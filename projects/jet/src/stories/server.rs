@@ -32,13 +32,14 @@
 //! TODO(#197 follow-up): advanced conditional-`exports` edge cases and CommonJS
 //! interop are out of scope — see [`super::deps`].
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use anyhow::{Context, Result};
 use axum::{
-    extract::{ws::WebSocket, Path as AxumPath, State, WebSocketUpgrade},
+    extract::{ws::WebSocket, Path as AxumPath, Query, State, WebSocketUpgrade},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
@@ -170,8 +171,14 @@ fn build_router_with(
         .route("/", get(manager_handler))
         .route(MANAGER_PREFIX, get(manager_handler))
         .route("/index.json", get(index_json_handler))
+        .route("/favicon.ico", get(favicon_handler))
+        .route("/iframe.html", get(iframe_handler))
         .route("/__jet_stories_preview/{story_id}", get(preview_handler))
         .route("/__jet_stories_controls/{story_id}", get(controls_handler))
+        .route(
+            "/storybook-server-channel",
+            get(storybook_server_channel_handler),
+        )
         // Preview-frame HMR WebSocket (B2b/#176).
         .route(STORIES_HMR_ROUTE, get(stories_hmr_handler))
         // React Fast Refresh runtime (#196): the preview-served `.tsx`/`.jsx`
@@ -179,6 +186,11 @@ fn build_router_with(
         // preamble (injected by the transform), so the preview must serve that
         // runtime — reusing the dev server's shim — for state-preserving refresh.
         .route(REACT_REFRESH_ROUTE, get(react_refresh_handler))
+        // Optimized third-party dependency bundles for heavy Storybook preview deps.
+        .route(
+            "/__jet_stories_optimized/{*specifier}",
+            get(optimized_dep_handler),
+        )
         // Resolved node_modules dependency modules (#197): the module route
         // rewrites a served module's bare imports to `/@dep/<key>`, served here.
         .route("/@dep/{*dep}", get(dep_handler))
@@ -192,18 +204,42 @@ fn build_router_with(
 /// B3: the manager embeds the resolved controls for the initially-selected
 /// story (the first in the id-sorted index) so the Controls panel renders
 /// server-side, seeded with that story's current arg values.
-async fn manager_handler(State(state): State<WorkbenchState>) -> Response {
+async fn manager_handler(
+    State(state): State<WorkbenchState>,
+    Query(query): Query<BTreeMap<String, String>>,
+) -> Response {
+    let selected_path = selected_storybook_path_from_query(&query);
     let selected = state.index.stories.first();
     let controls = selected
         .map(|story| controls_for_story(&state.root, &state.index, story))
         .unwrap_or_default();
     let docs_pages = docs_pages_for_index(&state.root, &state.index);
-    let html = manager::render_manager_html_with_docs(&state.index, None, &controls, &docs_pages);
+    let html = if selected_path.is_some() {
+        manager::render_official_storybook_manager_html()
+    } else {
+        manager::render_manager_html_with_docs(&state.index, None, &controls, &docs_pages)
+    };
     html_response(html)
 }
 
 async fn index_json_handler(State(state): State<WorkbenchState>) -> Response {
     json_response(story_index_json(&state.root, &state.index))
+}
+
+async fn favicon_handler() -> Response {
+    StatusCode::NO_CONTENT.into_response()
+}
+
+async fn iframe_handler(
+    State(state): State<WorkbenchState>,
+    Query(query): Query<BTreeMap<String, String>>,
+) -> Response {
+    let id = query.get("id").map(String::as_str).unwrap_or_default();
+    let view_mode = query.get("viewMode").map(String::as_str).unwrap_or("story");
+    if view_mode == "docs" {
+        return docs_response_for_docs_id(&state.root, &state.index, id);
+    }
+    preview_response_for_story_id(&state.root, &state.index, id)
 }
 
 /// `GET /__jet_stories_controls/{story_id}` → current Controls markup + args.
@@ -264,6 +300,7 @@ pub(crate) fn docs_pages_for_index(root: &Path, index: &StoryIndex) -> Vec<manag
             .map(|story| manager::DocsStory {
                 id: story.id.clone(),
                 name: story.name.clone(),
+                description: story.description.clone(),
             })
             .collect();
         if stories.is_empty() {
@@ -284,6 +321,9 @@ pub(crate) fn docs_pages_for_index(root: &Path, index: &StoryIndex) -> Vec<manag
                             type_text: prop.type_text,
                             default_value: prop.default_value,
                             description: prop.description,
+                            control_kind: None,
+                            control_options: Vec::new(),
+                            control_current: None,
                         })
                         .collect();
             }
@@ -308,25 +348,45 @@ pub(crate) fn docs_pages_for_index(root: &Path, index: &StoryIndex) -> Vec<manag
 
 pub(crate) fn story_index_json(root: &Path, index: &StoryIndex) -> String {
     let docs_pages = docs_pages_for_index(root, index);
-    let mut out = String::from("{\"schemaVersion\":1,\"stories\":[");
+    let mut entries = Vec::new();
+    let mut emitted = BTreeSet::new();
+    for meta in &index.metas {
+        push_storybook_docs_entry(root, &mut emitted, &mut entries, meta);
+        let component_path = meta.component.as_deref().and_then(|component_name| {
+            read_component_source(root, &meta.file, component_name).map(|(path, _)| path)
+        });
+        for story in index
+            .stories
+            .iter()
+            .filter(|story| story.file == meta.file && story.title_path == meta.title_path)
+        {
+            push_storybook_story_entry(
+                root,
+                &mut emitted,
+                &mut entries,
+                story,
+                component_path.as_deref(),
+            );
+        }
+    }
+    for story in &index.stories {
+        push_storybook_story_entry(root, &mut emitted, &mut entries, story, None);
+    }
+
+    let mut legacy_stories = String::new();
     for (idx, story) in index.stories.iter().enumerate() {
         if idx > 0 {
-            out.push(',');
+            legacy_stories.push(',');
         }
         let title = story.title_path.join("/");
-        let import_path = story
-            .file
-            .strip_prefix(root)
-            .unwrap_or(&story.file)
-            .to_string_lossy()
-            .replace('\\', "/");
+        let import_path = storybook_import_path(root, &story.file);
         let tags = index
             .metas
             .iter()
             .find(|meta| meta.file == story.file)
             .map(|meta| meta.tags.as_slice())
             .unwrap_or(&[]);
-        out.push_str(&format!(
+        legacy_stories.push_str(&format!(
             "{{\"id\":{},\"title\":{},\"name\":{},\"importPath\":{},\"tags\":{}}}",
             json_string(&story.id),
             json_string(&title),
@@ -335,20 +395,128 @@ pub(crate) fn story_index_json(root: &Path, index: &StoryIndex) -> String {
             json_string_array(tags),
         ));
     }
-    out.push_str("],\"docs\":[");
+
+    let mut legacy_docs = String::new();
     for (idx, docs) in docs_pages.iter().enumerate() {
         if idx > 0 {
-            out.push(',');
+            legacy_docs.push(',');
         }
-        out.push_str(&format!(
+        legacy_docs.push_str(&format!(
             "{{\"id\":{},\"title\":{},\"primaryStoryId\":{}}}",
             json_string(&docs.id),
             json_string(&docs.title),
             json_string(&docs.primary_story_id),
         ));
     }
-    out.push_str("]}");
-    out
+
+    format!(
+        "{{\"v\":5,\"entries\":{{{}}},\"schemaVersion\":1,\"stories\":[{}],\"docs\":[{}]}}",
+        entries.join(","),
+        legacy_stories,
+        legacy_docs,
+    )
+}
+
+fn push_storybook_docs_entry(
+    root: &Path,
+    emitted: &mut BTreeSet<String>,
+    entries: &mut Vec<String>,
+    meta: &super::StoryMeta,
+) {
+    let title = storybook_title(&meta.title_path);
+    let id = storybook_docs_id(&title);
+    if !emitted.insert(id.clone()) {
+        return;
+    }
+    let import_path = storybook_import_path(root, &meta.file);
+    entries.push(format!(
+        "{}:{{\"id\":{},\"title\":{},\"name\":\"Docs\",\"importPath\":{},\"type\":\"docs\",\"tags\":[\"dev\",\"test\",\"autodocs\"],\"storiesImports\":[]}}",
+        json_string(&id),
+        json_string(&id),
+        json_string(&title),
+        json_string(&import_path),
+    ));
+}
+
+fn push_storybook_story_entry(
+    root: &Path,
+    emitted: &mut BTreeSet<String>,
+    entries: &mut Vec<String>,
+    story: &StoryEntry,
+    component_path: Option<&Path>,
+) {
+    if !emitted.insert(story.id.clone()) {
+        return;
+    }
+    let title = storybook_title(&story.title_path);
+    let import_path = storybook_import_path(root, &story.file);
+    let component_path_field = component_path
+        .map(|path| {
+            format!(
+                ",\"componentPath\":{}",
+                json_string(&storybook_import_path(root, path))
+            )
+        })
+        .unwrap_or_default();
+    entries.push(format!(
+        "{}:{{\"id\":{},\"title\":{},\"name\":{},\"importPath\":{},\"type\":\"story\"{},\"tags\":[\"dev\",\"test\",\"autodocs\"]}}",
+        json_string(&story.id),
+        json_string(&story.id),
+        json_string(&title),
+        json_string(&storybook_story_name(&story.name)),
+        json_string(&import_path),
+        component_path_field,
+    ));
+}
+
+fn storybook_import_path(root: &Path, file: &Path) -> String {
+    let relative = file.strip_prefix(root).unwrap_or(file);
+    let path = relative
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+            Component::ParentDir => Some("..".to_string()),
+            Component::CurDir | Component::RootDir | Component::Prefix(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    if path.starts_with("./") {
+        path
+    } else {
+        format!("./{path}")
+    }
+}
+
+fn storybook_docs_id(title: &str) -> String {
+    format!("{}--docs", slug_for_docs_id(title))
+}
+
+fn storybook_title(title_path: &[String]) -> String {
+    title_path.join("/")
+}
+
+fn storybook_story_name(name: &str) -> String {
+    let mut out = String::new();
+    let mut prev_lower_or_digit = false;
+    for ch in name.chars() {
+        if ch == '_' || ch == '-' {
+            if !out.ends_with(' ') && !out.is_empty() {
+                out.push(' ');
+            }
+            prev_lower_or_digit = false;
+            continue;
+        }
+        if ch.is_ascii_uppercase() && prev_lower_or_digit && !out.ends_with(' ') {
+            out.push(' ');
+        }
+        out.push(ch);
+        prev_lower_or_digit = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+    }
+    let mut chars = out.trim().chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    first.to_ascii_uppercase().to_string() + chars.as_str()
 }
 
 fn json_string_array(values: &[String]) -> String {
@@ -553,33 +721,66 @@ fn strip_quotes(raw: &str) -> String {
         .to_string()
 }
 
-/// `GET /__jet_stories_preview/{story_id}` → isolated single-story preview.
-async fn preview_handler(
-    State(state): State<WorkbenchState>,
-    AxumPath(story_id): AxumPath<String>,
-) -> Response {
-    // Empty id (the `/__jet_stories_preview/` empty-state link) → empty preview.
+fn selected_storybook_path_from_query(query: &BTreeMap<String, String>) -> Option<String> {
+    query
+        .get("path")
+        .filter(|path| path.starts_with("/story/") || path.starts_with("/docs/"))
+        .cloned()
+}
+
+fn preview_response_for_story_id(root: &Path, index: &StoryIndex, story_id: &str) -> Response {
     if story_id.is_empty() {
         return html_response(manager::render_empty_preview_html());
     }
-
-    let Some(story) = state.index.stories.iter().find(|s| s.id == story_id) else {
+    let Some(story) = index.stories.iter().find(|s| s.id == story_id) else {
         return (
             StatusCode::NOT_FOUND,
             format!("jet stories: unknown story id '{story_id}'"),
         )
             .into_response();
     };
-
-    let module_url = module_url_for(&state.root, &story.file);
-    let project_preview_url = project_preview_module_url(&state.root);
-    let html = manager::render_preview_html_with_project_preview(
+    let module_url = module_url_for(root, &story.file);
+    let project_preview_url = project_preview_module_url(root);
+    let controls = controls_for_story(root, index, story);
+    let html = manager::render_preview_html_with_project_preview_actions_and_controls(
         story,
         &module_url,
         manager::UrlMode::Dev,
         project_preview_url.as_deref(),
+        &[],
+        &controls,
     );
     html_response(html)
+}
+
+fn docs_response_for_docs_id(root: &Path, index: &StoryIndex, docs_id: &str) -> Response {
+    let docs_pages = docs_pages_for_index(root, index);
+    let Some(page) = docs_pages
+        .iter()
+        .find(|page| docs_page_matches_id(page, docs_id))
+    else {
+        return (
+            StatusCode::NOT_FOUND,
+            format!("jet stories: unknown docs id '{docs_id}'"),
+        )
+            .into_response();
+    };
+    html_response(manager::render_docs_preview_html(
+        page,
+        manager::UrlMode::Dev,
+    ))
+}
+
+fn docs_page_matches_id(page: &manager::DocsPage, id: &str) -> bool {
+    page.id == id || storybook_docs_id(&page.title.replace(" / ", "/")) == id
+}
+
+/// `GET /__jet_stories_preview/{story_id}` → isolated single-story preview.
+async fn preview_handler(
+    State(state): State<WorkbenchState>,
+    AxumPath(story_id): AxumPath<String>,
+) -> Response {
+    preview_response_for_story_id(&state.root, &state.index, &story_id)
 }
 
 /// `GET /@react-refresh` → the React Fast Refresh runtime shim (#196).
@@ -591,6 +792,53 @@ async fn preview_handler(
 /// HMR client can drive `performReactRefresh()` for state-preserving updates.
 async fn react_refresh_handler() -> Response {
     js_response(crate::dev_server::react_refresh::react_refresh_runtime_source().to_string())
+}
+
+async fn storybook_server_channel_handler(ws: WebSocketUpgrade) -> Response {
+    ws.on_upgrade(storybook_server_channel_socket)
+}
+
+async fn storybook_server_channel_socket(socket: WebSocket) {
+    use axum::extract::ws::Message;
+    use std::time::Duration;
+
+    let (mut sender, mut receiver) = socket.split();
+    let mut interval = tokio::time::interval(Duration::from_secs(10));
+
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                if sender
+                    .send(Message::Text(r#"{"type":"ping"}"#.into()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            msg = receiver.next() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        if text.contains(r#""type":"requestWhatsNewData""#)
+                            && sender
+                                .send(Message::Text(storybook_whats_new_response_json().into()))
+                                .await
+                                .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(_)) => {}
+                    Some(Err(_)) => break,
+                }
+            }
+        }
+    }
+}
+
+fn storybook_whats_new_response_json() -> &'static str {
+    r#"{"type":"resultWhatsNewData","args":[{"data":{"title":"Storybook 10.4","url":"https://storybook.js.org/blog/whats-new/storybook-10-4","blogUrl":"https://storybook.js.org/blog/storybook-10-4","publishedAt":"2026-05-18T20:38:16.000+00:00","excerpt":"Storybook 10.4","blogExcerpt":"Automatic setup with agents, review filters, TanStack React, and more","status":"SUCCESS","postIsRead":false,"showNotification":true,"disableWhatsNewNotifications":false}}],"from":"jet"}"#
 }
 
 /// `GET /__jet_stories_hmr` → upgrade to the preview-frame HMR WebSocket.
@@ -657,6 +905,9 @@ async fn module_handler(
     if path.split('/').any(|seg| seg == "..") {
         return (StatusCode::BAD_REQUEST, "jet stories: invalid path").into_response();
     }
+    if let Some(asset_path) = resolve_storybook_manager_asset(&state.root, &path) {
+        return serve_storybook_manager_asset(&asset_path).await;
+    }
 
     let file_path =
         resolve_module_file(&state.root, &path).unwrap_or_else(|| state.root.join(&path));
@@ -680,6 +931,110 @@ async fn module_handler(
             format!("jet stories: not found '{path}'"),
         )
             .into_response(),
+    }
+}
+
+fn resolve_storybook_manager_asset(root: &Path, request_path: &str) -> Option<PathBuf> {
+    if request_path == "favicon.svg" {
+        return storybook_core_package_dir(root)
+            .map(|dir| dir.join("assets/browser/favicon.svg"))
+            .filter(|path| path.is_file());
+    }
+    if let Some(rel) = request_path.strip_prefix("sb-common-assets/") {
+        return storybook_core_package_dir(root)
+            .map(|dir| dir.join("assets/browser").join(rel))
+            .filter(|path| path.is_file());
+    }
+    if let Some(rel) = request_path.strip_prefix("sb-manager/") {
+        return storybook_core_package_dir(root)
+            .map(|dir| dir.join("dist/manager").join(rel))
+            .filter(|path| path.is_file());
+    }
+    if request_path.starts_with("sb-addons/") {
+        return storybook_cache_public_dir(root)
+            .map(|dir| dir.join(request_path))
+            .filter(|path| path.is_file());
+    }
+    None
+}
+
+fn storybook_core_package_dir(root: &Path) -> Option<PathBuf> {
+    node_package_dir(root, "@storybook/core")
+}
+
+fn node_package_dir(root: &Path, package_name: &str) -> Option<PathBuf> {
+    let direct = root.join("node_modules").join(package_name);
+    if direct.is_dir() {
+        return Some(direct);
+    }
+    let pnpm_hoist = root
+        .join("node_modules/.pnpm/node_modules")
+        .join(package_name);
+    if pnpm_hoist.is_dir() {
+        return Some(pnpm_hoist);
+    }
+
+    let pnpm_dir = root.join("node_modules/.pnpm");
+    let entries = std::fs::read_dir(pnpm_dir).ok()?;
+    for entry in entries.flatten() {
+        let candidate = entry.path().join("node_modules").join(package_name);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn storybook_cache_public_dir(root: &Path) -> Option<PathBuf> {
+    let cache_dir = root.join("node_modules/.cache/storybook");
+    let entries = std::fs::read_dir(cache_dir).ok()?;
+    for entry in entries.flatten() {
+        let public = entry.path().join("public");
+        if public.join("sb-addons").is_dir() {
+            return Some(public);
+        }
+    }
+    None
+}
+
+async fn serve_storybook_manager_asset(path: &Path) -> Response {
+    let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
+    if ext == "js" {
+        return match std::fs::read_to_string(path) {
+            Ok(code) => js_response(code),
+            Err(err) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!(
+                    "jet stories: failed to read Storybook manager asset '{}': {err}",
+                    path.display()
+                ),
+            )
+                .into_response(),
+        };
+    }
+    match std::fs::read(path) {
+        Ok(bytes) => (
+            [(header::CONTENT_TYPE, storybook_asset_content_type(path))],
+            bytes,
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "jet stories: failed to read Storybook manager asset '{}': {err}",
+                path.display()
+            ),
+        )
+            .into_response(),
+    }
+}
+
+fn storybook_asset_content_type(path: &Path) -> &'static str {
+    match path.extension().and_then(|ext| ext.to_str()).unwrap_or("") {
+        "svg" => "image/svg+xml",
+        "woff2" => "font/woff2",
+        "css" => "text/css; charset=utf-8",
+        _ => "application/octet-stream",
     }
 }
 
@@ -852,6 +1207,28 @@ async fn serve_raw_asset(file_path: &Path, request_path: &str) -> Response {
 /// routes — so a dep's transitive deps load too. The dep's RELATIVE imports
 /// (`./chunk.js`) resolve browser-side against this same `/@dep/<dir>/` URL, so
 /// they need no rewriting.
+async fn optimized_dep_handler(
+    State(state): State<WorkbenchState>,
+    AxumPath(specifier): AxumPath<String>,
+) -> Response {
+    if specifier.split('/').any(|seg| seg == "..") {
+        return (
+            StatusCode::BAD_REQUEST,
+            "jet stories: invalid optimized dep path",
+        )
+            .into_response();
+    }
+
+    match super::optimizer::optimized_dep_source(&state.root, &specifier) {
+        Ok(code) => js_response(rewrite_optimized_external_imports(&code)),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("jet stories: failed to optimize dependency '{specifier}': {err}"),
+        )
+            .into_response(),
+    }
+}
+
 async fn dep_handler(
     State(state): State<WorkbenchState>,
     AxumPath(dep): AxumPath<String>,
@@ -861,13 +1238,7 @@ async fn dep_handler(
         return (StatusCode::BAD_REQUEST, "jet stories: invalid dep path").into_response();
     }
 
-    let file_path = state
-        .root
-        .join("node_modules")
-        .join(&dep)
-        .is_file()
-        .then(|| state.root.join("node_modules").join(&dep))
-        .or_else(|| resolve_workspace_dep_asset(&state.root, &dep))
+    let file_path = resolve_dep_route_file(&state.root, &dep)
         .unwrap_or_else(|| state.root.join("node_modules").join(&dep));
     if !file_path.is_file() {
         return (
@@ -877,6 +1248,13 @@ async fn dep_handler(
             .into_response();
     }
 
+    let ext = file_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("");
+    if matches!(ext, "css" | "scss" | "sass") {
+        return serve_style_module(&file_path, &format!("@dep/{dep}")).await;
+    }
     if is_raw_asset_path(&file_path) {
         return serve_raw_asset(&file_path, &format!("@dep/{dep}")).await;
     }
@@ -916,6 +1294,12 @@ fn transform_to_js(source: &str, file_path: &Path) -> Result<String> {
         "tsx" => crate::transform::transform_tsx::transform_tsx(source, &options),
         "ts" => crate::transform::typescript::transform_typescript(source, &options),
         "jsx" => crate::transform::jsx::transform_jsx(source, &options),
+        "js" | "cjs" => Ok(crate::transform::TransformResult {
+            code: crate::dev_server::prebundle::convert_cjs_file_to_esm_with_import_prefix(
+                source, file_path, DEP_PREFIX,
+            ),
+            source_map: None,
+        }),
         _ => Ok(crate::transform::TransformResult {
             code: source.to_string(),
             source_map: None,
@@ -931,11 +1315,59 @@ fn transform_to_js(source: &str, file_path: &Path) -> Result<String> {
 /// Bare specifiers that don't resolve on disk are left untouched so the esm.sh
 /// importmap still satisfies them (React etc.). Only quoted specifier forms are
 /// replaced, so an identifier sharing the spelling is never touched.
+fn rewrite_optimized_external_imports(code: &str) -> String {
+    let mut specs = vec!["dayjs".to_string()];
+    for spec in super::deps::extract_all_import_specifiers(code) {
+        if spec.starts_with("dayjs/") && !specs.contains(&spec) {
+            specs.push(spec);
+        }
+    }
+    let mut out = code.to_string();
+    for spec in specs {
+        let route = format!("{DEP_PREFIX}{spec}");
+        out = rewrite_import_source_literal(&out, &spec, &route);
+    }
+    out
+}
+
+fn rewrite_import_source_literal(code: &str, spec: &str, route: &str) -> String {
+    code.replace(&format!(" from \"{spec}\""), &format!(" from \"{route}\""))
+        .replace(&format!(" from '{spec}'"), &format!(" from '{route}'"))
+        .replace(
+            &format!("import \"{spec}\""),
+            &format!("import \"{route}\""),
+        )
+        .replace(&format!("import '{spec}'"), &format!("import '{route}'"))
+}
+
 fn rewrite_bare_imports_to_dep_routes(code: &str, root: &Path, importer_file: &Path) -> String {
     let mut out = code.to_string();
     for spec in super::deps::extract_all_import_specifiers(code) {
+        if spec.starts_with('.') && path_has_node_modules(importer_file) {
+            if let Some(resolved) = resolve_relative_import_file(importer_file, &spec) {
+                let route = if path_has_node_modules(&resolved) {
+                    format!("{DEP_PREFIX}{}", super::deps::dep_key(&resolved))
+                } else {
+                    module_url_for(root, &resolved)
+                };
+                if is_raw_asset_path(&resolved) {
+                    out = rewrite_asset_import_for_spec(&out, &spec, &route);
+                } else {
+                    out = out
+                        .replace(&format!("\"{spec}\""), &format!("\"{route}\""))
+                        .replace(&format!("'{spec}'"), &format!("'{route}'"));
+                }
+                continue;
+            }
+        }
+        if let Some(route) = super::optimizer::optimized_route_for_specifier(root, &spec) {
+            out = out
+                .replace(&format!("\"{spec}\""), &format!("\"{route}\""))
+                .replace(&format!("'{spec}'"), &format!("'{route}'"));
+            continue;
+        }
         let Some(resolved) = super::deps::resolve_bare_specifier(root, importer_file, &spec) else {
-            continue; // relative, or unresolved → leave for the importmap
+            continue; // relative, or unresolved -> leave for the importmap
         };
         if is_raw_asset_path(&resolved) {
             let route = if path_has_node_modules(&resolved) {
@@ -946,12 +1378,21 @@ fn rewrite_bare_imports_to_dep_routes(code: &str, root: &Path, importer_file: &P
             out = rewrite_asset_import_for_spec(&out, &spec, &route);
             continue;
         }
-        let route = format!("{DEP_PREFIX}{}", super::deps::dep_key(&resolved));
+        let route = if spec == "dayjs" {
+            format!("{DEP_PREFIX}dayjs")
+        } else {
+            format!("{DEP_PREFIX}{}", super::deps::dep_key(&resolved))
+        };
         out = out
             .replace(&format!("\"{spec}\""), &format!("\"{route}\""))
             .replace(&format!("'{spec}'"), &format!("'{route}'"));
     }
     out
+}
+
+fn resolve_relative_import_file(importer_file: &Path, spec: &str) -> Option<PathBuf> {
+    let base = importer_file.parent()?;
+    resolve_file_with_extension_fallback(base.join(spec))
 }
 
 fn rewrite_asset_import_for_spec(code: &str, spec: &str, new_spec: &str) -> String {
@@ -1038,20 +1479,147 @@ fn content_type_for_asset(path: &Path) -> &'static str {
     }
 }
 
-fn resolve_workspace_dep_asset(root: &Path, dep: &str) -> Option<PathBuf> {
+fn resolve_dep_route_file(root: &Path, dep: &str) -> Option<PathBuf> {
+    resolve_file_with_extension_fallback(root.join("node_modules").join(dep))
+        .or_else(|| resolve_pnpm_dep_file(root, dep))
+        .or_else(|| resolve_workspace_dep_file(root, dep))
+}
+
+fn resolve_pnpm_dep_file(root: &Path, dep: &str) -> Option<PathBuf> {
     let (package_name, subpath) = split_dep_package_path(dep)?;
-    if !is_raw_asset_path(Path::new(&subpath)) {
-        return None;
+    let entries = std::fs::read_dir(root.join("node_modules/.pnpm")).ok()?;
+    for entry in entries.flatten() {
+        let package_dir = entry.path().join("node_modules").join(&package_name);
+        let candidate = package_dir.join(&subpath);
+        if let Some(file) = resolve_file_with_extension_fallback(candidate) {
+            return Some(file);
+        }
+        if let Some(file) = resolve_package_json_route(&package_dir, &subpath) {
+            return Some(file);
+        }
     }
+    None
+}
+
+fn resolve_workspace_dep_file(root: &Path, dep: &str) -> Option<PathBuf> {
+    let (package_name, subpath) = split_dep_package_path(dep)?;
     let package_dir = workspace_package_dir(root, &package_name)?;
     let direct = package_dir.join(&subpath);
-    if direct.is_file() {
-        return Some(direct);
+    if let Some(file) = resolve_file_with_extension_fallback(direct) {
+        return Some(file);
+    }
+    if let Some(file) = resolve_package_json_route(&package_dir, &subpath) {
+        return Some(file);
     }
     if let Some(rest) = subpath.strip_prefix("dist/") {
-        let source = package_dir.join("src/lib").join(rest);
-        if source.is_file() {
-            return Some(source);
+        for source_root in ["src/lib", "src"] {
+            let source = package_dir.join(source_root).join(rest);
+            if let Some(file) = resolve_file_with_extension_fallback(source) {
+                return Some(file);
+            }
+        }
+    }
+    None
+}
+
+fn resolve_package_json_route(package_dir: &Path, subpath: &str) -> Option<PathBuf> {
+    let package = std::fs::read_to_string(package_dir.join("package.json")).ok()?;
+    let package = serde_json::from_str::<serde_json::Value>(&package).ok()?;
+    if let Some(exports) = package.get("exports") {
+        let key = if subpath.is_empty() {
+            ".".to_string()
+        } else {
+            format!("./{subpath}")
+        };
+        if let Some(target) = export_target_for_route(exports, &key) {
+            let target = target.trim_start_matches("./");
+            if let Some(file) = resolve_file_with_extension_fallback(package_dir.join(target)) {
+                return Some(file);
+            }
+        }
+    }
+    if subpath.is_empty() {
+        for field in ["browser", "module", "main"] {
+            if let Some(target) = package.get(field).and_then(|value| value.as_str()) {
+                let target = target.trim_start_matches("./");
+                if let Some(file) = resolve_file_with_extension_fallback(package_dir.join(target)) {
+                    return Some(file);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn export_target_for_route(exports: &serde_json::Value, key: &str) -> Option<String> {
+    match exports {
+        serde_json::Value::String(target) if key == "." => Some(target.clone()),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .find_map(|item| export_target_for_route(item, key)),
+        serde_json::Value::Object(map) => {
+            if let Some(value) = map.get(key) {
+                return export_target_value(value);
+            }
+            for (pattern, value) in map {
+                let Some((prefix, suffix)) = pattern.split_once('*') else {
+                    continue;
+                };
+                if key.starts_with(prefix) && key.ends_with(suffix) {
+                    let matched = &key[prefix.len()..key.len() - suffix.len()];
+                    return export_target_value(value).map(|target| target.replace('*', matched));
+                }
+            }
+            if key == "." {
+                return export_target_value(exports);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn export_target_value(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(target) => Some(target.clone()),
+        serde_json::Value::Array(items) => items.iter().find_map(export_target_value),
+        serde_json::Value::Object(map) => {
+            for key in ["browser", "import", "module", "default", "require"] {
+                if let Some(value) = map.get(key).and_then(export_target_value) {
+                    return Some(value);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn resolve_file_with_extension_fallback(path: PathBuf) -> Option<PathBuf> {
+    if path.is_file() {
+        return Some(path);
+    }
+    if path.extension().is_none() {
+        for ext in ["js", "mjs", "cjs", "ts", "tsx", "jsx"] {
+            let candidate = path.with_extension(ext);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    if path.is_dir() {
+        for name in [
+            "index.js",
+            "index.mjs",
+            "index.cjs",
+            "index.ts",
+            "index.tsx",
+            "index.jsx",
+        ] {
+            let candidate = path.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
         }
     }
     None
@@ -1172,6 +1740,7 @@ mod tests {
             id: "x--y".into(),
             name: "Y".into(),
             export_name: "Y".into(),
+            description: String::new(),
             args: BTreeMap::new(),
             parameters: BTreeMap::new(),
             source: None,
@@ -1224,9 +1793,36 @@ mod tests {
     }
 
     #[test]
+    fn rewrites_node_modules_relative_imports_to_dep_routes() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = dir.path();
+        let dep_dir =
+            root.join("node_modules/.pnpm/dom-helpers@6.0.1/node_modules/dom-helpers/esm");
+        std::fs::create_dir_all(&dep_dir).expect("mkdir dep");
+        let index = dep_dir.join("index.js");
+        let animate = dep_dir.join("animate.js");
+        std::fs::write(&animate, "export default null;").expect("write dep");
+        let rewritten = rewrite_bare_imports_to_dep_routes(
+            "export { default as animate } from './animate';",
+            root,
+            &index,
+        );
+        assert!(
+            rewritten.contains("/@dep/dom-helpers/esm/animate.js"),
+            "relative dep import should use package-relative dep route: {rewritten}"
+        );
+    }
+
+    #[test]
     fn asset_content_type_uses_image_mime() {
         assert_eq!(content_type_for_asset(Path::new("x.svg")), "image/svg+xml");
         assert_eq!(content_type_for_asset(Path::new("x.png")), "image/png");
+    }
+
+    #[test]
+    fn style_paths_are_not_raw_assets() {
+        assert!(!is_raw_asset_path(Path::new("x.css")));
+        assert!(!is_raw_asset_path(Path::new("x.scss")));
     }
 
     #[test]
@@ -1243,8 +1839,111 @@ mod tests {
         std::fs::write(package_dir.join("src/lib/icons/list.svg"), "<svg />").expect("write svg");
 
         assert_eq!(
-            resolve_workspace_dep_asset(root, "@tw-tech/shared-assets/dist/icons/list.svg"),
+            resolve_workspace_dep_file(root, "@tw-tech/shared-assets/dist/icons/list.svg"),
             Some(package_dir.join("src/lib/icons/list.svg"))
+        );
+    }
+
+    #[test]
+    fn resolves_workspace_dep_js_from_dist() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = dir.path();
+        let package_dir = root.join("packages/ui-styles");
+        std::fs::create_dir_all(package_dir.join("dist")).expect("mkdir package");
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{"name":"@tw-tech/shared-ui-styles"}"#,
+        )
+        .expect("write package");
+        std::fs::write(package_dir.join("dist/index.js"), "export const x = 1;").expect("write js");
+
+        assert_eq!(
+            resolve_workspace_dep_file(root, "@tw-tech/shared-ui-styles/dist/index.js"),
+            Some(package_dir.join("dist/index.js"))
+        );
+    }
+
+    #[test]
+    fn resolves_pnpm_dep_route_file_from_canonical_dep_key() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = dir.path();
+        let package_dir =
+            root.join("node_modules/.pnpm/react-router-dom@6.30.4/node_modules/react-router-dom");
+        std::fs::create_dir_all(package_dir.join("dist")).expect("mkdir package");
+        std::fs::write(package_dir.join("dist/index.js"), "export const Link = 1;")
+            .expect("write js");
+
+        assert_eq!(
+            resolve_dep_route_file(root, "react-router-dom/dist/index.js"),
+            Some(package_dir.join("dist/index.js"))
+        );
+    }
+
+    #[test]
+    fn resolves_pnpm_dep_route_file_with_extensionless_fallback() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = dir.path();
+        let package_dir =
+            root.join("node_modules/.pnpm/dom-helpers@6.0.1/node_modules/dom-helpers");
+        std::fs::create_dir_all(package_dir.join("esm")).expect("mkdir package");
+        std::fs::write(package_dir.join("esm/canUseDOM.js"), "export default true;")
+            .expect("write js");
+
+        assert_eq!(
+            resolve_dep_route_file(root, "dom-helpers/esm/canUseDOM"),
+            Some(package_dir.join("esm/canUseDOM.js"))
+        );
+    }
+
+    #[test]
+    fn cjs_dep_transform_exports_default() {
+        let file = Path::new("/proj/node_modules/classnames/index.js");
+        let transformed =
+            transform_to_js("module.exports = function classNames() {};", file).expect("transform");
+        assert!(transformed.contains("export default __cjs_default__"));
+        assert!(!transformed.contains("/node_modules/.jet/"));
+    }
+
+    #[test]
+    fn resolves_package_root_via_package_json_module_or_main() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = dir.path();
+        let package_dir = root.join("node_modules/.pnpm/dayjs@1.0.0/node_modules/dayjs");
+        std::fs::create_dir_all(&package_dir).expect("mkdir package");
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{"name":"dayjs","main":"dayjs.min.js"}"#,
+        )
+        .expect("write package");
+        std::fs::write(package_dir.join("dayjs.min.js"), "module.exports = {};").expect("write js");
+
+        assert_eq!(
+            resolve_dep_route_file(root, "dayjs"),
+            Some(package_dir.join("dayjs.min.js"))
+        );
+    }
+
+    #[test]
+    fn resolves_package_subpath_via_exports_wildcard() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = dir.path();
+        let package_dir =
+            root.join("node_modules/.pnpm/dom-helpers@6.0.1/node_modules/dom-helpers");
+        std::fs::create_dir_all(package_dir.join("esm")).expect("mkdir package");
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{"name":"dom-helpers","exports":{"./*":{"import":{"default":"./esm/*.js"}}}}"#,
+        )
+        .expect("write package");
+        std::fs::write(
+            package_dir.join("esm/querySelectorAll.js"),
+            "export default null;",
+        )
+        .expect("write js");
+
+        assert_eq!(
+            resolve_dep_route_file(root, "dom-helpers/querySelectorAll"),
+            Some(package_dir.join("esm/querySelectorAll.js"))
         );
     }
 }

@@ -336,8 +336,11 @@ export const decorators = [
     let primary_preview = fs::read_to_string(out.join("preview/components-button--primary.html"))
         .expect("read preview");
     assert!(
-        primary_preview
-            .contains(r#"import * as ProjectPreview from "../modules/.storybook/preview.js";"#),
+        primary_preview.contains(
+            r#"import * as ProjectPreviewModule from "../modules/.storybook/preview.js";"#
+        ) && primary_preview.contains(
+            "const ProjectPreview = ProjectPreviewModule.default || ProjectPreviewModule;",
+        ),
         "static preview imports emitted project preview runtime: {primary_preview}"
     );
     assert!(
@@ -857,6 +860,7 @@ fn dev_renderers_default_output_is_unchanged() {
         id: "components-button--primary".into(),
         name: "Primary".into(),
         export_name: "Primary".into(),
+        description: String::new(),
         args: BTreeMap::new(),
         parameters: BTreeMap::new(),
         source: None,

@@ -104,6 +104,9 @@ pub struct CsfStory {
     pub source: Option<String>,
     /// Story-level `args:` object (merged over meta args by the index).
     pub args: BTreeMap<String, CsfValue>,
+    /// Story-level docs description from `parameters.docs.description.story`
+    /// or the JSDoc comment immediately preceding the story export.
+    pub description: String,
     /// Whether the story declares its own `render:` function.
     ///
     /// For a CSF2 `Template.bind({})` story this is `true`: the story renders
@@ -214,14 +217,18 @@ pub fn parse_csf(source: &str, _is_tsx: bool) -> Result<ParsedStoryFile> {
                     .or_else(|| first_child_of_kind(child, "variable_declaration"))
                 {
                     // `export const Primary = {...}` — one or more named stories,
-                    // or `export const Primary = Template.bind({})` (CSF2 export
-                    // form). Track which exported names are bound templates.
+                    // `export const Primary = Template.bind({})` (CSF2), or a
+                    // callable/factory story such as `export const Primary =
+                    // (args) => <Button {...args} />` followed by
+                    // `Primary.args = {...}`.
                     for (name, value) in declarators(source, decl) {
                         source_decls.insert(name.clone(), child);
                         if let Some(obj) = unwrap_to_object(value) {
                             named_stories.push((name, obj, child));
                         } else if let Some(template) = bind_template_name(source, value) {
                             bound_stories.push((name, Some(template)));
+                        } else if is_exported_callable_story(&name, value) {
+                            bound_stories.push((name, None));
                         }
                     }
                 }
@@ -249,6 +256,7 @@ pub fn parse_csf(source: &str, _is_tsx: bool) -> Result<ParsedStoryFile> {
         .into_iter()
         .map(|(export_name, obj, source_node)| {
             let extracted_source = Some(node_text(source_node, source).trim().to_string());
+            let jsdoc_description = jsdoc_comment_before_node(source, source_node);
             parse_story_object(
                 source,
                 &export_name,
@@ -256,6 +264,7 @@ pub fn parse_csf(source: &str, _is_tsx: bool) -> Result<ParsedStoryFile> {
                 &scope,
                 &mutations,
                 extracted_source,
+                jsdoc_description,
             )
         })
         .collect();
@@ -272,6 +281,9 @@ pub fn parse_csf(source: &str, _is_tsx: bool) -> Result<ParsedStoryFile> {
             .get(&name)
             .map(|m| resolve_args(&m.args_pairs, source, &scope, &mutations))
             .unwrap_or_default();
+        let jsdoc_description = source_decls
+            .get(&name)
+            .and_then(|decl| jsdoc_comment_before_node(source, *decl));
         stories.push(CsfStory {
             source: bound_story_source(
                 source,
@@ -282,6 +294,7 @@ pub fn parse_csf(source: &str, _is_tsx: bool) -> Result<ParsedStoryFile> {
             ),
             export_name: name,
             args,
+            description: jsdoc_description.unwrap_or_default(),
             // The render is supplied by the bound template.
             has_render: true,
             parameters: BTreeMap::new(),
@@ -355,6 +368,7 @@ fn parse_story_object(
     scope: &SpreadScope,
     mutations: &BTreeMap<String, StoryMutation>,
     extracted_source: Option<String>,
+    jsdoc_description: Option<String>,
 ) -> CsfStory {
     let mut args = BTreeMap::new();
     let mut has_render = false;
@@ -386,15 +400,35 @@ fn parse_story_object(
         }
     }
     let source = docs_source_override(&parameters).or(extracted_source);
+    let description = docs_story_description_from_parameters(&parameters)
+        .or(jsdoc_description)
+        .unwrap_or_default();
     CsfStory {
         export_name: export_name.to_string(),
         source,
         args,
+        description,
         has_render,
         parameters,
         globals,
         has_decorators,
         has_loaders,
+    }
+}
+
+fn docs_story_description_from_parameters(
+    parameters: &BTreeMap<String, CsfValue>,
+) -> Option<String> {
+    let Some(CsfValue::Object(docs)) = parameters.get("docs") else {
+        return None;
+    };
+    let Some(CsfValue::Object(description)) = docs.get("description") else {
+        return None;
+    };
+    match description.get("story") {
+        Some(CsfValue::Str(text)) => Some(text.clone()),
+        Some(CsfValue::Raw(text)) => Some(strip_quotes(text)),
+        _ => None,
     }
 }
 
@@ -407,9 +441,29 @@ fn docs_source_override(parameters: &BTreeMap<String, CsfValue>) -> Option<Strin
     };
     match source.get("code") {
         Some(CsfValue::Str(code)) => Some(code.clone()),
-        Some(CsfValue::Raw(code)) => Some(code.trim_matches(['"', '\'', '`']).to_string()),
+        Some(CsfValue::Raw(code)) => Some(strip_quotes(code)),
         _ => None,
     }
+}
+
+fn jsdoc_comment_before_node(source: &str, node: Node) -> Option<String> {
+    let before = source[..node.start_byte()].trim_end();
+    let close = before.rfind("*/")?;
+    if close + 2 != before.len() {
+        return None;
+    }
+    let open = before[..close].rfind("/**")?;
+    let raw = &before[open + 3..close];
+    let mut lines = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        let line = line.strip_prefix('*').unwrap_or(line).trim();
+        if !line.is_empty() {
+            lines.push(line.to_string());
+        }
+    }
+    let text = lines.join("\n").trim().to_string();
+    (!text.is_empty()).then_some(text)
 }
 
 fn string_array_values(source: &str, node: Node) -> Vec<String> {
@@ -663,6 +717,29 @@ fn bind_template_name(source: &str, value: Node) -> Option<String> {
     has_bind.then(|| node_text(*base, source).to_string())
 }
 
+fn is_exported_callable_story(name: &str, value: Node) -> bool {
+    starts_with_uppercase(name) && is_callable_story_value(value)
+}
+
+fn starts_with_uppercase(name: &str) -> bool {
+    name.chars()
+        .next()
+        .map(|ch| ch.is_ascii_uppercase())
+        .unwrap_or(false)
+}
+
+fn is_callable_story_value(value: Node) -> bool {
+    match value.kind() {
+        "arrow_function" | "function" | "function_declaration" | "call_expression" => true,
+        "satisfies_expression" | "as_expression" | "parenthesized_expression" => {
+            named_children(value)
+                .into_iter()
+                .any(is_callable_story_value)
+        }
+        _ => false,
+    }
+}
+
 /// Unwrap `as`/`satisfies`/parenthesized wrappers to reach a `call_expression`.
 fn unwrap_to_call(node: Node) -> Option<Node> {
     match node.kind() {
@@ -873,8 +950,18 @@ fn node_text<'a>(node: Node, source: &'a str) -> &'a str {
 }
 
 fn strip_quotes(raw: &str) -> String {
-    raw.trim_matches(|c| c == '"' || c == '\'' || c == '`')
-        .to_string()
+    let trimmed = raw.trim();
+    let Some(first) = trimmed.chars().next() else {
+        return String::new();
+    };
+    let Some(last) = trimmed.chars().next_back() else {
+        return String::new();
+    };
+    if matches!(first, '"' | '\'' | '`') && first == last && trimmed.len() >= 2 {
+        trimmed[first.len_utf8()..trimmed.len() - last.len_utf8()].to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────

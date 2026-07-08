@@ -6,7 +6,8 @@
 //! (no port binding needed). We cover:
 //! (a) the manager route serves an HTML page listing the discovered stories,
 //! (b) the preview route for a known story id returns HTML that references that
-//!     story's module file + export name and mounts in isolation (`#jet-root`),
+//!     story's module file + export name and mounts in Storybook's canonical
+//!     preview root (`#storybook-root`),
 //! (c) an unknown story id returns 404,
 //! (d) the module route transforms + serves a fixture `.tsx` module as JS.
 
@@ -162,11 +163,23 @@ async fn preview_route_renders_story_in_isolation() {
         html.contains("const exportName = \"Primary\""),
         "selects the Primary export"
     );
-    // Mounts into a single isolated root — no app shell/router.
+    // Mounts into Storybook's canonical isolated preview root — no app shell/router.
     assert_eq!(
-        html.matches("id=\"jet-root\"").count(),
+        html.matches("id=\"storybook-root\"").count(),
         1,
-        "exactly one isolated mount root"
+        "exactly one Storybook preview mount root"
+    );
+    assert!(
+        html.contains("class=\"sb-main-padded sb-show-main\""),
+        "preview body starts in Storybook's padded visible state"
+    );
+    assert!(
+        html.contains("class=\"sb-preparing-story sb-wrapper\""),
+        "preview includes Storybook's preparing wrapper"
+    );
+    assert!(
+        !html.contains("id=\"jet-root\""),
+        "old Jet-only preview root must not leak into the Storybook contract"
     );
     assert!(html.contains("createRoot"), "uses react-dom createRoot");
 }

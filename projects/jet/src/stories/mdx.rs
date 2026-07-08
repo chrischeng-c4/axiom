@@ -92,6 +92,7 @@ fn compile_mdx_doc(
                 stories.push(DocsStory {
                     id: story.id.clone(),
                     name: story.name.clone(),
+                    description: String::new(),
                 });
             }
             let label = if trimmed.starts_with("<Canvas") {
@@ -160,6 +161,7 @@ fn compile_mdx_doc(
                 .map(|story| DocsStory {
                     id: story.id.clone(),
                     name: story.name.clone(),
+                    description: String::new(),
                 }),
         );
     }
@@ -393,6 +395,7 @@ mod tests {
             id: "components-button--primary".to_string(),
             name: "Primary".to_string(),
             export_name: "Primary".to_string(),
+            description: String::new(),
             args: Default::default(),
             parameters: Default::default(),
             source: Some("export const Primary = {};".to_string()),

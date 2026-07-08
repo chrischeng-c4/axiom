@@ -30,6 +30,88 @@ const App = () => (
 }
 
 #[test]
+fn test_tsx_member_tag_with_lowercase_base_is_component_expression() {
+    let source = r#"
+const context = createContext({});
+const App = ({ children }) => (
+  <context.Provider value={{ ready: true }}>{children}</context.Provider>
+);
+"#;
+    let options = TransformOptions::default();
+    let result = transform_tsx(source, &options).unwrap();
+
+    assert!(
+        result.code.contains("jsx(context.Provider")
+            || result.code.contains("jsxs(context.Provider"),
+        "member JSX tag should remain an expression: {}",
+        result.code
+    );
+    assert!(
+        !result.code.contains("\"context.Provider\""),
+        "member JSX tag must not become a host element string: {}",
+        result.code
+    );
+}
+
+#[test]
+fn preserves_single_space_text_between_jsx_expressions() {
+    let source = r#"
+const label = <div>{icon} {name}</div>;
+"#;
+    let options = TransformOptions::default();
+    let result = transform_tsx(source, &options).unwrap();
+
+    assert!(
+        result.code.contains("children: [icon, \" \", name]"),
+        "single JSX space between expressions must be a text child: {}",
+        result.code
+    );
+}
+
+#[test]
+fn preserves_jsx_nbsp_character_reference_between_expressions_and_text() {
+    let source = r#"
+const label = <div>{size}&nbsp;MB</div>;
+"#;
+    let options = TransformOptions::default();
+    let result = transform_tsx(source, &options).unwrap();
+
+    assert!(
+        result
+            .code
+            .contains("children: [size, \"\\u00a0\", \"MB\"]"),
+        "JSX &nbsp; entity must render as a non-breaking space text child: {}",
+        result.code
+    );
+}
+
+#[test]
+fn aliases_jsx_runtime_fragment_to_avoid_user_import_collision() {
+    let source = r#"
+import { Fragment } from 'react';
+const value = <>{items.map((item) => <Fragment key={item}>{item}</Fragment>)}</>;
+"#;
+    let options = TransformOptions::default();
+    let result = transform_tsx(source, &options).unwrap();
+
+    assert!(
+        result.code.contains("Fragment as __JetFragment"),
+        "runtime fragment import must be aliased: {}",
+        result.code
+    );
+    assert!(
+        result.code.contains("jsxs(__JetFragment"),
+        "JSX fragments must use the aliased runtime binding: {}",
+        result.code
+    );
+    assert!(
+        result.code.contains("import { Fragment } from 'react';"),
+        "user Fragment import must remain untouched: {}",
+        result.code
+    );
+}
+
+#[test]
 fn test_tsx_function_call_with_jsx() {
     let source = r#"root.render(<App />);"#;
     let options = TransformOptions::default();
@@ -429,6 +511,80 @@ fn t30_strip_as_const_expression() {
     );
 }
 
+#[test]
+fn strips_as_expression_inside_jsx_attribute_expression() {
+    let source = r#"
+type Row = { id: string };
+const rows: Row[] = [];
+export function Table() {
+  return <VirtualList dataset={rows as Row[]} />;
+}
+"#;
+    let options = TransformOptions::default();
+    let result = transform_tsx(source, &options).unwrap();
+    assert!(
+        result.code.contains("dataset: rows"),
+        "must keep the asserted expression value in JSX props: {}",
+        result.code
+    );
+    assert!(
+        !result.code.contains(" as Row"),
+        "must strip TS as-expression inside JSX props: {}",
+        result.code
+    );
+}
+
+#[test]
+fn strips_class_field_accessibility_modifiers() {
+    let source = r#"
+class LoadingData {
+  public key;
+  constructor(key: string) {
+    this.key = key;
+  }
+}
+"#;
+    let options = TransformOptions::default();
+    let result = transform_tsx(source, &options).unwrap();
+    assert!(
+        result.code.contains("class LoadingData"),
+        "must preserve class declaration: {}",
+        result.code
+    );
+    assert!(
+        result.code.contains("key;"),
+        "must preserve runtime class field: {}",
+        result.code
+    );
+    assert!(
+        !result.code.contains("public key"),
+        "must strip class field accessibility modifier: {}",
+        result.code
+    );
+}
+
+#[test]
+fn strips_optional_marker_from_class_field_definition() {
+    let source = r#"
+class ImageNode {
+  __src: string;
+  __dataSrc?: string;
+}
+"#;
+    let options = TransformOptions::default();
+    let result = transform_tsx(source, &options).unwrap();
+    assert!(
+        result.code.contains("__dataSrc;"),
+        "must preserve optional class field as a runtime field: {}",
+        result.code
+    );
+    assert!(
+        !result.code.contains("__dataSrc?"),
+        "must strip TS optional marker from class field: {}",
+        result.code
+    );
+}
+
 /// T31: Strip Type Alias Declaration
 #[test]
 fn t31_strip_type_alias() {
@@ -756,6 +912,107 @@ export const value = 1"#;
     assert!(
         result.code.contains("export const value = 1"),
         "must preserve value export: {}",
+        result.code
+    );
+}
+
+#[test]
+fn preserves_exported_namespace_runtime_const_assignment() {
+    let source = r#"import { Radio } from 'antd';
+
+export function SpRadio(props: {}) {
+  return <Radio {...props} />;
+}
+
+export namespace SpRadio {
+  export const Group: typeof Radio.Group = Radio.Group;
+  export type Option = string;
+}"#;
+    let options = TransformOptions::default();
+    let result = transform_tsx(source, &options).unwrap();
+
+    assert!(
+        result.code.contains("export function SpRadio"),
+        "must preserve component export: {}",
+        result.code
+    );
+    assert!(
+        result.code.contains("SpRadio.Group = Radio.Group;"),
+        "must preserve namespace runtime static assignment: {}",
+        result.code
+    );
+    assert!(
+        !result.code.contains("namespace") && !result.code.contains("Option"),
+        "must strip namespace/type syntax: {}",
+        result.code
+    );
+}
+
+#[test]
+fn strips_types_from_exported_namespace_arrow_assignment() {
+    let source = r#"export function Editor() {
+  return <div />;
+}
+
+export namespace Editor {
+  export const formatFromString = (
+    value: string,
+    { isNullable = true }: FormatOptions = {},
+    gsDownLoadFunc: (string) => Promise<string>,
+  ): EditorState | null => {
+    return (value?.toString?.call?.(value) as string) || gsDownLoadFunc('x');
+  };
+}"#;
+    let options = TransformOptions::default();
+    let result = transform_tsx(source, &options).unwrap();
+
+    assert!(
+        result.code.contains("Editor.formatFromString =")
+            && result.code.contains("value,")
+            && result.code.contains("{ isNullable = true } = {}")
+            && result.code.contains("gsDownLoadFunc")
+            && result.code.contains(") =>"),
+        "must strip parameter and return types in namespace assignment: {}",
+        result.code
+    );
+    assert!(
+        !result.code.contains(": string")
+            && !result.code.contains("EditorState")
+            && !result.code.contains("Promise<string>")
+            && !result.code.contains(" as string"),
+        "must strip TypeScript-only syntax from namespace assignment: {}",
+        result.code
+    );
+}
+
+#[test]
+fn strips_function_type_from_exported_namespace_identifier_assignment() {
+    let source = r#"export function SpDetailCollapse() {
+  return <div />;
+}
+
+function SpDetailCollapsePanel() {
+  return <section />;
+}
+
+export namespace SpDetailCollapse {
+  export const Panel: (props: SpDetailCollapsePanelProps) => JSX.Element = SpDetailCollapsePanel;
+}"#;
+    let options = TransformOptions::default();
+    let result = transform_tsx(source, &options).unwrap();
+
+    assert!(
+        result
+            .code
+            .contains("SpDetailCollapse.Panel = SpDetailCollapsePanel;"),
+        "must preserve namespace static assigned from identifier: {}",
+        result.code
+    );
+    assert!(
+        !result.code.contains("=> JSX.Element")
+            && !result.code.contains("SpDetailCollapsePanelProps")
+            && !result.code.contains("namespace"),
+        "must strip function type annotation from namespace assignment: {}",
         result.code
     );
 }
