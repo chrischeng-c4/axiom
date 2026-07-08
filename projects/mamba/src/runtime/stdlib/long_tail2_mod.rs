@@ -170,6 +170,16 @@ unsafe extern "C" fn dispatch_gettext_translation(args: *const MbValue, nargs: u
     MbValue::from_ptr(MbObject::new_dict())
 }
 
+unsafe extern "C" fn dispatch_multiprocessing_heap_arena(
+    args: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    if nargs > 0 && (*args).as_int_pyint().is_none() {
+        return raise_type_error("Arena.__init__() argument 'size' must be int");
+    }
+    MbValue::from_ptr(MbObject::new_dict())
+}
+
 fn new_str(s: &str) -> MbValue {
     MbValue::from_ptr(MbObject::new_str(s.to_string()))
 }
@@ -1053,6 +1063,16 @@ pub fn register() {
     );
 
     // multiprocessing submodules
+    register_with(
+        "multiprocessing.heap",
+        &[],
+        &[(
+            "Arena",
+            dispatch_multiprocessing_heap_arena as *const () as usize,
+        )],
+        &[],
+        &[],
+    );
     register_with(
         "multiprocessing.pool",
         &[
