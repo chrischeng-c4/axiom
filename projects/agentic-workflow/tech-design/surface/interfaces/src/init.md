@@ -21,13 +21,10 @@ Public API manifest for `projects/agentic-workflow/src/cli/init.rs` generated fr
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `WorkspaceType` | projects/agentic-workflow/src/cli/init.rs | enum | pub(crate) | 642 |  |
-| `check_and_auto_upgrade` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1455 | check_and_auto_upgrade(auto_upgrade: bool) -> bool |
-| `detect_workspace_type` | projects/agentic-workflow/src/cli/init.rs | function | pub(crate) | 658 | detect_workspace_type(project_root: &Path) -> WorkspaceType |
-| `get_current_version` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1561 | get_current_version() -> &'static str |
-| `get_installed_version` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1523 | get_installed_version() -> Option<String> |
-| `run` | projects/agentic-workflow/src/cli/init.rs | function | pub | 66 | run(name: Option<&str>, force: bool, _agent_mode: Option<&str>) -> Result<()> |
-| `run_check` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1352 | run_check() -> Result<()> |
+| `NewArgs` | projects/agentic-workflow/src/cli/init.rs | struct | pub | 71 |  |
+| `run_new` | projects/agentic-workflow/src/cli/init.rs | function | pub | 89 | run_new(args: NewArgs) -> Result<()> |
+| `WorkspaceType` | projects/agentic-workflow/src/cli/init.rs | enum | pub(crate) | 615 |  |
+| `detect_workspace_type` | projects/agentic-workflow/src/cli/init.rs | function | pub(crate) | 631 | detect_workspace_type(project_root: &Path) -> WorkspaceType |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
@@ -166,7 +163,7 @@ fn run_new_with_current_dir(args: NewArgs, current_dir: &Path) -> Result<NewProj
         });
     }
 
-    run_at_project_root(Some(&args.name), args.force, &target, false)?;
+    run_at_project_root(args.force, &target)?;
 
     Ok(NewProjectOutcome {
         target,
@@ -219,12 +216,7 @@ fn is_directory_empty(path: &Path) -> Result<bool> {
     Ok(std::fs::read_dir(path)?.next().is_none())
 }
 
-fn run_at_project_root(
-    name: Option<&str>,
-    force: bool,
-    project_root: &Path,
-    print_fresh_success: bool,
-) -> Result<()> {
+fn run_at_project_root(force: bool, project_root: &Path) -> Result<()> {
     let legacy_score_dir = project_root.join(concat!(".", "score"));
     let legacy_cclab_dir = project_root.join("cclab");
     let sdd_dir = project_root.join(crate::shared::workspace::WORKSPACE_DIR);
@@ -302,14 +294,7 @@ fn run_at_project_root(
             .bold()
         );
         println!();
-        run_update(
-            name,
-            &project_root,
-            &sdd_dir,
-            &claude_dir,
-            force,
-            print_fresh_success,
-        )?;
+        run_update(&project_root, &sdd_dir, &claude_dir, force)?;
     } else {
         // Fresh install - CLI interface, determine platform
         let interface = SddInterface::Cli;
@@ -324,13 +309,11 @@ fn run_at_project_root(
         println!("   Interface: {}", interface.name().green());
         println!();
         run_fresh_install(
-            name,
             &project_root,
             &sdd_dir,
             &claude_dir,
             interface,
             platform_toml,
-            print_fresh_success,
         )?;
     }
 
@@ -343,11 +326,9 @@ fn run_at_project_root(
 
 // Platform type selected during init
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 enum Platform {
     GitHub,
     GitLab,
-    None,
 }
 
 // Auth method selected during init
@@ -452,7 +433,6 @@ fn determine_platform(project_root: &Path) -> Result<Option<String>> {
     let cli_tool = match platform {
         Platform::GitHub => "gh",
         Platform::GitLab => "glab",
-        Platform::None => unreachable!(),
     };
 
     // Verify CLI tool if CLI auth selected
@@ -475,7 +455,6 @@ fn determine_platform(project_root: &Path) -> Result<Option<String>> {
                     match platform {
                         Platform::GitHub => "https://cli.github.com",
                         Platform::GitLab => "https://gitlab.com/gitlab-org/cli",
-                        Platform::None => unreachable!(),
                     }
                 );
             }
@@ -487,7 +466,6 @@ fn determine_platform(project_root: &Path) -> Result<Option<String>> {
     let platform_type = match platform {
         Platform::GitHub => "github",
         Platform::GitLab => "gitlab",
-        Platform::None => unreachable!(),
     };
 
     let repo_str = repo.as_deref().unwrap_or("owner/repo");
@@ -505,7 +483,6 @@ fn determine_platform(project_root: &Path) -> Result<Option<String>> {
             let envfield = match platform {
                 Platform::GitHub => "GITHUB_TOKEN",
                 Platform::GitLab => "GITLAB_TOKEN",
-                Platform::None => unreachable!(),
             };
 
             toml.push_str(&format!("auth_method = \"token\"\n"));
@@ -772,13 +749,11 @@ fn build_scopes_comment_hint(workspace_type: WorkspaceType) -> Option<String> {
 
 // Fresh install: create all directories and files
 fn run_fresh_install(
-    name: Option<&str>,
     project_root: &Path,
     sdd_dir: &Path,
     claude_dir: &Path,
     interface: SddInterface,
     platform_toml: Option<String>,
-    print_success_message: bool,
 ) -> Result<()> {
     // Create directory structure
     println!("{}", "📁 Creating directory structure...".cyan());
@@ -790,7 +765,6 @@ fn run_fresh_install(
     std::fs::create_dir_all(&skills_dir)?;
 
     // Create config with selected interface
-    let _ = name; // name parameter is deprecated and ignored
     let mut config = SddConfig::with_interface(interface);
     config.set_version(SDD_VERSION);
 
@@ -831,26 +805,11 @@ fn run_fresh_install(
     // (issue #1077; no-op when CONTRIBUTING.md is absent or has no markers).
     update_contributing_trait_table(project_root)?;
 
-    if print_success_message {
-        print_init_success();
-        print_next_step(sdd_dir);
-    }
-
     Ok(())
 }
 
 // Update mode: overwrite config.toml, update system files
-fn run_update(
-    name: Option<&str>,
-    project_root: &Path,
-    sdd_dir: &Path,
-    claude_dir: &Path,
-    force: bool,
-    print_next: bool,
-) -> Result<()> {
-    // name parameter is deprecated and ignored
-    let _ = name;
-
+fn run_update(project_root: &Path, sdd_dir: &Path, claude_dir: &Path, force: bool) -> Result<()> {
     println!("{}", "📦 User data:".cyan());
     println!("   ✓ .aw/tech-design/     (untouched)");
 
@@ -939,9 +898,6 @@ fn run_update(
 
     println!();
     println!("{}", "✅ Update complete!".green().bold());
-    if print_next {
-        print_next_step(sdd_dir);
-    }
 
     Ok(())
 }
@@ -987,44 +943,6 @@ fn install_system_files(project_root: &Path, _sdd_dir: &Path, claude_dir: &Path)
     Ok(())
 }
 
-// Print success message for fresh install
-fn print_init_success() {
-    println!();
-    println!(
-        "{}",
-        "✅ Agentic Workflow initialized successfully!"
-            .green()
-            .bold()
-    );
-    println!();
-    println!("{}", "📁 Structure:".cyan());
-    println!("   .aw/                  - Agentic Workflow workspace (hidden)");
-    println!("   .aw/config.toml       - Configuration");
-    println!("   .aw/tech-design/      - Tech design docs");
-    println!();
-    println!("{}", "🤖 Claude Code assets installed:".cyan());
-    println!("   .claude/skills/          - Agentic Workflow skills");
-    println!("   .agents/skills/          - same skills, projected for Codex");
-    println!("   .claude/hooks/           - retired hook cleanup area");
-    println!("   .claude/settings.json    - permissions + status line settings");
-    println!();
-
-    println!("{}", "🎯 Primary Workflow (use skills):".cyan().bold());
-    println!(
-        "   {} - Tech-design and generated-code lifecycle",
-        "/aw:td:create".green().bold()
-    );
-    println!(
-        "   {} - Existing-project takeover",
-        "/aw:standardize".green().bold()
-    );
-    println!();
-
-    println!("{}", "⏭️  Next Steps:".yellow().bold());
-    println!("   Start your first change:");
-    println!("      {}", "/aw:td:create my-feature".cyan());
-}
-
 // Score section markers (must match templates/mainthread/CLAUDE.md.tmpl)
 const GENESIS_START_MARKER: &str = "<!-- aw:start -->";
 const GENESIS_END_MARKER: &str = "<!-- aw:end -->";
@@ -1047,20 +965,18 @@ fn split_claude_template() -> (&'static str, &'static str, &'static str) {
 
 // Extract the SDD section from the template (between markers) and render its
 // fine-grained generated CLI tables (issue #985, init-projector slice 2/3).
-// Rendering happens here, before any of the whole-block diff/upsert/
-// staleness machinery below ever sees the section text, so CLI-table drift
-// is covered by that existing machinery for free.
+// Rendering happens here before any document upsert sees the section text, so
+// fresh and updated root docs use the same generated CLI tables.
 fn get_sdd_section() -> String {
     let (_, section, _) = split_claude_template();
     doc_mirror::render_cli_tables(section)
 }
 
 // The full CLAUDE.md document with its CLI tables rendered, for the
-// fresh-install path (no CLAUDE.md exists yet). Must stay content-equivalent
-// to what `managed_section_is_stale`/`run_check` recompute afterwards — the
-// raw `CLAUDE_TEMPLATE` constant is NOT a valid substitute once `get_sdd_section`
-// performs real rendering, since the raw template still carries unrendered
-// markers/seed rows (issue #985 fresh-install regression).
+// fresh-install path (no CLAUDE.md exists yet). The raw `CLAUDE_TEMPLATE`
+// constant is NOT a valid substitute once `get_sdd_section` performs real
+// rendering, since the raw template still carries unrendered markers/seed rows
+// (issue #985 fresh-install regression).
 fn rendered_claude_doc() -> String {
     let (before, section, after) = split_claude_template();
     format!(
@@ -1275,128 +1191,6 @@ fn update_contributing_trait_table(project_root: &Path) -> Result<()> {
     Ok(())
 }
 
-// Best-effort scan of `.aw/config.toml` for a single registered
-// `[[projects]]` entry's `name`. Returns `None` when zero or more than one
-// project is registered so the chainable `next:` hint (issue #984) never
-// emits an ambiguous or unexecutable `aw health --project <name>` command
-// (`--project` is required, not optional).
-fn resolve_single_project_name(sdd_dir: &Path) -> Option<String> {
-    let config_path = sdd_dir.join("config.toml");
-    let content = std::fs::read_to_string(&config_path).ok()?;
-
-    let mut names = Vec::new();
-    let mut in_projects_table = false;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            in_projects_table = trimmed.starts_with("[[projects]]");
-            continue;
-        }
-        if in_projects_table && trimmed.starts_with("name") {
-            if let Some(val) = trimmed.strip_prefix("name") {
-                let val = val.trim().trim_start_matches('=').trim();
-                let val = val.trim_matches('"').trim_matches('\'');
-                if !val.is_empty() {
-                    names.push(val.to_string());
-                }
-            }
-        }
-    }
-
-    if names.len() == 1 {
-        names.into_iter().next()
-    } else {
-        None
-    }
-}
-
-// Chainable next-step line ending project asset installation output (CONTRIBUTING's
-// chainable-output convention, issue #984): a runnable `aw health` when
-// exactly one project resolves unambiguously, else a `done` marker.
-fn print_next_step(sdd_dir: &Path) {
-    match resolve_single_project_name(sdd_dir) {
-        Some(name) => println!("next: aw health --project {}", name),
-        None => println!("next: done"),
-    }
-}
-
-// Check if upgrade is available and optionally auto-upgrade
-// Returns true if auto-upgrade was performed
-// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/init.md#source
-pub fn check_and_auto_upgrade(auto_upgrade: bool) -> bool {
-    let project_root = match env::current_dir() {
-        Ok(p) => p,
-        Err(_) => return false,
-    };
-
-    let sdd_dir = project_root.join(crate::shared::workspace::WORKSPACE_DIR);
-
-    // Not initialized, nothing to upgrade
-    if !sdd_dir.exists() {
-        return false;
-    }
-
-    let installed_version_owned =
-        read_version_from_config_or_file(&sdd_dir).unwrap_or_else(|| "0.0.0".to_string());
-    let installed_version = installed_version_owned.trim();
-
-    // Compare versions - only upgrade if CLI version is newer than installed
-    if installed_version == SDD_VERSION {
-        return false; // Already up to date
-    }
-
-    // Check if CLI version is actually newer (not older)
-    if !crate::cli::update::is_newer(SDD_VERSION, installed_version) {
-        // CLI is older than installed - don't downgrade
-        return false;
-    }
-
-    // CLI version is newer - upgrade
-    if auto_upgrade {
-        println!(
-            "{}",
-            format!(
-                "🔄 Auto-upgrading SDD: {} → {}",
-                installed_version, SDD_VERSION
-            )
-            .cyan()
-        );
-
-        let sdd_dir = project_root.join(crate::shared::workspace::WORKSPACE_DIR);
-        let claude_dir = project_root.join(".claude");
-
-        if let Err(e) = run_update(None, &project_root, &sdd_dir, &claude_dir, false, false) {
-            eprintln!("{}", format!("⚠️  Auto-upgrade failed: {}", e).yellow());
-            return false;
-        }
-
-        println!();
-        return true;
-    } else {
-        // Just notify
-        println!(
-            "{}",
-            format!(
-                "💡 SDD update available: {} → {} (run {} to upgrade)",
-                installed_version,
-                SDD_VERSION,
-                "aw upgrade".cyan()
-            )
-            .yellow()
-        );
-        println!();
-        return false;
-    }
-}
-
-// Get installed version (for display purposes)
-// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/init.md#source
-pub fn get_installed_version() -> Option<String> {
-    let project_root = env::current_dir().ok()?;
-    let sdd_dir = project_root.join(crate::shared::workspace::WORKSPACE_DIR);
-    read_version_from_config_or_file(&sdd_dir)
-}
-
 // Read version from config.toml `version` key, with legacy `.version` file fallback.
 fn read_version_from_config_or_file(sdd_dir: &Path) -> Option<String> {
     let config_path = sdd_dir.join("config.toml");
@@ -1425,12 +1219,6 @@ fn read_version_from_config_or_file(sdd_dir: &Path) -> Option<String> {
     std::fs::read_to_string(&version_file)
         .ok()
         .map(|v| v.trim().to_string())
-}
-
-// Get current CLI version
-// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/init.md#source
-pub fn get_current_version() -> &'static str {
-    SDD_VERSION
 }
 
 // Update the `version = "..."` line in config.toml content, or prepend it if missing.
@@ -2579,24 +2367,20 @@ changes:
       `compute_upserted_doc`/`upsert_managed_section` helpers; added
       `generate_agents_md`/`get_agents_sdd_section` (AGENTS.md = CLAUDE.md's
       section plus `doc_mirror::agents_block_from_claude_block`'s Codex-only
-      insertions), wired into both `run_fresh_install` and `run_update`; added
-      the read-only `managed_section_is_stale`/`pub fn run_check()` pair for
-      read-only staleness checks (non-zero exit + named stale files, `cargo fmt
-      --check` semantics, never writes); and added
-      `resolve_single_project_name`/`print_next_step` so asset installation success
-      output ends with a chainable `next: aw health --project <name>` (or
-      `next: done` when zero/multiple projects are registered, since
-      `--project` is required and the hint must always be runnable).
+      insertions), wired into both `run_fresh_install` and `run_update`.
+      The retired top-level `aw init` status/check helpers and chainable
+      `next:` emitters were removed; `aw new` now owns greenfield bootstrap
+      user output, while existing-project guidance is routed through
+      `aw health`.
 
       Issue #985 (init-projector slice 2/3): `get_sdd_section` now returns
       the template's `aw:start` section run through
-      `doc_mirror::render_cli_tables`, so the pre-existing whole-block
-      diff/upsert/staleness machinery (`managed_section_is_stale`,
-      `run_check`) covers the new fine-grained
+      `doc_mirror::render_cli_tables`, so the document upsert path receives
+      the rendered fine-grained
       `<!-- aw:cli-table:{workflow,support}:start/end -->` CLI-table
-      markers for free — no new detection code needed. Added
-      `update_readme_projects_table`/`readme_projects_table_is_stale`
-      (wired into `run_fresh_install`, `run_update`, and `run_check`): the
+      markers directly. Added
+      `update_readme_projects_table`
+      (wired into `run_fresh_install` and `run_update`): the
       repo-root README's `<!-- aw:projects-table:start/end -->` Projects
       table (rendered by `doc_mirror::upsert_projects_table` from
       `.aw/config.toml`) is opt-in per document — managed asset installation only touches
@@ -2609,14 +2393,12 @@ changes:
       `CLAUDE_TEMPLATE` constant as `upsert_managed_section`'s
       `full_doc_if_missing` fallback — a brand-new CLAUDE.md would be
       seeded with the template's unrendered markers/seed rows, which
-      `run_check`'s freshly-rendered comparison then immediately flagged as
-      stale (and which `agents_block_from_claude_block` would also project
+      `agents_block_from_claude_block` would also project
       forward into a fresh AGENTS.md, corrupting it too). Extracted
       `split_claude_template` (shared before/section/after split at the
       `aw:start`/`aw:end` marker offsets) and added `rendered_claude_doc`
       (the same split, with the section rendered) so `generate_claude_md`'s
-      fresh-install fallback is now content-equivalent to what
-      `managed_section_is_stale`/`run_check` recompute afterwards, mirroring
+      fresh-install fallback is now content-equivalent to the update path, mirroring
       how `generate_agents_md` already built its fallback from the rendered
       `sdd_section` rather than a raw constant.
 
@@ -2632,25 +2414,14 @@ changes:
       through `doc_mirror::agents_skill_body_from_claude_skill_body` before
       writing it — same prune list, same script installer, only the body
       differs. `install_system_files` now also creates and populates
-      `.agents/skills/` (needed the previously-unused `project_root` param).
-      `run_check` gained `skill_tree_stale_entries`, walking both installed
-      skill trees (`.claude/skills`, `.agents/skills`) against the same
-      `aw_skill_entries`/`skill_script_entries`/`deprecated_skill_names`
-      source-of-truth so a hand-edited installed skill, a hand-edited
-      companion script, or a lingering deprecated skill directory in EITHER
-      tree is named and flagged without writing — the same `cargo fmt
-      --check` semantics as the existing CLAUDE.md/AGENTS.md staleness
-      check.
+      `.agents/skills/`.
 
       Issue #1077 (archetype-as-traits slice 1/3): added
-      `update_contributing_trait_table`/`contributing_trait_table_is_stale`,
-      wired into `run_fresh_install`, `run_update`, and `run_check`
-      immediately after their `update_readme_projects_table`/
-      `readme_projects_table_is_stale` counterparts. Same opt-in-per-document
+      `update_contributing_trait_table`, wired into `run_fresh_install` and
+      `run_update` immediately after `update_readme_projects_table`.
+      Same opt-in-per-document
       contract as the README Projects table (issue #985): only touches
       CONTRIBUTING.md when it exists AND already carries the
       `<!-- aw:trait-table:start/end -->` markers, rendering the enclosed
       table from `doc_mirror::upsert_trait_table`/`doc_mirror::TRAITS`.
-      `run_check`'s doc comment and stale-file list now cover CONTRIBUTING.md
-      alongside README.md, never writing.
 ```
