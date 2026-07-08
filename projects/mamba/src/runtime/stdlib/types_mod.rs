@@ -538,6 +538,7 @@ pub fn mb_types_new_class_impl(name: MbValue, bases: MbValue, exec_body: MbValue
     // classes are represented as the class-name string — the form whose
     // __name__/__bases__/isinstance resolve through the registry — so return
     // that for consistency.
+    let explicit_type_params = dict_get_str(ns, "__type_params__");
     let _ = super::super::builtins::mb_type3(name, bases, ns);
     if let Some(s) = name.as_ptr().and_then(|p| unsafe {
         if let ObjData::Str(ref s) = (*p).data {
@@ -546,6 +547,14 @@ pub fn mb_types_new_class_impl(name: MbValue, bases: MbValue, exec_body: MbValue
             None
         }
     }) {
+        set_dynamic_class_generic_metadata(&s, bases);
+        if let Some(type_params) = explicit_type_params {
+            super::super::class::mb_class_set_class_attr(
+                MbValue::from_ptr(MbObject::new_str(s.clone())),
+                MbValue::from_ptr(MbObject::new_str("__type_params__".to_string())),
+                type_params,
+            );
+        }
         return MbValue::from_ptr(MbObject::new_str(s));
     }
     name
@@ -586,6 +595,69 @@ fn dict_without_metaclass(kwds: MbValue, had_metaclass: bool) -> MbValue {
         );
     }
     remaining
+}
+
+fn instance_field(value: MbValue, field: &str) -> Option<MbValue> {
+    value.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get(field).copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn is_generic_alias(value: MbValue) -> bool {
+    value.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. }
+                if matches!(
+                    class_name.as_str(),
+                    "GenericAlias" | "types.GenericAlias" | "typing.Alias"
+                )
+        )
+    })
+}
+
+fn generic_alias_parameters_from_bases(bases: MbValue) -> Vec<MbValue> {
+    let mut params = Vec::new();
+    let mut seen = HashSet::new();
+    for base in super::super::builtins::extract_items(bases) {
+        let Some(alias_params) = instance_field(base, "__parameters__") else {
+            continue;
+        };
+        for param in super::super::builtins::extract_items(alias_params) {
+            if seen.insert(param.to_bits()) {
+                params.push(param);
+            }
+        }
+    }
+    params
+}
+
+fn bases_contain_generic_alias(bases: MbValue) -> bool {
+    super::super::builtins::extract_items(bases)
+        .into_iter()
+        .any(is_generic_alias)
+}
+
+fn set_dynamic_class_generic_metadata(class_name: &str, bases: MbValue) {
+    if !bases_contain_generic_alias(bases) {
+        return;
+    }
+    let class_name_v = MbValue::from_ptr(MbObject::new_str(class_name.to_string()));
+    super::super::class::mb_class_set_class_attr(
+        class_name_v,
+        MbValue::from_ptr(MbObject::new_str("__orig_bases__".to_string())),
+        bases,
+    );
+    let params = generic_alias_parameters_from_bases(bases);
+    super::super::class::mb_class_set_class_attr(
+        class_name_v,
+        MbValue::from_ptr(MbObject::new_str("__parameters__".to_string())),
+        MbValue::from_ptr(MbObject::new_tuple(params)),
+    );
 }
 
 fn normalized_bases_tuple(bases: MbValue) -> MbValue {
@@ -959,6 +1031,40 @@ mod tests {
             crate::runtime::class::resolve_class_name(cls).as_deref(),
             Some("MyClass")
         );
+    }
+
+    #[test]
+    fn test_new_class_preserves_generic_alias_metadata() {
+        let tv = crate::runtime::pep695::mb_pep695_typevar(
+            MbValue::from_ptr(MbObject::new_str("T".to_string())),
+            MbValue::from_int(0),
+            MbValue::none(),
+            MbValue::none(),
+            MbValue::none(),
+        );
+        let generic = crate::runtime::builtins::make_type_object("typing.Generic");
+        let alias = crate::runtime::stdlib::typing_mod::generic_subscript(generic, tv);
+        let bases = MbValue::from_ptr(MbObject::new_tuple(vec![alias]));
+        let cls = mb_types_new_class_impl(
+            MbValue::from_ptr(MbObject::new_str("NewClassGeneric".to_string())),
+            bases,
+            MbValue::none(),
+        );
+
+        let orig_bases = crate::runtime::class::mb_getattr(
+            cls,
+            MbValue::from_ptr(MbObject::new_str("__orig_bases__".to_string())),
+        );
+        let params = crate::runtime::class::mb_getattr(
+            cls,
+            MbValue::from_ptr(MbObject::new_str("__parameters__".to_string())),
+        );
+
+        assert_eq!(
+            crate::runtime::builtins::extract_items(orig_bases),
+            vec![alias]
+        );
+        assert_eq!(crate::runtime::builtins::extract_items(params), vec![tv]);
     }
 
     #[test]
