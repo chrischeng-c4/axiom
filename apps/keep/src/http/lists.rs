@@ -13,9 +13,10 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 
 use crate::http::error::ApiErr;
-use crate::http::handlers::{ack_durable, key_of};
+use crate::http::handlers::{ack_durable, key_of, propose_write};
 use crate::http::models::{kv_to_json, PopResponse};
 use crate::http::AppState;
+use crate::persistence::format::WalOp;
 
 /// Upper bound on a single blocking wait, so a long-poll can't pin a connection
 /// indefinitely (Redis BLPOP's 0 = block-forever is intentionally not offered).
@@ -43,13 +44,39 @@ async fn blocking_pop(
     let timeout = Duration::from_millis(req.timeout_ms.clamp(1, MAX_TIMEOUT_MS));
     let deadline = Instant::now() + timeout;
 
-    let pop = |st: &AppState| match side {
-        Side::Left => st.engine.lpop(&k),
-        Side::Right => st.engine.rpop(&k),
+    let peek = |st: &AppState| match side {
+        Side::Left => st
+            .engine
+            .lrange(&k, 0, 0)
+            .ok()
+            .and_then(|values| values.into_iter().next()),
+        Side::Right => st
+            .engine
+            .lrange(&k, -1, -1)
+            .ok()
+            .and_then(|values| values.into_iter().next()),
     };
 
     loop {
-        if let Some(v) = pop(&st) {
+        if let Some(v) = peek(&st) {
+            let op = match side {
+                Side::Left => WalOp::LPop {
+                    key: k.as_str().to_string(),
+                },
+                Side::Right => WalOp::RPop {
+                    key: k.as_str().to_string(),
+                },
+            };
+            if !propose_write(&st, &k, op).await? {
+                let v = match side {
+                    Side::Left => st.engine.lpop(&k),
+                    Side::Right => st.engine.rpop(&k),
+                };
+                ack_durable(&st).await;
+                return Ok(Json(PopResponse {
+                    value: v.map(kv_to_json),
+                }));
+            }
             ack_durable(&st).await;
             return Ok(Json(PopResponse {
                 value: Some(kv_to_json(v)),
@@ -67,7 +94,25 @@ async fn blocking_pop(
         tokio::pin!(notified);
         notified.as_mut().enable();
 
-        if let Some(v) = pop(&st) {
+        if let Some(v) = peek(&st) {
+            let op = match side {
+                Side::Left => WalOp::LPop {
+                    key: k.as_str().to_string(),
+                },
+                Side::Right => WalOp::RPop {
+                    key: k.as_str().to_string(),
+                },
+            };
+            if !propose_write(&st, &k, op).await? {
+                let v = match side {
+                    Side::Left => st.engine.lpop(&k),
+                    Side::Right => st.engine.rpop(&k),
+                };
+                ack_durable(&st).await;
+                return Ok(Json(PopResponse {
+                    value: v.map(kv_to_json),
+                }));
+            }
             ack_durable(&st).await;
             return Ok(Json(PopResponse {
                 value: Some(kv_to_json(v)),

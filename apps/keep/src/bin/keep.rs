@@ -968,37 +968,46 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
             tracing::info!("claim-check token enforcement ON");
         }
     }
-    #[cfg_attr(not(feature = "raft"), allow(unused_mut))]
-    let mut app = keep::router(state.clone());
-
     // Peer raft RPCs (`/shard/{id}/raft/*`, `/shard/{id}/raftz`) share the h2c
     // serve port. Built only when the raft feature is compiled in and k8s has
     // scaled the StatefulSet into replica/HA mode (REPLICAS_PER_SHARD > 1);
     // single-node deployments keep the direct-to-engine write path. The hosts
     // are held for the server's lifetime (Drop aborts their tick/pump tasks).
     #[cfg(feature = "raft")]
-    let _shard_hosts = if raft_host::cluster::replica_mode() {
+    let shard_hosts = if raft_host::cluster::replica_mode() {
         let replicas = std::env::var("KEEP_REPLICAS_PER_SHARD")
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(1);
-        let hosts = keep::raft::ShardHosts::new(
-            (*state.cluster).clone(),
-            state.engine.clone(),
-            &args.data_dir,
-            replicas,
-        )
-        .await?;
+        let hosts = Arc::new(
+            keep::raft::ShardHosts::new(
+                (*state.cluster).clone(),
+                state.engine.clone(),
+                &args.data_dir,
+                replicas,
+            )
+            .await?,
+        );
         info!(
             shard_hosts = hosts.host_count(),
             replicas_per_shard = replicas,
             "raft: per-shard hosts up; peer transport merged onto serve port"
         );
-        app = app.merge(hosts.router());
         Some(hosts)
     } else {
         None
     };
+    #[cfg(feature = "raft")]
+    if let Some(hosts) = shard_hosts.clone() {
+        state = state.with_raft_hosts(hosts);
+    }
+
+    #[cfg_attr(not(feature = "raft"), allow(unused_mut))]
+    let mut app = keep::router(state.clone());
+    #[cfg(feature = "raft")]
+    if let Some(hosts) = &shard_hosts {
+        app = app.merge(hosts.router());
+    }
 
     let listener = TcpListener::bind(addr).await?;
     info!(%addr, "listening (HTTP/1.1 + HTTP/2 cleartext)");
@@ -1043,8 +1052,8 @@ fn derive_cluster_config(args: &ServeArgs) -> Result<keep::ClusterConfig> {
         ));
     }
 
-    let headless = std::env::var("KEEP_HEADLESS_SERVICE")
-        .unwrap_or_else(|_| "keep-headless".to_string());
+    let headless =
+        std::env::var("KEEP_HEADLESS_SERVICE").unwrap_or_else(|_| "keep-headless".to_string());
     let dims = raft_host::ClusterDims::from_env()?;
     let topo = raft_host::ClusterTopology::from_env("keep", &headless, args.port, "KEEP_PEERS")?;
     let node_count = topo.replicas_per_shard.max(1) as usize;
@@ -1101,9 +1110,14 @@ where
 }
 
 fn has_downward_api_topology() -> bool {
-    ["POD_NAME", "SHARD_COUNT", "REPLICAS_PER_SHARD", "VOTER_COUNT"]
-        .iter()
-        .all(|key| std::env::var_os(key).is_some())
+    [
+        "POD_NAME",
+        "SHARD_COUNT",
+        "REPLICAS_PER_SHARD",
+        "VOTER_COUNT",
+    ]
+    .iter()
+    .all(|key| std::env::var_os(key).is_some())
 }
 
 #[cfg(test)]

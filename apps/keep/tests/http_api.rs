@@ -9,8 +9,18 @@ use axum::{
     Router,
 };
 use keep::{router, AppState, KvEngine};
+#[cfg(feature = "raft")]
+use keep::{ClusterConfig, KvKey, KvValue};
 use serde_json::{json, Value};
 use tower::ServiceExt;
+
+#[cfg(feature = "raft")]
+struct RaftHttpNode {
+    url: String,
+    engine: Arc<KvEngine>,
+    hosts: Arc<keep::raft::ShardHosts>,
+    serve: tokio::task::JoinHandle<()>,
+}
 
 fn app() -> (Router, AppState) {
     let state = AppState::new(Arc::new(KvEngine::with_shards(16)));
@@ -40,6 +50,84 @@ async fn send_json(app: &Router, method: &str, path: &str, body: Value) -> (Stat
         serde_json::from_slice(&bytes).unwrap_or(Value::Null)
     };
     (status, value)
+}
+
+#[cfg(feature = "raft")]
+fn tmp_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("keep-http-raft-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[cfg(feature = "raft")]
+async fn bind_local() -> (tokio::net::TcpListener, String) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    (listener, format!("http://127.0.0.1:{port}"))
+}
+
+#[cfg(feature = "raft")]
+async fn raft_http_cluster(tag: &str) -> (std::path::PathBuf, Vec<RaftHttpNode>) {
+    let dir = tmp_dir(tag);
+    let mut listeners = Vec::new();
+    let mut urls = Vec::new();
+    for _ in 0..3 {
+        let (listener, url) = bind_local().await;
+        listeners.push(listener);
+        urls.push(url);
+    }
+
+    let mut nodes = Vec::new();
+    for (node_id, listener) in listeners.into_iter().enumerate() {
+        let engine = Arc::new(KvEngine::with_shards(4));
+        let cluster = ClusterConfig::from_shared_topology(node_id, 3, 1, urls.clone());
+        let hosts = Arc::new(
+            keep::raft::ShardHosts::new(
+                cluster.clone(),
+                engine.clone(),
+                &dir.join(format!("node-{node_id}")),
+                3,
+            )
+            .await
+            .unwrap(),
+        );
+        let state = AppState::new(engine.clone())
+            .with_cluster(cluster)
+            .with_raft_hosts(hosts.clone());
+        let app = router(state).merge(hosts.router());
+        let serve = tokio::spawn(async move {
+            service_http::serve(listener, app, std::future::pending::<()>()).await;
+        });
+        nodes.push(RaftHttpNode {
+            url: urls[node_id].clone(),
+            engine,
+            hosts,
+            serve,
+        });
+    }
+    (dir, nodes)
+}
+
+#[cfg(feature = "raft")]
+async fn await_raft_leader(nodes: &[RaftHttpNode], key: &str) -> usize {
+    for _ in 0..400 {
+        for (idx, node) in nodes.iter().enumerate() {
+            if node.hosts.host_for(key).unwrap().is_leader().await {
+                return idx;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("no raft leader elected for key {key}");
+}
+
+#[cfg(feature = "raft")]
+async fn stop_raft_http_cluster(dir: std::path::PathBuf, nodes: Vec<RaftHttpNode>) {
+    for node in nodes {
+        node.serve.abort();
+    }
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[tokio::test]
@@ -79,6 +167,35 @@ async fn set_get_delete_roundtrip() {
     let (st, body) = send_json(&app, "GET", "/kv/foo", Value::Null).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
     assert_eq!(body["code"], json!("key_not_found"));
+}
+
+#[cfg(feature = "raft")]
+#[tokio::test]
+async fn replica_mode_http_write_proposes_and_replicates() {
+    let key = "raft-http-write";
+    let (dir, nodes) = raft_http_cluster("write").await;
+    let leader = await_raft_leader(&nodes, key).await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .put(format!("{}/kv/{key}", nodes[leader].url))
+        .json(&json!({"value": "via-http-raft"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let kv_key = KvKey::new(key).unwrap();
+    for _ in 0..400 {
+        if nodes.iter().all(|node| {
+            node.engine.get(&kv_key) == Some(KvValue::String("via-http-raft".to_string()))
+        }) {
+            stop_raft_http_cluster(dir, nodes).await;
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("HTTP raft write did not reach every replica engine");
 }
 
 #[tokio::test]

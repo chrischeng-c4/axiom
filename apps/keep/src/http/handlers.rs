@@ -17,6 +17,7 @@ use crate::cluster::ClusterState;
 use crate::http::error::ApiErr;
 use crate::http::models::*;
 use crate::http::AppState;
+use crate::persistence::format::WalOp;
 use crate::types::{KvKey, KvValue};
 
 // ---------------------------------------------------------------------------
@@ -38,6 +39,36 @@ pub(crate) async fn ack_durable(st: &AppState) {
     if let Some(rx) = st.engine.durability_barrier() {
         let _ = rx.await;
     }
+}
+
+pub(crate) async fn propose_write(st: &AppState, key: &KvKey, op: WalOp) -> Result<bool, ApiErr> {
+    #[cfg(feature = "raft")]
+    {
+        use axum::http::StatusCode;
+
+        if let Some(hosts) = &st.raft_hosts {
+            if !hosts.owns(key.as_str()) {
+                return Err(ApiErr::new(
+                    StatusCode::CONFLICT,
+                    "shard_not_owned",
+                    format!(
+                        "shard for key '{}' is not hosted by this node",
+                        key.as_str()
+                    ),
+                ));
+            }
+            hosts.write(key.as_str(), op).await.map_err(|e| {
+                ApiErr::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "raft_propose_failed",
+                    e.to_string(),
+                )
+            })?;
+            return Ok(true);
+        }
+    }
+    let _ = (st, key, op);
+    Ok(false)
 }
 
 /// TTL passed via query string on the raw-bytes write path.
@@ -114,17 +145,41 @@ pub async fn put_key(
         .unwrap_or("application/json");
 
     if ct.starts_with("application/octet-stream") {
-        st.engine
-            .set(&k, KvValue::Bytes(body.to_vec()), ttl(q.ttl_ms))
-            .map_err(ApiErr::from)?;
+        let value = KvValue::Bytes(body.to_vec());
+        let ttl = ttl(q.ttl_ms);
+        if !propose_write(
+            &st,
+            &k,
+            WalOp::Set {
+                key: k.as_str().to_string(),
+                value: value.clone(),
+                ttl,
+            },
+        )
+        .await?
+        {
+            st.engine.set(&k, value, ttl).map_err(ApiErr::from)?;
+        }
     } else if ct.starts_with("application/json") {
         // Fast parse: JSON tokens -> KvValue directly, no serde_json::Value tree
         // (the measured write-path hot cost). SetRequest stays the OpenAPI schema.
         let req: SetRequestFast = serde_json::from_slice(&body)
             .map_err(|e| ApiErr::bad_request(format!("invalid JSON body: {e}")))?;
-        st.engine
-            .set(&k, req.value.0, ttl(req.ttl_ms))
-            .map_err(ApiErr::from)?;
+        let value = req.value.0;
+        let ttl = ttl(req.ttl_ms);
+        if !propose_write(
+            &st,
+            &k,
+            WalOp::Set {
+                key: k.as_str().to_string(),
+                value: value.clone(),
+                ttl,
+            },
+        )
+        .await?
+        {
+            st.engine.set(&k, value, ttl).map_err(ApiErr::from)?;
+        }
     } else {
         return Err(ApiErr::unsupported_media_type(format!(
             "unsupported content-type: {ct}"
@@ -147,7 +202,20 @@ pub async fn delete_key(
     Path(key): Path<String>,
 ) -> Result<Json<DeleteResponse>, ApiErr> {
     let k = key_of(&key)?;
-    let deleted = st.engine.delete(&k);
+    let deleted = st.engine.exists(&k);
+    let proposed = propose_write(
+        &st,
+        &k,
+        WalOp::Delete {
+            key: k.as_str().to_string(),
+        },
+    )
+    .await?;
+    let deleted = if proposed {
+        deleted
+    } else {
+        st.engine.delete(&k)
+    };
     ack_durable(&st).await;
     Ok(Json(DeleteResponse { deleted }))
 }
@@ -189,7 +257,29 @@ pub async fn incr_key(
     Json(req): Json<IncrRequest>,
 ) -> Result<Json<IncrResponse>, ApiErr> {
     let k = key_of(&key)?;
-    let value = st.engine.incr(&k, req.delta).map_err(ApiErr::from)?;
+    let value = if propose_write(
+        &st,
+        &k,
+        WalOp::Incr {
+            key: k.as_str().to_string(),
+            delta: req.delta,
+        },
+    )
+    .await?
+    {
+        match st.engine.get(&k) {
+            Some(KvValue::Int(value)) => value,
+            Some(other) => {
+                return Err(ApiErr::from(crate::error::KvError::TypeMismatch {
+                    expected: "Int".to_string(),
+                    actual: format!("{:?}", std::mem::discriminant(&other)),
+                }))
+            }
+            None => req.delta,
+        }
+    } else {
+        st.engine.incr(&k, req.delta).map_err(ApiErr::from)?
+    };
     ack_durable(&st).await;
     Ok(Json(IncrResponse { value }))
 }
@@ -210,10 +300,35 @@ pub async fn cas_key(
 ) -> Result<Json<CasResponse>, ApiErr> {
     let k = key_of(&key)?;
     let expected = json_to_kv(req.expected);
-    let swapped = st
-        .engine
-        .cas(&k, &expected, json_to_kv(req.new), ttl(req.ttl_ms))
-        .map_err(ApiErr::from)?;
+    let new = json_to_kv(req.new);
+    let ttl = ttl(req.ttl_ms);
+    let before = st.engine.get(&k).ok_or_else(|| {
+        ApiErr::new(
+            StatusCode::NOT_FOUND,
+            "key_not_found",
+            format!("key not found: {key}"),
+        )
+    })?;
+    let swapped = before == expected;
+    if !propose_write(
+        &st,
+        &k,
+        WalOp::Cas {
+            key: k.as_str().to_string(),
+            expected: expected.clone(),
+            new: new.clone(),
+            ttl,
+        },
+    )
+    .await?
+    {
+        let swapped = st
+            .engine
+            .cas(&k, &expected, new, ttl)
+            .map_err(ApiErr::from)?;
+        ack_durable(&st).await;
+        return Ok(Json(CasResponse { swapped }));
+    }
     ack_durable(&st).await;
     Ok(Json(CasResponse { swapped }))
 }
@@ -233,10 +348,24 @@ pub async fn setnx_key(
     Json(req): Json<SetRequest>,
 ) -> Result<Json<SetNxResponse>, ApiErr> {
     let k = key_of(&key)?;
-    let set = st
-        .engine
-        .setnx(&k, json_to_kv(req.value), ttl(req.ttl_ms))
-        .map_err(ApiErr::from)?;
+    let set = !st.engine.exists(&k);
+    let value = json_to_kv(req.value);
+    let ttl = ttl(req.ttl_ms);
+    if !propose_write(
+        &st,
+        &k,
+        WalOp::SetNx {
+            key: k.as_str().to_string(),
+            value: value.clone(),
+            ttl,
+        },
+    )
+    .await?
+    {
+        let set = st.engine.setnx(&k, value, ttl).map_err(ApiErr::from)?;
+        ack_durable(&st).await;
+        return Ok(Json(SetNxResponse { set }));
+    }
     ack_durable(&st).await;
     Ok(Json(SetNxResponse { set }))
 }
@@ -291,10 +420,24 @@ pub async fn mset(State(st): State<AppState>, body: Bytes) -> Result<Json<CountR
         keys.push(KvKey::new(&k).map_err(ApiErr::from)?);
         vals.push(v.0);
     }
-    let pairs: Vec<(&KvKey, KvValue)> = keys.iter().zip(vals).collect();
-    st.engine
-        .mset(&pairs, ttl(req.ttl_ms))
-        .map_err(ApiErr::from)?;
+    let ttl = ttl(req.ttl_ms);
+    let pairs: Vec<(&KvKey, KvValue)> = keys.iter().zip(vals.iter().cloned()).collect();
+    let mut proposed = false;
+    for (key, value) in &pairs {
+        proposed |= propose_write(
+            &st,
+            key,
+            WalOp::Set {
+                key: key.as_str().to_string(),
+                value: value.clone(),
+                ttl,
+            },
+        )
+        .await?;
+    }
+    if !proposed {
+        st.engine.mset(&pairs, ttl).map_err(ApiErr::from)?;
+    }
     ack_durable(&st).await;
     Ok(Json(CountResponse { count: pairs.len() }))
 }
@@ -317,8 +460,24 @@ pub async fn mdel(
         .map(|s| KvKey::new(s))
         .collect::<Result<_, _>>()
         .map_err(ApiErr::from)?;
+    let existing = keys.iter().filter(|key| st.engine.exists(key)).count();
+    let mut proposed = false;
+    for key in &keys {
+        proposed |= propose_write(
+            &st,
+            key,
+            WalOp::Delete {
+                key: key.as_str().to_string(),
+            },
+        )
+        .await?;
+    }
     let refs: Vec<&KvKey> = keys.iter().collect();
-    let count = st.engine.mdel(&refs);
+    let count = if proposed {
+        existing
+    } else {
+        st.engine.mdel(&refs)
+    };
     ack_durable(&st).await;
     Ok(Json(CountResponse { count }))
 }
@@ -359,9 +518,22 @@ pub async fn lock(
     Json(req): Json<LockRequest>,
 ) -> Result<Json<LockResponse>, ApiErr> {
     let k = key_of(&key)?;
-    let acquired = st
-        .engine
-        .lock(&k, &req.owner, Duration::from_millis(req.ttl_ms));
+    let ttl = Duration::from_millis(req.ttl_ms);
+    let acquired = !st.engine.exists(&k);
+    if !propose_write(
+        &st,
+        &k,
+        WalOp::Lock {
+            key: k.as_str().to_string(),
+            owner: req.owner.clone(),
+            ttl,
+        },
+    )
+    .await?
+    {
+        let acquired = st.engine.lock(&k, &req.owner, ttl);
+        return Ok(Json(LockResponse { acquired }));
+    }
     Ok(Json(LockResponse { acquired }))
 }
 
@@ -383,7 +555,20 @@ pub async fn unlock(
     Json(req): Json<UnlockRequest>,
 ) -> Result<Json<UnlockResponse>, ApiErr> {
     let k = key_of(&key)?;
-    let released = st.engine.unlock(&k, &req.owner).map_err(ApiErr::from)?;
+    let released = matches!(st.engine.get(&k), Some(KvValue::String(owner)) if owner == req.owner);
+    if !propose_write(
+        &st,
+        &k,
+        WalOp::Unlock {
+            key: k.as_str().to_string(),
+            owner: req.owner.clone(),
+        },
+    )
+    .await?
+    {
+        let released = st.engine.unlock(&k, &req.owner).map_err(ApiErr::from)?;
+        return Ok(Json(UnlockResponse { released }));
+    }
     Ok(Json(UnlockResponse { released }))
 }
 
@@ -405,10 +590,25 @@ pub async fn extend_lock(
     Json(req): Json<ExtendLockRequest>,
 ) -> Result<Json<ExtendLockResponse>, ApiErr> {
     let k = key_of(&key)?;
-    let extended = st
-        .engine
-        .extend_lock(&k, &req.owner, Duration::from_millis(req.ttl_ms))
-        .map_err(ApiErr::from)?;
+    let ttl = Duration::from_millis(req.ttl_ms);
+    let extended = matches!(st.engine.get(&k), Some(KvValue::String(owner)) if owner == req.owner);
+    if !propose_write(
+        &st,
+        &k,
+        WalOp::ExtendLock {
+            key: k.as_str().to_string(),
+            owner: req.owner.clone(),
+            ttl,
+        },
+    )
+    .await?
+    {
+        let extended = st
+            .engine
+            .extend_lock(&k, &req.owner, ttl)
+            .map_err(ApiErr::from)?;
+        return Ok(Json(ExtendLockResponse { extended }));
+    }
     Ok(Json(ExtendLockResponse { extended }))
 }
 
@@ -431,8 +631,21 @@ pub async fn lpush(
     Json(req): Json<PushRequest>,
 ) -> Result<Json<PushResponse>, ApiErr> {
     let k = key_of(&key)?;
-    let values = req.values.into_iter().map(json_to_kv).collect();
-    let length = st.engine.lpush(&k, values).map_err(ApiErr::from)?;
+    let values: Vec<KvValue> = req.values.into_iter().map(json_to_kv).collect();
+    let length = if propose_write(
+        &st,
+        &k,
+        WalOp::LPush {
+            key: k.as_str().to_string(),
+            values: values.clone(),
+        },
+    )
+    .await?
+    {
+        st.engine.llen(&k).map_err(ApiErr::from)?
+    } else {
+        st.engine.lpush(&k, values).map_err(ApiErr::from)?
+    };
     st.waiters.notify(&key);
     Ok(Json(PushResponse { length }))
 }
@@ -452,8 +665,21 @@ pub async fn rpush(
     Json(req): Json<PushRequest>,
 ) -> Result<Json<PushResponse>, ApiErr> {
     let k = key_of(&key)?;
-    let values = req.values.into_iter().map(json_to_kv).collect();
-    let length = st.engine.rpush(&k, values).map_err(ApiErr::from)?;
+    let values: Vec<KvValue> = req.values.into_iter().map(json_to_kv).collect();
+    let length = if propose_write(
+        &st,
+        &k,
+        WalOp::RPush {
+            key: k.as_str().to_string(),
+            values: values.clone(),
+        },
+    )
+    .await?
+    {
+        st.engine.llen(&k).map_err(ApiErr::from)?
+    } else {
+        st.engine.rpush(&k, values).map_err(ApiErr::from)?
+    };
     st.waiters.notify(&key);
     Ok(Json(PushResponse { length }))
 }
@@ -471,8 +697,28 @@ pub async fn lpop(
     Path(key): Path<String>,
 ) -> Result<Json<PopResponse>, ApiErr> {
     let k = key_of(&key)?;
+    let value = st
+        .engine
+        .lrange(&k, 0, 0)
+        .map_err(ApiErr::from)?
+        .into_iter()
+        .next();
+    if !propose_write(
+        &st,
+        &k,
+        WalOp::LPop {
+            key: k.as_str().to_string(),
+        },
+    )
+    .await?
+    {
+        let value = st.engine.lpop(&k);
+        return Ok(Json(PopResponse {
+            value: value.map(kv_to_json),
+        }));
+    }
     Ok(Json(PopResponse {
-        value: st.engine.lpop(&k).map(kv_to_json),
+        value: value.map(kv_to_json),
     }))
 }
 
@@ -489,8 +735,28 @@ pub async fn rpop(
     Path(key): Path<String>,
 ) -> Result<Json<PopResponse>, ApiErr> {
     let k = key_of(&key)?;
+    let value = st
+        .engine
+        .lrange(&k, -1, -1)
+        .map_err(ApiErr::from)?
+        .into_iter()
+        .next();
+    if !propose_write(
+        &st,
+        &k,
+        WalOp::RPop {
+            key: k.as_str().to_string(),
+        },
+    )
+    .await?
+    {
+        let value = st.engine.rpop(&k);
+        return Ok(Json(PopResponse {
+            value: value.map(kv_to_json),
+        }));
+    }
     Ok(Json(PopResponse {
-        value: st.engine.rpop(&k).map(kv_to_json),
+        value: value.map(kv_to_json),
     }))
 }
 
@@ -679,13 +945,37 @@ async fn claim_put(
     if ct.starts_with("application/json") {
         let req: SetRequestFast = serde_json::from_slice(&body)
             .map_err(|e| ApiErr::bad_request(format!("invalid JSON body: {e}")))?;
-        st.engine
-            .set(&k, req.value.0, ttl(req.ttl_ms))
-            .map_err(ApiErr::from)?;
+        let value = req.value.0;
+        let ttl = ttl(req.ttl_ms);
+        if !propose_write(
+            st,
+            &k,
+            WalOp::Set {
+                key: k.as_str().to_string(),
+                value: value.clone(),
+                ttl,
+            },
+        )
+        .await?
+        {
+            st.engine.set(&k, value, ttl).map_err(ApiErr::from)?;
+        }
     } else {
-        st.engine
-            .set(&k, KvValue::Bytes(body.to_vec()), ttl(q.ttl_ms))
-            .map_err(ApiErr::from)?;
+        let value = KvValue::Bytes(body.to_vec());
+        let ttl = ttl(q.ttl_ms);
+        if !propose_write(
+            st,
+            &k,
+            WalOp::Set {
+                key: k.as_str().to_string(),
+                value: value.clone(),
+                ttl,
+            },
+        )
+        .await?
+        {
+            st.engine.set(&k, value, ttl).map_err(ApiErr::from)?;
+        }
     }
     ack_durable(st).await;
     Ok((

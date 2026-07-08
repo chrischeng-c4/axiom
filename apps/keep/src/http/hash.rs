@@ -12,9 +12,10 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::http::error::ApiErr;
-use crate::http::handlers::{ack_durable, key_of};
+use crate::http::handlers::{ack_durable, key_of, propose_write};
 use crate::http::models::{json_to_kv, kv_to_json, CountResponse};
 use crate::http::AppState;
+use crate::persistence::format::WalOp;
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct HSetRequest {
@@ -75,7 +76,24 @@ pub async fn hset(
         .into_iter()
         .map(|(f, v)| (f, json_to_kv(v)))
         .collect();
-    let count = st.engine.hset(&k, fields).map_err(ApiErr::from)?;
+    let existing = st.engine.hlen(&k).unwrap_or(0);
+    let count = if propose_write(
+        &st,
+        &k,
+        WalOp::HSet {
+            key: k.as_str().to_string(),
+            fields: fields.clone(),
+        },
+    )
+    .await?
+    {
+        st.engine
+            .hlen(&k)
+            .map_err(ApiErr::from)?
+            .saturating_sub(existing)
+    } else {
+        st.engine.hset(&k, fields).map_err(ApiErr::from)?
+    };
     ack_durable(&st).await;
     Ok(Json(CountResponse { count }))
 }
@@ -110,7 +128,24 @@ pub async fn hdel(
 ) -> Result<Json<CountResponse>, ApiErr> {
     let k = key_of(&key)?;
     let refs: Vec<&str> = req.fields.iter().map(String::as_str).collect();
-    let count = st.engine.hdel(&k, &refs).map_err(ApiErr::from)?;
+    let existing = refs
+        .iter()
+        .filter(|field| st.engine.hexists(&k, field).unwrap_or(false))
+        .count();
+    let count = if propose_write(
+        &st,
+        &k,
+        WalOp::HDel {
+            key: k.as_str().to_string(),
+            fields: req.fields.clone(),
+        },
+    )
+    .await?
+    {
+        existing
+    } else {
+        st.engine.hdel(&k, &refs).map_err(ApiErr::from)?
+    };
     ack_durable(&st).await;
     Ok(Json(CountResponse { count }))
 }
@@ -160,10 +195,32 @@ pub async fn hincr(
     Json(req): Json<HIncrRequest>,
 ) -> Result<Json<IntValueResponse>, ApiErr> {
     let k = key_of(&key)?;
-    let value = st
-        .engine
-        .hincrby(&k, &req.field, req.delta)
-        .map_err(ApiErr::from)?;
+    let value = if propose_write(
+        &st,
+        &k,
+        WalOp::HIncrBy {
+            key: k.as_str().to_string(),
+            field: req.field.clone(),
+            delta: req.delta,
+        },
+    )
+    .await?
+    {
+        match st.engine.hget(&k, &req.field).map_err(ApiErr::from)? {
+            Some(crate::types::KvValue::Int(value)) => value,
+            Some(other) => {
+                return Err(ApiErr::from(crate::error::KvError::TypeMismatch {
+                    expected: "Int".to_string(),
+                    actual: format!("{:?}", std::mem::discriminant(&other)),
+                }))
+            }
+            None => req.delta,
+        }
+    } else {
+        st.engine
+            .hincrby(&k, &req.field, req.delta)
+            .map_err(ApiErr::from)?
+    };
     ack_durable(&st).await;
     Ok(Json(IntValueResponse { value }))
 }

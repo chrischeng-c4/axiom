@@ -11,9 +11,10 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::http::error::ApiErr;
-use crate::http::handlers::{ack_durable, key_of};
+use crate::http::handlers::{ack_durable, key_of, propose_write};
 use crate::http::models::kv_to_json;
 use crate::http::AppState;
+use crate::persistence::format::WalOp;
 
 // ---------------------------------------------------------------------------
 // expiry
@@ -53,14 +54,41 @@ pub async fn expire(
     Json(req): Json<ExpireRequest>,
 ) -> Result<Json<AppliedResponse>, ApiErr> {
     let k = key_of(&key)?;
-    let result = match req.ms {
-        Some(ms) => st.engine.pexpire(&k, ms),
-        None => st.engine.expire(&k, req.seconds.unwrap_or(0)),
+    let applied = st.engine.exists(&k);
+    let proposed = match req.ms {
+        Some(ms) => {
+            propose_write(
+                &st,
+                &k,
+                WalOp::PExpire {
+                    key: k.as_str().to_string(),
+                    milliseconds: ms,
+                },
+            )
+            .await?
+        }
+        None => {
+            propose_write(
+                &st,
+                &k,
+                WalOp::Expire {
+                    key: k.as_str().to_string(),
+                    seconds: req.seconds.unwrap_or(0),
+                },
+            )
+            .await?
+        }
+    };
+    let applied = if proposed {
+        applied
+    } else {
+        match req.ms {
+            Some(ms) => st.engine.pexpire(&k, ms) == 1,
+            None => st.engine.expire(&k, req.seconds.unwrap_or(0)) == 1,
+        }
     };
     ack_durable(&st).await;
-    Ok(Json(AppliedResponse {
-        applied: result == 1,
-    }))
+    Ok(Json(AppliedResponse { applied }))
 }
 
 /// Remaining time-to-live (TTL / PTTL).
@@ -87,7 +115,20 @@ pub async fn persist(
     Path(key): Path<String>,
 ) -> Result<Json<AppliedResponse>, ApiErr> {
     let k = key_of(&key)?;
-    let applied = st.engine.persist(&k) == 1;
+    let applied = st.engine.pttl(&k) >= 0;
+    let proposed = propose_write(
+        &st,
+        &k,
+        WalOp::Persist {
+            key: k.as_str().to_string(),
+        },
+    )
+    .await?;
+    let applied = if proposed {
+        applied
+    } else {
+        st.engine.persist(&k) == 1
+    };
     ack_durable(&st).await;
     Ok(Json(AppliedResponse { applied }))
 }
@@ -121,9 +162,26 @@ pub async fn getex(
     let k = key_of(&key)?;
     let ttl = req.ttl_ms.map(Duration::from_millis);
     let mutates = ttl.is_some() || req.persist;
-    let value = st.engine.getex(&k, ttl, req.persist).map(kv_to_json);
+    let value = st.engine.get(&k).map(kv_to_json);
     if mutates {
+        if !propose_write(
+            &st,
+            &k,
+            WalOp::GetEx {
+                key: k.as_str().to_string(),
+                ttl_ms: req.ttl_ms,
+                persist: req.persist,
+            },
+        )
+        .await?
+        {
+            let value = st.engine.getex(&k, ttl, req.persist).map(kv_to_json);
+            ack_durable(&st).await;
+            return Ok(Json(GetExResponse { value }));
+        }
         ack_durable(&st).await;
+    } else {
+        return Ok(Json(GetExResponse { value }));
     }
     Ok(Json(GetExResponse { value }))
 }

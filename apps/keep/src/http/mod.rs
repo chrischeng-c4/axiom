@@ -43,6 +43,10 @@ pub struct AppState {
     /// `Some`, worker ops (GET input / PUT result) require a valid in-scope
     /// token; when `None`, claim-check is open (backward compatible).
     pub verifier: Option<Arc<auth::KeepVerifier>>,
+    /// Per-shard raft hosts used by replica-mode write handlers. Absent in the
+    /// default/single-node fast path.
+    #[cfg(feature = "raft")]
+    pub raft_hosts: Option<Arc<crate::raft::ShardHosts>>,
     draining: Arc<AtomicBool>,
 }
 
@@ -55,6 +59,8 @@ impl AppState {
             waiters: Arc::new(waiters::ListWaiters::default()),
             cluster: Arc::new(crate::cluster::ClusterConfig::default()),
             verifier: None,
+            #[cfg(feature = "raft")]
+            raft_hosts: None,
             draining: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -75,6 +81,12 @@ impl AppState {
 
     pub fn with_cluster(mut self, cluster: crate::cluster::ClusterConfig) -> Self {
         self.cluster = Arc::new(cluster);
+        self
+    }
+
+    #[cfg(feature = "raft")]
+    pub fn with_raft_hosts(mut self, hosts: Arc<crate::raft::ShardHosts>) -> Self {
+        self.raft_hosts = Some(hosts);
         self
     }
 

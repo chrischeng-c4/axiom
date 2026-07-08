@@ -159,7 +159,7 @@ impl ShardHosts {
         snapshot_every: u64,
     ) -> Result<Self> {
         let mut hosts = HashMap::new();
-        for shard in cluster.owned_shards() {
+        for shard in hosted_shards(&cluster, replicas_per_shard) {
             let (node_id, membership, peers) = shard_topology(&cluster, shard, replicas_per_shard);
             let dir = data_dir.join("raft").join(format!("shard-{shard}"));
             std::fs::create_dir_all(&dir)?;
@@ -192,11 +192,11 @@ impl ShardHosts {
 
     /// Route `op` to the host owning `key`'s shard and propose it through Raft;
     /// resolves with the assigned raft index once **this node's** engine has
-    /// applied it (read-your-write). Errors if `key`'s shard is not owned here.
+    /// applied it (read-your-write). Errors if `key`'s shard is not hosted here.
     pub async fn write(&self, key: &str, op: WalOp) -> Result<Index> {
         let host = self
             .host_for(key)
-            .ok_or_else(|| anyhow::anyhow!("shard for key '{key}' not owned by this node"))?;
+            .ok_or_else(|| anyhow::anyhow!("shard for key '{key}' not hosted by this node"))?;
         host.propose(serde_json::to_vec(&op)?).await
     }
 
@@ -211,9 +211,9 @@ impl ShardHosts {
         app
     }
 
-    /// Whether this node owns `key`'s shard.
+    /// Whether this node hosts `key`'s shard group.
     pub fn owns(&self, key: &str) -> bool {
-        self.cluster.owns(key)
+        self.host_for(key).is_some()
     }
 
     /// Number of per-shard hosts this node runs.
@@ -225,6 +225,20 @@ impl ShardHosts {
     pub fn host_for(&self, key: &str) -> Option<&Arc<RaftHost>> {
         self.hosts.get(&self.cluster.shard_for(key))
     }
+}
+
+fn hosted_shards(cluster: &ClusterConfig, replicas_per_shard: u32) -> Vec<u32> {
+    if replicas_per_shard <= 1 {
+        return cluster.owned_shards();
+    }
+    let node_count = cluster.node_count.max(1) as u32;
+    let replicas = replicas_per_shard.min(node_count);
+    (0..cluster.shard_count)
+        .filter(|shard| {
+            let owner = cluster.owner_of_shard(*shard) as u32;
+            (0..replicas).any(|r| ((owner + r) % node_count) as usize == cluster.node_id)
+        })
+        .collect()
 }
 
 /// Derive a shard group's raft node id, membership, and peer URLs.

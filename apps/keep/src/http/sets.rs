@@ -10,9 +10,10 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::http::error::ApiErr;
-use crate::http::handlers::{ack_durable, key_of};
+use crate::http::handlers::{ack_durable, key_of, propose_write};
 use crate::http::models::CountResponse;
 use crate::http::AppState;
+use crate::persistence::format::WalOp;
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct MembersRequest {
@@ -34,7 +35,25 @@ pub async fn sadd(
     Json(req): Json<MembersRequest>,
 ) -> Result<Json<CountResponse>, ApiErr> {
     let k = key_of(&key)?;
-    let count = st.engine.sadd(&k, req.members).map_err(ApiErr::from)?;
+    let existing = req
+        .members
+        .iter()
+        .filter(|member| st.engine.sismember(&k, member).unwrap_or(false))
+        .count();
+    let count = if propose_write(
+        &st,
+        &k,
+        WalOp::SAdd {
+            key: k.as_str().to_string(),
+            members: req.members.clone(),
+        },
+    )
+    .await?
+    {
+        req.members.len().saturating_sub(existing)
+    } else {
+        st.engine.sadd(&k, req.members).map_err(ApiErr::from)?
+    };
     ack_durable(&st).await;
     Ok(Json(CountResponse { count }))
 }
@@ -63,7 +82,25 @@ pub async fn srem(
     Json(req): Json<MembersRequest>,
 ) -> Result<Json<CountResponse>, ApiErr> {
     let k = key_of(&key)?;
-    let count = st.engine.srem(&k, req.members).map_err(ApiErr::from)?;
+    let existing = req
+        .members
+        .iter()
+        .filter(|member| st.engine.sismember(&k, member).unwrap_or(false))
+        .count();
+    let count = if propose_write(
+        &st,
+        &k,
+        WalOp::SRem {
+            key: k.as_str().to_string(),
+            members: req.members.clone(),
+        },
+    )
+    .await?
+    {
+        existing
+    } else {
+        st.engine.srem(&k, req.members).map_err(ApiErr::from)?
+    };
     ack_durable(&st).await;
     Ok(Json(CountResponse { count }))
 }
