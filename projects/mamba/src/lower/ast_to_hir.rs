@@ -246,6 +246,19 @@ fn push_unique_name(out: &mut Vec<String>, name: &str) {
     }
 }
 
+fn collect_assignment_target_idents(expr: &ast::Expr, out: &mut Vec<String>) {
+    match expr {
+        ast::Expr::Ident(name) => push_unique_name(out, name),
+        ast::Expr::ListLit(items) | ast::Expr::TupleLit(items) | ast::Expr::UnpackTarget(items) => {
+            for item in items {
+                collect_assignment_target_idents(&item.node, out);
+            }
+        }
+        ast::Expr::Starred(inner) => collect_assignment_target_idents(&inner.node, out),
+        _ => {}
+    }
+}
+
 fn collect_walrus_targets_expr(expr: &Spanned<ast::Expr>, out: &mut Vec<String>) {
     match &expr.node {
         ast::Expr::Walrus { target, value } => {
@@ -5016,9 +5029,10 @@ impl<'a> AstLowerer<'a> {
                 .iter()
                 .any(|b| self.class_base_needs_runtime_eval(&b.node));
             if has_runtime_bases {
-                if bases
-                    .iter()
-                    .any(|base| matches!(base.node, ast::Expr::Starred(_)))
+                if !type_params.is_empty()
+                    || bases
+                        .iter()
+                        .any(|base| matches!(base.node, ast::Expr::Starred(_)))
                 {
                     cls.runtime_base_list_expr =
                         self.lower_runtime_class_base_list(bases, type_params, stmt_span);
@@ -5118,6 +5132,7 @@ impl<'a> AstLowerer<'a> {
                 || !cls.class_kwargs.is_empty()
                 || cls.metaclass.is_some()
                 || !bases.is_empty()
+                || !type_params.is_empty()
                 || has_cross_class_property_decorator
             {
                 if placeholder_to_top {
@@ -5128,7 +5143,7 @@ impl<'a> AstLowerer<'a> {
                 }
                 placeholder_sym.set(Some(cls.name));
             }
-            cls.force_textual_registration = force_textual_registration;
+            cls.force_textual_registration = force_textual_registration || !type_params.is_empty();
             self.result.classes.push(cls);
         }
         placeholder_sym.get()
@@ -5138,11 +5153,10 @@ impl<'a> AstLowerer<'a> {
         match expr {
             ast::Expr::Ident(name) => self.runtime_class_base_names.iter().any(|n| n == name),
             ast::Expr::Starred(_) => true,
-            ast::Expr::Index { object, .. } => match &object.node {
-                ast::Expr::Ident(name) => name == "Generic",
-                ast::Expr::Attr { attr, .. } => attr == "Generic",
-                _ => false,
-            },
+            // Subscripted bases such as `Base[T]` or `Base[lambda: ...]` need
+            // runtime evaluation so the class-update pass can preserve both
+            // the resolved base class and the original generic alias.
+            ast::Expr::Index { .. } => true,
             _ => false,
         }
     }
@@ -5997,9 +6011,12 @@ impl<'a> AstLowerer<'a> {
                 keyword_args,
                 ..
             } => {
-                let sym = self
-                    .resolve_name(name, stmt.span)
-                    .unwrap_or_else(|| self.define_local(name, self.checker.tcx.any()));
+                let sym = if self.in_function_body {
+                    self.define_local(name, self.checker.tcx.any())
+                } else {
+                    self.resolve_name(name, stmt.span)
+                        .unwrap_or_else(|| self.define_local(name, self.checker.tcx.any()))
+                };
                 self.result
                     .sym_names
                     .entry(sym)
@@ -6221,6 +6238,16 @@ impl<'a> AstLowerer<'a> {
                         value: val_boxed,
                         span: stmt.span,
                     });
+                }
+                let mut rebound_names = Vec::new();
+                collect_assignment_target_idents(&target.node, &mut rebound_names);
+                for name in rebound_names {
+                    if !self.in_function_body {
+                        self.module_deleted_names.remove(&name);
+                        self.module_del_stmt_names.remove(&name);
+                    } else {
+                        self.local_deleted_names.remove(&name);
+                    }
                 }
                 let lv = self.lower_lvalue(target)?;
                 let val = self.lower_expr(value)?;
@@ -11890,6 +11917,48 @@ mod tests {
     }
 
     #[test]
+    fn test_lower_function_nested_class_does_not_reuse_module_class_symbol() {
+        let mut module = crate::parser::parse(
+            "def make_base(arg):\n    class Base:\n        __arg__ = arg\n    return Base\n\nclass Base:\n    marker = 1\n",
+            FileId(0),
+        )
+        .expect("parse failed");
+        crate::lower::pep695::desugar_module(&mut module);
+        let mut checker = TypeChecker::new();
+        let _ = checker.check_module(&module);
+        let hir = lower_module(&module, &checker).expect("lower failed");
+        let nested_placeholder = hir
+            .functions
+            .iter()
+            .find(|func| func.func_sig.as_ref().is_some_and(|sig| sig.params[0].name == "arg"))
+            .and_then(|func| {
+                func.body.iter().find_map(|stmt| {
+                    if let HirStmt::ClassDefPlaceholder { name, .. } = stmt {
+                        Some(*name)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .expect("nested class placeholder should be present");
+        let module_placeholder = hir
+            .top_level
+            .iter()
+            .find_map(|stmt| {
+                if let HirStmt::ClassDefPlaceholder { name, .. } = stmt {
+                    Some(*name)
+                } else {
+                    None
+                }
+            })
+            .expect("module class placeholder should be present");
+        assert_ne!(
+            nested_placeholder, module_placeholder,
+            "function-local class must not reuse a same-named module class symbol"
+        );
+    }
+
+    #[test]
     fn test_lower_starred_generic_class_bases_as_runtime_list() {
         let hir = helper_lower_with_classes(
             vec![
@@ -11921,6 +11990,35 @@ mod tests {
                 .iter()
                 .any(|stmt| matches!(stmt, HirStmt::ClassDefPlaceholder { name, .. } if *name == class.name)),
             "starred class bases require a textual class placeholder"
+        );
+    }
+
+    #[test]
+    fn test_lower_indexed_generic_class_base_as_runtime_list() {
+        let hir = helper_lower_with_classes(
+            vec![sp(Stmt::ClassDef {
+                decorators: vec![],
+                name: "Indexed".to_string(),
+                type_params: vec![TypeParam::plain("T")],
+                bases: vec![sp(Expr::Index {
+                    object: Box::new(sp(Expr::Ident("Base".to_string()))),
+                    index: Box::new(sp(Expr::Ident("T".to_string()))),
+                })],
+                keyword_args: vec![],
+                body: vec![sp(Stmt::Pass)],
+            })],
+            &["Base", "Indexed"],
+        );
+        let class = hir
+            .classes
+            .iter()
+            .find(|class| class.runtime_base_list_expr.is_some())
+            .expect("Indexed generic base should lower with a runtime base list");
+        assert!(
+            hir.top_level
+                .iter()
+                .any(|stmt| matches!(stmt, HirStmt::ClassDefPlaceholder { name, .. } if *name == class.name)),
+            "indexed generic base should force a textual class placeholder"
         );
     }
 
@@ -13015,6 +13113,33 @@ async def main():
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_lower_tuple_unpack_rebind_clears_deleted_name() {
+        let hir = helper_lower(vec![
+            sp(Stmt::VarDecl {
+                name: "T".to_string(),
+                ty: sp(TypeExpr::Named("Any".to_string())),
+                value: sp(Expr::IntLit(1)),
+            }),
+            sp(Stmt::Del(sp(Expr::Ident("T".to_string())))),
+            sp(Stmt::Assign {
+                target: sp(Expr::TupleLit(vec![sp(Expr::Ident("T".to_string()))])),
+                value: sp(Expr::TupleLit(vec![sp(Expr::IntLit(2))])),
+            }),
+            sp(Stmt::ExprStmt(sp(Expr::Ident("T".to_string())))),
+        ]);
+        let Some(HirStmt::Expr {
+            expr: HirExpr::Var(..),
+            ..
+        }) = hir.top_level.last()
+        else {
+            panic!(
+                "tuple-unpack rebind should make T readable again, got {:?}",
+                hir.top_level.last()
+            );
+        };
     }
 
     // -------------------------------------------------------------------------
