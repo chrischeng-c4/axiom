@@ -1,5 +1,7 @@
 use super::*;
 use rustc_hash::FxHashMap;
+use std::collections::HashSet;
+use std::sync::{Arc, RwLock};
 
 // ── eval/exec/compile/globals/locals (#441) ──
 
@@ -477,10 +479,21 @@ struct ExecContext {
     type_vars: std::collections::HashSet<String>,
     type_param_reuse_once: FxHashMap<String, MbValue>,
     functions: FxHashMap<String, ExecFunction>,
-    frames: Vec<FxHashMap<String, MbValue>>,
+    frames: Vec<ExecFrame>,
+    frame_scopes: Vec<ExecFrameScope>,
     generic_class_body_depth: usize,
     globals: Option<MbValue>,
     locals: Option<MbValue>,
+}
+
+type ExecFrame = Arc<RwLock<FxHashMap<String, MbValue>>>;
+
+#[derive(Clone, Default)]
+struct ExecFrameScope {
+    is_function: bool,
+    local_bindings: HashSet<String>,
+    declared_globals: HashSet<String>,
+    declared_nonlocals: HashSet<String>,
 }
 
 #[derive(Clone)]
@@ -495,7 +508,8 @@ struct ExecFunctionBinding {
     name: String,
     is_async: bool,
     globals: Option<MbValue>,
-    captures: Vec<FxHashMap<String, MbValue>>,
+    captures: Vec<ExecFrame>,
+    capture_scopes: Vec<ExecFrameScope>,
     function: ExecFunction,
 }
 
@@ -1051,25 +1065,139 @@ fn exec_lookup_builtin_name(name: &str) -> Option<MbValue> {
     }
 }
 
-fn exec_lookup_name(ctx: &ExecContext, name: &str) -> Option<MbValue> {
-    for frame in ctx.frames.iter().rev() {
-        if let Some(&value) = frame.get(name) {
-            return Some(value);
+fn exec_new_frame(bindings: FxHashMap<String, MbValue>) -> ExecFrame {
+    Arc::new(RwLock::new(bindings))
+}
+
+fn exec_collect_scope_declarations(
+    stmts: &[crate::source::span::Spanned<crate::parser::ast::Stmt>],
+    globals: &mut HashSet<String>,
+    nonlocals: &mut HashSet<String>,
+) {
+    use crate::parser::ast::Stmt;
+
+    for stmt in stmts {
+        match &stmt.node {
+            Stmt::Global(names) => {
+                globals.extend(names.iter().cloned());
+            }
+            Stmt::Nonlocal(names) => {
+                nonlocals.extend(names.iter().cloned());
+            }
+            Stmt::If {
+                body,
+                elif_clauses,
+                else_body,
+                ..
+            } => {
+                exec_collect_scope_declarations(body, globals, nonlocals);
+                for (_, elif_body) in elif_clauses {
+                    exec_collect_scope_declarations(elif_body, globals, nonlocals);
+                }
+                if let Some(else_body) = else_body {
+                    exec_collect_scope_declarations(else_body, globals, nonlocals);
+                }
+            }
+            Stmt::While {
+                body, else_body, ..
+            }
+            | Stmt::For {
+                body, else_body, ..
+            }
+            | Stmt::AsyncFor {
+                body, else_body, ..
+            } => {
+                exec_collect_scope_declarations(body, globals, nonlocals);
+                if let Some(else_body) = else_body {
+                    exec_collect_scope_declarations(else_body, globals, nonlocals);
+                }
+            }
+            Stmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+            } => {
+                exec_collect_scope_declarations(body, globals, nonlocals);
+                for handler in handlers {
+                    exec_collect_scope_declarations(&handler.body, globals, nonlocals);
+                }
+                if let Some(else_body) = else_body {
+                    exec_collect_scope_declarations(else_body, globals, nonlocals);
+                }
+                if let Some(finally_body) = finally_body {
+                    exec_collect_scope_declarations(finally_body, globals, nonlocals);
+                }
+            }
+            Stmt::With { body, .. } | Stmt::AsyncWith { body, .. } => {
+                exec_collect_scope_declarations(body, globals, nonlocals);
+            }
+            Stmt::Match { arms, .. } => {
+                for arm in arms {
+                    exec_collect_scope_declarations(&arm.body, globals, nonlocals);
+                }
+            }
+            _ => {}
         }
     }
-    if let Some(locals) = ctx.locals {
-        let key = MbValue::from_ptr(MbObject::new_str(name.to_string()));
-        if crate::runtime::dict_ops::mb_dict_contains(locals, key)
-            .as_bool()
-            .unwrap_or(false)
-        {
-            return Some(crate::runtime::dict_ops::mb_dict_get(
-                locals,
-                key,
-                MbValue::none(),
-            ));
+}
+
+fn exec_function_scope(
+    params: &[String],
+    body: &[crate::source::span::Spanned<crate::parser::ast::Stmt>],
+) -> ExecFrameScope {
+    let mut assigned = Vec::new();
+    let mut _declared = Vec::new();
+    crate::resolve::pass::collect_assignment_targets(body, &mut assigned, &mut _declared);
+    crate::resolve::pass::collect_walrus_targets_in_stmts(body, &mut assigned);
+
+    let mut declared_globals = HashSet::new();
+    let mut declared_nonlocals = HashSet::new();
+    exec_collect_scope_declarations(body, &mut declared_globals, &mut declared_nonlocals);
+
+    let mut local_bindings: HashSet<String> = params.iter().cloned().collect();
+    for name in assigned {
+        if !declared_globals.contains(&name) && !declared_nonlocals.contains(&name) {
+            local_bindings.insert(name);
         }
     }
+
+    ExecFrameScope {
+        is_function: true,
+        local_bindings,
+        declared_globals,
+        declared_nonlocals,
+    }
+}
+
+fn exec_current_scope_declares_global(ctx: &ExecContext, name: &str) -> bool {
+    ctx.frame_scopes
+        .last()
+        .is_some_and(|scope| scope.declared_globals.contains(name))
+}
+
+fn exec_current_scope_declares_nonlocal(ctx: &ExecContext, name: &str) -> bool {
+    ctx.frame_scopes
+        .last()
+        .is_some_and(|scope| scope.declared_nonlocals.contains(name))
+}
+
+fn exec_nonlocal_target_frame(ctx: &ExecContext, name: &str) -> Option<ExecFrame> {
+    if ctx.frames.len() < 2 {
+        return None;
+    }
+    for idx in (0..ctx.frames.len() - 1).rev() {
+        let Some(scope) = ctx.frame_scopes.get(idx) else {
+            continue;
+        };
+        if scope.is_function && scope.local_bindings.contains(name) {
+            return ctx.frames.get(idx).cloned();
+        }
+    }
+    None
+}
+
+fn exec_lookup_global_name(ctx: &ExecContext, name: &str) -> Option<MbValue> {
     let globals = ctx.globals?;
     let key = MbValue::from_ptr(MbObject::new_str(name.to_string()));
     if crate::runtime::dict_ops::mb_dict_contains(globals, key)
@@ -1086,9 +1214,46 @@ fn exec_lookup_name(ctx: &ExecContext, name: &str) -> Option<MbValue> {
     }
 }
 
+fn exec_lookup_name(ctx: &ExecContext, name: &str) -> Option<MbValue> {
+    if exec_current_scope_declares_global(ctx, name) {
+        return exec_lookup_global_name(ctx, name);
+    }
+    if exec_current_scope_declares_nonlocal(ctx, name) {
+        return exec_nonlocal_target_frame(ctx, name)
+            .and_then(|frame| frame.read().unwrap().get(name).copied());
+    }
+    for frame in ctx.frames.iter().rev() {
+        if let Some(&value) = frame.read().unwrap().get(name) {
+            return Some(value);
+        }
+    }
+    if let Some(locals) = ctx.locals {
+        let key = MbValue::from_ptr(MbObject::new_str(name.to_string()));
+        if crate::runtime::dict_ops::mb_dict_contains(locals, key)
+            .as_bool()
+            .unwrap_or(false)
+        {
+            return Some(crate::runtime::dict_ops::mb_dict_get(
+                locals,
+                key,
+                MbValue::none(),
+            ));
+        }
+    }
+    exec_lookup_global_name(ctx, name)
+}
+
 fn exec_store_name(ctx: &mut ExecContext, name: &str, value: MbValue) {
-    if let Some(frame) = ctx.frames.last_mut() {
-        frame.insert(name.to_string(), value);
+    if exec_current_scope_declares_global(ctx, name) {
+        exec_store_global(ctx, name, value);
+    } else if exec_current_scope_declares_nonlocal(ctx, name) {
+        if let Some(frame) = exec_nonlocal_target_frame(ctx, name) {
+            frame.write().unwrap().insert(name.to_string(), value);
+        } else if let Some(frame) = ctx.frames.last() {
+            frame.write().unwrap().insert(name.to_string(), value);
+        }
+    } else if let Some(frame) = ctx.frames.last() {
+        frame.write().unwrap().insert(name.to_string(), value);
     } else if let Some(locals) = ctx.locals {
         crate::runtime::dict_ops::mb_dict_setitem(
             locals,
@@ -1101,7 +1266,7 @@ fn exec_store_name(ctx: &mut ExecContext, name: &str, value: MbValue) {
 }
 
 enum ExecMaskedNameScope {
-    Frame,
+    Frame(ExecFrame),
     Locals,
     Globals,
 }
@@ -1113,12 +1278,50 @@ struct ExecMaskedName {
 }
 
 fn exec_take_name_binding(ctx: &mut ExecContext, name: &str) -> Option<ExecMaskedName> {
-    if let Some(frame) = ctx.frames.last_mut() {
-        return frame.remove(name).map(|value| ExecMaskedName {
-            name: name.to_string(),
-            scope: ExecMaskedNameScope::Frame,
-            value,
-        });
+    if exec_current_scope_declares_global(ctx, name) {
+        let key = MbValue::from_ptr(MbObject::new_str(name.to_string()));
+        let globals = ctx.globals?;
+        if crate::runtime::dict_ops::mb_dict_contains(globals, key)
+            .as_bool()
+            .unwrap_or(false)
+        {
+            let value = crate::runtime::dict_ops::mb_dict_get(globals, key, MbValue::none());
+            unsafe {
+                crate::runtime::rc::retain_if_ptr(value);
+            }
+            crate::runtime::dict_ops::mb_dict_delitem(globals, key);
+            return Some(ExecMaskedName {
+                name: name.to_string(),
+                scope: ExecMaskedNameScope::Globals,
+                value,
+            });
+        }
+        return None;
+    }
+    if exec_current_scope_declares_nonlocal(ctx, name) {
+        if let Some(frame) = exec_nonlocal_target_frame(ctx, name) {
+            return frame
+                .write()
+                .unwrap()
+                .remove(name)
+                .map(|value| ExecMaskedName {
+                    name: name.to_string(),
+                    scope: ExecMaskedNameScope::Frame(frame.clone()),
+                    value,
+                });
+        }
+        return None;
+    }
+    if let Some(frame) = ctx.frames.last() {
+        return frame
+            .write()
+            .unwrap()
+            .remove(name)
+            .map(|value| ExecMaskedName {
+                name: name.to_string(),
+                scope: ExecMaskedNameScope::Frame(frame.clone()),
+                value,
+            });
     }
     let key = MbValue::from_ptr(MbObject::new_str(name.to_string()));
     if let Some(locals) = ctx.locals {
@@ -1160,10 +1363,11 @@ fn exec_take_name_binding(ctx: &mut ExecContext, name: &str) -> Option<ExecMaske
 fn exec_restore_name_bindings(ctx: &mut ExecContext, masked: Vec<ExecMaskedName>) {
     for masked_name in masked {
         match masked_name.scope {
-            ExecMaskedNameScope::Frame => {
-                if let Some(frame) = ctx.frames.last_mut() {
-                    frame.insert(masked_name.name, masked_name.value);
-                }
+            ExecMaskedNameScope::Frame(frame) => {
+                frame
+                    .write()
+                    .unwrap()
+                    .insert(masked_name.name, masked_name.value);
             }
             ExecMaskedNameScope::Locals => {
                 if let Some(locals) = ctx.locals {
@@ -1258,7 +1462,7 @@ fn exec_restore_temporary_names(ctx: &mut ExecContext, bindings: Vec<ExecTempora
 
 fn exec_drop_masked_name(masked_name: ExecMaskedName) {
     match masked_name.scope {
-        ExecMaskedNameScope::Frame => {}
+        ExecMaskedNameScope::Frame(_) => {}
         ExecMaskedNameScope::Locals | ExecMaskedNameScope::Globals => unsafe {
             crate::runtime::rc::release_if_ptr(masked_name.value);
         },
@@ -1361,19 +1565,8 @@ fn exec_leading_docstring(
     }
 }
 
-fn exec_capture_frames(ctx: &ExecContext) -> Vec<FxHashMap<String, MbValue>> {
-    let mut captures = Vec::with_capacity(ctx.frames.len());
-    for frame in &ctx.frames {
-        let mut captured = FxHashMap::default();
-        for (name, value) in frame {
-            unsafe {
-                crate::runtime::rc::retain_if_ptr(*value);
-            }
-            captured.insert(name.clone(), *value);
-        }
-        captures.push(captured);
-    }
-    captures
+fn exec_capture_frames(ctx: &ExecContext) -> Vec<ExecFrame> {
+    ctx.frames.clone()
 }
 
 fn make_exec_function_body_value(
@@ -1397,6 +1590,7 @@ fn make_exec_function_body_value(
         }
     }
     let captures = exec_capture_frames(ctx);
+    let capture_scopes = ctx.frame_scopes.clone();
     let id = NEXT_EXEC_FUNCTION_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     EXEC_FUNCTIONS.write().unwrap().insert(
         id,
@@ -1405,6 +1599,7 @@ fn make_exec_function_body_value(
             is_async,
             globals,
             captures,
+            capture_scopes,
             function,
         },
     );
@@ -1582,6 +1777,7 @@ pub fn mb_exec_function_call(func: MbValue, args: Vec<MbValue>) -> MbValue {
             let mut ctx = ExecContext {
                 globals: binding.globals,
                 frames: binding.captures,
+                frame_scopes: binding.capture_scopes,
                 ..ExecContext::default()
             };
             let return_value = exec_call_function(&mut ctx, &binding.function, &args);
@@ -1899,9 +2095,12 @@ fn exec_call_function(ctx: &mut ExecContext, func: &ExecFunction, args: &[MbValu
         };
         frame.insert(param.clone(), value);
     }
-    ctx.frames.push(frame);
+    ctx.frames.push(exec_new_frame(frame));
+    ctx.frame_scopes
+        .push(exec_function_scope(&func.params, &func.body));
     let flow = exec_block_flow(ctx, &func.body);
     ctx.frames.pop();
+    ctx.frame_scopes.pop();
     match flow {
         ExecFlow::Return(value) => value,
         ExecFlow::Normal | ExecFlow::Break | ExecFlow::Continue => MbValue::none(),
@@ -1916,16 +2115,23 @@ fn exec_class_body_namespace(
     if in_generic_class_body {
         ctx.generic_class_body_depth += 1;
     }
-    ctx.frames.push(FxHashMap::default());
+    ctx.frames.push(exec_new_frame(FxHashMap::default()));
+    ctx.frame_scopes.push(ExecFrameScope::default());
     let flow = exec_block_flow(ctx, body);
-    let frame = ctx.frames.pop().unwrap_or_default();
+    let frame = ctx.frames.pop();
+    ctx.frame_scopes.pop();
     if in_generic_class_body {
         ctx.generic_class_body_depth = ctx.generic_class_body_depth.saturating_sub(1);
     }
     if exec_has_pending_exception() || !matches!(flow, ExecFlow::Normal) {
         return None;
     }
-    Some(frame)
+    Some(
+        frame
+            .as_ref()
+            .map(|frame| frame.read().unwrap().clone())
+            .unwrap_or_default(),
+    )
 }
 
 fn exec_static_return_value(
@@ -2558,6 +2764,7 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
             exec_import_stmt(ctx, module, names, module_alias);
             ExecFlow::Normal
         }
+        Stmt::Global(_) | Stmt::Nonlocal(_) => ExecFlow::Normal,
         Stmt::Del(target) => {
             exec_delete_target(ctx, &target.node);
             ExecFlow::Normal
