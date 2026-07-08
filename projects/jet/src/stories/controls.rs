@@ -100,6 +100,9 @@ pub fn infer_control(prop: &PropDef) -> ControlKind {
     if ty == "number" {
         return ControlKind::Number;
     }
+    if is_function_like_type(ty) || is_object_like_type(ty) {
+        return ControlKind::Object;
+    }
     // String-literal union: `"sm" | "lg"` / `'sm' | 'lg'`. Require every member
     // to be a quoted string literal; a mixed union (`string | number`) is Text.
     if let Some(options) = string_literal_union(ty) {
@@ -111,6 +114,25 @@ pub fn infer_control(prop: &PropDef) -> ControlKind {
     // TODO(#175 follow-up): enums, numeric-literal unions, object/array props,
     // and union types mixing literals with `undefined`/`null` fall back to Text.
     ControlKind::Text
+}
+
+fn is_function_like_type(ty: &str) -> bool {
+    ty.contains("=>")
+        || ty.ends_with("Handler")
+        || ty.contains("Handler<")
+        || ty.starts_with("MouseEventHandler")
+        || ty.starts_with("ChangeEventHandler")
+        || ty.starts_with("KeyboardEventHandler")
+        || ty.starts_with("FocusEventHandler")
+}
+
+fn is_object_like_type(ty: &str) -> bool {
+    ty.starts_with('{')
+        || ty.starts_with("Record<")
+        || ty.starts_with("Partial<")
+        || ty == "CSSProperties"
+        || ty.ends_with("CSSProperties")
+        || ty == "React.CSSProperties"
 }
 
 /// Parse a `"a" | "b" | "c"` string-literal union into its unquoted options.

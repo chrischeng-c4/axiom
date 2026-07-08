@@ -318,7 +318,10 @@ export const decorators = [(Story) => Story()];
     let (status, html) = get(&router, "/__jet_stories_preview/components-button--primary").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
-        html.contains(r#"import * as ProjectPreview from "/.storybook/preview.tsx";"#),
+        html.contains(r#"import * as ProjectPreviewModule from "/.storybook/preview.tsx";"#)
+            && html.contains(
+                "const ProjectPreview = ProjectPreviewModule.default || ProjectPreviewModule;",
+            ),
         "dev preview imports project preview runtime: {html}"
     );
     assert!(

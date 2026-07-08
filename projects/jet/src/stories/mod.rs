@@ -20,14 +20,15 @@ pub mod deps;
 pub mod hmr;
 pub mod manager;
 pub mod mdx;
+pub mod optimizer;
 pub mod prop_extractor;
 pub mod server;
 
 pub use build::{build_stories_static, BuildStaticResult};
 pub use server::start_stories_workbench;
 
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Component, Path, PathBuf};
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use walkdir::{DirEntry, WalkDir};
@@ -81,6 +82,8 @@ pub struct StoryEntry {
     pub args: BTreeMap<String, CsfValue>,
     /// Parameters effective for this story = meta parameters overridden by story parameters.
     pub parameters: BTreeMap<String, CsfValue>,
+    /// Story-level docs description from JSDoc or `parameters.docs.description.story`.
+    pub description: String,
     /// Copyable source slice for the story source panel.
     pub source: Option<String>,
     /// Whether the story declares its own `render:` function.
@@ -96,7 +99,7 @@ pub struct StoryEntry {
 pub struct StoryIndex {
     /// One meta per discovered (valid) story file.
     pub metas: Vec<StoryMeta>,
-    /// One entry per named story across all files, sorted by id.
+    /// One entry per named story across all files, in Storybook discovery order.
     pub stories: Vec<StoryEntry>,
     /// Human-readable per-file problems; never fatal to discovery.
     pub diagnostics: Vec<String>,
@@ -134,9 +137,11 @@ pub fn discover(root: &Path) -> StoryIndex {
         }
     };
 
+    let story_prefixes = storybook_story_prefixes(root);
     let mut files = discover_files(root, &globset, &mut index.diagnostics);
-    // Deterministic order so ids / hierarchy are stable across runs.
-    files.sort();
+    // Deterministic order so ids / hierarchy are stable across runs while
+    // respecting Storybook's configured story glob order when present.
+    sort_story_files(&mut files, &story_prefixes);
 
     for file in files {
         let rel = file.strip_prefix(root).unwrap_or(&file).to_path_buf();
@@ -154,17 +159,81 @@ pub fn discover(root: &Path) -> StoryIndex {
             Some("tsx") | Some("jsx")
         );
         match csf::parse_csf(&source, is_tsx) {
-            Ok(parsed) => assemble_file(&mut index, &file, parsed),
+            Ok(parsed) => assemble_file(&mut index, &file, &source, parsed),
             Err(err) => index
                 .diagnostics
                 .push(format!("{}: parse error: {err}", rel.display())),
         }
     }
 
-    index.stories.sort_by(|a, b| a.id.cmp(&b.id));
-    index.metas.sort_by(|a, b| a.file.cmp(&b.file));
+    sort_story_metas(&mut index.metas, &story_prefixes);
     index.diagnostics.extend(mdx::diagnostics(root, &index));
     index
+}
+
+fn sort_story_files(files: &mut [PathBuf], story_prefixes: &[PathBuf]) {
+    files.sort_by(|a, b| {
+        story_file_rank(a, story_prefixes)
+            .cmp(&story_file_rank(b, story_prefixes))
+            .then_with(|| storybook_order_key(a).cmp(&storybook_order_key(b)))
+    });
+}
+
+fn sort_story_metas(metas: &mut [StoryMeta], story_prefixes: &[PathBuf]) {
+    metas.sort_by(|a, b| {
+        story_file_rank(&a.file, story_prefixes)
+            .cmp(&story_file_rank(&b.file, story_prefixes))
+            .then_with(|| storybook_order_key(&a.file).cmp(&storybook_order_key(&b.file)))
+    });
+}
+
+fn story_file_rank(file: &Path, story_prefixes: &[PathBuf]) -> usize {
+    story_prefixes
+        .iter()
+        .position(|prefix| file.starts_with(prefix))
+        .unwrap_or(usize::MAX)
+}
+
+fn storybook_order_key(file: &Path) -> String {
+    file.to_string_lossy().replace('\\', "/")
+}
+
+fn storybook_story_prefixes(root: &Path) -> Vec<PathBuf> {
+    let config = root.join(".storybook").join("main.ts");
+    let Ok(source) = std::fs::read_to_string(config) else {
+        return Vec::new();
+    };
+    let storybook_dir = root.join(".storybook");
+    source
+        .split(['"', '\'', '`'])
+        .filter(|token| token.contains(".stories"))
+        .filter_map(|token| {
+            let prefix = token
+                .split(['*', '(', '@', '{'])
+                .next()
+                .unwrap_or("")
+                .trim();
+            if prefix.is_empty() {
+                None
+            } else {
+                Some(normalize_storybook_path(storybook_dir.join(prefix)))
+            }
+        })
+        .collect()
+}
+
+fn normalize_storybook_path(path: PathBuf) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 /// Fold one parsed story file into the index.
@@ -173,12 +242,13 @@ pub fn discover(root: &Path) -> StoryIndex {
 /// against the importing `file`: the sibling is parsed and the named story is
 /// pulled in under this file's title. Unresolvable re-exports become a
 /// diagnostic and are skipped — they never abort discovery.
-fn assemble_file(index: &mut StoryIndex, file: &Path, parsed: ParsedStoryFile) {
+fn assemble_file(index: &mut StoryIndex, file: &Path, source: &str, parsed: ParsedStoryFile) {
     let ParsedStoryFile {
         meta,
         stories,
         re_exports,
     } = parsed;
+    let export_filter = story_export_filter(source);
     let title_path = resolve_title_path(&meta, file);
 
     let story_meta = StoryMeta {
@@ -194,6 +264,9 @@ fn assemble_file(index: &mut StoryIndex, file: &Path, parsed: ParsedStoryFile) {
 
     let title_slug = slug(&title_path.join("/"));
     for story in &stories {
+        if !export_filter.allows(&story.export_name) {
+            continue;
+        }
         push_story(
             index,
             file,
@@ -207,6 +280,9 @@ fn assemble_file(index: &mut StoryIndex, file: &Path, parsed: ParsedStoryFile) {
 
     // Resolve each re-exported story against its sibling file.
     for re in &re_exports {
+        if !export_filter.allows(&re.exported_name) {
+            continue;
+        }
         match resolve_re_export(file, re) {
             Ok(sibling) => {
                 // The re-export keeps THIS file's title, but adopts the sibling
@@ -220,6 +296,7 @@ fn assemble_file(index: &mut StoryIndex, file: &Path, parsed: ParsedStoryFile) {
                         export_name: re.exported_name.clone(),
                         source: src_story.source.clone(),
                         args: src_story.args.clone(),
+                        description: src_story.description.clone(),
                         has_render: src_story.has_render,
                         parameters: src_story.parameters.clone(),
                         globals: src_story.globals.clone(),
@@ -257,6 +334,86 @@ fn assemble_file(index: &mut StoryIndex, file: &Path, parsed: ParsedStoryFile) {
     index.metas.push(story_meta);
 }
 
+#[derive(Debug, Default)]
+struct StoryExportFilter {
+    include: Option<BTreeSet<String>>,
+    exclude: BTreeSet<String>,
+}
+
+impl StoryExportFilter {
+    fn allows(&self, export_name: &str) -> bool {
+        if let Some(include) = &self.include {
+            if !include.contains(export_name) {
+                return false;
+            }
+        }
+        !self.exclude.contains(export_name)
+    }
+}
+
+fn story_export_filter(source: &str) -> StoryExportFilter {
+    StoryExportFilter {
+        include: story_filter_names(source, "includeStories")
+            .map(|names| names.into_iter().collect()),
+        exclude: story_filter_names(source, "excludeStories")
+            .unwrap_or_default()
+            .into_iter()
+            .collect(),
+    }
+}
+
+fn story_filter_names(source: &str, field: &str) -> Option<Vec<String>> {
+    let marker = format!("{field}:");
+    let start = source.find(&marker)? + marker.len();
+    let rest = source[start..].trim_start();
+    if rest.starts_with('[') {
+        let end = rest.find(']')?;
+        return Some(string_literals_in(&rest[..=end]));
+    }
+    if rest.starts_with('"') || rest.starts_with('\'') {
+        return string_literals_in(rest)
+            .into_iter()
+            .next()
+            .map(|name| vec![name]);
+    }
+    if let Some(regex_body) = rest.strip_prefix("/^") {
+        if let Some(end) = regex_body.find("$/") {
+            return Some(vec![regex_body[..end].to_string()]);
+        }
+    }
+    None
+}
+
+fn string_literals_in(source: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut chars = source.char_indices().peekable();
+    while let Some((idx, quote)) = chars.next() {
+        if quote != '"' && quote != '\'' {
+            continue;
+        }
+        let mut escaped = false;
+        let mut end = None;
+        for (next_idx, ch) in chars.by_ref() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == quote {
+                end = Some(next_idx);
+                break;
+            }
+        }
+        if let Some(end) = end {
+            out.push(source[idx + quote.len_utf8()..end].to_string());
+        }
+    }
+    out
+}
+
 /// Push one story into the index, merging `base_args` (meta/sibling defaults)
 /// under the story's own args.
 fn push_story(
@@ -277,13 +434,14 @@ fn push_story(
     for (k, v) in &story.parameters {
         parameters.insert(k.clone(), v.clone());
     }
-    let id = format!("{title_slug}--{}", slug(&story.export_name));
+    let id = format!("{title_slug}--{}", story_export_slug(&story.export_name));
     index.stories.push(StoryEntry {
         id,
         name: story.export_name.clone(),
         export_name: story.export_name.clone(),
         args: merged,
         parameters,
+        description: story.description.clone(),
         source: story.source.clone(),
         has_render: story.has_render,
         file: file.to_path_buf(),
@@ -400,6 +558,40 @@ fn slug(input: &str) -> String {
     }
 }
 
+/// Storybook derives the story-id suffix from the export name after converting
+/// identifier casing into words: `DatePicker` -> `date-picker`.
+fn story_export_slug(input: &str) -> String {
+    let mut spaced = String::with_capacity(input.len() + 8);
+    let mut prev: Option<char> = None;
+    let chars: Vec<char> = input.chars().collect();
+    for (idx, ch) in chars.iter().copied().enumerate() {
+        let next = chars.get(idx + 1).copied();
+        if idx > 0 && should_split_story_identifier(prev, ch, next) {
+            spaced.push(' ');
+        }
+        spaced.push(ch);
+        prev = Some(ch);
+    }
+    slug(&spaced)
+}
+
+fn should_split_story_identifier(prev: Option<char>, current: char, next: Option<char>) -> bool {
+    let Some(prev) = prev else {
+        return false;
+    };
+    if current == '_' || current == '-' || current.is_whitespace() {
+        return false;
+    }
+    if current.is_ascii_digit() {
+        return prev.is_ascii_alphabetic();
+    }
+    if prev.is_ascii_digit() {
+        return current.is_ascii_alphabetic();
+    }
+    current.is_ascii_uppercase()
+        && (prev.is_ascii_lowercase() || next.map(|ch| ch.is_ascii_lowercase()).unwrap_or(false))
+}
+
 /// Walk `root` and collect every file matching the story globs.
 fn discover_files(root: &Path, globset: &GlobSet, diagnostics: &mut Vec<String>) -> Vec<PathBuf> {
     let mut out = Vec::new();
@@ -461,6 +653,14 @@ mod tests {
         assert_eq!(slug("Primary"), "primary");
         assert_eq!(slug("With Footer!!"), "with-footer");
         assert_eq!(slug(""), "story");
+    }
+
+    #[test]
+    fn story_export_slug_matches_storybook_identifier_words() {
+        assert_eq!(story_export_slug("DatePicker"), "date-picker");
+        assert_eq!(story_export_slug("OutlinePrimary"), "outline-primary");
+        assert_eq!(story_export_slug("URLInput"), "url-input");
+        assert_eq!(story_export_slug("V2Button"), "v-2-button");
     }
 
     #[test]

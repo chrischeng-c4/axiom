@@ -72,22 +72,28 @@ pub fn resolve_bare_specifier(
     let resolver = ModuleResolver::new(options).ok()?;
     let resolved = match resolver.resolve(specifier, importer_file).ok() {
         Some(resolved) => resolved,
-        None => return resolve_bare_asset_export(root, specifier),
+        None => {
+            return resolve_nested_bare_specifier(importer_file, specifier)
+                .or_else(|| resolve_bare_asset_export(root, specifier));
+        }
     };
 
     // External (or anything not a package resolution) is not something we serve
     // from disk — leave it for the importmap.
     if resolved.is_external || resolved.kind != ResolveKind::Package {
-        return resolve_bare_asset_export(root, specifier);
+        return resolve_nested_bare_specifier(importer_file, specifier)
+            .or_else(|| resolve_bare_asset_export(root, specifier));
     }
 
     // Must be a real file genuinely inside node_modules. (`resolve` returns the
     // specifier path verbatim for externals, which would not be a real file.)
     if !resolved.path.is_file() {
-        return resolve_bare_asset_export(root, specifier);
+        return resolve_nested_bare_specifier(importer_file, specifier)
+            .or_else(|| resolve_bare_asset_export(root, specifier));
     }
     if !path_has_node_modules(&resolved.path) {
-        return resolve_bare_asset_export(root, specifier);
+        return resolve_nested_bare_specifier(importer_file, specifier)
+            .or_else(|| resolve_bare_asset_export(root, specifier));
     }
     Some(canonical_node_modules_path(&resolved.path))
 }
@@ -95,7 +101,15 @@ pub fn resolve_bare_specifier(
 fn is_preview_importmap_specifier(specifier: &str) -> bool {
     matches!(
         specifier,
-        "react" | "react-dom" | "react-dom/client" | "react/jsx-runtime"
+        "react"
+            | "react-dom"
+            | "react-dom/client"
+            | "react/jsx-runtime"
+            | "@storybook/addon-actions"
+            | "@storybook/global"
+            | "@storybook/preview-api"
+            | "@storybook/instrumenter"
+            | "@storybook/test"
     )
 }
 
@@ -155,6 +169,88 @@ fn workspace_package_dir(root: &Path, package_name: &str) -> Option<PathBuf> {
                 return Some(package_dir);
             }
         }
+    }
+    None
+}
+
+fn resolve_nested_bare_specifier(importer_file: &Path, specifier: &str) -> Option<PathBuf> {
+    let (package_name, subpath) = split_package_specifier(specifier)?;
+    let importer = importer_file
+        .canonicalize()
+        .unwrap_or_else(|_| importer_file.to_path_buf());
+    for ancestor in importer.ancestors() {
+        let mut candidates = Vec::new();
+        if ancestor.file_name().and_then(|name| name.to_str()) == Some("node_modules") {
+            candidates.push(ancestor.join(&package_name));
+        }
+        candidates.push(ancestor.join("node_modules").join(&package_name));
+        for package_dir in candidates {
+            if !package_dir.is_dir() {
+                continue;
+            }
+            if let Some(file) = package_entry_file(&package_dir, &subpath) {
+                return Some(canonical_node_modules_path(&file));
+            }
+        }
+    }
+    None
+}
+
+fn package_entry_file(package_dir: &Path, subpath: &str) -> Option<PathBuf> {
+    let package_json = package_dir.join("package.json");
+    let package = std::fs::read_to_string(package_json)
+        .ok()
+        .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok());
+    if let Some(package) = &package {
+        if let Some(exports) = package.get("exports") {
+            if let Some(target) =
+                export_target_for_subpath(exports, specifier_path_without_query(subpath))
+            {
+                if let Some(file) = package_file(package_dir, &target) {
+                    return Some(file);
+                }
+            }
+        }
+        if subpath == "." {
+            for field in ["module", "main"] {
+                if let Some(target) = package.get(field).and_then(|value| value.as_str()) {
+                    if let Some(file) = package_file(package_dir, target) {
+                        return Some(file);
+                    }
+                }
+            }
+        }
+    }
+    if subpath == "." {
+        for index in ["index.mjs", "index.js", "index.cjs"] {
+            let file = package_dir.join(index);
+            if file.is_file() {
+                return Some(file);
+            }
+        }
+    } else {
+        return package_file(package_dir, subpath);
+    }
+    None
+}
+
+fn package_file(package_dir: &Path, target: &str) -> Option<PathBuf> {
+    let clean = specifier_path_without_query(target)
+        .trim_start_matches("./")
+        .trim_start_matches('/');
+    let direct = package_dir.join(clean);
+    if direct.is_file() {
+        return Some(direct);
+    }
+    for ext in ["js", "mjs", "cjs", "ts", "tsx"] {
+        let with_ext = package_dir.join(format!("{clean}.{ext}"));
+        if with_ext.is_file() {
+            return Some(with_ext);
+        }
+    }
+    let index = package_dir.join(clean).join("index.js");
+    if index.is_file() {
+        return Some(index);
     }
     None
 }
@@ -636,6 +732,40 @@ const dyn = import("ignored");
     }
 
     #[test]
+    fn resolve_finds_nested_pnpm_transitive_dependency_from_importer() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let react_pdf = root.join("node_modules/.pnpm/react-pdf@1.0.0/node_modules/react-pdf");
+        let pdfjs = root.join("node_modules/.pnpm/react-pdf@1.0.0/node_modules/pdfjs-dist");
+        std::fs::create_dir_all(react_pdf.join("dist")).unwrap();
+        std::fs::create_dir_all(pdfjs.join("build")).unwrap();
+        std::fs::write(
+            react_pdf.join("package.json"),
+            r#"{"name":"react-pdf","version":"1.0.0","main":"dist/index.js"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            pdfjs.join("package.json"),
+            r#"{"name":"pdfjs-dist","version":"5.4.296","main":"build/pdf.mjs"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            react_pdf.join("dist/index.js"),
+            "import * as pdfjs from 'pdfjs-dist';\n",
+        )
+        .unwrap();
+        std::fs::write(
+            pdfjs.join("build/pdf.mjs"),
+            "export const version = '5.4.296';\n",
+        )
+        .unwrap();
+
+        let resolved = resolve_bare_specifier(root, &react_pdf.join("dist/index.js"), "pdfjs-dist")
+            .expect("resolves nested pdfjs-dist from importer package");
+        assert_eq!(dep_key(&resolved), "pdfjs-dist/build/pdf.mjs");
+    }
+
+    #[test]
     fn resolve_finds_workspace_asset_export_source_fallback() {
         let tmp = tempfile::TempDir::new().unwrap();
         let root = tmp.path();
@@ -673,13 +803,15 @@ const dyn = import("ignored");
     }
 
     #[test]
-    fn resolve_keeps_preview_importmap_react_specifiers_external_even_when_installed() {
+    fn resolve_keeps_preview_importmap_specifiers_external_even_when_installed() {
         let tmp = tempfile::TempDir::new().unwrap();
         let root = tmp.path();
         let react = root.join("node_modules/react");
         let react_dom = root.join("node_modules/react-dom");
+        let storybook_test = root.join("node_modules/@storybook/test");
         std::fs::create_dir_all(&react).unwrap();
         std::fs::create_dir_all(&react_dom).unwrap();
+        std::fs::create_dir_all(&storybook_test).unwrap();
         std::fs::write(
             react.join("package.json"),
             r#"{"name":"react","version":"18.3.1","main":"index.js","exports":{"./jsx-runtime":"./jsx-runtime.js",".":"./index.js"}}"#,
@@ -694,6 +826,17 @@ const dyn = import("ignored");
         .unwrap();
         std::fs::write(react_dom.join("index.js"), "module.exports = {};\n").unwrap();
         std::fs::write(react_dom.join("client.js"), "module.exports = {};\n").unwrap();
+        std::fs::write(
+            storybook_test.join("package.json"),
+            r#"{"name":"@storybook/test","version":"8.0.0","main":"dist/index.mjs"}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(storybook_test.join("dist")).unwrap();
+        std::fs::write(
+            storybook_test.join("dist/index.mjs"),
+            "export const fn = () => {};\n",
+        )
+        .unwrap();
 
         let importer = root.join("src/Button.tsx");
         std::fs::create_dir_all(importer.parent().unwrap()).unwrap();
@@ -702,6 +845,7 @@ const dyn = import("ignored");
             "react-dom",
             "react-dom/client",
             "react/jsx-runtime",
+            "@storybook/test",
         ] {
             assert!(
                 resolve_bare_specifier(root, &importer, specifier).is_none(),

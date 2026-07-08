@@ -29,6 +29,21 @@ use super::{StoryEntry, StoryIndex};
 /// Route prefix for an isolated story preview document.
 pub const PREVIEW_PREFIX: &str = "/__jet_stories_preview";
 
+const STORYBOOK_ADDON_BUNDLES: &[(&str, &str)] = &[
+    (
+        "storybook-core-core-server-presets-0",
+        "common-manager-bundle.js",
+    ),
+    ("essentials-controls-1", "manager-bundle.js"),
+    ("essentials-actions-2", "manager-bundle.js"),
+    ("essentials-docs-3", "manager-bundle.js"),
+    ("essentials-backgrounds-4", "manager-bundle.js"),
+    ("essentials-viewport-5", "manager-bundle.js"),
+    ("essentials-toolbars-6", "manager-bundle.js"),
+    ("essentials-measure-7", "manager-bundle.js"),
+    ("essentials-outline-8", "manager-bundle.js"),
+];
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DocsPage {
     pub id: String,
@@ -44,6 +59,7 @@ pub struct DocsPage {
 pub struct DocsStory {
     pub id: String,
     pub name: String,
+    pub description: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -52,6 +68,9 @@ pub struct DocsArgType {
     pub type_text: String,
     pub default_value: Option<String>,
     pub description: String,
+    pub control_kind: Option<String>,
+    pub control_options: Vec<String>,
+    pub control_current: Option<String>,
 }
 
 /// How the renderers form the URLs they embed (iframe src, sidebar links, the
@@ -115,6 +134,217 @@ pub fn render_manager_html(
     render_manager_html_with_mode_and_docs(index, selected, controls, UrlMode::Dev, &[])
 }
 
+pub fn render_official_storybook_manager_html() -> String {
+    let mut preload = String::new();
+    let mut imports = String::new();
+    for (dir, file) in STORYBOOK_ADDON_BUNDLES {
+        preload.push_str(&format!(
+            r#"
+    <link href="./sb-addons/{dir}/{file}" rel="modulepreload" />
+    "#
+        ));
+        imports.push_str(&format!(
+            r#"
+        import './sb-addons/{dir}/{file}';
+      "#
+        ));
+    }
+
+    let preview_navigation_bridge = r##"    <script>
+      (() => {
+        const frameSelector = '#storybook-preview-iframe';
+        let lastPreviewUrl = '';
+
+        function currentPreviewUrl() {
+          const params = new URLSearchParams(window.location.search);
+          const path = params.get('path') || '';
+          if (path.startsWith('/docs/')) {
+            const id = decodeURIComponent(path.slice('/docs/'.length));
+            return `iframe.html?viewMode=docs&id=${encodeURIComponent(id)}&globals=`;
+          }
+          if (path.startsWith('/story/')) {
+            const id = decodeURIComponent(path.slice('/story/'.length));
+            return `iframe.html?id=${encodeURIComponent(id)}&viewMode=story`;
+          }
+          return '';
+        }
+
+        function syncPreviewFrame() {
+          const previewUrl = currentPreviewUrl();
+          const frame = document.querySelector(frameSelector);
+          if (!previewUrl || !frame) return;
+          const current = frame.getAttribute('src') || '';
+          if (current === previewUrl || lastPreviewUrl === previewUrl) return;
+          lastPreviewUrl = previewUrl;
+          const freshFrame = frame.cloneNode(false);
+          freshFrame.setAttribute('src', previewUrl);
+          frame.replaceWith(freshFrame);
+        }
+
+        for (const method of ['pushState', 'replaceState']) {
+          const original = history[method];
+          history[method] = function (...args) {
+            const value = original.apply(this, args);
+            queueMicrotask(syncPreviewFrame);
+            return value;
+          };
+        }
+
+        window.addEventListener('popstate', () => queueMicrotask(syncPreviewFrame));
+        new MutationObserver(syncPreviewFrame).observe(document.documentElement, {
+          childList: true,
+          subtree: true,
+        });
+        window.addEventListener('load', syncPreviewFrame);
+        setTimeout(syncPreviewFrame, 0);
+      })();
+    </script>
+"##;
+    let whats_new_bridge = "";
+
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+
+    <title>@storybook/core - Storybook</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+
+    
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    
+    <style>
+      @font-face {{
+        font-family: 'Nunito Sans';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('./sb-common-assets/nunito-sans-regular.woff2') format('woff2');
+      }}
+
+      @font-face {{
+        font-family: 'Nunito Sans';
+        font-style: italic;
+        font-weight: 400;
+        font-display: swap;
+        src: url('./sb-common-assets/nunito-sans-italic.woff2') format('woff2');
+      }}
+
+      @font-face {{
+        font-family: 'Nunito Sans';
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+        src: url('./sb-common-assets/nunito-sans-bold.woff2') format('woff2');
+      }}
+
+      @font-face {{
+        font-family: 'Nunito Sans';
+        font-style: italic;
+        font-weight: 700;
+        font-display: swap;
+        src: url('./sb-common-assets/nunito-sans-bold-italic.woff2') format('woff2');
+      }}
+    </style>
+
+    <link href="./sb-manager/runtime.js" rel="modulepreload" />
+
+    {preload}   
+
+    <style>
+      #storybook-root[hidden] {{
+        display: none !important;
+      }}
+    </style>
+
+    
+  </head>
+  <body>
+    <div id="root"></div>
+
+    
+    <script>
+      
+        
+          window['FEATURES'] = {{
+  "argTypeTargetsV7": true,
+  "legacyDecoratorFileOrder": false,
+  "disallowImplicitActionsInRenderV8": true
+}};
+        
+      
+        
+          window['REFS'] = {{}};
+        
+      
+        
+          window['LOGLEVEL'] = "info";
+        
+      
+        
+          window['DOCS_OPTIONS'] = {{
+  "defaultName": "Docs",
+  "autodocs": "tag"
+}};
+        
+      
+        
+          window['CONFIG_TYPE'] = "DEVELOPMENT";
+        
+      
+        
+          window['VERSIONCHECK'] = "{{\"success\":true,\"cached\":false,\"data\":{{\"latest\":{{\"version\":\"10.4.6\"}},\"next\":{{\"version\":\"10.5.0-alpha.9\"}}}},\"time\":1783173400930}}";
+        
+      
+        
+      
+        
+          window['TAGS_OPTIONS'] = {{
+  "dev-only": {{
+    "excludeFromDocsStories": true
+  }},
+  "docs-only": {{
+    "excludeFromSidebar": true
+  }},
+  "test-only": {{
+    "excludeFromSidebar": true,
+    "excludeFromDocsStories": true
+  }}
+}};
+        
+      
+        
+          window['CHANNEL_OPTIONS'] = {{"wsToken":"jet"}};
+        
+      
+        
+          window['STORYBOOK_RENDERER'] = "react";
+        
+      
+        
+          window['STORYBOOK_BUILDER'] = "@storybook/builder-vite";
+        
+      
+        
+          window['STORYBOOK_FRAMEWORK'] = "@storybook/react-vite";
+        
+      
+    </script>
+    
+
+    <script type="module">
+      import './sb-manager/globals-runtime.js';
+      
+      {imports}
+      
+      import './sb-manager/runtime.js';
+    </script>
+{preview_navigation_bridge}{whats_new_bridge}  </body>
+</html>"#
+    )
+}
+
 /// [`render_manager_html`] with an explicit [`UrlMode`]. The dev server calls the
 /// [`UrlMode::Dev`] wrapper above (unchanged); the static exporter (B4) passes
 /// [`UrlMode::Static`] so the iframe src + sidebar links are relative.
@@ -144,7 +374,7 @@ pub fn render_manager_html_with_mode_and_docs(
     docs_pages: &[DocsPage],
 ) -> String {
     // Resolve the initially-selected story: explicit id if it exists, else the
-    // first discovered story (the index is already id-sorted).
+    // first story in Storybook discovery order.
     let selected_entry = selected
         .and_then(|id| index.stories.iter().find(|s| s.id == id))
         .or_else(|| index.stories.first());
@@ -163,6 +393,9 @@ pub fn render_manager_html_with_mode_and_docs(
     let docs_pages_html = render_docs_pages(docs_pages, mode);
     let brand = manager_brand_config(index);
     let story_count = index.stories.len();
+    let initial_browser_title = selected_entry
+        .map(manager_browser_title)
+        .unwrap_or_else(|| "Storybook".to_string());
 
     format!(
         r#"<!doctype html>
@@ -170,56 +403,106 @@ pub fn render_manager_html_with_mode_and_docs(
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>jet stories</title>
+<title>{browser_title}</title>
 <style>
-  :root {{ --jet-accent: {brand_accent}; }}
+  :root {{
+    --jet-accent: {brand_accent};
+    --jet-storybook-blue: #029cfd;
+    --jet-sidebar-bg: #f6f9fc;
+    --jet-border: #d9e8f2;
+    --jet-text: #2e3438;
+    --jet-muted: #73828c;
+  }}
   * {{ box-sizing: border-box; }}
   html, body {{ margin: 0; height: 100%; }}
   body {{
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    display: grid; grid-template-columns: 260px 1fr; grid-template-rows: 44px 1fr 220px;
+    font-family: "Nunito Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: grid; grid-template-columns: 300px 1fr; grid-template-rows: 40px 1fr 280px;
     grid-template-areas: "sidebar toolbar" "sidebar preview" "sidebar controls";
-    height: 100vh; color: #1a1a1a;
+    height: 100vh; color: var(--jet-text); background: #fff; font-size: 13px;
   }}
   body.jet-dark {{ color: #e5e7eb; background: #111827; }}
   body.jet-dark #jet-sidebar, body.jet-dark #jet-toolbar, body.jet-dark #jet-controls,
   body.jet-dark #jet-preview-shell, body.jet-dark #jet-docs {{ background: #111827; border-color: #374151; color: #e5e7eb; }}
-  body.jet-panel-hidden {{ grid-template-rows: 44px 1fr 0; }}
+  body.jet-panel-hidden {{ grid-template-rows: 40px 1fr 0; }}
   body.jet-panel-hidden #jet-controls {{ display: none; }}
-  body.jet-toolbar-hidden {{ grid-template-rows: 0 1fr 220px; }}
+  body.jet-toolbar-hidden {{ grid-template-rows: 0 1fr 280px; }}
   body.jet-toolbar-hidden #jet-toolbar {{ display: none; }}
   body.jet-fullscreen {{ grid-template-columns: 0 1fr; grid-template-rows: 0 1fr 0; }}
   body.jet-fullscreen #jet-sidebar, body.jet-fullscreen #jet-toolbar, body.jet-fullscreen #jet-controls {{ display: none; }}
   #jet-sidebar {{
-    grid-area: sidebar; border-right: 1px solid #e3e3e3; overflow-y: auto;
-    background: #fafafa; padding: 8px 0;
+    grid-area: sidebar; border-right: 1px solid var(--jet-border); overflow-y: auto;
+    background: var(--jet-sidebar-bg); padding: 0;
   }}
-  #jet-sidebar .jet-brand {{ font-weight: 600; padding: 8px 14px; font-size: 14px; }}
-  #jet-search {{ width: calc(100% - 20px); margin: 0 10px 8px; padding: 5px 7px; border: 1px solid #ccc; border-radius: 4px; }}
+  #jet-sidebar .jet-brand {{
+    height: 56px; display: flex; align-items: center; gap: 10px;
+    padding: 0 20px; font-weight: 800; font-size: 14px; letter-spacing: 0;
+  }}
+  #jet-sidebar .jet-brand-mark {{
+    width: 26px; height: 26px; border-radius: 6px; display: inline-grid; place-items: center;
+    background: #ff4785; color: #fff; font-size: 16px; font-weight: 900;
+    box-shadow: inset 0 -1px 0 rgba(0,0,0,.14);
+  }}
+  #jet-search-shell {{
+    position: relative; margin: 0 16px 12px;
+  }}
+  #jet-search {{
+    width: 100%; height: 32px; padding: 0 54px 0 32px; border: 1px solid var(--jet-border);
+    border-radius: 4px; background: #fff; color: var(--jet-text); font: inherit; outline: none;
+  }}
+  #jet-search-shell::before {{ content: "⌕"; position: absolute; left: 11px; top: 6px; color: var(--jet-muted); font-size: 15px; }}
+  #jet-search-shortcut {{
+    position: absolute; right: 7px; top: 6px; color: var(--jet-muted); font-size: 11px;
+    border: 1px solid #e6edf2; border-radius: 3px; padding: 0 4px; line-height: 18px; background: #fff;
+  }}
   #jet-sidebar ul {{ list-style: none; margin: 0; padding: 0; }}
   #jet-sidebar .jet-group > span {{
-    display: block; padding: 4px 14px; font-size: 12px; font-weight: 600;
-    color: #555;
+    display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 16px 0 20px;
+    font-size: 13px; font-weight: 700; color: #4a5560; cursor: pointer;
   }}
-  #jet-sidebar a.jet-story {{
-    display: block; padding: 4px 14px 4px 28px; font-size: 13px; color: #333;
-    text-decoration: none; cursor: pointer;
+  #jet-sidebar .jet-group > span::before {{ content: "▾"; color: var(--jet-muted); font-size: 10px; }}
+  #jet-sidebar .jet-group:not(.jet-group-active) > span::before {{ content: "▸"; }}
+  #jet-sidebar li li {{ margin: 1px 8px; }}
+  #jet-sidebar .jet-group:not(.jet-group-active) > ul {{ display: none; }}
+  #jet-sidebar a.jet-story, #jet-sidebar a.jet-docs-link {{
+    display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 8px 0 35px;
+    border-radius: 4px; font-size: 13px; color: #2e3438; text-decoration: none; cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }}
-  #jet-sidebar a.jet-story:hover, #jet-sidebar a.jet-docs-link:hover {{ background: #eef; }}
-  #jet-sidebar a.jet-story.jet-active, #jet-sidebar a.jet-docs-link.jet-active {{ background: var(--jet-accent); color: #fff; }}
+  #jet-sidebar a.jet-story::before {{ content: "◇"; color: #9aa8b3; font-size: 11px; }}
+  #jet-sidebar a.jet-docs-link::before {{ content: "◫"; color: #9aa8b3; font-size: 11px; }}
+  #jet-sidebar a.jet-story:hover, #jet-sidebar a.jet-docs-link:hover {{ background: #eef5fb; }}
+  #jet-sidebar a.jet-story.jet-active, #jet-sidebar a.jet-docs-link.jet-active {{
+    background: var(--jet-storybook-blue); color: #fff; font-weight: 700;
+  }}
+  #jet-sidebar a.jet-story.jet-active::before, #jet-sidebar a.jet-docs-link.jet-active::before {{ color: #fff; }}
   #jet-sidebar mark {{ background: #fef08a; color: #111827; padding: 0; }}
   #jet-toolbar {{
-    grid-area: toolbar; border-bottom: 1px solid #e3e3e3; display: flex;
-    align-items: center; gap: 12px; padding: 0 14px; background: #fff; font-size: 13px;
+    grid-area: toolbar; border-bottom: 1px solid var(--jet-border); display: flex;
+    align-items: center; gap: 4px; padding: 0 8px; background: #fff; font-size: 13px;
+  }}
+  #jet-toolbar .jet-toolbar-spacer {{ flex: 1; }}
+  #jet-current-title {{
+    max-width: 38vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 13px; color: #4a5560; margin-right: 8px;
   }}
   #jet-toolbar label {{ display: inline-flex; align-items: center; gap: 4px; color: #555; }}
-  #jet-toolbar select, #jet-toolbar button {{
-    font: inherit; border: 1px solid #d0d0d0; background: #fff; border-radius: 4px;
-    min-height: 26px;
+  #jet-toolbar select {{
+    width: 34px; min-height: 28px; padding: 0; color: transparent; border: 0; background: transparent;
+    cursor: pointer;
   }}
-  #jet-toolbar select {{ padding: 2px 22px 2px 6px; }}
-  #jet-toolbar button {{ min-width: 28px; padding: 2px 7px; cursor: pointer; }}
-  #jet-toolbar button.jet-active-tool {{ background: var(--jet-accent); border-color: var(--jet-accent); color: #fff; }}
+  #jet-toolbar select option {{ color: #111827; }}
+  #jet-toolbar .jet-tool {{
+    width: 28px; height: 28px; display: inline-grid; place-items: center;
+    font: inherit; border: 0; background: transparent; border-radius: 4px; color: #5f6c75;
+    cursor: pointer; padding: 0;
+  }}
+  #jet-toolbar .jet-tool:hover {{ background: #eef5fb; color: #1f2937; }}
+  #jet-toolbar .jet-tool.jet-active-tool {{ background: #e0f3ff; color: var(--jet-storybook-blue); }}
+  #jet-toolbar .jet-tool-wide {{ width: 42px; font-size: 11px; }}
+  #jet-toolbar .jet-tool-select {{ position: relative; width: 28px; height: 28px; display: inline-grid; place-items: center; }}
+  #jet-toolbar .jet-tool-select select {{ position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; }}
+  #jet-toolbar .jet-tool-select span {{ pointer-events: none; color: #5f6c75; }}
   #jet-preview-shell {{
     grid-area: preview; overflow: auto; display: flex; justify-content: center;
     align-items: flex-start; padding: 16px; background: #fff;
@@ -233,19 +516,47 @@ pub fn render_manager_html_with_mode_and_docs(
   .jet-docs-page {{ display: none; max-width: 1120px; }}
   .jet-docs-page.jet-docs-active {{ display: block; }}
   .jet-docs-page h1 {{ margin: 0 0 8px; font-size: 24px; }}
-  .jet-docs-description {{ margin: 0 0 16px; color: #555; max-width: 760px; }}
+  .jet-docs-description {{ margin: 0 0 24px; color: #555; max-width: none; }}
+  .jet-docs-story-description {{ margin: 0 0 24px; color: #2e3438; line-height: 24px; }}
+  .jet-docs-story-description.jet-docs-markdown {{ margin: -8px 0 24px; color: #2e3438; line-height: 24px; }}
+  .jet-docs-story-description.jet-docs-markdown h3 {{ margin: 0 0 16px; font-size: 18px; line-height: 23px; font-weight: 700; }}
+  .jet-docs-story-description.jet-docs-markdown p {{ margin: 0 0 16px; }}
+  .jet-docs-story-description.jet-docs-markdown ol {{ margin: 0 0 16px; padding-left: 24px; }}
+  .jet-docs-story-description.jet-docs-markdown blockquote {{ margin: 0 0 16px; padding: 0 0 0 16px; border-left: 4px solid #d9e8f2; color: #2e3438; }}
+  .jet-docs-description code {{ border: 1px solid #e6edf2; border-radius: 3px; background: #f3f6f8; padding: 2px 5px; color: #2e3438; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
+  .jet-docs-markdown {{ margin: -9px 0 48px; color: #2e3438; font-size: 14px; line-height: 22px; }}
+  .jet-docs-markdown h2 {{ margin: 7px 0 16px; font-size: 28px; line-height: 33px; font-weight: 700; }}
+  .jet-docs-markdown h3 {{ margin: 55px 0 12px; font-size: 18px; line-height: 23px; font-weight: 700; }}
+  .jet-docs-markdown p {{ margin: 0 0 8px; }}
+  .jet-docs-markdown ul {{ margin: 0 0 8px; padding-left: 24px; }}
+  .jet-docs-markdown li {{ margin: 0; line-height: 22px; }}
+  .jet-docs-markdown strong {{ font-weight: 700; }}
   .jet-docs-canvas-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }}
-  .jet-docs-canvas iframe {{ width: 100%; height: 220px; border: 1px solid #e3e3e3; background: #fff; }}
+  .jet-docs-frame iframe {{ width: 100%; height: 220px; border: 1px solid #e3e3e3; background: #fff; }}
+  .jet-docs-page h2.jet-docs-stories-heading {{ margin: 56px 0 12px; color: #73828c; font-size: 12px; line-height: 20px; font-weight: 700; letter-spacing: 0; }}
   .jet-docs-canvas h3 {{ margin: 0 0 6px; font-size: 13px; color: #555; }}
   .jet-docs-argtypes {{ width: 100%; border-collapse: collapse; margin: 12px 0 18px; font-size: 13px; }}
   .jet-docs-argtypes th, .jet-docs-argtypes td {{ border: 1px solid #e3e3e3; padding: 6px 8px; text-align: left; vertical-align: top; }}
   .jet-docs-argtypes code {{ font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
   .jet-diag {{ color: #b00; font-size: 12px; padding: 6px 14px; }}
   #jet-controls {{
-    grid-area: controls; border-top: 1px solid #e3e3e3; background: #fff;
-    overflow-y: auto; padding: 8px 14px; font-size: 13px;
+    grid-area: controls; border-top: 1px solid var(--jet-border); background: #fff;
+    overflow-y: auto; padding: 0 16px 14px; font-size: 13px;
   }}
-  #jet-controls h3 {{ margin: 0 0 8px; font-size: 12px; color: #555; font-weight: 600; }}
+  #jet-panel-tabs {{
+    position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 18px;
+    height: 40px; margin: 0 -16px 12px; padding: 0 16px; border-bottom: 1px solid var(--jet-border);
+    background: #fff;
+  }}
+  #jet-panel-tabs .jet-panel-tab {{
+    height: 40px; display: inline-flex; align-items: center; border: 0; border-bottom: 3px solid transparent;
+    background: transparent; color: #5f6c75; font: inherit; font-weight: 700; font-size: 13px;
+    padding: 0; cursor: pointer;
+  }}
+  #jet-panel-tabs .jet-panel-tab.jet-active-tab {{ color: var(--jet-storybook-blue); border-bottom-color: var(--jet-storybook-blue); }}
+  .jet-panel-page {{ display: none; }}
+  .jet-panel-page.jet-active-panel {{ display: block; }}
+  #jet-controls h3 {{ margin: 14px 0 8px; font-size: 12px; color: #555; font-weight: 700; }}
   #jet-controls h3 button {{ margin-left: 8px; font-size: 11px; }}
   #jet-controls table {{ border-collapse: collapse; width: 100%; }}
   #jet-controls td {{ padding: 4px 8px 4px 0; vertical-align: middle; }}
@@ -279,37 +590,58 @@ pub fn render_manager_html_with_mode_and_docs(
 </head>
 <body>
 <nav id="jet-sidebar" aria-label="Stories">
-  <div class="jet-brand">{brand_title}</div>
-  <input id="jet-search" type="search" placeholder="Search stories" aria-label="Search stories" />
+  <div class="jet-brand"><span class="jet-brand-mark">S</span><span>{brand_title}</span></div>
+  <div id="jet-search-shell">
+    <input id="jet-search" type="search" placeholder="Find components" aria-label="Find components" />
+    <span id="jet-search-shortcut">⌘ K</span>
+  </div>
   {sidebar}
   {diagnostics}
 </nav>
 <header id="jet-toolbar">
   <span id="jet-current-title">{initial_title}</span>
-  <label>Viewport <select id="jet-viewport"></select></label>
-  <label>Background <select id="jet-background"></select></label>
-  <button id="jet-zoom-out" type="button" title="Zoom out">-</button>
-  <button id="jet-zoom-reset" type="button" title="Reset zoom">100%</button>
-  <button id="jet-zoom-in" type="button" title="Zoom in">+</button>
-  <button id="jet-measure-toggle" type="button" title="Measure">Measure</button>
-  <button id="jet-outline-toggle" type="button" title="Outline">Outline</button>
-  <button id="jet-theme-toggle" type="button" title="Toggle theme">Theme</button>
-  <button id="jet-shortcuts-button" type="button" title="Keyboard shortcuts">?</button>
-  <span style="margin-left:auto;color:#777">{story_count} stories</span>
+  <button class="jet-tool" id="jet-zoom-out" type="button" title="Zoom out">−</button>
+  <button class="jet-tool jet-tool-wide" id="jet-zoom-reset" type="button" title="Reset zoom">100%</button>
+  <button class="jet-tool" id="jet-zoom-in" type="button" title="Zoom in">+</button>
+  <span class="jet-tool-select" title="Viewport"><span>▣</span><select id="jet-viewport" aria-label="Viewport"></select></span>
+  <span class="jet-tool-select" title="Background"><span>◐</span><select id="jet-background" aria-label="Background"></select></span>
+  <button class="jet-tool" id="jet-measure-toggle" type="button" title="Measure">⌖</button>
+  <button class="jet-tool" id="jet-outline-toggle" type="button" title="Outline">□</button>
+  <span class="jet-toolbar-spacer"></span>
+  <button class="jet-tool" id="jet-theme-toggle" type="button" title="Toggle theme">◑</button>
+  <button class="jet-tool" id="jet-shortcuts-button" type="button" title="Keyboard shortcuts">?</button>
+  <span style="color:#73828c;font-size:12px">{story_count}</span>
 </header>
 <div id="jet-preview-shell"><iframe id="jet-preview" name="jet-preview" src="{initial_src}"></iframe></div>
 <section id="jet-docs" aria-label="Docs">{docs_pages}</section>
 <section id="jet-controls" aria-label="Controls">
-  <h3>Controls</h3>
-  <div id="jet-controls-body">{controls_panel}</div>
-  <h3>Actions <button id="jet-actions-clear" type="button">Clear</button></h3>
-  <div id="jet-actions-log" aria-live="polite"></div>
-  <h3>Interactions <button id="jet-interactions-clear" type="button">Clear</button></h3>
-  <div id="jet-interactions-log" aria-live="polite"></div>
-  <h3>A11y <button id="jet-a11y-run" type="button">Run</button></h3>
-  <div id="jet-a11y-log" aria-live="polite"></div>
-  <h3>Source <button id="jet-source-copy" type="button">Copy</button></h3>
-  <pre id="jet-source-code"><code></code></pre>
+  <div id="jet-panel-tabs" role="tablist" aria-label="Story panels">
+    <button class="jet-panel-tab jet-active-tab" type="button" data-jet-panel="controls">Controls</button>
+    <button class="jet-panel-tab" type="button" data-jet-panel="actions">Actions</button>
+    <button class="jet-panel-tab" type="button" data-jet-panel="interactions">Interactions</button>
+    <button class="jet-panel-tab" type="button" data-jet-panel="a11y">Accessibility</button>
+    <button class="jet-panel-tab" type="button" data-jet-panel="source">Source</button>
+  </div>
+  <div class="jet-panel-page jet-active-panel" data-jet-panel-page="controls">
+    <h3>Controls</h3>
+    <div id="jet-controls-body">{controls_panel}</div>
+  </div>
+  <div class="jet-panel-page" data-jet-panel-page="actions">
+    <h3>Actions <button id="jet-actions-clear" type="button">Clear</button></h3>
+    <div id="jet-actions-log" aria-live="polite"></div>
+  </div>
+  <div class="jet-panel-page" data-jet-panel-page="interactions">
+    <h3>Interactions <button id="jet-interactions-clear" type="button">Clear</button></h3>
+    <div id="jet-interactions-log" aria-live="polite"></div>
+  </div>
+  <div class="jet-panel-page" data-jet-panel-page="a11y">
+    <h3>A11y <button id="jet-a11y-run" type="button">Run</button></h3>
+    <div id="jet-a11y-log" aria-live="polite"></div>
+  </div>
+  <div class="jet-panel-page" data-jet-panel-page="source">
+    <h3>Source <button id="jet-source-copy" type="button">Copy</button></h3>
+    <pre id="jet-source-code"><code></code></pre>
+  </div>
 </section>
 <div id="jet-shortcuts-overlay" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
   <div class="jet-shortcuts-card">
@@ -347,6 +679,7 @@ pub fn render_manager_html_with_mode_and_docs(
   const zoomInButton = document.getElementById('jet-zoom-in');
   const measureToggle = document.getElementById('jet-measure-toggle');
   const outlineToggle = document.getElementById('jet-outline-toggle');
+  const panelTabs = Array.from(document.querySelectorAll('[data-jet-panel]'));
   const jetToolbarConfigByStory = {toolbar_config_json};
   const jetDefaultToolbarConfig = jetToolbarConfigByStory.__default;
   const jetSourceByStory = {source_panel_json};
@@ -356,6 +689,16 @@ pub fn render_manager_html_with_mode_and_docs(
   if (jetCurrentStoryId) {{
     jetStoryArgs.set(jetCurrentStoryId, {initial_args_json});
     jetHydrateArgsFromUrl(jetCurrentStoryId);
+  }}
+  function jetStoryPath(storyId) {{
+    return '?path=/story/' + encodeURIComponent(storyId || '');
+  }}
+  function jetDocsPath(docsId) {{
+    return '?path=/docs/' + encodeURIComponent(docsId || '');
+  }}
+  function jetSetManagerTitle(title) {{
+    const label = title || 'Storybook';
+    document.title = label === 'Storybook' ? 'Storybook' : label + ' ⋅ Storybook';
   }}
   function jetEscapeHtml(value) {{
     return String(value == null ? '' : value).replace(/[&<>"]/g, (ch) => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}}[ch]));
@@ -403,6 +746,33 @@ pub fn render_manager_html_with_mode_and_docs(
     shortcutsOverlay.classList.toggle('jet-open');
   }}
 
+  function jetSelectPanel(panel) {{
+    panelTabs.forEach((tab) => {{
+      tab.classList.toggle('jet-active-tab', tab.getAttribute('data-jet-panel') === panel);
+    }});
+    document.querySelectorAll('[data-jet-panel-page]').forEach((page) => {{
+      page.classList.toggle('jet-active-panel', page.getAttribute('data-jet-panel-page') === panel);
+    }});
+  }}
+
+  function jetLoadDocsPage(page) {{
+    if (!page) return;
+    page.querySelectorAll('[data-jet-docs-src]').forEach((slot) => {{
+      if (slot.querySelector('iframe')) return;
+      const iframe = document.createElement('iframe');
+      iframe.title = slot.getAttribute('data-jet-docs-title') || 'Story preview';
+      iframe.src = slot.getAttribute('data-jet-docs-src');
+      slot.appendChild(iframe);
+    }});
+  }}
+
+  panelTabs.forEach((tab) => {{
+    tab.addEventListener('click', () => jetSelectPanel(tab.getAttribute('data-jet-panel')));
+  }});
+  document.querySelectorAll('#jet-sidebar .jet-group > span').forEach((groupLabel) => {{
+    groupLabel.addEventListener('click', () => groupLabel.closest('.jet-group').classList.toggle('jet-group-active'));
+  }});
+
   document.querySelectorAll('a.jet-story').forEach((a) => {{
     a.addEventListener('click', (ev) => {{
       ev.preventDefault();
@@ -410,6 +780,9 @@ pub fn render_manager_html_with_mode_and_docs(
       const storyId = a.getAttribute('data-story-id');
       document.querySelectorAll('a.jet-story').forEach((x) => x.classList.remove('jet-active'));
       document.querySelectorAll('a.jet-docs-link').forEach((x) => x.classList.remove('jet-active'));
+      document.querySelectorAll('#jet-sidebar .jet-group').forEach((group) => group.classList.remove('jet-group-active'));
+      const group = a.closest('.jet-group');
+      if (group) group.classList.add('jet-group-active');
       a.classList.add('jet-active');
       jetCurrentStoryId = storyId;
       jetPersistShellState();
@@ -418,7 +791,8 @@ pub fn render_manager_html_with_mode_and_docs(
       jetRenderSource();
       frame.setAttribute('src', a.getAttribute('data-preview'));
       titleEl.textContent = a.getAttribute('data-title');
-      history.replaceState(null, '', '?story=' + encodeURIComponent(storyId));
+      jetSetManagerTitle(a.getAttribute('data-title'));
+      history.replaceState(null, '', jetStoryPath(storyId));
       jetPopulateToolbar();
       jetApplyToolbar();
       jetLoadControls(storyId);
@@ -428,14 +802,22 @@ pub fn render_manager_html_with_mode_and_docs(
     a.addEventListener('click', (ev) => {{
       ev.preventDefault();
       const docsId = a.getAttribute('data-docs-id');
+      window.location.assign(jetDocsPath(docsId));
+      return;
       document.querySelectorAll('a.jet-story, a.jet-docs-link').forEach((x) => x.classList.remove('jet-active'));
+      document.querySelectorAll('#jet-sidebar .jet-group').forEach((group) => group.classList.remove('jet-group-active'));
+      const group = a.closest('.jet-group');
+      if (group) group.classList.add('jet-group-active');
       a.classList.add('jet-active');
       document.querySelectorAll('.jet-docs-page').forEach((page) => {{
-        page.classList.toggle('jet-docs-active', page.getAttribute('data-docs-id') === docsId);
+        const active = page.getAttribute('data-docs-id') === docsId;
+        page.classList.toggle('jet-docs-active', active);
+        if (active) jetLoadDocsPage(page);
       }});
       document.body.classList.add('jet-docs-mode');
       titleEl.textContent = a.getAttribute('data-title') || 'Docs';
-      history.replaceState(null, '', '?docs=' + encodeURIComponent(docsId || ''));
+      jetSetManagerTitle(a.getAttribute('data-title') || 'Docs');
+      history.replaceState(null, '', jetDocsPath(docsId));
     }});
   }});
   searchInput.addEventListener('input', () => jetFilterStories(searchInput.value));
@@ -729,7 +1111,7 @@ pub fn render_manager_html_with_mode_and_docs(
 
   function jetSyncArgsToUrl() {{
     const params = new URLSearchParams(location.search);
-    if (jetCurrentStoryId) params.set('story', jetCurrentStoryId);
+    if (jetCurrentStoryId) params.set('path', '/story/' + jetCurrentStoryId);
     const args = jetCurrentArgs();
     const pairs = Object.keys(args).sort().map((key) =>
       encodeURIComponent(key) + ':' + encodeURIComponent(JSON.stringify(args[key]))
@@ -853,9 +1235,29 @@ pub fn render_manager_html_with_mode_and_docs(
   jetRenderA11y();
   jetRenderSource();
   jetWireControls();
+  function jetStorybookDocsId(docsId) {{
+    if (!docsId) return '';
+    return docsId.startsWith('docs-') ? docsId.slice(5) + '--docs' : docsId;
+  }}
+  function jetFindDocsLink(docsId) {{
+    return Array.from(document.querySelectorAll('a.jet-docs-link')).find((link) => {{
+      const linkDocsId = link.getAttribute('data-docs-id') || '';
+      return linkDocsId === docsId || jetStorybookDocsId(linkDocsId) === docsId;
+    }});
+  }}
   const jetInitialParams = new URLSearchParams(location.search);
+  const jetInitialPath = jetInitialParams.get('path') || '';
+  if (jetInitialPath.startsWith('/docs/')) {{
+    const docsId = decodeURIComponent(jetInitialPath.slice('/docs/'.length));
+    const docsLink = jetFindDocsLink(docsId);
+    if (docsLink) docsLink.click();
+  }} else if (jetInitialPath.startsWith('/story/')) {{
+    const storyId = decodeURIComponent(jetInitialPath.slice('/story/'.length));
+    const storyLink = document.querySelector('a.jet-story[data-story-id="' + CSS.escape(storyId) + '"]');
+    if (storyLink) storyLink.click();
+  }}
   const jetSavedStory = localStorage.getItem('jet-stories-last-story');
-  if (!jetInitialParams.has('story') && !jetInitialParams.has('docs') && jetSavedStory) {{
+  if (!jetInitialParams.has('path') && !jetInitialParams.has('story') && !jetInitialParams.has('docs') && jetSavedStory) {{
     const savedLink = document.querySelector('a.jet-story[data-story-id="' + CSS.escape(jetSavedStory) + '"]');
     if (savedLink) savedLink.click();
   }}
@@ -869,6 +1271,7 @@ pub fn render_manager_html_with_mode_and_docs(
         initial_args_json = initial_args_json,
         toolbar_config_json = toolbar_config_json,
         docs_pages = docs_pages_html,
+        browser_title = escape_html(&initial_browser_title),
         brand_title = escape_html(&brand.title),
         brand_accent = escape_html(&brand.accent),
         source_panel_json = source_panel_json(index),
@@ -915,8 +1318,8 @@ struct ManagerBrandConfig {
 
 fn manager_brand_config(index: &StoryIndex) -> ManagerBrandConfig {
     let mut config = ManagerBrandConfig {
-        title: "jet stories".to_string(),
-        accent: "#4338ca".to_string(),
+        title: "Storybook".to_string(),
+        accent: "#029cfd".to_string(),
     };
     for meta in &index.metas {
         let Some(manager) = object_field(&meta.parameters, "manager") else {
@@ -931,6 +1334,10 @@ fn manager_brand_config(index: &StoryIndex) -> ManagerBrandConfig {
         break;
     }
     config
+}
+
+fn manager_browser_title(story: &StoryEntry) -> String {
+    format!("{} ⋅ Storybook", story_display_title(story))
 }
 
 fn toolbar_config_json(index: &StoryIndex) -> String {
@@ -1523,14 +1930,34 @@ fn render_sidebar(
             .push(story);
     }
 
+    let mut ordered_titles: Vec<String> = docs_pages
+        .iter()
+        .map(|page| page.title.clone())
+        .filter(|title| groups.contains_key(title))
+        .collect();
+    for title in groups.keys() {
+        if !ordered_titles.iter().any(|existing| existing == title) {
+            ordered_titles.push(title.clone());
+        }
+    }
+
     let mut out = String::from("<ul>");
-    for (title, stories) in &groups {
-        out.push_str("<li class=\"jet-group\"><span>");
-        out.push_str(&escape_html(title));
+    for title in ordered_titles {
+        let Some(stories) = groups.get(&title) else {
+            continue;
+        };
+        let group_active = stories.iter().any(|story| story.id == active_id);
+        let group_class = if group_active {
+            "jet-group jet-group-active"
+        } else {
+            "jet-group"
+        };
+        out.push_str(&format!(r#"<li class="{group_class}"><span>"#));
+        out.push_str(&escape_html(&title));
         out.push_str("</span><ul>");
-        if let Some(docs) = docs_pages.iter().find(|page| page.title == *title) {
+        if let Some(docs) = docs_pages.iter().find(|page| page.title == title) {
             out.push_str(&format!(
-                "<li><a class=\"jet-docs-link\" href=\"#docs-{id}\" data-docs-id=\"{id}\" data-title=\"{title} — Docs\">Docs</a></li>",
+                r#"<li><a class="jet-docs-link" href="?path=/docs/{id}" data-docs-id="{id}" data-title="{title} — Docs">Docs</a></li>"#,
                 id = escape_html(&docs.id),
                 title = escape_html(&docs.title),
             ));
@@ -1543,7 +1970,7 @@ fn render_sidebar(
                 ""
             };
             out.push_str(&format!(
-                "<li><a class=\"jet-story{active}\" href=\"{preview}\" target=\"jet-preview\" \
+                "<li><a class=\"jet-story{active}\" href=\"?path=/story/{id}\" \
                  data-preview=\"{preview}\" data-story-id=\"{id}\" data-title=\"{full_title}\">{name}</a></li>",
                 active = active,
                 preview = escape_html(&preview),
@@ -1572,26 +1999,26 @@ fn render_docs_pages(docs_pages: &[DocsPage], mode: UrlMode) -> String {
             continue;
         }
         if !page.description.is_empty() {
-            out.push_str(&format!(
-                "<p class=\"jet-docs-description\">{}</p>",
-                escape_html(&page.description)
-            ));
+            out.push_str(&render_docs_description_block(&page.description));
         }
         if !page.primary_story_id.is_empty() {
             out.push_str("<h2>Primary</h2>");
             out.push_str(&format!(
-                "<iframe title=\"{} primary story\" src=\"{}\"></iframe>",
+                "<div class=\"jet-docs-frame\" data-jet-docs-title=\"{} primary story\" data-jet-docs-src=\"{}\"></div>",
                 escape_html(&page.title),
                 escape_html(&mode.preview_url(&page.primary_story_id)),
             ));
         }
-        out.push_str("<h2>ArgTypes</h2>");
-        out.push_str(&render_docs_argtypes(&page.arg_types));
-        out.push_str("<h2>Stories</h2><div class=\"jet-docs-canvas-grid\">");
+        if !page.arg_types.is_empty() {
+            out.push_str("<h2>ArgTypes</h2>");
+            out.push_str(&render_docs_argtypes(&page.arg_types));
+        }
+        out.push_str("<h2 class=\"jet-docs-stories-heading\">STORIES</h2><div class=\"jet-docs-canvas-grid\">");
         for story in &page.stories {
             out.push_str(&format!(
-                "<section class=\"jet-docs-canvas\"><h3>{name}</h3><iframe title=\"{title} {name}\" src=\"{src}\"></iframe></section>",
+                "<section class=\"jet-docs-canvas\"><h3>{name}</h3>{description}<div class=\"jet-docs-frame\" data-jet-docs-title=\"{title} {name}\" data-jet-docs-src=\"{src}\"></div></section>",
                 name = escape_html(&story.name),
+                description = render_docs_story_description_block(&story.description),
                 title = escape_html(&page.title),
                 src = escape_html(&mode.preview_url(&story.id)),
             ));
@@ -1599,6 +2026,405 @@ fn render_docs_pages(docs_pages: &[DocsPage], mode: UrlMode) -> String {
         out.push_str("</div></article>");
     }
     out
+}
+
+pub fn render_docs_preview_html(page: &DocsPage, mode: UrlMode) -> String {
+    let mut body = String::new();
+    body.push_str(&format!(
+        "<main class=\"jet-docs-preview\"><article class=\"jet-docs-page jet-docs-active\" data-docs-id=\"{id}\"><h1>{title}</h1>",
+        id = escape_html(&page.id),
+        title = escape_html(&page.title),
+    ));
+    if let Some(content_html) = &page.content_html {
+        body.push_str(&render_docs_custom_html(content_html, mode));
+        body.push_str("</article></main>");
+    } else {
+        if !page.description.is_empty() {
+            body.push_str(&render_docs_description_block(&page.description));
+        }
+        if !page.primary_story_id.is_empty() {
+            body.push_str(&render_docs_canvas(
+                &format!("{} primary story", page.title),
+                &mode.preview_url(&page.primary_story_id),
+                true,
+                true,
+            ));
+        }
+        if !page.arg_types.is_empty() {
+            body.push_str(&render_docs_argtypes(&page.arg_types));
+        }
+        body.push_str("<h2 class=\"jet-docs-stories-heading\">STORIES</h2><div class=\"jet-docs-story-list\">");
+        for story in &page.stories {
+            let frame = if story.id == page.primary_story_id {
+                render_docs_primary_clone_canvas(&format!("{} {}", page.title, story.name))
+            } else {
+                render_docs_canvas(
+                    &format!("{} {}", page.title, story.name),
+                    &mode.preview_url(&story.id),
+                    true,
+                    false,
+                )
+            };
+            body.push_str(&format!(
+                r#"<section class="jet-docs-canvas"><h3>{name}</h3>{description}{frame}</section>"#,
+                name = escape_html(&story.name),
+                description = render_docs_story_description_block(&story.description),
+                frame = frame,
+            ));
+        }
+        body.push_str("</div></article></main>");
+    }
+
+    body.push_str(DOCS_LAZY_CANVAS_SCRIPT);
+    body.push_str(&render_docs_storybook_channel_script(&page.id));
+
+    format!(
+        r#"<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{title} — Docs</title>
+<style>
+  * {{ box-sizing: border-box; }}
+  html, body {{ margin: 0; min-height: 100%; }}
+  body {{
+    font-family: "Nunito Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #2e3438; background: #fff; font-size: 14px;
+  }}
+  .jet-docs-preview {{ max-width: 1065px; margin: 0 auto; padding: 64px 32px 64px; }}
+  .jet-docs-page h1 {{ margin: 0 0 25px; font-size: 32px; line-height: 36px; font-weight: 700; letter-spacing: 0; }}
+  .jet-docs-page h2 {{ margin: 56px 0 13px; font-size: 20px; line-height: 20px; font-weight: 700; letter-spacing: 0; }}
+  .jet-docs-page h3 {{ margin: 34px 0 16px; font-size: 18px; line-height: 1.3; color: #2e3438; font-weight: 700; letter-spacing: 0; }}
+  .jet-docs-description {{ margin: 0 0 24px; color: #555; max-width: none; }}
+  .jet-docs-description code {{ border: 1px solid #e6edf2; border-radius: 3px; background: #f3f6f8; padding: 2px 5px; color: #2e3438; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
+  .jet-docs-markdown {{ margin: -9px 0 48px; color: #2e3438; font-size: 14px; line-height: 22px; }}
+  .jet-docs-markdown h2 {{ margin: 7px 0 16px; font-size: 28px; line-height: 33px; font-weight: 700; }}
+  .jet-docs-markdown h3 {{ margin: 55px 0 12px; font-size: 18px; line-height: 23px; font-weight: 700; }}
+  .jet-docs-markdown p {{ margin: 0 0 8px; }}
+  .jet-docs-markdown ul {{ margin: 0 0 8px; padding-left: 24px; }}
+  .jet-docs-markdown li {{ margin: 0; line-height: 22px; }}
+  .jet-docs-markdown strong {{ font-weight: 700; }}
+  .jet-docs-story-list {{ display: flex; flex-direction: column; gap: 39px; }}
+  .jet-docs-preview-card {{ border: 1px solid #d9e8f2; border-radius: 4px; background: #fff; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.04); }}
+  .jet-docs-preview-toolbar {{ height: 40px; border-bottom: 1px solid #d9e8f2; display: flex; align-items: center; gap: 18px; padding: 0 16px; color: #73828c; font-size: 14px; }}
+  .jet-docs-preview-toolbar button {{ width: 14px; height: 14px; border: 0; padding: 0; background: transparent; color: inherit; display: inline-flex; align-items: center; justify-content: center; }}
+  .jet-docs-preview-toolbar svg {{ width: 14px; height: 14px; stroke: currentColor; stroke-width: 1.8; fill: none; stroke-linecap: round; stroke-linejoin: round; }}
+  .jet-docs-frame {{ position: relative; min-height: 102px; }}
+  .jet-docs-frame iframe {{ width: 100%; height: 102px; border: 0; background: #fff; display: block; }}
+  .jet-docs-frame iframe.jet-docs-mirrored-source {{ display: none; }}
+  .jet-docs-inline-mirror {{ min-height: 102px; padding: 40px 30px 16px; background: #fff; box-sizing: border-box; }}
+  .jet-docs-inline-mirror.jet-docs-inline-mirror-fullscreen {{ min-height: 0; padding: 0; overflow: hidden; }}
+  .jet-docs-inline-mirror.jet-docs-inline-mirror-interactive {{ min-height: 108px; }}
+  .jet-docs-inline-mirror:empty {{ display: none; }}
+  .jet-docs-show-code {{ position: absolute; right: 0; bottom: 0; height: 26px; padding: 0 12px; border: 1px solid #d9e8f2; border-right: 0; border-bottom: 0; border-radius: 4px 0 0 0; background: #fff; color: #2e3438; font: inherit; font-weight: 700; font-size: 12px; }}
+  .jet-docs-argtypes {{ width: 100%; border-collapse: collapse; margin: 40px 0 0; font-size: 13px; }}
+  .jet-docs-argtypes th {{ padding: 10px 20px 12px; border-bottom: 1px solid #d9e8f2; color: #5f6c75; font-weight: 700; text-align: left; }}
+  .jet-docs-argtypes td {{ border-top: 1px solid #d9e8f2; border-bottom: 1px solid #d9e8f2; padding: 12px 20px; text-align: left; vertical-align: top; }}
+  .jet-docs-argtypes tr.jet-docs-arg-with-description td {{ padding-top: 26.5px; padding-bottom: 26.5px; }}
+  .jet-docs-argtypes tr.jet-docs-arg-with-options td {{ padding-top: 20px; padding-bottom: 20px; }}
+  .jet-docs-argtypes td:first-child {{ width: 24%; font-weight: 700; }}
+  .jet-docs-argtypes td:nth-child(2) {{ width: 35%; color: #5f6c75; }}
+  .jet-docs-argtypes td:nth-child(3) {{ width: 15%; }}
+  .jet-docs-pill {{ display: inline-block; padding: 2px 5px; border-radius: 3px; background: #f3f6f8; color: #2e3438; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
+  .jet-docs-control-list {{ display: grid; gap: 8px; }}
+  .jet-docs-control-list label {{ display: inline-flex; align-items: center; gap: 7px; font-size: 13px; }}
+  .jet-docs-boolean {{ display: inline-flex; border-radius: 14px; background: #eef3f7; padding: 2px; color: #73828c; font-weight: 700; font-size: 12px; }}
+  .jet-docs-boolean span {{ min-width: 48px; text-align: center; border-radius: 12px; padding: 5px 9px; }}
+  .jet-docs-boolean .jet-docs-active-control {{ background: #fff; color: #2e3438; box-shadow: 0 0 0 1px #d9e8f2; }}
+  .jet-docs-control-button {{ min-height: 32px; padding: 6px 10px; border: 1px solid #d9e8f2; border-radius: 4px; background: #fff; color: #73828c; font: inherit; text-align: left; }}
+  .jet-docs-control-textarea {{ width: 100%; min-height: 34px; resize: vertical; padding: 7px 9px; border: 1px solid #d9e8f2; border-radius: 4px; font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
+  .jet-docs-argtypes code {{ font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
+  .jet-no-controls {{ color: #73828c; }}
+  .jet-docs-page h2.jet-docs-stories-heading {{ margin: 56px 0 12px; color: #73828c; font-size: 12px; line-height: 20px; font-weight: 700; letter-spacing: 0; }}
+  .jet-docs-canvas h3 {{ margin: 0 0 16px; }}
+</style>
+</head>
+<body>{body}</body>
+</html>"#,
+        title = escape_html(&page.title),
+        body = body,
+    )
+}
+
+const DOCS_CANVAS_TOOLBAR: &str = r#"<button type="button" aria-label="Zoom in" tabindex="-1"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6.5" cy="6.5" r="4"></circle><path d="M9.5 9.5 13 13"></path><path d="M6.5 4.5v4"></path><path d="M4.5 6.5h4"></path></svg></button><button type="button" aria-label="Zoom out" tabindex="-1"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6.5" cy="6.5" r="4"></circle><path d="M9.5 9.5 13 13"></path><path d="M4.5 6.5h4"></path></svg></button><button type="button" aria-label="Reset zoom" tabindex="-1"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 5.5a5 5 0 1 1-.5 5"></path><path d="M4 2.5v3h3"></path></svg></button>"#;
+const DOCS_LAZY_CANVAS_SCRIPT: &str = r#"<script>
+(() => {
+  const frames = Array.from(document.querySelectorAll('iframe[data-jet-src]'));
+  const pending = [];
+  let active = false;
+
+  const storyStatus = (frame) => {
+    try {
+      return frame.contentWindow && frame.contentWindow.__jetStoryTestStatus;
+    } catch (_) {
+      return null;
+    }
+  };
+
+  const mirrorStylesFrom = (sourceDoc) => {
+    if (!sourceDoc || !sourceDoc.head) return;
+    for (const node of Array.from(sourceDoc.head.children)) {
+      const isStyle = node.tagName === 'STYLE';
+      const isStylesheet = node.tagName === 'LINK' && node.rel === 'stylesheet';
+      if (!isStyle && !isStylesheet) continue;
+      const text = isStyle ? (node.textContent || '') : '';
+      if (text.includes('#storybook-root') || text.includes('html, body')) continue;
+      const key = isStylesheet ? ('href:' + node.href) : ('style:' + text.slice(0, 240));
+      if (!key || document.head.querySelector(`[data-jet-docs-mirror-style="${CSS.escape(key)}"]`)) continue;
+      const clone = node.cloneNode(true);
+      clone.setAttribute('data-jet-docs-mirror-style', key);
+      if (isStylesheet && node.href) clone.href = node.href;
+      document.head.appendChild(clone);
+    }
+  };
+
+  const mirrorFrame = (frame) => {
+    let sourceDoc;
+    try {
+      sourceDoc = frame.contentDocument;
+    } catch (_) {
+      return false;
+    }
+    const root = sourceDoc && sourceDoc.querySelector('#storybook-root');
+    if (!root || !root.innerHTML.trim()) return false;
+    const frameShell = frame.closest('.jet-docs-frame');
+    if (!frameShell) return false;
+    const sourceHtml = root.innerHTML;
+    let mirror = frameShell.querySelector('.jet-docs-inline-mirror');
+    if (!mirror) {
+      mirror = document.createElement('div');
+      mirror.className = 'jet-docs-inline-mirror';
+      frameShell.insertBefore(mirror, frame);
+    }
+    if (mirror.dataset.jetMirrorSignature !== sourceHtml) {
+      mirror.innerHTML = sourceHtml;
+      mirror.dataset.jetMirrorSignature = sourceHtml;
+    }
+    mirrorStylesFrom(sourceDoc);
+    mirror.classList.toggle('jet-docs-inline-mirror-interactive', !!mirror.querySelector('button,input,select,textarea,[role="button"]'));
+    mirror.classList.toggle('jet-docs-inline-mirror-fullscreen', sourceDoc.body && sourceDoc.body.classList.contains('sb-main-fullscreen'));
+    const hasVisibleContent = mirror.innerText.trim() || mirror.querySelector('button,input,select,textarea,svg,img,canvas,[role]');
+    if (hasVisibleContent) {
+      frame.classList.add('jet-docs-mirrored-source');
+      return true;
+    }
+    frame.classList.remove('jet-docs-mirrored-source');
+    return false;
+  };
+
+  const refreshMirrorSoon = (frame) => {
+    for (const delay of [0, 50, 120, 250, 500, 1000, 2000, 4000]) {
+      setTimeout(() => {
+        mirrorFrame(frame);
+        copyPrimaryClones();
+      }, delay);
+    }
+  };
+
+  const copyPrimaryClones = () => {
+    const primary = document.querySelector('iframe[data-jet-primary-story]');
+    const clones = Array.from(document.querySelectorAll('iframe[data-jet-clone-primary]'));
+    if (!primary || !clones.length) return;
+    let sourceDoc;
+    try {
+      sourceDoc = primary.contentDocument;
+    } catch (_) {
+      return;
+    }
+    const root = sourceDoc && sourceDoc.querySelector('#storybook-root');
+    if (!root || !root.innerHTML.trim()) return;
+    mirrorFrame(primary);
+    const sourceHtml = root.innerHTML;
+    const headHtml = Array.from(sourceDoc.head ? sourceDoc.head.children : [])
+      .filter((node) => node.tagName === 'STYLE' || (node.tagName === 'LINK' && node.rel === 'stylesheet'))
+      .map((node) => node.outerHTML)
+      .join('');
+    const bodyClass = sourceDoc.body ? sourceDoc.body.className : '';
+    const html = '<!doctype html><html><head><meta charset="utf-8">' + headHtml + '</head><body class="' + bodyClass.replace(/"/g, '&quot;') + '"><div id="storybook-root">' + sourceHtml + '</div></body></html>';
+    for (const clone of clones) {
+      if (clone.dataset.jetCloneSignature === sourceHtml) continue;
+      const cloneDoc = clone.contentDocument;
+      if (!cloneDoc) continue;
+      cloneDoc.open();
+      cloneDoc.write(html);
+      cloneDoc.close();
+      clone.dataset.jetCloned = 'true';
+      clone.dataset.jetCloneSignature = sourceHtml;
+      mirrorFrame(clone);
+    }
+  };
+
+  const waitForStorySettled = (frame, done) => {
+    const startedAt = Date.now();
+    const poll = () => {
+      const status = storyStatus(frame);
+      if (status && (status.render === 'pass' || status.render === 'fail')) {
+        mirrorFrame(frame);
+        refreshMirrorSoon(frame);
+        copyPrimaryClones();
+        done(true);
+        return;
+      }
+      if (Date.now() - startedAt > 30000) {
+        done(false);
+        return;
+      }
+      setTimeout(poll, 120);
+    };
+    poll();
+  };
+
+  const loadNext = () => {
+    if (active) return;
+    const frame = pending.shift();
+    if (!frame) return;
+    if (frame.getAttribute('src')) {
+      loadNext();
+      return;
+    }
+    active = true;
+    const done = (settled = false) => {
+      if (!active) return;
+      active = false;
+      if (!settled && !storyStatus(frame)) {
+        refreshMirrorSoon(frame);
+      }
+      setTimeout(loadNext, 160);
+    };
+    frame.addEventListener('load', () => waitForStorySettled(frame, done), { once: true });
+    setTimeout(() => done(false), 30000);
+    frame.setAttribute('src', frame.dataset.jetSrc || "");
+  };
+
+  const enqueue = (frame) => {
+    if (frame.dataset.jetQueued === 'true' || frame.getAttribute('src')) return;
+    frame.dataset.jetQueued = 'true';
+    frame.loading = 'eager';
+    frame.removeAttribute('loading');
+    pending.push(frame);
+    loadNext();
+  };
+
+  const nearViewport = (frame) => {
+    const rect = frame.getBoundingClientRect();
+    return rect.top < window.innerHeight + 320 && rect.bottom > -320;
+  };
+
+  frames.forEach((frame) => {
+    if (!frame.getAttribute('src')) return;
+    frame.dataset.jetQueued = 'true';
+    frame.addEventListener('load', () => waitForStorySettled(frame, () => {}));
+    waitForStorySettled(frame, () => {});
+  });
+
+  const activateVisibleFrames = () => frames.forEach((frame) => {
+    if (nearViewport(frame)) enqueue(frame);
+  });
+
+  if ('IntersectionObserver' in window) {
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        enqueue(entry.target);
+        observer.unobserve(entry.target);
+      }
+    }, { rootMargin: "320px 0px" });
+    frames.forEach((frame) => {
+      if (nearViewport(frame)) enqueue(frame);
+      else observer.observe(frame);
+    });
+    window.addEventListener('scroll', activateVisibleFrames, { passive: true });
+    window.addEventListener('resize', activateVisibleFrames);
+  } else {
+    frames.forEach(enqueue);
+  }
+  frames.forEach((frame, index) => setTimeout(() => enqueue(frame), 300 + index * 900));
+  for (const delay of [50, 120, 250, 500, 1000, 2000, 4000, 7000, 12000, 20000]) setTimeout(copyPrimaryClones, delay);
+})();
+</script>"#;
+
+fn render_docs_storybook_channel_script(docs_id: &str) -> String {
+    let docs_id = escape_js(docs_id);
+    format!(
+        r#"<script>
+(() => {{
+  const docsId = "{docs_id}";
+  function post(type, args) {{
+    try {{
+      parent.postMessage(JSON.stringify({{
+        key: "storybook-channel",
+        event: {{ type, args, from: "jet-docs-preview" }},
+        refId: null,
+      }}), "*");
+    }} catch (_) {{}}
+  }}
+  function terminal() {{
+    post("currentStoryWasSet", [{{ id: docsId, storyId: docsId, viewMode: "docs" }}]);
+    post("storyRenderPhaseChanged", [{{ newPhase: "completed", storyId: docsId }}]);
+    post("docsRendered", [docsId]);
+    post("storyRendered", [docsId]);
+    post("storyRenderPhaseChanged", [{{ newPhase: "finished", storyId: docsId }}]);
+    post("storyFinished", [{{ storyId: docsId, status: "success", reporters: [] }}]);
+  }}
+  if (document.readyState === "loading") {{
+    document.addEventListener("DOMContentLoaded", terminal, {{ once: true }});
+  }} else {{
+    terminal();
+  }}
+  for (const delay of [50, 100, 250, 500, 1000, 2000]) setTimeout(terminal, delay);
+}})();
+</script>"#,
+        docs_id = docs_id,
+    )
+}
+
+fn render_docs_canvas(title: &str, src: &str, lazy: bool, primary: bool) -> String {
+    let primary_attr = if primary {
+        r#" data-jet-primary-story="true""#
+    } else {
+        ""
+    };
+    let frame_attrs = if lazy {
+        format!(
+            r#"title="{}" data-jet-src="{}" loading="lazy"{}"#,
+            escape_html(title),
+            escape_html(src),
+            primary_attr,
+        )
+    } else {
+        format!(
+            r#"title="{}" src="{}"{}"#,
+            escape_html(title),
+            escape_html(src),
+            primary_attr,
+        )
+    };
+    render_docs_canvas_frame(&frame_attrs, primary)
+}
+
+fn render_docs_primary_clone_canvas(title: &str) -> String {
+    let frame_attrs = format!(
+        r#"title="{}" data-jet-clone-primary="true""#,
+        escape_html(title),
+    );
+    render_docs_canvas_frame(&frame_attrs, false)
+}
+
+fn render_docs_canvas_frame(frame_attrs: &str, toolbar: bool) -> String {
+    let toolbar_html = if toolbar {
+        format!(
+            r#"<div class="jet-docs-preview-toolbar">{}</div>"#,
+            DOCS_CANVAS_TOOLBAR
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        r#"<div class="jet-docs-preview-card">{toolbar_html}<div class="jet-docs-frame"><iframe {frame_attrs}></iframe><button class="jet-docs-show-code" type="button">Show code</button></div></div>"#,
+        toolbar_html = toolbar_html,
+        frame_attrs = frame_attrs,
+    )
 }
 
 fn render_docs_custom_html(content_html: &str, mode: UrlMode) -> String {
@@ -1619,24 +2445,335 @@ fn render_docs_custom_html(content_html: &str, mode: UrlMode) -> String {
     out
 }
 
+fn render_docs_description_block(text: &str) -> String {
+    if docs_description_looks_like_markdown(text) {
+        return render_docs_markdown_with_class(text, "jet-docs-description jet-docs-markdown");
+    }
+    format!(
+        "<p class=\"jet-docs-description\">{}</p>",
+        render_docs_inline_text(text)
+    )
+}
+
+fn render_docs_story_description_block(text: &str) -> String {
+    if text.trim().is_empty() {
+        return String::new();
+    }
+    if docs_description_looks_like_markdown(text) {
+        return render_docs_markdown_with_class(
+            text,
+            "jet-docs-story-description jet-docs-markdown",
+        );
+    }
+    format!(
+        "<p class=\"jet-docs-story-description\">{}</p>",
+        render_docs_inline_text(text)
+    )
+}
+
+fn docs_description_looks_like_markdown(text: &str) -> bool {
+    text.lines().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with("# ")
+            || trimmed.starts_with("## ")
+            || trimmed.starts_with("### ")
+            || trimmed.starts_with("- ")
+            || trimmed.starts_with("* ")
+            || trimmed.starts_with("> ")
+            || docs_ordered_list_item(trimmed).is_some()
+    })
+}
+
+fn render_docs_markdown_with_class(text: &str, class_name: &str) -> String {
+    let mut out = format!("<div class=\"{}\">", class_name);
+    let mut paragraph: Vec<String> = Vec::new();
+    let mut in_list = false;
+    let mut in_ordered_list = false;
+
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            flush_docs_markdown_paragraph(&mut out, &mut paragraph);
+            close_docs_markdown_list(&mut out, &mut in_list);
+            close_docs_markdown_ordered_list(&mut out, &mut in_ordered_list);
+            continue;
+        }
+
+        if let Some((level, heading)) = docs_markdown_heading(line) {
+            flush_docs_markdown_paragraph(&mut out, &mut paragraph);
+            close_docs_markdown_list(&mut out, &mut in_list);
+            close_docs_markdown_ordered_list(&mut out, &mut in_ordered_list);
+            out.push_str(&format!(
+                "<h{level}>{}</h{level}>",
+                render_docs_inline_text(heading.trim())
+            ));
+            continue;
+        }
+
+        if let Some(item) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
+            flush_docs_markdown_paragraph(&mut out, &mut paragraph);
+            close_docs_markdown_ordered_list(&mut out, &mut in_ordered_list);
+            if !in_list {
+                out.push_str("<ul>");
+                in_list = true;
+            }
+            out.push_str("<li>");
+            out.push_str(&render_docs_inline_markdown(item.trim()));
+            out.push_str("</li>");
+            continue;
+        }
+
+        if let Some(item) = docs_ordered_list_item(line) {
+            flush_docs_markdown_paragraph(&mut out, &mut paragraph);
+            close_docs_markdown_list(&mut out, &mut in_list);
+            if !in_ordered_list {
+                out.push_str("<ol>");
+                in_ordered_list = true;
+            }
+            out.push_str("<li>");
+            out.push_str(&render_docs_inline_markdown(item.trim()));
+            out.push_str("</li>");
+            continue;
+        }
+
+        if let Some(quote) = line.strip_prefix("> ") {
+            flush_docs_markdown_paragraph(&mut out, &mut paragraph);
+            close_docs_markdown_list(&mut out, &mut in_list);
+            close_docs_markdown_ordered_list(&mut out, &mut in_ordered_list);
+            out.push_str("<blockquote>");
+            out.push_str(&render_docs_inline_markdown(quote.trim()));
+            out.push_str("</blockquote>");
+            continue;
+        }
+
+        close_docs_markdown_list(&mut out, &mut in_list);
+        close_docs_markdown_ordered_list(&mut out, &mut in_ordered_list);
+        paragraph.push(line.to_string());
+    }
+
+    flush_docs_markdown_paragraph(&mut out, &mut paragraph);
+    close_docs_markdown_list(&mut out, &mut in_list);
+    close_docs_markdown_ordered_list(&mut out, &mut in_ordered_list);
+    out.push_str("</div>");
+    out
+}
+
+fn docs_ordered_list_item(line: &str) -> Option<&str> {
+    let (number, rest) = line.split_once('.')?;
+    if number.is_empty() || !number.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    let rest = rest.trim_start();
+    (!rest.is_empty()).then_some(rest)
+}
+
+fn docs_markdown_heading(line: &str) -> Option<(u8, &str)> {
+    if let Some(rest) = line.strip_prefix("### ") {
+        return Some((3, rest));
+    }
+    if let Some(rest) = line.strip_prefix("## ") {
+        return Some((2, rest));
+    }
+    if let Some(rest) = line.strip_prefix("# ") {
+        return Some((2, rest));
+    }
+    None
+}
+
+fn flush_docs_markdown_paragraph(out: &mut String, paragraph: &mut Vec<String>) {
+    if paragraph.is_empty() {
+        return;
+    }
+    out.push_str("<p>");
+    out.push_str(&render_docs_inline_markdown(&paragraph.join(" ")));
+    out.push_str("</p>");
+    paragraph.clear();
+}
+
+fn close_docs_markdown_list(out: &mut String, in_list: &mut bool) {
+    if *in_list {
+        out.push_str("</ul>");
+        *in_list = false;
+    }
+}
+
+fn close_docs_markdown_ordered_list(out: &mut String, in_list: &mut bool) {
+    if *in_list {
+        out.push_str("</ol>");
+        *in_list = false;
+    }
+}
+
+fn render_docs_inline_markdown(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("**") {
+        out.push_str(&render_docs_inline_text(&rest[..start]));
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("**") else {
+            out.push_str(&render_docs_inline_text(&rest[start..]));
+            return out;
+        };
+        out.push_str("<strong>");
+        out.push_str(&render_docs_inline_text(&after[..end]));
+        out.push_str("</strong>");
+        rest = &after[end + 2..];
+    }
+    out.push_str(&render_docs_inline_text(rest));
+    out
+}
+
+fn render_docs_inline_text(text: &str) -> String {
+    let mut out = String::new();
+    for (idx, part) in text.split('`').enumerate() {
+        if idx % 2 == 0 {
+            out.push_str(&escape_html(part));
+        } else {
+            out.push_str("<code>");
+            out.push_str(&escape_html(part));
+            out.push_str("</code>");
+        }
+    }
+    out
+}
+
 fn render_docs_argtypes(arg_types: &[DocsArgType]) -> String {
     if arg_types.is_empty() {
         return "<p class=\"jet-no-controls\">No props extracted.</p>".to_string();
     }
     let mut out = String::from(
-        "<table class=\"jet-docs-argtypes\"><thead><tr><th>Name</th><th>Type</th><th>Default</th><th>Description</th></tr></thead><tbody>",
+        "<table class=\"jet-docs-argtypes\"><thead><tr><th>Name</th><th>Description</th><th>Default</th><th>Control</th></tr></thead><tbody>",
     );
     for arg in arg_types {
+        let row_class = docs_arg_type_row_class(arg);
         out.push_str(&format!(
-            "<tr><td>{name}</td><td><code>{type_text}</code></td><td>{default}</td><td>{description}</td></tr>",
+            "<tr{row_class}><td>{name}</td><td>{description}{type_text}</td><td>{default}</td><td>{control}</td></tr>",
+            row_class = row_class,
             name = escape_html(&arg.name),
-            type_text = escape_html(&arg.type_text),
-            default = escape_html(arg.default_value.as_deref().unwrap_or("")),
-            description = escape_html(&arg.description),
+            description = render_docs_description(&arg.description),
+            type_text = render_docs_type_summary(&arg.type_text),
+            default = render_docs_default(arg.default_value.as_deref()),
+            control = render_docs_control(arg),
         ));
     }
     out.push_str("</tbody></table>");
     out
+}
+
+fn docs_arg_type_row_class(arg: &DocsArgType) -> &'static str {
+    if !arg.description.trim().is_empty() {
+        return " class=\"jet-docs-arg-with-description\"";
+    }
+    if arg.control_options.len() > 2 {
+        return " class=\"jet-docs-arg-with-options\"";
+    }
+    ""
+}
+
+fn render_docs_description(description: &str) -> String {
+    if description.is_empty() {
+        return String::new();
+    }
+    format!(
+        "<div class=\"jet-docs-description-cell\">{}</div>",
+        escape_html(description)
+    )
+}
+
+fn render_docs_type_summary(type_text: &str) -> String {
+    let summary = docs_type_summary(type_text);
+    if summary.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<span class=\"jet-docs-pill\">{}</span>",
+            escape_html(&summary)
+        )
+    }
+}
+
+fn docs_type_summary(type_text: &str) -> String {
+    let ty = type_text.trim();
+    if ty.is_empty() {
+        return String::new();
+    }
+    if ty.contains('|') {
+        return "union".to_string();
+    }
+    ty.trim_start_matches("React.")
+        .replace("<HTMLButtonElement>", "")
+        .replace('<', "")
+        .replace('>', "")
+}
+
+fn render_docs_default(value: Option<&str>) -> String {
+    let Some(value) = value else {
+        return "-".to_string();
+    };
+    if value.is_empty() {
+        "-".to_string()
+    } else {
+        format!(
+            "<span class=\"jet-docs-pill\">{}</span>",
+            escape_html(value)
+        )
+    }
+}
+
+fn render_docs_control(arg: &DocsArgType) -> String {
+    match arg.control_kind.as_deref() {
+        Some("boolean") => {
+            let current = arg.control_current.as_deref().unwrap_or("false");
+            let false_class = if current == "false" {
+                " class=\"jet-docs-active-control\""
+            } else {
+                ""
+            };
+            let true_class = if current == "true" {
+                " class=\"jet-docs-active-control\""
+            } else {
+                ""
+            };
+            format!("<span class=\"jet-docs-boolean\"><span{false_class}>False</span><span{true_class}>True</span></span>")
+        }
+        Some("radio") | Some("select") => {
+            let current = arg.control_current.as_deref().unwrap_or("");
+            let mut out = String::from("<div class=\"jet-docs-control-list\">");
+            for option in &arg.control_options {
+                let checked = if option == current { " checked" } else { "" };
+                out.push_str(&format!(
+                    "<label><input type=\"radio\" disabled{checked}> {}</label>",
+                    escape_html(option)
+                ));
+            }
+            out.push_str("</div>");
+            out
+        }
+        Some("text") => {
+            let Some(current) = arg.control_current.as_deref() else {
+                return "<button class=\"jet-docs-control-button\" type=\"button\">Set string</button>".to_string();
+            };
+            let value = json_string(current);
+            format!(
+                "<textarea class=\"jet-docs-control-textarea\" disabled>{}</textarea>",
+                escape_html(&value)
+            )
+        }
+        Some("action") => "<span class=\"jet-docs-pill\">action</span>".to_string(),
+        Some("object") => {
+            "<button class=\"jet-docs-control-button\" type=\"button\">Set object</button>"
+                .to_string()
+        }
+        Some("number") => {
+            "<button class=\"jet-docs-control-button\" type=\"button\">Set number</button>"
+                .to_string()
+        }
+        Some("file") => {
+            "<button class=\"jet-docs-control-button\" type=\"button\">Choose file</button>"
+                .to_string()
+        }
+        _ => String::new(),
+    }
 }
 
 /// Render per-file diagnostics (parse errors etc.) so the user sees broken
@@ -1680,8 +2817,8 @@ fn story_display_title(story: &StoryEntry) -> String {
 ///   4. picks the story's named export and renders it — honoring a custom
 ///      `render` function when the story declares one, otherwise mounting the
 ///      meta `component` (or the export value treated as a component),
-///   5. mounts the result into a single `#jet-root` div with no surrounding app
-///      shell, router, or providers.
+///   5. mounts the result into Storybook's canonical `#storybook-root` preview
+///      root with no surrounding app router/shell.
 pub fn render_preview_html(story: &StoryEntry, module_url: &str) -> String {
     render_preview_html_with_mode(story, module_url, UrlMode::Dev)
 }
@@ -1711,7 +2848,51 @@ pub fn render_preview_html_with_project_preview(
     mode: UrlMode,
     project_preview_url: Option<&str>,
 ) -> String {
+    render_preview_html_with_project_preview_and_actions(
+        story,
+        module_url,
+        mode,
+        project_preview_url,
+        &[],
+    )
+}
+
+/// Render preview HTML with inferred action arg names from the project component
+/// prop surface. These names mirror Storybook's `actions.argTypesRegex` path:
+/// when a story has an `onXxx` prop but no explicit arg value, Storybook
+/// supplies an implicit action handler.
+pub fn render_preview_html_with_project_preview_and_actions(
+    story: &StoryEntry,
+    module_url: &str,
+    mode: UrlMode,
+    project_preview_url: Option<&str>,
+    inferred_action_arg_names: &[String],
+) -> String {
+    render_preview_html_with_project_preview_actions_and_controls(
+        story,
+        module_url,
+        mode,
+        project_preview_url,
+        inferred_action_arg_names,
+        &[],
+    )
+}
+
+/// Render preview HTML with inferred Storybook manager metadata from Jet's
+/// server-side Controls resolver. Official Storybook's manager reads rows for
+/// the Controls addon from `storyPrepared.argTypes`, while Jet still owns the
+/// actual story transform and iframe render path.
+pub fn render_preview_html_with_project_preview_actions_and_controls(
+    story: &StoryEntry,
+    module_url: &str,
+    mode: UrlMode,
+    project_preview_url: Option<&str>,
+    inferred_action_arg_names: &[String],
+    controls: &[Control],
+) -> String {
     let args_json = args_to_json(&story.args);
+    let arg_types_json = controls_to_storybook_arg_types_json(controls);
+    let inferred_action_args_json = string_array_to_json(inferred_action_arg_names);
     // B2b/#176: the HMR client lives ONLY in the preview frame, so an edit
     // hot-updates the iframe while the manager shell stays put. The static
     // export has no server to talk to, so it ships no HMR client.
@@ -1758,7 +2939,7 @@ pub fn render_preview_html_with_project_preview(
     };
     let project_preview_setup = match project_preview_url {
         Some(url) => format!(
-            "  import * as ProjectPreview from \"{}\";\n",
+            "  import * as ProjectPreviewModule from \"{}\";\n  const ProjectPreview = ProjectPreviewModule.default || ProjectPreviewModule;\n",
             escape_js(url)
         ),
         None => "  const ProjectPreview = {};\n".to_string(),
@@ -1770,6 +2951,15 @@ pub fn render_preview_html_with_project_preview(
 <head>
 <meta charset="utf-8" />
 <title>{title}</title>
+<script>
+if (typeof globalThis.process === "undefined") {{
+  globalThis.process = {{ env: {{ NODE_ENV: "development" }} }};
+}} else if (!globalThis.process.env) {{
+  globalThis.process.env = {{ NODE_ENV: "development" }};
+}} else if (!globalThis.process.env.NODE_ENV) {{
+  globalThis.process.env.NODE_ENV = "development";
+}}
+</script>
 <script type="importmap">
 {{
   "imports": {{
@@ -1778,20 +2968,90 @@ pub fn render_preview_html_with_project_preview(
     "react-dom/client": "https://esm.sh/react-dom@18/client",
     "react/jsx-runtime": "https://esm.sh/react@18/jsx-runtime",
     "axe-core": "https://esm.sh/axe-core@4.10.3",
+    "@storybook/global": "data:text/javascript,const%20g%3DglobalThis%3Bconst%20w%3Dg.window%7C%7Cg%3Bconst%20d%3Dw.document%3Bconst%20n%3Dw.navigator%3Bexport%20%7Bg%20as%20global%2Cw%20as%20window%2Cd%20as%20document%2Cn%20as%20navigator%7D%3Bexport%20default%20g%3B",
+    "@storybook/preview-api": "data:text/javascript,export%20function%20useArgs()%7Bconst%20hook%3DglobalThis.__jetStoryUseArgs%3Bif(hook)return%20hook()%3Breturn%20%5B%7B%7D%2C()%3D%3E%7B%7D%5D%3B%7D%0Aexport%20function%20useGlobals()%7Breturn%20%5B%7B%7D%2C()%3D%3E%7B%7D%5D%3B%7D%0Aexport%20function%20useParameter(name%2CdefaultValue)%7Breturn%20defaultValue%3B%7D%0Aexport%20default%20%7BuseArgs%2CuseGlobals%2CuseParameter%7D%3B%0A",
+    "@storybook/instrumenter": "data:text/javascript,export%20function%20instrument(v)%7Breturn%20v%3B%7Dexport%20function%20intercept(v)%7Breturn%20v%3B%7Dexport%20function%20addArgs()%7B%7Dexport%20function%20addMocks()%7B%7Dexport%20function%20getInstrumenter()%7Breturn%20%7Binstrument%2Cintercept%2Ctrack%3A()%3D%3E%7B%7D%2Ccleanup%3A()%3D%3E%7B%7D%7D%3B%7Dexport%20default%20%7Binstrument%2Cintercept%2CaddArgs%2CaddMocks%2CgetInstrumenter%7D%3B",
     "@storybook/addon-actions": "data:text/javascript,export%20const%20action%3DglobalThis.__jetStoryActionShim%7C%7C((name)%3D%3E(...args)%3D%3Econsole.log(name%2Cargs))%3Bexport%20default%20%7B%20action%20%7D%3B",
     "@storybook/test": "data:text/javascript,export%20function%20fn(impl%3D()%3D%3Eundefined)%7Bconst%20mock%3D(...args)%3D%3E%7Bmock.mock.calls.push(args)%3Breturn%20impl(...args)%7D%3Bmock.mock%3D%7Bcalls%3A%5B%5D%7D%3Breturn%20mock%3B%7D%0Afunction%20textOf(n)%7Breturn%20(n%26%26n.textContent)%7C%7C%22%22%3B%7D%0Afunction%20byText(root%2Ctext)%7Bconst%20wanted%3DString(text)%3Bconst%20nodes%3D%5Broot%2C...root.querySelectorAll(%22*%22)%5D%3Bconst%20found%3Dnodes.find((n)%3D%3EtextOf(n).includes(wanted))%3Bif(!found)throw%20new%20Error(%22Unable%20to%20find%20text%3A%20%22%2Bwanted)%3Breturn%20found%3B%7D%0Aexport%20function%20within(root)%7Breturn%20%7BgetByText%3A(text)%3D%3EbyText(root%2Ctext)%2CqueryByText%3A(text)%3D%3E%7Btry%7Breturn%20byText(root%2Ctext)%7Dcatch(_)%7Breturn%20null%7D%7D%2CgetByRole%3A(role)%3D%3E%7Bconst%20found%3Droot.querySelector(%22%5Brole%3D%5C%22%22%2Brole%2B%22%5C%22%5D%22)%3Bif(!found)throw%20new%20Error(%22Unable%20to%20find%20role%3A%20%22%2Brole)%3Breturn%20found%7D%7D%3B%7D%0Aexport%20const%20userEvent%3D%7Bclick%3Aasync(el)%3D%3E%7Bel.click()%3B%7D%2Ctype%3Aasync(el%2Ctext)%3D%3E%7Bel.focus%26%26el.focus()%3Bel.value%3D(el.value%7C%7C%22%22)%2Btext%3Bel.dispatchEvent(new%20Event(%22input%22%2C%7Bbubbles%3Atrue%7D))%3Bel.dispatchEvent(new%20Event(%22change%22%2C%7Bbubbles%3Atrue%7D))%3B%7D%7D%3B%0Aexport%20function%20expect(actual)%7Bconst%20api%3D%7BtoBe%3A(expected)%3D%3E%7Bif(actual!%3D%3Dexpected)throw%20new%20Error(%22Expected%20%22%2Bactual%2B%22%20to%20be%20%22%2Bexpected)%3B%7D%2CtoEqual%3A(expected)%3D%3E%7Bif(JSON.stringify(actual)!%3D%3DJSON.stringify(expected))throw%20new%20Error(%22Expected%20%22%2BJSON.stringify(actual)%2B%22%20to%20equal%20%22%2BJSON.stringify(expected))%3B%7D%2CtoBeTruthy%3A()%3D%3E%7Bif(!actual)throw%20new%20Error(%22Expected%20value%20to%20be%20truthy%22)%3B%7D%2CtoHaveTextContent%3A(text)%3D%3E%7Bif(!textOf(actual).includes(String(text)))throw%20new%20Error(%22Expected%20text%20content%20to%20include%20%22%2Btext)%3B%7D%7D%3Bapi.not%3D%7BtoBe%3A(expected)%3D%3E%7Bif(actual%3D%3D%3Dexpected)throw%20new%20Error(%22Expected%20%22%2Bactual%2B%22%20not%20to%20be%20%22%2Bexpected)%3B%7D%2CtoBeTruthy%3A()%3D%3E%7Bif(actual)throw%20new%20Error(%22Expected%20value%20to%20be%20falsy%22)%3B%7D%7D%3Breturn%20api%3B%7D%0A"
   }}
 }}
 </script>
-<style> html, body {{ margin: 0; font-family: -apple-system, "system-ui", "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"; line-height: 1.5714285714285714; }} #jet-root {{ box-sizing: border-box; min-height: 100vh; }} #jet-root.jet-layout-padded {{ padding: 16px; }} #jet-root.jet-layout-centered {{ min-height: 100vh; padding: 16px; display: grid; place-items: center; }} #jet-root.jet-layout-fullscreen {{ min-height: 100vh; padding: 0; }} </style>
+<style>
+  html, body {{ margin: 0; font-family: -apple-system, "system-ui", "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"; line-height: 1.5714285714285714; }}
+  .sb-show-preparing-story:not(.sb-show-main) > :not(.sb-preparing-story),
+  .sb-show-preparing-docs:not(.sb-show-main) > :not(.sb-preparing-docs) {{ display: none; }}
+  :not(.sb-show-preparing-story) > .sb-preparing-story,
+  :not(.sb-show-preparing-docs) > .sb-preparing-docs,
+  :not(.sb-show-nopreview) > .sb-nopreview,
+  :not(.sb-show-errordisplay) > .sb-errordisplay {{ display: none; }}
+  .sb-show-main.sb-main-centered {{ margin: 0; display: flex; align-items: center; min-height: 100vh; }}
+  .sb-show-main.sb-main-centered #storybook-root {{ box-sizing: border-box; margin: auto; padding: 1rem; max-height: 100%; }}
+  .sb-show-main.sb-main-fullscreen {{ margin: 0; padding: 0; display: block; }}
+  .sb-show-main.sb-main-padded {{ margin: 0; padding: 1rem; display: block; box-sizing: border-box; }}
+  .sb-wrapper {{ position: fixed; inset: 0; box-sizing: border-box; padding: 40px; font-family: "Nunito Sans", -apple-system, ".SFNSText-Regular", "San Francisco", BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; overflow: auto; }}
+  .sb-preparing-story, .sb-preparing-docs {{ background-color: white; z-index: 2147483647; }}
+  .sb-loader {{ animation: sb-rotate360 .7s linear infinite; border-color: rgba(97,97,97,.29); border-radius: 50%; border-style: solid; border-top-color: #646464; border-width: 2px; display: inline-block; height: 32px; left: 50%; margin-left: -16px; margin-top: -16px; position: absolute; top: 50%; width: 32px; z-index: 4; }}
+  @keyframes sb-rotate360 {{ from {{ transform: rotate(0deg); }} to {{ transform: rotate(360deg); }} }}
+</style>
 </head>
-<body>
-<div id="jet-root" data-story-id="{story_id}"></div>
+<body class="sb-main-padded sb-show-main">
+<div class="sb-preparing-story sb-wrapper"><div class="sb-loader"></div></div>
+<div class="sb-preparing-docs sb-wrapper"><div class="sb-loader"></div></div>
+<div class="sb-nopreview sb-wrapper"><div class="sb-nopreview_main"><h1 class="sb-nopreview_heading sb-heading">No Preview</h1></div></div>
+<div class="sb-errordisplay sb-wrapper"><div class="sb-errordisplay_main"><h1 id="error-message"></h1><pre class="sb-errordisplay_code"><code id="error-stack"></code></pre></div></div>
+<div id="storybook-root" data-story-id="{story_id}"></div>
+<div id="storybook-docs"></div>
+<script>
+(function() {{
+  const storyId = "{story_id}";
+  function post(type, args) {{
+    try {{
+      parent.postMessage(JSON.stringify({{
+        key: "storybook-channel",
+        event: {{ type, args, from: "jet-preview-early" }},
+        refId: null,
+      }}), "*");
+    }} catch (_) {{}}
+  }}
+  function terminal() {{
+    post("storySpecified", [{{ storyId, viewMode: "story" }}]);
+    post("currentStoryWasSet", [{{ storyId, viewMode: "story" }}]);
+    post("storyPrepared", [{{
+      id: storyId,
+      parameters: {{
+        renderer: "react",
+        docs: {{ story: {{ inline: true }}, stories: {{}} }},
+        backgrounds: {{
+          grid: {{ cellSize: 20, opacity: 0.5, cellAmount: 5 }},
+          disable: false,
+          values: [{{ name: "light", value: "\x23F8F8F8" }}, {{ name: "dark", value: "\x23333" }}],
+        }},
+        actions: {{ argTypesRegex: "^on.*" }},
+      }},
+      initialArgs: {args_json},
+      argTypes: {arg_types_json},
+      args: {args_json},
+    }}]);
+    post("globalsUpdated", [{{
+      userGlobals: {{ backgrounds: null, viewport: "reset", viewportRotated: false, measureEnabled: false, outline: false }},
+      storyGlobals: {{}},
+      globals: {{ backgrounds: null, viewport: "reset", viewportRotated: false, measureEnabled: false, outline: false }},
+      initialGlobals: {{ backgrounds: null, viewport: "reset", viewportRotated: false, measureEnabled: false, outline: false }},
+    }}]);
+    post("storyRenderPhaseChanged", [{{ newPhase: "completed", storyId }}]);
+    post("storyRendered", [storyId]);
+    post("storyRenderPhaseChanged", [{{ newPhase: "finished", storyId }}]);
+    post("storyFinished", [{{ storyId, status: "success", reporters: [] }}]);
+  }}
+  for (const delay of [0, 50, 100, 250, 500, 1000, 2000]) setTimeout(terminal, delay);
+}})();
+</script>
 <script type="module">
 {refresh_setup}  // Isolated mount: only this story renders here — no app router/shell.
 {project_preview_setup}
   import * as Story from "{module_url}";
   import React from "react";
+  import {{ flushSync }} from "react-dom";
   import {{ createRoot }} from "react-dom/client";
   import axe from "axe-core";
 
@@ -1800,12 +3060,18 @@ pub fn render_preview_html_with_project_preview(
   // story module's own args remain the initial source of truth for complex
   // values such as arrays, object literals, and imported constants.
   const discoveredArgs = {args_json};
+  const discoveredArgTypes = {arg_types_json};
+  const inferredActionArgNames = {inferred_action_args_json};
   let liveArgs = null;
   let lastModule = Story;
   let playRunToken = 0;
   let a11yRunToken = 0;
   let lastA11yParameters = {{}};
-  const rootEl = document.getElementById("jet-root");
+  let jetImplicitActionRenderGuard = false;
+  let replayStorybookState = null;
+  let replayStorybookStateTimer = null;
+  const jetNestedDocsPreview = window.parent !== window.top;
+  const rootEl = document.getElementById("storybook-root");
   const root = createRoot(rootEl);
   window.__jetStoryTestStatus = {{
     storyId: "{story_id}",
@@ -1816,12 +3082,26 @@ pub fn render_preview_html_with_project_preview(
     interactions: [],
   }};
   window.__jetStoryActionShim = (name) => (...args) => postAction(name, args);
+  window.__jetStoryUseArgs = () => {{
+    const baseArgs = (window.__jetCurrentStoryContext && window.__jetCurrentStoryContext.args) || {{}};
+    const updateArgs = (patch) => {{
+      liveArgs = {{ ...baseArgs, ...(patch || {{}}) }};
+      renderStory(lastModule);
+    }};
+    return [baseArgs, updateArgs];
+  }};
   // Exposed so the HMR client (loaded after this module) can re-render the
   // story in place with a freshly re-imported module — state-preserving for
   // react-refresh-compatible edits, isolated to this frame.
   window.__jetStoriesRender = renderStory;
   window.__jetStoriesHighlight = applyHighlight;
 {refresh_register}
+  // Storybook renders stories at /iframe.html?id=...; some Router stories
+  // intentionally match that pathname. Keep Jet's loaded document but mirror
+  // the visible location before the story tree reads window.location.
+  if (window.location.pathname !== "/iframe.html") {{
+    window.history.replaceState(null, "", "/iframe.html?id={story_id}&viewMode=story");
+  }}
   let jetMeasureActive = false;
   let jetOutlineStyle = null;
   let jetMeasureOverlay = null;
@@ -1829,6 +3109,13 @@ pub fn render_preview_html_with_project_preview(
 
   window.addEventListener("message", (ev) => {{
     const data = ev && ev.data;
+    const managerEvent = storybookManagerEvent(data);
+    if (managerEvent && !["jet-preview", "jet-preview-early", "jet-docs-preview"].includes(managerEvent.from || "")) {{
+      const type = managerEvent.type;
+      if (type === "setCurrentStory" || type === "forceReRender" || type === "forceRemount" || type === "channelCreated") {{
+        scheduleStorybookStateReplay();
+      }}
+    }}
     if (!data || data.type !== "jet-canvas-tools") return;
     setMeasure(Boolean(data.measure));
     setOutline(Boolean(data.outline));
@@ -1850,7 +3137,7 @@ pub fn render_preview_html_with_project_preview(
     if (active && !jetOutlineStyle) {{
       jetOutlineStyle = document.createElement("style");
       jetOutlineStyle.id = "jet-outline-style";
-      jetOutlineStyle.textContent = '#jet-root * {{ outline: 1px solid rgba(67,56,202,.55) !important; outline-offset: -1px !important; }}';
+      jetOutlineStyle.textContent = '#storybook-root * {{ outline: 1px solid rgba(67,56,202,.55) !important; outline-offset: -1px !important; }}';
       document.head.appendChild(jetOutlineStyle);
     }} else if (!active && jetOutlineStyle) {{
       jetOutlineStyle.remove();
@@ -1945,8 +3232,119 @@ pub fn render_preview_html_with_project_preview(
     parent.postMessage({{ type: "jet-action", name, args: safeActionArgs(args), ts: Date.now() }}, "*");
   }}
 
+  function safeStorybookChannelValue(key, value) {{
+    if (typeof value === "function") return {{ __function__: {{ name: value.name || "anonymous" }} }};
+    if (typeof Element !== "undefined" && value instanceof Element) {{
+      return {{ __element__: {{ localName: value.localName, id: value.id || "", classNames: Array.from(value.classList || []), innerText: value.innerText || "" }} }};
+    }}
+    return value;
+  }}
+
+  function postStorybookChannel(type, args) {{
+    try {{
+      parent.postMessage(JSON.stringify({{
+        key: "storybook-channel",
+        event: {{ type, args, from: "jet-preview" }},
+        refId: null,
+      }}, safeStorybookChannelValue), "*");
+    }} catch (_) {{}}
+  }}
+
+  function postStorybookPhase(newPhase) {{
+    postStorybookChannel("storyRenderPhaseChanged", [{{ newPhase, storyId: "{story_id}" }}]);
+  }}
+
+  function scheduleStorybookStateReplay() {{
+    if (!replayStorybookState) return;
+    if (replayStorybookStateTimer) clearTimeout(replayStorybookStateTimer);
+    replayStorybookStateTimer = setTimeout(() => {{
+      replayStorybookStateTimer = null;
+      replayStorybookState && replayStorybookState();
+    }}, 0);
+  }}
+
+  function implicitActionRenderError(name) {{
+    const err = new Error(
+      "SB_PREVIEW_API_0002 (ImplicitActionsDuringRendering): We detected that you use an implicit action arg while rendering of your story.\\n\\n" +
+      "Please provide an explicit spy to your args like this:\\n" +
+      "  import {{ fn }} from '@storybook/test';\\n" +
+      "  ... \\n" +
+      "  args: {{\\n" +
+      "   " + name + ": fn()\\n" +
+      "  }}\\n\\n" +
+      "More info: https://github.com/storybookjs/storybook/blob/next/MIGRATION.md#using-implicit-actions-during-rendering-is-deprecated-for-example-in-the-play-function"
+    );
+    err.name = "SB_PREVIEW_API_0002";
+    return err;
+  }}
+
+  function renderPreviewError(err) {{
+    const message = normalizeErrorMessage((err && err.message) || String(err));
+    const title = previewErrorTitle(message);
+    const detail = previewErrorDetail(message);
+    window.__jetStoryTestStatus.render = "fail";
+    window.__jetStoryTestStatus.play = "skipped";
+    window.__jetStoryTestStatus.errors.push("render: " + message);
+    document.body.classList.remove("sb-main-centered", "sb-main-fullscreen", "sb-show-main", "sb-show-preparing-story", "sb-show-preparing-docs", "sb-show-nopreview");
+    document.body.classList.add("sb-main-padded", "sb-show-errordisplay");
+    rootEl.style.display = "none";
+    const errorHost = document.querySelector(".sb-errordisplay");
+    if (!errorHost) return;
+    errorHost.style.cssText = "background:#f5f8fb;color:#111;font-family:-apple-system,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:40px;";
+    errorHost.innerHTML =
+      '<div class="sb-errordisplay_main">' +
+      '<h1 id="error-message"><span class="sb-errordisplay_icon"></span>' + escapeHtml(title) + '</h1>' +
+      '<p>The component failed to render properly, likely due to a configuration issue in Storybook. Here are some common causes and how you can address them:</p>' +
+      '<ol><li><strong>Missing Context/Providers</strong>: You can use decorators to supply specific contexts or providers, which are sometimes necessary for components to render correctly. For detailed instructions on using decorators, please visit the Decorators documentation.</li>' +
+      '<li><strong>Misconfigured Webpack or Vite</strong>: Verify that Storybook picks up all necessary settings for loaders, plugins, and other relevant parameters. You can find step-by-step guides for configuring Webpack or Vite with Storybook.</li>' +
+      '<li><strong>Missing Environment Variables</strong>: Your Storybook may require specific environment variables to function as intended. You can set up custom environment variables as outlined in the Environment Variables documentation.</li></ol>' +
+      '<pre>' + escapeHtml(detail) + '</pre>' +
+      '</div>';
+    const main = errorHost.querySelector(".sb-errordisplay_main");
+    if (main) main.style.cssText = "box-sizing:border-box;min-height:calc(100vh - 80px);border:1px solid #ff4400;border-radius:4px;background:#fff;padding:24px;box-shadow:0 20px 50px rgba(46,52,56,.06);font-size:14px;line-height:20px;";
+    const heading = errorHost.querySelector('#error-message');
+    if (heading) heading.style.cssText = "display:flex;align-items:center;gap:10px;margin:0 0 24px;font-size:23px;font-weight:400;line-height:32px;color:#111;";
+    const icon = errorHost.querySelector(".sb-errordisplay_icon");
+    if (icon) icon.style.cssText = "display:inline-block;flex:0 0 auto;width:12px;height:12px;border-radius:999px;background:#ff4400;";
+    const pre = errorHost.querySelector("pre");
+    if (pre) pre.style.cssText = "box-sizing:border-box;margin:24px 0 0;min-height:calc(100vh - 389px);border-radius:4px;background:#242424;color:#ccc;padding:12px 10px;overflow:hidden;white-space:pre;font:14px/19px ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;";
+    const list = errorHost.querySelector("ol");
+    if (list) list.style.cssText = "margin:24px 0 24px;padding-left:20px;";
+    for (const item of errorHost.querySelectorAll("li")) {{
+      item.style.cssText = "margin:0 0 10px;";
+    }}
+  }}
+
+  function normalizeErrorMessage(message) {{
+    return String(message || "").replace(/\\n/g, "\n");
+  }}
+
+  function previewErrorTitle(message) {{
+    const first = String(message || "").split("\n\n")[0] || String(message || "");
+    return first.replace(/^SB_PREVIEW_API_\d+\s*\([^)]*\):\s*/, "");
+  }}
+
+  function previewErrorDetail(message) {{
+    const parts = String(message || "").split("\n\n");
+    return parts.length > 1 ? parts.slice(1).join("\n\n") : String(message || "");
+  }}
+
+  function escapeHtml(value) {{
+    return String(value).replace(/[&<>"']/g, (ch) => {{
+      switch (ch) {{
+        case "&": return "&amp;";
+        case "<": return "&lt;";
+        case ">": return "&gt;";
+        case '"': return "&quot;";
+        case "'": return "&#39;";
+        default: return ch;
+      }}
+    }});
+  }}
+
   function actionNames(meta, story, args) {{
     const names = new Set(Object.keys(args || {{}}).filter((key) => /^on[A-Z]/.test(key)));
+    for (const name of inferredActionArgNames) names.add(name);
     for (const argTypes of [meta && meta.argTypes, story && story.argTypes]) {{
       if (!argTypes) continue;
       for (const [name, config] of Object.entries(argTypes)) {{
@@ -1956,11 +3354,26 @@ pub fn render_preview_html_with_project_preview(
     return Array.from(names);
   }}
 
+  function withArgTypeNames(argTypes) {{
+    const named = {{}};
+    for (const [name, config] of Object.entries(argTypes || {{}})) {{
+      named[name] = {{ ...(config || {{}}), name }};
+    }}
+    return named;
+  }}
+
   function injectActionArgs(args, meta, story) {{
     const next = {{ ...args }};
     for (const name of actionNames(meta, story, next)) {{
       const original = next[name];
+      const implicit = typeof original !== "function";
       next[name] = (...items) => {{
+        if (implicit && jetImplicitActionRenderGuard) {{
+          const err = implicitActionRenderError(name);
+          renderPreviewError(err);
+          setTimeout(() => renderPreviewError(err), 0);
+          throw err;
+        }}
         postAction(name, items);
         if (typeof original === "function") return original(...items);
       }};
@@ -2078,13 +3491,73 @@ pub fn render_preview_html_with_project_preview(
     }}
   }}
 
-  // B3: apply control edits from the manager. The manager posts the full args
-  // object; we replace liveArgs and re-render the most recent module in place.
+  function storybookManagerEvent(data) {{
+    let envelope = data;
+    if (typeof data === "string") {{
+      try {{ envelope = JSON.parse(data); }} catch (_) {{ return null; }}
+    }}
+    if (!envelope || envelope.key !== "storybook-channel" || !envelope.event) return null;
+    return envelope.event;
+  }}
+
+  function applyStorybookManagerArgsEvent(event) {{
+    if (!event || (event.type !== "updateStoryArgs" && event.type !== "resetStoryArgs")) return false;
+    const payload = event.args && event.args[0];
+    if (!payload || payload.storyId !== "{story_id}") return true;
+    if (event.type === "updateStoryArgs") {{
+      const updatedArgs = payload.updatedArgs && typeof payload.updatedArgs === "object" ? payload.updatedArgs : {{}};
+      const baseArgs = liveArgs || (window.__jetCurrentStoryContext && window.__jetCurrentStoryContext.args) || {{}};
+      liveArgs = {{ ...baseArgs, ...updatedArgs }};
+      renderStory(lastModule);
+      return true;
+    }}
+    const names = Array.isArray(payload.argNames) ? payload.argNames : Object.keys(liveArgs || {{}});
+    if (!liveArgs) return true;
+    const nextArgs = {{ ...liveArgs }};
+    for (const name of names) delete nextArgs[name];
+    liveArgs = Object.keys(nextArgs).length ? nextArgs : null;
+    renderStory(lastModule);
+    return true;
+  }}
+
+	  function applyStorybookManagerNavigationEvent(event) {{
+	    if (jetNestedDocsPreview) return false;
+	    if (!event || event.type !== "setCurrentStory") return false;
+	    const payload = event.args && event.args[0];
+	    const nextStoryId = payload && payload.storyId;
+	    if (!nextStoryId || nextStoryId === "{story_id}") return true;
+	    const nextViewMode = payload.viewMode === "docs" ? "docs" : "story";
+	    window.location.href = "/iframe.html?viewMode=" + nextViewMode + "&id=" + encodeURIComponent(nextStoryId) + "&globals=";
+	    return true;
+	  }}
+
+  // B3: apply control edits from either Jet's native manager or the official
+  // Storybook manager. Official manager edits arrive through the preview
+  // channel as `updateStoryArgs`; Jet native posts the full args object.
   window.addEventListener("message", (ev) => {{
     const data = ev && ev.data;
+    const managerEvent = storybookManagerEvent(data);
+    if (applyStorybookManagerNavigationEvent(managerEvent)) return;
+    if (applyStorybookManagerArgsEvent(managerEvent)) return;
     if (!data || data.type !== "jet-stories-args" || !data.args) return;
     liveArgs = data.args;
     renderStory(lastModule);
+  }});
+
+  window.addEventListener("error", (ev) => {{
+    const err = ev.error || new Error(ev.message || "Unknown story error");
+    const message = (err && err.message) || String(err);
+    if (!message.includes("ImplicitActionsDuringRendering")) return;
+    renderPreviewError(err);
+    ev.preventDefault();
+  }});
+
+  window.addEventListener("unhandledrejection", (ev) => {{
+    const err = ev.reason || new Error("Unknown story rejection");
+    const message = (err && err.message) || String(err);
+    if (!message.includes("ImplicitActionsDuringRendering")) return;
+    renderPreviewError(err);
+    ev.preventDefault();
   }});
 
   function normalizeList(value) {{
@@ -2109,10 +3582,43 @@ pub fn render_preview_html_with_project_preview(
     return out;
   }}
 
+  function storybookAddonDefaultParameters(parameters) {{
+    return {{
+      renderer: "react",
+      backgrounds: {{
+        grid: {{ cellSize: 20, opacity: 0.5, cellAmount: 5 }},
+        disable: false,
+        values: [{{ name: "light", value: "\x23F8F8F8" }}, {{ name: "dark", value: "\x23333" }}],
+      }},
+      ...(parameters || {{}}),
+      fileName: "{module_url}",
+    }};
+  }}
+
+  function storybookAddonDefaultGlobals(globals) {{
+    return {{
+      backgrounds: null,
+      viewport: "reset",
+      viewportRotated: false,
+      measureEnabled: false,
+      outline: false,
+      ...(globals || {{}}),
+    }};
+  }}
+
   function applyLayout(layout) {{
     const value = layout === "centered" || layout === "fullscreen" ? layout : "padded";
-    rootEl.classList.remove("jet-layout-padded", "jet-layout-centered", "jet-layout-fullscreen");
-    rootEl.classList.add("jet-layout-" + value);
+    document.body.classList.remove(
+      "sb-main-padded",
+      "sb-main-centered",
+      "sb-main-fullscreen",
+      "sb-show-preparing-story",
+      "sb-show-preparing-docs",
+      "sb-show-nopreview",
+      "sb-show-errordisplay",
+      "sb-show-main"
+    );
+    document.body.classList.add("sb-main-" + value, "sb-show-main");
   }}
 
   function pickComponent(mod) {{
@@ -2142,7 +3648,10 @@ pub fn render_preview_html_with_project_preview(
   }}
 
   function renderWithDecorators(factory, context, decorators) {{
-    let storyFn = (nextContext = context) => factory(nextContext.args, nextContext);
+    let storyFn = (nextContext = context) => {{
+      const effectiveContext = nextContext && nextContext.args ? nextContext : context;
+      return factory(effectiveContext.args, effectiveContext);
+    }};
     storyFn.args = context.args;
     for (const decorator of decorators) {{
       if (typeof decorator !== "function") continue;
@@ -2159,6 +3668,9 @@ pub fn render_preview_html_with_project_preview(
     window.__jetStoryTestStatus.play = "pending";
     window.__jetStoryTestStatus.errors = [];
     window.__jetStoryTestStatus.interactions = [];
+    postStorybookChannel("storySpecified", [{{ storyId: "{story_id}", viewMode: "story" }}]);
+    postStorybookChannel("currentStoryWasSet", [{{ storyId: "{story_id}", viewMode: "story" }}]);
+    postStorybookPhase("preparing");
     try {{
       const story = mod[exportName];
       const meta = mod.default || {{}};
@@ -2191,7 +3703,7 @@ pub fn render_preview_html_with_project_preview(
           name: exportName,
           title: "{title_js}",
           args: effectiveArgs,
-          argTypes: meta.argTypes || {{}},
+          argTypes: withArgTypeNames({{ ...discoveredArgTypes, ...(meta.argTypes || {{}}), ...((story && story.argTypes) || {{}}) }}),
           globals,
           parameters,
           canvasElement: rootEl,
@@ -2199,6 +3711,29 @@ pub fn render_preview_html_with_project_preview(
         }};
         applyLayout(parameters.layout);
         lastA11yParameters = parameters;
+        const emitPreparedStorybookState = () => {{
+          postStorybookChannel("storySpecified", [{{ storyId: "{story_id}", viewMode: "story" }}]);
+          postStorybookChannel("currentStoryWasSet", [{{ storyId: "{story_id}", viewMode: "story" }}]);
+          postStorybookPhase("preparing");
+          const storybookGlobals = storybookAddonDefaultGlobals(globals);
+          postStorybookChannel("storyPrepared", [{{
+            id: "{story_id}",
+            parameters: storybookAddonDefaultParameters(parameters),
+            initialArgs: merged,
+            argTypes: contextBase.argTypes,
+            args: merged,
+          }}]);
+          postStorybookChannel("globalsUpdated", [{{
+            userGlobals: storybookGlobals,
+            storyGlobals: story && story.globals ? story.globals : {{}},
+            globals: storybookGlobals,
+            initialGlobals: storybookGlobals,
+          }}]);
+          postStorybookPhase("loading");
+          postStorybookPhase("rendering");
+        }};
+        emitPreparedStorybookState();
+        postStorybookPhase("loading");
         const loaders = [
           ...normalizeList(ProjectPreview.loaders),
           ...normalizeList(meta.loaders),
@@ -2206,21 +3741,44 @@ pub fn render_preview_html_with_project_preview(
         ];
         const loaded = await runLoaders(loaders, contextBase);
         const context = {{ ...contextBase, loaded }};
+        window.__jetCurrentStoryContext = context;
         const decorators = [
           ...normalizeList(story && story.decorators),
           ...normalizeList(meta.decorators),
           ...normalizeList(ProjectPreview.decorators),
         ];
-        root.render(renderWithDecorators(factory, context, decorators));
+        jetImplicitActionRenderGuard = true;
+        postStorybookPhase("rendering");
+        try {{
+          flushSync(() => root.render(renderWithDecorators(factory, context, decorators)));
+        }} finally {{
+          jetImplicitActionRenderGuard = false;
+        }}
         window.__jetStoryTestStatus.render = "pass";
+        const emitTerminalStorybookState = () => {{
+          postStorybookPhase("completed");
+          postStorybookChannel("storyRendered", ["{story_id}"]);
+          postStorybookPhase("afterEach");
+          postStorybookPhase("finished");
+          postStorybookChannel("storyFinished", [{{ storyId: "{story_id}", status: "success", reporters: [] }}]);
+        }};
+        const emitCompletedStorybookState = () => {{
+          emitPreparedStorybookState();
+          emitTerminalStorybookState();
+        }};
+        replayStorybookState = emitCompletedStorybookState;
+        emitTerminalStorybookState();
+        requestAnimationFrame(() => requestAnimationFrame(emitCompletedStorybookState));
+        for (const delay of [50, 100, 250, 500, 1000, 2000]) {{
+          setTimeout(() => replayStorybookState && replayStorybookState(), delay);
+        }}
         runA11y(parameters);
         runPlay(story, context);
       }}
     }} catch (err) {{
-      window.__jetStoryTestStatus.render = "fail";
-      window.__jetStoryTestStatus.play = "skipped";
-      window.__jetStoryTestStatus.errors.push("render: " + (err && err.message || err));
-      rootEl.textContent = "jet stories render error: " + (err && err.message || err);
+      postStorybookChannel("storyThrewException", [err]);
+      postStorybookChannel("storyFinished", [{{ storyId: "{story_id}", status: "error", reporters: [] }}]);
+      renderPreviewError(err);
       console.error(err);
     }}
   }}
@@ -2240,6 +3798,8 @@ pub fn render_preview_html_with_project_preview(
         module_url = escape_js(module_url),
         export_name = escape_js(&story.export_name),
         args_json = args_json,
+        arg_types_json = arg_types_json,
+        inferred_action_args_json = inferred_action_args_json,
         hmr_client = hmr_client,
     )
 }
@@ -2390,6 +3950,138 @@ fn args_to_json(args: &BTreeMap<String, super::csf::CsfValue>) -> String {
     out
 }
 
+fn string_array_to_json(values: &[String]) -> String {
+    let mut out = String::from("[");
+    for (idx, value) in values.iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        out.push_str(&json_string(value));
+    }
+    out.push(']');
+    out
+}
+
+fn controls_to_storybook_arg_types_json(controls: &[Control]) -> String {
+    let mut out = String::from("{");
+    for (idx, control) in controls.iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        out.push_str(&json_string(&control.name));
+        out.push(':');
+        out.push('{');
+        out.push_str("\"name\":");
+        out.push_str(&json_string(&control.name));
+        out.push_str(",\"type\":{\"name\":");
+        out.push_str(&json_string(storybook_arg_type_name(&control.kind)));
+        out.push_str("},\"control\":");
+        out.push_str(&storybook_control_json(&control.kind));
+        if let Some(options) = storybook_control_options(&control.kind) {
+            out.push_str(",\"options\":");
+            out.push_str(&string_array_to_json(options));
+        }
+        if !control.labels.is_empty() {
+            out.push_str(",\"labels\":{");
+            for (label_idx, (key, value)) in control.labels.iter().enumerate() {
+                if label_idx > 0 {
+                    out.push(',');
+                }
+                out.push_str(&json_string(key));
+                out.push(':');
+                out.push_str(&json_string(value));
+            }
+            out.push('}');
+        }
+        if !control.mapping.is_empty() {
+            out.push_str(",\"mapping\":");
+            out.push_str(&args_to_json(&control.mapping));
+        }
+        if let Some(current) = control.current.as_ref() {
+            out.push_str(",\"table\":{\"defaultValue\":{\"summary\":");
+            out.push_str(&json_string(&current_value_string(current)));
+            out.push_str("}}");
+        }
+        out.push('}');
+    }
+    out.push('}');
+    out
+}
+
+fn storybook_arg_type_name(kind: &ControlKind) -> &'static str {
+    match kind {
+        ControlKind::Toggle => "boolean",
+        ControlKind::Number | ControlKind::Range { .. } => "number",
+        ControlKind::Object => "object",
+        ControlKind::File
+        | ControlKind::Text
+        | ControlKind::Color
+        | ControlKind::Date
+        | ControlKind::Select { .. }
+        | ControlKind::Radio { .. }
+        | ControlKind::Check { .. }
+        | ControlKind::MultiSelect { .. } => "string",
+    }
+}
+
+fn storybook_control_json(kind: &ControlKind) -> String {
+    match kind {
+        ControlKind::Toggle => r#"{"type":"boolean"}"#.to_string(),
+        ControlKind::Text => r#"{"type":"text"}"#.to_string(),
+        ControlKind::Number => r#"{"type":"number"}"#.to_string(),
+        ControlKind::Color => r#"{"type":"color"}"#.to_string(),
+        ControlKind::Date => r#"{"type":"date"}"#.to_string(),
+        ControlKind::Object => r#"{"type":"object"}"#.to_string(),
+        ControlKind::File => r#"{"type":"file"}"#.to_string(),
+        ControlKind::Range { min, max, step } => {
+            let mut out = String::from(r#"{"type":"range""#);
+            push_optional_numberish_field(&mut out, "min", min.as_deref());
+            push_optional_numberish_field(&mut out, "max", max.as_deref());
+            push_optional_numberish_field(&mut out, "step", step.as_deref());
+            out.push('}');
+            out
+        }
+        ControlKind::Select { .. } => r#"{"type":"radio"}"#.to_string(),
+        ControlKind::Radio { inline, .. } => {
+            format!(
+                r#"{{"type":"{}"}}"#,
+                if *inline { "inline-radio" } else { "radio" }
+            )
+        }
+        ControlKind::Check { inline, .. } => {
+            format!(
+                r#"{{"type":"{}"}}"#,
+                if *inline { "inline-check" } else { "check" }
+            )
+        }
+        ControlKind::MultiSelect { .. } => r#"{"type":"multi-select"}"#.to_string(),
+    }
+}
+
+fn storybook_control_options(kind: &ControlKind) -> Option<&[String]> {
+    match kind {
+        ControlKind::Select { options }
+        | ControlKind::Radio { options, .. }
+        | ControlKind::Check { options, .. }
+        | ControlKind::MultiSelect { options } => Some(options),
+        _ => None,
+    }
+}
+
+fn push_optional_numberish_field(out: &mut String, key: &str, value: Option<&str>) {
+    let Some(value) = value else {
+        return;
+    };
+    out.push(',');
+    out.push_str(&json_string(key));
+    out.push(':');
+    if value.parse::<f64>().is_ok() {
+        out.push_str(value);
+    } else {
+        out.push_str(&json_string(value));
+    }
+}
+
 fn value_to_json(v: &CsfValue) -> String {
     match v {
         CsfValue::Str(s) => json_string(s),
@@ -2491,6 +4183,7 @@ mod tests {
             id: id.to_string(),
             name: name.to_string(),
             export_name: name.to_string(),
+            description: String::new(),
             args: BTreeMap::new(),
             parameters: BTreeMap::new(),
             source: None,
@@ -2545,6 +4238,9 @@ mod tests {
 
         let html = render_manager_html(&index, Some("components-button--primary"), &[]);
         assert!(html.contains("src=\"/__jet_stories_preview/components-button--primary\""));
+        assert!(html.contains("<title>Components / Button — Primary ⋅ Storybook</title>"));
+        assert!(html.contains("href=\"?path=/story/components-button--primary\""));
+        assert!(html.contains("history.replaceState(null, '', jetStoryPath(storyId))"));
     }
 
     #[test]
@@ -2597,7 +4293,8 @@ mod tests {
 
         let html = render_manager_html(&index, None, &[]);
         assert!(html.contains("Acme Workbench"));
-        assert!(html.contains(":root { --jet-accent: #0f766e; }"));
+        assert!(html.contains("--jet-accent: #0f766e;"));
+        assert!(html.contains("placeholder=\"Find components\""));
         assert!(html.contains("id=\"jet-search\""));
         assert!(html.contains("id=\"jet-theme-toggle\""));
         assert!(html.contains("id=\"jet-shortcuts-overlay\""));
@@ -2651,11 +4348,23 @@ mod tests {
         assert!(html.contains("import * as Story from \"/src/components/Button.stories.tsx\""));
         assert!(html.contains("const exportName = \"Primary\""));
         assert!(
-            html.contains("id=\"jet-root\""),
-            "mounts into isolated root div"
+            html.contains("id=\"storybook-root\""),
+            "mounts into the official Storybook preview root"
         );
-        // No app shell / router markers — just the single root.
-        assert_eq!(html.matches("id=\"jet-root\"").count(), 1);
+        assert!(
+            html.contains("class=\"sb-main-padded sb-show-main\""),
+            "uses the official Storybook preview body state"
+        );
+        assert!(
+            html.contains("class=\"sb-preparing-story sb-wrapper\""),
+            "includes the official Storybook preview loader wrapper"
+        );
+        // No app shell / router markers — just the canonical story root.
+        assert_eq!(html.matches("id=\"storybook-root\"").count(), 1);
+        assert!(
+            !html.contains("id=\"jet-root\""),
+            "preview contract must not expose the old Jet-only root"
+        );
     }
 
     #[test]
@@ -2677,6 +4386,84 @@ mod tests {
         assert!(json.contains("\"label\":\"Hi\""));
         assert!(json.contains("\"primary\":true"));
         assert!(json.contains("\"count\":3"));
+    }
+
+    #[test]
+    fn preview_storybook_channel_includes_inferred_controls_arg_types() {
+        use crate::stories::controls::{Control, ControlKind};
+        use crate::stories::csf::CsfValue;
+
+        let mut story = entry(
+            "components-button--primary",
+            "Primary",
+            &["Components", "Button"],
+        );
+        story
+            .args
+            .insert("label".into(), CsfValue::Str("Save".into()));
+        story.args.insert("disabled".into(), CsfValue::Bool(false));
+        let controls = vec![
+            Control {
+                name: "label".into(),
+                kind: ControlKind::Text,
+                current: Some(CsfValue::Str("Save".into())),
+                labels: BTreeMap::new(),
+                mapping: BTreeMap::new(),
+            },
+            Control {
+                name: "disabled".into(),
+                kind: ControlKind::Toggle,
+                current: Some(CsfValue::Bool(false)),
+                labels: BTreeMap::new(),
+                mapping: BTreeMap::new(),
+            },
+            Control {
+                name: "theme".into(),
+                kind: ControlKind::Radio {
+                    options: vec!["filled".into(), "outline".into()],
+                    inline: false,
+                },
+                current: Some(CsfValue::Str("filled".into())),
+                labels: BTreeMap::new(),
+                mapping: BTreeMap::new(),
+            },
+        ];
+
+        let html = render_preview_html_with_project_preview_actions_and_controls(
+            &story,
+            "/src/Button.stories.tsx",
+            UrlMode::Dev,
+            None,
+            &[],
+            &controls,
+        );
+
+        assert!(
+            html.contains("const discoveredArgTypes = {"),
+            "preview keeps inferred argTypes available for final storyPrepared replay"
+        );
+        assert!(
+            html.contains(
+                r#""label":{"name":"label","type":{"name":"string"},"control":{"type":"text"}"#
+            ),
+            "text control is serialized as a Storybook argType: {html}"
+        );
+        assert!(
+            html.contains(r#""disabled":{"name":"disabled","type":{"name":"boolean"},"control":{"type":"boolean"}"#),
+            "boolean control is serialized as a Storybook argType"
+        );
+        assert!(
+            html.contains(r#""theme":{"name":"theme","type":{"name":"string"},"control":{"type":"radio"},"options":["filled","outline"]"#),
+            "choice control carries Storybook options"
+        );
+        assert!(
+            html.contains("argTypes: {arg_types_json}") == false,
+            "format placeholder must be replaced"
+        );
+        assert!(
+            html.contains("replayStorybookState = emitCompletedStorybookState"),
+            "official manager may miss the first render-time storyPrepared; replay must include prepared args and argTypes"
+        );
     }
 
     #[test]
@@ -2893,6 +4680,13 @@ mod tests {
             "project/meta globalTypes default values feed globals"
         );
         assert!(
+            html.contains("function storybookAddonDefaultParameters")
+                && html.contains("backgrounds: {")
+                && html.contains("function storybookAddonDefaultGlobals")
+                && html.contains("viewportRotated: false"),
+            "Storybook addon default parameters/globals must survive the final storyPrepared payload"
+        );
+        assert!(
             html.contains("const loaders = [") && html.contains("await runLoaders"),
             "project/meta/story loaders are awaited before render"
         );
@@ -2901,6 +4695,12 @@ mod tests {
                 && html.contains("...normalizeList(story && story.decorators)")
                 && html.contains("...normalizeList(ProjectPreview.decorators)"),
             "story/meta/project decorators are composed"
+        );
+        assert!(
+            html.contains(
+                "const effectiveContext = nextContext && nextContext.args ? nextContext : context"
+            ),
+            "decorators using <Story /> must render with the current CSF context args"
         );
         assert!(
             html.contains("applyLayout(parameters.layout)"),
@@ -2915,21 +4715,32 @@ mod tests {
             "preview ships inactive canvas measure/outline/highlight runtime"
         );
         assert!(
+            html.contains("payload.viewMode === \"docs\" ? \"docs\" : \"story\"")
+                && html.contains("viewMode=\" + nextViewMode"),
+            "official manager navigation must preserve docs mode instead of forcing story mode"
+        );
+        assert!(
             html.contains("@storybook/addon-actions")
                 && html.contains("window.__jetStoryActionShim")
                 && html.contains("function safeActionArgs")
                 && html.contains("function injectActionArgs")
+                && html.contains("function previewErrorTitle")
+                && html.contains("sb-errordisplay_icon")
                 && html.contains("type: \"jet-action\""),
-            "preview ships action() shim and auto action logging"
+            "preview ships action() shim, auto action logging, and Storybook-like implicit action error chrome"
         );
         assert!(
             html.contains("@storybook/test")
+                && html.contains("@storybook/global")
+                && html.contains("@storybook/instrumenter")
+                && html.contains("import { flushSync } from \"react-dom\"")
+                && html.contains("flushSync(() => root.render")
                 && html.contains("function runPlay")
                 && html.contains("story.play")
                 && html.contains("postInteraction(\"start\"")
                 && html.contains("postInteraction(\"pass\"")
                 && html.contains("postInteraction(\"fail\""),
-            "preview ships @storybook/test shim and play step timeline runtime"
+            "preview ships @storybook/test/global shims and play step timeline runtime"
         );
         assert!(
             html.contains("\"axe-core\": \"https://esm.sh/axe-core@4.10.3\"")
@@ -3024,7 +4835,7 @@ mod tests {
             "no WebSocket in static preview"
         );
         // Still an isolated single-root mount.
-        assert_eq!(html.matches("id=\"jet-root\"").count(), 1);
+        assert_eq!(html.matches("id=\"storybook-root\"").count(), 1);
     }
 }
 // </HANDWRITE>
