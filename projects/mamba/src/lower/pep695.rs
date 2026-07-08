@@ -121,6 +121,15 @@ fn attr_tuple_assign(
     type_params: &[TypeParam],
     span: Span,
 ) -> Spanned<Stmt> {
+    attr_assign(path, attr, params_tuple(type_params, span), span)
+}
+
+fn attr_assign(
+    path: &[Name],
+    attr: &str,
+    value: Spanned<Expr>,
+    span: Span,
+) -> Spanned<Stmt> {
     let mut object = sp(Expr::Ident(path[0].clone()), span);
     for seg in &path[1..] {
         object = sp(
@@ -140,7 +149,7 @@ fn attr_tuple_assign(
                 },
                 span,
             ),
-            value: params_tuple(type_params, span),
+            value,
         },
         span,
     )
@@ -748,12 +757,12 @@ fn rewrite_class_alias_value(
     shadowed: &mut HashSet<Name>,
 ) {
     match &mut expr.node {
+        Expr::Ident(name) if class_locals.contains(name) && !shadowed.contains(name) => {
+            *expr = class_attr_expr(class_path, name, expr.span);
+        }
         Expr::Ident(name) if class_type_params.contains_key(name) && !shadowed.contains(name) => {
             let index = class_type_params[name];
             *expr = class_type_param_expr(class_path, index, expr.span);
-        }
-        Expr::Ident(name) if class_locals.contains(name) && !shadowed.contains(name) => {
-            *expr = class_attr_expr(class_path, name, expr.span);
         }
         Expr::BinOp { lhs, rhs, .. } => {
             rewrite_class_alias_value(lhs, class_path, class_locals, class_type_params, shadowed);
@@ -1724,6 +1733,35 @@ mod tests {
                             && matches!(&cls.node, Expr::Ident(name) if name == "Holder")
                 )
                     && matches!(&index.node, Expr::IntLit(0))
+        ));
+    }
+
+    #[test]
+    fn class_body_type_alias_prefers_shadowing_class_local_over_type_param() {
+        let m = desugared("class C[T]:\n    T = \"class\"\n    type Alias = T\n");
+        let Stmt::ClassDef { body, .. } = &m.stmts[1].node else {
+            panic!("expected class definition after typevar binding");
+        };
+        let Stmt::Assign { target, value } = &body[3].node else {
+            panic!("expected real alias assignment");
+        };
+        assert!(matches!(
+            &target.node,
+            Expr::Ident(name) if name == "Alias"
+        ));
+        let Expr::Call { args, .. } = &value.node else {
+            panic!("expected type alias constructor");
+        };
+        let Some(CallArg::Positional(thunk)) = args.get(1) else {
+            panic!("expected alias value thunk");
+        };
+        let Expr::Lambda { body, .. } = &thunk.node else {
+            panic!("expected lambda thunk");
+        };
+        assert!(matches!(
+            &body.node,
+            Expr::Attr { object, attr }
+                if attr == "T" && matches!(&object.node, Expr::Ident(name) if name == "C")
         ));
     }
 }
