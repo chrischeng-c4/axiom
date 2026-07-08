@@ -945,6 +945,72 @@ fn exec_restore_name_bindings(ctx: &mut ExecContext, masked: Vec<ExecMaskedName>
     }
 }
 
+struct ExecTemporaryName {
+    name: String,
+    previous: Option<ExecMaskedName>,
+}
+
+fn exec_type_param_value(param: &crate::parser::ast::TypeParam) -> MbValue {
+    let kind = match param.kind {
+        crate::parser::ast::TypeParamKind::TypeVar => 0,
+        crate::parser::ast::TypeParamKind::TypeVarTuple => 1,
+        crate::parser::ast::TypeParamKind::ParamSpec => 2,
+    };
+    crate::runtime::pep695::mb_pep695_typevar(
+        MbValue::from_ptr(MbObject::new_str(param.name.clone())),
+        MbValue::from_int(kind),
+        MbValue::none(),
+        MbValue::none(),
+        MbValue::none(),
+    )
+}
+
+fn exec_bind_temporary_type_params(
+    ctx: &mut ExecContext,
+    type_params: &[crate::parser::ast::TypeParam],
+) -> Vec<ExecTemporaryName> {
+    let mut bindings = Vec::with_capacity(type_params.len());
+    for param in type_params {
+        let previous = exec_take_name_binding(ctx, &param.name);
+        exec_store_name(ctx, &param.name, exec_type_param_value(param));
+        bindings.push(ExecTemporaryName {
+            name: param.name.clone(),
+            previous,
+        });
+    }
+    bindings
+}
+
+fn exec_restore_temporary_names(ctx: &mut ExecContext, bindings: Vec<ExecTemporaryName>) {
+    for binding in bindings {
+        if let Some(current) = exec_take_name_binding(ctx, &binding.name) {
+            unsafe {
+                crate::runtime::rc::release_if_ptr(current.value);
+            }
+        }
+        if let Some(previous) = binding.previous {
+            exec_restore_name_bindings(ctx, vec![previous]);
+        }
+    }
+}
+
+fn exec_drop_masked_name(masked_name: ExecMaskedName) {
+    match masked_name.scope {
+        ExecMaskedNameScope::Frame => {}
+        ExecMaskedNameScope::Locals | ExecMaskedNameScope::Globals => unsafe {
+            crate::runtime::rc::release_if_ptr(masked_name.value);
+        },
+    }
+}
+
+fn exec_commit_temporary_names(bindings: Vec<ExecTemporaryName>) {
+    for binding in bindings {
+        if let Some(previous) = binding.previous {
+            exec_drop_masked_name(previous);
+        }
+    }
+}
+
 fn exec_mask_type_param_bindings(
     ctx: &mut ExecContext,
     type_params: &[crate::parser::ast::TypeParam],
@@ -953,6 +1019,25 @@ fn exec_mask_type_param_bindings(
         .iter()
         .filter_map(|param| exec_take_name_binding(ctx, &param.name))
         .collect()
+}
+
+fn exec_string_value(value: MbValue) -> Option<String> {
+    value.as_ptr().and_then(|ptr| unsafe {
+        match &(*ptr).data {
+            ObjData::Str(text) => Some(text.clone()),
+            _ => None,
+        }
+    })
+}
+
+fn exec_is_pep695_type_param_value(value: MbValue) -> bool {
+    value.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. }
+                if matches!(class_name.as_str(), "TypeVar" | "TypeVarTuple" | "ParamSpec")
+        )
+    })
 }
 
 fn make_exec_function_value(name: &str, is_async: bool, return_value: MbValue) -> MbValue {
@@ -1596,6 +1681,13 @@ fn exec_eval_expr(ctx: &mut ExecContext, expr: &crate::parser::ast::Expr) -> MbV
             };
             if let Expr::Ident(name) = &func.node {
                 if name == crate::lower::pep695::TYPEVAR_INTRINSIC && values.len() == 5 {
+                    if let Some(param_name) = exec_string_value(values[0]) {
+                        if let Some(existing) = exec_lookup_name(ctx, &param_name) {
+                            if exec_is_pep695_type_param_value(existing) {
+                                return existing;
+                            }
+                        }
+                    }
                     return crate::runtime::pep695::mb_pep695_typevar(
                         values[0], values[1], values[2], values[3], values[4],
                     );
@@ -1648,6 +1740,13 @@ fn exec_eval_expr(ctx: &mut ExecContext, expr: &crate::parser::ast::Expr) -> MbV
                     MbValue::from_ptr(MbObject::new_str(attr.clone())),
                     MbValue::from_ptr(MbObject::new_list(values)),
                 );
+            }
+            let callee = exec_eval_expr(ctx, &func.node);
+            if exec_has_pending_exception() {
+                return MbValue::none();
+            }
+            if mb_callable(callee).as_bool() == Some(true) {
+                return mb_call_spread(callee, MbValue::from_ptr(MbObject::new_list(values)));
             }
             eval_expr(expr)
         }
@@ -2102,6 +2201,7 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
             decorators,
             name,
             params,
+            type_params,
             return_ty,
             body,
             ..
@@ -2122,11 +2222,13 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                 };
                 defaults.push(default);
             }
-            let Some(annotations) =
-                exec_function_annotations_value(ctx, params, return_ty.as_ref())
-            else {
+            let annotation_type_params = exec_bind_temporary_type_params(ctx, type_params);
+            let annotations = exec_function_annotations_value(ctx, params, return_ty.as_ref());
+            let Some(annotations) = annotations else {
+                exec_restore_temporary_names(ctx, annotation_type_params);
                 return ExecFlow::Normal;
             };
+            exec_commit_temporary_names(annotation_type_params);
             let mut decorator_values = Vec::with_capacity(decorators.len());
             for decorator in decorators {
                 let value = exec_eval_expr(ctx, &decorator.node);
@@ -2185,6 +2287,7 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
             decorators,
             name,
             params,
+            type_params,
             return_ty,
             body,
             ..
@@ -2206,11 +2309,13 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                     };
                     defaults.push(default);
                 }
-                let Some(annotations) =
-                    exec_function_annotations_value(ctx, params, return_ty.as_ref())
-                else {
+                let annotation_type_params = exec_bind_temporary_type_params(ctx, type_params);
+                let annotations = exec_function_annotations_value(ctx, params, return_ty.as_ref());
+                let Some(annotations) = annotations else {
+                    exec_restore_temporary_names(ctx, annotation_type_params);
                     return ExecFlow::Normal;
                 };
+                exec_commit_temporary_names(annotation_type_params);
                 let function = ExecFunction {
                     params: param_names,
                     defaults,
@@ -3752,5 +3857,84 @@ mod tests {
             MbValue::none(),
         );
         assert_eq!(arg.as_int(), Some(1));
+    }
+
+    #[test]
+    fn test_exec_generic_fn_default_does_not_see_type_param() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(
+            MbValue::from_ptr(MbObject::new_str(
+                "def func[T](arg = list[T]()):\n    pass\n".to_string(),
+            )),
+            globals,
+        );
+
+        assert!(
+            crate::runtime::exception::mb_has_exception()
+                .as_bool()
+                .unwrap_or(false),
+            "exec should raise NameError for a generic-function default reading its type param",
+        );
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("NameError")
+        );
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_exec_generic_fn_annotation_sees_type_param() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(
+            MbValue::from_ptr(MbObject::new_str(
+                "def func[T](arg: T):\n    pass\n".to_string(),
+            )),
+            globals,
+        );
+
+        assert!(
+            !crate::runtime::exception::mb_has_exception()
+                .as_bool()
+                .unwrap_or(false),
+            "exec should let generic function annotations read their type params"
+        );
+        let func = crate::runtime::dict_ops::mb_dict_get(
+            globals,
+            MbValue::from_ptr(MbObject::new_str("func".to_string())),
+            MbValue::none(),
+        );
+        let annotations = crate::runtime::class::mb_getattr(
+            func,
+            MbValue::from_ptr(MbObject::new_str("__annotations__".to_string())),
+        );
+        let arg = crate::runtime::dict_ops::mb_dict_get(
+            annotations,
+            MbValue::from_ptr(MbObject::new_str("arg".to_string())),
+            MbValue::none(),
+        );
+        let type_params = crate::runtime::class::mb_getattr(
+            func,
+            MbValue::from_ptr(MbObject::new_str("__type_params__".to_string())),
+        );
+        let params = extract_items(type_params);
+        assert_eq!(params.len(), 1);
+        assert_eq!(arg.to_bits(), params[0].to_bits());
+        let name = crate::runtime::class::mb_getattr(
+            arg,
+            MbValue::from_ptr(MbObject::new_str("__name__".to_string())),
+        );
+        let name_text = name.as_ptr().and_then(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::Str(value) => Some(value.clone()),
+                _ => None,
+            }
+        });
+        assert_eq!(name_text.as_deref(), Some("T"));
     }
 }
