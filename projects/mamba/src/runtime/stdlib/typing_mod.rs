@@ -384,6 +384,7 @@ pub fn register() {
         "Self",
         "LiteralString",
         "TypeAlias",
+        "Unpack",
     ] {
         attrs.insert(name.to_string(), special_form(name));
     }
@@ -465,7 +466,6 @@ pub fn register() {
     for name in &[
         "TypeGuard",
         "Concatenate",
-        "Unpack",
         "Required",
         "NotRequired",
         "OrderedDict",
@@ -1479,6 +1479,11 @@ pub fn mb_typing_get_args(tp: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_tuple(Vec::new()))
 }
 
+/// Runtime helper for PEP 646 starred type arguments lowered from `tuple[*Ts]`.
+pub fn mb_typing_unpack_alias(arg: MbValue) -> MbValue {
+    special_form_subscript("Unpack", arg)
+}
+
 /// isinstance(value, Union[...]) — any member matches.
 pub fn typing_union_isinstance(value: MbValue, alias: MbValue) -> Option<bool> {
     if alias_kind(alias).as_deref() != Some("union") {
@@ -2071,6 +2076,32 @@ mod tests {
             match &(*params_repr.as_ptr().expect("params repr")).data {
                 super::super::super::rc::ObjData::Str(s) => assert_eq!(s, "(~T,)"),
                 _ => panic!("expected type_params repr string"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_unpack_special_form_repr_preserves_typevartuple_surface() {
+        let typevartuple_args = [MbValue::from_ptr(MbObject::new_str("Ts".to_string()))];
+        let ts =
+            unsafe { d_typevartuple_ctor(typevartuple_args.as_ptr(), typevartuple_args.len()) };
+        let unpack = mb_typing_unpack_alias(ts);
+        let repr = super::super::super::builtins::mb_repr(unpack);
+        let text = super::super::super::builtins::mb_str(unpack);
+        let args_repr = super::super::super::builtins::mb_repr(mb_typing_get_args(unpack));
+
+        unsafe {
+            match &(*repr.as_ptr().expect("repr")).data {
+                super::super::super::rc::ObjData::Str(s) => assert_eq!(s, "typing.Unpack[Ts]"),
+                _ => panic!("expected repr string"),
+            }
+            match &(*text.as_ptr().expect("str")).data {
+                super::super::super::rc::ObjData::Str(s) => assert_eq!(s, "typing.Unpack[Ts]"),
+                _ => panic!("expected str string"),
+            }
+            match &(*args_repr.as_ptr().expect("args repr")).data {
+                super::super::super::rc::ObjData::Str(s) => assert_eq!(s, "(Ts,)"),
+                _ => panic!("expected args repr string"),
             }
         }
     }
