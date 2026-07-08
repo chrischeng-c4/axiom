@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "projects/relay",
+    "apps/relay",
     "projects/defer",
     "projects/loom",
     "projects/preview",

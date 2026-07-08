@@ -109,7 +109,7 @@ changes:
     section: unit-test
     impl_mode: hand-written
     reason: "Integration tests (feature relay-wal): publish/tail, latest_seq, two-node fan-out, restart dedupe safety, reconnect from last seq, and invalid payload reporting against an in-process relay."
-  - path: projects/relay/src/server.rs
+  - path: apps/relay/src/server.rs
     action: modify
     section: logic
     impl_mode: hand-written

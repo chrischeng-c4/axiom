@@ -12931,7 +12931,7 @@ traits = ["cli_facing", "forever_service"]
 
         let artifact = render_capability_map_draft(
             "relay",
-            Path::new("projects/relay/README.md"),
+            Path::new("apps/relay/README.md"),
             &candidates,
             &profile,
             1,
