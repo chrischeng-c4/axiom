@@ -21,6 +21,36 @@ authoring, CLI, service, and meta-doc rules remain in
 - CLI behavior must be proven by focused tests under `tests/` or crate unit
   tests, and public command output must remain chainable.
 
+## Local Workflow
+
+- Treat `CAPABILITIES.md` as the project promise map and keep capability IDs,
+  work-root rows, WI refs, TD refs, and EC evidence resolvable.
+- For AW self-hosting repairs, direct commits are allowed when the lifecycle
+  itself is broken; otherwise prefer the active `aw wi` -> `aw td` -> `aw td
+  code-check` route.
+- For CLI surface changes, update the command implementation, generated or
+  mirrored agent docs, active skill templates, and focused CLI tests together.
+- For `SPEC-MANAGED` or generated files, update the owning TD/source unit and
+  regenerate or run the matching code-check instead of hand-editing only the
+  projected output.
+- Keep project-specific agent behavior in this file, `CAPABILITIES.md`, scoped
+  convention docs, skills/templates, or command output. Do not add live
+  project-layer `CLAUDE.md` or `AGENTS.md`.
+
+## Verification
+
+Before claiming an Agentic Workflow change is complete, run the narrowest
+checks that prove the changed surface:
+
+- Formatting/build: `cargo fmt --check -p agentic-workflow` and
+  `cargo check -p agentic-workflow` for Rust changes.
+- Focused behavior: the smallest relevant `cargo test -p agentic-workflow ...`
+  target for the changed command, parser, validator, or doc contract.
+- Generated-code closure: `aw td code-check <changed-source> --project
+  agentic-workflow` when changing SPEC-MANAGED source or its projection.
+- Meta-doc changes: run or update the root doc allowlist/mirror tests when
+  changing root/project meta-doc policy, README shells, or agent-doc placement.
+
 ## Self-Hosting Boundary
 
 Agentic Workflow may repair its own lifecycle directly when the lifecycle is
