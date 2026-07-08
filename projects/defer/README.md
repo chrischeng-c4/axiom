@@ -42,6 +42,27 @@ FIFO by task creation order.
 | Security Hardening | #766 | planned | planned | none | not_ready | target signing, authz, tenant isolation, audit, and secret rotation |
 | Competitor Feature Parity | #766 | planned | planned | none | not_ready | Cloud Tasks/Celery/Sidekiq-style delayed task feature matrix |
 | Competitor Performance | #766 | planned | planned | none | not_ready | pinned schedule/dispatch baseline, rerun only on scope change |
+| Defer App Source Root Taxonomy | #1217 | planned | planned | none | not_ready | move source-root routing from `projects/defer` to `apps/defer` while keeping project identity |
+
+### Defer App Source Root Taxonomy
+
+ID: defer-app-source-root-taxonomy
+Type: Devops
+Root WI: #1217
+Status: confirmed
+Surfaces: Repo taxonomy: root inventory, Cargo workspace routing, AW project config, project-local docs, scripts, tests, and generated evidence paths.
+EC Dimensions: behavior: pending repo taxonomy gate - defer resolves through apps/defer while tracker identity remains project:defer
+Required Verification: smoke
+Promise:
+Defer's app-facing source root resolves through `apps/defer` without changing
+the GitHub label, AW project name, persistent branch convention, or TD bucket
+identity.
+Gate Inventory:
+- pending: projects/defer/tech-design/logic/repo-taxonomy-move-defer-from-projects-defer-to-apps-defer.md
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| defer-app-source-root-taxonomy | change | #1217 | planned | planned | none | pending source-root migration gate |
 
 ### CLI Interface
 
