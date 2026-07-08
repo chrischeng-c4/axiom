@@ -56,11 +56,7 @@ impl<'a> Parser<'a> {
                 self.advance();
                 if self.peek_kind() == Some(TokenKind::LBracket) {
                     self.advance();
-                    let mut args = vec![self.parse_type_expr()?];
-                    while self.peek_kind() == Some(TokenKind::Comma) {
-                        self.advance();
-                        args.push(self.parse_type_expr()?);
-                    }
+                    let args = self.parse_type_arg_list()?;
                     self.expect(TokenKind::RBracket)?;
                     let span = self.span_from(start);
                     if name == "tuple" {
@@ -87,11 +83,7 @@ impl<'a> Parser<'a> {
                     self.parse_type_call_annotation(start, &name)
                 } else if self.peek_kind() == Some(TokenKind::LBracket) {
                     self.advance();
-                    let mut args = vec![self.parse_type_expr()?];
-                    while self.peek_kind() == Some(TokenKind::Comma) {
-                        self.advance();
-                        args.push(self.parse_type_expr()?);
-                    }
+                    let args = self.parse_type_arg_list()?;
                     self.expect(TokenKind::RBracket)?;
                     Ok(Spanned::new(
                         TypeExpr::Generic { name, args },
@@ -158,11 +150,7 @@ impl<'a> Parser<'a> {
                 self.advance(); // consume 'type'
                 if self.peek_kind() == Some(TokenKind::LBracket) {
                     self.advance(); // consume '['
-                    let mut args = vec![self.parse_type_expr()?];
-                    while self.peek_kind() == Some(TokenKind::Comma) {
-                        self.advance();
-                        args.push(self.parse_type_expr()?);
-                    }
+                    let args = self.parse_type_arg_list()?;
                     self.expect(TokenKind::RBracket)?;
                     Ok(Spanned::new(
                         TypeExpr::Generic {
@@ -216,6 +204,18 @@ impl<'a> Parser<'a> {
                 ))
             }
         }
+    }
+
+    fn parse_type_arg_list(&mut self) -> crate::error::Result<Vec<Spanned<TypeExpr>>> {
+        let mut args = vec![self.parse_type_expr()?];
+        while self.peek_kind() == Some(TokenKind::Comma) {
+            self.advance();
+            if self.peek_kind() == Some(TokenKind::RBracket) {
+                break;
+            }
+            args.push(self.parse_type_expr()?);
+        }
+        Ok(args)
     }
 
     fn parse_type_call_annotation(
@@ -388,6 +388,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_tuple_type_starred_arg_with_trailing_comma() {
+        match parse_type("tuple[*Ts,]") {
+            TypeExpr::Tuple(args) => {
+                assert_eq!(args.len(), 1);
+                assert!(matches!(&args[0].node, TypeExpr::Named(n) if n == "Ts"));
+            }
+            other => panic!("expected Tuple, got {other:?}"),
+        }
+    }
+
     // --- Optional ---
 
     #[test]
@@ -481,6 +492,18 @@ mod tests {
                 assert!(matches!(&args[0].node, TypeExpr::Generic { .. }));
             }
             other => panic!("expected nested Generic, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_generic_type_arg_with_trailing_comma() {
+        match parse_type("Box[int,]") {
+            TypeExpr::Generic { name, args } => {
+                assert_eq!(name, "Box");
+                assert_eq!(args.len(), 1);
+                assert!(matches!(&args[0].node, TypeExpr::Named(n) if n == "int"));
+            }
+            other => panic!("expected Generic, got {other:?}"),
         }
     }
 
