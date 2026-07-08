@@ -399,19 +399,19 @@ verify_cold = true
 
 [[projects]]
 name = "relay"
-path = "projects/relay"
-td_path = "projects/relay/tech-design"
-cap_path = "projects/relay/README.md"
+path = "apps/relay"
+td_path = "apps/relay/tech-design"
+cap_path = "apps/relay/README.md"
 label = "project:relay"
 # Relay EC dispatch is vat-isolated; meter owns performance evidence and guard
 # owns security evidence. Legacy arena comparison remains advisory dogfood until
 # native broker adapters are promoted to required EC.
-ec.efficiency = { tool = "meter", meter = "projects/relay", command = "cd projects/relay && ../../target/debug/vat run meter-perf" }
-ec.security = { tool = "guard", dir = "projects/relay", command = "cd projects/relay && ../../target/debug/vat run guard-security" }
+ec.efficiency = { tool = "meter", meter = "apps/relay", command = "cd apps/relay && ../../target/debug/vat run meter-perf" }
+ec.security = { tool = "guard", dir = "apps/relay", command = "cd apps/relay && ../../target/debug/vat run guard-security" }
 
 [[projects.workspaces]]
 name = "relay"
-paths = ["projects/relay/**"]
+paths = ["apps/relay/**"]
 target = "rust"
 test_cmd = "cargo test -p relay"
 verify_cold = true

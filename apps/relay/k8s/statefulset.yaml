@@ -1,0 +1,75 @@
+# relay base: a SMALL single-node direct install for kind / smoke / dev.
+# No raft env is injected (REPLICAS_PER_SHARD unset -> replica_mode() stays
+# false), so this is the plain direct-engine broker on one durable PVC.
+#
+# Production HA does NOT live here: the 3-replica raft topology (downward-API
+# quartet, quorum PDB, resources) is rendered by the operator from a Relay CR —
+# `relay k8s crd render` + `relay k8s operator render` +
+# `relay k8s instance render --profile prod`.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: relay
+  labels:
+    app: relay
+spec:
+  serviceName: relay-headless # stable pod DNS (relay-0.relay-headless)
+  replicas: 1
+  selector:
+    matchLabels:
+      app: relay
+  template:
+    metadata:
+      labels:
+        app: relay
+    spec:
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: relay
+          image: relay:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 7000
+          env:
+            - name: RELAY_BIND
+              value: "0.0.0.0:7000"
+            - name: RELAY_DATA_DIR
+              value: "/data"
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

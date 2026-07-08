@@ -302,7 +302,7 @@ Promise:
 Serve as the claim-check/value data plane paired with relay's ordered queue and
 worker contract.
 Gate Inventory:
-- projects/keep/README.md; projects/relay/tests/worker_loop.rs
+- projects/keep/README.md; apps/relay/tests/worker_loop.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|

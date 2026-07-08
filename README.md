@@ -24,7 +24,7 @@ details.
 | [mamba](projects/mamba/README.md) | Force-typed Python compiler. |
 | [lumen](projects/lumen/README.md) | A K8s-native, log-replicated search specialist. |
 | [jet](projects/jet/README.md) | Jet is a Rust-native frontend toolchain. |
-| [relay](projects/relay/README.md) | `relay` is the durable ordered-log and queue broker in the Axiom stack. |
+| [relay](apps/relay/README.md) | `relay` is the durable ordered-log and queue broker in the Axiom stack. |
 | [keep](projects/keep/README.md) | Cloud-native, multi-core key-value / claim-check store — the loom/relay data plane and a Redis / Dragonfly replacement. |
 | [cgdb](projects/cgdb/README.md) | Cgdb is a local graph database for agentic codebase understanding. |
 | [httpkit-demo](projects/httpkit-demo/README.md) | httpkit-demo is a generated demo consumer of the `mambalibs.http` framework. |
@@ -82,7 +82,7 @@ an installer yet are marked _coming soon_.
 | [mamba](projects/mamba/README.md) | `mamba` | _coming soon_ |
 | [meter](projects/meter/README.md) | `meter` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/meter/install.sh \| sh` |
 | [preview](projects/preview/README.md) | `preview` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/preview/install.sh \| sh` |
-| [relay](projects/relay/README.md) | `relay-server` | _coming soon_ |
+| [relay](apps/relay/README.md) | `relay` | _coming soon_ |
 | [rig](projects/rig/README.md) | `rig` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/rig/install.sh \| sh` |
 | [tape](projects/tape/README.md) | `tape` | _coming soon_ |
 | [vat](projects/vat/README.md) | `vat` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/vat/install.sh \| sh` |

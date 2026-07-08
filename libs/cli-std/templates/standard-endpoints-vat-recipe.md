@@ -4,7 +4,7 @@ Copy-usable EC recipe for a project's `standard_endpoints` archetype trait
 baseline capability (`CONTRIBUTING.md` § "Standard endpoints — one
 operational surface, one contract three ways", trait table row
 `standard_endpoints` → baseline cap `standard-operational-endpoints`). Follows
-the meter/guard recipe format already in `projects/relay/vat.toml` /
+the meter/guard recipe format already in `apps/relay/vat.toml` /
 `projects/keep/vat.toml`: vat owns the build + workspace isolation, a plain
 curl-based probe script is the assertion, and one `aw.toml` `ec.*` binding
 wires it into `aw ec check` / `aw health --verify-ec`.
@@ -69,7 +69,7 @@ but `command` is what actually resolves since it is present.
 Add the TD stub that `aw ec gen` reads to populate the EC inventory, at
 `projects/<name>/external-contracts/standard-operational-endpoints/behavior/endpoints-probe.md`
 (same `<capability-id>/<category>/<file>.md` layout as
-`projects/relay/external-contracts/competitor-performance/efficiency/perf-gate.md`):
+`apps/relay/external-contracts/competitor-performance/efficiency/perf-gate.md`):
 
 ```markdown
 ---
