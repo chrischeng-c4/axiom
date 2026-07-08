@@ -475,7 +475,7 @@ fn exec_has_pending_exception() -> bool {
 struct ExecContext {
     class_match_args: FxHashMap<String, Option<MbValue>>,
     type_vars: std::collections::HashSet<String>,
-    type_param_reuse_once: std::collections::HashSet<String>,
+    type_param_reuse_once: FxHashMap<String, MbValue>,
     functions: FxHashMap<String, ExecFunction>,
     frames: Vec<FxHashMap<String, MbValue>>,
     generic_class_body_depth: usize,
@@ -1064,6 +1064,20 @@ fn exec_bind_temporary_type_params(
     bindings
 }
 
+fn exec_type_params_tuple_value(
+    ctx: &ExecContext,
+    type_params: &[crate::parser::ast::TypeParam],
+) -> Option<MbValue> {
+    if type_params.is_empty() {
+        return None;
+    }
+    let mut values = Vec::with_capacity(type_params.len());
+    for param in type_params {
+        values.push(exec_lookup_name(ctx, &param.name)?);
+    }
+    Some(MbValue::from_ptr(MbObject::new_tuple(values)))
+}
+
 fn exec_restore_temporary_names(ctx: &mut ExecContext, bindings: Vec<ExecTemporaryName>) {
     for binding in bindings {
         if let Some(current) = exec_take_name_binding(ctx, &binding.name) {
@@ -1094,10 +1108,24 @@ fn exec_drop_name_bindings(masked: Vec<ExecMaskedName>) {
 
 fn exec_commit_temporary_names(ctx: &mut ExecContext, bindings: Vec<ExecTemporaryName>) {
     for binding in bindings {
+        if let Some(value) = exec_lookup_name(ctx, &binding.name) {
+            if exec_is_pep695_type_param_value(value) {
+                unsafe {
+                    crate::runtime::rc::retain_if_ptr(value);
+                }
+                if let Some(previous) = ctx
+                    .type_param_reuse_once
+                    .insert(binding.name.clone(), value)
+                {
+                    unsafe {
+                        crate::runtime::rc::release_if_ptr(previous);
+                    }
+                }
+            }
+        }
         if let Some(previous) = binding.previous {
             exec_drop_masked_name(previous);
         }
-        ctx.type_param_reuse_once.insert(binding.name);
     }
 }
 
@@ -1233,9 +1261,7 @@ fn exec_eval_annotation_type_expr(
             let value = exec_lookup_name(ctx, name).unwrap_or_else(|| {
                 crate::runtime::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("NameError".to_string())),
-                    MbValue::from_ptr(MbObject::new_str(format!(
-                        "name '{name}' is not defined"
-                    ))),
+                    MbValue::from_ptr(MbObject::new_str(format!("name '{name}' is not defined"))),
                 );
                 MbValue::none()
             });
@@ -1956,11 +1982,14 @@ fn exec_eval_expr(ctx: &mut ExecContext, expr: &crate::parser::ast::Expr) -> MbV
             if let Expr::Ident(name) = &func.node {
                 if name == crate::lower::pep695::TYPEVAR_INTRINSIC && values.len() == 5 {
                     if let Some(param_name) = exec_string_value(values[0]) {
-                        if ctx.type_param_reuse_once.remove(&param_name) {
+                        if let Some(reusable) = ctx.type_param_reuse_once.remove(&param_name) {
                             if let Some(existing) = exec_lookup_name(ctx, &param_name) {
                                 if exec_is_pep695_type_param_value(existing) {
                                     return existing;
                                 }
+                            }
+                            if exec_is_pep695_type_param_value(reusable) {
+                                return reusable;
                             }
                         }
                     }
@@ -2203,9 +2232,7 @@ fn exec_class_metaclass_name(
     ctx: &mut ExecContext,
     keyword_args: &[(String, crate::source::Spanned<crate::parser::ast::Expr>)],
 ) -> Option<String> {
-    let (_, expr) = keyword_args
-        .iter()
-        .find(|(name, _)| name == "metaclass")?;
+    let (_, expr) = keyword_args.iter().find(|(name, _)| name == "metaclass")?;
     let value = exec_eval_expr(ctx, &expr.node);
     if exec_has_pending_exception() {
         return None;
@@ -2437,9 +2464,7 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
             if let Some(match_args) = match_args {
                 crate::runtime::class::mb_class_set_match_args(class_name, match_args);
             }
-            if let Some(namespace) =
-                exec_class_body_namespace(ctx, body, !type_params.is_empty())
-            {
+            if let Some(namespace) = exec_class_body_namespace(ctx, body, !type_params.is_empty()) {
                 for (attr, value) in namespace {
                     crate::runtime::class::mb_class_set_class_attr(
                         class_name,
@@ -2519,6 +2544,13 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                 "__annotations__",
                 annotations,
             );
+            if let Some(params_tuple) = exec_type_params_tuple_value(ctx, type_params) {
+                crate::runtime::pep695::instance_field_set_pub(
+                    func_value,
+                    "__type_params__",
+                    params_tuple,
+                );
+            }
             if decorators.is_empty() {
                 exec_commit_temporary_names(ctx, annotation_type_params);
                 ctx.functions.insert(name.clone(), function);
@@ -2611,6 +2643,13 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                     "__annotations__",
                     annotations,
                 );
+                if let Some(params_tuple) = exec_type_params_tuple_value(ctx, type_params) {
+                    crate::runtime::pep695::instance_field_set_pub(
+                        func_value,
+                        "__type_params__",
+                        params_tuple,
+                    );
+                }
                 exec_store_name(ctx, name, func_value);
             }
             ExecFlow::Normal
@@ -4354,8 +4393,7 @@ mod tests {
         let globals = crate::runtime::dict_ops::mb_dict_new();
         mb_exec_with_globals(
             MbValue::from_ptr(MbObject::new_str(
-                "def deco(func):\n    return func\n@deco\ndef func():\n    return 1\n"
-                    .to_string(),
+                "def deco(func):\n    return func\n@deco\ndef func():\n    return 1\n".to_string(),
             )),
             globals,
         );
@@ -4371,7 +4409,10 @@ mod tests {
             MbValue::from_ptr(MbObject::new_str("func".to_string())),
             MbValue::none(),
         );
-        assert!(!func.is_none(), "decorated function should stay bound in globals");
+        assert!(
+            !func.is_none(),
+            "decorated function should stay bound in globals"
+        );
         let result = mb_call_spread(func, MbValue::from_ptr(MbObject::new_list(vec![])));
         assert_eq!(result.as_int(), Some(1));
     }
