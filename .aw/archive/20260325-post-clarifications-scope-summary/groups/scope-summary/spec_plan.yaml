@@ -1,7 +1,0 @@
-- spec_id: post-clarifications-scope
-  action: modify
-  main_spec_ref: crates/cclab-sdd/logic/post-clarifications.md
-  source: crates/cclab-sdd/logic/post-clarifications.md
-  sections:
-  - overview
-  - changes

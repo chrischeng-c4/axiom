@@ -42,7 +42,7 @@ dirs = "5"
 pulldown-cmark = "0.12"
 
 # Internal dependencies
-agentic-workflow = { path = "../../projects/agentic-workflow" }
+agentic-workflow = { path = "../../apps/agentic-workflow" }
 
 [features]
 default = []

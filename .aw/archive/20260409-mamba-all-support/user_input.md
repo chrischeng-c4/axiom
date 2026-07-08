@@ -1,1 +1,0 @@
-#975 __all__ support — control from X import * exports. When a module defines __all__, only those names are exported by star-import. Crate: cclab-mamba

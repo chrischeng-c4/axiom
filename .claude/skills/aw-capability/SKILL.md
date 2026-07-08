@@ -24,7 +24,7 @@ promises from inference alone.
 
 ## Flow
 
-1. Resolve the project from the prompt, current branch, or `.aw/config.toml`.
+1. Resolve the project from the prompt, current branch, or `aw.toml`.
 2. Run `aw capability report --project <project>` to inspect README capability
    sections, WI inventory, TD refs, and evidence.
 3. Run `aw capability next --project <project>` when deciding the next bounded

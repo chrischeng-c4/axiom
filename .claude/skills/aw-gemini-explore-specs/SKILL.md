@@ -6,7 +6,7 @@ user-invocable: true
 
 # /aw:gemini:explore:specs
 
-Dispatches Gemini CLI headlessly to explore `projects/agentic-workflow/tech-design/`, `cclab/knowledge/`, and `.aw/changes/` — AW specs, knowledge base, and change artifacts.
+Dispatches Gemini CLI headlessly to explore `apps/agentic-workflow/tech-design/`, `cclab/knowledge/`, and `/tmp/aw/workspaces/<workspace>/changes/` — AW specs, knowledge base, and change artifacts.
 
 ## Usage
 
@@ -21,7 +21,7 @@ Dispatches Gemini CLI headlessly to explore `projects/agentic-workflow/tech-desi
 2. Run Gemini CLI headlessly via Bash:
 
 ```bash
-gemini -m gemini-3-flash-preview --output-format stream-json -p "Focus on files under projects/agentic-workflow/tech-design/, cclab/knowledge/, and .aw/changes/. <prompt>"
+gemini -m gemini-3-flash-preview --output-format stream-json -p "Focus on files under apps/agentic-workflow/tech-design/, cclab/knowledge/, and /tmp/aw/workspaces/<workspace>/changes/. <prompt>"
 ```
 
 3. Parse the streamed JSON output and present the findings to the user.

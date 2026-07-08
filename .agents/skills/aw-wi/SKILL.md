@@ -46,10 +46,10 @@ aw capability run --project <name> --non-interactive --max-ticks 1
 
 * `--type` (required, closed enum): `bug | enhancement | refactor | test | epic`
 * `--project <name>` (repeatable): resolved against `[[projects]]` in
-  `.aw/config.toml`. `epic` accepts 0 or 1; other types require exactly 1.
+  `aw.toml`. `epic` accepts 0 or 1; other types require exactly 1.
 * `--priority <p0|p1|p2|p3>` (optional)
 * `--agent <name>` (optional): resolved against `[[agents]]` in
-  `.aw/config.toml`.
+  `aw.toml`.
 
 Unknown `--project` / `--agent` names → error envelope on stdout, exit 2.
 
@@ -136,7 +136,7 @@ aw wi show <slug>
 ```
 
 Prefer `--project <name>` for project-scoped lists; it resolves the
-configured project label from `.aw/config.toml`. Use `--label` only as a
+configured project label from `aw.toml`. Use `--label` only as a
 raw low-level label filter.
 
 ## Planning operators

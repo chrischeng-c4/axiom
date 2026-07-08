@@ -4,7 +4,7 @@ set -euo pipefail
 # /aw:build:release dispatcher.
 #
 # This skill is intentionally AW-only. It delegates to
-# projects/agentic-workflow/build.sh release and rejects other project names.
+# apps/agentic-workflow/build.sh release and rejects other project names.
 #
 # The AW build.sh owns release-prep: tag-collision check, version bump, release
 # build, install, and commit. The skill lands, tags, pushes, and monitors the
@@ -44,7 +44,7 @@ case "$TARGET" in
     ;;
 esac
 
-BUILD="projects/agentic-workflow/build.sh"
+BUILD="apps/agentic-workflow/build.sh"
 if [[ ! -x "$BUILD" ]]; then
   echo "error: $BUILD not found or not executable" >&2
   exit 4

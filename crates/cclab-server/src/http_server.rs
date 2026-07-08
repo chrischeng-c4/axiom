@@ -6,7 +6,7 @@
 //! - Health check at `/health`
 //!
 //! MCP tools were removed — Claude Code invokes SDD tool logic via the CLI
-//! directly. See `projects/agentic-workflow/` for the CLI that replaces the former
+//! directly. See `apps/agentic-workflow/` for the CLI that replaces the former
 //! MCP tool surface.
 
 use crate::lens_pool::LensHandlerPool;

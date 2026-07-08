@@ -1,7 +1,0 @@
-- spec_id: codegen-extensions-spec
-  action: create
-  main_spec_ref: crates/sdd/logic/codegen-extensions.md
-  sections:
-  - overview
-  - requirements
-  - changes

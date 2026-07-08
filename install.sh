@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cclab installer — auto-dispatches to projects/<name>/install.sh.
+# cclab installer — auto-dispatches to apps/<name>/install.sh or projects/<name>/install.sh.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/cclab/main/install.sh | bash
@@ -19,9 +19,10 @@
 #    via `gh auth login` is also accepted when present.)
 #
 # Resolution order for `--project=<name>`:
-#   1. local file  projects/<name>/install.sh   (running inside a checkout)
-#   2. remote      https://raw.githubusercontent.com/<repo>/main/projects/<name>/install.sh
-#   3. (legacy)    inline score build  — kept until projects/agentic-workflow/install.sh lands
+#   1. local file  apps/<name>/install.sh, then projects/<name>/install.sh
+#   2. remote      https://raw.githubusercontent.com/<repo>/main/apps/<name>/install.sh,
+#                  then projects/<name>/install.sh
+#   3. (legacy)    inline score build
 #
 # Env:
 #   CCLAB_REPO       GitHub repo for remote fetch (default: chrischeng-c4/cclab)
@@ -60,15 +61,18 @@ done
 
 # --list: best-effort enumeration. Only meaningful from a checkout.
 if [ "${LIST}" = true ]; then
-    if [ -d projects ]; then
-        echo "available projects (local checkout):"
-        for f in projects/*/install.sh; do
-            [ -f "${f}" ] || continue
-            name="${f#projects/}"; name="${name%/install.sh}"
-            echo "  ${name}"
+    if [ -d apps ] || [ -d projects ]; then
+        echo "available apps/projects (local checkout):"
+        for root in apps projects; do
+            [ -d "${root}" ] || continue
+            for f in "${root}"/*/install.sh; do
+                [ -f "${f}" ] || continue
+                name="${f#${root}/}"; name="${name%/install.sh}"
+                echo "  ${name}"
+            done
         done
     else
-        echo "no local checkout. browse: https://github.com/${REPO}/tree/${REF}/projects"
+        echo "no local checkout. browse: https://github.com/${REPO}/tree/${REF}"
     fi
     exit 0
 fi
@@ -80,15 +84,16 @@ PROJECT="${PROJECT:-cap}"
 echo "=== ${PROJECT} install ==="
 
 # --- 1. local installer ----------------------------------------------------
-local_path="projects/${PROJECT}/install.sh"
-if [ -f "${local_path}" ]; then
-    # Forward the token through env — child installer needs it too for
-    # any GitHub API / asset fetches on a private repo.
-    GH_TOKEN="${TOKEN}" exec sh "${local_path}"
-fi
+for root in apps projects; do
+    local_path="${root}/${PROJECT}/install.sh"
+    if [ -f "${local_path}" ]; then
+        # Forward the token through env — child installer needs it too for
+        # any GitHub API / asset fetches on a private repo.
+        GH_TOKEN="${TOKEN}" exec sh "${local_path}"
+    fi
+done
 
 # --- 2. remote installer ---------------------------------------------------
-remote_url="https://raw.githubusercontent.com/${REPO}/${REF}/projects/${PROJECT}/install.sh"
 tmp="$(mktemp 2>/dev/null || mktemp -t cclab-install)"
 trap 'rm -f "${tmp}"' EXIT INT TERM
 
@@ -96,22 +101,27 @@ trap 'rm -f "${tmp}"' EXIT INT TERM
 # curl builds, so only add it when we actually have a token.
 # (avoid bash arrays — macOS bash 3.2 chokes on empty-array expansion
 # under `set -u`.)
-if [ -n "${TOKEN}" ]; then
-    http_code="$(
-        curl -fsSL -o "${tmp}" -w '%{http_code}' \
-            -H "Authorization: Bearer ${TOKEN}" \
-            "${remote_url}" 2>/dev/null || true
-    )"
-else
-    http_code="$(
-        curl -fsSL -o "${tmp}" -w '%{http_code}' \
-            "${remote_url}" 2>/dev/null || true
-    )"
-fi
+http_code=""
+remote_url=""
+for root in apps projects; do
+    remote_url="https://raw.githubusercontent.com/${REPO}/${REF}/${root}/${PROJECT}/install.sh"
+    if [ -n "${TOKEN}" ]; then
+        http_code="$(
+            curl -fsSL -o "${tmp}" -w '%{http_code}' \
+                -H "Authorization: Bearer ${TOKEN}" \
+                "${remote_url}" 2>/dev/null || true
+        )"
+    else
+        http_code="$(
+            curl -fsSL -o "${tmp}" -w '%{http_code}' \
+                "${remote_url}" 2>/dev/null || true
+        )"
+    fi
 
-if [ -s "${tmp}" ] && [ "${http_code}" = "200" ]; then
-    GH_TOKEN="${TOKEN}" exec sh "${tmp}"
-fi
+    if [ -s "${tmp}" ] && [ "${http_code}" = "200" ]; then
+        GH_TOKEN="${TOKEN}" exec sh "${tmp}"
+    fi
+done
 
 # Useful diagnostic when private repo + no token.
 if [ "${http_code}" = "404" ] && [ -z "${TOKEN}" ]; then

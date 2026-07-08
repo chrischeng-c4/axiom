@@ -1,1 +1,0 @@
-Jet dev server improvements: optimizeDeps CJS→ESM pre-bundling (#1089), AST-based TypeScript type stripping (#1090), Node.js builtin polyfills (#1091), .jet-store Node resolution compatibility (#1092)

@@ -1,1 +1,0 @@
-Fix resolver: bare package name as version spec (e.g. @storybook/expect: storybook-jest). When version spec doesnt parse as semver, treat as npm:{name}@latest. #957 #883

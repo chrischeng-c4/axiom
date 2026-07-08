@@ -26,11 +26,11 @@ old muscle-memory invocations and must be `aw` or `agentic-workflow`.
 
 Examples:
 
-- `/aw:build:release` - releases `projects/agentic-workflow`.
+- `/aw:build:release` - releases `apps/agentic-workflow`.
 - `/aw:build:release aw` - accepted compatibility form; still releases AW.
 - `/aw:build:release mamba` - rejected; this skill does not release other projects.
 
-The dispatcher execs `projects/agentic-workflow/build.sh release`. Capture
+The dispatcher execs `apps/agentic-workflow/build.sh release`. Capture
 `RELEASE_TAG=aw@<version>` from stdout.
 
 ### Step 2 — land
@@ -61,4 +61,4 @@ Release URL.
 
 Exit codes from the dispatcher:
 - `2` unsupported argument or too many arguments
-- `4` `projects/agentic-workflow/build.sh` is missing or not executable
+- `4` `apps/agentic-workflow/build.sh` is missing or not executable

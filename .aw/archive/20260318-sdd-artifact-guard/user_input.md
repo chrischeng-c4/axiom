@@ -1,1 +1,0 @@
-Add delegation guard check to artifact CLI — reject out-of-scope artifact commands when delegation_guard is active in STATE.yaml #929

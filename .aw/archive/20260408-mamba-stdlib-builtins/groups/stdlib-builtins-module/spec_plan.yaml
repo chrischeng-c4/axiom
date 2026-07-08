@@ -1,7 +1,0 @@
-- spec_id: mamba-stdlib-builtins-spec
-  action: create
-  main_spec_ref: crates/cclab-mamba/stdlib/builtins.md
-  sections:
-  - overview
-  - changes
-  - acceptance_criteria

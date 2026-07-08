@@ -1,1 +1,0 @@
-feat(agent): add reverse flow agents — ReferenceCodebaseContextAgent (explore code, understand architecture) and CodebaseToSpecAgent (reverse-engineer specs from code context). Also rename ReferenceContextAgent → ReferenceSpecContextAgent. #950 #951 #952

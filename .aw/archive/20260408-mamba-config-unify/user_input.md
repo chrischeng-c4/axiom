@@ -1,1 +1,0 @@
-#1134 mamba: dual MambaConfig structs — unify driver/config.rs and config/schema.rs into a single MambaConfig struct. Crate: cclab-mamba

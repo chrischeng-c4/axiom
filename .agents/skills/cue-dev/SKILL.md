@@ -14,8 +14,8 @@ Use this skill for Cue product development in `projects/cue`.
 Read specs and product docs before source code:
 
 1. `projects/cue/README.md`
-2. `.aw/tech-design/projects/cue/README.md`
-3. Relevant design files under `.aw/tech-design/projects/cue/`
+2. `projects/cue/tech-design/README.md`
+3. Relevant design files under `projects/cue/tech-design/`
 4. Source code under `projects/cue/` only after the intended behavior is clear
 
 Keep the current product shape intact:
