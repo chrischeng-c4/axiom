@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-install-sh" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+# <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-install-sh" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 # jet installer — downloads the right prebuilt binary from GitHub
 # Releases and drops it on your PATH.
 #
@@ -165,4 +165,4 @@ if "${INSTALL_DIR}/jet" --version >/dev/null 2>&1; then
   say "ready: ${ver}"
 fi
 
-// </HANDWRITE>
+# </HANDWRITE>
