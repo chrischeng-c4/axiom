@@ -53,7 +53,7 @@ nodes:
     label: "Fix the stale runtime source-root reference"
   done:
     kind: terminal
-    label: "Defer resolves through apps/defer while project identity remains project:defer"
+    label: "Defer resolves through apps/defer while project identity remains app:defer"
 edges:
   - from: inventory
     to: classify
@@ -100,7 +100,7 @@ flowchart TD
     smoke --> stale{Live command still emits projects/defer as source root?}
     stale -- yes --> fix[Fix stale runtime source-root reference]
     fix --> smoke
-    stale -- no --> done([Defer resolves through apps/defer while identity remains project:defer])
+    stale -- no --> done([Defer resolves through apps/defer while identity remains app:defer])
 ```
 ## Config
 <!-- type: config lang: yaml -->
@@ -112,7 +112,7 @@ repo_taxonomy_migration:
   legacy_source_root: projects/defer
   preserved_identity:
     aw_project: defer
-    github_label: project:defer
+    github_label: app:defer
     persistent_branch: project-defer
     td_bucket: projects/defer/tech-design
   rewrite_classes:
@@ -159,7 +159,7 @@ requirements:
     verify: cargo test -p defer
   project_identity_is_preserved:
     id: R2
-    text: "The migration preserves AW project name defer, GitHub label project:defer, persistent branch project-defer, and the projects/defer/tech-design TD bucket."
+    text: "The migration preserves AW project name defer, GitHub label app:defer, persistent branch project-defer, and the projects/defer/tech-design TD bucket."
     kind: regression
     risk: medium
     verify: aw wi list --project defer --state open
@@ -212,7 +212,7 @@ changes:
     action: update
     section: config
     impl_mode: hand-written
-    reason: "AW project path and cap_path for project defer must point at apps/defer while retaining name defer and label project:defer."
+    reason: "AW project path and cap_path for project defer must point at apps/defer while retaining name defer and label app:defer."
   - path: apps/defer/README.md
     action: update
     section: config

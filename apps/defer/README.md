@@ -51,7 +51,7 @@ Type: Devops
 Root WI: #1217
 Status: confirmed
 Surfaces: Repo taxonomy: root inventory, Cargo workspace routing, AW project config, project-local docs, scripts, tests, and generated evidence paths.
-EC Dimensions: behavior: pending repo taxonomy gate - defer resolves through apps/defer while tracker identity remains project:defer
+EC Dimensions: behavior: pending repo taxonomy gate - defer resolves through apps/defer while tracker identity remains app:defer
 Required Verification: smoke
 Promise:
 Defer's app-facing source root resolves through `apps/defer` without changing

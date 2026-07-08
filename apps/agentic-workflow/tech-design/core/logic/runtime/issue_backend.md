@@ -1274,7 +1274,7 @@ mod tests {
             &stored_issue(
                 "open-cue",
                 StoredIssueState::Open,
-                vec!["project:cue", "priority:p1"],
+                vec!["app:cue", "priority:p1"],
             ),
         )
         .await;
@@ -1283,7 +1283,7 @@ mod tests {
             &stored_issue(
                 "draft-cue",
                 StoredIssueState::Draft,
-                vec!["project:cue", "priority:p1"],
+                vec!["app:cue", "priority:p1"],
             ),
         )
         .await;
@@ -1292,13 +1292,13 @@ mod tests {
             &stored_issue(
                 "closed-cue",
                 StoredIssueState::Closed,
-                vec!["project:cue", "priority:p1"],
+                vec!["app:cue", "priority:p1"],
             ),
         )
         .await;
         write_stored_issue(
             tmp.path(),
-            &stored_issue("open-other", StoredIssueState::Open, vec!["project:cue"]),
+            &stored_issue("open-other", StoredIssueState::Open, vec!["app:cue"]),
         )
         .await;
 
@@ -1306,7 +1306,7 @@ mod tests {
         let refs = backend
             .list(&ListFilter {
                 state: RuntimeIssueState::Open,
-                labels: vec!["project:cue".into(), "priority:p1".into()],
+                labels: vec!["app:cue".into(), "priority:p1".into()],
             })
             .await
             .unwrap();
@@ -1321,7 +1321,7 @@ mod tests {
         let mut issue = stored_issue(
             "enhancement-read",
             StoredIssueState::Open,
-            vec!["project:cue"],
+            vec!["app:cue"],
         );
         issue.phase = Some("reviewed".into());
         issue.review_count = Some(1);

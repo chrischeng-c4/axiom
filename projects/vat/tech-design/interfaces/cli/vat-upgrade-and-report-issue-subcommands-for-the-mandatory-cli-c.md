@@ -138,7 +138,7 @@ commands:
   - name: vat issue
     usage: "vat issue search [query] | vat issue view <n> | vat issue create [--title <t>] [--dry-run] [message...]"
     behavior:
-      - "Search and view project:vat issues through read-only GitHub API calls."
+      - "Search and view app:vat issues through read-only GitHub API calls."
       - "Create a structured GitHub issue against the axiom repo; without a token, print a prefilled issues/new URL — never silent-fail."
       - "Auto-attach diagnostics: vat version, target, OS/arch, git sha, and build timestamp."
       - "`create --title` sets the title; trailing args add a description above the diagnostics block; `--dry-run` assembles and prints without submitting."

@@ -1,7 +1,7 @@
 ---
 project: lumen
 branch: project-lumen
-label: "project:lumen"
+label: "app:lumen"
 repo: chrischeng-c4/axiom
 pick_order: priority
 build: skip
@@ -84,7 +84,7 @@ UIs, ingestion pipelines, bundled connectors).
 - Perf gate output OR an explicit "perf N/A because …" line.
 
 ## Loop exit
-- Stop when `gh issue list --label project:lumen --state open` returns 0.
+- Stop when `gh issue list --label app:lumen --state open` returns 0.
 - If an issue is blocked (depends on another, needs a human decision, fails a
   gate that isn't a quick fix), comment explaining the block, label it, and move
   to the next. Don't loop on a stuck issue.

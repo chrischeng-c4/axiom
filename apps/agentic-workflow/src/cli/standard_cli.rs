@@ -195,7 +195,7 @@ pub async fn run_issue(args: IssueArgs) -> Result<()> {
 }
 
 fn report_issue_labels(mut extra: Vec<String>) -> Vec<String> {
-    let mut labels = vec!["project:agentic-workflow".to_string()];
+    let mut labels = vec!["app:agentic-workflow".to_string()];
     for label in extra.drain(..) {
         if !labels.contains(&label) {
             labels.push(label);
@@ -210,14 +210,12 @@ mod tests {
 
     #[test]
     fn report_issue_labels_include_project_once() {
-        let labels = report_issue_labels(vec![
-            "bug".to_string(),
-            "project:agentic-workflow".to_string(),
-        ]);
+        let labels =
+            report_issue_labels(vec!["bug".to_string(), "app:agentic-workflow".to_string()]);
 
         assert_eq!(
             labels,
-            vec!["project:agentic-workflow".to_string(), "bug".to_string()]
+            vec!["app:agentic-workflow".to_string(), "bug".to_string()]
         );
     }
 }

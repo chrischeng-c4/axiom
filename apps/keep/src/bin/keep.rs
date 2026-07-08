@@ -52,7 +52,7 @@ enum Command {
     Upgrade(UpgradeArgs),
     /// Search, view, file, and follow up on keep issues on the axiom tracker
     /// (`search`/`view`/`create`/`comment`). `create` bundles diagnostics and
-    /// auto-tags `project:keep`; `comment` reopens before posting diagnostics.
+    /// auto-tags `app:keep`; `comment` reopens before posting diagnostics.
     Issue(IssueArgs),
     /// Kubernetes artifacts split by layer: the cluster-scoped CRD, the operator
     /// control plane, and app-namespace Keep instances. Render paths are offline
@@ -226,11 +226,11 @@ struct IssueArgs {
 
 #[derive(Subcommand, Debug)]
 enum IssueCommand {
-    /// Search keep's issues (`project:keep`); omit the query to list recent.
+    /// Search keep's issues (`app:keep`); omit the query to list recent.
     Search(IssueSearchArgs),
     /// Print a single issue by number.
     View(IssueViewArgs),
-    /// File a structured issue (auto-tagged `project:keep`).
+    /// File a structured issue (auto-tagged `app:keep`).
     Create(IssueCreateArgs),
     /// Reopen if needed and add a diagnostics-rich follow-up comment.
     Comment(IssueCommentArgs),
@@ -887,7 +887,7 @@ fn ensure_trailing_newline(input: &str) -> String {
 }
 
 /// `keep issue <verb>` — dispatch search/view/create/comment to cli-std.
-/// `create` always tags `project:keep`; `search` is filtered to keep's own
+/// `create` always tags `app:keep`; `search` is filtered to keep's own
 /// issues; `comment` reopens before adding the diagnostics-rich note.
 async fn dispatch_issue(args: IssueArgs) -> Result<()> {
     match args.cmd {
@@ -923,7 +923,7 @@ async fn dispatch_issue(args: IssueArgs) -> Result<()> {
                     message,
                     url: None,
                     repo: None,
-                    label: vec!["project:keep".to_string()],
+                    label: vec!["app:keep".to_string()],
                     dry_run: m.dry_run,
                     yes: true,
                 },

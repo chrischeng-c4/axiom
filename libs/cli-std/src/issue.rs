@@ -1,7 +1,7 @@
 //! `<tool> issue <verb>` — the shared issue interface every CLI ships.
 //!
 //! - [`search`] — find this tool's issues on the tracker (filtered to the
-//!   `project:<name>` label), optionally by free text. Read-only.
+//!   `app:<name>` label), optionally by free text. Read-only.
 //! - [`view`] — print a single issue by number. Read-only.
 //! - [`create`] — assemble a diagnostics block + the operator's description and
 //!   file a GitHub issue (`POST /repos/{repo}/issues` via `GITHUB_TOKEN`), or
@@ -120,7 +120,7 @@ pub fn followup_comment_body(tool: &ToolInfo, message: Option<&str>) -> String {
 
 /// A browser-openable pre-filled `issues/new` URL (title + body + labels
 /// percent-encoded). Labels are comma-joined into the `labels` query param so
-/// the convention's `project:<name>` tag survives the no-token fallback path.
+/// the convention's `app:<name>` tag survives the no-token fallback path.
 pub fn prefilled_url(repo: &str, title: &str, body: &str, labels: &[String]) -> String {
     let mut url = format!(
         "https://github.com/{repo}/issues/new?title={}&body={}",
@@ -373,11 +373,11 @@ impl Default for SearchOptions {
     }
 }
 
-/// `issue search` — list/search this tool's issues (filtered to `project:<name>`).
+/// `issue search` — list/search this tool's issues (filtered to `app:<name>`).
 #[cfg(feature = "online")]
 pub async fn search(tool: &ToolInfo, opts: SearchOptions) -> Result<()> {
     use anyhow::Context;
-    let label = format!("project:{}", tool.project);
+    let label = tool.issue_label();
     let mut q = format!("repo:{} is:issue label:\"{}\"", tool.repo, label);
     if opts.state != "all" {
         q.push_str(&format!(" state:{}", opts.state));
@@ -632,9 +632,9 @@ mod tests {
         assert!(u.starts_with("https://github.com/o/n/issues/new?title="));
         assert!(u.contains("a%20b%26c") && u.contains("x%0Ay") && !u.contains(' '));
         assert!(!u.contains("labels="));
-        // Labels survive the no-token URL fallback (convention `project:<name>`).
-        let ul = prefilled_url("o/n", "t", "b", &["project:jet".into(), "bug".into()]);
-        assert!(ul.contains("&labels=project%3Ajet%2Cbug"));
+        // Labels survive the no-token URL fallback (convention `app:<name>`).
+        let ul = prefilled_url("o/n", "t", "b", &["app:jet".into(), "bug".into()]);
+        assert!(ul.contains("&labels=app%3Ajet%2Cbug"));
         assert_eq!(resolve_repo(&TOOL, None), "chrischeng-c4/axiom");
         assert_eq!(resolve_repo(&TOOL, Some("o/n")), "o/n");
 

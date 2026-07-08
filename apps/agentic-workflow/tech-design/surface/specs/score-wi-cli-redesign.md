@@ -32,11 +32,11 @@ scenarios:
   - id: S1
     title: "known --project resolves to scoped label"
     given:
-      - "[[projects]] in .aw/config.toml contains name=score label=project::score"
+      - "[[projects]] in .aw/config.toml contains name=score label=app::score"
     when:
       - "aw wi create --type enhancement --project score"
     then:
-      - "labels vector = [type::enhancement, project::score]"
+      - "labels vector = [type::enhancement, app::score]"
       - "dispatch envelope emitted on stdout"
 
   - id: S2
@@ -76,7 +76,7 @@ scenarios:
     when:
       - "aw wi create --type epic --project score"
     then:
-      - "labels vector = [type::epic, project::score]"
+      - "labels vector = [type::epic, app::score]"
       - "dispatch envelope emitted"
 
   - id: S6
@@ -106,7 +106,7 @@ scenarios:
     when:
       - "aw wi create --type enhancement --project score --agent claude-code"
     then:
-      - "labels vector = [type::enhancement, project::score, agent::claude-code]"
+      - "labels vector = [type::enhancement, app::score, agent::claude-code]"
       - "dispatch envelope emitted"
 
   - id: S9
@@ -126,7 +126,7 @@ scenarios:
     when:
       - "aw wi create --type bug --project score --priority p1"
     then:
-      - "labels vector = [type::bug, project::score, priority::p1]"
+      - "labels vector = [type::bug, app::score, priority::p1]"
 
   - id: S11
     title: "label vector order is stable: type, project, priority, agent"
@@ -135,7 +135,7 @@ scenarios:
     when:
       - "aw wi create --type enhancement --project score --priority p2 --agent claude-code"
     then:
-      - "labels = [type::enhancement, project::score, priority::p2, agent::claude-code]"
+      - "labels = [type::enhancement, app::score, priority::p2, agent::claude-code]"
       - "order invariant regardless of flag input order"
 ```
 
@@ -289,7 +289,7 @@ commands:
             repeatable: true
             type: string
             resolves_against: ".aw/config.toml [[projects]].name"
-            emits_label: "project::<config-resolved-label-suffix>"
+            emits_label: "app::<config-resolved-label-suffix>"
             cardinality:
               when_type_is_epic: "0 or 1"
               when_type_is_other: "exactly 1"
@@ -364,7 +364,7 @@ requirements:
     verify: test
   project_known:
     id: TC3
-    text: "known project name resolves to project::<config-label> from [[projects]]"
+    text: "known project name resolves to app::<config-label> from [[projects]]"
     kind: functional
     risk: medium
     verify: test
@@ -382,7 +382,7 @@ requirements:
     verify: test
   project_card_epic_1:
     id: TC6
-    text: "epic with 1 --project succeeds; labels = [type::epic, project::<v>]"
+    text: "epic with 1 --project succeeds; labels = [type::epic, app::<v>]"
     kind: functional
     risk: low
     verify: test
@@ -492,7 +492,7 @@ requirementDiagram
     }
     requirement project_known {
       id: TC3
-      text: "known project name resolves to project::<config-label>"
+      text: "known project name resolves to app::<config-label>"
       risk: medium
       verifymethod: test
     }
@@ -567,7 +567,7 @@ changes:
     action: patch
     section: cli
     impl_mode: hand-written
-    summary: "Update `## Issue Labels` table: remove `crate:{name}` row; add `project::{name}` row (sourced from .aw/config.toml [[projects]].label) and `agent::{name}` row (sourced from [[agents]].label). Update `## Issues` block examples to `aw wi create --type <t> --project <p> [--priority <pN>] [--agent <name>]`."
+    summary: "Update `## Issue Labels` table: remove `crate:{name}` row; add `app::{name}` row (sourced from .aw/config.toml [[projects]].label) and `agent::{name}` row (sourced from [[agents]].label). Update `## Issues` block examples to `aw wi create --type <t> --project <p> [--priority <pN>] [--agent <name>]`."
     spec_refs: [requirements#R8, requirements#R9]
 
   - path: apps/agentic-workflow/templates/mainthread/skills/score-issue/SKILL.md

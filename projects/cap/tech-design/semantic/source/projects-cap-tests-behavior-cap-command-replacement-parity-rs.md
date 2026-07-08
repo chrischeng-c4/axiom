@@ -367,7 +367,7 @@ fn installed_frontend_exposes_standard_agent_commands() -> Result<()> {
             String::from_utf8_lossy(&out.stderr)
         );
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(stdout.contains("labels: project:cap"), "{stdout}");
+        assert!(stdout.contains("labels: app:cap"), "{stdout}");
         assert!(stdout.contains("## Diagnostics"), "{stdout}");
     }
 

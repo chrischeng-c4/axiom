@@ -1990,7 +1990,7 @@ mod tests {
                     path: "apps/agentic-workflow".to_string(),
                     td_path: "apps/agentic-workflow/tech-design".to_string(),
                     cap_path: "apps/agentic-workflow/CAPABILITIES.md".to_string(),
-                    label: "project:agentic-workflow".to_string(),
+                    label: "app:agentic-workflow".to_string(),
                 },
                 readme: crate::cli::view::ReadmeSnapshot {
                     path: "apps/agentic-workflow/README.md".to_string(),

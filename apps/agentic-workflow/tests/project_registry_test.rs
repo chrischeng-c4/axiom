@@ -199,7 +199,7 @@ fn load_projects_reads_workspace_codegen_profile() {
 name = "agentic-workflow"
 path = "apps/agentic-workflow"
 td_path = "apps/agentic-workflow/tech-design/core"
-label = "project:agentic-workflow"
+label = "app:agentic-workflow"
 
 [[projects.workspaces]]
 paths = ["apps/agentic-workflow/**"]
@@ -228,7 +228,7 @@ fn load_projects_overlays_project_aw_toml() {
 name = "demo"
 path = "projects/demo-legacy"
 td_path = "projects/demo/tech-design"
-label = "project:demo"
+label = "app:demo"
 
 [[projects.workspaces]]
 name = "demo"
@@ -254,7 +254,7 @@ name = "demo"
 aliases = ["d"]
 td_path = "tech-design"
 cap_path = "README.md"
-label = "project:demo-local"
+label = "app:demo-local"
 
 [ec.security]
 tool = "guard"
@@ -295,7 +295,7 @@ codegen.profile = "rust/score-crate"
         .iter()
         .find(|row| row.matches("d"))
         .expect("alias resolves");
-    assert_eq!(row.label_or_default(), "project:demo-local");
+    assert_eq!(row.label_or_default(), "app:demo-local");
     assert_eq!(row.cap_path.as_deref(), Some("projects/demo/README.md"));
 
     let td = resolve_td_root_from_config(tmp.path(), "d").unwrap();

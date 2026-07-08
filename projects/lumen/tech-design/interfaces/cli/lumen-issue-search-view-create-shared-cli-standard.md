@@ -3,11 +3,11 @@ id: lumen-cli-issue-group
 summary: >
   Ship the standard top-level `lumen issue` command group required by the
   ecosystem CLI convention: `issue search [query]`, `issue view <n>`, and
-  `issue create [--title <t>] [msg...]`. Search/view read `project:lumen`
+  `issue create [--title <t>] [msg...]`. Search/view read `app:lumen`
   tracker issues through `cli_std::issue`; create assembles a diagnostics block
   (lumen version, target triple, git sha, built-at, OS/arch, and optional
   running-node `/version`+`/healthz` snapshot via `--url`) with the operator's
-  message, tags the report `project:lumen`, and either files it through GitHub
+  message, tags the report `app:lumen`, and either files it through GitHub
   or prints a pre-filled fallback URL. The deprecated `lumen report-issue`
   command is removed from the command surface.
 capability_refs:
@@ -31,7 +31,7 @@ id: lumen-issue-group-contract
 entry: start
 nodes:
   start:    { kind: start,    label: "lumen issue <search|view|create>" }
-  search:   { kind: terminal, label: "issue search [query] [--state open|closed|all] [--limit N] -> cli_std::issue::search(project:lumen)" }
+  search:   { kind: terminal, label: "issue search [query] [--state open|closed|all] [--limit N] -> cli_std::issue::search(app:lumen)" }
   view:     { kind: terminal, label: "issue view <n> -> cli_std::issue::view" }
   create:   { kind: process,  label: "issue create [--title T] [msg...] [--url U] [--repo R] [--label L] [--dry-run] [-y]" }
   diag:     { kind: process,  label: "Diagnostics{version=CARGO_PKG_VERSION, target=LUMEN_TARGET, git_sha=LUMEN_GIT_SHA, built_at=LUMEN_BUILT_AT, os=consts::OS, arch=consts::ARCH}" }
@@ -42,7 +42,7 @@ nodes:
   dry:      { kind: decision, label: "--dry-run?" }
   print:    { kind: terminal, label: "print 'repo: {repo}', 'title: {title}', body; submit nothing; exit 0" }
   title:    { kind: process,  label: "title = --title else 'lumen: ' + first message line else 'lumen: issue report'" }
-  labels:   { kind: process,  label: "labels = project:lumen + any --label values" }
+  labels:   { kind: process,  label: "labels = app:lumen + any --label values" }
   cansubmit: { kind: decision, label: "online build AND GitHub token available?" }
   confirm:  { kind: decision, label: "stdin tty AND not -y -> confirm 'file issue to {repo}?'" }
   abort:    { kind: terminal, label: "'aborted'; exit 0" }
@@ -75,12 +75,12 @@ edges:
   - { from: okstatus,  to: created,   label: "yes" }
 ---
 flowchart TD
-    start([lumen issue]) --> search([search project:lumen issues])
+    start([lumen issue]) --> search([search app:lumen issues])
     start --> view([view one issue])
     start --> create[create diagnostics-rich issue]
     create --> title[title from --title or message]
     title --> diag[gather Diagnostics]
-    diag --> labels[labels = project:lumen + --label]
+    diag --> labels[labels = app:lumen + --label]
     labels --> repo[repo = --repo or DEFAULT_REPO]
     repo --> node{--url provided?}
     node -->|yes| fetch[GET /version + /healthz; degrade on error]
@@ -118,13 +118,13 @@ requirements:
     verify: test
   search_filters_project:
     id: R3
-    text: "issue search delegates to cli_std::issue::search with tool.project = lumen, so results filter to project:lumen"
+    text: "issue search delegates to cli_std::issue::search with tool.project = lumen, so results filter to app:lumen"
     kind: functional
     risk: medium
     verify: test
   create_labels_project:
     id: R4
-    text: "issue create always includes project:lumen before any user labels"
+    text: "issue create always includes app:lumen before any user labels"
     kind: functional
     risk: high
     verify: test
@@ -138,8 +138,8 @@ requirements:
 flowchart TD
     r1[R1 help surface] --> v1{issue shown/report-issue absent?}
     r2[R2 issue subcommands] --> v2{search/view/create shown?}
-    r3[R3 search] --> v3{project:lumen filter?}
-    r4[R4 create labels] --> v4{project:lumen included?}
+    r3[R3 search] --> v3{app:lumen filter?}
+    r4[R4 create labels] --> v4{app:lumen included?}
     r5[R5 create diagnostics] --> v5{cli_std create path?}
 ```
 

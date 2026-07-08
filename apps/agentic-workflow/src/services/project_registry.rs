@@ -116,9 +116,14 @@ impl ProjectConfigRow {
     }
 
     pub fn label_or_default(&self) -> String {
-        self.label
-            .clone()
-            .unwrap_or_else(|| format!("project:{}", self.name))
+        self.label.clone().unwrap_or_else(|| {
+            let prefix = if self.path.starts_with("libs/") || self.path.contains("/mambalibs/") {
+                "lib"
+            } else {
+                "app"
+            };
+            format!("{prefix}:{}", self.name)
+        })
     }
 }
 
@@ -852,7 +857,7 @@ mod tests {
 name = "jet"
 path = "projects/jet"
 td_path = "projects/jet/tech-design"
-label = "project:jet"
+label = "app:jet"
 
 [[projects.workspaces]]
 name = "jet-full"
@@ -876,7 +881,7 @@ test_cmd = "cargo test -p jet"
         let jet = rows.iter().find(|row| row.name == "jet").unwrap();
         assert_eq!(jet.path, "projects/jet");
         assert_eq!(jet.td_path.as_deref(), Some("projects/jet/tech-design"));
-        assert_eq!(jet.label.as_deref(), Some("project:jet"));
+        assert_eq!(jet.label.as_deref(), Some("app:jet"));
 
         let projects = load_projects(tmp.path()).unwrap();
         let jet = projects

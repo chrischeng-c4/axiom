@@ -102,7 +102,7 @@ Gate Inventory:
 
 ID: cli-standard-surface
 Type: RuntimeTool
-Surfaces: CLI: `lumen llm` - shared offline agent self-doc topic surface required by the ecosystem CLI convention.; CLI: `lumen upgrade` - shared self-update and `--check` surface provided through `cli-std`.; CLI: `lumen issue search`, `lumen issue view`, `lumen issue create`, and `lumen issue comment` - shared tracker read/write/follow-up surface scoped to `project:lumen`, separate from Lumen's domain commands.
+Surfaces: CLI: `lumen llm` - shared offline agent self-doc topic surface required by the ecosystem CLI convention.; CLI: `lumen upgrade` - shared self-update and `--check` surface provided through `cli-std`.; CLI: `lumen issue search`, `lumen issue view`, `lumen issue create`, and `lumen issue comment` - shared tracker read/write/follow-up surface scoped to `app:lumen`, separate from Lumen's domain commands.
 EC Dimensions: behavior: `cargo test -p lumen --test cli_convention help_ships_standard_issue_group_not_report_issue -- --exact` - top-level help keeps the standard `llm`, `upgrade`, and `issue` groups visible; behavior: `cargo test -p lumen --test cli_convention issue_help_lists_search_view_create_comment -- --exact` - the issue group exposes the shared search/view/create/comment verbs; behavior: `cargo test -p lumen --test cli_convention issue_create_comment_and_upgrade_check_outputs_are_chainable -- --exact` - shared issue create/comment and upgrade check remain runnable in offline smoke mode; behavior: `cargo test -p lumen --test spec_cli llm_outline_maps_agent_topics -- --exact` - the shared `llm` entrypoint still publishes the agent topic set.
 Root WI: 1164
 Status: verified

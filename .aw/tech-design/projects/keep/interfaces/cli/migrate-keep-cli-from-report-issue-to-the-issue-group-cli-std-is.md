@@ -4,7 +4,7 @@ summary: >
   Replace Keep's write-only `keep report-issue` clap command with the standard
   `keep issue <search|view|create>` group, dispatching to
   cli_std::issue::{search, view, create} while keeping the convention's
-  project:keep auto-tag on create and project:keep filtering on search.
+  app:keep auto-tag on create and app:keep filtering on search.
 fill_sections: [logic, unit-test, changes]
 ---
 
@@ -18,9 +18,9 @@ entry: parse
 nodes:
   parse: { kind: start, label: "keep CLI parses the issue subcommand group" }
   branch: { kind: decision, label: "which issue verb" }
-  search: { kind: process, label: "issue search dispatches cli_std::issue::search filtered to project:keep" }
+  search: { kind: process, label: "issue search dispatches cli_std::issue::search filtered to app:keep" }
   view: { kind: process, label: "issue view dispatches cli_std::issue::view by number" }
-  create: { kind: process, label: "issue create dispatches cli_std::issue::create auto-tagged project:keep" }
+  create: { kind: process, label: "issue create dispatches cli_std::issue::create auto-tagged app:keep" }
   out: { kind: terminal, label: "print results or filed/preview issue" }
 edges:
   - { from: parse, to: branch }
@@ -102,7 +102,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Replace the ReportIssue clap command + ReportIssueArgs with an Issue subcommand group (search/view/create) dispatching to cli_std::issue::{search,view,create}; auto-tag project:keep on create and filter search to it; update the module doc comment."
+    description: "Replace the ReportIssue clap command + ReportIssueArgs with an Issue subcommand group (search/view/create/comment) dispatching to cli_std::issue::{search,view,create,comment}; auto-tag app:keep on create and filter search to it; update the module doc comment."
   - path: apps/keep/src/bin/keep.rs
     action: modify
     section: unit-test

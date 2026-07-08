@@ -50,7 +50,7 @@ enum Command {
     /// reports the available version without changing anything.
     Upgrade(UpgradeArgs),
     /// Search, view, and file relay issues on the axiom tracker
-    /// (`search`/`view`/`create`). `create` auto-tags `project:relay`;
+    /// (`search`/`view`/`create`). `create` auto-tags `app:relay`;
     /// `search` is filtered to relay's own issues.
     Issue(IssueArgs),
     /// Kubernetes artifacts split by layer: the cluster-scoped CRD, the
@@ -374,11 +374,11 @@ struct IssueArgs {
 
 #[derive(Subcommand, Debug)]
 enum IssueCommand {
-    /// Search relay's issues (`project:relay`); omit the query to list recent.
+    /// Search relay's issues (`app:relay`); omit the query to list recent.
     Search(IssueSearchArgs),
     /// Print a single issue by number.
     View(IssueViewArgs),
-    /// File a structured issue (auto-tagged `project:relay`).
+    /// File a structured issue (auto-tagged `app:relay`).
     Create(IssueCreateArgs),
 }
 
@@ -793,7 +793,7 @@ fn ensure_trailing_newline(input: &str) -> String {
 }
 
 /// `relay issue <verb>` — dispatch search/view/create to cli-std. `create`
-/// always tags `project:relay`; `search` is filtered to relay's own issues.
+/// always tags `app:relay`; `search` is filtered to relay's own issues.
 async fn dispatch_issue(args: IssueArgs) -> Result<()> {
     match args.cmd {
         IssueCommand::Search(m) => {
@@ -828,7 +828,7 @@ async fn dispatch_issue(args: IssueArgs) -> Result<()> {
                     message,
                     url: None,
                     repo: None,
-                    label: vec!["project:relay".to_string()],
+                    label: vec!["app:relay".to_string()],
                     dry_run: m.dry_run,
                     yes: true,
                 },
