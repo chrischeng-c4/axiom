@@ -93,10 +93,10 @@ pub(crate) fn pep695_display_name(val: MbValue) -> Option<String> {
                 "TypeVar" | "TypeVarTuple" | "ParamSpec" | "TypeAliasType"
             ) =>
             {
-                fields
-                    .read()
-                    .ok()
-                    .and_then(|f| f.get("__name__").copied())
+                let guard = fields.read().ok()?;
+                let name = guard
+                    .get("__name__")
+                    .copied()
                     .and_then(|v| v.as_ptr())
                     .and_then(|name_ptr| {
                         if let ObjData::Str(ref s) = (*name_ptr).data {
@@ -104,7 +104,15 @@ pub(crate) fn pep695_display_name(val: MbValue) -> Option<String> {
                         } else {
                             None
                         }
-                    })
+                    })?;
+                let typing_ctor = guard
+                    .get("__typing_ctor__")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                match class_name.as_str() {
+                    "TypeVar" | "ParamSpec" if typing_ctor => Some(format!("~{name}")),
+                    _ => Some(name),
+                }
             }
             _ => None,
         }
