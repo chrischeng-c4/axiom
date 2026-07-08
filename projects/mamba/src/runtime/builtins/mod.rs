@@ -8668,6 +8668,38 @@ def f():
         crate::runtime::exception::mb_clear_exception();
     }
 
+    #[test]
+    fn test_exec_runs_pep695_class_alias_with_shadowing_class_binding() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+        let code = make_str(
+            "class C[T]:\n    T = 'class'\n    type Alias = T\nvalue = C.Alias.__value__\nvalue_type = type(C.Alias.__value__).__name__\n",
+        );
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(code, globals);
+        let value =
+            crate::runtime::dict_ops::mb_dict_get(globals, make_str("value"), MbValue::none());
+        let value_type = crate::runtime::dict_ops::mb_dict_get(
+            globals,
+            make_str("value_type"),
+            MbValue::none(),
+        );
+        let class_c =
+            crate::runtime::dict_ops::mb_dict_get(globals, make_str("C"), MbValue::none());
+
+        assert_eq!(eval_str_value(value).as_deref(), Some("class"));
+        assert_eq!(eval_str_value(value_type).as_deref(), Some("str"));
+        assert_eq!(
+            eval_str_value(crate::runtime::class::mb_getattr(
+                class_c,
+                make_str("T"),
+            ))
+            .as_deref(),
+            Some("class")
+        );
+        crate::runtime::exception::mb_clear_exception();
+    }
+
     /// AC2b: compile("x = 1", "<test>", "eval") raises SyntaxError.
     #[test]
     fn test_compile_eval_rejects_statement() {
