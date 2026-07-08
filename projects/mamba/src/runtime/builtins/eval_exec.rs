@@ -2443,6 +2443,32 @@ fn exec_assignment_target_names(expr: &crate::parser::ast::Expr, out: &mut Vec<S
     }
 }
 
+fn exec_delete_target(ctx: &mut ExecContext, expr: &crate::parser::ast::Expr) {
+    use crate::parser::ast::Expr;
+    match expr {
+        Expr::Ident(name) => {
+            if let Some(binding) = exec_take_name_binding(ctx, name) {
+                exec_drop_masked_name(binding);
+            } else {
+                crate::runtime::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("NameError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!("name '{name}' is not defined"))),
+                );
+            }
+        }
+        Expr::TupleLit(items) | Expr::ListLit(items) | Expr::UnpackTarget(items) => {
+            for item in items {
+                exec_delete_target(ctx, &item.node);
+                if exec_has_pending_exception() {
+                    return;
+                }
+            }
+        }
+        Expr::Starred(inner) => exec_delete_target(ctx, &inner.node),
+        _ => {}
+    }
+}
+
 fn exec_handler_matches(
     ctx: &mut ExecContext,
     handler: &crate::parser::ast::ExceptHandler,
@@ -2529,6 +2555,10 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
             module_alias,
         } => {
             exec_import_stmt(ctx, module, names, module_alias);
+            ExecFlow::Normal
+        }
+        Stmt::Del(target) => {
+            exec_delete_target(ctx, &target.node);
             ExecFlow::Normal
         }
         Stmt::Assign { target, value } => {
@@ -4672,5 +4702,39 @@ mod tests {
             crate::runtime::exception::mb_has_exception().as_bool(),
             Some(false)
         );
+    }
+
+    #[test]
+    fn test_exec_generic_class_type_param_deleted_after_statement() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(
+            MbValue::from_ptr(MbObject::new_str(
+                "class ClassA[T]:\n    pass\nx = T\n".to_string(),
+            )),
+            globals,
+        );
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("NameError")
+        );
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_exec_del_missing_name_raises_name_error() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(
+            MbValue::from_ptr(MbObject::new_str("del missing\n".to_string())),
+            globals,
+        );
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("NameError")
+        );
+        crate::runtime::exception::mb_clear_exception();
     }
 }
