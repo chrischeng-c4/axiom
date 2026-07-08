@@ -1,0 +1,92 @@
+version = 2
+project = "tape"
+ir_kind = "td"
+td_path = "apps/tape/tech-design"
+generated_at = "2026-07-08T05:47:10.019671+00:00"
+digest = "sha256:a6cdea798cab15874d52b54d0c78ecee4bb95d8edf69370df7e9dd5fa369342a"
+source_digest = "sha256:a6cdea798cab15874d52b54d0c78ecee4bb95d8edf69370df7e9dd5fa369342a"
+ir_digest = "sha256:b375efb2cfafdce975011d168c2a3c0feee1e2eeb1c54277a0014aadc6f9fe53"
+
+[[files]]
+path = "README.md"
+digest = "sha256:dc7fb8fe7a4210bf50824fc477078de4b62f30208e3c506f7756e1ab5c787104"
+ir_digest = "sha256:ffd60e3aff92c538315b70c3984361efaa6fab25e0af61264310a39a68b8cfcd"
+section_count = 0
+
+[[files]]
+path = "semantic/source/apps-tape-build-rs.md"
+digest = "sha256:117aa9b483290ef240d81cafb5509797753490dca1eba01c283447cd2aad124c"
+ir_digest = "sha256:7cf8022e5eeb83373947a6ba4b87e7b3de62b2eb3aaf69f8afb99acff1fead0d"
+section_count = 3
+
+[[files]]
+path = "semantic/source/apps-tape-src-bench-rs.md"
+digest = "sha256:c5404b65102cd629c07162a44109372a3238cae3a25d4cacb10d69ecdf19b2eb"
+ir_digest = "sha256:f4463888c4e95f08ace77f2f15a189b04dbad4b4756d8740927df1522b565b39"
+section_count = 4
+
+[[files]]
+path = "semantic/source/apps-tape-src-bin-tape-bench-rs.md"
+digest = "sha256:7233d0391571c783f4bbe5a91f25aa65c11255ea17a1fae69aa311be9ae35591"
+ir_digest = "sha256:86f03f322194e39451dbba2e9787990514aeb96dfe85983ef44f17d34359eaac"
+section_count = 3
+
+[[files]]
+path = "semantic/source/apps-tape-src-bin-tape-rs.md"
+digest = "sha256:3fca4343e6490d0f2d87f3873895a12b158e6dbf7943937dd3fb1d6639387349"
+ir_digest = "sha256:c58365ea609344e35a3eda59d04850751d7d718a44e88f4802bb40ac9159c6b4"
+section_count = 4
+
+[[files]]
+path = "semantic/source/apps-tape-src-lib-rs.md"
+digest = "sha256:02d35a42dcd4a2ed3a6e2e1f39923376a932639b0a8fe4a390b2a535cf173a04"
+ir_digest = "sha256:69e4d27fa24958e93a208c4380f095a92f35c527fc8744065cc7f541d8d99437"
+section_count = 4
+
+[[files]]
+path = "semantic/source/apps-tape-src-spec-rs.md"
+digest = "sha256:9d5cc9fc94364202a8c19b8d500407482ced1b30f1414d0f9ccffddb38387502"
+ir_digest = "sha256:24d5c39506969c73d044f64520128e05349548d66b411c2995a0da154c2065c2"
+section_count = 4
+
+[[files]]
+path = "semantic/source/apps-tape-tests-cli-contract-rs.md"
+digest = "sha256:ccae58f10a530a48a3ee05f3f5985d989032c5b867be397e339d5e7d5e83ce0a"
+ir_digest = "sha256:f6110fd06ab7d20409ec9d7d2afdcc7244ad952ad0cebc32c90044684a3f6d96"
+section_count = 3
+
+[[files]]
+path = "semantic/source/apps-tape-tests-competitor-feature-parity-rs.md"
+digest = "sha256:70c81b9f380d9fd091896e17bfa63466478c8fec638ca8d0ae57ec9de931f834"
+ir_digest = "sha256:160851994db30701f249d75b55c00072f39adb50a3e1b81d3a30f209b6228eca"
+section_count = 3
+
+[[files]]
+path = "semantic/source/apps-tape-tests-tape-perf-gate-rs.md"
+digest = "sha256:bbd875aed61931a73ad173fc4e88ccc2034c26c9d9fc49584da048bc7f2c7e5f"
+ir_digest = "sha256:75151a703480b510f577b56672b44b53daeee63e7791f3d590604eae3a672957"
+section_count = 3
+
+[[files]]
+path = "semantic/source/apps-tape-tests-tape-vs-nats-jetstream-rs.md"
+digest = "sha256:e0dcc6de559ff2ca322937c70599f62c58ff88147558486293ba4d6767a7c50a"
+ir_digest = "sha256:0538bce15ce5e0a38954ad32e5bb90aba440d33c5cade672abb2b12103b7ebd0"
+section_count = 3
+
+[[files]]
+path = "semantic/tape-apps-tape.md"
+digest = "sha256:6b6edb76a4b27782f6cf90f427d79cf3803752cf83d41ad50088609863d81f30"
+ir_digest = "sha256:cc33b3faf22ba50c09b527bdb7552418fa968f6d0521b7822ee9016c62e86f95"
+section_count = 3
+
+[[files]]
+path = "semantic/tape-build-script.md"
+digest = "sha256:cfcae6a1c2230ec823703d6d4ff5070123a454c59b1e660ad059b9d200259b9f"
+ir_digest = "sha256:8abe15753f6a1f9d5571573c2f244cebd176f5e9ce5cdd5adb1fb4ba86b9ff7b"
+section_count = 3
+
+[[files]]
+path = "semantic/tape-install-script.md"
+digest = "sha256:4212305a743b209d7977347730c010de5a3c6c7cb8850f9ea5098fa146e057d2"
+ir_digest = "sha256:a17e69751a12aaafa6775f753a194fcde6acfa0f827ae5f845e840d88a1c3e47"
+section_count = 3
