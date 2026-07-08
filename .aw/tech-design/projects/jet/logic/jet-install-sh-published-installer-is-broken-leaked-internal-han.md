@@ -39,7 +39,6 @@ flowchart TD
     marker --> fix[Use shell comment marker #]
     fix --> valid([sh -n projects/jet/install.sh passes])
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
