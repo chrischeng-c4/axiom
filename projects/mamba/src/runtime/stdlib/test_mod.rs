@@ -7,6 +7,9 @@ use super::super::value::MbValue;
 /// and a main() test runner entry point. Distinct from the `unittest` module.
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static TYPE_PARAMS_MAKE_BASE_SEQ: AtomicUsize = AtomicUsize::new(0);
 
 unsafe fn dispatch_args<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue] {
     if nargs == 0 {
@@ -98,6 +101,23 @@ unsafe extern "C" fn dispatch_load_package_tests(
     let suite = a.get(2).copied().unwrap_or_else(MbValue::none);
     super::super::rc::retain_if_ptr(suite);
     suite
+}
+
+unsafe extern "C" fn dispatch_type_params_make_base(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    let a = unsafe { dispatch_args(args_ptr, nargs) };
+    let arg = a.first().copied().unwrap_or_else(MbValue::none);
+    let id = TYPE_PARAMS_MAKE_BASE_SEQ.fetch_add(1, Ordering::Relaxed);
+    let class_name = format!("_test_type_params_Base_{id}");
+    super::super::class::mb_class_register(&class_name, Vec::new(), HashMap::new());
+    super::super::class::mb_class_set_class_attr(
+        MbValue::from_ptr(MbObject::new_str(class_name.clone())),
+        MbValue::from_ptr(MbObject::new_str("__arg__".to_string())),
+        arg,
+    );
+    MbValue::from_ptr(MbObject::new_str(class_name))
 }
 
 unsafe extern "C" fn support_always_eq(_self_v: MbValue, _other: MbValue) -> MbValue {
@@ -807,6 +827,7 @@ fn register_support_submodules() {
     let assert_python_failure = dispatch_assert_python_failure as usize;
     let decorator_factory = dispatch_decorator_factory as usize;
     let load_package_tests = dispatch_load_package_tests as usize;
+    let type_params_make_base = dispatch_type_params_make_base as usize;
     let fakepath = dispatch_fakepath as usize;
     let swap_attr = dispatch_swap_attr as usize;
     let env_guard = dispatch_env_guard as usize;
@@ -1091,6 +1112,10 @@ fn register_support_submodules() {
     super::register_module("test.seq_tests", make_attrs(&[]));
     super::register_module("test.string_tests", make_attrs(&[]));
     super::register_module("test.list_tests", make_attrs(&[]));
+    super::register_module(
+        "test.test_type_params",
+        make_attrs(&[("make_base", type_params_make_base)]),
+    );
     super::register_module(
         "test.test_grammar",
         make_attrs(&[
@@ -1436,6 +1461,19 @@ mod tests {
                 .and_then(|m| m.attrs.get("TestStack").copied())
         });
         assert_eq!(test_stack.and_then(extract_str), Some("TestStack".to_string()));
+    }
+
+    #[test]
+    fn test_register_support_submodules_installs_type_params_make_base() {
+        register_support_submodules();
+        let make_base = module::MODULES.with(|mods| {
+            mods.borrow()
+                .get("test.test_type_params")
+                .and_then(|m| m.attrs.get("make_base").copied())
+                .expect("test.test_type_params.make_base")
+        });
+
+        assert_eq!(builtins::mb_callable(make_base).as_bool(), Some(true));
     }
 
     #[test]

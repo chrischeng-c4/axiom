@@ -1421,6 +1421,118 @@ fn exec_range_values(args: &[MbValue]) -> MbValue {
     MbValue::from_ptr(MbObject::new_list(items))
 }
 
+fn exec_lookup_global_pep695_type_param(ctx: &ExecContext, name: &str) -> Option<MbValue> {
+    let globals = ctx.globals?;
+    let key = MbValue::from_ptr(MbObject::new_str(name.to_string()));
+    if !crate::runtime::dict_ops::mb_dict_contains(globals, key)
+        .as_bool()
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let value = crate::runtime::dict_ops::mb_dict_get(globals, key, MbValue::none());
+    if exec_is_pep695_type_param_value(value) {
+        Some(value)
+    } else {
+        None
+    }
+}
+
+fn exec_eval_generator_element(
+    ctx: &mut ExecContext,
+    element: &crate::parser::ast::Expr,
+) -> MbValue {
+    if let crate::parser::ast::Expr::Ident(name) = element {
+        if let Some(value) = exec_lookup_global_pep695_type_param(ctx, name) {
+            return value;
+        }
+    }
+    exec_eval_expr(ctx, element)
+}
+
+fn exec_restore_comprehension_targets(ctx: &mut ExecContext, bindings: Vec<ExecTemporaryName>) {
+    exec_restore_temporary_names(ctx, bindings);
+}
+
+fn exec_bind_comprehension_targets(
+    ctx: &mut ExecContext,
+    targets: &[String],
+    value: MbValue,
+) -> Vec<ExecTemporaryName> {
+    let bindings = targets
+        .iter()
+        .map(|target| ExecTemporaryName {
+            name: target.clone(),
+            previous: exec_take_name_binding(ctx, target),
+        })
+        .collect::<Vec<_>>();
+    if targets.len() == 1 {
+        exec_store_name(ctx, &targets[0], value);
+    } else {
+        for (target, item) in targets.iter().zip(extract_items(value)) {
+            exec_store_name(ctx, target, item);
+        }
+    }
+    bindings
+}
+
+fn exec_eval_generator_expr(
+    ctx: &mut ExecContext,
+    element: &crate::source::span::Spanned<crate::parser::ast::Expr>,
+    generators: &[crate::parser::ast::Comprehension],
+) -> MbValue {
+    fn visit(
+        ctx: &mut ExecContext,
+        element: &crate::source::span::Spanned<crate::parser::ast::Expr>,
+        generators: &[crate::parser::ast::Comprehension],
+        index: usize,
+        out: &mut Vec<MbValue>,
+    ) -> bool {
+        if index >= generators.len() {
+            let value = exec_eval_generator_element(ctx, &element.node);
+            if exec_has_pending_exception() {
+                return false;
+            }
+            out.push(value);
+            return true;
+        }
+
+        let generator = &generators[index];
+        let iter_value = exec_eval_expr(ctx, &generator.iter.node);
+        if exec_has_pending_exception() {
+            return false;
+        }
+        for item in extract_items(iter_value) {
+            let masked = exec_bind_comprehension_targets(ctx, &generator.targets, item);
+            let mut include = true;
+            for condition in &generator.conditions {
+                let condition_value = exec_eval_expr(ctx, &condition.node);
+                if exec_has_pending_exception() {
+                    exec_restore_comprehension_targets(ctx, masked);
+                    return false;
+                }
+                if !exec_truthy(condition_value) {
+                    include = false;
+                    break;
+                }
+            }
+            if include && !visit(ctx, element, generators, index + 1, out) {
+                exec_restore_comprehension_targets(ctx, masked);
+                return false;
+            }
+            exec_restore_comprehension_targets(ctx, masked);
+        }
+        true
+    }
+
+    let mut values = Vec::new();
+    if visit(ctx, element, generators, 0, &mut values) {
+        MbValue::from_ptr(MbObject::new_list(values))
+    } else {
+        MbValue::none()
+    }
+}
+
 fn exec_call_function(ctx: &mut ExecContext, func: &ExecFunction, args: &[MbValue]) -> MbValue {
     if args.len() > func.params.len() {
         exec_raise_type_error(format!(
@@ -1602,6 +1714,10 @@ fn exec_eval_expr(ctx: &mut ExecContext, expr: &crate::parser::ast::Expr) -> MbV
             }
             crate::runtime::set_ops::mb_set_from_list(MbValue::from_ptr(MbObject::new_list(values)))
         }
+        Expr::GeneratorExpr {
+            element,
+            generators,
+        } => exec_eval_generator_expr(ctx, element, generators),
         Expr::DictLit(entries) => {
             let dict = crate::runtime::dict_ops::mb_dict_new();
             for (key, value) in entries {
