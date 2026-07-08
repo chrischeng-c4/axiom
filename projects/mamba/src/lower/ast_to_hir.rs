@@ -7025,6 +7025,41 @@ impl<'a> AstLowerer<'a> {
             .collect()
     }
 
+    fn lower_type_unpack_alias(&mut self, inner: &Spanned<ast::Expr>) -> Option<HirExpr> {
+        let arg = self.lower_expr(inner)?;
+        Some(HirExpr::Call {
+            func: Box::new(HirExpr::StrLit(
+                "mb_typing_unpack_alias".to_string(),
+                self.checker.tcx.any(),
+            )),
+            args: vec![arg],
+            ty: self.checker.tcx.any(),
+        })
+    }
+
+    fn lower_type_subscription_index_tuple(
+        &mut self,
+        elems: &[Spanned<ast::Expr>],
+    ) -> Option<HirExpr> {
+        let elements: Vec<HirExpr> = elems
+            .iter()
+            .filter_map(|elem| match &elem.node {
+                ast::Expr::Starred(inner) => self.lower_type_unpack_alias(inner),
+                _ => self.lower_expr(elem),
+            })
+            .collect();
+        let elem_tys: Vec<crate::types::TypeId> = elements.iter().map(|e| e.ty()).collect();
+        let ty = if !elem_tys.is_empty() {
+            self.checker
+                .tcx
+                .find(&crate::types::Ty::Tuple(elem_tys))
+                .unwrap_or_else(|| self.checker.tcx.any())
+        } else {
+            self.checker.tcx.any()
+        };
+        Some(HirExpr::Tuple { elements, ty })
+    }
+
     fn lower_expr(&mut self, expr: &Spanned<ast::Expr>) -> Option<HirExpr> {
         match &expr.node {
             ast::Expr::IntLit(i) => Some(HirExpr::IntLit(*i, self.checker.tcx.int())),
@@ -9245,15 +9280,19 @@ impl<'a> AstLowerer<'a> {
             }
             ast::Expr::Index { object, index } => {
                 let obj = self.lower_expr(object)?;
-                // PEP 695 variadic type arguments use a starred AST node in
-                // subscription position (`tuple[*Ts]`). Runtime lowering wants
-                // the underlying type-parameter object there, not iterable
-                // display unpacking semantics. Without this, the starred index
-                // fails to lower, which silently drops the surrounding lazy
-                // alias thunk from the call-arg filter_map and shifts
-                // `__mb_pep695_type_alias__`'s args left.
+                // PEP 646 variadic type arguments use a starred AST node in
+                // subscription position (`tuple[*Ts]`). Lower the star into
+                // typing.Unpack[Ts] rather than display-unpacking or erasing it,
+                // so runtime alias repr/args preserve CPython's public surface.
                 let idx = match &index.node {
-                    ast::Expr::Starred(inner) => self.lower_expr(inner)?,
+                    ast::Expr::Starred(inner) => self.lower_type_unpack_alias(inner)?,
+                    ast::Expr::TupleLit(elems)
+                        if elems
+                            .iter()
+                            .any(|elem| matches!(elem.node, ast::Expr::Starred(_))) =>
+                    {
+                        self.lower_type_subscription_index_tuple(elems)?
+                    }
                     _ => self.lower_expr(index)?,
                 };
                 let ty = match self.checker.tcx.get(obj.ty()) {
@@ -13332,7 +13371,58 @@ async def main():
             body.as_ref(),
             HirExpr::Index { object, index, .. }
                 if matches!(object.as_ref(), HirExpr::Var(_, _))
-                    && matches!(index.as_ref(), HirExpr::Var(_, _))
+                    && matches!(
+                        index.as_ref(),
+                        HirExpr::Call { func, args, .. }
+                            if matches!(
+                                func.as_ref(),
+                                HirExpr::StrLit(name, _) if name == "mb_typing_unpack_alias"
+                            ) && matches!(args.as_slice(), [HirExpr::Var(_, _)])
+                    )
+        ));
+    }
+
+    #[test]
+    fn test_lower_type_alias_variadic_multi_arg_index_wraps_starred_param() {
+        let mut module = crate::parser::parse("type V[*Ts] = dict[str, *Ts]\n", FileId(0))
+            .expect("parse failed");
+        crate::lower::pep695::desugar_module(&mut module);
+        let mut checker = TypeChecker::new();
+        let _ = checker.check_module(&module);
+        let hir = lower_module(&module, &checker).expect("lower failed");
+
+        let alias_assign = hir
+            .top_level
+            .iter()
+            .find_map(|stmt| match stmt {
+                HirStmt::Assign {
+                    value: HirExpr::Call { args, .. },
+                    ..
+                } if args.len() == 3 && matches!(&args[1], HirExpr::Lambda { .. }) => Some(args),
+                _ => None,
+            })
+            .expect("expected full type-alias constructor call");
+
+        let HirExpr::Lambda { body, .. } = &alias_assign[1] else {
+            panic!("expected lazy alias thunk");
+        };
+        assert!(matches!(
+            body.as_ref(),
+            HirExpr::Index { index, .. }
+                if matches!(
+                    index.as_ref(),
+                    HirExpr::Tuple { elements, .. }
+                        if matches!(
+                            elements.as_slice(),
+                            [
+                                HirExpr::Var(_, _),
+                                HirExpr::Call { func, args, .. },
+                            ] if matches!(
+                                func.as_ref(),
+                                HirExpr::StrLit(name, _) if name == "mb_typing_unpack_alias"
+                            ) && matches!(args.as_slice(), [HirExpr::Var(_, _)])
+                        )
+                )
         ));
     }
 
