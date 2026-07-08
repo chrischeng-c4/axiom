@@ -181,6 +181,66 @@ pub(crate) fn make_type_object(name: &str) -> MbValue {
     })
 }
 
+fn str_field(
+    fields: &crate::runtime::rc::MbRwLock<crate::runtime::rc::InstanceFields>,
+    name: &str,
+) -> Option<String> {
+    fields.read().ok().and_then(|f| {
+        f.get(name).and_then(|v| {
+            v.as_ptr().and_then(|p| unsafe {
+                if let ObjData::Str(ref s) = (*p).data {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            })
+        })
+    })
+}
+
+pub(crate) fn type_object_display_name(val: MbValue) -> Option<String> {
+    let ptr = val.as_ptr()?;
+    unsafe {
+        let ObjData::Instance { class_name, fields } = &(*ptr).data else {
+            return None;
+        };
+        if class_name != "type" {
+            return None;
+        }
+        let name = str_field(fields, "__name__")?;
+        let module = str_field(fields, "__module__");
+        match module.as_deref() {
+            Some(module) if !module.is_empty() && module != "builtins" => {
+                Some(format!("{module}.{name}"))
+            }
+            _ => Some(name),
+        }
+    }
+}
+
+pub(crate) fn type_object_repr_name(val: MbValue) -> Option<String> {
+    type_object_display_name(val).map(|name| format!("<class '{name}'>"))
+}
+
+pub(crate) fn set_type_object_attr(type_name: &str, attr_name: &str, value: MbValue) {
+    let type_obj = make_type_object(type_name);
+    let Some(ptr) = type_obj.as_ptr() else {
+        return;
+    };
+    unsafe {
+        if let ObjData::Instance { class_name, fields } = &(*ptr).data {
+            if class_name != "type" {
+                return;
+            }
+            rc::retain_if_ptr(value);
+            let old = fields.write().unwrap().insert(attr_name.to_string(), value);
+            if let Some(old) = old {
+                rc::release_if_ptr(old);
+            }
+        }
+    }
+}
+
 /// Return the singleton type object for a builtin type name.
 ///
 /// Called from JIT code generated for builtin type names used in non-call

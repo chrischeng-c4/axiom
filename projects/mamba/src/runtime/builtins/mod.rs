@@ -144,7 +144,10 @@ pub(crate) use str_conversion::pep695_display_name;
 pub use truthiness::{
     mb_is_identity, mb_is_none, mb_is_not_identity, mb_is_not_none, mb_is_truthy, mb_not,
 };
-pub(crate) use type_objects::{make_type_object, reject_non_constructible_type_object};
+pub(crate) use type_objects::{
+    make_type_object, reject_non_constructible_type_object, set_type_object_attr,
+    type_object_display_name, type_object_repr_name,
+};
 pub use type_objects::{
     mb_builtin_type_obj, mb_type, mb_type2, mb_type3, mb_type3_kwargs, mb_type_no_args,
 };
@@ -391,20 +394,10 @@ pub fn mb_print(val: MbValue) -> MbValue {
                         print_value_str(msg_copy);
                         mb_out!("\n");
                     } else if class_name == "type" {
-                        // Type objects: print <class 'name'> matching CPython
-                        let type_name = f
-                            .get("__name__")
-                            .and_then(|v| v.as_ptr())
-                            .and_then(|p| {
-                                if let ObjData::Str(ref s) = (*p).data {
-                                    Some(s.clone())
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or_else(|| "unknown".to_string());
+                        let repr = type_object_repr_name(val)
+                            .unwrap_or_else(|| "<class 'unknown'>".to_string());
                         drop(f);
-                        mb_outln!("<class '{type_name}'>");
+                        mb_outln!("{repr}");
                     } else if class_name == "slice" {
                         let s = f.get("start").copied().unwrap_or(MbValue::none());
                         let e = f.get("stop").copied().unwrap_or(MbValue::none());
@@ -979,20 +972,8 @@ fn print_repr(val: MbValue) {
                     // Type objects in a container repr as `<class 'name'>`,
                     // matching mb_repr / the print path (e.g. `[int, str]`).
                     if class_name == "type" {
-                        let name = fields
-                            .read()
-                            .ok()
-                            .and_then(|f| f.get("__name__").copied())
-                            .and_then(|v| v.as_ptr())
-                            .and_then(|p| {
-                                if let ObjData::Str(ref s) = (*p).data {
-                                    Some(s.clone())
-                                } else {
-                                    None
-                                }
-                            });
-                        if let Some(name) = name {
-                            mb_out!("<class '{name}'>");
+                        if let Some(repr) = type_object_repr_name(val) {
+                            mb_out!("{repr}");
                             return;
                         }
                     }
@@ -4193,22 +4174,8 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                     // CPython and the print path. Without this, `repr(int)` /
                     // `repr(defaultdict(int))`'s factory showed `<type instance>`.
                     if class_name == "type" {
-                        let name = fields
-                            .read()
-                            .ok()
-                            .and_then(|f| f.get("__name__").copied())
-                            .and_then(|v| v.as_ptr())
-                            .and_then(|p| {
-                                if let ObjData::Str(ref s) = (*p).data {
-                                    Some(s.clone())
-                                } else {
-                                    None
-                                }
-                            });
-                        if let Some(name) = name {
-                            return MbValue::from_ptr(MbObject::new_str(format!(
-                                "<class '{name}'>"
-                            )));
+                        if let Some(repr) = type_object_repr_name(val) {
+                            return MbValue::from_ptr(MbObject::new_str(repr));
                         }
                     }
                     // Class-body enum member without a user __repr__:
@@ -7119,6 +7086,35 @@ mod tests {
         assert_eq!(mb_eq(alias_a, alias_b).as_bool(), Some(true));
         assert_eq!(mb_eq(alias_a, alias_c).as_bool(), Some(false));
         assert_eq!(mb_eq(alias_a, types_alias).as_bool(), Some(true));
+    }
+
+    #[test]
+    fn test_generic_alias_repr_qualifies_user_class_origin_module() {
+        let origin = make_type_object("Pep695Box1116");
+        set_type_object_attr(
+            "Pep695Box1116",
+            "__module__",
+            MbValue::from_ptr(MbObject::new_str("__main__".to_string())),
+        );
+        let alias = generic_alias_instance(
+            "GenericAlias",
+            "__origin__",
+            "__args__",
+            origin,
+            vec![make_type_object("int")],
+        );
+        let alias_repr = mb_repr(alias);
+        let origin_repr = mb_repr(origin);
+        unsafe {
+            match &(*alias_repr.as_ptr().unwrap()).data {
+                ObjData::Str(s) => assert_eq!(s, "__main__.Pep695Box1116[int]"),
+                _ => panic!("expected alias repr string"),
+            }
+            match &(*origin_repr.as_ptr().unwrap()).data {
+                ObjData::Str(s) => assert_eq!(s, "<class '__main__.Pep695Box1116'>"),
+                _ => panic!("expected origin repr string"),
+            }
+        }
     }
 
     #[test]

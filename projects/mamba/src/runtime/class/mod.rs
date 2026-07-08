@@ -1547,6 +1547,13 @@ pub fn mb_class_define(
     }
 
     mb_class_register(&class_name, bases, methods);
+    if !module_name.is_empty() {
+        super::builtins::set_type_object_attr(
+            &class_name,
+            "__module__",
+            MbValue::from_ptr(MbObject::new_str(module_name)),
+        );
+    }
 }
 
 /// Register a class from MbValues with multiple bases (P1 OOP conformance).
@@ -1598,6 +1605,13 @@ pub fn mb_class_define_multi(
         u.borrow_mut().insert(class_name.clone());
     });
     mb_class_register(&class_name, bases, methods);
+    if !module_name.is_empty() {
+        super::builtins::set_type_object_attr(
+            &class_name,
+            "__module__",
+            MbValue::from_ptr(MbObject::new_str(module_name)),
+        );
+    }
 }
 
 fn stamp_class_method_module(method: MbValue, module_name: &str) {
@@ -13559,7 +13573,11 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                             .iter()
                             .any(|base| base == "typing.Generic")
                         {
-                            return super::stdlib::typing_mod::user_generic_subscript(obj, key, s);
+                            let repr_name = super::builtins::type_object_display_name(obj)
+                                .unwrap_or_else(|| s.to_string());
+                            return super::stdlib::typing_mod::user_generic_subscript(
+                                obj, key, &repr_name,
+                            );
                         }
                         // No __class_getitem__ → raise TypeError
                         super::exception::mb_raise(
@@ -13715,7 +13733,11 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                                 .iter()
                                 .any(|base| base == "typing.Generic") =>
                             {
-                                return super::stdlib::typing_mod::pep585_subscript(obj, key);
+                                let repr_name = super::builtins::type_object_display_name(obj)
+                                    .unwrap_or_else(|| tn.clone());
+                                return super::stdlib::typing_mod::user_generic_subscript(
+                                    obj, key, &repr_name,
+                                );
                             }
                             _ => {}
                         }
