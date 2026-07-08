@@ -93,7 +93,7 @@ commands:
       - "Same flags (--check/--version/--force/--yes); dispatches to cli_std::upgrade::run with a vat ToolInfo and Options mapped from the flags. Self-updates from the latest vat@* GitHub release exactly as before."
   - name: vat issue
     behavior:
-      - "`search [query]`, `view <n>`, and `create [--title <t>] [message...]` dispatch to cli_std::issue and are scoped to the project:vat label."
+      - "`search [query]`, `view <n>`, and `create [--title <t>] [message...]` dispatch to cli_std::issue and are scoped to the app:vat label."
   - name: vat --help
     behavior:
       - "Lists llm, upgrade, and issue (all three mandatory verbs)."

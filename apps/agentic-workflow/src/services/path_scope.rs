@@ -229,7 +229,7 @@ mod tests {
 name = "jet"
 path = "projects/jet"
 td_path = "projects/jet/tech-design"
-label = "project:jet"
+label = "app:jet"
 
 [[projects.workspaces]]
 name = "jet"
@@ -241,7 +241,7 @@ test_cmd = "cargo test -p jet"
 name = "agentic-workflow"
 path = "apps/agentic-workflow"
 td_path = "apps/agentic-workflow/tech-design/surface"
-label = "project:agentic-workflow"
+label = "app:agentic-workflow"
 
 [[projects.workspaces]]
 name = "agentic-workflow"

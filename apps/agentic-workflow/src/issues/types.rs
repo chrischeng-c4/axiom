@@ -1146,7 +1146,7 @@ mod tests {
         let labels = vec![
             "priority:p1".into(),
             "type:epic".into(),
-            "project:agentic-workflow".into(),
+            "app:agentic-workflow".into(),
         ];
         assert_eq!(IssueType::from_labels(&labels), IssueType::Epic);
 
@@ -1173,7 +1173,7 @@ mod tests {
             gitlab_id: None,
             url: None,
             author: Some("alice".into()),
-            labels: vec!["priority:p0".into(), "project:agentic-workflow".into()],
+            labels: vec!["priority:p0".into(), "app:agentic-workflow".into()],
             created_at: None,
             updated_at: None,
             slug: "bug-x".into(),
@@ -1207,10 +1207,10 @@ mod tests {
         assert!(!f.matches(&issue));
 
         f.state = Some(IssueState::Open);
-        f.label = Some("project:agentic-workflow".into());
+        f.label = Some("app:agentic-workflow".into());
         assert!(f.matches(&issue));
 
-        f.label = Some("project:other".into());
+        f.label = Some("app:other".into());
         assert!(!f.matches(&issue));
     }
 

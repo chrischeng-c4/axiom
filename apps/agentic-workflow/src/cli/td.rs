@@ -1847,6 +1847,7 @@ fn active_td_section_types() -> Vec<crate::models::spec_rules::SectionType> {
         .collect()
 }
 
+#[cfg(test)]
 fn derive_spec_dir(labels: &[String]) -> String {
     derive_spec_dir_from_parts(labels, None)
 }
@@ -1855,9 +1856,51 @@ fn derive_spec_dir_for_issue(issue: &Issue) -> String {
     derive_spec_dir_from_parts(&issue.labels, Some(&issue.title))
 }
 
+fn derive_project_td_spec_dir(labels: &[String]) -> String {
+    let concern = derive_td_concern(labels, None);
+    for label in labels {
+        if let Some(crate_name) = label.strip_prefix("crate:") {
+            return match crate_name {
+                "sdd" => format!("apps/agentic-workflow/tech-design/{concern}/"),
+                "mamba" | "cclab-mamba" => format!("projects/mamba/tech-design/{concern}/"),
+                _ => format!(
+                    "crates/{}/tech-design/{concern}/",
+                    slugify_path_component(crate_name)
+                ),
+            };
+        }
+        if let Some(app) = label.strip_prefix("app:") {
+            let app = app.trim();
+            if !app.is_empty() {
+                let root = match app {
+                    "agentic-workflow" | "relay" => "apps",
+                    _ => "projects",
+                };
+                return format!(
+                    "{root}/{}/tech-design/{concern}/",
+                    slugify_path_component(app)
+                );
+            }
+        }
+        if let Some(lib) = label.strip_prefix("lib:") {
+            let lib = lib.trim();
+            if !lib.is_empty() {
+                return format!(
+                    "libs/{}/tech-design/{concern}/",
+                    slugify_path_component(lib)
+                );
+            }
+        }
+    }
+    format!("projects/score/tech-design/{concern}/")
+}
+
 fn project_label_for_issue(issue: &Issue) -> Option<&str> {
     issue.labels.iter().find_map(|label| {
-        let project = label.strip_prefix("project:")?.trim();
+        let project = label
+            .strip_prefix("app:")
+            .or_else(|| label.strip_prefix("lib:"))?
+            .trim();
         (!project.is_empty()).then_some(project)
     })
 }
@@ -1872,10 +1915,20 @@ fn derive_spec_dir_from_parts(labels: &[String], title: Option<&str>) -> String 
                 _ => format!("crates/{}/{concern}/", slugify_path_component(crate_name)),
             };
         }
-        if let Some(project) = label.strip_prefix("project:") {
-            let project = project.trim();
-            if !project.is_empty() {
-                return format!("projects/{}/{concern}/", slugify_path_component(project));
+        if let Some(app) = label.strip_prefix("app:") {
+            let app = app.trim();
+            if !app.is_empty() {
+                let root = match app {
+                    "agentic-workflow" | "relay" => "apps",
+                    _ => "projects",
+                };
+                return format!("{root}/{}/{concern}/", slugify_path_component(app));
+            }
+        }
+        if let Some(lib) = label.strip_prefix("lib:") {
+            let lib = lib.trim();
+            if !lib.is_empty() {
+                return format!("libs/{}/{concern}/", slugify_path_component(lib));
             }
         }
     }
@@ -2505,8 +2558,8 @@ fn lifecycle_pass_phase(pass: &str) -> String {
 /// Resolve the checkout-relative destination path for a `td claim`
 /// `--from-path` source. If the source already lives under
 /// `<project_root>/.aw/tech-design/`, mirror its exact relative path so
-/// the claim does not duplicate an in-tree spec into a label-derived
-/// directory. Otherwise fall back to `derive_spec_dir(labels) + file_name`.
+/// the claim does not duplicate a legacy in-tree spec into a label-derived
+/// directory. Otherwise fall back to the project-local `tech-design` tree.
 fn preserve_or_derive_dest_rel(
     src: &std::path::Path,
     project_root: &std::path::Path,
@@ -2528,12 +2581,12 @@ fn preserve_or_derive_dest_rel(
     if let Ok(rel) = canon_src.strip_prefix(&canon_td) {
         return format!(".aw/tech-design/{}", rel.display());
     }
-    let group = derive_spec_dir(labels);
+    let group = derive_project_td_spec_dir(labels);
     let file_name = src
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| format!("{}.md", slug));
-    format!(".aw/tech-design/{}{}", group, file_name)
+    format!("{}{}", group, file_name)
 }
 
 // ── Dispatch ─────────────────────────────────────────────────────────
@@ -4603,7 +4656,7 @@ mod tests {
             gitlab_id: None,
             url: None,
             author: None,
-            labels: vec!["project:jet".to_string()],
+            labels: vec!["app:jet".to_string()],
             created_at: None,
             updated_at: None,
             slug: "3940".to_string(),
@@ -4665,13 +4718,13 @@ name = "agentic-workflow"
 aliases = ["aw"]
 path = "apps/agentic-workflow"
 td_path = "apps/agentic-workflow/tech-design"
-label = "project:agentic-workflow"
+label = "app:agentic-workflow"
 "#,
         )
         .unwrap();
 
         let mut issue = issue_with_title("Manage AW init templates as greenfield-ready artifacts");
-        issue.labels = vec!["project:agentic-workflow".to_string()];
+        issue.labels = vec!["app:agentic-workflow".to_string()];
 
         assert_eq!(
             default_spec_path_for_issue_in_project(tmp.path(), &issue, "4162"),
@@ -5049,7 +5102,7 @@ label = "project:agentic-workflow"
 
     #[test]
     fn derive_spec_dir_uses_project_label_name() {
-        let labels = vec!["type:enhancement".to_string(), "project:jet".to_string()];
+        let labels = vec!["type:enhancement".to_string(), "app:jet".to_string()];
         assert_eq!(derive_spec_dir(&labels), "projects/jet/logic/");
     }
 
@@ -6240,7 +6293,7 @@ mod promote_tests {
 [[projects]]
 name = "tool"
 path = "projects/tool"
-label = "project:tool"
+label = "app:tool"
 
 [[projects.workspaces]]
 name = "tool"

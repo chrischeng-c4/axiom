@@ -2018,7 +2018,7 @@ version = "0.1.0"
 name = "agentic-workflow"
 path = "apps/agentic-workflow"
 td_path = "apps/agentic-workflow/tech-design"
-label = "project:agentic-workflow"
+label = "app:agentic-workflow"
 
 [agentic_workflow.issue_platform]
 type = "github"
@@ -2035,7 +2035,7 @@ mode = "legacy"
         assert!(updated.contains(&format!("version = \"{}\"", SDD_VERSION)));
         assert!(updated.contains("[[projects]]"), "{updated}");
         assert!(updated.contains("td_path = \"apps/agentic-workflow/tech-design\""));
-        assert!(updated.contains("label = \"project:agentic-workflow\""));
+        assert!(updated.contains("label = \"app:agentic-workflow\""));
         assert!(updated.contains("[agentic_workflow.issue_platform]"));
         assert!(updated.contains("repo = \"chrischeng-c4/cclab\""));
         assert!(!updated.contains("[workflow.agents]"), "{updated}");
@@ -2050,7 +2050,7 @@ version = "0.1.0"
 name = "agentic-workflow"
 path = "apps/agentic-workflow"
 td_path = "apps/agentic-workflow/tech-design"
-label = "project:agentic-workflow"
+label = "app:agentic-workflow"
 
 [agentic_workflow.issue_platform]
 type = "github"
@@ -2066,7 +2066,7 @@ auth_method = "cli"
         );
 
         assert!(updated.contains("[[projects]]"), "{updated}");
-        assert!(updated.contains("label = \"project:agentic-workflow\""));
+        assert!(updated.contains("label = \"app:agentic-workflow\""));
         assert!(updated.contains("type = \"gitlab\""));
         assert!(updated.contains("repo = \"new/repo\""));
         assert!(!updated.contains("repo = \"old/repo\""), "{updated}");

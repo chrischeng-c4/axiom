@@ -113,7 +113,7 @@ per library: `<lib>/real_world/<scenario>.py` for R4 exit-0 gates and
 
 ## Issue tracking
 
-Issues live on GitHub under `chrischeng-c4/cclab` with the `project:mamba` label. Three monitoring angles:
+Issues live on GitHub under `chrischeng-c4/cclab` with the `app:mamba` label. Three monitoring angles:
 
 - **Angle A — Conformance** (Goal 1): titles prefixed `conformance(mamba):`
 - **Angle B — Tests** (Goal 3): titles prefixed `test(mamba):`

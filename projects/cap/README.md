@@ -72,7 +72,7 @@ Required Verification: smoke
 Promise:
 Cap exposes the repo-wide standard agent commands through the shared `cli-std`
 implementation: `llm` for offline guidance, `upgrade` for cap release updates,
-and `issue` for tracker search/view/create with `project:cap` diagnostics.
+and `issue` for tracker search/view/create with `app:cap` diagnostics.
 Gate Inventory:
 - `cargo test -p cap cli_std_convention`; `cargo test -p cap installed_frontend_exposes_standard_agent_commands`; `cargo build -p cap --features release`
 
@@ -176,7 +176,7 @@ Standard agent commands:
 |---|---|
 | `cap llm [--topic <topic>] [--format md\|json]` | Offline self-documentation for agents. |
 | `cap upgrade [--version <tag>] [--check]` | Self-update from `cap@*` GitHub releases through `cli-std`. |
-| `cap issue search [query]` / `view <n>` / `create [--title <t>] [message...]` | Search, read, and file `project:cap` issues with build diagnostics. |
+| `cap issue search [query]` / `view <n>` / `create [--title <t>] [message...]` | Search, read, and file `app:cap` issues with build diagnostics. |
 | `cap report-issue --dry-run ...` | Deprecated compatibility alias for older automation; prefer `cap issue create`. |
 
 Cap's planner owns automatic command replacement. It preserves the familiar

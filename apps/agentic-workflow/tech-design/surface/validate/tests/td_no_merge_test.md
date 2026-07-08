@@ -1433,7 +1433,7 @@ async fn test_code_check_consumes_implements_populated_by_real_td_create() {
         gitlab_id: None,
         url: None,
         author: None,
-        labels: vec!["project:agentic-workflow".to_string()],
+        labels: vec!["app:agentic-workflow".to_string()],
         created_at: Some(chrono::Utc::now().to_rfc3339()),
         updated_at: Some(chrono::Utc::now().to_rfc3339()),
         slug: slug.to_string(),
@@ -1624,7 +1624,7 @@ fn write_932_handwrite_missing_tracker_file(root: &std::path::Path, rel_path: &s
     .unwrap();
 }
 
-/// Identical to `seed_847_open_issue` but also carries a `project:<name>`
+/// Identical to `seed_847_open_issue` but also carries a `app:<name>`
 /// label — the gate's activation key (`cb::project_label_for_wi`). Kept as
 /// a separate helper rather than widening `seed_847_open_issue` itself:
 /// every pre-#932 fixture in this file relies on that helper producing an
@@ -1651,7 +1651,7 @@ async fn seed_932_open_issue(
         gitlab_id: None,
         url: None,
         author: None,
-        labels: vec![format!("phase:{}", phase), format!("project:{}", project)],
+        labels: vec![format!("phase:{}", phase), format!("app:{}", project)],
         created_at: Some(chrono::Utc::now().to_rfc3339()),
         updated_at: Some(chrono::Utc::now().to_rfc3339()),
         slug: slug.to_string(),
@@ -2023,7 +2023,7 @@ changes:
       actionable envelope naming the remediation instead of misrouting into
       `td::run_audit`'s unrelated "audit target not found" path lookup.
       Also covers #932: the touched-scope standardization gate — for a WI
-      carrying a `project:<name>` label, its own touched-file set (branch
+      carrying a `app:<name>` label, its own touched-file set (branch
       diff ∪ TD Changes paths) must be fully CODEGEN/HANDWRITE-marked with
       valid HANDWRITE gap/tracker attrs; once the rest of the project
       (excluding the touched set) is already at 100% managed coverage a

@@ -1,7 +1,7 @@
 [project]
 name = "relay"
 cap_path = "README.md"
-label = "project:relay"
+label = "app:relay"
 
 [capability.profile]
 traits = ["service", "long_running", "cli_facing", "competitive_replacement", "network_exposed", "primary_replicas"]

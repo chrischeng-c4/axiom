@@ -195,7 +195,7 @@ The command an agent calls to understand a vat. One document, no log-scraping:
 | `vat run -- <cmd>` | Clone a base, run one direct command, record the result. `--base DIR`, `--from VAT`, `--isolation none\|seatbelt`, `--gpu auto\|required\|none`, `--json`. |
 | `vat llm [--topic <t>] [--format md\|json]` | Print offline agent-facing docs. Default `outline`; use `--topic guide` for the detailed vat.toml/service/evidence/boundary guide. |
 | `vat upgrade` | Self-update to the latest `vat@*` GitHub release (`--check` to report only, `--version <tag>` to pin). One of the three mandatory CLI-convention verbs (`llm`/`upgrade`/`issue`), via the shared `cli-std` crate. |
-| `vat issue search\|view\|create` | Search, read, and file diagnostics-rich GitHub issues under `project:vat`; `issue create --dry-run --title <t>` previews version + target + OS/arch diagnostics without submitting. |
+| `vat issue search\|view\|create` | Search, read, and file diagnostics-rich GitHub issues under `app:vat`; `issue create --dry-run --title <t>` previews version + target + OS/arch diagnostics without submitting. |
 | `vat ls` | List vats (one line each, or `--json` array of full states). |
 | `vat state <id>` | Full agent-legible state as JSON (`--compact` for one line). |
 | `vat diff <id>` | Every filesystem change vs. the vat's base (`--json`). |

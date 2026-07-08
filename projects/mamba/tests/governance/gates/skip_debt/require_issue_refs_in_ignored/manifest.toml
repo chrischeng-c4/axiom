@@ -44,7 +44,7 @@ allowed_reference_kinds = [
     "documented_opt_in_category",
 ]
 issue_number_pattern_must_match_project_mamba_only = true
-project_mamba_label_required = "project:mamba"
+project_mamba_label_required = "app:mamba"
 forbid_external_repository_references = true
 
 # Acceptance: "An ignored test without a linked issue fails validation."

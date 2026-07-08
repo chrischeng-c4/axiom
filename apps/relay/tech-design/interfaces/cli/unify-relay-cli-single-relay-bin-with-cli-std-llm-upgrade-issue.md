@@ -6,7 +6,7 @@ summary: >
   standard agent-facing ops ship alongside it — `relay llm` (cli_std::llm over
   relay-supplied topics + build-stamp ToolInfo), `relay upgrade`, and
   `relay issue <search|view|create>` (cli_std::issue, auto-tagged
-  project:relay). build.rs delegates to libs/build-stamp for
+  app:relay). build.rs delegates to libs/build-stamp for
   RELAY_GIT_SHA/RELAY_BUILT_AT/RELAY_TARGET. relay-raft stays untouched (its
   collapse is the raft-host adoption WI).
 fill_sections: [logic, unit-test, changes]
@@ -25,7 +25,7 @@ nodes:
   serve: { kind: process, label: "bare relay runs the h2c server with ServeArgs flags falling back to RELAY_BIND and RELAY_DATA_DIR env" }
   llm: { kind: process, label: "llm renders relay topics via cli_std llm render with the build-stamp ToolInfo" }
   upgrade: { kind: process, label: "upgrade checks or installs the latest relay release asset via cli_std (network path behind self-update feature)" }
-  issue: { kind: process, label: "issue search view create dispatch cli_std issue filtered and auto-tagged project:relay (network path behind issue feature)" }
+  issue: { kind: process, label: "issue search view create dispatch cli_std issue filtered and auto-tagged app:relay (network path behind issue feature)" }
   out: { kind: terminal, label: "serve runs until shutdown; ops verbs print to stdout and exit" }
 edges:
   - { from: parse, to: branch }
