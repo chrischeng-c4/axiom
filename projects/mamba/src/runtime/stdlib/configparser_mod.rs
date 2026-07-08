@@ -1672,6 +1672,14 @@ fn proxy_name(self_v: MbValue) -> String {
         .unwrap_or_default()
 }
 
+fn proxy_option_arg(pos: &[MbValue]) -> Result<String, MbValue> {
+    match pos.first().copied() {
+        Some(value) => extract_str(value)
+            .ok_or_else(|| raise_type_error("SectionProxy option must be str")),
+        None => Ok(String::new()),
+    }
+}
+
 unsafe extern "C" fn p_getitem(self_v: MbValue, args: MbValue) -> MbValue {
     let (pos, _kw) = split_args(args);
     let key = pos
@@ -1743,10 +1751,10 @@ unsafe extern "C" fn p_len(self_v: MbValue, _args: MbValue) -> MbValue {
 
 unsafe extern "C" fn p_get(self_v: MbValue, args: MbValue) -> MbValue {
     let (pos, kw) = split_args(args);
-    let key = pos
-        .first()
-        .and_then(|v| extract_str(*v))
-        .unwrap_or_default();
+    let key = match proxy_option_arg(&pos) {
+        Ok(key) => key,
+        Err(err) => return err,
+    };
     let parser = proxy_parser(self_v);
     let sec = proxy_name(self_v);
     let raw = kw_get(kw, "raw").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -1759,10 +1767,10 @@ unsafe extern "C" fn p_get(self_v: MbValue, args: MbValue) -> MbValue {
 
 fn proxy_typed_get(self_v: MbValue, args: MbValue, conv: fn(&str) -> MbValue) -> MbValue {
     let (pos, kw) = split_args(args);
-    let key = pos
-        .first()
-        .and_then(|v| extract_str(*v))
-        .unwrap_or_default();
+    let key = match proxy_option_arg(&pos) {
+        Ok(key) => key,
+        Err(err) => return err,
+    };
     let parser = proxy_parser(self_v);
     let sec = proxy_name(self_v);
     let fallback = kw_get(kw, "fallback").or_else(|| pos.get(1).copied());
