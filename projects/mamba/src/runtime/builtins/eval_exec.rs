@@ -1273,20 +1273,21 @@ fn exec_drop_name_bindings(masked: Vec<ExecMaskedName>) {
 
 fn exec_commit_temporary_names(ctx: &mut ExecContext, bindings: Vec<ExecTemporaryName>) {
     for binding in bindings {
-        if let Some(value) = exec_lookup_name(ctx, &binding.name) {
-            if exec_is_pep695_type_param_value(value) {
+        if let Some(current) = exec_take_name_binding(ctx, &binding.name) {
+            if exec_is_pep695_type_param_value(current.value) {
                 unsafe {
-                    crate::runtime::rc::retain_if_ptr(value);
+                    crate::runtime::rc::retain_if_ptr(current.value);
                 }
                 if let Some(previous) = ctx
                     .type_param_reuse_once
-                    .insert(binding.name.clone(), value)
+                    .insert(binding.name.clone(), current.value)
                 {
                     unsafe {
                         crate::runtime::rc::release_if_ptr(previous);
                     }
                 }
             }
+            exec_drop_masked_name(current);
         }
         if let Some(previous) = binding.previous {
             exec_drop_masked_name(previous);
@@ -4712,6 +4713,24 @@ mod tests {
         mb_exec_with_globals(
             MbValue::from_ptr(MbObject::new_str(
                 "class ClassA[T]:\n    pass\nx = T\n".to_string(),
+            )),
+            globals,
+        );
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("NameError")
+        );
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_exec_generic_method_type_param_not_visible_in_class_body() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(
+            MbValue::from_ptr(MbObject::new_str(
+                "class ClassA[A]:\n    def funcB[B](self):\n        pass\n    x = B\n".to_string(),
             )),
             globals,
         );
