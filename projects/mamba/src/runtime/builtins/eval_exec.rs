@@ -657,6 +657,170 @@ fn exec_expr_contains_comprehension_expr(expr: &crate::parser::ast::Expr) -> boo
     }
 }
 
+fn exec_expr_pep695_nested_scope_kind(expr: &crate::parser::ast::Expr) -> Option<&'static str> {
+    use crate::parser::ast::{CallArg, Expr};
+    match expr {
+        Expr::Lambda { .. } => Some("lambda"),
+        Expr::GeneratorExpr { .. }
+        | Expr::ListComp { .. }
+        | Expr::SetComp { .. }
+        | Expr::DictComp { .. } => Some("comprehension"),
+        Expr::Call { func, args } => exec_expr_pep695_nested_scope_kind(&func.node).or_else(|| {
+            args.iter().find_map(|arg| match arg {
+                CallArg::Positional(expr)
+                | CallArg::Keyword { value: expr, .. }
+                | CallArg::StarArg(expr)
+                | CallArg::DoubleStarArg(expr) => exec_expr_pep695_nested_scope_kind(&expr.node),
+            })
+        }),
+        Expr::Index { object, index } => exec_expr_pep695_nested_scope_kind(&object.node)
+            .or_else(|| exec_expr_pep695_nested_scope_kind(&index.node)),
+        Expr::Attr { object, .. } => exec_expr_pep695_nested_scope_kind(&object.node),
+        Expr::TupleLit(items) | Expr::ListLit(items) | Expr::SetLit(items) => items
+            .iter()
+            .find_map(|item| exec_expr_pep695_nested_scope_kind(&item.node)),
+        Expr::DictLit(entries) => entries.iter().find_map(|(key, value)| {
+            key.as_ref()
+                .and_then(|key| exec_expr_pep695_nested_scope_kind(&key.node))
+                .or_else(|| exec_expr_pep695_nested_scope_kind(&value.node))
+        }),
+        Expr::BinOp { lhs, rhs, .. } => exec_expr_pep695_nested_scope_kind(&lhs.node)
+            .or_else(|| exec_expr_pep695_nested_scope_kind(&rhs.node)),
+        Expr::UnaryOp { operand: expr, .. }
+        | Expr::Await(expr)
+        | Expr::Yield(Some(expr))
+        | Expr::YieldFrom(expr)
+        | Expr::Starred(expr) => exec_expr_pep695_nested_scope_kind(&expr.node),
+        Expr::IfExpr {
+            body,
+            condition,
+            else_body,
+        } => exec_expr_pep695_nested_scope_kind(&body.node)
+            .or_else(|| exec_expr_pep695_nested_scope_kind(&condition.node))
+            .or_else(|| exec_expr_pep695_nested_scope_kind(&else_body.node)),
+        Expr::Walrus { value, .. } => exec_expr_pep695_nested_scope_kind(&value.node),
+        Expr::Slice { start, stop, step } => start
+            .iter()
+            .chain(stop.iter())
+            .chain(step.iter())
+            .find_map(|expr| exec_expr_pep695_nested_scope_kind(&expr.node)),
+        Expr::ChainedCompare { operands, .. } => operands
+            .iter()
+            .find_map(|operand| exec_expr_pep695_nested_scope_kind(&operand.node)),
+        _ => None,
+    }
+}
+
+fn exec_pep695_class_type_alias_nested_scope_kind(
+    stmts: &[crate::source::span::Spanned<crate::parser::ast::Stmt>],
+    in_class_scope: bool,
+) -> Option<&'static str> {
+    use crate::parser::ast::Stmt;
+    for stmt in stmts {
+        match &stmt.node {
+            Stmt::ClassDef { body, .. } => {
+                if let Some(kind) = exec_pep695_class_type_alias_nested_scope_kind(body, true) {
+                    return Some(kind);
+                }
+            }
+            Stmt::TypeAlias { value, .. } if in_class_scope => {
+                if let Some(kind) = exec_expr_pep695_nested_scope_kind(&value.node) {
+                    return Some(kind);
+                }
+            }
+            Stmt::If {
+                body,
+                elif_clauses,
+                else_body,
+                ..
+            } if in_class_scope => {
+                if let Some(kind) = exec_pep695_class_type_alias_nested_scope_kind(body, true) {
+                    return Some(kind);
+                }
+                for (_, body) in elif_clauses {
+                    if let Some(kind) = exec_pep695_class_type_alias_nested_scope_kind(body, true) {
+                        return Some(kind);
+                    }
+                }
+                if let Some(else_body) = else_body {
+                    if let Some(kind) =
+                        exec_pep695_class_type_alias_nested_scope_kind(else_body, true)
+                    {
+                        return Some(kind);
+                    }
+                }
+            }
+            Stmt::For {
+                body, else_body, ..
+            }
+            | Stmt::AsyncFor {
+                body, else_body, ..
+            }
+            | Stmt::While {
+                body, else_body, ..
+            } if in_class_scope => {
+                if let Some(kind) = exec_pep695_class_type_alias_nested_scope_kind(body, true) {
+                    return Some(kind);
+                }
+                if let Some(else_body) = else_body {
+                    if let Some(kind) =
+                        exec_pep695_class_type_alias_nested_scope_kind(else_body, true)
+                    {
+                        return Some(kind);
+                    }
+                }
+            }
+            Stmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+            } if in_class_scope => {
+                if let Some(kind) = exec_pep695_class_type_alias_nested_scope_kind(body, true) {
+                    return Some(kind);
+                }
+                for handler in handlers {
+                    if let Some(kind) =
+                        exec_pep695_class_type_alias_nested_scope_kind(&handler.body, true)
+                    {
+                        return Some(kind);
+                    }
+                }
+                if let Some(else_body) = else_body {
+                    if let Some(kind) =
+                        exec_pep695_class_type_alias_nested_scope_kind(else_body, true)
+                    {
+                        return Some(kind);
+                    }
+                }
+                if let Some(finally_body) = finally_body {
+                    if let Some(kind) =
+                        exec_pep695_class_type_alias_nested_scope_kind(finally_body, true)
+                    {
+                        return Some(kind);
+                    }
+                }
+            }
+            Stmt::With { body, .. } | Stmt::AsyncWith { body, .. } if in_class_scope => {
+                if let Some(kind) = exec_pep695_class_type_alias_nested_scope_kind(body, true) {
+                    return Some(kind);
+                }
+            }
+            Stmt::Match { arms, .. } if in_class_scope => {
+                for arm in arms {
+                    if let Some(kind) =
+                        exec_pep695_class_type_alias_nested_scope_kind(&arm.body, true)
+                    {
+                        return Some(kind);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn exec_raise_pep695_class_annotation_comprehension_syntax_error() {
     crate::runtime::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
@@ -3064,6 +3228,17 @@ fn mb_exec_impl(code: MbValue, globals: Option<MbValue>, locals: Option<MbValue>
         unsafe {
             if let ObjData::CodeObject { ast, .. } = &(*ptr).data {
                 let mut ast = ast.clone();
+                if let Some(kind) =
+                    exec_pep695_class_type_alias_nested_scope_kind(&ast.stmts, false)
+                {
+                    crate::runtime::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "Cannot use {kind} in annotation scope within class scope"
+                        ))),
+                    );
+                    return MbValue::none();
+                }
                 crate::lower::pep695::desugar_module(&mut ast);
                 let mut ctx = ExecContext {
                     globals,
@@ -3113,6 +3288,15 @@ fn mb_exec_impl(code: MbValue, globals: Option<MbValue>, locals: Option<MbValue>
             return MbValue::none();
         }
     };
+    if let Some(kind) = exec_pep695_class_type_alias_nested_scope_kind(&module.stmts, false) {
+        crate::runtime::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "Cannot use {kind} in annotation scope within class scope"
+            ))),
+        );
+        return MbValue::none();
+    }
     crate::lower::pep695::desugar_module(&mut module);
     let mut ctx = ExecContext {
         globals,
@@ -4450,5 +4634,43 @@ mod tests {
         assert!(!pep695_class_annotation_comprehension_syntax_error(
             "class C:\n    def meth(x: (T for _ in (1,))):\n        pass\n"
         ));
+    }
+
+    #[test]
+    fn test_exec_class_type_alias_nested_scope_syntax_error() {
+        crate::runtime::module::mb_register_builtins();
+        for source in [
+            "class C:\n    type Alias = lambda: 1\n",
+            "class C[T]:\n    type Alias = (T for _ in (1,))\n",
+        ] {
+            crate::runtime::exception::mb_clear_exception();
+            let globals = crate::runtime::dict_ops::mb_dict_new();
+            mb_exec_with_globals(
+                MbValue::from_ptr(MbObject::new_str(source.to_string())),
+                globals,
+            );
+            assert_eq!(
+                crate::runtime::exception::current_exception_type().as_deref(),
+                Some("SyntaxError")
+            );
+        }
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_exec_function_type_alias_lambda_not_class_scope() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(
+            MbValue::from_ptr(MbObject::new_str(
+                "def outer():\n    type Alias = lambda: 1\n".to_string(),
+            )),
+            globals,
+        );
+        assert_eq!(
+            crate::runtime::exception::mb_has_exception().as_bool(),
+            Some(false)
+        );
     }
 }
