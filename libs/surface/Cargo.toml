@@ -1,4 +1,5 @@
-# HANDWRITE-BEGIN gap="missing-generator:surface-manifest" tracker="pending-tracker" reason="Manifest for the shared renderer-neutral UI element crate extracted from jet-wasm."
+# SPEC-MANAGED: libs/surface/tech-design/semantic/source/libs-surface-cargo-toml.md#text-source-unit
+# CODEGEN-BEGIN
 [package]
 name = "cclab-surface"
 version.workspace = true
@@ -16,4 +17,4 @@ serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
 serde_json.workspace = true
-# HANDWRITE-END
+# CODEGEN-END

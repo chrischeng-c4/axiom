@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-rust-models-emit-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Emit serde structs / aliases for the spec's component schemas.
 
 use crate::emit::rust::rsmap;
@@ -16,6 +18,7 @@ const RUST_KEYWORDS: &[&str] = &[
 
 /// `(rust_field_name, serde_rename)` — the rename is `Some` when the field name
 /// differs from the JSON key.
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-rust-models-emit-rs.md#source
 pub fn field_name(key: &str) -> (String, Option<String>) {
     let snake = to_snake(key);
     let field = if RUST_KEYWORDS.contains(&snake.as_str()) {
@@ -27,6 +30,7 @@ pub fn field_name(key: &str) -> (String, Option<String>) {
     (field, rename)
 }
 
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-rust-models-emit-rs.md#source
 pub fn emit(spec: &Spec, tm: &TypeMap) -> String {
     let mut out = String::from(HEADER);
     out.push_str("use serde::{Deserialize, Serialize};\n");
@@ -80,3 +84,4 @@ fn emit_struct(name: &str, schema: &Schema, tm: &TypeMap) -> String {
 fn esc(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
+// CODEGEN-END

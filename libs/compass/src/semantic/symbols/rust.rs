@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-rust-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Rust symbol extraction visitor methods
 //!
 //! Implements R1-R7 from spec rust-symbol-analysis:
@@ -14,6 +16,7 @@ use crate::syntax::ParsedFile;
 
 use super::{SymbolKind, SymbolTableBuilder, TypeInfo};
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-rust-rs.md#source
 impl SymbolTableBuilder {
     pub(crate) fn visit_rust_node(&mut self, node: &tree_sitter::Node<'_>, file: &ParsedFile) {
         if node.is_error() || node.is_missing() {
@@ -772,3 +775,4 @@ fn outer() {
         );
     }
 }
+// CODEGEN-END

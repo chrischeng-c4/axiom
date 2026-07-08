@@ -1,0 +1,19 @@
+version = 2
+project = "service-metrics"
+ir_kind = "td"
+td_path = "libs/service-metrics/tech-design"
+generated_at = "2026-07-07T16:09:51.509816+00:00"
+digest = "sha256:6469fcbd82791fa81485768011cde50b2aafc88b570eabf543135d6a43c62ca8"
+source_digest = "sha256:6469fcbd82791fa81485768011cde50b2aafc88b570eabf543135d6a43c62ca8"
+ir_digest = "sha256:daefd80d79bb5b4022804614ba1e71072693811f135ffd4a9f47f3ad58c145d1"
+
+[[files]]
+path = "semantic/service-metrics-libs-service-metrics.md"
+digest = "sha256:9aae0ebd9739abb1494aefb99331d9fde42d4792de98c169ae24a1ce524a6222"
+parse_error = "schema:15-56: section 'schema' at lines 15..56: JSON Schema typed-payload parse error: did not find expected key at line 7 column 1, while parsing a block mapping"
+
+[[files]]
+path = "semantic/source/libs-service-metrics-src-lib-rs.md"
+digest = "sha256:388660e5687a0557463599c632b27dd1258746a2b7a36edc83663ab26bcdd74c"
+ir_digest = "sha256:4aecdc89faedb7f0708887fe20d371a7751cdb219000a56d6ef248c656029737"
+section_count = 3

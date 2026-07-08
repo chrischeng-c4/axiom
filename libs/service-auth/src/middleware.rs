@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-auth/tech-design/semantic/source/libs-service-auth-src-middleware-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! The generic auth middleware + a `Bearer` token extraction helper.
 //!
 //! Attach with
@@ -32,6 +34,7 @@ use crate::verifier::Verifier;
 ///
 /// Returns the token with the `Bearer ` prefix stripped, or `None` when the
 /// header is missing, non-ASCII, or not a bearer credential.
+/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-middleware-rs.md#source
 pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     headers
         .get(header::AUTHORIZATION)?
@@ -47,6 +50,7 @@ pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 /// the stack. On `Err`, short-circuits with the rendered [`AuthError`]. The
 /// verifier decides open-mode (via [`Verifier::required`] + returning its open
 /// principal); this function is pure plumbing.
+/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-middleware-rs.md#source
 pub async fn auth_middleware<V: Verifier>(
     State(verifier): State<Arc<V>>,
     mut req: Request,
@@ -60,3 +64,4 @@ pub async fn auth_middleware<V: Verifier>(
         Err(e) => e.into_response(),
     }
 }
+// CODEGEN-END

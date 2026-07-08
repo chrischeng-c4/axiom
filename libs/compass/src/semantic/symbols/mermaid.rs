@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-mermaid-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Mermaid diagram symbol extraction (line-based)
 //!
 //! Extracts symbols from Mermaid diagram source:
@@ -11,6 +13,7 @@ use crate::diagnostic::{Position, Range};
 
 const FLOWCHART_TYPES: &[&str] = &["graph", "flowchart"];
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-mermaid-rs.md#source
 impl SymbolTableBuilder {
     pub(crate) fn visit_mermaid_lines(&mut self, source: &str) {
         let mut diagram_type: Option<String> = None;
@@ -328,3 +331,4 @@ mod tests {
         assert!(modules.contains(&"sequenceDiagram"), "got: {:?}", modules);
     }
 }
+// CODEGEN-END

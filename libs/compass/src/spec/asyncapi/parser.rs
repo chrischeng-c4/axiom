@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-spec-asyncapi-parser-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! AsyncAPI 2.x/3.x to EventApiSpec parser
 //!
 //! Parses AsyncAPI specifications for event-driven APIs.
@@ -14,6 +16,7 @@ use crate::type_inference::Type;
 
 /// Error type for AsyncAPI parsing
 #[derive(Debug)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-asyncapi-parser-rs.md#source
 pub enum AsyncApiError {
     /// Invalid JSON/YAML
     ParseError(String),
@@ -27,6 +30,7 @@ pub enum AsyncApiError {
     Other(String),
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-asyncapi-parser-rs.md#source
 impl std::fmt::Display for AsyncApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -39,9 +43,11 @@ impl std::fmt::Display for AsyncApiError {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-asyncapi-parser-rs.md#source
 impl std::error::Error for AsyncApiError {}
 
 /// AsyncAPI parser
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-asyncapi-parser-rs.md#source
 pub struct AsyncApiParser {
     /// Parsed components for reference resolution
     components: HashMap<String, Value>,
@@ -49,6 +55,7 @@ pub struct AsyncApiParser {
     version_major: u8,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-asyncapi-parser-rs.md#source
 impl AsyncApiParser {
     pub fn new() -> Self {
         Self {
@@ -522,6 +529,7 @@ impl AsyncApiParser {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-asyncapi-parser-rs.md#source
 impl Default for AsyncApiParser {
     fn default() -> Self {
         Self::new()
@@ -700,3 +708,4 @@ components:
         }
     }
 }
+// CODEGEN-END

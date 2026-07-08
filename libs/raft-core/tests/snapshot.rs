@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/raft-core/tech-design/semantic/source/libs-raft-core-tests-snapshot-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Snapshot / log-compaction: a compacted leader still brings a lagging follower
 //! fully up to date by shipping its state-machine snapshot, and the durable hard
 //! state round-trips the compaction point.
@@ -15,6 +17,7 @@ struct Cluster {
     applied: HashMap<NodeId, Vec<Vec<u8>>>,
 }
 
+/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-tests-snapshot-rs.md#source
 impl Cluster {
     fn new(n: u64) -> Cluster {
         let m = auto_membership(n);
@@ -182,3 +185,4 @@ fn persisted_state_round_trips_the_snapshot() {
     assert_eq!(restored.snapshot_index(), 8);
     assert_eq!(restored.last_index(), 10, "snapshot_index 8 + 2 resident");
 }
+// CODEGEN-END

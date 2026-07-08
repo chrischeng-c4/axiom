@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-openapi-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! OpenAPI 3.x lint checker (source-line analysis on YAML)
 
 use crate::checker::LintConfig;
@@ -5,8 +7,10 @@ use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, Posi
 use crate::syntax::{Language, ParsedFile};
 
 /// OpenAPI 3.x checker — line-based YAML analysis
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-openapi-rs.md#source
 pub struct OpenApiChecker;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-openapi-rs.md#source
 impl OpenApiChecker {
     pub fn new() -> Self {
         Self
@@ -318,12 +322,14 @@ fn op_id_diag(line: usize, method: String, lines: &[&str]) -> Diagnostic {
     )
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-openapi-rs.md#source
 impl Default for OpenApiChecker {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-openapi-rs.md#source
 impl super::Checker for OpenApiChecker {
     fn language(&self) -> Language {
         Language::Yaml
@@ -473,3 +479,4 @@ paths:
         assert!(diags.is_empty(), "expected no diags for non-openapi YAML");
     }
 }
+// CODEGEN-END

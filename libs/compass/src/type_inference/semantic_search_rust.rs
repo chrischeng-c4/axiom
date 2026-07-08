@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rust-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Rust-specific semantic search support
 //!
 //! Adds Rust language support to the unified semantic search API.
@@ -11,8 +13,10 @@ use super::mutable_ast::Span;
 use super::semantic_search::{CallSite, MatchKind, SearchMatch};
 
 /// Rust semantic search provider
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rust-rs.md#source
 pub struct RustSearchProvider;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rust-rs.md#source
 impl RustSearchProvider {
     pub fn new() -> Self {
         Self
@@ -393,6 +397,7 @@ impl RustSearchProvider {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rust-rs.md#source
 impl Default for RustSearchProvider {
     fn default() -> Self {
         Self::new()
@@ -516,3 +521,4 @@ impl Clone for Foo {
         assert!(symbols.contains(&"Bar".to_string()));
     }
 }
+// CODEGEN-END

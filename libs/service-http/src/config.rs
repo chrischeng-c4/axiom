@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-http/tech-design/semantic/source/libs-service-http-src-config-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! `HttpConfig` — the env-driven runtime knobs every k8s-native service shares.
 //!
 //! Each service binary already parses these (under its own `SERVICE_*`
@@ -8,6 +10,7 @@
 
 /// Log output format for the fmt layer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-config-rs.md#source
 pub enum LogFormat {
     /// Human/agent-readable multi-line output (local dev default).
     Pretty,
@@ -20,6 +23,7 @@ pub enum LogFormat {
 /// Built by a service binary from its flags/env and handed to the shared
 /// scaffolding. Construct with [`HttpConfig::new`].
 #[derive(Clone, Debug)]
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-config-rs.md#source
 pub struct HttpConfig {
     /// Bind host. k8s passes `0.0.0.0`; local dev defaults to `127.0.0.1`.
     pub host: String,
@@ -41,6 +45,7 @@ pub struct HttpConfig {
     pub otlp_endpoint: Option<String>,
 }
 
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-config-rs.md#source
 impl HttpConfig {
     /// Construct a config from already-resolved values. Every field is explicit
     /// so a service binary maps its own flags/env in one place.
@@ -96,3 +101,4 @@ mod tests {
         assert_eq!(cfg.bind_addr(), "0.0.0.0:7373");
     }
 }
+// CODEGEN-END

@@ -117,6 +117,7 @@ fn rule_a(root: &Path, dir: &Path) -> Option<Vec<Workspace>> {
         paths: vec![format!("{}/**", be_rel)],
         target: be_target,
         test_cmd: infer_test_cmd_relative(root, &be, be_target, "be"),
+        verify_cold: false,
         codegen: None,
     };
     let fe_ws = Workspace {
@@ -124,6 +125,7 @@ fn rule_a(root: &Path, dir: &Path) -> Option<Vec<Workspace>> {
         paths: vec![format!("{}/**", fe_rel)],
         target: fe_target,
         test_cmd: infer_test_cmd_relative(root, &fe, fe_target, "fe"),
+        verify_cold: false,
         codegen: None,
     };
 
@@ -144,6 +146,7 @@ fn rule_b(root: &Path, dir: &Path, project_name: &str) -> Option<Workspace> {
         paths: vec![format!("{}/**", rel)],
         target: Language::Rust,
         test_cmd: Some(format!("cargo test -p {}", pkg_name)),
+        verify_cold: false,
         codegen: None,
     })
 }
@@ -166,6 +169,7 @@ fn rule_c(root: &Path, dir: &Path, _project_name: &str) -> Option<Workspace> {
         paths: vec![format!("{}/**", rel)],
         target: Language::Python,
         test_cmd,
+        verify_cold: false,
         codegen: None,
     })
 }
@@ -194,6 +198,7 @@ fn rule_d(root: &Path, dir: &Path, _project_name: &str) -> Option<Workspace> {
         paths: vec![format!("{}/**", rel)],
         target,
         test_cmd,
+        verify_cold: false,
         codegen: None,
     })
 }
@@ -240,6 +245,7 @@ fn rule_e(root: &Path, dir: &Path) -> Option<Workspace> {
         paths: vec![format!("{}/**", rel)],
         target: Language::Rust,
         test_cmd: Some(format!("cargo test -p {}", pkg_name)),
+        verify_cold: false,
         codegen: None,
     })
 }
@@ -253,6 +259,7 @@ fn rule_f(root: &Path, dir: &Path, project_name: &str) -> Workspace {
         paths: vec![format!("{}/**", rel)],
         target: Language::Schemas,
         test_cmd: Some("true".to_string()),
+        verify_cold: false,
         codegen: None,
     }
 }

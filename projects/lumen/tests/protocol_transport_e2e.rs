@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-protocol-transport
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-tests-protocol_transport_e2e-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 // @contract service-listener-http1-and-h2c
 //! Lumen server transport contract: the service entrypoint accepts HTTP/1.1
@@ -16,6 +16,7 @@ struct LumenTransportServer {
     handle: tokio::task::JoinHandle<()>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-tests-protocol_transport_e2e-rs.md#source
 impl LumenTransportServer {
     async fn start() -> Self {
         let engine = Arc::new(lumen::storage::Engine::new());

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-auth/tech-design/semantic/source/libs-service-auth-src-llm-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! LLM topic provider for the shared service-auth contract.
 
 /// Agent-facing topic describing the reusable auth primitive.
@@ -49,6 +51,7 @@ with 403.
 };
 
 /// Return the shared auth topic for CLI composition.
+/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-llm-rs.md#source
 pub fn topic() -> &'static cli_std::llm::Topic {
     &TOPIC
 }
@@ -63,3 +66,4 @@ mod tests {
         assert!(topic.body.contains("Authorization: Bearer"));
     }
 }
+// CODEGEN-END

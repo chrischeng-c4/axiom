@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-advanced-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Advanced Rust type inference (R2)
 //!
 //! Extends the existing Rust type system (`rust_types`, `rust_infer`) with
@@ -26,6 +28,7 @@ use super::rust_types::{Lifetime, LifetimeId, RustType, TraitBound, TraitId, Tra
 /// `[T; size_of::<u64>()]`, etc.  This type models the subset that Lens
 /// needs to evaluate for `hover` / `type-at` purposes.
 #[derive(Debug, Clone, PartialEq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-advanced-rs.md#source
 pub enum ArraySizeExpr {
     /// A literal integer size
     Literal(usize),
@@ -41,6 +44,7 @@ pub enum ArraySizeExpr {
 
 /// Binary operator for array size expressions
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-advanced-rs.md#source
 pub enum SizeOp {
     Add,
     Sub,
@@ -48,6 +52,7 @@ pub enum SizeOp {
     Div,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-advanced-rs.md#source
 impl ArraySizeExpr {
     /// Attempt to evaluate the expression given a mapping of const-param names
     /// to their concrete `usize` values.
@@ -96,6 +101,7 @@ impl ArraySizeExpr {
 ///
 /// Corresponds to `<Item = u32>` in `T: Iterator<Item = u32>`.
 #[derive(Debug, Clone, PartialEq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-advanced-rs.md#source
 pub struct AssocTypeConstraint {
     /// Name of the associated type (e.g. `"Item"`)
     pub name: String,
@@ -109,6 +115,7 @@ pub struct AssocTypeConstraint {
 /// Corresponds to a `where` clause predicate like:
 /// `T: Iterator<Item = u32> + DoubleEndedIterator + Send + 'static`
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-advanced-rs.md#source
 pub struct ComplexTraitBounds {
     /// The type being bounded (usually a `TypeParam`)
     pub ty: RustType,
@@ -122,6 +129,7 @@ pub struct ComplexTraitBounds {
 
 /// Result of checking a type against a `ComplexTraitBounds` spec.
 #[derive(Debug, Clone, PartialEq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-advanced-rs.md#source
 pub enum BoundCheckResult {
     /// All bounds are satisfied.
     Satisfied,
@@ -144,6 +152,7 @@ pub enum BoundCheckResult {
 /// This performs a structural walk: for each required trait, it looks up
 /// impl blocks in the context, verifies the impl covers the concrete type,
 /// and then checks associated-type constraints.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-advanced-rs.md#source
 pub fn check_complex_trait_bounds(
     ctx: &RustTypeContext,
     concrete_type: &RustType,
@@ -253,6 +262,7 @@ fn types_match(a: &RustType, b: &RustType) -> bool {
 // ============================================================================
 
 /// Resolution context for `<T as Trait>::Assoc` projections.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-advanced-rs.md#source
 pub struct ProjectionResolver<'ctx> {
     ctx: &'ctx RustTypeContext,
 }
@@ -343,6 +353,7 @@ impl<'ctx> ProjectionResolver<'ctx> {
 ///
 /// See <https://doc.rust-lang.org/reference/lifetime-elision.html>.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-advanced-rs.md#source
 pub enum ElisionRule {
     /// Rule 1 — each elided input lifetime gets its own fresh lifetime.
     EachInputGetsOwn,
@@ -356,6 +367,7 @@ pub enum ElisionRule {
 
 /// The result of applying lifetime elision to a function signature.
 #[derive(Debug, Clone, PartialEq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-advanced-rs.md#source
 pub struct ElisionResult {
     /// The elision rule that was applied to determine the output lifetime.
     pub rule: ElisionRule,
@@ -374,6 +386,7 @@ pub struct ElisionResult {
 /// - `has_elided_output` — `true` when the return type contains an elided
 ///   lifetime
 /// - `lifetime_counter` — counter used to generate fresh `LifetimeId`s
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-advanced-rs.md#source
 pub fn apply_lifetime_elision(
     has_self_ref: bool,
     input_elided_count: usize,
@@ -433,6 +446,7 @@ pub fn apply_lifetime_elision(
 // ============================================================================
 
 /// High-level helper that bundles projection resolution and bound checking.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-advanced-rs.md#source
 pub struct RustAdvancedInferencer<'ctx> {
     ctx: &'ctx RustTypeContext,
     projection_resolver: ProjectionResolver<'ctx>,
@@ -640,3 +654,4 @@ mod tests {
         assert_eq!(result.rule, ElisionRule::SingleInputToOutput);
     }
 }
+// CODEGEN-END

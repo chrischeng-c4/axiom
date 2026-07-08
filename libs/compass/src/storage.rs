@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-storage-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Persistent index storage path resolution.
 //!
 //! Resolves the persistent storage directory for Lens code indexes at
@@ -9,6 +11,7 @@ use std::path::{Path, PathBuf};
 /// Resolve the persistent Lens storage root for a project.
 ///
 /// Returns `{project_root}/cclab/.index/`.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-storage-rs.md#source
 pub fn resolve_lens_storage(project_root: &Path) -> std::io::Result<PathBuf> {
     let canonical = project_root.canonicalize()?;
     Ok(canonical.join("cclab").join(".index"))
@@ -17,6 +20,7 @@ pub fn resolve_lens_storage(project_root: &Path) -> std::io::Result<PathBuf> {
 /// Resolve a module-specific index path within the Lens storage directory.
 ///
 /// Returns `{project_root}/cclab/.index/{module_name}.idx`
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-storage-rs.md#source
 pub fn resolve_module_index(project_root: &Path, module_name: &str) -> std::io::Result<PathBuf> {
     let root = resolve_lens_storage(project_root)?;
     Ok(root.join(format!("{}.idx", module_name)))
@@ -25,6 +29,7 @@ pub fn resolve_module_index(project_root: &Path, module_name: &str) -> std::io::
 /// Resolve the PID file path for the daemon.
 ///
 /// Returns `{project_root}/cclab/.index/daemon.pid`
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-storage-rs.md#source
 pub fn resolve_pid_file(project_root: &Path) -> std::io::Result<PathBuf> {
     let root = resolve_lens_storage(project_root)?;
     Ok(root.join("daemon.pid"))
@@ -33,6 +38,7 @@ pub fn resolve_pid_file(project_root: &Path) -> std::io::Result<PathBuf> {
 /// Resolve the socket path for the daemon.
 ///
 /// Returns `{project_root}/cclab/.index/daemon.sock`
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-storage-rs.md#source
 pub fn resolve_socket_path(project_root: &Path) -> std::io::Result<PathBuf> {
     let root = resolve_lens_storage(project_root)?;
     Ok(root.join("daemon.sock"))
@@ -41,6 +47,7 @@ pub fn resolve_socket_path(project_root: &Path) -> std::io::Result<PathBuf> {
 /// Resolve the persistent AST index cache directory.
 ///
 /// Returns `{project_root}/cclab/.index/cache/`
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-storage-rs.md#source
 pub fn resolve_cache_dir(project_root: &Path) -> std::io::Result<PathBuf> {
     let root = resolve_lens_storage(project_root)?;
     Ok(root.join("cache"))
@@ -49,6 +56,7 @@ pub fn resolve_cache_dir(project_root: &Path) -> std::io::Result<PathBuf> {
 /// Resolve per-scope cache directory (#1127).
 ///
 /// Returns `{project_root}/cclab/.index/scopes/{scope_id}/cache/`
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-storage-rs.md#source
 pub fn resolve_scope_cache_dir(project_root: &Path, scope_id: &str) -> std::io::Result<PathBuf> {
     let root = resolve_lens_storage(project_root)?;
     Ok(root.join("scopes").join(scope_id).join("cache"))
@@ -119,3 +127,4 @@ mod tests {
         assert!(path.to_string_lossy().ends_with("cclab/.index/cache"));
     }
 }
+// CODEGEN-END

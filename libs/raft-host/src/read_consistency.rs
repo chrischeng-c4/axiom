@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/raft-host/tech-design/semantic/source/libs-raft-host-src-read-consistency-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! The `X-Read-Consistency` request-header contract.
 //!
 //! Every raft_core service's replica-read path parses the same header to
@@ -17,6 +19,7 @@ pub const READ_CONSISTENCY_HEADER: &str = "x-read-consistency";
 /// [`READ_CONSISTENCY_HEADER`] header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+/// @spec libs/raft-host/tech-design/semantic/source/libs-raft-host-src-read-consistency-rs.md#source
 pub enum ReadConsistency {
     /// Default — only the shard leader may answer.
     Leader,
@@ -27,6 +30,7 @@ pub enum ReadConsistency {
     Any,
 }
 
+/// @spec libs/raft-host/tech-design/semantic/source/libs-raft-host-src-read-consistency-rs.md#source
 impl ReadConsistency {
     /// Parse a [`READ_CONSISTENCY_HEADER`] value. A missing or unrecognized
     /// value falls back to [`ReadConsistency::Leader`], the safest setting.
@@ -77,3 +81,4 @@ mod tests {
         assert_eq!(ReadConsistency::from_header(None), ReadConsistency::Leader);
     }
 }
+// CODEGEN-END

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-quasar-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! cclab.quasar route handler generator
 //!
 //! Generates API route handlers from OpenAPI specs.
@@ -7,8 +9,10 @@ use crate::gen::traits::{CodeGenerator, GenContext, GenResult, GeneratedCode, La
 use crate::spec::ir::{DataModelSpec, EndpointDef, HttpMethod, RestApiSpec};
 
 /// Quasar (route handlers) code generator
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-quasar-rs.md#source
 pub struct QuasarGenerator;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-quasar-rs.md#source
 impl QuasarGenerator {
     pub fn new() -> Self {
         Self
@@ -182,12 +186,14 @@ impl QuasarGenerator {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-quasar-rs.md#source
 impl Default for QuasarGenerator {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-quasar-rs.md#source
 impl CodeGenerator for QuasarGenerator {
     fn name(&self) -> &str {
         "quasar"
@@ -326,3 +332,4 @@ mod tests {
         assert!(code.contains("Body[NewPet]"));
     }
 }
+// CODEGEN-END

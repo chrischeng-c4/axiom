@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-backup/tech-design/semantic/source/libs-service-backup-src-policy-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -6,6 +8,7 @@ use crate::BackupDestination;
 /// Operator/runner-facing backup policy.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-policy-rs.md#source
 pub struct BackupPolicy {
     /// Cron expression for the runner. The operator owns translating this into
     /// a Kubernetes CronJob schedule.
@@ -18,12 +21,14 @@ pub struct BackupPolicy {
 /// Retention applied after a successful put.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-policy-rs.md#source
 pub struct RetentionPolicy {
     /// Drop objects older than this many seconds. `None` disables age pruning.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_age_seconds: Option<u64>,
 }
 
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-policy-rs.md#source
 impl RetentionPolicy {
     pub fn max_age_seconds(max_age_seconds: u64) -> Self {
         Self {
@@ -47,3 +52,4 @@ mod tests {
         assert_eq!(json["retention"]["maxAgeSeconds"], 3600);
     }
 }
+// CODEGEN-END

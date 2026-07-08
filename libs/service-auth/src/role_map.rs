@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-auth/tech-design/semantic/source/libs-service-auth-src-role-map-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Static bearer-token role-map RBAC — the reusable model behind the
 //! archetype's `<SVC>_AUTH=off|required` + `<SVC>_TOKEN_REGISTRY_FILE`
 //! contract (originally lumen's hand-rolled `src/auth.rs`, generalized here
@@ -40,12 +42,14 @@ const WILDCARD_RESOURCE: &str = "*";
 /// Role hierarchy: `Admin` ⊇ `Write` ⊇ `Read`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-role-map-rs.md#source
 pub enum Role {
     Read,
     Write,
     Admin,
 }
 
+/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-role-map-rs.md#source
 impl Role {
     /// Whether this role meets or exceeds `needed`.
     pub fn covers(self, needed: Role) -> bool {
@@ -57,6 +61,7 @@ impl Role {
 /// keyed by a generic resource string. `*` is a wildcard grant applied when
 /// no more specific entry matches.
 #[derive(Debug, Clone, Deserialize)]
+/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-role-map-rs.md#source
 pub struct TokenClaims {
     pub subject: String,
     /// `resource` → `Role`. The literal key `*` is a wildcard.
@@ -73,6 +78,7 @@ pub struct TokenClaims {
 /// per-request 401). `registry_file_env`/`legacy_tokens_env` only word the
 /// error context; naming the actual env vars stays the caller's job so the
 /// message matches whatever the service calls them.
+/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-role-map-rs.md#source
 pub fn load_registry(
     required: bool,
     registry_file_env: &str,
@@ -104,6 +110,7 @@ pub fn load_registry(
 /// The resolved principal for a request: `Open` (auth disabled, no bearer
 /// presented) or an authenticated token's claims.
 #[derive(Debug, Clone)]
+/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-role-map-rs.md#source
 pub enum RoleMapPrincipal {
     /// Auth is disabled and no bearer was presented. Treated as full admin
     /// in development; production should run with auth required.
@@ -111,6 +118,7 @@ pub enum RoleMapPrincipal {
     Token(TokenClaims),
 }
 
+/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-role-map-rs.md#source
 impl RoleMapPrincipal {
     /// The per-resource authorization check a handler runs after
     /// authentication: `Open` always passes (dev mode); a token must carry a
@@ -147,6 +155,7 @@ impl RoleMapPrincipal {
 /// lacking `needed` on `resource`. Structured (not pre-rendered) so a
 /// service can build its own message / audit log the way lumen does.
 #[derive(Debug, Clone)]
+/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-role-map-rs.md#source
 pub struct RoleMapDenied {
     pub subject: String,
     pub needed: Role,
@@ -156,11 +165,13 @@ pub struct RoleMapDenied {
 /// A [`Verifier`] over a static, config-driven token→claims registry — the
 /// archetype's `<SVC>_AUTH=off|required` shape.
 #[derive(Debug, Clone)]
+/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-role-map-rs.md#source
 pub struct StaticRoleMapVerifier {
     required: bool,
     tokens: HashMap<String, TokenClaims>,
 }
 
+/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-role-map-rs.md#source
 impl StaticRoleMapVerifier {
     pub fn new(required: bool, tokens: HashMap<String, TokenClaims>) -> Self {
         Self { required, tokens }
@@ -176,6 +187,7 @@ impl StaticRoleMapVerifier {
     }
 }
 
+/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-role-map-rs.md#source
 impl Verifier for StaticRoleMapVerifier {
     type Principal = RoleMapPrincipal;
 
@@ -381,3 +393,4 @@ mod tests {
         assert!(err.to_string().contains("LEGACY_TOKENS"));
     }
 }
+// CODEGEN-END

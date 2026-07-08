@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-backup/tech-design/semantic/source/libs-service-backup-src-llm-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! LLM topic provider for the shared service-backup contract.
 
 /// Agent-facing topic describing backup destinations, sinks, and seed fetches.
@@ -37,6 +39,7 @@ synchronization.
 };
 
 /// Return the shared backup topic for CLI composition.
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-llm-rs.md#source
 pub fn topic() -> &'static cli_std::llm::Topic {
     &TOPIC
 }
@@ -51,3 +54,4 @@ mod tests {
         assert!(topic.body.contains("fetch_backup_object"));
     }
 }
+// CODEGEN-END

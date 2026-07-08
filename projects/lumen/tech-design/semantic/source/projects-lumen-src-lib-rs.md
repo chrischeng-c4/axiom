@@ -23,6 +23,7 @@ Public API manifest for `projects/lumen/src/lib.rs` generated from AST during Sc
 | `aof` | projects/lumen/src/lib.rs | module | pub | 23 |  |
 | `api` | projects/lumen/src/lib.rs | module | pub | 24 |  |
 | `auth` | projects/lumen/src/lib.rs | module | pub | 25 |  |
+| `backup` | projects/lumen/src/lib.rs | module | pub | 33 |  |
 | `backup_sink` | projects/lumen/src/lib.rs | module | pub | 26 |  |
 | `config` | projects/lumen/src/lib.rs | module | pub | 27 |  |
 | `consumer` | projects/lumen/src/lib.rs | module | pub | 28 |  |
@@ -34,6 +35,7 @@ Public API manifest for `projects/lumen/src/lib.rs` generated from AST during Sc
 | `raft` | projects/lumen/src/lib.rs | module | pub | 43 |  |
 | `raft_sm` | projects/lumen/src/lib.rs | module | pub | 49 |  |
 | `rdb` | projects/lumen/src/lib.rs | module | pub | 50 |  |
+| `reshard` | projects/lumen/src/lib.rs | module | pub | 59 |  |
 | `routing` | projects/lumen/src/lib.rs | module | pub | 51 |  |
 | `segment_rdb` | projects/lumen/src/lib.rs | module | pub | 63 |  |
 | `spec` | projects/lumen/src/lib.rs | module | pub | 67 |  |
@@ -44,7 +46,6 @@ Public API manifest for `projects/lumen/src/lib.rs` generated from AST during Sc
 | `vector_index` | projects/lumen/src/lib.rs | module | pub | 72 |  |
 | `wal` | projects/lumen/src/lib.rs | module | pub | 73 |  |
 | `wal_nats` | projects/lumen/src/lib.rs | module | pub | 74 |  |
-| `wal_relay` | projects/lumen/src/lib.rs | module | pub | 76 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -107,6 +108,7 @@ pub mod raft;
 #[cfg(feature = "raft-wal")]
 pub mod raft_sm;
 pub mod rdb;
+pub mod reshard;
 pub mod routing;
 /// Columnar mmap disk segment (Stage 2 disk-tier): a single Number column
 /// for `n_docs` rows at one `applied_seq`, written page-aligned for zero-copy
@@ -132,7 +134,6 @@ pub mod vector_index;
 pub mod wal;
 pub mod wal_nats;
 // CODEGEN-END
-
 ````
 
 ## Changes

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-auth/tech-design/semantic/source/libs-service-auth-src-error-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! The generic auth rejection type — 401 / 403 with a small JSON body.
 //!
 //! Mirrors lumen's `auth.rs` error shape (`{"error": "...", "message": "..."}`)
@@ -26,11 +28,13 @@ struct ErrorBody {
 ///   the needed authorization. The string carries the human-readable reason; a
 ///   service decides per-resource policy and supplies the message.
 #[derive(Debug, Clone)]
+/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-error-rs.md#source
 pub enum AuthError {
     Unauthenticated,
     Forbidden(String),
 }
 
+/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-error-rs.md#source
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         match self {
@@ -53,3 +57,4 @@ impl IntoResponse for AuthError {
         }
     }
 }
+// CODEGEN-END

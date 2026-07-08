@@ -1,0 +1,61 @@
+version = 2
+project = "h2c"
+ir_kind = "td"
+td_path = "libs/h2c/tech-design"
+generated_at = "2026-07-07T15:58:25.101152+00:00"
+digest = "sha256:cd0c326bf421a4b9c01e8cf89b084c61f21c74f55b71198dcde6f12feae2407e"
+source_digest = "sha256:cd0c326bf421a4b9c01e8cf89b084c61f21c74f55b71198dcde6f12feae2407e"
+ir_digest = "sha256:3ba534ce7f2ee88cce86da236e0d81638e801c4ef837ebbe0a7ca7e90d6706cc"
+
+[[files]]
+path = "semantic/h2c-libs-h2c.md"
+digest = "sha256:ddb290516bcc1cbd00c65e80c02b7e93a6e4fdb53c69a3dbccc0a3fa1ad6ad9f"
+parse_error = "schema:15-126: section 'schema' at lines 15..126: JSON Schema typed-payload parse error: did not find expected key at line 7 column 1, while parsing a block mapping"
+
+[[files]]
+path = "semantic/source/libs-h2c-examples-conn-sweep-rs.md"
+digest = "sha256:3c1a22dcfcf19e44f5449c23e93f7fe4e72af384d9d4ef32e6da761a093395b5"
+ir_digest = "sha256:23bfb10789f2f3f8b9a0b22b70d84219036b70fd529d79c817cde3b62e8d3400"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-h2c-src-conn-rs.md"
+digest = "sha256:66f12483162a0d171e2794786a0ad7bd316f00e6714f7a69ba237929587a2007"
+ir_digest = "sha256:f446edfd822292f6312265408f1a6907903e6c4a1cc1e7c4b628aade8fa6df50"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-h2c-src-error-rs.md"
+digest = "sha256:26736674c6c95764c9177f02c997341c5565725b712179e0ca3e4ebd81a40a99"
+ir_digest = "sha256:4be27bfb61da774a59512fdc21522cc70c7997442f106ce4dcbeb116ae83a981"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-h2c-src-lib-rs.md"
+digest = "sha256:f035e9d6b3795a48d13b45a3966ec540c4e5c788edb307059eba198e03f09aac"
+ir_digest = "sha256:66dce7000d22116e80212ea0f0d70094292c6b2aa2e0403f8cdb7936a3e8e5be"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-h2c-src-llm-rs.md"
+digest = "sha256:bd7addf16e9cc705fc98ceb44543cee024bb73345cd236dce9865bcd4c8e0786"
+ir_digest = "sha256:10200bd7a3fee35debc915e03ac32fe5677d3d36657a5ba6917a892d8d1e266b"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-h2c-src-manager-rs.md"
+digest = "sha256:34d03ac2a1321b2474b500faea16acbb3a64808da268a3222a1250bb41065183"
+ir_digest = "sha256:45e8eba9343ff3722375a1d2aca383aa4b241bafb181b94c2eba21719a841494"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-h2c-src-server-rs.md"
+digest = "sha256:d685642d59b0839855d2b30733af1f122499b6daa947d04046ddb0ee2b24a5e9"
+ir_digest = "sha256:2439cad857e6e4325fb511c2547da4b3dc3bf1f826362ccb347cd2223ee0041b"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-h2c-tests-manager-rs.md"
+digest = "sha256:7015388afe26b2c1008fb041e4e3b27a5806698d70a3fbefdde15c3ccebf9513"
+ir_digest = "sha256:3834c8ddd9da1e08ed44bff3d6c5a8330018f4205d502f02ab3eac4bf11a9ca3"
+section_count = 3

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-gen-traits-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Code generator traits and configuration
 //!
 //! Defines the `CodeGenerator` trait that all generators implement,
@@ -11,10 +13,12 @@ use crate::spec::ir::{
 };
 
 /// Result type for code generation
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-traits-rs.md#source
 pub type GenResult<T> = Result<T, GenError>;
 
 /// Code generation error
 #[derive(Debug)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-traits-rs.md#source
 pub enum GenError {
     /// Unsupported feature for the target stack
     UnsupportedFeature(String),
@@ -28,6 +32,7 @@ pub enum GenError {
     Other(String),
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-traits-rs.md#source
 impl fmt::Display for GenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -40,8 +45,10 @@ impl fmt::Display for GenError {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-traits-rs.md#source
 impl std::error::Error for GenError {}
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-traits-rs.md#source
 impl From<std::io::Error> for GenError {
     fn from(e: std::io::Error) -> Self {
         GenError::Io(e)
@@ -50,6 +57,7 @@ impl From<std::io::Error> for GenError {
 
 /// Target technology stack for code generation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-traits-rs.md#source
 pub enum TechStack {
     // Python stacks (cclab ecosystem)
     /// cclab.shield - Data validation models
@@ -90,6 +98,7 @@ pub enum TechStack {
     Zod,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-traits-rs.md#source
 impl TechStack {
     /// Get the target language for this stack
     pub fn language(&self) -> Language {
@@ -159,6 +168,7 @@ impl TechStack {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-traits-rs.md#source
 impl fmt::Display for TechStack {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.name())
@@ -167,12 +177,14 @@ impl fmt::Display for TechStack {
 
 /// Target programming language
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-traits-rs.md#source
 pub enum Language {
     Python,
     Rust,
     TypeScript,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-traits-rs.md#source
 impl Language {
     pub fn file_extension(&self) -> &'static str {
         match self {
@@ -185,6 +197,7 @@ impl Language {
 
 /// Code generation context/configuration
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-traits-rs.md#source
 pub struct GenContext {
     /// Target technology stack
     pub stack: TechStack,
@@ -206,6 +219,7 @@ pub struct GenContext {
     pub db_schema: Option<String>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-traits-rs.md#source
 impl Default for GenContext {
     fn default() -> Self {
         Self {
@@ -222,6 +236,7 @@ impl Default for GenContext {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-traits-rs.md#source
 impl GenContext {
     pub fn new(stack: TechStack) -> Self {
         Self {
@@ -253,6 +268,7 @@ impl GenContext {
 
 /// Generated code output
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-traits-rs.md#source
 pub struct GeneratedCode {
     /// File name (without extension)
     pub name: String,
@@ -264,6 +280,7 @@ pub struct GeneratedCode {
     pub language: Language,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-traits-rs.md#source
 impl GeneratedCode {
     pub fn new(name: impl Into<String>, content: impl Into<String>, language: Language) -> Self {
         Self {
@@ -304,6 +321,7 @@ impl GeneratedCode {
 /// The SpecIR-aware methods accept `serde_json::Value` to avoid a circular
 /// dependency between cclab-compass and sdd (the generate module now lives
 /// in sdd). Typed SpecIR dispatch is provided by `sdd::generate::generators`.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-traits-rs.md#source
 pub trait CodeGenerator {
     /// Generator name for display and routing.
     fn name(&self) -> &str;
@@ -423,3 +441,4 @@ mod tests {
         assert!(code.full_content().contains("from cclab.shield"));
     }
 }
+// CODEGEN-END

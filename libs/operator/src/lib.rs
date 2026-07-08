@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/operator/tech-design/semantic/source/libs-operator-src-lib-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! `operator` — the ecosystem's shared k8s operator scaffold.
 //!
 //! Every axiom service that ships a CRD reconciles the same way: a controller
@@ -22,3 +24,4 @@ pub mod service;
 pub use controller::{run, Error};
 pub use lease::Election;
 pub use service::{ClusterSpec, ManagedService, ReadinessTarget, ReadyFacts, ResourceSpec};
+// CODEGEN-END

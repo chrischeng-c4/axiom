@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/cli-std/tech-design/semantic/source/libs-cli-std-src-lib-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! `cli-std` — the standard agent-facing CLI commands every axiom tool
 //! ships, per the convention in `CONTRIBUTING.md` ("every CLI ships `llm`,
 //! `upgrade`, `issue`"):
@@ -48,6 +50,7 @@ pub mod upgrade;
 /// assert_eq!(TOOL.asset_name(), "lumen-aarch64-apple-darwin.tar.gz");
 /// ```
 #[derive(Clone, Copy, Debug)]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-lib-rs.md#source
 pub struct ToolInfo {
     /// Short tool name — also the release-tag prefix (`<project>@X.Y.Z`), the
     /// asset stem (`<project>-<target>.tar.gz`) and the inner binary name.
@@ -64,6 +67,7 @@ pub struct ToolInfo {
     pub built_at: &'static str,
 }
 
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-lib-rs.md#source
 impl ToolInfo {
     /// Default tracker label for this tool's issue surface.
     pub fn issue_label(&self) -> String {
@@ -97,6 +101,7 @@ impl ToolInfo {
 /// is available. This makes the standard CLI ops "just work" for anyone already
 /// authenticated via `gh`, which does not export a `GITHUB_TOKEN` env var.
 #[cfg(feature = "online")]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-lib-rs.md#source
 pub(crate) fn resolve_github_token() -> Option<String> {
     resolve_github_token_from(|var| std::env::var(var).ok(), gh_auth_token)
 }
@@ -183,6 +188,7 @@ pub(crate) async fn download_text(client: &reqwest::Client, url: &str) -> anyhow
 /// Prompt on an interactive terminal; non-interactive sessions return `true`
 /// (callers gate on `--yes` first).
 #[cfg(feature = "online")]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-lib-rs.md#source
 pub(crate) fn confirm(prompt: &str) -> anyhow::Result<bool> {
     use anyhow::Context;
     use std::io::{IsTerminal, Write};
@@ -202,6 +208,7 @@ pub(crate) fn confirm(prompt: &str) -> anyhow::Result<bool> {
 /// dir ⇒ same filesystem), make it executable, then `rename` over self. A
 /// permission failure leaves the existing binary intact.
 #[cfg(feature = "online")]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-lib-rs.md#source
 pub(crate) fn install_over_self(bin: &[u8], tmp_label: &str) -> anyhow::Result<()> {
     use anyhow::{anyhow, Context};
     let exe = std::env::current_exe().context("locate current executable")?;
@@ -285,3 +292,4 @@ mod token_tests {
         assert_eq!(got, None);
     }
 }
+// CODEGEN-END

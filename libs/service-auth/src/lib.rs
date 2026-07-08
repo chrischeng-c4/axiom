@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-auth/tech-design/semantic/source/libs-service-auth-src-lib-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Shared request-auth middleware for the ecosystem's HTTP services.
 //!
 //! This is the service-kit auth layer: the generic **extract -> verify ->
@@ -223,3 +225,4 @@ mod tests {
         assert!(body.contains("nope"));
     }
 }
+// CODEGEN-END

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-sql-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! SQL lint checker (line-based)
 //!
 //! Rules: SQ001-SQ005, PG001, MY001
@@ -8,8 +10,10 @@ use crate::checker::LintConfig;
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, Position, Range};
 use crate::syntax::{Language, ParsedFile};
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-sql-rs.md#source
 pub struct SqlChecker;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-sql-rs.md#source
 impl SqlChecker {
     pub fn new() -> Self {
         Self
@@ -329,6 +333,7 @@ impl SqlChecker {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-sql-rs.md#source
 impl Default for SqlChecker {
     fn default() -> Self {
         Self::new()
@@ -336,6 +341,7 @@ impl Default for SqlChecker {
 }
 
 /// Detect SQL injection patterns in Python/JS/Go source code.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-sql-rs.md#source
 pub fn detect_sql_injection(source: &str, language: &str) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let kws = ["SELECT", "INSERT", "UPDATE", "DELETE", "DROP", "CREATE"];
@@ -445,6 +451,7 @@ fn lr(line: u32) -> Range {
     Range::new(Position::new(line, 0), Position::new(line, u32::MAX))
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-sql-rs.md#source
 impl Checker for SqlChecker {
     fn language(&self) -> Language {
         Language::Sql
@@ -608,3 +615,4 @@ mod tests {
         assert!(d.iter().any(|d| d.code == "SQL-INJ"), "expected SQL-INJ");
     }
 }
+// CODEGEN-END

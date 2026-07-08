@@ -1,0 +1,55 @@
+version = 2
+project = "operator"
+ir_kind = "td"
+td_path = "libs/operator/tech-design"
+generated_at = "2026-07-07T15:58:25.300340+00:00"
+digest = "sha256:af074ae5db0e9923a45cfc5ee2ffc53cdf23ceba601ea8060bdce3783f01b91f"
+source_digest = "sha256:af074ae5db0e9923a45cfc5ee2ffc53cdf23ceba601ea8060bdce3783f01b91f"
+ir_digest = "sha256:bd24b23d186cad279609d581a6493b789faeea17c5b90022d5518358f8e26f83"
+
+[[files]]
+path = "semantic/operator-libs-operator.md"
+digest = "sha256:1ab0d7394649c25be8152532f1c2f395499bf99a15cb8cc673fd968598874210"
+parse_error = "schema:15-116: section 'schema' at lines 15..116: JSON Schema typed-payload parse error: did not find expected key at line 7 column 1, while parsing a block mapping"
+
+[[files]]
+path = "semantic/source/libs-operator-src-controller-rs.md"
+digest = "sha256:cd9f1aeae1229976f3f0296428219481bdcac2e8128044cd48c1da8a78a31689"
+ir_digest = "sha256:ae6379a743966230e8012c44a07bb9f90291f99ab00e20d677aba3e2d71bd8f6"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-operator-src-lease-rs.md"
+digest = "sha256:7b8e4914d8171d5376f12ea5c5a79184cc6c6554ae768d326e3788f9e0de87f0"
+ir_digest = "sha256:2d9006fe1551916e22ac1976033457a559cf31dfd58780619bf0a559c750f50c"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-operator-src-lib-rs.md"
+digest = "sha256:778e4c1629b32ebaa2fbc9256ab8f3fd129c52af2722e16a061db0d790a41cdd"
+ir_digest = "sha256:b55a3ba55a68d2248c075cd04059145251fe7bd0d7c85afca7b255231a061ff7"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-operator-src-llm-rs.md"
+digest = "sha256:c7d1ab34d610e1e8f19db64ca69cba2cbdb3ecbae1e423ce2094d39a41fba780"
+ir_digest = "sha256:9ded793fb66cf9b2e44b6ea5b08e740dca0a748921c160e21a721d89bf275e87"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-operator-src-render-rs.md"
+digest = "sha256:5d8ee16bdd34cf9ac45cf4151e6e640cf2d775f8cdb17484cb2b8ef7b67384b9"
+ir_digest = "sha256:7d5c687569206d7b537be43823590e56adc10e5a8d6b46e4f4debf5b553fd1b6"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-operator-src-resize-rs.md"
+digest = "sha256:fb7308100565489f3eb2b2379de908b8335cc442bf823e058bc11c01d7ff3fe4"
+ir_digest = "sha256:4f935433b3d5ea472d13f05dbad0f16d934ddf808f7f34289694eb837cf14df4"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-operator-src-service-rs.md"
+digest = "sha256:b5cbedcbe9b272c99c3b53b141cd11199b19a5c2f8781846b131356ec6bcd17e"
+ir_digest = "sha256:1da736100c203654d66d6310e192c4a22afde657657d1b4464181895a3a22e81"
+section_count = 3

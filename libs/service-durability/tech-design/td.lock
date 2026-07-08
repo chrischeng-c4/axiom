@@ -1,0 +1,44 @@
+version = 2
+project = "service-durability"
+ir_kind = "td"
+td_path = "libs/service-durability/tech-design"
+generated_at = "2026-07-08T05:43:34.724076+00:00"
+digest = "sha256:00bc891a009daeacbf8b1f227dbde2767f22ec9242b3e118f4dafe9eeb057aaf"
+source_digest = "sha256:00bc891a009daeacbf8b1f227dbde2767f22ec9242b3e118f4dafe9eeb057aaf"
+ir_digest = "sha256:0c92b94129ca1bc36938ba379b5776344e9999855d4ef17b1831ffda73725caf"
+
+[[files]]
+path = "semantic/service-durability-libs-service-durability.md"
+digest = "sha256:cabcb70200eb8da24cfa00ffc12a5de4aa3927ca879d24828da9b4f6ddff8786"
+ir_digest = "sha256:5ceae45ba2bcc6a9fa0d6d9d120efe6b99b83a318f4526efa1cc261896ecf485"
+section_count = 2
+
+[[files]]
+path = "semantic/source/libs-service-durability-src-atomic-rs.md"
+digest = "sha256:9fade3ef008391c1e49925dd18c3f54334da435cd4f540cbade2fb31841b0804"
+ir_digest = "sha256:566f4b2afb02aa6b5f995984c7ff2376595f858a233e809b1a0ff18d8cb1b282"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-durability-src-framed_log-rs.md"
+digest = "sha256:67766d707b66ec026989ab1fdcd4df90bd359e058039d54d0c1da00a4557a529"
+ir_digest = "sha256:022ca4175d5f176302ed6cf5615d00bef5322219a26df8463569613bdfcbb6a0"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-durability-src-fsync-rs.md"
+digest = "sha256:c966399b148e31568727847a93d3c8dfed9ebcfadf190f9fb42a6c93e1e33c03"
+ir_digest = "sha256:7d2d8cca6ea091d9fa0e9b725903190e1b3cab4fb2da17bb3a25a63c12a4a18c"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-durability-src-lib-rs.md"
+digest = "sha256:d6fb06a73d6f554e6692b8abf51419a0f9c9d944d1693babe87e0ea3ac716f88"
+ir_digest = "sha256:6da5d714680ee9dc7e205cc1cf5cbd247325b6197244c205a3cf3bccfe10d70c"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-durability-src-snapshot_store-rs.md"
+digest = "sha256:abcc94828334992b75e9db9694b948e9943e4e6d9703ee206c9fdc07ae0cb0f0"
+ir_digest = "sha256:e5b86d0616e2759db9eb7e333402701ba38dd33a6e88c8d09c5f03dd9d206c70"
+section_count = 3

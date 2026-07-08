@@ -1,0 +1,31 @@
+version = 1
+project = "cli-std"
+ir_kind = "ec"
+ec_path = "libs/cli-std/external-contracts"
+inventory_path = "libs/cli-std/aw.toml"
+generated_at = "2026-07-07T14:12:33.433411+00:00"
+ir_digest = "sha256:7a2ce978fcfe8a224da7dc1c5e34bacce30f36aed933c43f25aba9f4ade8de73"
+source_digest = "sha256:d74297260e739823681e9554458f142496731517d147d56b612489e9d1d8129c"
+tool_contracts = []
+
+[[sources]]
+path = "libs/cli-std/external-contracts/behavior/standard-agent-cli-commands-contract.md"
+digest = "sha256:5cc5c6b79175e6043961779a43438b1cbec8e08e72244b70b77091fb74052063"
+
+[[cases]]
+id = "standard-agent-cli-commands-contract"
+capability_id = "standard-agent-cli-commands"
+claim_id = "standard-agent-cli-commands-contract"
+contract_id = "standard-agent-cli-commands-contract"
+dimension = "behavior"
+source_ref = "libs/cli-std/external-contracts/behavior/standard-agent-cli-commands-contract.md#standard-agent-cli-commands-contract"
+test_path = "libs/cli-std/tests/behavior_standard_agent_cli_commands_contract.rs"
+command = "cargo test -p cli-std"
+required_for_production = true
+assertions = [
+    "Standard Agent CLI Commands public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:aa269ead2f5b95212259b2a0abb44c4549926859f88f58cb6225d8f2c994fc14"

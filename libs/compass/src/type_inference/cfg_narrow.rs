@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cfg-narrow-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! CFG-based type narrowing (R2.1)
 //!
 //! Integrates the Control Flow Graph from the PDG module with the TypeNarrower
@@ -15,11 +17,13 @@ use crate::type_inference::ty::Type;
 
 /// Narrowed type environment for a single CFG block entry
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cfg-narrow-rs.md#source
 pub struct BlockNarrowEnv {
     /// Variable -> narrowed type at this block entry
     pub narrowed: HashMap<String, Type>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cfg-narrow-rs.md#source
 impl BlockNarrowEnv {
     /// Merge two environments (join at control-flow merge points)
     ///
@@ -45,11 +49,13 @@ impl BlockNarrowEnv {
 }
 
 /// Result of CFG-based narrowing analysis
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cfg-narrow-rs.md#source
 pub struct CfgNarrowingResult {
     /// Narrowing environment at the entry of each block
     pub block_envs: HashMap<BlockId, BlockNarrowEnv>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cfg-narrow-rs.md#source
 impl CfgNarrowingResult {
     /// Get the narrowed type of a variable at a given line
     pub fn type_at_line(&self, line: usize, var: &str, cfg: &ControlFlowGraph) -> Option<&Type> {
@@ -77,6 +83,7 @@ impl CfgNarrowingResult {
 ///
 /// For each IfCondition / LoopCondition block, extracts the condition
 /// from the statement text and propagates narrowed types to successor blocks.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cfg-narrow-rs.md#source
 pub struct CfgNarrowingPass<'a> {
     cfg: &'a ControlFlowGraph,
     /// Original (pre-narrowing) type environment
@@ -440,6 +447,7 @@ fn parse_simple_type_from_name(name: &str) -> Type {
 /// and a call `get([1, 2, 3])`, this resolves `T = int`.
 ///
 /// Returns a map of TypeVarId -> concrete Type.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cfg-narrow-rs.md#source
 pub fn resolve_typevar_bindings(
     param_types: &[crate::type_inference::ty::Type],
     arg_types: &[crate::type_inference::ty::Type],
@@ -454,6 +462,7 @@ pub fn resolve_typevar_bindings(
 }
 
 /// Apply TypeVar bindings to a return type to get the concrete return type
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cfg-narrow-rs.md#source
 pub fn apply_typevar_bindings(
     return_type: &crate::type_inference::ty::Type,
     bindings: &HashMap<crate::type_inference::ty::TypeVarId, crate::type_inference::ty::Type>,
@@ -469,6 +478,7 @@ pub fn apply_typevar_bindings(
 ///
 /// A type satisfies a Protocol if it has all required members (methods/attributes)
 /// with compatible types. This implements duck typing via typing.Protocol.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cfg-narrow-rs.md#source
 pub fn check_protocol_satisfaction(
     ty: &crate::type_inference::ty::Type,
     protocol_members: &[(String, crate::type_inference::ty::Type)],
@@ -502,11 +512,13 @@ pub fn check_protocol_satisfaction(
 
 /// Result of a protocol satisfaction check
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cfg-narrow-rs.md#source
 pub struct ProtocolCheckResult {
     pub missing: Vec<String>,
     pub incompatible: Vec<ProtocolMemberError>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cfg-narrow-rs.md#source
 impl ProtocolCheckResult {
     pub fn is_satisfied(&self) -> bool {
         self.missing.is_empty() && self.incompatible.is_empty()
@@ -515,6 +527,7 @@ impl ProtocolCheckResult {
 
 /// An incompatible member error
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cfg-narrow-rs.md#source
 pub struct ProtocolMemberError {
     pub member: String,
     pub expected: crate::type_inference::ty::Type,
@@ -564,6 +577,7 @@ fn types_compatible(
 /// 1. Try each overload in order
 /// 2. Return the first one where all argument types are compatible with params
 /// 3. Fall back to the last overload if none match (error recovery)
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cfg-narrow-rs.md#source
 pub fn resolve_overload(
     overloaded: &crate::type_inference::ty::Type,
     arg_types: &[crate::type_inference::ty::Type],
@@ -744,3 +758,4 @@ mod tests {
         assert_eq!(result, Some(Type::Int));
     }
 }
+// CODEGEN-END

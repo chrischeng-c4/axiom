@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-client-emit-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Emits `runtime.ts` (the fetch or axios base) and `client.ts` (a `createClient`
 //! factory with one typed function per operation, taking a grouped `data` arg).
 
@@ -11,6 +13,7 @@ use std::collections::BTreeSet;
 /// only on the chosen [`HttpClient`] backend — the `ClientConfig`/`request`
 /// contract is the same, so `client.ts` and `hooks.ts` never change.
 ///
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-client-emit-rs.md#source
 pub fn emit_runtime(http_client: HttpClient) -> String {
     let body = match http_client {
         HttpClient::Fetch => FETCH_RUNTIME,
@@ -287,6 +290,7 @@ export async function request<T>(config: ClientConfig, args: RequestArgs): Promi
 
 /// Render `client.ts`.
 ///
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-client-emit-rs.md#source
 pub fn emit_client(plans: &[OperationPlan], opts: &GenOptions) -> String {
     let mut out = String::from(HEADER);
     out.push_str("import type { ClientConfig } from \"./runtime\";\n");
@@ -411,6 +415,7 @@ fn access(base: &str, optional: bool, name: &str) -> String {
 }
 
 /// `import type { ... } from "./types";` for the per-operation type names.
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-client-emit-rs.md#source
 pub fn type_import(plans: &[OperationPlan]) -> String {
     let mut names: BTreeSet<String> = BTreeSet::new();
     for p in plans {
@@ -528,3 +533,4 @@ mod tests {
         assert!(axios.contains("return response.data;"));
     }
 }
+// CODEGEN-END

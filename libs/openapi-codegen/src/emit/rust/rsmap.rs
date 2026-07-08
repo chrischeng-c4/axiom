@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-rust-rsmap-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Maps an OpenAPI [`Schema`] to a Rust type expression (serde-flavored).
 
 use crate::ir::openapi::{AdditionalProperties, RefOr, Schema};
@@ -7,6 +9,7 @@ use crate::ir::typemap::TypeMap;
 const ANY: &str = "serde_json::Value";
 
 /// Rust type expression for a schema (or `$ref`), including `Option`.
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-rust-rsmap-rs.md#source
 pub fn type_expr(node: &RefOr<Schema>, tm: &TypeMap) -> String {
     match node {
         RefOr::Ref(r) => tm
@@ -24,6 +27,7 @@ pub fn type_expr(node: &RefOr<Schema>, tm: &TypeMap) -> String {
 }
 
 /// Wrap in `Option<...>` unless already optional or free-form.
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-rust-rsmap-rs.md#source
 pub fn optional(ty: &str) -> String {
     if ty == ANY || ty.starts_with("Option<") {
         ty.to_string()
@@ -88,6 +92,7 @@ fn array_expr(schema: &Schema, tm: &TypeMap) -> String {
 }
 
 /// Inline object → a typed map (`additionalProperties`) or a free-form value.
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-rust-rsmap-rs.md#source
 pub fn object_expr(schema: &Schema, tm: &TypeMap) -> String {
     match &schema.additional_properties {
         Some(AdditionalProperties::Schema(s)) => {
@@ -132,3 +137,4 @@ mod tests {
         );
     }
 }
+// CODEGEN-END

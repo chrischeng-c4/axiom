@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-package-managers-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Package manager detection and integration (P1 M5.1)
 //!
 //! Automatically detects and integrates with Python package managers:
@@ -21,6 +23,7 @@ use std::path::PathBuf;
 
 /// Package manager type
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-package-managers-rs.md#source
 pub enum PackageManager {
     /// uv - Modern, fast package manager
     Uv,
@@ -34,6 +37,7 @@ pub enum PackageManager {
     Unknown,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-package-managers-rs.md#source
 impl PackageManager {
     /// Get human-readable name
     pub fn display_name(&self) -> &str {
@@ -71,6 +75,7 @@ impl PackageManager {
 
 /// Dependency information
 #[derive(Debug, Clone, PartialEq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-package-managers-rs.md#source
 pub struct Dependency {
     /// Package name
     pub name: String,
@@ -84,6 +89,7 @@ pub struct Dependency {
     pub is_optional: bool,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-package-managers-rs.md#source
 impl Dependency {
     /// Create a new dependency
     pub fn new(name: String) -> Self {
@@ -125,6 +131,7 @@ impl Dependency {
 
 /// Package manager detection result
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-package-managers-rs.md#source
 pub struct PackageManagerDetection {
     /// Detected package manager
     pub manager: PackageManager,
@@ -140,6 +147,7 @@ pub struct PackageManagerDetection {
     pub confidence: f64,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-package-managers-rs.md#source
 impl PackageManagerDetection {
     /// Create empty detection (Unknown manager)
     pub fn unknown() -> Self {
@@ -177,11 +185,13 @@ impl PackageManagerDetection {
 // ============================================================================
 
 /// Package manager detector
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-package-managers-rs.md#source
 pub struct PackageManagerDetector {
     /// Project root directory
     root: PathBuf,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-package-managers-rs.md#source
 impl PackageManagerDetector {
     /// Create a new detector for a project root
     pub fn new(root: PathBuf) -> Self {
@@ -795,3 +805,4 @@ mod tests {
         assert!(frameworks.iter().any(|d| d.name == "fastapi"));
     }
 }
+// CODEGEN-END

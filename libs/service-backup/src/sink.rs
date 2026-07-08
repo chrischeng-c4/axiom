@@ -1,13 +1,17 @@
+// SPEC-MANAGED: libs/service-backup/tech-design/semantic/source/libs-service-backup-src-sink-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{bail, Context, Result};
+use service_durability::{atomic_write, FsyncPolicy};
 
 #[cfg(feature = "s3")]
 use crate::s3::S3Sink;
 use crate::BackupDestination;
 
 /// Destination for snapshot bytes.
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-sink-rs.md#source
 pub trait BackupSink: Send + Sync + 'static {
     /// Store bytes under a key derived from `timestamp`; returns the final key.
     fn put(&self, timestamp: SystemTime, payload: &[u8]) -> Result<String>;
@@ -21,11 +25,13 @@ pub trait BackupSink: Send + Sync + 'static {
 
 /// Local filesystem sink for dev/tests/PVC-backed local deployments.
 #[derive(Debug, Clone)]
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-sink-rs.md#source
 pub struct LocalFsSink {
     pub root: PathBuf,
     pub prefix: String,
 }
 
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-sink-rs.md#source
 impl LocalFsSink {
     pub fn new(root: impl Into<PathBuf>, prefix: impl Into<String>) -> Result<Self> {
         let root = root.into();
@@ -47,6 +53,7 @@ impl LocalFsSink {
     }
 }
 
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-sink-rs.md#source
 impl BackupSink for LocalFsSink {
     fn put(&self, timestamp: SystemTime, payload: &[u8]) -> Result<String> {
         let ts = timestamp
@@ -55,7 +62,8 @@ impl BackupSink for LocalFsSink {
             .as_secs();
         let name = format!("{}-{ts}.json", self.prefix);
         let path = self.root.join(&name);
-        std::fs::write(&path, payload).with_context(|| format!("write {}", path.display()))?;
+        atomic_write(&path, payload, FsyncPolicy::Always)
+            .with_context(|| format!("write {}", path.display()))?;
         Ok(name)
     }
 
@@ -81,10 +89,12 @@ impl BackupSink for LocalFsSink {
 /// Placeholder sink for a policy whose cloud adapter is not linked into this
 /// runner binary. It fails loudly instead of silently writing elsewhere.
 #[derive(Debug, Clone)]
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-sink-rs.md#source
 pub struct UnsupportedCloudSink {
     pub destination: BackupDestination,
 }
 
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-sink-rs.md#source
 impl UnsupportedCloudSink {
     fn action_message(&self) -> String {
         match &self.destination {
@@ -103,6 +113,7 @@ impl UnsupportedCloudSink {
     }
 }
 
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-sink-rs.md#source
 impl BackupSink for UnsupportedCloudSink {
     fn put(&self, _timestamp: SystemTime, _payload: &[u8]) -> Result<String> {
         bail!("{}", self.action_message())
@@ -117,6 +128,7 @@ impl BackupSink for UnsupportedCloudSink {
     }
 }
 
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-sink-rs.md#source
 pub fn sink_from_destination(destination: &BackupDestination) -> Result<Box<dyn BackupSink>> {
     match destination {
         BackupDestination::Local { .. } => {
@@ -173,3 +185,4 @@ mod tests {
         assert!(err.contains("--features s3"));
     }
 }
+// CODEGEN-END

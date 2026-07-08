@@ -36,9 +36,10 @@ details.
 ## Shared Libraries
 
 Services and tools compose the internal libraries below instead of
-reimplementing transport, auth, metrics, codegen, replication, or operator
-plumbing locally. Libraries have no user-facing CLI or release pipeline; those
-surfaces belong under `projects/`.
+reimplementing transport, auth, metrics, codegen, replication, durable local
+storage, backup, or operator plumbing locally. Shared service capabilities
+belong in `libs/*`; projects supply domain behavior and wiring. Libraries have no user-facing CLI
+or release pipeline; those surfaces belong under `projects/`.
 
 | Library | What it is |
 |---------|------------|
@@ -56,6 +57,7 @@ surfaces belong under `projects/`.
 | [raft-host](libs/raft-host/Cargo.toml) | Shared Raft host driver over h2c peer transport with snapshots, compaction, and read-your-write propose. |
 | [service-auth](libs/service-auth/Cargo.toml) | Shared request-auth middleware: extract, verify, reject, and inject verified identity into service handlers. |
 | [service-backup](libs/service-backup/Cargo.toml) | Shared backup contract: destination and policy schema, sink trait, local and S3-compatible sinks, and runner primitive. |
+| [service-durability](libs/service-durability/Cargo.toml) | Shared durable local storage primitives: fsync policy, atomic replace, CRC-framed append logs, and sequence-named snapshot stores. |
 | [service-http](libs/service-http/Cargo.toml) | Standard HTTP service shell: probes, readiness, metrics, OpenAPI/docs routes, tracing, graceful drain, and h2c serve. |
 | [service-metrics](libs/service-metrics/Cargo.toml) | Lock-free Prometheus primitives and text encoder for service metrics. |
 | [service-tls](libs/service-tls/Cargo.toml) | Peer mTLS material loading and rustls server/client config builders. |
@@ -108,9 +110,9 @@ The runtime tools are intentionally split by responsibility:
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the repo-wide authoring contract:
 how to shape files, paths, and names so the tree stays legible to agents and
-tooling, plus the shared **service archetype** (HA, HTTP/2 + OpenAPI,
-k8s-native) and the **CLI convention** every binary follows (`llm` / `upgrade` /
-`issue`).
+tooling, plus the shared **service archetype** (durable-only, scheduled object
+snapshots, HA, HTTP/2 + OpenAPI, k8s-native) and the **CLI convention** every
+binary follows (`llm` / `upgrade` / `issue`).
 
 ## License
 

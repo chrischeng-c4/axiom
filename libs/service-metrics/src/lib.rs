@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-metrics/tech-design/semantic/source/libs-service-metrics-src-lib-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Lock-free Prometheus metric primitives + text-format encoder.
 //!
 //! Every service in the kit needs the same three shapes — a monotonic
@@ -21,8 +23,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// `Ordering::Relaxed` (counters have no other state to stay consistent
 /// with, so relaxed ordering is sufficient).
 #[derive(Debug, Default)]
+/// @spec libs/service-metrics/tech-design/semantic/source/libs-service-metrics-src-lib-rs.md#source
 pub struct Counter(AtomicU64);
 
+/// @spec libs/service-metrics/tech-design/semantic/source/libs-service-metrics-src-lib-rs.md#source
 impl Counter {
     pub const fn new() -> Self {
         Self(AtomicU64::new(0))
@@ -47,6 +51,7 @@ impl Counter {
 /// Deref to the underlying `AtomicU64` for callers that need raw
 /// atomic ops (e.g. an observable-instrument callback holding only a
 /// `&Counter`); `get`/`add`/`incr` above cover the common paths.
+/// @spec libs/service-metrics/tech-design/semantic/source/libs-service-metrics-src-lib-rs.md#source
 impl std::ops::Deref for Counter {
     type Target = AtomicU64;
 
@@ -58,8 +63,10 @@ impl std::ops::Deref for Counter {
 /// A point-in-time Prometheus gauge: a single `AtomicU64` set with
 /// `Ordering::Relaxed`.
 #[derive(Debug, Default)]
+/// @spec libs/service-metrics/tech-design/semantic/source/libs-service-metrics-src-lib-rs.md#source
 pub struct Gauge(AtomicU64);
 
+/// @spec libs/service-metrics/tech-design/semantic/source/libs-service-metrics-src-lib-rs.md#source
 impl Gauge {
     pub const fn new() -> Self {
         Self(AtomicU64::new(0))
@@ -78,6 +85,7 @@ impl Gauge {
 
 /// Deref to the underlying `AtomicU64`, mirroring [`Counter`]'s escape
 /// hatch for raw atomic ops.
+/// @spec libs/service-metrics/tech-design/semantic/source/libs-service-metrics-src-lib-rs.md#source
 impl std::ops::Deref for Gauge {
     type Target = AtomicU64;
 
@@ -91,11 +99,13 @@ impl std::ops::Deref for Gauge {
 /// boundaries. `observe` records one duration in whatever unit the
 /// caller's metric name promises (lumen uses milliseconds).
 #[derive(Debug, Default)]
+/// @spec libs/service-metrics/tech-design/semantic/source/libs-service-metrics-src-lib-rs.md#source
 pub struct Latency {
     pub sum: Counter,
     pub count: Counter,
 }
 
+/// @spec libs/service-metrics/tech-design/semantic/source/libs-service-metrics-src-lib-rs.md#source
 impl Latency {
     pub const fn new() -> Self {
         Self {
@@ -115,6 +125,7 @@ impl Latency {
 /// `name`, its `kind` token (`"counter"` or `"gauge"`), the `# HELP`
 /// text, and the current `value`.
 #[derive(Debug, Clone, Copy)]
+/// @spec libs/service-metrics/tech-design/semantic/source/libs-service-metrics-src-lib-rs.md#source
 pub struct Sample<'a> {
     pub name: &'a str,
     pub kind: &'a str,
@@ -137,6 +148,7 @@ impl<'a> Sample<'a> {
 /// sample emits `# HELP <name> <help>`, `# TYPE <name> <kind>`, then
 /// `<name> <value>`, in the order given. Always emits the same set of
 /// lines for the same input so scrape configs stay stable.
+/// @spec libs/service-metrics/tech-design/semantic/source/libs-service-metrics-src-lib-rs.md#source
 pub fn render(samples: &[Sample<'_>]) -> String {
     let mut out = String::new();
     for sample in samples {
@@ -343,3 +355,4 @@ lumen_posting_cache_misses_total 2\n";
         );
     }
 }
+// CODEGEN-END

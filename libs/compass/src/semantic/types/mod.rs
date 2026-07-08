@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-types-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Language-specific type inference for semantic analysis
 //!
 //! Provides deeper type analysis beyond what the symbol table captures.
@@ -10,3 +12,4 @@ mod go_tests;
 
 pub use go::{ChannelDirection, GenericParam, GoType, GoTypeInference, MethodInfo, TypeAssertion};
 pub use go_advanced::check_interface_satisfaction;
+// CODEGEN-END

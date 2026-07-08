@@ -24,6 +24,22 @@ capability_refs:
     rationale: >
       Reuses the existing SnapshotV1 backup/restore contract; the change is a
       CLI wrapper, not a new data format or backup mechanism.
+  - id: "chainable-output-conformance"
+    role: primary
+    gap: "backup-export-import-next-contract"
+    claim: "backup-export-import-next-contract"
+    coverage: full
+    rationale: >
+      Defines the dump/export/load/import/backup command outputs that carry
+      machine-readable next or terminal markers.
+  - id: "replica-sync-bootstrap"
+    role: primary
+    gap: "empty-pvc-object-store-seed-before-raft-catch-up"
+    claim: "empty-pvc-object-store-seed-before-raft-catch-up"
+    coverage: partial
+    rationale: >
+      Shares the SnapshotV1 import path used by bootstrap seed restore before
+      WAL or raft catch-up.
 fill_sections: [logic, unit-test, changes]
 ---
 

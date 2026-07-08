@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Refactoring engine with pluggable operation strategies
 //!
 //! Dispatches refactoring requests to the appropriate engine based on
@@ -30,6 +32,7 @@ use crate::type_inference::{RefactorKind, RefactorRequest, RefactorResult};
 // ============================================================================
 
 /// Parsed context for a single file, shared across operations.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-mod-rs.md#source
 pub struct FileContext<'a> {
     /// Absolute path
     pub path: &'a PathBuf,
@@ -44,6 +47,7 @@ pub struct FileContext<'a> {
 }
 
 /// Multi-file project context for cross-file operations.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-mod-rs.md#source
 pub struct ProjectContext<'a> {
     /// All parsed files keyed by path
     pub files: &'a HashMap<PathBuf, (String, ParsedFile, SymbolTable)>,
@@ -54,6 +58,7 @@ pub struct ProjectContext<'a> {
 // ============================================================================
 
 /// A single refactoring operation.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-mod-rs.md#source
 pub trait RefactoringOp {
     /// Apply the operation and return edits.
     ///
@@ -72,6 +77,7 @@ pub trait RefactoringOp {
 // ============================================================================
 
 /// Central dispatcher that maps `RefactorKind` to the correct engine.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-mod-rs.md#source
 pub struct RefactoringRegistry {
     rename: RenameEngine,
     extract: ExtractEngine,
@@ -80,6 +86,7 @@ pub struct RefactoringRegistry {
     signature: SignatureEngine,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-mod-rs.md#source
 impl RefactoringRegistry {
     pub fn new() -> Self {
         Self {
@@ -111,6 +118,7 @@ impl RefactoringRegistry {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-mod-rs.md#source
 impl Default for RefactoringRegistry {
     fn default() -> Self {
         Self::new()
@@ -122,6 +130,7 @@ impl Default for RefactoringRegistry {
 // ============================================================================
 
 /// Validate that `name` is a legal identifier for the given language.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-mod-rs.md#source
 pub(crate) fn validate_identifier(name: &str, language: Language) -> Result<()> {
     if name.is_empty() {
         return Err(ArgusError::invalid_identifier("name cannot be empty"));
@@ -149,6 +158,7 @@ pub(crate) fn validate_identifier(name: &str, language: Language) -> Result<()> 
 }
 
 /// Check whether `name` is a reserved keyword in `language`.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-mod-rs.md#source
 pub(crate) fn is_keyword(name: &str, language: Language) -> bool {
     match language {
         Language::Python => matches!(
@@ -271,3 +281,4 @@ pub(crate) fn is_keyword(name: &str, language: Language) -> bool {
         _ => false,
     }
 }
+// CODEGEN-END

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-axum-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Axum route handler generator
 //!
 //! Generates async route handlers from OpenAPI specs.
@@ -7,8 +9,10 @@ use crate::gen::traits::{CodeGenerator, GenContext, GenResult, GeneratedCode, La
 use crate::spec::ir::{DataModelSpec, EndpointDef, HttpMethod, RestApiSpec};
 
 /// Axum (route handlers) code generator
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-axum-rs.md#source
 pub struct AxumGenerator;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-axum-rs.md#source
 impl AxumGenerator {
     pub fn new() -> Self {
         Self
@@ -235,12 +239,14 @@ impl AxumGenerator {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-axum-rs.md#source
 impl Default for AxumGenerator {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-axum-rs.md#source
 impl CodeGenerator for AxumGenerator {
     fn name(&self) -> &str {
         "axum"
@@ -399,3 +405,4 @@ mod tests {
         assert!(code.contains("pub async fn get_pet"));
     }
 }
+// CODEGEN-END

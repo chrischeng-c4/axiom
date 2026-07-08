@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-schemas-gitlab-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Programmatic GitLab CI JSON-Schema definition.
 //!
 //! Defines valid top-level keys and the job structure so that `GL002`
@@ -147,3 +149,4 @@ mod tests {
             .any(|d| d.message.contains("invalid_key") || d.message.contains("additional")));
     }
 }
+// CODEGEN-END

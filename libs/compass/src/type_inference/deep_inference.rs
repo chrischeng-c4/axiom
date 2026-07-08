@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Deep cross-file type inference (Sprint 2 - Track 1)
 //!
 //! Provides advanced type inference capabilities:
@@ -15,6 +17,7 @@ use crate::type_inference::frameworks::FrameworkRegistry;
 use crate::type_inference::ty::Type;
 
 /// Unique identifier for types in cross-file tracking.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 pub type TypeId = usize;
 
 // ============================================================================
@@ -23,6 +26,7 @@ pub type TypeId = usize;
 
 /// Cross-file type context for tracking type information across modules.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 pub struct TypeContext {
     /// Type bindings by file and symbol
     bindings: HashMap<PathBuf, HashMap<String, TypeBinding>>,
@@ -40,6 +44,7 @@ pub struct TypeContext {
 
 /// A type binding with source information.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 pub struct TypeBinding {
     /// The inferred type
     pub ty: Type,
@@ -59,6 +64,7 @@ pub struct TypeBinding {
 
 /// TypeVar information for generics.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 pub struct TypeVarInfo {
     /// TypeVar name
     pub name: String,
@@ -72,6 +78,7 @@ pub struct TypeVarInfo {
     pub contravariant: bool,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 impl TypeVarInfo {
     /// Create a new TypeVar.
     pub fn new(name: impl Into<String>) -> Self {
@@ -111,6 +118,7 @@ impl TypeVarInfo {
 
 /// Protocol definition for structural typing.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 pub struct ProtocolDef {
     /// Protocol name
     pub name: String,
@@ -124,6 +132,7 @@ pub struct ProtocolDef {
 
 /// Method signature in a protocol.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 pub struct MethodSignature {
     /// Method name
     pub name: String,
@@ -137,6 +146,7 @@ pub struct MethodSignature {
 
 /// Key for generic instantiation cache.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 pub struct GenericKey {
     /// Base generic type
     pub base: String,
@@ -144,6 +154,7 @@ pub struct GenericKey {
     pub args: Vec<String>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 impl TypeContext {
     /// Create a new type context.
     pub fn new() -> Self {
@@ -442,6 +453,7 @@ impl TypeContext {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 impl Default for TypeContext {
     fn default() -> Self {
         Self::new()
@@ -453,6 +465,7 @@ impl Default for TypeContext {
 // ============================================================================
 
 /// Deep type inferencer with cross-file support.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 pub struct DeepTypeInferencer {
     /// Type context
     context: TypeContext,
@@ -470,6 +483,7 @@ pub struct DeepTypeInferencer {
 
 /// Analysis state for a single file.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 pub struct FileAnalysis {
     /// File path
     pub path: PathBuf,
@@ -485,6 +499,7 @@ pub struct FileAnalysis {
 
 /// Import information.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 pub struct ImportInfo {
     /// Module being imported
     pub module: String,
@@ -496,6 +511,7 @@ pub struct ImportInfo {
 
 /// Import graph for dependency tracking.
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 pub struct ImportGraph {
     /// Edges: file -> files it imports from
     edges: HashMap<PathBuf, HashSet<PathBuf>>,
@@ -503,6 +519,7 @@ pub struct ImportGraph {
     reverse_edges: HashMap<PathBuf, HashSet<PathBuf>>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 impl ImportGraph {
     /// Create a new import graph.
     pub fn new() -> Self {
@@ -581,6 +598,7 @@ impl ImportGraph {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 impl DeepTypeInferencer {
     /// Create a new deep type inferencer.
     pub fn new() -> Self {
@@ -1084,6 +1102,7 @@ impl DeepTypeInferencer {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 impl Default for DeepTypeInferencer {
     fn default() -> Self {
         Self::new()
@@ -1092,6 +1111,7 @@ impl Default for DeepTypeInferencer {
 
 /// A step in a type trace.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 pub struct TypeTraceStep {
     /// Symbol name
     pub symbol: String,
@@ -1109,6 +1129,7 @@ pub struct TypeTraceStep {
 
 /// Deep type inference result for MCP.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 pub struct DeepInferenceResult {
     /// Inferred type
     pub ty: Type,
@@ -1122,6 +1143,7 @@ pub struct DeepInferenceResult {
 
 /// Cross-file reference.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 pub struct CrossFileRef {
     /// File path
     pub file: PathBuf,
@@ -1132,6 +1154,7 @@ pub struct CrossFileRef {
 }
 
 /// Infer type with deep cross-file analysis.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 pub fn infer_type_deep(
     inferencer: &DeepTypeInferencer,
     symbol: &str,
@@ -1172,6 +1195,7 @@ pub fn infer_type_deep(
 }
 
 /// Trace type through call chain.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-deep-inference-rs.md#source
 pub fn trace_type_chain(
     inferencer: &DeepTypeInferencer,
     symbol: &str,
@@ -1388,3 +1412,4 @@ mod tests {
         );
     }
 }
+// CODEGEN-END

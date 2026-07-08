@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-rename-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Cross-file rename refactoring
 //!
 //! Finds all references to a symbol (definitions, usages, imports) across
@@ -18,8 +20,10 @@ use super::{validate_identifier, FileContext, ProjectContext, RefactoringOp};
 // ============================================================================
 
 /// Engine for renaming symbols across files.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-rename-rs.md#source
 pub struct RenameEngine;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-rename-rs.md#source
 impl RefactoringOp for RenameEngine {
     fn apply(
         &self,
@@ -105,6 +109,7 @@ impl RefactoringOp for RenameEngine {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-rename-rs.md#source
 impl RenameEngine {
     /// Walk every other file in the project and update references + imports.
     fn rename_across_files(
@@ -224,3 +229,4 @@ mod tests {
         assert_eq!(line_col_to_byte(src, 2, 1), 9);
     }
 }
+// CODEGEN-END

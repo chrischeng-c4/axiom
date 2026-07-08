@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-server-incremental-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Incremental daemon update manager (R6)
 //!
 //! Replaces the former full-workspace re-indexing triggered on every file-
@@ -44,6 +46,7 @@ use std::time::Instant;
 
 /// The type of file-system event that made a file dirty.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-incremental-rs.md#source
 pub enum FileChangeKind {
     /// The file was newly created.
     Created,
@@ -62,6 +65,7 @@ pub enum FileChangeKind {
 /// Files are accumulated with `mark_dirty()` and consumed atomically with
 /// `drain()`, which also resets the internal state for the next cycle.
 #[derive(Debug, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-incremental-rs.md#source
 pub struct DirtyFileTracker {
     /// Dirty files mapped to their most recent change kind.
     dirty: HashMap<PathBuf, FileChangeKind>,
@@ -69,6 +73,7 @@ pub struct DirtyFileTracker {
     last_drain: Option<Instant>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-incremental-rs.md#source
 impl DirtyFileTracker {
     /// Create a new, empty tracker.
     pub fn new() -> Self {
@@ -127,6 +132,7 @@ impl DirtyFileTracker {
 /// The graph is intentionally kept as a simple adjacency list rather than a
 /// full module-resolution system, which keeps it fast and workspace-agnostic.
 #[derive(Debug, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-incremental-rs.md#source
 pub struct DependencyGraph {
     /// dependency → importers
     reverse_edges: HashMap<PathBuf, HashSet<PathBuf>>,
@@ -134,6 +140,7 @@ pub struct DependencyGraph {
     forward_edges: HashMap<PathBuf, HashSet<PathBuf>>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-incremental-rs.md#source
 impl DependencyGraph {
     /// Create an empty dependency graph.
     pub fn new() -> Self {
@@ -226,11 +233,13 @@ impl DependencyGraph {
 /// then calls `drain_dirty_files()` to obtain the minimal set of files to
 /// re-analyze.  The dependency graph is updated separately by the indexer
 /// after it parses import statements.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-incremental-rs.md#source
 pub struct IncrementalUpdateManager {
     tracker: DirtyFileTracker,
     dep_graph: DependencyGraph,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-incremental-rs.md#source
 impl IncrementalUpdateManager {
     /// Create a new manager with empty tracker and dependency graph.
     pub fn new() -> Self {
@@ -305,6 +314,7 @@ impl IncrementalUpdateManager {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-incremental-rs.md#source
 impl Default for IncrementalUpdateManager {
     fn default() -> Self {
         Self::new()
@@ -510,3 +520,4 @@ mod tests {
         assert_eq!(files, sorted);
     }
 }
+// CODEGEN-END

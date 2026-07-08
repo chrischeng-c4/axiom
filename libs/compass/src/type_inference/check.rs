@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-check-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Type checking - verifies type compatibility and generates diagnostics
 
 use std::collections::HashMap;
@@ -12,6 +14,7 @@ use crate::syntax::ParsedFile;
 
 /// Type error information
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-check-rs.md#source
 pub struct TypeError {
     pub range: Range,
     pub expected: Type,
@@ -37,6 +40,7 @@ enum VariancePosition {
 }
 
 /// Type checker that combines inference with compatibility checking
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-check-rs.md#source
 pub struct TypeChecker<'a> {
     /// Type inferencer
     inferencer: TypeInferencer<'a>,
@@ -1107,6 +1111,7 @@ use std::path::PathBuf;
 ///
 /// This struct traverses the AST and collects type information,
 /// producing an owned SemanticModel that can be cached and queried.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-check-rs.md#source
 pub struct SemanticModelBuilder<'a> {
     source: &'a str,
     file_path: PathBuf,
@@ -1588,6 +1593,7 @@ impl<'a> SemanticModelBuilder<'a> {
 }
 
 /// Create a SemanticModel from a parsed file
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-check-rs.md#source
 pub fn build_semantic_model(file: &ParsedFile, source: &str, file_path: PathBuf) -> SemanticModel {
     SemanticModelBuilder::new(source, file_path).build(file)
 }
@@ -1595,3 +1601,4 @@ pub fn build_semantic_model(file: &ParsedFile, source: &str, file_path: PathBuf)
 #[cfg(test)]
 #[path = "check_tests.rs"]
 mod tests;
+// CODEGEN-END

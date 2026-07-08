@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-http/tech-design/semantic/source/libs-service-http-src-lib-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! `service-http` — shared HTTP-service scaffolding for the ecosystem's
 //! k8s-native services.
 //!
@@ -88,3 +90,4 @@ pub use probes::standard_probe_routes;
 pub use readiness::ReadinessHook;
 pub use signal::{shutdown_with_drain, wait_shutdown_signal};
 pub use transport::{serve, trace_layer};
+// CODEGEN-END

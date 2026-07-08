@@ -103,4 +103,9 @@ changes:
     section: changes
     impl_mode: hand-written
     description: "Regenerate Lumen TD lock after deleting orphaned semantic TDs."
+  - path: projects/lumen/tech-design/semantic/orphaned-semantic-mirror-snapshots-deleted-wal-relay-rs.md
+    action: annotate
+    section: unit-test
+    impl_mode: hand-written
+    description: "Traceability edge for the governance verification section."
 ```

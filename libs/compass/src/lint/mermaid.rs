@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-mermaid-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Mermaid diagram lint checker (line-based, no tree-sitter)
 
 use std::collections::{HashMap, HashSet};
@@ -26,8 +28,10 @@ const VALID_DIAGRAM_TYPES: &[&str] = &[
 ];
 
 /// Mermaid checker — line-based, no tree-sitter
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-mermaid-rs.md#source
 pub struct MermaidChecker;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-mermaid-rs.md#source
 impl MermaidChecker {
     pub fn new() -> Self {
         Self
@@ -387,12 +391,14 @@ impl MermaidChecker {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-mermaid-rs.md#source
 impl Default for MermaidChecker {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-mermaid-rs.md#source
 impl super::Checker for MermaidChecker {
     fn language(&self) -> Language {
         Language::Mermaid
@@ -526,3 +532,4 @@ mod tests {
         assert!(rules.contains(&"MM005"));
     }
 }
+// CODEGEN-END

@@ -13,6 +13,14 @@ capability_refs:
       No generator exists for this HTTP-client + service-backup-sink shape
       yet, so it stays HANDWRITE per CLAUDE.md ("no skip state for source
       ownership") until a generator primitive covers it.
+  - id: "replica-sync-bootstrap"
+    role: primary
+    gap: "external-backup-disaster-recovery-seed"
+    claim: "external-backup-disaster-recovery-seed"
+    coverage: full
+    rationale: >
+      This module delegates backup snapshots to shared service-backup sinks,
+      making external object storage the disaster-recovery seed surface.
 fill_sections: [overview, source, changes]
 ---
 

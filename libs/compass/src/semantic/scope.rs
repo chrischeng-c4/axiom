@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-scope-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Scope analysis for Python code
 //!
 //! Tracks variable definitions and usages across scopes to detect:
@@ -11,6 +13,7 @@ use std::collections::HashMap;
 
 /// Kind of symbol
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-scope-rs.md#source
 pub enum SymbolKind {
     Variable,
     Parameter,
@@ -23,6 +26,7 @@ pub enum SymbolKind {
 
 /// A symbol in a scope
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-scope-rs.md#source
 pub struct Symbol {
     pub name: String,
     pub kind: SymbolKind,
@@ -33,6 +37,7 @@ pub struct Symbol {
 
 /// Kind of scope
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-scope-rs.md#source
 pub enum ScopeKind {
     Module,
     Function,
@@ -43,12 +48,14 @@ pub enum ScopeKind {
 
 /// A scope containing symbols
 #[derive(Debug)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-scope-rs.md#source
 pub struct Scope {
     pub kind: ScopeKind,
     pub symbols: HashMap<String, Symbol>,
     pub parent: Option<usize>, // Index of parent scope
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-scope-rs.md#source
 impl Scope {
     pub fn new(kind: ScopeKind, parent: Option<usize>) -> Self {
         Self {
@@ -86,11 +93,13 @@ impl Scope {
 }
 
 /// Scope analyzer for Python
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-scope-rs.md#source
 pub struct ScopeAnalyzer {
     scopes: Vec<Scope>,
     current_scope: usize,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-scope-rs.md#source
 impl ScopeAnalyzer {
     pub fn new() -> Self {
         let mut analyzer = Self {
@@ -518,8 +527,10 @@ impl ScopeAnalyzer {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-scope-rs.md#source
 impl Default for ScopeAnalyzer {
     fn default() -> Self {
         Self::new()
     }
 }
+// CODEGEN-END

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-env-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Python environment detection and configuration
 //!
 //! This module provides automatic detection of Python virtual environments
@@ -19,6 +21,7 @@ use super::config::ArgusConfig;
 
 /// Type of virtual environment detected
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-env-rs.md#source
 pub enum VenvType {
     /// Standard venv created with `python -m venv`
     Venv,
@@ -32,6 +35,7 @@ pub enum VenvType {
     Unknown,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-env-rs.md#source
 impl std::fmt::Display for VenvType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -46,6 +50,7 @@ impl std::fmt::Display for VenvType {
 
 /// Information about a detected virtual environment
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-env-rs.md#source
 pub struct DetectedEnv {
     /// Path to the virtual environment
     pub path: PathBuf,
@@ -57,6 +62,7 @@ pub struct DetectedEnv {
 
 /// Comprehensive environment information for Python module resolution
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-env-rs.md#source
 pub struct EnvInfo {
     /// Active virtual environment (from config or auto-detected)
     pub active_venv: Option<DetectedEnv>,
@@ -74,12 +80,14 @@ pub struct EnvInfo {
 /// 1. Explicit `[tool.cclab_lens.python]` configuration
 /// 2. `PYTHONPATH` environment variable
 /// 3. Auto-detected virtual environments
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-env-rs.md#source
 pub fn detect_python_environment(project_root: &Path) -> EnvInfo {
     let config = ArgusConfig::from_pyproject(project_root);
     detect_with_config(project_root, &config)
 }
 
 /// Detect Python environment with a pre-loaded configuration
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-env-rs.md#source
 pub fn detect_with_config(project_root: &Path, config: &ArgusConfig) -> EnvInfo {
     let mut info = EnvInfo {
         python_version: config.python_version.clone(),
@@ -166,6 +174,7 @@ pub fn detect_with_config(project_root: &Path, config: &ArgusConfig) -> EnvInfo 
 }
 
 /// Detect all virtual environments in a project directory
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-env-rs.md#source
 pub fn detect_all_venvs(project_root: &Path) -> Vec<DetectedEnv> {
     let mut envs = Vec::new();
 
@@ -232,6 +241,7 @@ pub fn detect_all_venvs(project_root: &Path) -> Vec<DetectedEnv> {
 }
 
 /// Check if a directory is a Python virtual environment
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-env-rs.md#source
 pub fn is_venv_directory(path: &Path) -> bool {
     if !path.is_dir() {
         return false;
@@ -253,6 +263,7 @@ pub fn is_venv_directory(path: &Path) -> bool {
 }
 
 /// Find site-packages directory within a virtual environment
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-env-rs.md#source
 pub fn find_site_packages(venv_path: &Path, python_version: Option<&str>) -> Option<PathBuf> {
     // Try Unix-style paths first (lib/pythonX.Y/site-packages)
     let lib_dir = venv_path.join("lib");
@@ -404,6 +415,7 @@ fn find_pipenv_venv(project_root: &Path) -> Option<PathBuf> {
 }
 
 /// Get the Python version from a virtual environment
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-env-rs.md#source
 pub fn get_venv_python_version(venv_path: &Path) -> Option<String> {
     // Try to read from pyvenv.cfg
     let pyvenv_cfg = venv_path.join("pyvenv.cfg");
@@ -835,3 +847,4 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_dir);
     }
 }
+// CODEGEN-END

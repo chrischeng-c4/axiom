@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Program Dependence Graph (PDG) for Python
 //!
 //! Combines control dependencies and data dependencies into a unified
@@ -23,6 +25,7 @@ pub use dominator::{ControlDependencies, DominatorTree};
 
 /// A node in the PDG (represents a statement)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub struct PdgNode {
     /// Unique identifier
     pub id: u32,
@@ -40,6 +43,7 @@ pub struct PdgNode {
 
 /// Type of PDG edge
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub enum PdgEdgeKind {
     /// Control dependency
     Control,
@@ -49,6 +53,7 @@ pub enum PdgEdgeKind {
 
 /// An edge in the PDG
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub struct PdgEdge {
     /// Source node
     pub from: u32,
@@ -60,6 +65,7 @@ pub struct PdgEdge {
 
 /// Program Dependence Graph
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub struct ProgramDependenceGraph {
     /// All nodes (statement ID -> node)
     pub nodes: HashMap<u32, PdgNode>,
@@ -81,6 +87,7 @@ pub struct ProgramDependenceGraph {
     pub control_deps: ControlDependencies,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 impl ProgramDependenceGraph {
     /// Build PDG from source code
     pub fn build(source: &str, file: &ParsedFile) -> Self {
@@ -486,6 +493,7 @@ impl ProgramDependenceGraph {
 
 /// Direction of program slice
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub enum SliceDirection {
     Forward,
     Backward,
@@ -493,6 +501,7 @@ pub enum SliceDirection {
 
 /// Result of program slicing
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub struct ProgramSlice {
     /// Direction of the slice
     pub direction: SliceDirection,
@@ -502,6 +511,7 @@ pub struct ProgramSlice {
     pub nodes: Vec<PdgNode>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 impl ProgramSlice {
     fn new(direction: SliceDirection) -> Self {
         Self {
@@ -534,6 +544,7 @@ impl ProgramSlice {
 
 /// Result of impact analysis
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub struct ImpactAnalysis {
     /// Lines that were changed
     pub changed_lines: Vec<usize>,
@@ -541,6 +552,7 @@ pub struct ImpactAnalysis {
     pub affected_lines: Vec<usize>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 impl ImpactAnalysis {
     fn new() -> Self {
         Self {
@@ -557,6 +569,7 @@ impl ImpactAnalysis {
 
 /// A path from taint source to sink
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub struct TaintPath {
     /// Source line
     pub source: usize,
@@ -568,6 +581,7 @@ pub struct TaintPath {
 
 /// Result of taint analysis
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub struct TaintAnalysis {
     /// Taint sources
     pub sources: Vec<usize>,
@@ -577,6 +591,7 @@ pub struct TaintAnalysis {
     pub taint_paths: Vec<TaintPath>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 impl TaintAnalysis {
     fn new() -> Self {
         Self {
@@ -599,6 +614,7 @@ impl TaintAnalysis {
 
 /// Result of dead code detection
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub struct DeadCodeAnalysis {
     /// Lines that are dead (don't affect outputs)
     pub dead_lines: Vec<usize>,
@@ -611,6 +627,7 @@ pub struct DeadCodeAnalysis {
 /// Kind of dependency in the impact tree
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub enum DependencyReason {
     Data,
     Control,
@@ -619,6 +636,7 @@ pub enum DependencyReason {
 
 /// A node in the impact dependency tree
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub struct ImpactTreeNode {
     pub line: usize,
     pub text: String,
@@ -629,12 +647,14 @@ pub struct ImpactTreeNode {
 
 /// Impact analysis with dependency tree output (R6)
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub struct ImpactAnalysisTree {
     pub changed_lines: Vec<usize>,
     pub affected_lines: Vec<usize>,
     pub tree: Vec<ImpactTreeNode>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 impl ProgramDependenceGraph {
     /// Compute impact analysis with dependency tree format
     ///
@@ -738,6 +758,7 @@ impl ProgramDependenceGraph {
 
 /// Kind of taint source
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub enum TaintSourceKind {
     UserInput,
     EnvVar,
@@ -751,6 +772,7 @@ pub enum TaintSourceKind {
 
 /// Kind of taint sink
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub enum TaintSinkKind {
     OsCommand,
     SubprocessExec,
@@ -764,6 +786,7 @@ pub enum TaintSinkKind {
 
 /// A detected taint source
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub struct DetectedSource {
     pub line: usize,
     pub text: String,
@@ -772,6 +795,7 @@ pub struct DetectedSource {
 
 /// A detected taint sink
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub struct DetectedSink {
     pub line: usize,
     pub text: String,
@@ -780,12 +804,14 @@ pub struct DetectedSink {
 
 /// Semantic taint analysis result
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub struct SemanticTaintAnalysis {
     pub sources: Vec<DetectedSource>,
     pub sinks: Vec<DetectedSink>,
     pub taint_paths: Vec<TaintPath>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 impl SemanticTaintAnalysis {
     pub fn has_vulnerabilities(&self) -> bool {
         !self.taint_paths.is_empty()
@@ -793,6 +819,7 @@ impl SemanticTaintAnalysis {
 }
 
 /// Detect taint sources by scanning statement text patterns
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub fn detect_taint_sources(nodes: &HashMap<u32, PdgNode>) -> Vec<DetectedSource> {
     let mut sources = Vec::new();
 
@@ -883,6 +910,7 @@ pub fn detect_taint_sources(nodes: &HashMap<u32, PdgNode>) -> Vec<DetectedSource
 }
 
 /// Detect taint sinks by scanning statement text patterns
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub fn detect_taint_sinks(nodes: &HashMap<u32, PdgNode>) -> Vec<DetectedSink> {
     let mut sinks = Vec::new();
 
@@ -983,6 +1011,7 @@ pub fn detect_taint_sinks(nodes: &HashMap<u32, PdgNode>) -> Vec<DetectedSink> {
     sinks
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 impl ProgramDependenceGraph {
     /// Perform semantic taint analysis with automatic source/sink detection
     ///
@@ -1017,6 +1046,7 @@ impl ProgramDependenceGraph {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 impl DeadCodeAnalysis {
     fn new() -> Self {
         Self {
@@ -1037,6 +1067,7 @@ impl DeadCodeAnalysis {
 
 /// Statistics about a PDG
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub struct PdgStats {
     /// Number of nodes
     pub node_count: usize,
@@ -1050,6 +1081,7 @@ pub struct PdgStats {
 
 /// Serializable representation of PDG for MCP
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub struct PdgJson {
     /// Nodes
     pub nodes: Vec<PdgNodeJson>,
@@ -1064,6 +1096,7 @@ pub struct PdgJson {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub struct PdgNodeJson {
     pub id: u32,
     pub line: usize,
@@ -1072,6 +1105,7 @@ pub struct PdgNodeJson {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub struct PdgEdgeJson {
     pub from: u32,
     pub to: u32,
@@ -1080,6 +1114,7 @@ pub struct PdgEdgeJson {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 pub struct PdgStatsJson {
     pub node_count: usize,
     pub control_edge_count: usize,
@@ -1087,6 +1122,7 @@ pub struct PdgStatsJson {
     pub total_edge_count: usize,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-mod-rs.md#source
 impl From<&ProgramDependenceGraph> for PdgJson {
     fn from(pdg: &ProgramDependenceGraph) -> Self {
         let nodes: Vec<PdgNodeJson> = pdg
@@ -1243,3 +1279,4 @@ mod tests {
         assert!(!slice.is_empty());
     }
 }
+// CODEGEN-END

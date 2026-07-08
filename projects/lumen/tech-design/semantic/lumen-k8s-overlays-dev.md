@@ -51,15 +51,13 @@ deployment:
         resources:
           - ../../base
         
-        # dev: a single serving node, a single Relay broker, smallest viable
-        # footprint, auth off, human-readable logs. The ConfigMap is a static
-        # base resource (stable name, no hash suffix), so overlays patch its data
-        # in place rather than using a configMapGenerator merge.
+        # dev: a single serving node, embedded WAL, smallest viable footprint, auth off,
+        # human-readable logs. The ConfigMap is a static base resource (stable name, no
+        # hash suffix), so overlays patch its data in place rather than using a
+        # configMapGenerator merge.
         
         replicas:
           - name: lumen
-            count: 1
-          - name: lumen-relay
             count: 1
         
         patches:
@@ -83,8 +81,8 @@ deployment:
               name: lumen
             patch: |-
               # apply_raft_entry is a synchronous CPU-bound op (bulk index + BM25);
-              # too tight a CPU limit lets it starve the tokio runtime / broker client
-              # I/O under load. 1 core keeps a 10k-doc index e2e responsive.
+              # too tight a CPU limit lets it starve the tokio runtime under load.
+              # 1 core keeps a 10k-doc index e2e responsive.
               - op: replace
                 path: /spec/template/spec/containers/0/resources/requests/cpu
                 value: "500m"
@@ -120,29 +118,8 @@ deployment:
                 value: 1
               - op: replace
                 path: /spec/maxReplicas
-                value: 2
-          # Tiny Relay footprint + small broker volume.
-          - target:
-              kind: StatefulSet
-              name: lumen-relay
-            patch: |-
-              - op: replace
-                path: /spec/template/spec/containers/0/resources/requests/cpu
-                value: "100m"
-              - op: replace
-                path: /spec/template/spec/containers/0/resources/requests/memory
-                value: "256Mi"
-              - op: replace
-                path: /spec/template/spec/containers/0/resources/limits/cpu
-                value: "500m"
-              - op: replace
-                path: /spec/template/spec/containers/0/resources/limits/memory
-                value: "256Mi"
-              - op: replace
-                path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
-                value: "2Gi"
+                value: 1
         # CODEGEN-END
-
 ```
 
 ## Changes

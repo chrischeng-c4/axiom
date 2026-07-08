@@ -1,0 +1,33 @@
+[project]
+name = "h2c"
+cap_path = "README.md"
+label = "project:h2c"
+
+[[workspaces]]
+name = "h2c"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p h2c"
+verify_cold = true
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "h2c"
+generated_from_td_digest = "sha256:d3bddec6710216b69edfd82ac078e6c74960ea445e4d50df9d814b3b6fc0eb4c"
+
+[[aw.ec.generated.cases]]
+id = "http2-cleartext-client-helpers-contract"
+capability_id = "http2-cleartext-client-helpers"
+claim_id = "http2-cleartext-client-helpers-contract"
+contract_id = "http2-cleartext-client-helpers-contract"
+category = "behavior"
+td_ref = "libs/h2c/external-contracts/behavior/http2-cleartext-client-helpers-contract.md#http2-cleartext-client-helpers-contract"
+test_path = "libs/h2c/tests/behavior_http2_cleartext_client_helpers_contract.rs"
+command = "cargo test -p h2c"
+required_for_production = true
+assertions = [
+    "HTTP/2 Cleartext Client Helpers public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+# AW-EC-END

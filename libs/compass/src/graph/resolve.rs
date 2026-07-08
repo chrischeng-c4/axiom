@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-graph-resolve-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Per-language import extraction and resolution
 
 use regex_lite::Regex;
@@ -5,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 /// An extracted import from source code
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-graph-resolve-rs.md#source
 pub struct ExtractedImport {
     pub path: String,
     pub line: u32,
@@ -12,6 +15,7 @@ pub struct ExtractedImport {
 }
 
 /// Extract import statements from source code based on file extension
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-graph-resolve-rs.md#source
 pub fn extract_imports(source: &str, file_path: &Path) -> Vec<ExtractedImport> {
     match file_path.extension().and_then(|e| e.to_str()).unwrap_or("") {
         "py" | "pyi" => extract_python_imports(source),
@@ -23,6 +27,7 @@ pub fn extract_imports(source: &str, file_path: &Path) -> Vec<ExtractedImport> {
 }
 
 /// Resolve an import path to an absolute file path
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-graph-resolve-rs.md#source
 pub fn resolve_import(
     import_path: &str,
     from_file: &Path,
@@ -390,3 +395,4 @@ mod tests {
         );
     }
 }
+// CODEGEN-END

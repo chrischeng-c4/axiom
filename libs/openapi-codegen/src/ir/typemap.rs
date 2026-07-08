@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-typemap-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Component-schema key → generated type-name map.
 //!
 //! Language-neutral: a deterministic, collision-free PascalCase name per
@@ -11,10 +13,12 @@ use std::collections::BTreeMap;
 
 /// Maps an OpenAPI component-schema key to its final, collision-free type name.
 #[derive(Debug, Default)]
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-typemap-rs.md#source
 pub struct TypeMap {
     pub names: BTreeMap<String, String>,
 }
 
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-typemap-rs.md#source
 impl TypeMap {
     /// Resolve a `#/components/schemas/<key>` reference to its type name.
     /// Non-schema or external references yield `None`.
@@ -30,6 +34,7 @@ impl TypeMap {
 }
 
 /// Assign a deterministic, collision-free type name to each component schema key.
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-typemap-rs.md#source
 pub fn build_type_map(spec: &Spec) -> TypeMap {
     let mut reg = names::NameRegistry::new();
     let mut map = BTreeMap::new();
@@ -39,3 +44,4 @@ pub fn build_type_map(spec: &Spec) -> TypeMap {
     }
     TypeMap { names: map }
 }
+// CODEGEN-END

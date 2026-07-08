@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-gitlab-ci-rules-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Additional GitLab CI lint rules (GL002, GL005, GL006, GL009-GL012)
 
 use super::gitlab_ci::CiJob;
@@ -316,3 +318,4 @@ pub(super) fn check_invalid_includes(lines: &[&str]) -> Vec<Diagnostic> {
 
     diagnostics
 }
+// CODEGEN-END

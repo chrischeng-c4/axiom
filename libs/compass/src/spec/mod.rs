@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-spec-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Spec parsing module for spec-to-code generation
 //!
 //! This module contains parsers for various specification formats:
@@ -19,3 +21,4 @@ pub use statemachine::{
     MermaidPlusGenerator, MermaidPlusOutput, StateMachineDef, StateMachineValidator,
     ValidationError, ValidationResult,
 };
+// CODEGEN-END

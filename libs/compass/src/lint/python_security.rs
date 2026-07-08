@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-python-security-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Python security lint rules (PY301-PY305)
 
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, Position, Range};
@@ -208,3 +210,4 @@ fn check_function_call(
 
     diagnostics
 }
+// CODEGEN-END

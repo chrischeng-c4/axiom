@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-server-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Argus Daemon Server
 //!
 //! Provides a long-running daemon for code analysis with:
@@ -28,3 +30,4 @@ pub use watch_bridge::{
     spawn_watch_bridge, AsyncWatchBridgeBuilder, BridgeEvent, WatchBridge, WatchBridgeConfig,
     WatchBridgeHandle,
 };
+// CODEGEN-END

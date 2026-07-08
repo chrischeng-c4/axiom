@@ -1,0 +1,33 @@
+[project]
+name = "build-stamp"
+cap_path = "README.md"
+label = "project:build-stamp"
+
+[[workspaces]]
+name = "build-stamp"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p build-stamp"
+verify_cold = true
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "build-stamp"
+generated_from_td_digest = "sha256:5cd6f6697b23bd99175fb960d0216fbe9498b8249ccc2bca9dd9f101d94dffdd"
+
+[[aw.ec.generated.cases]]
+id = "build-script-version-stamp-contract"
+capability_id = "build-script-version-stamp"
+claim_id = "build-script-version-stamp-contract"
+contract_id = "build-script-version-stamp-contract"
+category = "behavior"
+td_ref = "libs/build-stamp/external-contracts/behavior/build-script-version-stamp-contract.md#build-script-version-stamp-contract"
+test_path = "libs/build-stamp/tests/behavior_build_script_version_stamp_contract.rs"
+command = "cargo test -p build-stamp"
+required_for_production = true
+assertions = [
+    "stamp(prefix) emits git SHA, build timestamp, target triple, and rerun hints through Cargo build-script directives.",
+    "fallback behavior remains best-effort when git metadata or TARGET are unavailable.",
+]
+# AW-EC-END

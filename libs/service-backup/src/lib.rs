@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-backup/tech-design/semantic/source/libs-service-backup-src-lib-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! `service-backup` — shared backup contract for axiom services.
 //!
 //! The data plane owns snapshot consistency: each service state machine produces
@@ -27,3 +29,4 @@ pub use policy::{BackupPolicy, RetentionPolicy};
 pub use runner::{run_backup_once, BackupObject, BackupRunResult};
 pub use sink::{sink_from_destination, BackupSink, LocalFsSink, UnsupportedCloudSink};
 pub use source::fetch_backup_object;
+// CODEGEN-END

@@ -1,5 +1,5 @@
 // SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-raft_sm-rs.md#rust-source-unit
-// HANDWRITE-BEGIN gap="missing-generator:logic:d11d8be6" tracker="standardize-gap-projects-lumen-src-raft-sm-rs" reason="EngineSm: lumen's Engine as a raft_host::RaftStateMachine (epic #524 convergence). apply folds a committed command into the engine and records ApplyOutcome in a window for read-your-write; snapshot/restore bridge to the engine RDB checkpoint; the raft log index is the WAL seq. No semantic TD captured yet; aw claim_code/fillback adoption hangs."
+// CODEGEN-BEGIN
 //! `EngineSm` — lumen's [`Engine`] as a [`raft_host::RaftStateMachine`].
 //!
 //! This is lumen's convergence onto the shared raft host (epic #524): the host
@@ -30,12 +30,14 @@ use raft_host::RaftHost;
 const OUTCOME_WINDOW: u64 = 8192;
 
 /// lumen's engine driven as a raft state machine.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft_sm-rs.md#source
 pub struct EngineSm {
     engine: Arc<Engine>,
     applied: AtomicU64,
     outcomes: Mutex<OutcomeWindow<Result<ApplyOutcome>>>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft_sm-rs.md#source
 impl EngineSm {
     /// Wrap `engine`, seeded at `from_seq` (the seq the engine was cold-started
     /// to, e.g. from an RDB checkpoint — `0` for a fresh engine).
@@ -58,6 +60,7 @@ impl EngineSm {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft_sm-rs.md#source
 impl RaftStateMachine for EngineSm {
     fn apply(&self, index: Index, command: &[u8]) -> Result<()> {
         let outcome =
@@ -98,11 +101,13 @@ impl RaftStateMachine for EngineSm {
 /// [`RaftHost`] (which handles leader-redirect + read-your-write), and the rich
 /// [`ApplyOutcome`] is claimed from the local [`EngineSm`] apply (the host
 /// applies on every node, so a follower has its own outcome).
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft_sm-rs.md#source
 pub struct RaftWriteSink {
     host: Arc<RaftHost>,
     sm: Arc<EngineSm>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft_sm-rs.md#source
 impl RaftWriteSink {
     pub fn new(host: Arc<RaftHost>, sm: Arc<EngineSm>) -> Self {
         Self { host, sm }
@@ -110,6 +115,7 @@ impl RaftWriteSink {
 }
 
 #[async_trait::async_trait]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft_sm-rs.md#source
 impl WriteSink for RaftWriteSink {
     async fn submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome> {
         let index = self.host.propose(WalRecord::new(entry).encode()?).await?;
@@ -201,4 +207,4 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
-// HANDWRITE-END
+// CODEGEN-END

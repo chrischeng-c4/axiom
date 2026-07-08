@@ -3,9 +3,16 @@ id: projects-lumen-src-raft-rs
 capability_refs:
   - id: "competitor-feature-parity"
     role: primary
+    gap: "query-planner-boolean-eval-roaring-postings"
     claim: "query-planner-boolean-eval-roaring-postings"
     coverage: partial
     rationale: "This source unit is captured as a per-file rust-source-unit during lumen td_ast standardization."
+  - id: "replica-sync-bootstrap"
+    role: primary
+    gap: "raft-log-replica-sync-existing-pvc"
+    claim: "raft-log-replica-sync-existing-pvc"
+    coverage: partial
+    rationale: "This source unit owns the public raft cluster topology DTOs for the durable replica path."
 fill_sections: [overview, source, changes]
 ---
 

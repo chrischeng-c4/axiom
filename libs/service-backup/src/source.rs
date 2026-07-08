@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-backup/tech-design/semantic/source/libs-service-backup-src-source-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 use anyhow::{bail, ensure, Context, Result};
 
 #[cfg(feature = "s3")]
@@ -9,6 +11,7 @@ use crate::s3;
 /// form names a sink prefix. Bootstrap and restore paths need one concrete
 /// snapshot object instead: `file:///path/to/snapshot.json` or
 /// `s3://bucket/path/to/snapshot.json`.
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-source-rs.md#source
 pub fn fetch_backup_object(raw_uri: &str) -> Result<Vec<u8>> {
     let uri = raw_uri.trim();
     ensure!(!uri.is_empty(), "backup object URI is empty");
@@ -77,3 +80,4 @@ mod tests {
         assert!(fetch_backup_object("s3://bucket/").is_err());
     }
 }
+// CODEGEN-END

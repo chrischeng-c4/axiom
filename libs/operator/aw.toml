@@ -1,0 +1,33 @@
+[project]
+name = "operator"
+cap_path = "README.md"
+label = "project:operator"
+
+[[workspaces]]
+name = "operator"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p operator"
+verify_cold = true
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "operator"
+generated_from_td_digest = "sha256:0eaf2afea3333b3b18a259cc71ae86beed0a6c42a31278194a332880d52e7c72"
+
+[[aw.ec.generated.cases]]
+id = "shared-kubernetes-operator-scaffold-contract"
+capability_id = "shared-kubernetes-operator-scaffold"
+claim_id = "shared-kubernetes-operator-scaffold-contract"
+contract_id = "shared-kubernetes-operator-scaffold-contract"
+category = "behavior"
+td_ref = "libs/operator/external-contracts/behavior/shared-kubernetes-operator-scaffold-contract.md#shared-kubernetes-operator-scaffold-contract"
+test_path = "libs/operator/tests/behavior_shared_kubernetes_operator_scaffold_contract.rs"
+command = "cargo test -p operator"
+required_for_production = true
+assertions = [
+    "Shared Kubernetes Operator Scaffold public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+# AW-EC-END

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-cfg-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Control Flow Graph (CFG) construction for Python
 //!
 //! Implements statement-level CFG for Python code analysis.
@@ -9,10 +11,12 @@ use crate::type_inference::Span;
 use std::collections::{HashMap, HashSet};
 
 /// Unique identifier for a CFG block
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-cfg-rs.md#source
 pub type BlockId = u32;
 
 /// A basic block in the CFG
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-cfg-rs.md#source
 pub struct BasicBlock {
     /// Unique identifier
     pub id: BlockId,
@@ -24,6 +28,7 @@ pub struct BasicBlock {
 
 /// Information about a statement
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-cfg-rs.md#source
 pub struct StatementInfo {
     /// Span in source code
     pub span: Span,
@@ -37,6 +42,7 @@ pub struct StatementInfo {
 
 /// Kind of statement
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-cfg-rs.md#source
 pub enum StatementKind {
     /// Variable assignment
     Assignment,
@@ -68,6 +74,7 @@ pub enum StatementKind {
 
 /// Kind of basic block
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-cfg-rs.md#source
 pub enum BlockKind {
     /// Entry block
     Entry,
@@ -91,6 +98,7 @@ pub enum BlockKind {
 
 /// Edge type in CFG
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-cfg-rs.md#source
 pub enum EdgeKind {
     /// Normal sequential flow
     Sequential,
@@ -112,6 +120,7 @@ pub enum EdgeKind {
 
 /// An edge in the CFG
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-cfg-rs.md#source
 pub struct CfgEdge {
     /// Source block
     pub from: BlockId,
@@ -123,6 +132,7 @@ pub struct CfgEdge {
 
 /// Control Flow Graph for a function/module
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-cfg-rs.md#source
 pub struct ControlFlowGraph {
     /// All basic blocks
     pub blocks: HashMap<BlockId, BasicBlock>,
@@ -140,6 +150,7 @@ pub struct ControlFlowGraph {
     pub function_name: Option<String>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-cfg-rs.md#source
 impl ControlFlowGraph {
     /// Create a new empty CFG
     pub fn new() -> Self {
@@ -270,6 +281,7 @@ impl ControlFlowGraph {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-cfg-rs.md#source
 impl Default for ControlFlowGraph {
     fn default() -> Self {
         Self::new()
@@ -277,6 +289,7 @@ impl Default for ControlFlowGraph {
 }
 
 /// CFG builder for Python code
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-cfg-rs.md#source
 pub struct CfgBuilder<'a> {
     /// The CFG being built
     cfg: ControlFlowGraph,
@@ -983,3 +996,4 @@ mod tests {
         assert!(!continue_edges.is_empty());
     }
 }
+// CODEGEN-END

@@ -1,0 +1,33 @@
+[project]
+name = "raft-host"
+cap_path = "README.md"
+label = "project:raft-host"
+
+[[workspaces]]
+name = "raft-host"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p raft-host"
+verify_cold = true
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "raft-host"
+generated_from_td_digest = "sha256:5c30ecd2b7377f649e349d552fd586ae4a331f0466a7bf31d700ff974d668df0"
+
+[[aw.ec.generated.cases]]
+id = "shared-raft-host-driver-contract"
+capability_id = "shared-raft-host-driver"
+claim_id = "shared-raft-host-driver-contract"
+contract_id = "shared-raft-host-driver-contract"
+category = "behavior"
+td_ref = "libs/raft-host/external-contracts/behavior/shared-raft-host-driver-contract.md#shared-raft-host-driver-contract"
+test_path = "libs/raft-host/tests/behavior_shared_raft_host_driver_contract.rs"
+command = "cargo test -p raft-host"
+required_for_production = true
+assertions = [
+    "Shared Raft Host Driver public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+# AW-EC-END

@@ -1,0 +1,16 @@
+[package]
+name = "service-durability"
+version = "0.1.0"
+edition = "2021"
+description = "Shared durable local storage primitives for axiom services: fsync policy, atomic replace, framed logs, and snapshot file stores."
+
+[lib]
+name = "service_durability"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+crc32fast = "1.4"
+
+[dev-dependencies]
+tempfile = "3"

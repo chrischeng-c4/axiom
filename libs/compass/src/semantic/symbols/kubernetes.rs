@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-kubernetes-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Kubernetes manifest symbol extraction (YAML tree-sitter)
 //!
 //! Extracts: resources (kind + metadata.name), labels, selectors.
@@ -6,6 +8,7 @@ use super::{SymbolKind, SymbolTableBuilder};
 use crate::diagnostic::Range;
 use crate::syntax::ParsedFile;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-kubernetes-rs.md#source
 impl SymbolTableBuilder {
     /// Walk YAML AST to extract Kubernetes resource symbols
     pub(crate) fn visit_k8s_node(&mut self, node: &tree_sitter::Node<'_>, file: &ParsedFile) {
@@ -284,3 +287,4 @@ mod tests {
         assert!(lbl.contains(&"env"), "got: {:?}", lbl);
     }
 }
+// CODEGEN-END
