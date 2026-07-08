@@ -1,0 +1,16 @@
+[package]
+name = "tcp-server"
+version = "0.1.0"
+edition = "2021"
+description = "Shared TCP server runtime built on server-core: efficient accept loop, per-connection supervision, connection budgeting, drain-aware shutdown, and protocol handler traits."
+
+[lib]
+name = "tcp_server"
+path = "src/lib.rs"
+
+[dependencies]
+server-core = { path = "../server-core" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+socket2 = "0.6"

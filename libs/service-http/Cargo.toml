@@ -21,8 +21,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 
-# The h2c serve loop (HTTP/1.1 + h2c on one port) is composed, not re-implemented.
-h2c = { path = "../h2c", features = ["server"] }
+# The HTTP runtime (HTTP/1.1 + h2c on one port) is composed, not re-implemented.
+http-server = { path = "../http-server" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

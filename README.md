@@ -48,6 +48,9 @@ surfaces belong under `projects/`.
 | [compass](libs/compass/README.md) | Code-intelligence engine for navigation, analysis, refactoring, and watch workflows. |
 | [h2c](libs/h2c/Cargo.toml) | Shared HTTP/2 cleartext transport: single client, round-robin pool, frame-level manager, and connection-count heuristic. |
 | [openapi-codegen](libs/openapi-codegen/Cargo.toml) | Typed TypeScript, Python, and Rust API client generation from OpenAPI 3.0/3.1 documents. |
+| [server-core](libs/server-core/Cargo.toml) | Shared server substrate: bind config, shutdown/drain, readiness signals, connection budgets, and metrics hooks. |
+| [tcp-server](libs/tcp-server/Cargo.toml) | Shared TCP accept/runtime layer for raw protocols, proxies, and poolers, built on server-core. |
+| [http-server](libs/http-server/Cargo.toml) | Shared HTTP runtime for tool/dev servers and service shells: HTTP/1.1 + h2c serve and request tracing. |
 | [operator](libs/operator/Cargo.toml) | Shared Kubernetes operator scaffold: reconcile controller, leader election, and HA render toolkit. |
 | [raft-core](libs/raft-core/Cargo.toml) | Transport- and storage-agnostic, step-driven Raft consensus core. |
 | [raft-host](libs/raft-host/Cargo.toml) | Shared Raft host driver over h2c peer transport with snapshots, compaction, and read-your-write propose. |
