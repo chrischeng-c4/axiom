@@ -475,6 +475,7 @@ fn exec_has_pending_exception() -> bool {
 struct ExecContext {
     class_match_args: FxHashMap<String, Option<MbValue>>,
     type_vars: std::collections::HashSet<String>,
+    type_param_reuse_once: std::collections::HashSet<String>,
     functions: FxHashMap<String, ExecFunction>,
     frames: Vec<FxHashMap<String, MbValue>>,
     globals: Option<MbValue>,
@@ -1003,11 +1004,12 @@ fn exec_drop_masked_name(masked_name: ExecMaskedName) {
     }
 }
 
-fn exec_commit_temporary_names(bindings: Vec<ExecTemporaryName>) {
+fn exec_commit_temporary_names(ctx: &mut ExecContext, bindings: Vec<ExecTemporaryName>) {
     for binding in bindings {
         if let Some(previous) = binding.previous {
             exec_drop_masked_name(previous);
         }
+        ctx.type_param_reuse_once.insert(binding.name);
     }
 }
 
@@ -1682,9 +1684,11 @@ fn exec_eval_expr(ctx: &mut ExecContext, expr: &crate::parser::ast::Expr) -> MbV
             if let Expr::Ident(name) = &func.node {
                 if name == crate::lower::pep695::TYPEVAR_INTRINSIC && values.len() == 5 {
                     if let Some(param_name) = exec_string_value(values[0]) {
-                        if let Some(existing) = exec_lookup_name(ctx, &param_name) {
-                            if exec_is_pep695_type_param_value(existing) {
-                                return existing;
+                        if ctx.type_param_reuse_once.remove(&param_name) {
+                            if let Some(existing) = exec_lookup_name(ctx, &param_name) {
+                                if exec_is_pep695_type_param_value(existing) {
+                                    return existing;
+                                }
                             }
                         }
                     }
@@ -2228,7 +2232,7 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                 exec_restore_temporary_names(ctx, annotation_type_params);
                 return ExecFlow::Normal;
             };
-            exec_commit_temporary_names(annotation_type_params);
+            exec_commit_temporary_names(ctx, annotation_type_params);
             let mut decorator_values = Vec::with_capacity(decorators.len());
             for decorator in decorators {
                 let value = exec_eval_expr(ctx, &decorator.node);
@@ -2315,7 +2319,7 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                     exec_restore_temporary_names(ctx, annotation_type_params);
                     return ExecFlow::Normal;
                 };
-                exec_commit_temporary_names(annotation_type_params);
+                exec_commit_temporary_names(ctx, annotation_type_params);
                 let function = ExecFunction {
                     params: param_names,
                     defaults,
