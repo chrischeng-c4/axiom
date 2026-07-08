@@ -2,10 +2,11 @@
 // CODEGEN-BEGIN
 //! Path alias resolver for the Jet bundler.
 //!
-//! Combines alias entries from two sources (in priority order):
+//! Combines alias entries from three sources (in priority order):
 //!
-//! 1. `tsconfig.json` → `compilerOptions.paths` (lower priority)
-//! 2. `jet.toml` → `alias` map (higher priority; overrides tsconfig)
+//! 1. `tsconfig.base.json` → `compilerOptions.paths` (Nx/workspace base priority)
+//! 2. `tsconfig.json` → `compilerOptions.paths` (project priority)
+//! 3. `jet.toml` → `alias` map (highest priority; overrides tsconfig)
 //!
 //! The resulting entries are used to populate [`crate::resolver::ResolveOptions::alias`]
 //! so that both the JIT dev server and production build resolve `@/foo` → `./src/foo`
@@ -28,17 +29,23 @@ pub struct AliasResolver {
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-resolver.md#schema
 impl AliasResolver {
-    /// Build an `AliasResolver` by merging `tsconfig.json` paths and the
-    /// `jet.toml` alias map.
+    /// Build an `AliasResolver` by merging tsconfig paths and the `jet.toml`
+    /// alias map.
     ///
     /// `config_aliases` entries take precedence — any tsconfig path whose
     /// prefix matches a jet-config key is replaced.
     pub fn load(project_root: &Path, config_aliases: &HashMap<String, String>) -> Self {
         let mut entries: Vec<(String, PathBuf)> = Vec::new();
 
-        // 1. Load tsconfig.json compilerOptions.paths (base priority)
-        if let Some(tsconfig_entries) = load_tsconfig_paths(project_root) {
-            entries.extend(tsconfig_entries);
+        // 1. Load Nx/workspace tsconfig.base.json first, then project tsconfig.json.
+        // Later files replace the same alias prefix.
+        for tsconfig_name in ["tsconfig.base.json", "tsconfig.json"] {
+            if let Some(tsconfig_entries) = load_tsconfig_paths_from(project_root, tsconfig_name) {
+                for (prefix, target_path) in tsconfig_entries {
+                    entries.retain(|(k, _)| k != &prefix);
+                    entries.push((prefix, target_path));
+                }
+            }
         }
 
         // 2. Apply jet.toml aliases (overrides any tsconfig entry for the same prefix)
@@ -142,6 +149,68 @@ mod tests {
 
         let resolver = AliasResolver::load(project_root, &HashMap::new());
         assert_eq!(resolver.to_resolve_aliases().len(), 2);
+    }
+
+    /// Nx workspaces usually keep root aliases in tsconfig.base.json instead of
+    /// tsconfig.json. These aliases must feed production and Nx builds.
+    #[test]
+    fn alias_resolves_nx_tsconfig_base_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+
+        let tsconfig = r#"{
+            "compilerOptions": {
+                "baseUrl": ".",
+                "paths": {
+                    "@operations/tech-platform-lib": ["libs/tech-platform-lib/src/index.ts"],
+                    "@operations/tech-platform-mock/*": ["libs/tech-platform-mock/src/*"]
+                }
+            }
+        }"#;
+        std::fs::write(project_root.join("tsconfig.base.json"), tsconfig).unwrap();
+
+        let resolver = AliasResolver::load(project_root, &HashMap::new());
+        let entries = resolver.to_resolve_aliases();
+
+        assert_eq!(entries.len(), 2);
+        assert!(
+            entries
+                .iter()
+                .any(|(prefix, path)| prefix == "@operations/tech-platform-lib"
+                    && path == &project_root.join("libs/tech-platform-lib/src/index.ts")),
+            "tsconfig.base.json exact alias must be loaded: {entries:?}"
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|(prefix, path)| prefix == "@operations/tech-platform-mock/"
+                    && path == &project_root.join("libs/tech-platform-mock/src/")),
+            "tsconfig.base.json glob alias must be loaded: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn alias_project_tsconfig_overrides_tsconfig_base() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+
+        std::fs::write(
+            project_root.join("tsconfig.base.json"),
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["base-src/*"]}}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            project_root.join("tsconfig.json"),
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["project-src/*"]}}}"#,
+        )
+        .unwrap();
+
+        let resolver = AliasResolver::load(project_root, &HashMap::new());
+        let entries = resolver.to_resolve_aliases();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "@/");
+        assert_eq!(entries[0].1, project_root.join("project-src/"));
     }
 
     /// REQ-JET-06: jet.toml alias takes precedence over tsconfig.json paths for the same prefix.
@@ -307,7 +376,11 @@ mod tests {
 /// GH #3157 — replaced the prior `.ok()?` chain that swallowed cases 2 and 3
 /// indistinguishably from case 1.
 fn load_tsconfig_paths(project_root: &Path) -> Option<Vec<(String, PathBuf)>> {
-    let tsconfig_path = project_root.join("tsconfig.json");
+    load_tsconfig_paths_from(project_root, "tsconfig.json")
+}
+
+fn load_tsconfig_paths_from(project_root: &Path, filename: &str) -> Option<Vec<(String, PathBuf)>> {
+    let tsconfig_path = project_root.join(filename);
 
     let content = match std::fs::read_to_string(&tsconfig_path) {
         Ok(c) => c,
@@ -326,9 +399,10 @@ fn load_tsconfig_paths(project_root: &Path) -> Option<Vec<(String, PathBuf)>> {
         Ok(t) => t,
         Err(e) => {
             eprintln!(
-                "[jet resolver] tsconfig.json at {} could not be parsed: \
+                "[jet resolver] {} at {} could not be parsed: \
                  {e}. Path aliases (compilerOptions.paths) will not be \
                  loaded for this project (GH #3157).",
+                filename,
                 tsconfig_path.display()
             );
             return None;

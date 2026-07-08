@@ -436,9 +436,16 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
         }
     }
 
+    let source_style_asset = emit_library_style_imports(&options, &entries, &externals)?;
+
     // Post-emit asset steps: CSS cascade-merge + raw-asset copy. No-ops (and
     // thus byte-identical to today) when neither is configured.
     let mut assets = run_post_emit_assets(&options)?;
+    if assets.is_empty() {
+        if let Some(asset) = source_style_asset {
+            assets.push(asset);
+        }
+    }
     assets.extend(copy_wildcard_export_assets(
         &options,
         &pkg_path,
@@ -1353,8 +1360,15 @@ fn build_library_preserve_modules(
         }
     }
 
+    let source_style_asset = emit_library_style_imports(options, entries, externals)?;
+
     // Post-emit asset steps run for preserve_modules builds too.
-    let assets = run_post_emit_assets(options)?;
+    let mut assets = run_post_emit_assets(options)?;
+    if assets.is_empty() {
+        if let Some(asset) = source_style_asset {
+            assets.push(asset);
+        }
+    }
 
     Ok(LibBuildResult {
         entries: outputs,
@@ -1444,6 +1458,89 @@ fn collect_modules(
         }
         if let Some(target) = resolve_relative(path, &spec)? {
             collect_modules(&target, externals, visited, order)?;
+        }
+    }
+    Ok(())
+}
+
+fn emit_library_style_imports(
+    options: &LibBuildOptions,
+    entries: &[LibraryEntry],
+    externals: &HashSet<String>,
+) -> Result<Option<AssetOutput>> {
+    let mut visited_modules = HashSet::new();
+    let mut seen_styles = HashSet::new();
+    let mut styles = Vec::new();
+    for entry in entries {
+        let entry_path = resolve_entry_path(&options.project_root, &entry.source)
+            .with_context(|| format!("resolving entry source {}", entry.source))?;
+        collect_style_imports(
+            &entry_path,
+            externals,
+            &mut visited_modules,
+            &mut seen_styles,
+            &mut styles,
+        )?;
+    }
+    if styles.is_empty() {
+        return Ok(None);
+    }
+
+    let config = crate::css::TailwindConfig::load(&options.project_root).unwrap_or_default();
+    let pipeline = crate::css::CssPipeline::new(options.project_root.clone(), config, false);
+    let mut bundle = String::new();
+    for style in styles {
+        let output = pipeline
+            .process(&style)
+            .with_context(|| format!("processing library style import {}", style.display()))?;
+        bundle.push_str(&output.css);
+        if !bundle.ends_with('\n') {
+            bundle.push('\n');
+        }
+    }
+
+    std::fs::create_dir_all(&options.out_dir)
+        .with_context(|| format!("creating out_dir {}", options.out_dir.display()))?;
+    let out_css = options.out_dir.join("style.css");
+    std::fs::write(&out_css, bundle)
+        .with_context(|| format!("writing library style bundle {}", out_css.display()))?;
+    Ok(Some(AssetOutput {
+        path: out_css,
+        kind: AssetKind::MergedCss,
+    }))
+}
+
+fn collect_style_imports(
+    path: &Path,
+    externals: &HashSet<String>,
+    visited_modules: &mut HashSet<PathBuf>,
+    seen_styles: &mut HashSet<PathBuf>,
+    styles: &mut Vec<PathBuf>,
+) -> Result<()> {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if !visited_modules.insert(canonical) {
+        return Ok(());
+    }
+
+    let source =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    for spec in module_specifiers(&source, path)? {
+        if is_external_specifier(&spec, externals) {
+            continue;
+        }
+        if let Some(asset_path) = resolve_relative_asset(path, &spec) {
+            if is_library_style_path(&asset_path) {
+                let key = asset_path
+                    .canonicalize()
+                    .unwrap_or_else(|_| asset_path.clone());
+                if seen_styles.insert(key) {
+                    styles.push(asset_path);
+                }
+            }
+            continue;
+        }
+        if let Some(target) = resolve_relative(path, &spec)? {
+            collect_style_imports(&target, externals, visited_modules, seen_styles, styles)?;
         }
     }
     Ok(())

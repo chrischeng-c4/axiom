@@ -111,6 +111,58 @@ fn is_singleton_package(package_name: &str) -> bool {
     matches!(package_name, "react" | "react-dom")
 }
 
+const NODE_BUILTINS_WITH_BROWSER_FALLBACK: &[&str] = &[
+    "assert",
+    "buffer",
+    "child_process",
+    "cluster",
+    "constants",
+    "crypto",
+    "dgram",
+    "dns",
+    "domain",
+    "events",
+    "fs",
+    "http",
+    "http2",
+    "https",
+    "module",
+    "net",
+    "os",
+    "path",
+    "perf_hooks",
+    "process",
+    "punycode",
+    "querystring",
+    "readline",
+    "stream",
+    "string_decoder",
+    "sys",
+    "timers",
+    "tls",
+    "tty",
+    "url",
+    "util",
+    "v8",
+    "vm",
+    "worker_threads",
+    "zlib",
+];
+
+fn node_builtin_name(specifier: &str) -> Option<&str> {
+    let name = specifier.strip_prefix("node:").unwrap_or(specifier);
+    NODE_BUILTINS_WITH_BROWSER_FALLBACK
+        .contains(&name)
+        .then_some(name)
+}
+
+fn append_extension(base: &Path, ext: &str) -> PathBuf {
+    let mut path = base.as_os_str().to_os_string();
+    path.push(".");
+    path.push(ext.trim_start_matches('.'));
+    PathBuf::from(path)
+}
+
 /// The nearest enclosing package root for bare-specifier resolution:
 /// the path up to and including the last `node_modules/<pkg>` (or
 /// `node_modules/@scope/<pkg>`) segment, or the directory itself when the
@@ -188,6 +240,14 @@ impl ModuleResolver {
             });
         }
 
+        if let Some(path) = self.resolve_browser_builtin(specifier)? {
+            return Ok(ResolvedModule {
+                path,
+                kind: ResolveKind::Package,
+                is_external: false,
+            });
+        }
+
         let kind = self.detect_kind(specifier);
 
         let path = match kind {
@@ -254,6 +314,44 @@ impl ModuleResolver {
     fn resolve_absolute(&self, specifier: &str) -> Result<PathBuf> {
         let candidate = PathBuf::from(specifier);
         self.try_extensions(&candidate)
+    }
+
+    fn resolve_browser_builtin(&self, specifier: &str) -> Result<Option<PathBuf>> {
+        if !self
+            .options
+            .conditions
+            .iter()
+            .any(|condition| condition == "browser")
+        {
+            return Ok(None);
+        }
+        let Some(builtin) = node_builtin_name(specifier) else {
+            return Ok(None);
+        };
+        let Some(base_dir) = self.options.base_dirs.first() else {
+            return Ok(None);
+        };
+
+        let jet_dir = base_dir.join("node_modules").join(".jet");
+        std::fs::create_dir_all(&jet_dir)?;
+        if builtin == "stream" {
+            let events_path = jet_dir.join("polyfill-events.mjs");
+            if !events_path.exists() {
+                std::fs::write(
+                    &events_path,
+                    crate::dev_server::polyfills::generate_polyfill("events"),
+                )?;
+            }
+        }
+        let polyfill_path = jet_dir.join(format!("polyfill-{builtin}.mjs"));
+        let content = crate::dev_server::polyfills::generate_polyfill(builtin);
+        let content = if content.is_empty() {
+            crate::dev_server::polyfills::generate_stub(builtin, "jet build")
+        } else {
+            content
+        };
+        std::fs::write(&polyfill_path, content)?;
+        Ok(Some(polyfill_path))
     }
 
     fn resolve_package(&self, specifier: &str, from: &Path) -> Result<PathBuf> {
@@ -444,7 +542,11 @@ impl ModuleResolver {
         for (prefix, target) in &self.options.alias {
             if specifier.starts_with(prefix) {
                 let rest = &specifier[prefix.len()..];
-                let candidate = target.join(rest.trim_start_matches('/'));
+                let candidate = if rest.is_empty() {
+                    target.clone()
+                } else {
+                    target.join(rest.trim_start_matches('/'))
+                };
                 return self.try_extensions(&candidate);
             }
         }
@@ -458,7 +560,7 @@ impl ModuleResolver {
         }
 
         for ext in &self.options.extensions {
-            let with_ext = base.with_extension(ext.trim_start_matches('.'));
+            let with_ext = append_extension(base, ext);
             if with_ext.exists() && with_ext.is_file() {
                 return Ok(with_ext);
             }
@@ -790,6 +892,89 @@ mod tests {
 
         assert_eq!(resolved.kind, ResolveKind::Relative);
         assert_eq!(resolved.path, index);
+    }
+
+    #[test]
+    fn dotted_extensionless_relative_import_appends_extension() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let importer = src.join("editor.js");
+        let target = src.join("DraftEditor.react.js");
+        std::fs::write(&importer, "import './DraftEditor.react';").unwrap();
+        std::fs::write(&target, "export default {};").unwrap();
+
+        let resolver = ModuleResolver::new(ResolveOptions::default()).unwrap();
+        let resolved = resolver.resolve("./DraftEditor.react", &importer).unwrap();
+
+        assert_eq!(resolved.path, target);
+    }
+
+    #[test]
+    fn exact_file_alias_resolves_without_trailing_directory_join() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let importer_dir = tmp.path().join("apps/tech-platform/src");
+        let lib_dir = tmp.path().join("libs/tech-platform-lib/src");
+        std::fs::create_dir_all(&importer_dir).unwrap();
+        std::fs::create_dir_all(&lib_dir).unwrap();
+        let importer = importer_dir.join("main.ts");
+        let target = lib_dir.join("index.ts");
+        std::fs::write(&importer, "import '@operations/tech-platform-lib';").unwrap();
+        std::fs::write(&target, "export const value = 1;").unwrap();
+
+        let mut options = ResolveOptions::default();
+        options.alias = vec![("@operations/tech-platform-lib".to_string(), target.clone())];
+        let resolver = ModuleResolver::new(options).unwrap();
+        let resolved = resolver
+            .resolve("@operations/tech-platform-lib", &importer)
+            .unwrap();
+
+        assert_eq!(resolved.path, target);
+    }
+
+    #[test]
+    fn legacy_cjs_relative_import_appends_extension_after_full_dotted_path() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let pkg = tmp.path().join("node_modules").join("core-js");
+        let object_dir = pkg.join("object");
+        let modules_dir = pkg.join("modules");
+        std::fs::create_dir_all(&object_dir).unwrap();
+        std::fs::create_dir_all(&modules_dir).unwrap();
+        let importer = object_dir.join("assign.js");
+        let target = modules_dir.join("es6.object.assign.js");
+        std::fs::write(&importer, "require('../modules/es6.object.assign');").unwrap();
+        std::fs::write(&target, "module.exports = {};").unwrap();
+
+        let resolver = ModuleResolver::new(ResolveOptions::default()).unwrap();
+        let resolved = resolver
+            .resolve("../modules/es6.object.assign", &importer)
+            .unwrap();
+
+        assert_eq!(
+            std::fs::canonicalize(resolved.path).unwrap(),
+            std::fs::canonicalize(target).unwrap()
+        );
+    }
+
+    #[test]
+    fn browser_builtin_crypto_resolves_to_generated_polyfill() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let importer = src.join("main.js");
+        std::fs::write(&importer, "import crypto from 'crypto';").unwrap();
+
+        let mut options = ResolveOptions::for_browser_production();
+        options.base_dirs = vec![tmp.path().to_path_buf()];
+        let resolver = ModuleResolver::new(options).unwrap();
+        let resolved = resolver.resolve("crypto", &importer).unwrap();
+
+        assert_eq!(resolved.kind, ResolveKind::Package);
+        assert!(resolved
+            .path
+            .ends_with("node_modules/.jet/polyfill-crypto.mjs"));
+        let polyfill = std::fs::read_to_string(&resolved.path).unwrap();
+        assert!(polyfill.contains("globalThis.crypto"));
     }
 
     #[test]

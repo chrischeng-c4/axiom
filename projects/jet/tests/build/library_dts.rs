@@ -808,6 +808,41 @@ fn object_literal_function_property_emits_dts() {
 }
 
 #[test]
+fn object_literal_arrow_property_with_object_assign_computed_key_body_emits_dts() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "query-dts-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export const _Query = {
+    parse: (search: string): Record<string, string> =>
+        Object.assign(
+            {},
+            ...search.replace(/^\?/, '').split('&').filter(Boolean).map((pair) => {
+                const [key, value] = pair.split('=');
+                return { [decodeURIComponent(key)]: decodeURIComponent(value ?? '') };
+            }),
+        ),
+};
+"#,
+    );
+
+    let result = build_library(lib_options(root))
+        .expect("Object.assign body with computed keys should not trip isolatedDeclarations");
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
+    assert!(
+        dts.contains("parse: (search: string) => Record<string, string>;"),
+        "object literal property arrow should use explicit boundary types, got:\n{dts}"
+    );
+}
+
+#[test]
 fn exported_class_member_infers_string_return_type() {
     let dir = tempdir().unwrap();
     let root = dir.path();
