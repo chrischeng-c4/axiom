@@ -123,7 +123,7 @@ auth_curl "${url}" -o "${tmpdir}/${asset}" \
 # Best-effort integrity check — if .sha256 is missing on a manual
 # release we don't refuse to install.
 if auth_curl "${sha_url}" -o "${tmpdir}/${asset}.sha256" 2>/dev/null; then
-  expected="$(cat "${tmpdir}/${asset}.sha256")"
+  expected="$(awk '{print $1}' "${tmpdir}/${asset}.sha256")"
   if command -v shasum >/dev/null 2>&1; then
     actual="$(shasum -a 256 "${tmpdir}/${asset}" | awk '{print $1}')"
   elif command -v sha256sum >/dev/null 2>&1; then
