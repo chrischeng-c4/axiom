@@ -183,6 +183,16 @@ unsafe extern "C" fn dispatch_weakrefset_weak_set(
     super::weakref_mod::mb_weakref_weak_set_from(a.first().copied().unwrap_or_else(MbValue::none))
 }
 
+fn extract_str(val: MbValue) -> Option<String> {
+    val.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    })
+}
+
 fn extract_args(args: MbValue) -> Vec<MbValue> {
     args.as_ptr()
         .and_then(|p| unsafe {
@@ -258,6 +268,26 @@ unsafe extern "C" fn multibyte_decoder_setstate(_self_v: MbValue, args: MbValue)
         return raise_type_error("_multibytecodec.MultibyteIncrementalDecoder state must be tuple");
     }
     MbValue::none()
+}
+
+unsafe extern "C" fn package_metadata_get(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = extract_args(args);
+    if let Some(value) = items.first().copied() {
+        if extract_str(value).is_none() {
+            return raise_type_error("PackageMetadata.get() argument 'name' must be str");
+        }
+    }
+    items.get(1).copied().unwrap_or_else(MbValue::none)
+}
+
+unsafe extern "C" fn package_metadata_get_all(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = extract_args(args);
+    if let Some(value) = items.first().copied() {
+        if extract_str(value).is_none() {
+            return raise_type_error("PackageMetadata.get_all() argument 'name' must be str");
+        }
+    }
+    items.get(1).copied().unwrap_or_else(MbValue::none)
 }
 
 fn register_variadic_method_class(class_name: &str, methods: &[(&str, usize)]) {
@@ -1550,6 +1580,14 @@ fn register_importlib_subs() {
         ],
         &[],
         &[],
+    );
+    register_type_module("importlib.metadata._meta", &["PackageMetadata"]);
+    register_variadic_method_class(
+        "PackageMetadata",
+        &[
+            ("get", package_metadata_get as *const () as usize),
+            ("get_all", package_metadata_get_all as *const () as usize),
+        ],
     );
     register_with(
         "importlib.resources",

@@ -71,6 +71,8 @@ class Mailbox:
 
     def get(self, key, default=None):
         """Return the keyed message, or default if it doesn't exist."""
+        if not isinstance(key, str):
+            raise TypeError("Mailbox.get() argument 'key' must be str")
         try:
             return self.__getitem__(key)
         except KeyError:
@@ -155,6 +157,8 @@ class Mailbox:
 
     def pop(self, key, default=None):
         """Delete the keyed message and return it, or default."""
+        if not isinstance(key, str):
+            raise TypeError("Mailbox.pop() argument 'key' must be str")
         try:
             result = self[key]
         except KeyError:
