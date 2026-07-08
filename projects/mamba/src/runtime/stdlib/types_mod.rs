@@ -837,6 +837,16 @@ pub fn mb_types_coroutine(func: MbValue) -> MbValue {
 /// Mamba does not track arbitrary `__orig_bases__` yet, but PEP 695 implicit
 /// generics have enough runtime metadata to reconstruct `Generic[T, ...]`.
 pub fn mb_types_get_original_bases(cls: MbValue) -> MbValue {
+    if let Some(class_name) = super::super::class::resolve_class_name(cls) {
+        if let Some(orig_bases) =
+            super::super::class::class_attr_lookup(&class_name, "__orig_bases__")
+        {
+            unsafe {
+                super::super::rc::retain_if_ptr(orig_bases);
+            }
+            return orig_bases;
+        }
+    }
     let bases = super::super::class::mb_getattr(
         cls,
         MbValue::from_ptr(MbObject::new_str("__bases__".to_string())),
