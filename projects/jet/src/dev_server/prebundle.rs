@@ -1632,19 +1632,19 @@ pub fn detect_circular_deps(prebundled_sources: &HashMap<String, String>) -> Vec
 ///   module.exports = require('./cjs/react.development.js')
 ///
 /// Only inlines relative requires (starting with `.`). External requires are left as-is.
-/// Recurses up to 3 levels deep to handle chained requires.
+/// Recurses up to 8 levels deep to handle chained package CJS requires.
 fn inline_requires(source: &str, base_dir: &Path) -> String {
     inline_requires_depth(source, base_dir, 0)
 }
 
 fn inline_requires_depth(source: &str, base_dir: &Path, depth: usize) -> String {
-    if depth > 3 {
+    if depth > 8 {
         return source.to_string();
     }
 
     let mut result = source.to_string();
     // Match require('./relative/path') patterns
-    let re = regex::Regex::new(r#"require\(\s*['"](\./[^'"]+)['"]\s*\)"#).unwrap();
+    let re = regex::Regex::new(r#"require\(\s*['"]((?:\./|\.\./)[^'"]+)['"]\s*\)"#).unwrap();
 
     // Collect matches first to avoid borrow issues
     let matches: Vec<(String, String)> = re
@@ -1655,11 +1655,14 @@ fn inline_requires_depth(source: &str, base_dir: &Path, depth: usize) -> String 
     for (full_match, rel_path) in matches {
         // Resolve the path
         let mut target = base_dir.join(&rel_path);
-        if !target.exists() {
+        if !target.is_file() {
             // Try adding .js extension
             target = base_dir.join(format!("{}.js", rel_path));
         }
-        if !target.exists() {
+        if !target.is_file() {
+            target = base_dir.join(&rel_path).join("index.js");
+        }
+        if !target.is_file() {
             continue;
         }
 
@@ -1703,6 +1706,69 @@ fn inline_requires_depth(source: &str, base_dir: &Path, depth: usize) -> String 
     result
 }
 
+pub(crate) fn convert_cjs_file_to_esm(source: &str, file_path: &Path) -> String {
+    let source = source.replace("process.env.NODE_ENV", "'development'");
+    let base_dir = file_path.parent().unwrap_or_else(|| Path::new("."));
+    let source = inline_requires(&source, base_dir);
+    convert_cjs_to_esm(&source, &file_path.display().to_string(), &HashMap::new())
+        .replace("process.env.NODE_ENV", "'development'")
+}
+
+pub(crate) fn convert_cjs_file_to_esm_with_import_prefix(
+    source: &str,
+    file_path: &Path,
+    import_prefix: &str,
+) -> String {
+    let source = source.replace("process.env.NODE_ENV", "'development'");
+    convert_cjs_to_esm_with_import_prefix(&source, file_path, import_prefix)
+        .replace("process.env.NODE_ENV", "'development'")
+}
+
+fn convert_cjs_to_esm_with_import_prefix(
+    source: &str,
+    file_path: &Path,
+    import_prefix: &str,
+) -> String {
+    if is_esm_module_source(source) {
+        return source.to_string();
+    }
+
+    let named = super::extract_named_reexports(source);
+    let deps = collect_import_prefix_requires(source, file_path, import_prefix);
+
+    let mut imports = String::new();
+    let mut require_cases = String::new();
+    for (i, (dep, dep_path)) in deps.iter().enumerate() {
+        let var_name = format!("__cjs_dep_{}__", i);
+        imports.push_str(&format!("import {} from '{}';\n", var_name, dep_path));
+        require_cases.push_str(&format!("    if (id === '{}') return {};\n", dep, var_name));
+    }
+
+    let mut result = format!(
+        r#"// CJS -> ESM wrapper
+{imports}var module = {{ exports: {{}} }};
+var exports = module.exports;
+
+(function(module, exports, require) {{
+{source}
+}})(module, exports, function require(id) {{
+{require_cases}  console.warn('[jet] Dynamic require("' + id + '") — no on-demand module found');
+  return {{}};
+}});
+
+var __cjs_default__ = module.exports && module.exports.__esModule && Object.prototype.hasOwnProperty.call(module.exports, "default")
+  ? module.exports.default
+  : module.exports;
+export default __cjs_default__;
+"#,
+    );
+    if !named.is_empty() {
+        result.push_str(&named);
+        result.push('\n');
+    }
+    result
+}
+
 fn convert_cjs_to_esm(source: &str, _name: &str, dep_imports: &HashMap<String, String>) -> String {
     // Check if it's already ESM-ish
     if is_esm_module_source(source) {
@@ -1742,7 +1808,10 @@ var exports = module.exports;
   return {{}};
 }});
 
-export default module.exports;
+var __cjs_default__ = module.exports && module.exports.__esModule && Object.prototype.hasOwnProperty.call(module.exports, "default")
+  ? module.exports.default
+  : module.exports;
+export default __cjs_default__;
 "#,
     );
     if !named.is_empty() {
@@ -1768,6 +1837,63 @@ fn collect_external_requires(source: &str) -> Vec<String> {
         }
     }
     deps
+}
+
+fn collect_import_prefix_requires(
+    source: &str,
+    file_path: &Path,
+    import_prefix: &str,
+) -> Vec<(String, String)> {
+    let mut deps = Vec::new();
+    let base_dir = file_path.parent().unwrap_or_else(|| Path::new("."));
+    let require_scan_source = strip_js_comments_for_require_scan(source);
+    for cap in regex::Regex::new(r#"require\s*\(\s*['"]([^'"]+)['"]\s*\)"#)
+        .unwrap()
+        .captures_iter(&require_scan_source)
+    {
+        let dep = cap[1].to_string();
+        let dep_path = if dep.starts_with('.') {
+            match resolve_relative_cjs_require(base_dir, &dep) {
+                Some(resolved) => format!(
+                    "{}{}",
+                    import_prefix,
+                    crate::stories::deps::dep_key(&resolved)
+                ),
+                None => continue,
+            }
+        } else if dep.starts_with('/') {
+            continue;
+        } else {
+            format!("{}{}", import_prefix, dep)
+        };
+        if !deps
+            .iter()
+            .any(|(existing, _): &(String, String)| existing == &dep)
+        {
+            deps.push((dep, dep_path));
+        }
+    }
+    deps
+}
+
+fn resolve_relative_cjs_require(base_dir: &Path, req: &str) -> Option<PathBuf> {
+    let path = base_dir.join(req);
+    if path.is_file() {
+        return Some(path);
+    }
+    let with_js = path.with_extension("js");
+    if with_js.is_file() {
+        return Some(with_js);
+    }
+    let with_json = path.with_extension("json");
+    if with_json.is_file() {
+        return Some(with_json);
+    }
+    let index = path.join("index.js");
+    if index.is_file() {
+        return Some(index);
+    }
+    None
 }
 
 fn resolve_nested_package_dir(parent_pkg_dir: &Path, dep: &str) -> Option<PathBuf> {

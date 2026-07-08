@@ -29,6 +29,7 @@ fn entry(id: &str, name: &str, file: &str) -> StoryEntry {
         id: id.to_string(),
         name: name.to_string(),
         export_name: name.to_string(),
+        description: String::new(),
         args: BTreeMap::new(),
         parameters: BTreeMap::new(),
         source: None,

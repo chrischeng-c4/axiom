@@ -855,13 +855,13 @@ fn transform_source(source: &str, file: &Path) -> Result<String> {
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
-fn cjs_default_esm_wrapper(source: &str) -> String {
+pub(super) fn cjs_default_esm_wrapper(source: &str) -> String {
     format!(
         "const module = {{ exports: {{}} }};\nconst exports = module.exports;\n{source}\nexport default module.exports;\n"
     )
 }
 
-fn classnames_esm_shim() -> &'static str {
+pub(super) fn classnames_esm_shim() -> &'static str {
     r#"const hasOwn = {}.hasOwnProperty;
 
 function appendClass(value, newClass) {
@@ -896,7 +896,7 @@ export default classNames;
 "#
 }
 
-fn json2mq_esm_shim() -> &'static str {
+pub(super) fn json2mq_esm_shim() -> &'static str {
     r#"function camel2hyphen(str) {
   return String(str).replace(/[A-Z]/g, (match) => "-" + match.toLowerCase());
 }
@@ -941,7 +941,7 @@ export default json2mq;
 "#
 }
 
-fn toggle_selection_esm_shim() -> &'static str {
+pub(super) fn toggle_selection_esm_shim() -> &'static str {
     r#"function toggleSelection() {
   const selection = document.getSelection();
   if (!selection || !selection.rangeCount) {
@@ -979,7 +979,7 @@ export default toggleSelection;
 "#
 }
 
-fn copy_to_clipboard_esm_shim() -> &'static str {
+pub(super) fn copy_to_clipboard_esm_shim() -> &'static str {
     r#"import deselectCurrent from "../toggle-selection/index.js";
 
 const clipboardToIE11Formatting = {
@@ -1083,7 +1083,7 @@ export default copy;
 "#
 }
 
-fn react_is_esm_shim() -> &'static str {
+pub(super) fn react_is_esm_shim() -> &'static str {
     r#"const hasSymbol = typeof Symbol === "function" && Symbol.for;
 const Element = hasSymbol ? Symbol.for("react.element") : 0xeac7;
 const Portal = hasSymbol ? Symbol.for("react.portal") : 0xeaca;

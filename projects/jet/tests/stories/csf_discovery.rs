@@ -257,12 +257,12 @@ fn index_exposes_title_hierarchy_and_stable_ids() {
     let ids: Vec<_> = index.stories.iter().map(|s| s.id.clone()).collect();
     assert!(ids.contains(&"components-button--primary".to_string()));
     assert!(ids.contains(&"components-button--disabled".to_string()));
-    // `WithFooter` is a single identifier (no separator) -> `withfooter`.
-    assert!(ids.contains(&"surfaces-card--withfooter".to_string()));
+    assert!(ids.contains(&"surfaces-card--with-footer".to_string()));
 
-    let mut sorted = ids.clone();
-    sorted.sort();
-    assert_eq!(ids, sorted, "stories are returned id-sorted");
+    assert!(
+        ids.windows(2).any(|pair| pair[0] > pair[1]),
+        "stories preserve discovery order instead of global id sorting"
+    );
 
     let unique: std::collections::BTreeSet<_> = ids.iter().collect();
     assert_eq!(unique.len(), ids.len(), "ids are unique");
@@ -321,6 +321,55 @@ fn csf2_template_bind_surfaces_story_with_args() {
         "bound-template story renders via template"
     );
     assert_eq!(primary.id, "legacy-toggle--primary");
+}
+
+#[test]
+fn exported_callable_stories_surface_with_mutated_args_and_storybook_ids() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+    fs::write(
+        root.join("Picker.tsx"),
+        "export const Picker = () => null;\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("Callable.stories.tsx"),
+        r#"
+import { Picker } from './Picker';
+
+export default { title: 'CallableStories', component: Picker };
+
+export const DatePicker = (args) => <Picker {...args} />;
+DatePicker.args = { size: 'middle' };
+
+export const RightTool = function () {
+  return <Picker />;
+}.bind({});
+RightTool.args = { label: 'right' };
+
+const getTemplate = (kind) => (args) => <Picker {...args} kind={kind} />;
+export const Success = getTemplate('success');
+Success.args = { message: 'ok' };
+"#,
+    )
+    .unwrap();
+
+    let index = index_of(root);
+    let ids: Vec<_> = index.stories.iter().map(|s| s.id.as_str()).collect();
+    assert!(ids.contains(&"callablestories--date-picker"));
+    assert!(ids.contains(&"callablestories--right-tool"));
+    assert!(ids.contains(&"callablestories--success"));
+
+    let date_picker = index
+        .stories
+        .iter()
+        .find(|s| s.export_name == "DatePicker")
+        .expect("DatePicker story discovered");
+    assert_eq!(
+        date_picker.args.get("size"),
+        Some(&CsfValue::Str("middle".into()))
+    );
+    assert!(date_picker.has_render);
 }
 
 /// (f) a barrel file re-exporting `export { Primary } from './LegacyToggle.stories'`

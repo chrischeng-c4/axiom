@@ -18,6 +18,10 @@ use super::{TransformOptions, TransformResult};
 /// This preserves trailing spaces on text like `"Counter: "` (before an expression).
 /// @spec .aw/tech-design/projects/jet/semantic/jet-transform.md#schema
 pub(super) fn normalize_jsx_text(raw: &str) -> String {
+    if !raw.contains('\n') && raw.chars().all(char::is_whitespace) {
+        return raw.replace('\t', " ");
+    }
+
     let lines: Vec<&str> = raw.split('\n').collect();
 
     // Find the last line that has non-whitespace content
@@ -48,6 +52,44 @@ pub(super) fn normalize_jsx_text(raw: &str) -> String {
     }
 
     result
+}
+
+fn decode_jsx_character_reference(raw: &str) -> Option<String> {
+    match raw {
+        "&nbsp;" => Some("\u{00a0}".to_string()),
+        "&amp;" => Some("&".to_string()),
+        "&lt;" => Some("<".to_string()),
+        "&gt;" => Some(">".to_string()),
+        "&quot;" => Some("\"".to_string()),
+        "&apos;" => Some("'".to_string()),
+        _ => decode_numeric_jsx_character_reference(raw),
+    }
+}
+
+fn decode_numeric_jsx_character_reference(raw: &str) -> Option<String> {
+    let body = raw.strip_prefix("&#")?.strip_suffix(';')?;
+    let code = if let Some(hex) = body.strip_prefix('x').or_else(|| body.strip_prefix('X')) {
+        u32::from_str_radix(hex, 16).ok()?
+    } else {
+        body.parse::<u32>().ok()?
+    };
+    char::from_u32(code).map(|ch| ch.to_string())
+}
+
+fn escape_js_string(value: &str) -> String {
+    let mut escaped = String::new();
+    for ch in value.chars() {
+        match ch {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            '\u{00a0}' => escaped.push_str("\\u00a0"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 /// Transform TSX to JavaScript in a single pass
@@ -105,7 +147,8 @@ pub fn transform_tsx(source: &str, options: &TransformOptions) -> Result<Transfo
     let mut transformed = transform_node(source, &root, opts)?;
 
     if use_automatic && has_jsx(&root) {
-        let runtime_import = "import { jsx, jsxs, Fragment } from 'react/jsx-runtime';\n";
+        let runtime_import =
+            "import { jsx, jsxs, Fragment as __JetFragment } from 'react/jsx-runtime';\n";
         transformed = runtime_import.to_string() + &transformed;
     }
 
@@ -151,11 +194,27 @@ pub(super) fn transform_node(
     node: &Node,
     options: &TransformOptions,
 ) -> Result<String> {
+    if is_as_expression(node) {
+        return transform_as_expression(source, node, options);
+    }
+
+    if node.kind() == "satisfies_expression" {
+        return transform_satisfies_expression(source, node, options);
+    }
+
     let mut result = String::new();
     let mut cursor = node.walk();
     let mut last_pos = node.start_byte();
 
     for child in node.children(&mut cursor) {
+        if is_optional_type_marker(node, &child, source) {
+            if child.start_byte() > last_pos {
+                result.push_str(&source[last_pos..child.start_byte()]);
+            }
+            last_pos = child.end_byte();
+            continue;
+        }
+
         // Handle as_expression: keep expression, strip type cast
         if is_as_expression(&child) {
             if child.start_byte() > last_pos {
@@ -174,6 +233,21 @@ pub(super) fn transform_node(
             result.push_str(&transform_satisfies_expression(source, &child, options)?);
             last_pos = child.end_byte();
             continue;
+        }
+
+        // Handle TS namespace declarations that carry runtime statics, e.g.
+        // `export namespace Button { export const Group = Radio.Group; }`.
+        if child.kind() == "export_statement" {
+            if let Some(namespace_assignments) =
+                transform_value_namespace_export(source, &child, options)?
+            {
+                if child.start_byte() > last_pos {
+                    result.push_str(&source[last_pos..child.start_byte()]);
+                }
+                result.push_str(&namespace_assignments);
+                last_pos = child.end_byte();
+                continue;
+            }
         }
 
         // Handle export_statement that exports only type-level constructs
@@ -315,7 +389,380 @@ fn should_skip_node(node: &Node) -> bool {
             | "function_signature"
             | "internal_module"
             | "ambient_declaration"
+            | "public"
+            | "private"
+            | "protected"
+            | "readonly"
     )
+}
+
+fn is_optional_type_marker(parent: &Node, child: &Node, source: &str) -> bool {
+    child.kind() == "?"
+        && &source[child.byte_range()] == "?"
+        && matches!(
+            parent.kind(),
+            "public_field_definition" | "property_signature" | "property_identifier"
+        )
+}
+
+fn transform_value_namespace_export(
+    source: &str,
+    node: &Node,
+    options: &TransformOptions,
+) -> Result<Option<String>> {
+    let text = source[node.byte_range()].trim();
+    let Some(after_export) = text.strip_prefix("export") else {
+        return Ok(None);
+    };
+    let after_export = after_export.trim_start();
+    let Some(after_namespace) = after_export.strip_prefix("namespace") else {
+        return Ok(None);
+    };
+    let after_namespace = after_namespace.trim_start();
+    let namespace: String = after_namespace
+        .chars()
+        .take_while(|ch| *ch == '_' || *ch == '$' || ch.is_ascii_alphanumeric())
+        .collect();
+    if !is_transform_identifier(&namespace) {
+        return Ok(None);
+    }
+    let Some(open_brace) = after_namespace.find('{') else {
+        return Ok(None);
+    };
+    let Some((body, _)) = take_balanced_brace_body(&after_namespace[open_brace..]) else {
+        return Ok(None);
+    };
+    let assignments = namespace_value_export_assignments(&namespace, body, options)?;
+    if assignments.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(assignments.join("\n")))
+}
+
+fn namespace_value_export_assignments(
+    namespace: &str,
+    body: &str,
+    options: &TransformOptions,
+) -> Result<Vec<String>> {
+    let mut assignments = Vec::new();
+    let mut rest = body;
+    while let Some(pos) = rest.find("export const") {
+        rest = &rest[pos + "export const".len()..];
+        let statement = rest.trim_start();
+        let name: String = statement
+            .chars()
+            .take_while(|ch| *ch == '_' || *ch == '$' || ch.is_ascii_alphanumeric())
+            .collect();
+        if !is_transform_identifier(&name) {
+            continue;
+        }
+        let after_name = &statement[name.len()..];
+        let Some(eq_pos) = find_top_level_assignment_equals(after_name) else {
+            continue;
+        };
+        let after_equals = &after_name[eq_pos + 1..];
+        let end = find_top_level_char(after_equals, ';').unwrap_or(after_equals.len());
+        let value = after_equals[..end].trim();
+        if value.is_empty() {
+            continue;
+        }
+        let value = transform_namespace_export_value(value, options)?;
+        assignments.push(format!("{namespace}.{name} = {value};"));
+        rest = &after_equals[end..];
+    }
+    Ok(assignments)
+}
+
+fn transform_namespace_export_value(value: &str, options: &TransformOptions) -> Result<String> {
+    let stripped_value;
+    let value = if let Some(stripped) = strip_outer_arrow_function_types(value) {
+        stripped_value = stripped;
+        stripped_value.as_str()
+    } else {
+        value
+    };
+    let source = format!("const __jetNamespaceValue = {value};");
+    let mut parser = Parser::new();
+    parser.set_language(&tree_sitter_typescript::LANGUAGE_TSX.into())?;
+    let tree = parser
+        .parse(&source, None)
+        .ok_or_else(|| anyhow::anyhow!("Failed to parse namespace export value"))?;
+    let transformed = transform_node(&source, &tree.root_node(), options)?;
+    let Some(value) = transformed
+        .trim()
+        .strip_prefix("const __jetNamespaceValue =")
+    else {
+        return Ok(value.to_string());
+    };
+    Ok(value.trim().trim_end_matches(';').trim().to_string())
+}
+
+fn strip_outer_arrow_function_types(value: &str) -> Option<String> {
+    let trimmed = value.trim_start();
+    let leading_len = value.len() - trimmed.len();
+    let leading = &value[..leading_len];
+    let (async_prefix, after_async) = if let Some(rest) = trimmed.strip_prefix("async") {
+        let rest = rest.trim_start();
+        if rest.starts_with('(') {
+            ("async ", rest)
+        } else {
+            ("", trimmed)
+        }
+    } else {
+        ("", trimmed)
+    };
+    if !after_async.starts_with('(') {
+        return None;
+    }
+    let close = find_matching_delimiter(after_async, 0, '(', ')')?;
+    let params = &after_async[1..close];
+    let stripped_params = strip_arrow_parameter_types(params);
+    let rest = after_async[close + 1..].trim_start();
+    let after_arrow = if let Some(rest) = rest.strip_prefix("=>") {
+        rest
+    } else if let Some(rest_after_colon) = rest.strip_prefix(':') {
+        let arrow = find_top_level_arrow(rest_after_colon)?;
+        &rest_after_colon[arrow + 2..]
+    } else {
+        return None;
+    };
+    Some(format!(
+        "{leading}{async_prefix}({stripped_params}) =>{}",
+        after_arrow
+    ))
+}
+
+fn strip_arrow_parameter_types(params: &str) -> String {
+    split_top_level(params, ',')
+        .into_iter()
+        .map(|param| strip_arrow_parameter_type(param.trim()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn strip_arrow_parameter_type(param: &str) -> String {
+    let Some(colon) = find_top_level_char(param, ':') else {
+        return param.to_string();
+    };
+    let binding = param[..colon].trim();
+    let type_and_default = &param[colon + 1..];
+    if let Some(default_pos) = find_top_level_default_equals(type_and_default) {
+        let default_value = type_and_default[default_pos + 1..].trim();
+        format!("{binding} = {default_value}")
+    } else {
+        binding.to_string()
+    }
+}
+
+fn split_top_level(source: &str, delimiter: char) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut brace_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut paren_depth = 0usize;
+    let mut angle_depth = 0usize;
+    let mut string_quote = None;
+    let mut escape = false;
+    for (idx, ch) in source.char_indices() {
+        if let Some(quote) = string_quote {
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == quote {
+                string_quote = None;
+            }
+            continue;
+        }
+        if ch == '"' || ch == '\'' || ch == '`' {
+            string_quote = Some(ch);
+            continue;
+        }
+        match ch {
+            '{' => brace_depth += 1,
+            '}' => brace_depth = brace_depth.saturating_sub(1),
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            '(' => paren_depth += 1,
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            '<' if brace_depth == 0 && bracket_depth == 0 && paren_depth == 0 => angle_depth += 1,
+            '>' if angle_depth > 0 => angle_depth -= 1,
+            ch if ch == delimiter
+                && brace_depth == 0
+                && bracket_depth == 0
+                && paren_depth == 0
+                && angle_depth == 0 =>
+            {
+                parts.push(&source[start..idx]);
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    parts.push(&source[start..]);
+    parts
+}
+
+fn find_matching_delimiter(source: &str, open_at: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut string_quote = None;
+    let mut escape = false;
+    for (idx, ch) in source.char_indices().filter(|(idx, _)| *idx >= open_at) {
+        if let Some(quote) = string_quote {
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == quote {
+                string_quote = None;
+            }
+            continue;
+        }
+        if ch == '"' || ch == '\'' || ch == '`' {
+            string_quote = Some(ch);
+            continue;
+        }
+        if ch == open {
+            depth += 1;
+        } else if ch == close {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(idx);
+            }
+        }
+    }
+    None
+}
+
+fn take_balanced_brace_body(source: &str) -> Option<(&str, usize)> {
+    let mut depth = 0usize;
+    let mut string_quote = None;
+    let mut escape = false;
+    let mut body_start = None;
+    for (idx, ch) in source.char_indices() {
+        if let Some(quote) = string_quote {
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == quote {
+                string_quote = None;
+            }
+            continue;
+        }
+        if ch == '"' || ch == '\'' || ch == '`' {
+            string_quote = Some(ch);
+            continue;
+        }
+        match ch {
+            '{' => {
+                if depth == 0 {
+                    body_start = Some(idx + ch.len_utf8());
+                }
+                depth += 1;
+            }
+            '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some((&source[body_start?..idx], idx + ch.len_utf8()));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn find_top_level_char(source: &str, needle: char) -> Option<usize> {
+    let mut brace_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut paren_depth = 0usize;
+    let mut string_quote = None;
+    let mut escape = false;
+    for (idx, ch) in source.char_indices() {
+        if let Some(quote) = string_quote {
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == quote {
+                string_quote = None;
+            }
+            continue;
+        }
+        if ch == '"' || ch == '\'' || ch == '`' {
+            string_quote = Some(ch);
+            continue;
+        }
+        match ch {
+            '{' => brace_depth += 1,
+            '}' => brace_depth = brace_depth.saturating_sub(1),
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            '(' => paren_depth += 1,
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            ch if ch == needle && brace_depth == 0 && bracket_depth == 0 && paren_depth == 0 => {
+                return Some(idx);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn find_top_level_default_equals(source: &str) -> Option<usize> {
+    let mut start = 0usize;
+    while let Some(pos) = find_top_level_char(&source[start..], '=') {
+        let absolute = start + pos;
+        if source[absolute + 1..].starts_with('>') {
+            start = absolute + 1;
+            continue;
+        }
+        return Some(absolute);
+    }
+    None
+}
+
+fn find_top_level_assignment_equals(source: &str) -> Option<usize> {
+    let mut start = 0usize;
+    while let Some(pos) = find_top_level_char(&source[start..], '=') {
+        let absolute = start + pos;
+        let prev = if absolute > 0 {
+            source.as_bytes().get(absolute - 1).copied()
+        } else {
+            None
+        };
+        let next = source.as_bytes().get(absolute + 1).copied();
+        if matches!(next, Some(b'>') | Some(b'='))
+            || matches!(prev, Some(b'=') | Some(b'!') | Some(b'<') | Some(b'>'))
+        {
+            start = absolute + 1;
+            continue;
+        }
+        return Some(absolute);
+    }
+    None
+}
+
+fn find_top_level_arrow(source: &str) -> Option<usize> {
+    let mut start = 0usize;
+    while let Some(pos) = find_top_level_char(&source[start..], '=') {
+        let absolute = start + pos;
+        if source[absolute + 1..].starts_with('>') {
+            return Some(absolute);
+        }
+        start = absolute + 1;
+    }
+    None
+}
+
+fn is_transform_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first == '$' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
 }
 
 /// Check if node is an as_expression that needs special handling
@@ -372,7 +819,7 @@ fn transform_jsx_fragment(source: &str, node: &Node, options: &TransformOptions)
 
     if options.jsx_automatic {
         Ok(format!(
-            "jsxs(Fragment, {{ children: [{}] }})",
+            "jsxs(__JetFragment, {{ children: [{}] }})",
             children.join(", ")
         ))
     } else {
@@ -577,7 +1024,12 @@ fn extract_children(source: &str, node: &Node, options: &TransformOptions) -> Re
             "jsx_text" => {
                 let text = normalize_jsx_text(&source[child.byte_range()]);
                 if !text.is_empty() {
-                    children.push(format!("\"{}\"", text.replace('"', "\\\"")));
+                    children.push(format!("\"{}\"", escape_js_string(&text)));
+                }
+            }
+            "html_character_reference" => {
+                if let Some(text) = decode_jsx_character_reference(&source[child.byte_range()]) {
+                    children.push(format!("\"{}\"", escape_js_string(&text)));
                 }
             }
             "jsx_expression" => {
@@ -608,12 +1060,7 @@ fn transform_to_jsx_runtime(
     props: &[(String, String)],
     children: &[String],
 ) -> Result<String> {
-    let is_component = tag_name.chars().next().unwrap_or('a').is_uppercase();
-    let tag = if is_component {
-        tag_name.to_string()
-    } else {
-        format!("\"{}\"", tag_name)
-    };
+    let tag = jsx_tag_expression(tag_name);
 
     let jsx_func = if children.len() > 1 { "jsxs" } else { "jsx" };
 
@@ -671,12 +1118,7 @@ fn transform_to_create_element(
     children: &[String],
     options: &TransformOptions,
 ) -> Result<String> {
-    let is_component = tag_name.chars().next().unwrap_or('a').is_uppercase();
-    let tag = if is_component {
-        tag_name.to_string()
-    } else {
-        format!("\"{}\"", tag_name)
-    };
+    let tag = jsx_tag_expression(tag_name);
 
     let pragma = options
         .jsx_pragma
@@ -741,6 +1183,20 @@ fn transform_to_create_element(
             props_obj,
             children.join(", ")
         ))
+    }
+}
+
+fn jsx_tag_expression(tag_name: &str) -> String {
+    let is_component = tag_name.contains('.')
+        || tag_name
+            .chars()
+            .next()
+            .map(|ch| ch.is_uppercase())
+            .unwrap_or(false);
+    if is_component {
+        tag_name.to_string()
+    } else {
+        format!("\"{}\"", tag_name)
     }
 }
 
