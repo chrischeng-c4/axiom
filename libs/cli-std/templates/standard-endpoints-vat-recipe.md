@@ -9,8 +9,8 @@ the meter/guard recipe format already in `apps/relay/vat.toml` /
 curl-based probe script is the assertion, and one `aw.toml` `ec.*` binding
 wires it into `aw ec check` / `aw health --verify-ec`.
 
-Home: `libs/cli-std/templates/` (not `projects/vat/`) — vat itself has no
-`docs/`/`templates/` convention today (checked: `projects/vat/README.md` has
+Home: `libs/cli-std/templates/` (not `apps/vat/`) — vat itself has no
+`docs/`/`templates/` convention today (checked: `apps/vat/README.md` has
 no such section), and this recipe is a cross-project adoption artifact for
 *consumers* of vat, not part of vat's own source tree. `libs/cli-std` is
 already where the sibling `chainable`/`llm`/`upgrade`/`issue` gate templates

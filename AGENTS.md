@@ -195,15 +195,19 @@ Agentic Workflow owns the project/worktree allocation strategy. Primary working-
 branches are:
 
 - `main`
-- `project-{name}` — persistent work-area branches such as `project-mamba` or
-  `project-agentic-workflow`
-- `lib-{name}` — persistent work-area branches for `libs/` internal libraries,
-  such as `lib-compass` or `lib-raft-host`
+- `app/{name}` — persistent work-area branches for `apps/` applications, such
+  as `app/jet` or `app/aw`; their local worktree directories use underscores,
+  such as `app_jet`.
+- `lib/{name}` — persistent work-area branches for `libs/` internal libraries,
+  such as `lib/openapi-codegen` or `lib/raft-host`; their local worktree
+  directories use underscores, such as `lib_openapi-codegen`.
+- `project-mamba` and `project-lumen` — retained legacy project work-area
+  branches while those two roots remain under `projects/`.
 
-One `project-{name}` (or `lib-{name}`) maps to one dedicated worktree and one
-agent session. Do not delete or force-overwrite `main`, `project-*`, or
-`lib-*` without explicit user confirmation. Prefer non-destructive convergence
-for stale `project-*` / `lib-*` refs. `project-*` and `lib-*` branches are
+One persistent app/lib/project branch maps to one dedicated worktree and one
+agent session. Do not delete or force-overwrite `main`, `app/*`, `lib/*`,
+`project-mamba`, or `project-lumen` without explicit user confirmation. Prefer
+non-destructive convergence for stale persistent refs. These branches are
 deletion-protected on GitHub via the `protect-persistent-branches` repository
 ruleset (force-push is intentionally left unprotected so rebase-based landing
 still works).
@@ -211,8 +215,9 @@ still works).
 WI never creates or switches git branches. TD lifecycle branches
 (`td-<id>`) are short-lived and may be created only when launched
 from `main`; off-main TD commands stay on the current branch. When the user
-says "the mamba branch" or "the agentic-workflow branch" without a prefix, prefer
-`project-<name>` if it exists.
+says "the jet branch" or "the agentic-workflow branch" without a prefix, prefer
+`app/<name>` for apps. For mamba and lumen, keep using `project-mamba` and
+`project-lumen`.
 
 ## Work-Item Rules
 

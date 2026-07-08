@@ -916,7 +916,7 @@ changes:
     section: cli
     impl_mode: hand-written
     description: Feed required capability claims into aw wi plan candidates.
-  - path: projects/jet/README.md
+  - path: apps/jet/README.md
     action: modify
     section: changes
     impl_mode: hand-written

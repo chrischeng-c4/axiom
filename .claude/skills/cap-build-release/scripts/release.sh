@@ -17,4 +17,4 @@ fi
 export CC="${CC:-/usr/bin/cc}"
 export CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="${CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER:-/usr/bin/cc}"
 
-exec projects/cap/build.sh release
+exec apps/cap/build.sh release

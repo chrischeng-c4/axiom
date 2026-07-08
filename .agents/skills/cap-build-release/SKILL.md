@@ -9,7 +9,7 @@ user-invocable: true
 Cuts **and lands** a cap release in four phases. `git:land` is the middle
 sub-action; invoke it as-is.
 
-1. **release-prep** — `projects/cap/build.sh release`: check tag collisions,
+1. **release-prep** — `apps/cap/build.sh release`: check tag collisions,
    bump when needed, build release, install `cap`, `cap-fast`, and `cap-full`,
    and commit `release(cap): cap@X`. **No tag, no push.**
 2. **land** — run the **/git:land** flow to land the release commit on `main`

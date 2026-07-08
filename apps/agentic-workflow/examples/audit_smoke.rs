@@ -12,14 +12,12 @@ fn main() {
     let root = manifest_dir
         .parent()
         .and_then(Path::parent)
-        .expect("projects/sdd should live under <repo>/projects/sdd");
+        .expect("apps/agentic-workflow should live under <repo>/apps/agentic-workflow");
     let files = [
         "projects/mamba/mambalibs/httpkit/src/http_exception.rs",
         "projects/mamba/mambalibs/httpkit/src/health.rs",
         "projects/mamba/mambalibs/httpkit/src/request_response.rs",
         "projects/mamba/mambalibs/httpkit/src/lib.rs",
-        "projects/httpkit-demo/src/create_user_request.rs",
-        "projects/httpkit-demo/src/lib.rs",
     ];
 
     let mut total_blocks = 0;

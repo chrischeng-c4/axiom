@@ -1,6 +1,6 @@
 ---
 name: issue-loop
-description: Schedule a recurring cron that drives a project's GitHub issue backlog. Each tick = one bounded action (pick / implement / gate / PR / merge / rebase — one of these per tick). Reads projects/<name>/issue-loop.md for per-project rules. Stops when the backlog is empty or the user halts via sentinel file.
+description: Schedule a recurring cron that drives a project's GitHub issue backlog. Each tick = one bounded action (pick / implement / gate / PR / merge / rebase — one of these per tick). Reads apps/<name>/issue-loop.md for app rules, with retained projects/<name>/issue-loop.md roots for mamba/lumen. Stops when the backlog is empty or the user halts via sentinel file.
 user-invocable: true
 aliases: [issue-patrol]
 ---
@@ -135,7 +135,8 @@ Pick the winner `#N`. Read its body via `gh issue view <N>`. Make a
 
 - **At most one `git commit` per tick** (and at most one `gh pr create`, `gh pr merge`, or `git push`).
 - **5 min budget** per non-test step; `cargo test` / bench commands get 30 min.
-- Never `git push --force`, never delete `main` or `project-*` branches.
+- Never `git push --force`, never delete `main`, `app/*`, `lib/*`,
+  `project-mamba`, or `project-lumen` branches.
 - Never skip pre-commit / pre-push hooks (`--no-verify`).
 - Never commit with `Co-Authored-By: Claude` / `🤖 Generated with Claude Code` trailer (global rule).
 - Don't run any build command the project marks as `build: skip`.
@@ -166,7 +167,8 @@ After creating the cron, report:
 
 ## Pairing with `/issue-goal`
 
-The two skills share the same `projects/<name>/issue-loop.md` config. Common pattern:
+The two skills share the same `apps/<name>/issue-loop.md` config, or retained
+`projects/<name>/issue-loop.md` for mamba/lumen. Common pattern:
 - `/issue-loop jet 15m` → leave running overnight, picks up easy issues.
 - `/issue-goal jet` next morning → sweep the harder remaining issues interactively.
 

@@ -101,17 +101,17 @@ jobs:
             )
           fi
           "${c_compiler}" "${frontend_flags[@]}" \
-            projects/cap/src/cap_frontend.c \
+            apps/cap/src/cap_frontend.c \
             -o "${stage}/cap"
           "${c_compiler}" "${c_flags[@]}" \
-            projects/cap/src/cap_fast_frontend.c \
+            apps/cap/src/cap_fast_frontend.c \
             -o "${stage}/cap-fast"
           if [[ "${{ matrix.target }}" == *"apple-darwin" ]]; then
             codesign -s - -f --options runtime "${stage}/cap"
             codesign -s - -f --options runtime "${stage}/cap-fast"
           fi
           cp "target/${{ matrix.target }}/release/cap-full" "${stage}/cap-full"
-          cp projects/cap/README.md "${stage}/README.md"
+          cp apps/cap/README.md "${stage}/README.md"
           # Emit the tarball + sha256 into `out/` (workspace root) so
           # upload-artifact's preserved `out/` prefix is shallow and
           # the release glob below is predictable.
@@ -168,7 +168,7 @@ jobs:
             ## Install
 
             ```sh
-            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/projects/cap/install.sh | sh
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/apps/cap/install.sh | sh
             ```
 
             Or pick a target tarball below and extract it manually.

@@ -41,7 +41,7 @@ passing run records new baselines.
 ## Artifacts
 
 - Closed-loop harness: [`examples/bench_compare.rs`](../examples/bench_compare.rs).
-- Gate spec: [`projects/arena/examples/relay-vs-rabbitmq-nats-redis.toml`](../../arena/examples/relay-vs-rabbitmq-nats-redis.toml)
+- Gate spec: [`apps/arena/examples/relay-vs-rabbitmq-nats-redis.toml`](../../arena/examples/relay-vs-rabbitmq-nats-redis.toml)
 - EC binding: `ec.benchmark` under the `relay` project in `.aw/config.toml`
   (`aw health --verify-ec` drives it).
 - relay-side measurement: `cargo bench -p relay` (criterion;

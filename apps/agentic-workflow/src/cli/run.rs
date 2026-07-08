@@ -2641,17 +2641,17 @@ mod tests {
 [[projects]]
 name = "jet"
 aliases = ["j"]
-path = "projects/jet"
-cap_path = "projects/jet/README.md"
+path = "apps/jet"
+cap_path = "apps/jet/README.md"
 "#,
         )
         .unwrap();
 
         let scopes = project_repo_side_scopes(root, "j").unwrap();
 
-        assert!(scopes.contains(&root.join("projects/jet/README.md")));
-        assert!(scopes.contains(&root.join("projects/jet/tech-design")));
-        assert!(scopes.contains(&root.join("projects/jet")));
+        assert!(scopes.contains(&root.join("apps/jet/README.md")));
+        assert!(scopes.contains(&root.join("apps/jet/tech-design")));
+        assert!(scopes.contains(&root.join("apps/jet")));
     }
 
     #[test]
@@ -2835,28 +2835,28 @@ cap_path = "projects/jet/README.md"
         let tmp = tempfile::tempdir().unwrap();
         let root_dir = tmp.path();
         std::fs::create_dir_all(root_dir.join(".aw")).unwrap();
-        std::fs::create_dir_all(root_dir.join("projects/jet/src")).unwrap();
-        std::fs::create_dir_all(root_dir.join("projects/jet/tech-design")).unwrap();
+        std::fs::create_dir_all(root_dir.join("apps/jet/src")).unwrap();
+        std::fs::create_dir_all(root_dir.join("apps/jet/tech-design")).unwrap();
         std::fs::write(
             root_dir.join("aw.toml"),
             r#"
 [[projects]]
 name = "jet"
-path = "projects/jet"
-td_path = "projects/jet/tech-design"
-cap_path = "projects/jet/README.md"
+path = "apps/jet"
+td_path = "apps/jet/tech-design"
+cap_path = "apps/jet/README.md"
 
 [[projects.workspaces]]
 name = "jet"
-paths = ["projects/jet/**"]
+paths = ["apps/jet/**"]
 target = "rust"
 test_cmd = "true"
 "#,
         )
         .unwrap();
-        std::fs::write(root_dir.join("projects/jet/README.md"), "# jet\n").unwrap();
+        std::fs::write(root_dir.join("apps/jet/README.md"), "# jet\n").unwrap();
         std::fs::write(
-            root_dir.join("projects/jet/src/lib.rs"),
+            root_dir.join("apps/jet/src/lib.rs"),
             "pub fn demo() {}\n",
         )
         .unwrap();
@@ -2883,7 +2883,7 @@ test_cmd = "true"
         assert!(clean_persistence.wi_evidence_complete);
 
         std::fs::write(
-            root_dir.join("projects/jet/src/lib.rs"),
+            root_dir.join("apps/jet/src/lib.rs"),
             "pub fn demo() { println!(\"dirty\"); }\n",
         )
         .unwrap();
@@ -2900,14 +2900,14 @@ test_cmd = "true"
         assert_eq!(dirty.next.kind, "milestone_persistence");
         assert!(dirty.requires_hitl);
         assert!(!dirty.completion.workflow_complete);
-        assert!(dirty.next.reason.contains("projects/jet/src/lib.rs"));
+        assert!(dirty.next.reason.contains("apps/jet/src/lib.rs"));
         let dirty_persistence = dirty.persistence.as_ref().unwrap();
         assert_eq!(dirty_persistence.status, "repo_dirty");
         assert!(!dirty_persistence.commit_complete);
         assert!(!dirty_persistence.wi_evidence_complete);
         assert_eq!(
             dirty_persistence.dirty_paths,
-            vec!["projects/jet/src/lib.rs".to_string()]
+            vec!["apps/jet/src/lib.rs".to_string()]
         );
         ensure_hitl_question(&mut dirty, "aw run --project jet");
         let dirty_json = serde_json::to_value(&dirty).unwrap();
@@ -2941,7 +2941,7 @@ test_cmd = "true"
         assert!(persisted.wi_evidence_complete);
         let log = git_stdout(root_dir, &["log", "-1", "--pretty=%B"]);
         assert!(log.contains("Lifecycle-Stage: Project-Persistence"));
-        assert!(log.contains("Dirty-Paths: projects/jet/src/lib.rs"));
+        assert!(log.contains("Dirty-Paths: apps/jet/src/lib.rs"));
     }
 
     #[test]
@@ -2952,28 +2952,28 @@ test_cmd = "true"
         let tmp = tempfile::tempdir().unwrap();
         let root_dir = tmp.path();
         std::fs::create_dir_all(root_dir.join(".aw")).unwrap();
-        std::fs::create_dir_all(root_dir.join("projects/jet/src")).unwrap();
-        std::fs::create_dir_all(root_dir.join("projects/jet/tech-design")).unwrap();
+        std::fs::create_dir_all(root_dir.join("apps/jet/src")).unwrap();
+        std::fs::create_dir_all(root_dir.join("apps/jet/tech-design")).unwrap();
         std::fs::write(
             root_dir.join("aw.toml"),
             r#"
 [[projects]]
 name = "jet"
-path = "projects/jet"
-td_path = "projects/jet/tech-design"
-cap_path = "projects/jet/README.md"
+path = "apps/jet"
+td_path = "apps/jet/tech-design"
+cap_path = "apps/jet/README.md"
 
 [[projects.workspaces]]
 name = "jet"
-paths = ["projects/jet/**"]
+paths = ["apps/jet/**"]
 target = "rust"
 test_cmd = "true"
 "#,
         )
         .unwrap();
-        std::fs::write(root_dir.join("projects/jet/README.md"), "# jet\n").unwrap();
+        std::fs::write(root_dir.join("apps/jet/README.md"), "# jet\n").unwrap();
         std::fs::write(
-            root_dir.join("projects/jet/src/lib.rs"),
+            root_dir.join("apps/jet/src/lib.rs"),
             "pub fn demo() {}\n",
         )
         .unwrap();
@@ -3003,28 +3003,28 @@ test_cmd = "true"
         let tmp = tempfile::tempdir().unwrap();
         let root_dir = tmp.path();
         std::fs::create_dir_all(root_dir.join(".aw")).unwrap();
-        std::fs::create_dir_all(root_dir.join("projects/jet/src")).unwrap();
-        std::fs::create_dir_all(root_dir.join("projects/jet/tech-design")).unwrap();
+        std::fs::create_dir_all(root_dir.join("apps/jet/src")).unwrap();
+        std::fs::create_dir_all(root_dir.join("apps/jet/tech-design")).unwrap();
         std::fs::write(
             root_dir.join("aw.toml"),
             r#"
 [[projects]]
 name = "jet"
-path = "projects/jet"
-td_path = "projects/jet/tech-design"
-cap_path = "projects/jet/README.md"
+path = "apps/jet"
+td_path = "apps/jet/tech-design"
+cap_path = "apps/jet/README.md"
 
 [[projects.workspaces]]
 name = "jet"
-paths = ["projects/jet/**"]
+paths = ["apps/jet/**"]
 target = "rust"
 test_cmd = "false"
 "#,
         )
         .unwrap();
-        std::fs::write(root_dir.join("projects/jet/README.md"), "# jet\n").unwrap();
+        std::fs::write(root_dir.join("apps/jet/README.md"), "# jet\n").unwrap();
         std::fs::write(
-            root_dir.join("projects/jet/src/lib.rs"),
+            root_dir.join("apps/jet/src/lib.rs"),
             "pub fn demo() {}\n",
         )
         .unwrap();

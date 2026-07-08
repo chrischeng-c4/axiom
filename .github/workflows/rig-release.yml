@@ -71,7 +71,7 @@ jobs:
           stage="pkg/${name}"
           mkdir -p "${stage}"
           cp "target/${{ matrix.target }}/release/rig" "${stage}/rig"
-          cp projects/rig/README.md "${stage}/README.md"
+          cp apps/rig/README.md "${stage}/README.md"
           mkdir -p out
           tarball="out/${name}.tar.gz"
           tar -C pkg -czf "${tarball}" "${name}"

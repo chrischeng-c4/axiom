@@ -7797,7 +7797,7 @@ paths = ["apps/agentic-workflow/**"]
 name = "jet"
 
 [[projects.workspaces]]
-paths = ["projects/jet/**"]
+paths = ["apps/jet/**"]
 "#,
         );
         write(
@@ -7805,7 +7805,7 @@ paths = ["projects/jet/**"]
             "apps/agentic-workflow/src/lib.rs",
             "pub fn agentic_workflow() {}\n",
         );
-        write(tmp.path(), "projects/jet/src/lib.rs", "pub fn jet() {}\n");
+        write(tmp.path(), "apps/jet/src/lib.rs", "pub fn jet() {}\n");
 
         let err = resolve_scopes(tmp.path(), &[], None, false).unwrap_err();
 
@@ -7831,7 +7831,7 @@ paths = ["apps/agentic-workflow/**"]
 name = "jet"
 
 [[projects.workspaces]]
-paths = ["projects/jet/**"]
+paths = ["apps/jet/**"]
 "#,
         );
         write(
@@ -7839,7 +7839,7 @@ paths = ["projects/jet/**"]
             "apps/agentic-workflow/src/lib.rs",
             "pub fn agentic_workflow() {}\n",
         );
-        write(tmp.path(), "projects/jet/src/lib.rs", "pub fn jet() {}\n");
+        write(tmp.path(), "apps/jet/src/lib.rs", "pub fn jet() {}\n");
 
         let scopes = resolve_scopes(tmp.path(), &[], Some("agentic-workflow"), false).unwrap();
 
@@ -7885,21 +7885,21 @@ paths = ["apps/agentic-workflow/**"]
             r#"
 [[projects]]
 name = "cap"
-path = "projects/cap"
+path = "apps/cap"
 
 [[projects.workspaces]]
-paths = ["projects/cap/**"]
+paths = ["apps/cap/**"]
 "#,
         );
         write(
             tmp.path(),
-            "projects/cap/tech-design/semantic/cap-src.md",
+            "apps/cap/tech-design/semantic/cap-src.md",
             "# Semantic TD\n",
         );
 
-        let roots = spec_roots_for_scopes(tmp.path(), &["projects/cap/**".into()]).unwrap();
+        let roots = spec_roots_for_scopes(tmp.path(), &["apps/cap/**".into()]).unwrap();
 
-        assert_eq!(roots, vec![tmp.path().join("projects/cap/tech-design")]);
+        assert_eq!(roots, vec![tmp.path().join("apps/cap/tech-design")]);
     }
 
     #[test]
@@ -7907,15 +7907,15 @@ paths = ["projects/cap/**"]
         let configured = vec![ConfiguredScope {
             project_name: Some("cap".into()),
             aliases: Vec::new(),
-            project_path: Some("projects/cap".into()),
-            scope: "projects/cap/**".into(),
+            project_path: Some("apps/cap".into()),
+            scope: "apps/cap/**".into(),
             td_path: None,
             cap_path: None,
         }];
 
-        let spec_rel = semantic_spec_rel_with_config("projects/cap/src/cli.rs", &configured);
+        let spec_rel = semantic_spec_rel_with_config("apps/cap/src/cli.rs", &configured);
 
-        assert_eq!(spec_rel, "projects/cap/tech-design/semantic/cap-src.md");
+        assert_eq!(spec_rel, "apps/cap/tech-design/semantic/cap-src.md");
     }
 
     #[test]
@@ -7969,9 +7969,9 @@ paths = ["projects/cap/**"]
     fn force_regen_replay_failure_path_is_extracted() {
         assert_eq!(
             extract_force_regen_replay_failure_path(
-                "projects/jet/src/dev_server/proxy.rs: differs after TD replay"
+                "apps/jet/src/dev_server/proxy.rs: differs after TD replay"
             ),
-            Some("projects/jet/src/dev_server/proxy.rs".to_string())
+            Some("apps/jet/src/dev_server/proxy.rs".to_string())
         );
         assert_eq!(
             extract_force_regen_replay_failure_path("public API summary failed"),

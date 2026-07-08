@@ -153,21 +153,21 @@ Status: auditing
 Surfaces: CLI: `jet install` + `jet add` + `jet remove` - package lifecycle entrypoints
 EC Dimensions: behavior: `jet test` - lockfile and install conformance; efficiency: `meter` - install/cache resource profile
 Efficiency Operating Point: local-vat-jet-install
-Efficiency Cube: projects/jet/.aw/ec/efficiency/install.cube.json
+Efficiency Cube: apps/jet/.aw/ec/efficiency/install.cube.json
 Required Verification: smoke, conformance, corpus, negative
 Promise:
 Jet can replace npm/pnpm/Bun package-management flows.
 Gate Inventory:
-- projects/jet/validation/pkg-manager.toml
+- apps/jet/validation/pkg-manager.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Lockfile parity | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
+| Lockfile parity | epic | #3779 | partial | planned | conformance | apps/jet/validation/pkg-manager.toml |
 
 #### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)
 
 Operating point: local-vat-jet-install
-Cube: projects/jet/.aw/ec/efficiency/install.cube.json
+Cube: apps/jet/.aw/ec/efficiency/install.cube.json
 ```
 
 Status enums:

@@ -75,7 +75,7 @@ jobs:
           stage="pkg/${name}"
           mkdir -p "${stage}"
           cp "target/${{ matrix.target }}/release/arena" "${stage}/arena"
-          cp projects/arena/README.md "${stage}/README.md"
+          cp apps/arena/README.md "${stage}/README.md"
           # Emit the tarball + sha256 into `out/` (workspace root) so
           # upload-artifact's preserved `out/` prefix is shallow and
           # the release glob below is predictable.
@@ -132,7 +132,7 @@ jobs:
             ## Install
 
             ```sh
-            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/projects/arena/install.sh | sh
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/apps/arena/install.sh | sh
             ```
 
             Or pick a target tarball below and extract it manually.
