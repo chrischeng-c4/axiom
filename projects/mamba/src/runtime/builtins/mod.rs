@@ -39,6 +39,7 @@ mod str_conversion;
 mod truthiness;
 mod type_objects;
 mod unary_negation;
+mod value_extractors;
 
 pub use absolute::mb_abs;
 pub use aggregate_kwargs::{
@@ -99,6 +100,7 @@ pub use type_objects::{
     mb_builtin_type_obj, mb_type, mb_type2, mb_type3, mb_type3_kwargs, mb_type_no_args,
 };
 pub use unary_negation::mb_neg;
+pub(crate) use value_extractors::{mb_first_index_value, mb_str_value};
 
 /// Write to capture buffer if active, else to stdout.
 macro_rules! mb_out {
@@ -1806,31 +1808,6 @@ pub(crate) fn complex_cmp_dunder(method: &str, a: MbValue, b: MbValue) -> Option
         }),
         "__lt__" | "__le__" | "__gt__" | "__ge__" => Some(MbValue::not_implemented()),
         _ => None,
-    }
-}
-
-fn mb_str_value(val: MbValue) -> Option<String> {
-    val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data {
-            Some(s.clone())
-        } else {
-            None
-        }
-    })
-}
-
-fn mb_first_index_value(val: MbValue) -> Option<i64> {
-    let ptr = val.as_ptr()?;
-    unsafe {
-        match &(*ptr).data {
-            ObjData::Tuple(items) => items.first().and_then(|v| resolve_index_value(*v)),
-            ObjData::List(lock) => lock
-                .read()
-                .unwrap()
-                .first()
-                .and_then(|v| resolve_index_value(*v)),
-            _ => None,
-        }
     }
 }
 
