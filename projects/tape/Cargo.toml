@@ -1,0 +1,45 @@
+# <HANDWRITE gap="missing-generator:project-bootstrap" tracker="#768" reason="Initial Tape Rust crate manifest following the Lumen-style service slice.">
+[package]
+name = "tape"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "tape - topic replay journal service"
+build = "build.rs"
+
+[lib]
+name = "tape"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tape"
+path = "src/bin/tape.rs"
+
+[[bin]]
+name = "tape-bench"
+path = "src/bin/tape-bench.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+cli-std = { path = "../../libs/cli-std", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+async-nats = { workspace = true }
+futures = { workspace = true }
+tempfile = "3"
+
+[build-dependencies]
+build-stamp = { path = "../../libs/build-stamp" }
+
+[features]
+default = []
+self-update = ["cli-std/online"]
+issue = ["cli-std/online"]
+# </HANDWRITE>
