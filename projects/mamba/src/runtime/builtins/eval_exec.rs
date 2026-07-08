@@ -1239,6 +1239,19 @@ fn exec_call_function(ctx: &mut ExecContext, func: &ExecFunction, args: &[MbValu
     }
 }
 
+fn exec_class_body_namespace(
+    ctx: &mut ExecContext,
+    body: &[crate::source::span::Spanned<crate::parser::ast::Stmt>],
+) -> Option<FxHashMap<String, MbValue>> {
+    ctx.frames.push(FxHashMap::default());
+    let flow = exec_block_flow(ctx, body);
+    let frame = ctx.frames.pop().unwrap_or_default();
+    if exec_has_pending_exception() || !matches!(flow, ExecFlow::Normal) {
+        return None;
+    }
+    Some(frame)
+}
+
 fn exec_static_return_value(
     ctx: &mut ExecContext,
     body: &[crate::source::span::Spanned<crate::parser::ast::Stmt>],
@@ -1429,6 +1442,33 @@ fn exec_eval_expr(ctx: &mut ExecContext, expr: &crate::parser::ast::Expr) -> MbV
                 prev = next;
             }
             MbValue::from_bool(true)
+        }
+        Expr::Lambda { params, body } => {
+            let mut param_names = Vec::with_capacity(params.len());
+            let mut defaults = Vec::with_capacity(params.len());
+            for param in params {
+                param_names.push(param.name.clone());
+                let default = match &param.default {
+                    Some(default) => {
+                        let value = exec_eval_expr(ctx, &default.node);
+                        if exec_has_pending_exception() {
+                            return MbValue::none();
+                        }
+                        Some(value)
+                    }
+                    None => None,
+                };
+                defaults.push(default);
+            }
+            let function = ExecFunction {
+                params: param_names,
+                defaults,
+                body: vec![crate::source::span::Spanned::new(
+                    crate::parser::ast::Stmt::Return(Some((**body).clone())),
+                    body.span,
+                )],
+            };
+            make_exec_function_body_value("<lambda>", false, function, ctx.globals, None)
         }
         Expr::Call { func, args } => {
             let values = match exec_eval_call_args(ctx, args) {
@@ -1903,6 +1943,19 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
             if let Some(match_args) = match_args {
                 crate::runtime::class::mb_class_set_match_args(class_name, match_args);
             }
+            if let Some(namespace) = exec_class_body_namespace(ctx, body) {
+                for (attr, value) in namespace {
+                    crate::runtime::class::mb_class_set_class_attr(
+                        class_name,
+                        MbValue::from_ptr(MbObject::new_str(attr)),
+                        value,
+                    );
+                }
+            }
+            if exec_has_pending_exception() {
+                return ExecFlow::Normal;
+            }
+            crate::runtime::class::mb_class_finalize_definition(class_name);
             let mut class_value = make_type_object(name);
             for decorator in decorator_values.into_iter().rev() {
                 if mb_callable(decorator).as_bool() != Some(true) {
