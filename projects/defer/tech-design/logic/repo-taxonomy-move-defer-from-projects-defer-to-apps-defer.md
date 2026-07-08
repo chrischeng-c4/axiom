@@ -102,7 +102,6 @@ flowchart TD
     fix --> smoke
     stale -- no --> done([Defer resolves through apps/defer while identity remains project:defer])
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
