@@ -63,7 +63,6 @@ flowchart TD
     r1[R1 shell syntax] --> sh_n_projects_jet_install_sh[sh -n projects/jet/install.sh]
     r2[R2 repo install scripts] --> find_name_install_sh_exec_sh_n_print[find . -name install.sh -exec sh -n {} ; -print]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
