@@ -1044,6 +1044,125 @@ fn make_exec_function_body_value(
     MbValue::from_ptr(inst)
 }
 
+fn exec_eval_annotation_type_expr(
+    ctx: &mut ExecContext,
+    ty: &crate::parser::ast::TypeExpr,
+) -> Option<MbValue> {
+    use crate::parser::ast::TypeExpr;
+
+    match ty {
+        // Match the compiled-path convention: parser-injected fillers mean
+        // "no annotation", so exec() should not materialize them.
+        TypeExpr::Named(name) if name == "Any" || name == "Self" => None,
+        TypeExpr::Named(name) => {
+            let value = exec_lookup_name(ctx, name).unwrap_or_else(|| {
+                crate::runtime::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("NameError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "name '{name}' is not defined"
+                    ))),
+                );
+                MbValue::none()
+            });
+            if exec_has_pending_exception() {
+                None
+            } else {
+                Some(value)
+            }
+        }
+        TypeExpr::Generic { name, args } => {
+            let origin = exec_eval_annotation_type_expr(ctx, &TypeExpr::Named(name.clone()))?;
+            let mut items = Vec::with_capacity(args.len());
+            for arg in args {
+                let value = exec_eval_annotation_type_expr(ctx, &arg.node)?;
+                items.push(value);
+            }
+            let key = if items.len() == 1 {
+                items[0]
+            } else {
+                MbValue::from_ptr(MbObject::new_tuple(items))
+            };
+            let value = crate::runtime::class::mb_obj_getitem(origin, key);
+            if exec_has_pending_exception() {
+                None
+            } else {
+                Some(value)
+            }
+        }
+        TypeExpr::Optional(inner) => {
+            let inner = exec_eval_annotation_type_expr(ctx, &inner.node)?;
+            Some(crate::runtime::stdlib::typing_mod::typing_union(vec![
+                inner,
+                MbValue::none(),
+            ]))
+        }
+        TypeExpr::Union(parts) => {
+            let mut members = Vec::with_capacity(parts.len());
+            for part in parts {
+                let value = exec_eval_annotation_type_expr(ctx, &part.node)?;
+                members.push(value);
+            }
+            Some(crate::runtime::stdlib::typing_mod::typing_union(members))
+        }
+        TypeExpr::Tuple(parts) => {
+            let mut items = Vec::with_capacity(parts.len());
+            for part in parts {
+                let value = exec_eval_annotation_type_expr(ctx, &part.node)?;
+                items.push(value);
+            }
+            let key = if items.len() == 1 {
+                items[0]
+            } else {
+                MbValue::from_ptr(MbObject::new_tuple(items))
+            };
+            let tuple_type = make_type_object("tuple");
+            let value = crate::runtime::class::mb_obj_getitem(tuple_type, key);
+            if exec_has_pending_exception() {
+                None
+            } else {
+                Some(value)
+            }
+        }
+        TypeExpr::Fn { .. } => None,
+    }
+}
+
+fn exec_function_annotations_value(
+    ctx: &mut ExecContext,
+    params: &[crate::parser::ast::Param],
+    return_ty: Option<&crate::source::span::Spanned<crate::parser::ast::TypeExpr>>,
+) -> Option<MbValue> {
+    let annotations = crate::runtime::dict_ops::mb_dict_new();
+
+    for param in params {
+        let Some(value) = exec_eval_annotation_type_expr(ctx, &param.ty.node) else {
+            if exec_has_pending_exception() {
+                return None;
+            }
+            continue;
+        };
+        crate::runtime::dict_ops::mb_dict_setitem(
+            annotations,
+            MbValue::from_ptr(MbObject::new_str(param.name.clone())),
+            value,
+        );
+    }
+
+    if let Some(return_ty) = return_ty {
+        if let Some(value) = exec_eval_annotation_type_expr(ctx, &return_ty.node) {
+            crate::runtime::dict_ops::mb_dict_setitem(
+                annotations,
+                MbValue::from_ptr(MbObject::new_str("return".to_string())),
+                value,
+            );
+        } else if exec_has_pending_exception() {
+            return None;
+        }
+    }
+
+    Some(annotations)
+}
+
 fn exec_function_field(func: MbValue, key: &str) -> Option<MbValue> {
     let ptr = func.as_ptr()?;
     unsafe {
@@ -1983,6 +2102,7 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
             decorators,
             name,
             params,
+            return_ty,
             body,
             ..
         } => {
@@ -2002,6 +2122,11 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                 };
                 defaults.push(default);
             }
+            let Some(annotations) =
+                exec_function_annotations_value(ctx, params, return_ty.as_ref())
+            else {
+                return ExecFlow::Normal;
+            };
             let mut decorator_values = Vec::with_capacity(decorators.len());
             for decorator in decorators {
                 let value = exec_eval_expr(ctx, &decorator.node);
@@ -2047,6 +2172,11 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                 let doc = exec_leading_docstring(body);
                 let func_value =
                     make_exec_function_body_value(name, false, function, ctx.globals, doc);
+                crate::runtime::pep695::instance_field_set_pub(
+                    func_value,
+                    "__annotations__",
+                    annotations,
+                );
                 exec_store_name(ctx, name, func_value);
             }
             ExecFlow::Normal
@@ -2055,6 +2185,7 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
             decorators,
             name,
             params,
+            return_ty,
             body,
             ..
         } => {
@@ -2075,6 +2206,11 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                     };
                     defaults.push(default);
                 }
+                let Some(annotations) =
+                    exec_function_annotations_value(ctx, params, return_ty.as_ref())
+                else {
+                    return ExecFlow::Normal;
+                };
                 let function = ExecFunction {
                     params: param_names,
                     defaults,
@@ -2083,6 +2219,11 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                 let doc = exec_leading_docstring(body);
                 let func_value =
                     make_exec_function_body_value(name, true, function, ctx.globals, doc);
+                crate::runtime::pep695::instance_field_set_pub(
+                    func_value,
+                    "__annotations__",
+                    annotations,
+                );
                 exec_store_name(ctx, name, func_value);
             }
             ExecFlow::Normal
@@ -3566,5 +3707,50 @@ mod tests {
             exec_lookup_name(&ctx, "__definitely_missing_exec_name__").is_none(),
             "unknown names should still miss"
         );
+    }
+
+    #[test]
+    fn test_exec_function_annotations_capture_class_scope_values() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(
+            MbValue::from_ptr(MbObject::new_str(
+                "class C:\n    x = 1\n    def method[T](self, arg: x):\n        pass\n".to_string(),
+            )),
+            globals,
+        );
+        assert!(
+            !crate::runtime::exception::mb_has_exception()
+                .as_bool()
+                .unwrap_or(false),
+            "exec should complete without raising: {:?}",
+            (
+                crate::runtime::exception::current_exception_type(),
+                crate::runtime::class::peek_last_raised_instance()
+                    .and_then(crate::runtime::exception::get_exception_message_pub)
+            )
+        );
+
+        let cls = crate::runtime::dict_ops::mb_dict_get(
+            globals,
+            MbValue::from_ptr(MbObject::new_str("C".to_string())),
+            MbValue::none(),
+        );
+        let method = crate::runtime::class::mb_getattr(
+            cls,
+            MbValue::from_ptr(MbObject::new_str("method".to_string())),
+        );
+        let annotations = crate::runtime::class::mb_getattr(
+            method,
+            MbValue::from_ptr(MbObject::new_str("__annotations__".to_string())),
+        );
+        let arg = crate::runtime::dict_ops::mb_dict_get(
+            annotations,
+            MbValue::from_ptr(MbObject::new_str("arg".to_string())),
+            MbValue::none(),
+        );
+        assert_eq!(arg.as_int(), Some(1));
     }
 }
