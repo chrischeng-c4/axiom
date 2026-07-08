@@ -7520,8 +7520,10 @@ impl<'a> AstLowerer<'a> {
                                 generators,
                             } = &arg.node
                             {
+                                let first_iter =
+                                    generators.first().and_then(|g| self.lower_expr(&g.iter));
                                 let saved = self.save_comp_scope(generators);
-                                let gens = self.lower_comprehensions(generators);
+                                let gens = self.lower_comprehensions(generators, first_iter);
                                 let elem = self.lower_expr(element)?;
                                 self.restore_comp_scope(saved);
                                 return Some(HirExpr::AnyAllComp {
@@ -9604,8 +9606,9 @@ impl<'a> AstLowerer<'a> {
             } => {
                 // P0-R5: Save outer names that comprehension variables will shadow.
                 // Comprehension loop variables must not leak into the enclosing scope.
+                let first_iter = generators.first().and_then(|g| self.lower_expr(&g.iter));
                 let saved = self.save_comp_scope(generators);
-                let gens = self.lower_comprehensions(generators);
+                let gens = self.lower_comprehensions(generators, first_iter);
                 let elem = self.lower_expr(element)?;
                 let ty = self.checker.tcx.any();
                 self.restore_comp_scope(saved);
@@ -9619,8 +9622,9 @@ impl<'a> AstLowerer<'a> {
                 element,
                 generators,
             } => {
+                let first_iter = generators.first().and_then(|g| self.lower_expr(&g.iter));
                 let saved = self.save_comp_scope(generators);
-                let gens = self.lower_comprehensions(generators);
+                let gens = self.lower_comprehensions(generators, first_iter);
                 let elem = self.lower_expr(element)?;
                 let ty = self.checker.tcx.any();
                 self.restore_comp_scope(saved);
@@ -9706,8 +9710,9 @@ impl<'a> AstLowerer<'a> {
                 value,
                 generators,
             } => {
+                let first_iter = generators.first().and_then(|g| self.lower_expr(&g.iter));
                 let saved = self.save_comp_scope(generators);
-                let gens = self.lower_comprehensions(generators);
+                let gens = self.lower_comprehensions(generators, first_iter);
                 let k = self.lower_expr(key)?;
                 let v = self.lower_expr(value)?;
                 let ty = self.checker.tcx.any();
@@ -10081,9 +10086,20 @@ impl<'a> AstLowerer<'a> {
         }
     }
 
-    fn lower_comprehensions(&mut self, gens: &[ast::Comprehension]) -> Vec<HirComprehension> {
+    fn lower_comprehensions(
+        &mut self,
+        gens: &[ast::Comprehension],
+        first_iter: Option<HirExpr>,
+    ) -> Vec<HirComprehension> {
         gens.iter()
+            .enumerate()
             .filter_map(|g| {
+                let (idx, g) = g;
+                let iter = if idx == 0 {
+                    first_iter.clone()?
+                } else {
+                    self.lower_expr(&g.iter)?
+                };
                 // Define all loop variables. For tuple targets `for k, v in ...`,
                 // the first goes in `var` and the rest in `extra_vars` — the hir_to_mir
                 // lowering unpacks the iterator's next value into these via tuple indexing.
@@ -10097,7 +10113,6 @@ impl<'a> AstLowerer<'a> {
                     .skip(1)
                     .map(|name| self.define_local(name, self.checker.tcx.any()))
                     .collect();
-                let iter = self.lower_expr(&g.iter)?;
                 let conditions: Vec<HirExpr> = g
                     .conditions
                     .iter()
@@ -12898,6 +12913,66 @@ async def main():
         } else {
             panic!("expected ListComp");
         }
+    }
+
+    #[test]
+    fn test_lower_list_comp_iter_uses_outer_symbol_before_binding_target() {
+        let hir = helper_lower(vec![
+            sp(Stmt::Assign {
+                target: sp(Expr::Ident("T".to_string())),
+                value: sp(Expr::StrLit("outer".to_string())),
+            }),
+            sp(Stmt::ExprStmt(sp(Expr::ListComp {
+                element: Box::new(sp(Expr::Ident("T".to_string()))),
+                generators: vec![Comprehension {
+                    targets: vec!["T".to_string()],
+                    unpack_target: false,
+                    target_reads_before_bind: Vec::new(),
+                    iter: sp(Expr::Ident("T".to_string())),
+                    conditions: vec![],
+                    is_async: false,
+                }],
+            }))),
+        ]);
+
+        match &hir.top_level[0] {
+            HirStmt::Let { .. } => {}
+            HirStmt::Assign {
+                target: HirLValue::Var(_),
+                ..
+            } => {}
+            other => panic!("expected outer T assignment, got {other:?}"),
+        };
+
+        let HirStmt::Expr {
+            expr: HirExpr::ListComp {
+                element,
+                generators,
+                ..
+            },
+            ..
+        } = &hir.top_level[1]
+        else {
+            panic!("expected list comprehension expression");
+        };
+
+        let generator = generators.first().expect("expected one generator");
+        assert!(matches!(
+            element.as_ref(),
+            HirExpr::Var(sym, _) if *sym == generator.var
+        ));
+        let HirExpr::Var(iter_sym, _) = &generator.iter else {
+            panic!("expected iterator to lower as a variable read");
+        };
+        assert_ne!(
+            *iter_sym, generator.var,
+            "comprehension target must not be visible while lowering its iter"
+        );
+        assert_eq!(
+            hir.sym_names.get(iter_sym).map(String::as_str),
+            Some("T"),
+            "iterator should still resolve the outer T binding"
+        );
     }
 
     // -------------------------------------------------------------------------
