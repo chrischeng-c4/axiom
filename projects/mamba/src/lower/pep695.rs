@@ -1147,6 +1147,7 @@ fn desugar_block(
         before: Vec::new(),
         after: Vec::new(),
     };
+    let mut visible_class_locals = class_locals.cloned().unwrap_or_default();
 
     // Emit one deferred wiring item into a non-class block.
     fn emit_after(out: &mut Vec<Spanned<Stmt>>, item: AfterItem) {
@@ -1157,6 +1158,7 @@ fn desugar_block(
     }
 
     for mut st in old {
+        let stmt_class_locals = in_class.then(|| collect_class_local_names(std::slice::from_ref(&st)));
         let span = st.span;
         match &mut st.node {
             // ── class definitions (recursion + emission together) ──
@@ -1179,7 +1181,6 @@ fn desugar_block(
                 );
                 let mut nested_path = class_path.to_vec();
                 nested_path.push(name.clone());
-                let nested_locals = collect_class_local_names(body);
                 let nested_type_params: HashMap<Name, usize> = tps
                     .iter()
                     .enumerate()
@@ -1189,7 +1190,7 @@ fn desugar_block(
                     body,
                     true,
                     &nested_path,
-                    Some(&nested_locals),
+                    None,
                     Some(&nested_type_params),
                 );
                 // Items leaving this class body gain its name as path prefix.
@@ -1253,14 +1254,12 @@ fn desugar_block(
                 body,
                 ..
             } => {
-                if let (true, Some(locals), Some(type_params_by_name)) =
-                    (in_class, class_locals, class_type_params)
-                {
+                if let (true, Some(type_params_by_name)) = (in_class, class_type_params) {
                     if !class_path.is_empty() {
                         rewrite_class_scoped_type_params(
                             type_params,
                             class_path,
-                            locals,
+                            &visible_class_locals,
                             type_params_by_name,
                         );
                     }
@@ -1317,14 +1316,14 @@ fn desugar_block(
                 let name = name.clone();
                 let tps = type_params.clone();
                 let mut value = value.clone();
-                if let (true, Some(locals), Some(type_params)) =
-                    (in_class, class_locals, class_type_params)
-                {
+                if let (true, Some(type_params)) = (in_class, class_type_params) {
                     if !class_path.is_empty() {
+                        let mut alias_locals = visible_class_locals.clone();
+                        alias_locals.insert(name.clone());
                         rewrite_class_alias_value(
                             &mut value,
                             class_path,
-                            locals,
+                            &alias_locals,
                             type_params,
                             &mut HashSet::new(),
                         );
@@ -1537,6 +1536,10 @@ fn desugar_block(
                 }
                 out.push(st);
             }
+        }
+
+        if let Some(stmt_class_locals) = stmt_class_locals {
+            visible_class_locals.extend(stmt_class_locals);
         }
     }
 
@@ -1896,5 +1899,44 @@ mod tests {
             Expr::Attr { object, attr }
                 if attr == "T" && matches!(&object.node, Expr::Ident(name) if name == "C")
         ));
+    }
+
+    #[test]
+    fn class_body_type_alias_does_not_rewrite_later_class_local_names() {
+        let m = desugared("class C:\n    type Alias = x\n    x = \"class\"\n");
+        let Stmt::ClassDef { body, .. } = &m.stmts[0].node else {
+            panic!("expected class definition");
+        };
+        let Stmt::Assign { value, .. } = &body[2].node else {
+            panic!("expected real alias assignment");
+        };
+        let Expr::Call { args, .. } = &value.node else {
+            panic!("expected type alias constructor");
+        };
+        let Some(CallArg::Positional(thunk)) = args.get(1) else {
+            panic!("expected alias value thunk");
+        };
+        let Expr::Lambda { body, .. } = &thunk.node else {
+            panic!("expected lambda thunk");
+        };
+        assert!(matches!(&body.node, Expr::Ident(name) if name == "x"));
+    }
+
+    #[test]
+    fn pep695_method_bound_does_not_rewrite_later_class_local_names() {
+        let m = desugared("class C:\n    def foo[T: x](self):\n        pass\n    x = \"class\"\n");
+        let Stmt::Assign { value, .. } = &m.stmts[1].node else {
+            panic!("expected hoisted typevar assignment");
+        };
+        let Expr::Call { args, .. } = &value.node else {
+            panic!("expected typevar constructor");
+        };
+        let Some(CallArg::Positional(bound)) = args.get(2) else {
+            panic!("expected bound thunk");
+        };
+        let Expr::Lambda { body, .. } = &bound.node else {
+            panic!("expected bound lambda");
+        };
+        assert!(matches!(&body.node, Expr::Ident(name) if name == "x"));
     }
 }

@@ -514,6 +514,38 @@ struct ExecFunctionBinding {
     function: ExecFunction,
 }
 
+fn exec_pep695_class_annotation_context(ctx: &ExecContext) -> ExecContext {
+    let in_class_body = ctx
+        .frame_scopes
+        .last()
+        .is_some_and(|scope| !scope.is_function);
+    if !in_class_body {
+        return ExecContext {
+            class_match_args: ctx.class_match_args.clone(),
+            type_vars: ctx.type_vars.clone(),
+            type_param_reuse_once: ctx.type_param_reuse_once.clone(),
+            functions: ctx.functions.clone(),
+            frames: ctx.frames.clone(),
+            frame_scopes: ctx.frame_scopes.clone(),
+            generic_class_body_depth: ctx.generic_class_body_depth,
+            globals: ctx.globals,
+            locals: ctx.locals,
+        };
+    }
+
+    ExecContext {
+        class_match_args: ctx.class_match_args.clone(),
+        type_vars: ctx.type_vars.clone(),
+        type_param_reuse_once: ctx.type_param_reuse_once.clone(),
+        functions: ctx.functions.clone(),
+        frames: ctx.frames.last().cloned().into_iter().collect(),
+        frame_scopes: ctx.frame_scopes.last().cloned().into_iter().collect(),
+        generic_class_body_depth: ctx.generic_class_body_depth,
+        globals: ctx.globals,
+        locals: ctx.locals,
+    }
+}
+
 static EXEC_FUNCTIONS: std::sync::LazyLock<std::sync::RwLock<FxHashMap<u64, ExecFunctionBinding>>> =
     std::sync::LazyLock::new(|| std::sync::RwLock::new(FxHashMap::default()));
 static NEXT_EXEC_FUNCTION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -1407,6 +1439,7 @@ fn exec_type_param_thunk(
     ctx: &ExecContext,
     body: crate::source::span::Spanned<crate::parser::ast::Expr>,
 ) -> MbValue {
+    let annotation_ctx = exec_pep695_class_annotation_context(ctx);
     let function = ExecFunction {
         params: Vec::new(),
         defaults: Vec::new(),
@@ -1415,7 +1448,7 @@ fn exec_type_param_thunk(
             body.span,
         )],
     };
-    make_exec_function_body_value("<lambda>", false, function, ctx, None)
+    make_exec_function_body_value("<lambda>", false, function, &annotation_ctx, None)
 }
 
 fn exec_type_param_value(ctx: &ExecContext, param: &crate::parser::ast::TypeParam) -> MbValue {
@@ -1762,10 +1795,11 @@ fn exec_function_annotations_value(
     params: &[crate::parser::ast::Param],
     return_ty: Option<&crate::source::span::Spanned<crate::parser::ast::TypeExpr>>,
 ) -> Option<MbValue> {
+    let mut annotation_ctx = exec_pep695_class_annotation_context(ctx);
     let annotations = crate::runtime::dict_ops::mb_dict_new();
 
     for param in params {
-        let Some(value) = exec_eval_annotation_type_expr(ctx, &param.ty.node) else {
+        let Some(value) = exec_eval_annotation_type_expr(&mut annotation_ctx, &param.ty.node) else {
             if exec_has_pending_exception() {
                 return None;
             }
@@ -1779,7 +1813,7 @@ fn exec_function_annotations_value(
     }
 
     if let Some(return_ty) = return_ty {
-        if let Some(value) = exec_eval_annotation_type_expr(ctx, &return_ty.node) {
+        if let Some(value) = exec_eval_annotation_type_expr(&mut annotation_ctx, &return_ty.node) {
             crate::runtime::dict_ops::mb_dict_setitem(
                 annotations,
                 MbValue::from_ptr(MbObject::new_str("return".to_string())),
@@ -2421,6 +2455,21 @@ fn exec_eval_expr(ctx: &mut ExecContext, expr: &crate::parser::ast::Expr) -> MbV
             make_exec_function_body_value("<lambda>", false, function, ctx, None)
         }
         Expr::Call { func, args } => {
+            if let Expr::Ident(name) = &func.node {
+                if name == crate::lower::pep695::TYPE_ALIAS_INTRINSIC && args.len() == 3 {
+                    let mut annotation_ctx = exec_pep695_class_annotation_context(ctx);
+                    let values = match exec_eval_call_args(&mut annotation_ctx, args) {
+                        Some(values) => values,
+                        None => return MbValue::none(),
+                    };
+                    if values.len() == 3 {
+                        return crate::runtime::pep695::mb_pep695_type_alias(
+                            values[0], values[1], values[2],
+                        );
+                    }
+                    return MbValue::none();
+                }
+            }
             let values = match exec_eval_call_args(ctx, args) {
                 Some(values) => values,
                 None => return MbValue::none(),
@@ -2441,11 +2490,6 @@ fn exec_eval_expr(ctx: &mut ExecContext, expr: &crate::parser::ast::Expr) -> MbV
                     }
                     return crate::runtime::pep695::mb_pep695_typevar(
                         values[0], values[1], values[2], values[3], values[4],
-                    );
-                }
-                if name == crate::lower::pep695::TYPE_ALIAS_INTRINSIC && values.len() == 3 {
-                    return crate::runtime::pep695::mb_pep695_type_alias(
-                        values[0], values[1], values[2],
                     );
                 }
                 if name == "range" {
