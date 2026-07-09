@@ -115,6 +115,7 @@ backend connection reuse, transaction/session pool modes, graceful drain, and
 clear observability before platform-specific adapters are added.
 Gate Inventory:
 - apps/pgpool/tests/wire_codec.rs (`cargo test -p pgpool --test wire_codec`)
+- apps/pgpool/tests/proxy.rs; apps/pgpool/tests/session_proxy.rs (`cargo test -p pgpool --test proxy --test session_proxy`)
 - pending: backend pool saturation and drain tests
 - pending: transaction/session mode behavior gates
 
@@ -123,7 +124,7 @@ Gate Inventory:
 | pg-wire-frontend-protocol | epic | 1287 | implemented | passing | conformance | apps/pgpool/tests/wire_codec.rs; apps/pgpool/tech-design/logic/pg-wire-message-codec-frontend-backend-frames.md |
 | backend-pool-and-reuse | epic | 1289 | planned | planned | none | pending: pool saturation, reuse, and release tests |
 | transaction-session-pool-modes | epic | 1289 | planned | planned | none | pending: mode behavior gates |
-| serve-entrypoint-and-drain | epic | 1288 | planned | planned | none | pending: serve smoke + drain conformance |
+| serve-entrypoint-and-drain | epic | 1288 | implemented | passing | conformance | apps/pgpool/tests/proxy.rs; apps/pgpool/tests/session_proxy.rs; apps/pgpool/tech-design/logic/session-mode-proxy-with-auth-passthrough-and-serve-entrypoint.md |
 
 ### Platform Adapter Boundary
 
@@ -166,7 +167,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | offline-plan-and-spec-verbs | change | - | implemented | passing | smoke | apps/pgpool/tests/cli_contract.rs |
-| serve-by-default-entrypoint | epic | 1288 | planned | planned | none | pending: serve smoke gate (tracked under postgres-pooler-core) |
+| serve-by-default-entrypoint | epic | 1288 | implemented | passing | smoke | apps/pgpool/tests/cli_contract.rs (`help_and_llm_workflow_topic_mention_serve`); apps/pgpool/src/bin/pgpool.rs |
 
 ### CLI Standard Surface
 
