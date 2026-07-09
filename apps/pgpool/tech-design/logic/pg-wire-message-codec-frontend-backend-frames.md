@@ -634,14 +634,99 @@ initial_transaction_status: idle # TransactionStatus before the first ReadyForQu
 
 ```mermaid
 ---
-id: pgpool-wire-codec-unit-test-pending
-entry: pending
-nodes:
-  pending:
-    kind: start
-    label: "unit-test plan pending — to be authored in its own applicability section"
-edges: []
+id: apps-pgpool-wire-codec-verification
+requirements:
+  r1_auth_frames:
+    id: R1
+    text: "Frontend codec round-trips PasswordMessage (cleartext/MD5 payload) and SASL initial-response/continuation frames."
+    kind: functional
+    risk: medium
+    verify: wire_codec::frontend_password_and_sasl_round_trip
+  r1_extended_query:
+    id: R1
+    text: "Frontend codec round-trips Parse/Bind/Describe/Execute/Sync extended-query messages."
+    kind: functional
+    risk: medium
+    verify: wire_codec::frontend_extended_query_round_trip
+  r1_simple_query:
+    id: R1
+    text: "Frontend codec round-trips the simple-query Query message."
+    kind: functional
+    risk: low
+    verify: wire_codec::frontend_query_round_trip
+  r1_startup_and_ssl:
+    id: R1
+    text: "Frontend codec round-trips StartupMessage (protocol 3.0 + parameters) and SSLRequest."
+    kind: functional
+    risk: medium
+    verify: wire_codec::frontend_startup_and_ssl_round_trip
+  r1_terminate:
+    id: R1
+    text: "Frontend codec round-trips Terminate."
+    kind: functional
+    risk: low
+    verify: wire_codec::frontend_terminate_round_trip
+  r2_auth_family:
+    id: R2
+    text: "Backend codec round-trips the Authentication family (Ok, CleartextPassword, MD5Password, SASL/SCRAM continuation frames)."
+    kind: functional
+    risk: medium
+    verify: wire_codec::backend_authentication_family_round_trip
+  r2_error_notice:
+    id: R2
+    text: "Backend codec round-trips ErrorResponse/NoticeResponse field maps."
+    kind: functional
+    risk: medium
+    verify: wire_codec::backend_error_notice_round_trip
+  r2_result_set:
+    id: R2
+    text: "Backend codec round-trips RowDescription/DataRow/CommandComplete."
+    kind: functional
+    risk: medium
+    verify: wire_codec::backend_result_set_round_trip
+  r2_status_and_keydata:
+    id: R2
+    text: "Backend codec round-trips ParameterStatus, BackendKeyData, and ReadyForQuery."
+    kind: functional
+    risk: medium
+    verify: wire_codec::backend_status_and_keydata_round_trip
+  r3_bounded_oversized:
+    id: R3
+    text: "FrameReader rejects a frame whose declared length exceeds max_frame_bytes with FrameError::Oversized and never panics."
+    kind: regression
+    risk: high
+    verify: wire_codec::reader_rejects_oversized_frame
+  r3_malformed_no_panic:
+    id: R3
+    text: "FrameReader rejects fuzz-shaped malformed frames (truncated fields, bad UTF-8, unknown tag, bad enum discriminant) with typed FrameError and never panics."
+    kind: regression
+    risk: high
+    verify: wire_codec::reader_rejects_malformed_frames_without_panic
+  r3_split_partial_reads:
+    id: R3
+    text: "FrameReader correctly reassembles a frame delivered across multiple split/partial reads at arbitrary buffer boundaries."
+    kind: functional
+    risk: high
+    verify: wire_codec::reader_handles_split_partial_reads
+  r4_tx_status_session:
+    id: R4
+    text: "TransactionStatus is tracked idle/in_transaction/failed correctly across a recorded simple-query and extended-query session fixture."
+    kind: functional
+    risk: medium
+    verify: wire_codec::transaction_status_tracks_simple_and_extended_session
 ---
 flowchart TD
-    pending([unit-test plan pending])
+    r1[R1 r1 auth frames] --> wire_codec_frontend_password_and_sasl_round_trip[wire_codec::frontend_password_and_sasl_round_trip]
+    r1[R1 r1 extended query] --> wire_codec_frontend_extended_query_round_trip[wire_codec::frontend_extended_query_round_trip]
+    r1[R1 r1 simple query] --> wire_codec_frontend_query_round_trip[wire_codec::frontend_query_round_trip]
+    r1[R1 r1 startup and ssl] --> wire_codec_frontend_startup_and_ssl_round_trip[wire_codec::frontend_startup_and_ssl_round_trip]
+    r1[R1 r1 terminate] --> wire_codec_frontend_terminate_round_trip[wire_codec::frontend_terminate_round_trip]
+    r2[R2 r2 auth family] --> wire_codec_backend_authentication_family_round_trip[wire_codec::backend_authentication_family_round_trip]
+    r2[R2 r2 error notice] --> wire_codec_backend_error_notice_round_trip[wire_codec::backend_error_notice_round_trip]
+    r2[R2 r2 result set] --> wire_codec_backend_result_set_round_trip[wire_codec::backend_result_set_round_trip]
+    r2[R2 r2 status and keydata] --> wire_codec_backend_status_and_keydata_round_trip[wire_codec::backend_status_and_keydata_round_trip]
+    r3[R3 r3 bounded oversized] --> wire_codec_reader_rejects_oversized_frame[wire_codec::reader_rejects_oversized_frame]
+    r3[R3 r3 malformed no panic] --> wire_codec_reader_rejects_malformed_frames_without_panic[wire_codec::reader_rejects_malformed_frames_without_panic]
+    r3[R3 r3 split partial reads] --> wire_codec_reader_handles_split_partial_reads[wire_codec::reader_handles_split_partial_reads]
+    r4[R4 r4 tx status session] --> wire_codec_transaction_status_tracks_simple_and_extended_session[wire_codec::transaction_status_tracks_simple_and_extended_session]
 ```
