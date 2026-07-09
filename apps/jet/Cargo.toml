@@ -134,6 +134,8 @@ tracing-subscriber = { workspace = true }
 which = "7"
 # @spec parity-dom-reference-runner.md#Changes (jet/Cargo.toml modify)
 jet-parity-oracle = { path = "parity/oracle" }
+# GH #1261 — mock HTTP server for pkg_manager::registry auth-header tests
+wiremock = { workspace = true }
 
 # Test targets are grouped by verification block under tests/<block>/;
 # target names are flat so `cargo test --test <name>` references in README/scripts keep working.

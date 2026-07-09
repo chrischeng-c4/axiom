@@ -542,7 +542,20 @@ impl RegistryClient {
 
         tracing::debug!("Downloading tarball: {}", version_meta.dist.tarball);
 
-        let response = self.client.get(&version_meta.dist.tarball).send().await?;
+        let mut req = self.client.get(&version_meta.dist.tarball);
+
+        // GH #1261 — apply the same auth token lookup `get_package_metadata`
+        // already does for the metadata request. Scoped/authenticated
+        // registries (e.g. GCP Artifact Registry) also require the
+        // Authorization header on the tarball GET, not just the metadata
+        // GET; without this, the tarball request 401s even though the
+        // token in .npmrc is valid and was just used successfully for the
+        // metadata fetch on the same host+path prefix.
+        if let Some(token) = self.npmrc.auth_token_for(&version_meta.dist.tarball) {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+
+        let response = req.send().await?;
 
         if !response.status().is_success() {
             anyhow::bail!(
@@ -996,6 +1009,200 @@ mod tests {
         // Client is still usable — disk_cache_dir is set, in-memory cache works.
         assert_eq!(client.disk_cache_dir, inside);
         assert!(client.cache.is_empty());
+    }
+
+    // GH #1261 — `download_package` sent the tarball GET without the
+    // `Authorization` header that `get_package_metadata` already attaches,
+    // so scoped/authenticated registries (e.g. GCP Artifact Registry) 401
+    // on every tarball download even with a valid `.npmrc` `_authToken`.
+    // These tests use `wiremock` to stand up local metadata + tarball
+    // endpoints and pin the fixed contract: the tarball request now carries
+    // the same Bearer token the metadata request uses, the metadata path is
+    // unchanged, no token means no header, and response byte handling is
+    // untouched by the added header-attachment step.
+    use wiremock::matchers::{header, header_exists, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Build a minimal `PackageMetadata` JSON body whose single version's
+    /// `dist.tarball` points at `tarball_url`.
+    fn metadata_body(name: &str, version: &str, tarball_url: &str) -> serde_json::Value {
+        serde_json::json!({
+            "name": name,
+            "dist-tags": { "latest": version },
+            "versions": {
+                version: {
+                    "version": version,
+                    "dist": {
+                        "tarball": tarball_url,
+                        "shasum": "deadbeef",
+                    }
+                }
+            }
+        })
+    }
+
+    /// npmrc configured with a `//host:port/:_authToken=<token>` entry
+    /// matching `registry_uri`'s host+port, mirroring the GCP Artifact
+    /// Registry `.npmrc` shape from the bug report.
+    fn npmrc_with_token(registry_uri: &str, token: &str) -> NpmrcConfig {
+        let mut npmrc = NpmrcConfig::default();
+        npmrc.registry = format!("{}/", registry_uri);
+        let host_port = registry_uri.trim_start_matches("http://");
+        npmrc
+            .auth_tokens
+            .insert(format!("//{}/", host_port), token.to_string());
+        npmrc
+    }
+
+    /// R1 — WI #1261 regression pin: an .npmrc with a matching
+    /// `_authToken` entry must result in `download_package` attaching
+    /// `Authorization: Bearer <token>` to the tarball GET (not just the
+    /// metadata GET). Metadata and tarball are served from the same
+    /// mock host+path prefix, matching the reporter's GCP Artifact
+    /// Registry setup where both requests share a host+path prefix.
+    #[tokio::test]
+    async fn download_package_attaches_configured_auth_token_to_tarball_request() {
+        let server = MockServer::start().await;
+        let tarball_url = format!("{}/tarballs/test-pkg-1.0.0.tgz", server.uri());
+        let npmrc = npmrc_with_token(&server.uri(), "secret-token");
+
+        Mock::given(method("GET"))
+            .and(path("/test-pkg"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(metadata_body("test-pkg", "1.0.0", &tarball_url)),
+            )
+            .mount(&server)
+            .await;
+
+        // Reporter-verified curl behavior: 401 without the header, 200
+        // with it — pinned here via a strict header-value match so a
+        // missing/mismatched Authorization header fails the mock.
+        Mock::given(method("GET"))
+            .and(path("/tarballs/test-pkg-1.0.0.tgz"))
+            .and(header("authorization", "Bearer secret-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"tarball-bytes".to_vec()))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/tarballs/test-pkg-1.0.0.tgz"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        let client = RegistryClient::new_with_options(&server.uri(), &npmrc, true).unwrap();
+        let bytes = client
+            .download_package("test-pkg", "1.0.0")
+            .await
+            .expect("download_package must succeed once the Authorization header is attached to the tarball request");
+        assert_eq!(bytes, b"tarball-bytes".to_vec());
+    }
+
+    /// R2 — regression control: `get_package_metadata`'s existing
+    /// Authorization header attachment on the metadata GET is unchanged
+    /// by the tarball-side fix.
+    #[tokio::test]
+    async fn get_package_metadata_still_attaches_auth_token_unchanged() {
+        let server = MockServer::start().await;
+        let tarball_url = format!("{}/tarballs/test-pkg-1.0.0.tgz", server.uri());
+        let npmrc = npmrc_with_token(&server.uri(), "secret-token");
+
+        Mock::given(method("GET"))
+            .and(path("/test-pkg"))
+            .and(header("authorization", "Bearer secret-token"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(metadata_body("test-pkg", "1.0.0", &tarball_url)),
+            )
+            .mount(&server)
+            .await;
+
+        let client = RegistryClient::new_with_options(&server.uri(), &npmrc, true).unwrap();
+        let metadata = client
+            .get_package_metadata("test-pkg")
+            .await
+            .expect("get_package_metadata must still attach the Authorization header");
+        assert_eq!(metadata.name, "test-pkg");
+        assert!(metadata.versions.contains_key("1.0.0"));
+    }
+
+    /// R3 — negative control: when no `.npmrc` entry matches the
+    /// tarball URL's host+path (public/unauthenticated registry),
+    /// `download_package` must NOT attach an Authorization header. The
+    /// tarball mock 401s whenever an Authorization header is present at
+    /// all, so this only passes if no header was sent.
+    #[tokio::test]
+    async fn download_package_sends_no_auth_header_when_no_token_configured() {
+        let server = MockServer::start().await;
+        let tarball_url = format!("{}/tarballs/public-pkg-1.0.0.tgz", server.uri());
+        let mut npmrc = NpmrcConfig::default();
+        npmrc.registry = format!("{}/", server.uri());
+        // Deliberately no auth_tokens entry — unauthenticated registry.
+
+        Mock::given(method("GET"))
+            .and(path("/public-pkg"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(metadata_body("public-pkg", "1.0.0", &tarball_url)),
+            )
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/tarballs/public-pkg-1.0.0.tgz"))
+            .and(header_exists("authorization"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/tarballs/public-pkg-1.0.0.tgz"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"public-bytes".to_vec()))
+            .mount(&server)
+            .await;
+
+        let client = RegistryClient::new_with_options(&server.uri(), &npmrc, true).unwrap();
+        let bytes = client
+            .download_package("public-pkg", "1.0.0")
+            .await
+            .expect(
+                "download_package must not attach a stale/empty Authorization header when no token is configured",
+            );
+        assert_eq!(bytes, b"public-bytes".to_vec());
+    }
+
+    /// R4 — happy-path regression: once the Authorization header is
+    /// attached and the mock tarball endpoint returns 200 with a known
+    /// byte payload, `download_package`'s existing `response.bytes()`
+    /// handling still returns exactly those bytes unchanged.
+    #[tokio::test]
+    async fn download_package_returns_tarball_bytes_on_authenticated_success() {
+        let server = MockServer::start().await;
+        let tarball_url = format!("{}/tarballs/test-pkg-2.0.0.tgz", server.uri());
+        let npmrc = npmrc_with_token(&server.uri(), "another-token");
+        let payload = b"exact-known-tarball-payload-bytes".to_vec();
+
+        Mock::given(method("GET"))
+            .and(path("/test-pkg"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(metadata_body("test-pkg", "2.0.0", &tarball_url)),
+            )
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/tarballs/test-pkg-2.0.0.tgz"))
+            .and(header("authorization", "Bearer another-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(payload.clone()))
+            .mount(&server)
+            .await;
+
+        let client = RegistryClient::new_with_options(&server.uri(), &npmrc, true).unwrap();
+        let bytes = client
+            .download_package("test-pkg", "2.0.0")
+            .await
+            .expect("download_package must succeed on authenticated 200");
+        assert_eq!(bytes, payload);
     }
 }
 

@@ -6343,6 +6343,7 @@ dependencies = [
  "tree-sitter-typescript",
  "walkdir",
  "which",
+ "wiremock",
  "zip 2.4.2",
 ]
 
