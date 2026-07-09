@@ -368,17 +368,20 @@ Gate Inventory:
 
 ID: primary-replicas
 Type: Runtime
-Root WI: #768
+Root WI: #768, #1327
 Status: confirmed
-Surfaces: Raft: topic journal state machine over `libs/raft-core` and `libs/raft-host`.
-EC Dimensions: stability: pending raft replay failover gate - leader failover without committed event loss
+Surfaces: Raft: topic journal state machine over `libs/raft-core` and `libs/raft-host`'s `TapeRaft`/`TapeStateMachine` (#1327); auto-mode leader/follower topology activated by `REPLICAS_PER_SHARD>1` (plus the standard `POD_NAME`/`SHARD_COUNT`/`VOTER_COUNT` downward-API quartet) — no tape-specific `--raft` flag. Peer mTLS (`TAPE_PEER_TLS_CERT`/`_KEY`/`_CA`, `TAPE_PEER_MTLS`) validates at startup but is not yet terminated on the peer port (`libs/raft-host`'s h2c transport has no TLS seam yet).
+EC Dimensions: behavior: real 3-node in-process raft group - election, leader-applied writes replicate to followers, follower-received appends forward to the leader, direct follower peer-route POST answers 421, fresh-node catch-up via InstallSnapshot; stability: live 3-node `kill -9` leader failover with no committed event loss, restart-recovery of the durable applied-index floor across process restarts; pending: peer-mTLS termination (config-surface + fail-fast validation only today)
 Required Verification: conformance, dogfood
 Promise:
 Tape replicates committed topic journal state through raft so replay ranges and
-checkpoints survive leader failover.
+checkpoints survive leader failover. Peer-TLS is a documented config-surface
+gap, not a silent security regression.
 Gate Inventory:
-- pending: apps/tape/tests/raft_replay.rs
+- apps/tape/tests/raft_cluster.rs
+- apps/tape/tests/raft_failover.rs
+- apps/tape/tests/raft_persistence.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| raft-backed-replay-journal | epic | #768 | planned | planned | none | pending raft replay failover gate |
+| raft-backed-replay-journal | epic | #768 | implemented | planned | dogfood | apps/tape/tests/{raft_cluster,raft_failover,raft_persistence}.rs prove election/replication/failover/restart-recovery; #1327; peer-mTLS termination gate still pending |
