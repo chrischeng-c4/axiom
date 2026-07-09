@@ -2816,6 +2816,17 @@ struct Collection {
     /// a strictly-older versioned replace drops the entire item. In-memory
     /// only (reconstructed by WAL replay), same as `cell_versions`.
     doc_versions: FastHashMap<u32, u64>,
+    /// #1293: `docs:replace` no-op suppression side cache. Sparse `doc-id →
+    /// field-name → FxHash content checksum` of the last value actually
+    /// *written* to a `text`/`vector` field via `docs:replace` — the only
+    /// two field types with no cheap forward-value accessor to compare
+    /// against directly (see `Engine::replace_value_unchanged`). Populated
+    /// and read only by the replace path; the `/index` merge path never
+    /// touches it. In-memory only, same as `cell_versions`/`doc_versions` —
+    /// a missing entry after a restart just means the next replace of that
+    /// field always applies (safe: writing is never wrong, only silently
+    /// skipping would be).
+    field_checksums: FastHashMap<u32, FastHashMap<String, u64>>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
@@ -2837,6 +2848,7 @@ impl Collection {
             search_cache: RwLock::new(FastHashMap::default()),
             cell_versions: FastHashMap::default(),
             doc_versions: FastHashMap::default(),
+            field_checksums: FastHashMap::default(),
         })
     }
 
@@ -3449,27 +3461,40 @@ impl Engine {
 
         let mut results = Vec::with_capacity(req.docs.len());
         let mut total_fields_written = 0u64;
+        let mut total_fields_skipped = 0u64;
+        let mut total_bytes = 0u64;
         let mut any_written = false;
         for item in req.docs {
-            let result = Self::replace_one_doc(collection_id, coll, item);
-            if let ReplaceDocResult::Ok { fields_written, .. } = &result {
+            let (result, bytes) = Self::replace_one_doc(collection_id, coll, item);
+            if let ReplaceDocResult::Ok {
+                fields_written,
+                fields_skipped,
+            } = &result
+            {
                 any_written = true;
                 total_fields_written += *fields_written as u64;
+                total_fields_skipped += *fields_skipped as u64;
+                total_bytes += bytes;
             }
             results.push(result);
         }
         if any_written {
             coll.last_indexed_at = Some(std::time::SystemTime::now());
         }
-        metrics.incr_index(total_fields_written, 0);
+        metrics.incr_index(total_fields_written, total_bytes);
+        metrics.incr_replace_skipped(total_fields_skipped);
         Ok(ReplaceDocsResponse { results })
     }
 
     /// Apply one [`ReplaceDocItem`], full-replacement at doc granularity.
     /// Fields absent from `item.fields` but present on the doc today are
-    /// dropped; fields present in both are re-applied (drop-then-reapply,
-    /// the same field-granularity replacement `index_collection` already
-    /// uses); fields new to the doc are added.
+    /// dropped; fields present in both are compared against the currently
+    /// indexed state (see [`Engine::replace_value_unchanged`]) and, when
+    /// equal, skipped entirely — no `drop_eid`, no `apply_value`, no
+    /// posting-list rewrite or HNSW tombstone/reinsert (#1293); fields new
+    /// to the doc, or whose value changed, are re-applied (drop-then-
+    /// reapply, the same field-granularity replacement `index_collection`
+    /// already uses).
     ///
     /// Every field is type-checked against the schema *before* any
     /// mutation happens, so a per-item error (unknown field, type
@@ -3477,11 +3502,16 @@ impl Engine {
     /// unlike `index_collection`'s partial-apply-on-error, docs:replace is
     /// framed as an atomic full replacement and a partially-applied doc
     /// would break that guarantee.
+    ///
+    /// Returns the per-item result plus the total bytes actually written
+    /// (0 for a fully-skipped item, `Dropped`, or `Error`), which the
+    /// caller feeds into `Metrics::incr_index` so a byte-identical resend
+    /// leaves `lumen_index_bytes_total` unmoved.
     fn replace_one_doc(
         collection_id: &str,
         coll: &mut Collection,
         item: ReplaceDocItem,
-    ) -> ReplaceDocResult {
+    ) -> (ReplaceDocResult, u64) {
         let (id, new_doc_in_request) = coll
             .interner
             .intern_owned_with_status(item.external_id.clone());
@@ -3493,29 +3523,38 @@ impl Engine {
         if let Some(v) = item.version {
             if let Some(stored) = coll.doc_versions.get(&id).copied() {
                 if stored >= v {
-                    return ReplaceDocResult::Dropped {
-                        current_version: stored,
-                    };
+                    return (
+                        ReplaceDocResult::Dropped {
+                            current_version: stored,
+                        },
+                        0,
+                    );
                 }
             }
         }
 
         for (field_name, value) in &item.fields {
             let Some(fi) = coll.fields.get(field_name.as_str()) else {
-                return ReplaceDocResult::Error {
-                    code: "unknown_field".to_string(),
-                    message: StorageError::UnknownField {
-                        collection: collection_id.to_string(),
-                        field: field_name.clone(),
-                    }
-                    .to_string(),
-                };
+                return (
+                    ReplaceDocResult::Error {
+                        code: "unknown_field".to_string(),
+                        message: StorageError::UnknownField {
+                            collection: collection_id.to_string(),
+                            field: field_name.clone(),
+                        }
+                        .to_string(),
+                    },
+                    0,
+                );
             };
             if let Err(e) = validate_value(fi, value, field_name) {
-                return ReplaceDocResult::Error {
-                    code: "type_mismatch".to_string(),
-                    message: e.to_string(),
-                };
+                return (
+                    ReplaceDocResult::Error {
+                        code: "type_mismatch".to_string(),
+                        message: e.to_string(),
+                    },
+                    0,
+                );
             }
         }
 
@@ -3534,29 +3573,56 @@ impl Engine {
                 if let Some(fi) = coll.fields.get_mut(f.as_str()) {
                     fi.drop_eid(id, &eid);
                 }
+                // The field is gone; drop its stale replace-path checksum
+                // (see `replace_value_unchanged`) so it can never be
+                // mistakenly compared against if the field is re-added
+                // later without a fresh write in between.
+                if let Some(sub) = coll.field_checksums.get_mut(&id) {
+                    sub.remove(f);
+                }
             }
         }
 
         let mut fields_written = 0u32;
+        let mut fields_skipped = 0u32;
+        let mut bytes_written = 0u64;
         for (field_name, value) in &item.fields {
+            let is_delta = old_fields.contains(field_name);
+            if is_delta && Self::replace_value_unchanged(coll, id, field_name, value) {
+                // Server-side no-op suppression (#1293): the incoming value
+                // is byte-identical to what's already indexed — skip the
+                // drop/reapply entirely so unchanged fields never rewrite a
+                // posting list or tombstone+reinsert an HNSW vector.
+                fields_skipped += 1;
+                continue;
+            }
             let fi = coll
                 .fields
                 .get_mut(field_name.as_str())
                 .expect("field presence validated above");
-            if old_fields.contains(field_name) {
+            if is_delta {
                 fi.drop_eid(id, &eid);
             }
-            if let Err(e) = apply_value(fi, id, &eid, value, field_name) {
-                return ReplaceDocResult::Error {
-                    code: "apply_failed".to_string(),
-                    message: e.to_string(),
-                };
-            }
+            let bytes = match apply_value(fi, id, &eid, value, field_name) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    return (
+                        ReplaceDocResult::Error {
+                            code: "apply_failed".to_string(),
+                            message: e.to_string(),
+                        },
+                        0,
+                    );
+                }
+            };
+            Self::record_replace_checksum(coll, id, field_name, value);
             fields_written += 1;
+            bytes_written += bytes;
         }
 
         if item.fields.is_empty() {
             coll.eid_fields.remove(&id);
+            coll.field_checksums.remove(&id);
         } else {
             coll.eid_fields.insert(
                 id,
@@ -3567,10 +3633,89 @@ impl Engine {
             coll.doc_versions.insert(id, v);
         }
 
-        ReplaceDocResult::Ok {
-            fields_written,
-            fields_skipped: 0,
+        (
+            ReplaceDocResult::Ok {
+                fields_written,
+                fields_skipped,
+            },
+            bytes_written,
+        )
+    }
+
+    /// Read-only per-(doc,field) equality check against the currently
+    /// indexed state — the no-op suppression decision for `docs:replace`
+    /// (#1293). Only called for a field the doc already had (`old_fields`);
+    /// a brand-new field is never "unchanged".
+    ///
+    /// - `keyword`/`number`/`set`/`hash` compare the exact indexed value:
+    ///   each backend already keeps a forward accessor (`keyword_at`,
+    ///   `number_at`, `set_members`, `hash_at`) for predicate/delete use, so
+    ///   equality is a real value compare, no extra storage.
+    /// - `text` has no raw forward store (only tokenized postings — the
+    ///   original string isn't recoverable), and `vector` deliberately
+    ///   avoids a full f32 compare (the point is to skip the expensive
+    ///   HNSW tombstone/reinsert, not pay an equivalent cost checking it).
+    ///   Both instead compare a stored FxHash checksum of the last
+    ///   *replaced* value, kept in `Collection::field_checksums` — a
+    ///   replace-path-only side cache, never persisted and never touched
+    ///   by the `/index` merge path (out of scope; #1293 Scope). A missing
+    ///   checksum (field never replaced before, or last written via
+    ///   `/index`) is always treated as "changed": the safe default is to
+    ///   write, never to silently skip.
+    fn replace_value_unchanged(
+        coll: &Collection,
+        id: u32,
+        field_name: &str,
+        value: &FieldValue,
+    ) -> bool {
+        let Some(fi) = coll.fields.get(field_name) else {
+            return false;
+        };
+        match (fi, value) {
+            (FieldIndex::Keyword(k), FieldValue::String(s)) => {
+                k.keyword_at(id).as_deref() == Some(s.as_str())
+            }
+            (FieldIndex::Number(n), FieldValue::Number(x)) => {
+                SortableF64::new(*x).is_ok_and(|key| n.number_at(id) == Some(key))
+            }
+            (FieldIndex::Set(s), FieldValue::StringList(elems)) => {
+                let want: BTreeSet<String> = elems.iter().cloned().collect();
+                s.set_members(id) == Some(want)
+            }
+            (FieldIndex::Hash(h), FieldValue::String(s)) => parse_hash(s).ok() == h.hash_at(id),
+            (FieldIndex::Text { .. }, FieldValue::String(s)) => coll
+                .field_checksums
+                .get(&id)
+                .and_then(|m| m.get(field_name))
+                .is_some_and(|&cs| cs == checksum_bytes(s.as_bytes())),
+            (FieldIndex::Vector { .. }, FieldValue::Vector(v)) => coll
+                .field_checksums
+                .get(&id)
+                .and_then(|m| m.get(field_name))
+                .is_some_and(|&cs| cs == checksum_f32(v)),
+            _ => false,
         }
+    }
+
+    /// After actually writing a `text`/`vector` field on the replace path,
+    /// remember its content checksum for the next `replace_value_unchanged`
+    /// comparison (see that function for why only these two types need a
+    /// side cache). No-op for every other field type.
+    fn record_replace_checksum(
+        coll: &mut Collection,
+        id: u32,
+        field_name: &str,
+        value: &FieldValue,
+    ) {
+        let checksum = match (coll.fields.get(field_name), value) {
+            (Some(FieldIndex::Text { .. }), FieldValue::String(s)) => checksum_bytes(s.as_bytes()),
+            (Some(FieldIndex::Vector { .. }), FieldValue::Vector(v)) => checksum_f32(v),
+            _ => return,
+        };
+        coll.field_checksums
+            .entry(id)
+            .or_default()
+            .insert(field_name.to_string(), checksum);
     }
 
     // -- Search -------------------------------------------------------------
@@ -4611,6 +4756,28 @@ fn value_kind(v: &FieldValue) -> &'static str {
         FieldValue::Vector(_) => "f32[]",
         FieldValue::StringList(_) => "string[]",
     }
+}
+
+/// FxHash content checksum of a `text` field's raw string, used only by
+/// `docs:replace`'s no-op suppression (`Engine::replace_value_unchanged` /
+/// `Engine::record_replace_checksum`) — see those for why `text` compares a
+/// checksum instead of the raw value.
+fn checksum_bytes(bytes: &[u8]) -> u64 {
+    let mut hasher = FxHasher::default();
+    hasher.write(bytes);
+    hasher.finish()
+}
+
+/// FxHash content checksum of a `vector` field's raw `f32` values (hashed
+/// via their bit patterns, not their text form), used only by
+/// `docs:replace`'s no-op suppression — the whole point is avoiding a full
+/// f32 compare (or an HNSW round trip) just to detect "unchanged".
+fn checksum_f32(v: &[f32]) -> u64 {
+    let mut hasher = FxHasher::default();
+    for x in v {
+        hasher.write_u32(x.to_bits());
+    }
+    hasher.finish()
 }
 
 /// Non-mutating type-check mirroring [`apply_value`]'s match arms, used by
@@ -8647,6 +8814,7 @@ impl Collection {
             search_cache: RwLock::new(FastHashMap::default()),
             cell_versions: FastHashMap::default(),
             doc_versions: FastHashMap::default(),
+            field_checksums: FastHashMap::default(),
         })
     }
 }
@@ -9320,6 +9488,7 @@ impl Collection {
             search_cache: RwLock::new(FastHashMap::default()),
             cell_versions: FastHashMap::default(),
             doc_versions: FastHashMap::default(),
+            field_checksums: FastHashMap::default(),
         })
     }
 }

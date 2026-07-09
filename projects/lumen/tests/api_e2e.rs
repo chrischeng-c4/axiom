@@ -684,8 +684,13 @@ async fn replace_docs_implicit_delete_field_absent_from_replacement() {
     resp.assert_status_ok();
     let body: Value = resp.json();
     assert_eq!(body["results"][0]["status"], "ok");
-    assert_eq!(body["results"][0]["fields_written"], 1);
-    assert_eq!(body["results"][0]["fields_skipped"], 0);
+    // #1293: `title` is resent with the exact value it already had, so
+    // no-op suppression skips it — the implicit delete of the *omitted*
+    // `state` field is a separate mechanism (driven by `old_fields` minus
+    // `item.fields`, not by `fields_written`/`fields_skipped`) and still
+    // applies regardless.
+    assert_eq!(body["results"][0]["fields_written"], 0);
+    assert_eq!(body["results"][0]["fields_skipped"], 1);
 
     // `state=open` no longer matches — the field was implicitly deleted.
     let resp = s.post("/collections/rows/search").json(&find_open()).await;
@@ -877,6 +882,220 @@ async fn replace_docs_over_limit_returns_400() {
         .json(&json!({ "docs": docs }))
         .await;
     resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
+}
+
+/// #1293 AC1: resending a byte-identical doc is a full no-op — every field
+/// compares equal to the currently indexed state, so `fields_written` is 0
+/// and no bytes are written to any field index (`lumen_index_bytes_total`
+/// stays flat), proven via the engine's own counters.
+#[tokio::test]
+async fn replace_docs_byte_identical_resend_is_full_noop() {
+    let (s, engine) = server_with_engine();
+    s.put("/collections/rows")
+        .json(&json!({ "fields": {
+            "title": { "type": "keyword" },
+            "score": { "type": "number" }
+        }}))
+        .await
+        .assert_status_ok();
+
+    let body = json!({ "docs": [
+        { "external_id": "row-1", "fields": { "title": "hello", "score": 4.5 } }
+    ]});
+    let resp = s.put("/collections/rows/docs:replace").json(&body).await;
+    resp.assert_status_ok();
+    let first: Value = resp.json();
+    assert_eq!(first["results"][0]["fields_written"], 2);
+    assert_eq!(first["results"][0]["fields_skipped"], 0);
+
+    let bytes_before = engine.metrics().index_bytes_total.get();
+    let skipped_before = engine.metrics().replace_fields_skipped_total.get();
+
+    // Resend the exact same request.
+    let resp = s.put("/collections/rows/docs:replace").json(&body).await;
+    resp.assert_status_ok();
+    let second: Value = resp.json();
+    assert_eq!(
+        second["results"][0]["status"], "ok",
+        "no version was sent, so an identical resend is `ok`, not `dropped`: {second}"
+    );
+    assert_eq!(
+        second["results"][0]["fields_written"], 0,
+        "a byte-identical resend writes nothing: {second}"
+    );
+    assert_eq!(second["results"][0]["fields_skipped"], 2);
+
+    assert_eq!(
+        engine.metrics().index_bytes_total.get(),
+        bytes_before,
+        "no bytes should be appended to any field index for a full no-op resend"
+    );
+    assert_eq!(
+        engine.metrics().replace_fields_skipped_total.get(),
+        skipped_before + 2,
+        "the suppression counter must move by exactly the 2 skipped fields"
+    );
+}
+
+/// #1293 AC2 + AC3: in a mixed-change doc, an unchanged `vector` field is
+/// skipped (no HNSW tombstone/reinsert — proven by the doc staying
+/// knn-searchable at its original vector unchanged) while a changed
+/// `keyword` sibling is still applied and visible to search.
+#[tokio::test]
+async fn replace_docs_unchanged_vector_skipped_alongside_changed_keyword() {
+    let (s, engine) = server_with_engine();
+    s.put("/collections/items")
+        .json(&json!({ "fields": {
+            "state": { "type": "keyword" },
+            "embedding": { "type": "vector", "dim": 3, "metric": "cosine" }
+        }}))
+        .await
+        .assert_status_ok();
+
+    let vector = json!([1.0, 0.0, 0.0]);
+    s.put("/collections/items/docs:replace")
+        .json(&json!({ "docs": [
+            { "external_id": "e1", "fields": { "state": "open", "embedding": vector } }
+        ]}))
+        .await
+        .assert_status_ok();
+
+    let skipped_before = engine.metrics().replace_fields_skipped_total.get();
+
+    // `state` changes, `embedding` is resent byte-identical.
+    let resp = s
+        .put("/collections/items/docs:replace")
+        .json(&json!({ "docs": [
+            { "external_id": "e1", "fields": { "state": "closed", "embedding": vector } }
+        ]}))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(
+        body["results"][0]["fields_written"], 1,
+        "only `state` actually changed: {body}"
+    );
+    assert_eq!(
+        body["results"][0]["fields_skipped"], 1,
+        "the byte-identical `embedding` value must be skipped: {body}"
+    );
+    assert_eq!(
+        engine.metrics().replace_fields_skipped_total.get(),
+        skipped_before + 1
+    );
+
+    // The changed field is reflected in search...
+    let resp = s
+        .post("/collections/items/search")
+        .json(&json!({ "query": { "term": { "field": "state", "value": "closed" } }, "limit": 10 }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["hits"][0]["external_id"], "e1");
+
+    // ...and the skipped vector field is untouched: the doc is still found
+    // at its original vector with the same top-1 result (no tombstone).
+    let resp = s
+        .post("/collections/items/search")
+        .json(&json!({ "query": { "knn": { "field": "embedding", "vector": vector, "k": 1 } }, "limit": 1 }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(
+        body["hits"][0]["external_id"], "e1",
+        "unchanged vector must still be indexed and searchable: {body}"
+    );
+}
+
+/// #1293: a `text` field's checksum-based no-op suppression skips when the
+/// raw string is unchanged, but a genuinely different string of the same
+/// tokens (or a byte-different string) is still applied.
+#[tokio::test]
+async fn replace_docs_unchanged_text_field_skipped_changed_text_applies() {
+    let (s, engine) = server_with_engine();
+    s.put("/collections/rows")
+        .json(&json!({ "fields": { "title": { "type": "text" }, "state": { "type": "keyword" } } }))
+        .await
+        .assert_status_ok();
+
+    s.put("/collections/rows/docs:replace")
+        .json(&json!({ "docs": [
+            { "external_id": "row-1", "fields": { "title": "hello world", "state": "open" } }
+        ]}))
+        .await
+        .assert_status_ok();
+
+    let skipped_before = engine.metrics().replace_fields_skipped_total.get();
+
+    // `title` resent identically, `state` changes.
+    let resp = s
+        .put("/collections/rows/docs:replace")
+        .json(&json!({ "docs": [
+            { "external_id": "row-1", "fields": { "title": "hello world", "state": "closed" } }
+        ]}))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["results"][0]["fields_written"], 1);
+    assert_eq!(body["results"][0]["fields_skipped"], 1);
+    assert_eq!(
+        engine.metrics().replace_fields_skipped_total.get(),
+        skipped_before + 1
+    );
+
+    // Now change `title` too — it must actually re-index (search reflects
+    // the new text, not the old one).
+    s.put("/collections/rows/docs:replace")
+        .json(&json!({ "docs": [
+            { "external_id": "row-1", "fields": { "title": "goodbye world", "state": "closed" } }
+        ]}))
+        .await
+        .assert_status_ok();
+    let resp = s
+        .post("/collections/rows/search")
+        .json(
+            &json!({ "query": { "match": { "field": "title", "text": "goodbye" } }, "limit": 10 }),
+        )
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(
+        body["hits"][0]["external_id"], "row-1",
+        "a genuinely changed text field must re-index: {body}"
+    );
+}
+
+/// #1293 AC4: the suppression counter is visible on `/metrics`.
+#[tokio::test]
+async fn replace_docs_skip_counter_visible_on_metrics_endpoint() {
+    let s = server();
+    s.put("/collections/rows")
+        .json(&json!({ "fields": { "state": { "type": "keyword" } } }))
+        .await
+        .assert_status_ok();
+    let body = json!({ "docs": [
+        { "external_id": "row-1", "fields": { "state": "open" } }
+    ]});
+    s.put("/collections/rows/docs:replace")
+        .json(&body)
+        .await
+        .assert_status_ok();
+    s.put("/collections/rows/docs:replace")
+        .json(&body)
+        .await
+        .assert_status_ok();
+
+    let resp = s.get("/metrics").await;
+    resp.assert_status_ok();
+    let text = resp.text();
+    assert!(
+        text.contains("lumen_replace_fields_skipped_total"),
+        "missing suppression counter in:\n{text}"
+    );
+    assert!(
+        text.contains("lumen_replace_fields_skipped_total 1"),
+        "expected the one skipped field to be counted:\n{text}"
+    );
 }
 
 #[tokio::test]
