@@ -807,7 +807,38 @@ fn alias_key(v: MbValue) -> String {
     if let Some(s) = extract_str(v) {
         return format!("V:str:{s:?}");
     }
+    if let Some(seq) = alias_sequence_key(v) {
+        return seq;
+    }
     format!("V:?:{:x}", v.to_bits())
+}
+
+fn alias_sequence_key(v: MbValue) -> Option<String> {
+    use super::super::rc::ObjData;
+    v.as_ptr().and_then(|ptr| unsafe {
+        match &(*ptr).data {
+            ObjData::Tuple(items) => Some(format!(
+                "Q:({})",
+                items
+                    .iter()
+                    .copied()
+                    .map(alias_key)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )),
+            ObjData::List(lock) => Some(format!(
+                "L:[{}]",
+                lock.read()
+                    .unwrap()
+                    .iter()
+                    .copied()
+                    .map(alias_key)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )),
+            _ => None,
+        }
+    })
 }
 
 fn tuple_items(v: MbValue) -> Vec<MbValue> {
