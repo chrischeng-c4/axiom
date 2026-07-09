@@ -127,6 +127,15 @@ struct ServeArgs {
     /// startup) when `--auth required`.
     #[arg(long, env = "TAPE_TOKEN_REGISTRY_FILE")]
     token_registry_file: Option<PathBuf>,
+    /// Durable directory for raft hard state + the applied-index marker
+    /// (#1327). Required in replica/HA mode (`REPLICAS_PER_SHARD > 1`);
+    /// unused in single-node serving.
+    #[arg(long, env = "TAPE_DATA_DIR")]
+    data_dir: Option<PathBuf>,
+    /// Headless service name peers are resolved against in replica/HA mode
+    /// (`ClusterTopology::from_env`).
+    #[arg(long, env = "TAPE_PEER_SERVICE", default_value = "tape")]
+    peer_service: String,
 }
 
 #[derive(clap::Args)]
@@ -369,7 +378,83 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         Some(path) => load_journal(path)?,
         None => TapeJournal::default(),
     };
-    let state = tape::server::AppState::with_auth(journal, args.store.clone(), auth);
+    let mut state = tape::server::AppState::with_auth(journal, args.store.clone(), auth);
+
+    // Auto-mode HA (#1327): the standard downward-API quartet flips replica
+    // mode (REPLICAS_PER_SHARD > 1) — no tape-specific flag. Topology comes
+    // from raft-host (never re-derive the ordinal math locally); the raft
+    // group replicates append/checkpoint-put into this process's journal and
+    // its peer router rides the serve port OUTSIDE the bearer-auth data plane
+    // (cluster traffic, tokenless like probes; mTLS termination is a later
+    // slice — raft-host's h2c transport has no TLS seam yet). Held for the
+    // process lifetime via `state` — dropping it would abort the tick/pump
+    // tasks.
+    if raft_host::cluster::replica_mode() {
+        // Peer-mTLS material (#1327): load + validate BEFORE the raft group
+        // spawns, so a misconfigured deployment (partial TAPE_PEER_TLS_* set,
+        // mis-pointed path, unusable PEM) exits nonzero at startup instead of
+        // failing at dial time. Termination on the peer port is NOT yet
+        // applied — raft-host's h2c transport has no TLS seam (the filed gap
+        // in the TD); this proves the mounted material is usable today.
+        match tape::peer_tls::PeerTlsConfig::from_env()? {
+            Some(tls) => {
+                tls.rustls_server_config()?;
+                tls.rustls_client_config()?;
+                if tls.required {
+                    tracing::warn!(
+                        cert = %tls.cert.display(),
+                        "peer TLS material validated; TAPE_PEER_MTLS=on requested but mTLS \
+                         termination on the raft peer port is not yet applied (raft-host/h2c \
+                         TLS seam gap) — peer RPCs stay h2c"
+                    );
+                } else {
+                    tracing::info!(
+                        cert = %tls.cert.display(),
+                        "peer TLS material validated (not required); peer RPCs stay h2c until \
+                         the raft-host TLS seam lands"
+                    );
+                }
+            }
+            None => tracing::info!(
+                "no peer TLS material configured (TAPE_PEER_TLS_*); peer RPCs are plain h2c"
+            ),
+        }
+        let peer_port = args
+            .bind
+            .rsplit(':')
+            .next()
+            .and_then(|p| p.parse::<u16>().ok())
+            .ok_or_else(|| {
+                anyhow::anyhow!("cannot derive the raft peer port from --bind {}", args.bind)
+            })?;
+        let topo = raft_host::ClusterTopology::from_env(
+            "tape",
+            &args.peer_service,
+            peer_port,
+            "TAPE_PEERS",
+        )?;
+        let data_dir = args.data_dir.clone().ok_or_else(|| {
+            anyhow::anyhow!("replica/HA mode requires a durable --data-dir (TAPE_DATA_DIR)")
+        })?;
+        anyhow::ensure!(
+            !data_dir.as_os_str().is_empty(),
+            "replica/HA mode requires a durable --data-dir (TAPE_DATA_DIR)"
+        );
+        let raft = std::sync::Arc::new(tape::raft::TapeRaft::from_topology(
+            state.journal_handle(),
+            &data_dir,
+            &topo,
+            tape::raft::TapeRaft::host_config(tape::raft::SNAPSHOT_EVERY),
+        )?);
+        tracing::info!(
+            node_id = topo.node_id,
+            replicas = topo.replicas_per_shard,
+            voters = topo.membership.voters.len(),
+            "raft: replica/HA mode — append/checkpoint-put replicate; peer RPCs on the serve port"
+        );
+        state.set_raft(raft);
+    }
+
     let app = tape::server::router(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&args.bind).await?;

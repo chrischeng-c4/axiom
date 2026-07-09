@@ -40,6 +40,15 @@ service-metrics = { path = "../../libs/service-metrics" }
 # Shared bearer-token auth contract (#1326): StaticRoleMapVerifier, the
 # blanket auth_middleware, and the registry loader.
 service-auth = { path = "../../libs/service-auth" }
+# Shared raft driver (#1327): RaftHost/RaftStore/RaftStateMachine,
+# ClusterTopology::from_env, OutcomeWindow, SnapshotPolicy/HostConfig.
+raft-host = { path = "../../libs/raft-host" }
+# Peer-mTLS config-surface adapter (#1327): PeerTlsConfig::from_env +
+# rustls server/client config builders.
+service-tls = { path = "../../libs/service-tls" }
+# rustls config types surfaced by the peer_tls builder passthroughs (always
+# in the graph via service-tls).
+rustls = "0.23"
 axum = { workspace = true }
 utoipa = { workspace = true }
 # Serve-path tracing init (RUST_LOG wins, else info EnvFilter).
