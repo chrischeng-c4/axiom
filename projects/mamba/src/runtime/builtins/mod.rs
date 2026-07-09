@@ -6375,6 +6375,14 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
     if kw_pairs.is_empty() {
         return mb_call_spread(func, MbValue::from_ptr(MbObject::new_list(pos)));
     }
+    if func.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. } if class_name == "__exec_function__"
+        )
+    }) {
+        return eval_exec::mb_exec_function_call_with_kwargs(func, pos, kwargs_dict);
+    }
     if super::stdlib::ast_mod::mb_ast_is_node_init_func(func) {
         let self_v = pos.first().copied().unwrap_or_else(MbValue::none);
         return super::stdlib::ast_mod::mb_ast_init_bound_method_kwargs(
