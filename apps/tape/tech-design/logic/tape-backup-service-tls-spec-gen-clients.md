@@ -26,3 +26,10 @@ summary: >
   in-process axum router test for the new route.
 fill_sections: [logic, unit-test, changes]
 ---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+(fill)
+```
