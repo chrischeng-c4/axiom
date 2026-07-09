@@ -36,6 +36,10 @@ fn legacy_top_level_commands_are_removed() {
     for name in [
         "status",
         "list",
+        // #1278 (epic #1270 R7): `aw standardize` fully retired -- reporting
+        // folded into `aw health`'s takeover-audit axis, `audit record`
+        // rehomed to `aw td audit-record`.
+        "standardize",
         // "view" was re-added by the repo-view desktop app capability
         // (Commands::View in src/cli/commands.rs) — no longer removed.
         "changes",
@@ -94,7 +98,6 @@ fn workflow_protocol_commands_remain_registered() {
         "capability",
         "wi",
         "td",
-        "standardize",
         "generator",
         "conf",
         "chat",
@@ -214,6 +217,15 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         "aw standardize managed",
         "aw standardize semantic",
         "aw standardize traceability",
+        // NOT added here: `aw standardize` / `aw standardize audit` (#1278,
+        // epic #1270 R7 -- the namespace is now fully retired: reporting
+        // folded into `aw health`'s takeover-audit axis, `audit record`
+        // rehomed to `aw td audit-record`). Root `AGENTS.md` (lines 56, 82,
+        // 115, 270) and `.agents/skills/aw-standardize/SKILL.md` still
+        // reference `aw standardize`/`aw standardize audit`, which are
+        // pre-existing in-flight edits outside this change's scope (see
+        // #918's identical note above re:
+        // `templates/cli/mainthread/skills/aw-wi/SKILL.md`).
         // NOT added here: `aw td code-claim` (#1273, folded into
         // `aw td create --from-source`) still appears in AGENTS.md and the
         // aw-cb-claim/aw-standardize skill docs, which are pre-existing
@@ -357,14 +369,10 @@ fn test_td_create_from_source_flags_registered() {
 fn public_aggregation_points_remain_registered() {
     let cmd = Cli::command();
     assert!(cmd.find_subcommand("health").is_some());
-
-    let standardize = cmd
-        .find_subcommand("standardize")
-        .expect("standardize namespace registered");
-    // #920 (epic #914 slice F): `aw standardize` is retired down to `audit`
-    // only; `managed`/`semantic`/`traceability` layer drivers are gone.
-    assert!(standardize.find_subcommand("audit").is_some());
-    assert!(standardize.find_subcommand("semantic").is_none());
+    // #1278 (epic #1270 R7): `aw standardize` fully retired -- reporting
+    // folded into `aw health`'s takeover-audit axis, `audit record` rehomed
+    // to `aw td audit-record` (asserted by `standardize_test.rs`).
+    assert!(cmd.find_subcommand("standardize").is_none());
 
     let generator = cmd
         .find_subcommand("generator")

@@ -14,7 +14,6 @@ use crate::cli::issues;
 use crate::cli::llm;
 use crate::cli::project;
 use crate::cli::standard_cli;
-use crate::cli::standardize;
 use crate::cli::view;
 
 /// Agentic Workflow CLI commands
@@ -70,9 +69,6 @@ pub enum Commands {
 
     /// External-contract lifecycle: generate tests/tool configs and verify EC gates.
     Ec(ec::EcArgs),
-
-    /// Existing-project workflow guidance and bounded remediation.
-    Standardize(standardize::StandardizeArgs),
 }
 
 /// Run an Agentic Workflow CLI command
@@ -124,9 +120,6 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         }
         Commands::Ec(args) => {
             ec::run(args)?;
-        }
-        Commands::Standardize(args) => {
-            standardize::run(args).await?;
         }
     }
 

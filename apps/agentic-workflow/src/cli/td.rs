@@ -64,6 +64,14 @@ pub enum TdCommand {
     /// standardization action, homed as a first-class td verb (#919).
     /// @spec apps/agentic-workflow/tech-design/surface/specs/score-standardization.md#the-6-standardization-actions
     Promote(PromoteArgs),
+    /// Record a bounded preservation audit fixture for the project. This is
+    /// the former `aw standardize audit record` action, homed as a
+    /// first-class td verb mirroring the `promote` precedent above (#1278,
+    /// epic #1270 R7). `aw standardize audit check`'s reporting moved to
+    /// `aw health`'s takeover-audit axis instead of a sibling read-only
+    /// command.
+    /// @spec apps/agentic-workflow/tech-design/surface/specs/aw-standardize-audit-first-quality.md#schema
+    AuditRecord(TdAuditRecordArgs),
 }
 
 /// Args for `aw td claim <slug>`.
@@ -104,6 +112,24 @@ pub struct PromoteArgs {
     /// Emit the result envelope as pretty-printed JSON.
     #[arg(long)]
     pub json: bool,
+}
+
+/// Args for `aw td audit-record`.
+#[derive(Debug, Args)]
+/// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
+pub struct TdAuditRecordArgs {
+    /// Override workspace scopes. Repeatable; supports simple glob prefixes like `projects/app/**`.
+    #[arg(long = "scope")]
+    pub scopes: Vec<String>,
+    /// DEPRECATED compatibility no-op. Always emits JSON by default.
+    #[arg(long, hide = true)]
+    pub json: bool,
+    /// Emit the legacy human-readable output.
+    #[arg(long)]
+    pub human: bool,
+    /// Pretty-print the JSON output.
+    #[arg(long)]
+    pub pretty: bool,
 }
 
 /// Args for `aw td ast <path>`.
@@ -2610,7 +2636,10 @@ fn preserve_or_derive_dest_rel(
 pub async fn run(args: TdArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     match &args.command {
-        TdCommand::Check(_) | TdCommand::Ast(_) | TdCommand::Lock(_) => {}
+        TdCommand::Check(_)
+        | TdCommand::Ast(_)
+        | TdCommand::Lock(_)
+        | TdCommand::AuditRecord(_) => {}
         TdCommand::CodeCheck(a) => {
             // Issue #856d: shared slug-vs-path classifier with cb.rs's
             // `run_check` instead of a third copy of the same check (issue
@@ -2671,6 +2700,16 @@ pub async fn run(args: TdArgs) -> Result<()> {
         TdCommand::CodeCheck(a) => super::cb::run_check(a).await,
         TdCommand::Fill(a) => super::cb_fill::run(a).await,
         TdCommand::Promote(a) => run_promote(a),
+        TdCommand::AuditRecord(a) => {
+            super::standardize::run_audit_record(
+                project.as_deref(),
+                &a.scopes,
+                a.json,
+                a.human,
+                a.pretty,
+            )
+            .await
+        }
     }
 }
 

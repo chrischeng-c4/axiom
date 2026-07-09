@@ -74,21 +74,19 @@ pub fn agents_block_from_claude_block(block: &str) -> String {
 
 /// Top-level `Commands` verbs rendered into the generated "Workflow CLI"
 /// table inside `aw:start` — the delivery-lifecycle nouns (work-item,
-/// tech-design, external-contract, capability, health, and existing-project
-/// takeover). Everything else agent-facing lands in [`SUPPORT_TABLE_VERBS`].
-/// A static allowlist, not a clap `is_hide_set()` filter: no top-level verb
-/// is actually clap-hidden today, so hide-based membership would leave most
-/// verbs (`new`, `generator`, `conf`, `report-issue`, ...) unclassified by
-/// either table instead of giving every relevant verb one home.
-pub const WORKFLOW_TABLE_VERBS: &[&str] = &[
-    "wi",
-    "capability",
-    "td",
-    "ec",
-    "health",
-    "conf",
-    "standardize",
-];
+/// tech-design, external-contract, capability, health). Everything else
+/// agent-facing lands in [`SUPPORT_TABLE_VERBS`]. A static allowlist, not a
+/// clap `is_hide_set()` filter: no top-level verb is actually clap-hidden
+/// today, so hide-based membership would leave most verbs (`new`,
+/// `generator`, `conf`, `report-issue`, ...) unclassified by either table
+/// instead of giving every relevant verb one home.
+///
+/// `standardize` was removed by #1278 (epic #1270 R7): the namespace is
+/// fully retired -- `aw standardize audit check`'s reporting folded into
+/// `aw health`'s takeover-audit axis (already covered by the `health` row
+/// below) and `audit record` rehomed as `aw td audit-record` (covered by the
+/// `td` row).
+pub const WORKFLOW_TABLE_VERBS: &[&str] = &["wi", "capability", "td", "ec", "health", "conf"];
 
 /// Top-level `Commands` verbs rendered into the generated "Support CLI"
 /// table: the CLI-convention trio (`llm`/`upgrade`/`issue` — see "CLI

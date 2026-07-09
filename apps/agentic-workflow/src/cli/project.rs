@@ -20,7 +20,7 @@ use crate::cli::production::{
 use crate::cli::regenerability_policy::{resolve_regenerability_policy, RegenerabilityAuthority};
 use crate::cli::standardize::{
     DriftMarkerCoverage, RegenerabilityCoverage, SemanticCoverage, StackMigrationCoverage,
-    StandardizationCoverage, TraceabilityCoverage,
+    StandardizationCoverage, TakeoverAuditCoverage, TraceabilityCoverage,
 };
 use crate::models::preflight::PreFlightGateReport;
 use crate::models::project::EcBinding;
@@ -30,13 +30,22 @@ use crate::models::project::EcBinding;
 #[command(after_help = r#"Default output is a low-token metrics envelope.
 Use `aw health --project <project> full` for the previous detailed report, or a
 focused section: metrics, capability, gates, tests, ec, cb, cold, traceability,
-regenerable, api, stack, td-lock, claims, blockers, drift-marker.
+regenerable, api, stack, td-lock, claims, blockers, drift-marker,
+takeover-audit.
 Use `-v/--verbose` to include progress events.
 
 `drift-marker` (also summarized compactly in every call's `axes.drift_marker`)
 is the CODEGEN-drift / HANDWRITE-marker-gap audit engine, homed here per
 issue #1276 -- previously reachable only via a bare, slug-less `aw td
 code-check` whole-tree walk (#844). Use it instead of that.
+
+`takeover-audit` (also summarized compactly in every call's
+`axes.takeover_audit`) is the existing-project preservation-audit record
+check, homed here per issue #1278 (the retired `aw standardize audit check`
+folded in). It is brownfield-only and advisory: a project with no recorded
+audit reports not-applicable rather than a production blocker, and this axis
+is never a `next.command` source. Record one with `aw td audit-record
+--project <project>` (the retired `aw standardize audit record`).
 
 Output schema (JSON default):
 {
@@ -111,6 +120,7 @@ pub enum ProjectHealthSection {
     Claims,
     Blockers,
     DriftMarker,
+    TakeoverAudit,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -190,6 +200,10 @@ pub struct ProjectHealthReport {
     // #1276: CODEGEN-drift / HANDWRITE-marker-gap audit engine, homed here
     // instead of behind a bare, slug-less `aw td code-check` (#844).
     pub drift_marker: DriftMarkerCoverage,
+    // #1278 (epic #1270 R7): existing-project preservation-audit record
+    // check, folded in from the retired `aw standardize audit check`.
+    // Brownfield-only/advisory -- never a `next.command` source.
+    pub takeover_audit: TakeoverAuditCoverage,
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -743,6 +757,8 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
     // (zero additional scan cost -- reuses the same inventory pass every
     // `aw health` call already runs).
     report.drift_marker = standardize.drift_marker;
+    // #1278: takeover-audit axis, same zero-additional-scan-cost reuse.
+    report.takeover_audit = standardize.takeover_audit;
     report.traceability_evaluated = verify_traceability;
     report.traceability_note = traceability_note.clone();
     if !caps_ec_only {
@@ -1368,6 +1384,17 @@ impl ProjectHealthReport {
                 uncovered_count: 0,
                 findings: Vec::new(),
             },
+            // #1278: placeholder -- the real value is assigned by the caller
+            // right after construction (`report.takeover_audit =
+            // standardize.takeover_audit`), same as `drift_marker` above.
+            takeover_audit: TakeoverAuditCoverage {
+                project: project.to_string(),
+                recorded: false,
+                audit_path: String::new(),
+                surfaces_to_preserve: Vec::new(),
+                quality_debt_count: 0,
+                safe_lever_count: 0,
+            },
         }
     }
 
@@ -1982,6 +2009,23 @@ pub fn project_health_section_summary(
             "uncovered_count": report.drift_marker.uncovered_count,
             "findings": &report.drift_marker.findings,
         }),
+        // #1278: `next_command` is embedded directly in this section instead
+        // of routed through `project_health_next_command`'s top-level
+        // priority chain -- this axis is brownfield-only/advisory and must
+        // never become a production blocker for a project that has simply
+        // never taken over a preservation audit.
+        ProjectHealthSection::TakeoverAudit => serde_json::json!({
+            "project": &report.takeover_audit.project,
+            "recorded": report.takeover_audit.recorded,
+            "audit_path": &report.takeover_audit.audit_path,
+            "surfaces_to_preserve": &report.takeover_audit.surfaces_to_preserve,
+            "quality_debt_count": report.takeover_audit.quality_debt_count,
+            "safe_lever_count": report.takeover_audit.safe_lever_count,
+            "next_command": crate::cli::standardize::takeover_audit_health_worker_command(
+                &report.project,
+                &report.takeover_audit,
+            ),
+        }),
         ProjectHealthSection::Blockers => serde_json::json!({
             "blocker_count": report.blockers.len(),
             "blockers": &report.blockers,
@@ -2084,6 +2128,26 @@ fn project_health_axes_summary(report: &ProjectHealthReport) -> serde_json::Valu
         "td": project_health_td_axis(report),
         "td_gen": project_health_td_gen_axis(report),
         "drift_marker": project_health_drift_marker_axis(report),
+        "takeover_audit": project_health_takeover_audit_axis(report),
+    })
+}
+
+/// Issue #1278 (epic #1270 R7): compact view of the existing-project
+/// preservation-audit record check, folded in from the retired `aw
+/// standardize audit check`. Brownfield-only: a project that has never
+/// recorded a preservation audit reports `"not_applicable"` (not a defect --
+/// see `TakeoverAuditCoverage`'s doc comment), never `"blocked"`. This axis
+/// is deliberately excluded from `project_health_next_command`'s priority
+/// chain for the same reason.
+/// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn project_health_takeover_audit_axis(report: &ProjectHealthReport) -> serde_json::Value {
+    let ta = &report.takeover_audit;
+    serde_json::json!({
+        "status": if ta.recorded { "recorded" } else { "not_applicable" },
+        "recorded": ta.recorded,
+        "surfaces_to_preserve_count": ta.surfaces_to_preserve.len(),
+        "quality_debt_count": ta.quality_debt_count,
+        "safe_lever_count": ta.safe_lever_count,
     })
 }
 
@@ -2917,7 +2981,8 @@ fn effective_health_verification_flags(args: &ProjectHealthArgs) -> HealthVerifi
             | ProjectHealthSection::Gates
             | ProjectHealthSection::TdLock
             | ProjectHealthSection::Blockers
-            | ProjectHealthSection::DriftMarker => HealthVerificationFlags::none(),
+            | ProjectHealthSection::DriftMarker
+            | ProjectHealthSection::TakeoverAudit => HealthVerificationFlags::none(),
         }
     } else {
         HealthVerificationFlags::none()

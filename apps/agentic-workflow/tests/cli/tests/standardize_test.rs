@@ -1,6 +1,10 @@
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/validate/tests/standardize_test.md#source
 // CODEGEN-BEGIN
-//! Integration tests for `aw standardize`.
+//! Integration tests for the retired `aw standardize` namespace (#1278, epic
+//! #1270 R7): `aw standardize audit check`'s reporting folded into the `aw
+//! health` takeover-audit axis, `aw standardize audit record` rehomed as
+//! `aw td audit-record`, and the `aw standardize` namespace itself removed
+//! from the clap tree.
 
 use agentic_workflow::cli::Commands;
 use clap::{CommandFactory, Parser};
@@ -12,76 +16,75 @@ struct Cli {
     command: Commands,
 }
 
+// Test name kept for the `existing-project-standardization-brownfield-takeover-surface`
+// AW-EC gate (see
+// tests/behavior_existing_project_standardization_brownfield_takeover_surface.rs),
+// which shells out to this exact test name -- renaming it would silently
+// stop exercising that EC contract instead of failing loudly. #1278 repoints
+// its assertion from "the audit subcommand is registered under standardize"
+// to "the whole namespace is retired", matching the namespace's actual
+// disposition.
 #[test]
 fn standardize_subcommands_registered() {
     let cmd = Cli::command();
-    let standardize = cmd
-        .find_subcommand("standardize")
-        .expect("standardize namespace");
-    let audit = standardize.find_subcommand("audit").expect("audit");
-    audit.find_subcommand("check").expect("audit check");
-    audit.find_subcommand("record").expect("audit record");
-    // #920 (epic #914 slice F): `managed`/`semantic`/`traceability` layer
-    // `report`/`next`/`run` drivers are retired -- `aw health` absorbs the
-    // read (same inventory/coverage library code) and slice-E worker verbs
-    // (`aw td promote`, `aw td create --from-source`, `aw wi create`, ...) absorb the
-    // mutating remediation. Only `audit` remains under `aw standardize`.
-    assert!(standardize.find_subcommand("managed").is_none());
-    assert!(standardize.find_subcommand("semantic").is_none());
-    assert!(standardize.find_subcommand("traceability").is_none());
-    assert!(standardize.find_subcommand("capability").is_none());
-    assert!(standardize.find_subcommand("regenerable").is_none());
-    // Legacy top-level aliases (`report`/`codegen`/`next`/`run`) have been
-    // removed; only the canonical takeover subcommands remain.
-    assert!(standardize.find_subcommand("report").is_none());
-    assert!(standardize.find_subcommand("codegen").is_none());
-    assert!(standardize.find_subcommand("next").is_none());
-    assert!(standardize.find_subcommand("run").is_none());
-}
-
-#[test]
-fn standardize_requires_an_explicit_subcommand() {
-    // #920: with only `audit` left, a bare `aw standardize --project <p>`
-    // would just be a second, narrower copy of `aw health --project <p>`.
-    // `StandardizeArgs::command` is required (not `Option`), so parsing
-    // without a subcommand must fail rather than fall through to a removed
-    // parent-workflow shorthand.
-    // `Commands` intentionally has no `Debug` impl, so this matches on the
-    // `Result` directly instead of `.expect_err(..)` (which would require
-    // `Cli: Debug` to format an unexpected `Ok` value).
-    let err = match Cli::try_parse_from(["aw", "standardize", "--project", "cap"]) {
-        Ok(_) => panic!("standardize without a subcommand must not parse"),
-        Err(err) => err,
-    };
-    let rendered = err.to_string();
     assert!(
-        rendered.contains("subcommand") || rendered.contains("required"),
-        "unexpected clap error: {rendered}"
+        cmd.find_subcommand("standardize").is_none(),
+        "`aw standardize` must be fully retired (#1278): reporting folded into \
+         `aw health`'s takeover-audit axis, `audit record` rehomed to `aw td audit-record`"
     );
 }
 
 #[test]
-fn standardize_project_option_propagates_to_audit_subcommand() {
-    let parsed = Cli::try_parse_from(["aw", "standardize", "--project", "cap", "audit", "check"])
-        .expect("standardize audit check with leading --project parses");
-    let Commands::Standardize(args) = parsed.command else {
-        panic!("expected standardize command");
+fn standardize_top_level_and_audit_forms_fail_to_parse() {
+    for argv in [
+        vec!["aw", "standardize", "--project", "cap"],
+        vec!["aw", "standardize", "audit", "check", "--project", "cap"],
+        vec!["aw", "standardize", "audit", "record", "--project", "cap"],
+    ] {
+        let err = match Cli::try_parse_from(&argv) {
+            Ok(_) => panic!("{argv:?} should not parse: `aw standardize` is retired (#1278)"),
+            Err(err) => err,
+        };
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("unrecognized subcommand") || rendered.contains("error"),
+            "unexpected clap error for {argv:?}: {rendered}"
+        );
+    }
+}
+
+#[test]
+fn audit_record_is_rehomed_under_td() {
+    let cmd = Cli::command();
+    let td = cmd.find_subcommand("td").expect("td namespace");
+    assert!(
+        td.find_subcommand("audit-record").is_some(),
+        "`aw standardize audit record` must be rehomed as `aw td audit-record` (#1278)"
+    );
+}
+
+#[test]
+fn audit_record_project_option_propagates() {
+    let parsed = Cli::try_parse_from(["aw", "td", "--project", "cap", "audit-record"])
+        .expect("td audit-record with leading --project parses");
+    let Commands::Td(args) = parsed.command else {
+        panic!("expected td command");
     };
     assert_eq!(args.project.as_deref(), Some("cap"));
     assert!(matches!(
         args.command,
-        agentic_workflow::cli::standardize::StandardizeCommand::Audit(_)
+        agentic_workflow::cli::td::TdCommand::AuditRecord(_)
     ));
 
-    let parsed = Cli::try_parse_from(["aw", "standardize", "audit", "check", "--project", "cap"])
-        .expect("standardize audit check with trailing --project parses");
-    let Commands::Standardize(args) = parsed.command else {
-        panic!("expected standardize command");
+    let parsed = Cli::try_parse_from(["aw", "td", "audit-record", "--project", "cap"])
+        .expect("td audit-record with trailing --project parses");
+    let Commands::Td(args) = parsed.command else {
+        panic!("expected td command");
     };
     assert_eq!(args.project.as_deref(), Some("cap"));
     assert!(matches!(
         args.command,
-        agentic_workflow::cli::standardize::StandardizeCommand::Audit(_)
+        agentic_workflow::cli::td::TdCommand::AuditRecord(_)
     ));
 }
 // CODEGEN-END

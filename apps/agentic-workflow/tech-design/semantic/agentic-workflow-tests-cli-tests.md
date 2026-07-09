@@ -134,36 +134,21 @@ semantic_domain:
       - path: "apps/agentic-workflow/tests/cli/tests/standardize_test.rs"
         language: "rust"
         ownership_state: "codegen"
-        generator_primitives: ["data_model", "service_method", "test_case"]
+        generator_primitives: ["data_model", "test_case"]
         symbols:
           - name: "Cli"
             kind: "struct"
             public: false
-          - name: "write"
-            kind: "function"
-            public: false
-          - name: "aw_bin"
-            kind: "function"
-            public: false
           - name: "standardize_subcommands_registered"
             kind: "function"
             public: false
-          - name: "standardize_run_claims_mixed_language_repo"
+          - name: "standardize_top_level_and_audit_forms_fail_to_parse"
             kind: "function"
             public: false
-          - name: "standardize_run_accepts_project_positional_from_config"
+          - name: "audit_record_is_rehomed_under_td"
             kind: "function"
             public: false
-          - name: "standardize_non_interactive_blocks_for_bad_td"
-            kind: "function"
-            public: false
-          - name: "standardize_scope_ignores_unrelated_bad_td"
-            kind: "function"
-            public: false
-          - name: "standardize_regenerable_next_reports_handwrite_gap"
-            kind: "function"
-            public: false
-          - name: "standardize_successful_action_commits_once"
+          - name: "audit_record_project_option_propagates"
             kind: "function"
             public: false
         source_evidence_node:
@@ -608,6 +593,12 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "cold_rebuild_failures_block_project_health"
+            kind: "function"
+            public: false
+          - name: "project_health_takeover_audit_axis_is_not_applicable_on_fresh_project"
+            kind: "function"
+            public: false
+          - name: "project_health_takeover_audit_axis_reports_recorded_state"
             kind: "function"
             public: false
         source_evidence_node:
