@@ -27,13 +27,13 @@ Public API manifest for `projects/lumen/src/api.rs` generated from AST during Sc
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 386 |  |
-| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 1556 |  |
+| `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 389 |  |
+| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 1559 |  |
 | `AppState` | projects/lumen/src/api.rs | struct | pub | 59 |  |
 | `new` | projects/lumen/src/api.rs | function | pub | 259 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
 | `open` | projects/lumen/src/api.rs | function | pub | 280 | open(engine: Arc<Engine>) -> Self |
-| `openapi` | projects/lumen/src/api.rs | function | pub | 1484 | openapi() -> utoipa::openapi::OpenApi |
-| `router` | projects/lumen/src/api.rs | function | pub | 425 | router(state: AppState) -> Router |
+| `openapi` | projects/lumen/src/api.rs | function | pub | 1487 | openapi() -> utoipa::openapi::OpenApi |
+| `router` | projects/lumen/src/api.rs | function | pub | 428 | router(state: AppState) -> Router |
 | `with_cluster` | projects/lumen/src/api.rs | function | pub | 263 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
 | `with_components` | projects/lumen/src/api.rs | function | pub | 238 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<dyn WriteSink>,     ) -> Self |
 | `with_search_backend` | projects/lumen/src/api.rs | function | pub | 268 | with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self |
@@ -394,6 +394,9 @@ impl AppState {
         TermQuery,
         TermsQuery,
         RangeQuery,
+        // #1307: $ref'd by RangeQuery's gt/gte/lt/lte bounds (untagged f64 | String) —
+        // same dangling-ref reason as the #200 note below, registered explicitly.
+        crate::types::RangeBound,
         KnnQuery,
         crate::types::RrfQuery,
         crate::types::ExistsQuery,
