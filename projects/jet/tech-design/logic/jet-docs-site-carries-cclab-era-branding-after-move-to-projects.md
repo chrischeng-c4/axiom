@@ -118,7 +118,6 @@ flowchart TD
     verify_no_cclab --> verify_all_linked[Re-diff nav/sidebar against full file set]
     verify_all_linked --> done([Site carries jet identity; every design-note file is nav-discoverable])
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
