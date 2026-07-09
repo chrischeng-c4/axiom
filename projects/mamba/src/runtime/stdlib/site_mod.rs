@@ -51,6 +51,10 @@ unsafe extern "C" fn dispatch_addusersitepackages(a: *const MbValue, n: usize) -
     unsafe { dispatch_known_paths_passthrough(a, n) }
 }
 
+unsafe extern "C" fn dispatch_venv(a: *const MbValue, n: usize) -> MbValue {
+    unsafe { dispatch_known_paths_passthrough(a, n) }
+}
+
 unsafe extern "C" fn dispatch_addsitedir(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::none()
 }
@@ -98,6 +102,7 @@ pub fn register() {
             "addusersitepackages",
             dispatch_addusersitepackages as *const () as usize,
         ),
+        ("venv", dispatch_venv as *const () as usize),
         ("addsitedir", dispatch_addsitedir as *const () as usize),
         ("main", dispatch_main as *const () as usize),
         (
@@ -181,6 +186,26 @@ mod tests {
         mb_clear_exception();
         let args = [MbValue::from_int(7)];
         let result = unsafe { dispatch_addusersitepackages(args.as_ptr(), args.len()) };
+        assert!(result.is_none());
+        assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        mb_clear_exception();
+    }
+
+    #[test]
+    fn site_venv_accepts_set() {
+        mb_clear_exception();
+        let set = MbValue::from_ptr(MbObject::new_set(Vec::new()));
+        let args = [set];
+        let result = unsafe { dispatch_venv(args.as_ptr(), args.len()) };
+        assert_eq!(result.to_bits(), set.to_bits());
+        assert_eq!(current_exception_type(), None);
+    }
+
+    #[test]
+    fn site_venv_rejects_wrong_known_paths_type() {
+        mb_clear_exception();
+        let args = [MbValue::from_int(7)];
+        let result = unsafe { dispatch_venv(args.as_ptr(), args.len()) };
         assert!(result.is_none());
         assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
         mb_clear_exception();
