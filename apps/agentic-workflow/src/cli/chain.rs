@@ -265,9 +265,17 @@ const EMIT_REGISTRY: &[EmitSite] = &[
         note: "project health's next-remediation command for capability readiness",
     },
     EmitSite {
-        source: "standardize.rs:standardize (audit record)",
-        sample: "aw standardize audit record --project agentic-workflow",
-        note: "standardize workflow's audit-record follow-up command",
+        source: "standardize.rs:takeover_audit_health_worker_command (unrecorded)",
+        sample: "aw td audit-record --project agentic-workflow",
+        note: "#1278: health takeover-audit axis routing pointer -- unrecorded preservation \
+               audit routes to the relocated `aw td audit-record` remediation verb (`aw \
+               standardize audit record` is retired)",
+    },
+    EmitSite {
+        source: "standardize.rs:takeover_audit_health_worker_command (recorded)",
+        sample: "aw health --project agentic-workflow takeover-audit --verbose",
+        note: "#1278: health takeover-audit axis routing pointer -- already-recorded case \
+               points back at the read-only health section instead of re-running record",
     },
     EmitSite {
         source: "standardize.rs:managed_health_worker_command (~:1298)",
@@ -346,9 +354,10 @@ const EMIT_REGISTRY: &[EmitSite] = &[
 ///     loops actually dispatch through.
 ///   - `Utility`: support tooling that is not itself a lifecycle-loop step —
 ///     the CLI-convention trio (`llm`/`upgrade`/`issue`), `chat`/`guard`/
-///     `view`/`new`/`report-issue`/`generator`, `standardize audit`, and the
-///     read-only/debug `td` verbs (`ast`, `check`, `lock`, `gen-source`,
-///     `promote`).
+///     `view`/`new`/`report-issue`/`generator`, and the read-only/debug `td`
+///     verbs (`ast`, `check`, `lock`, `gen-source`, `promote`,
+///     `audit-record` -- the former `standardize audit record`, rehomed by
+///     #1278).
 ///   - `Migration`: scheduled for removal or fold-in once a stated condition
 ///     holds. Every `Migration` entry MUST carry a non-empty
 ///     [`VerbLifecycle::sunset_criterion`] naming that condition — this is
@@ -665,6 +674,13 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         class: VerbLifecycleClass::Utility,
         sunset_criterion: "",
     },
+    // #1278 (epic #1270 R7): `aw standardize audit record` rehomed here,
+    // mirroring the `td.promote` fold-in above.
+    VerbLifecycle {
+        path: "td.audit-record",
+        class: VerbLifecycleClass::Utility,
+        sunset_criterion: "",
+    },
     // -- ec (core: external-contract lifecycle) --------------------------
     VerbLifecycle {
         path: "ec.draft",
@@ -721,17 +737,10 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         class: VerbLifecycleClass::Core,
         sunset_criterion: "",
     },
-    // -- standardize (support: existing-project takeover audit protocol) --
-    VerbLifecycle {
-        path: "standardize.audit.check",
-        class: VerbLifecycleClass::Utility,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "standardize.audit.record",
-        class: VerbLifecycleClass::Utility,
-        sunset_criterion: "",
-    },
+    // #1278 (epic #1270 R7): `aw standardize` namespace (`standardize.audit.check`
+    // / `standardize.audit.record`) fully retired -- reporting folded into
+    // the `aw health` takeover-audit axis, `audit record` rehomed as
+    // `td.audit-record` above.
     // -- capability (core: product capability completion loop) ----------
     VerbLifecycle {
         path: "capability.report",

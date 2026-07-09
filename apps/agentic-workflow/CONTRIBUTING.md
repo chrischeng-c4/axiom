@@ -62,8 +62,11 @@ Every registered `aw` CLI verb carries a lifecycle class in
   actually dispatch through.
 - `Utility` — support tooling that is not itself a lifecycle-loop step: the
   CLI-convention trio (`llm`/`upgrade`/`issue`), `chat`/`guard`/`view`/`new`/
-  `report-issue`/`generator`, `standardize audit`, and the read-only/debug
-  `td` verbs (`ast`, `check`, `lock`, `gen-source`, `promote`).
+  `report-issue`/`generator`, and the read-only/debug `td` verbs (`ast`,
+  `check`, `lock`, `gen-source`, `promote`, `audit-record` — the former
+  `standardize audit record`, rehomed by #1278; `standardize audit check`'s
+  reporting folded into `aw health`'s takeover-audit axis and the `aw
+  standardize` namespace itself was retired).
 - `Migration` — scheduled for removal or fold-in once a stated condition
   holds. Every `Migration` entry MUST carry a non-empty `sunset_criterion`
   naming that condition (for example `td code-claim`: "folded into `td

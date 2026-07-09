@@ -3,7 +3,7 @@
 //! `aw standardize` — existing-project workflow guidance and bounded remediation.
 
 use anyhow::{bail, Context, Result};
-use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, Parser};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -55,12 +55,13 @@ const DELETED_COMMAND_PATHS: &[&str] = &[
     "aw td revise",
     "aw wi merge",
     "aw cb ",
-    // #920 (epic #914 slice F): `aw standardize` is retired down to `audit`
-    // only; the `managed`/`semantic`/`traceability` layer `report`/`next`/
-    // `run` drivers are gone.
-    "aw standardize managed",
-    "aw standardize semantic",
-    "aw standardize traceability",
+    // #1278 (epic #1270 R7): `aw standardize` is fully retired -- reporting
+    // folded into `aw health`'s takeover-audit axis, `audit record` rehomed
+    // as `aw td audit-record`. A bare `"aw standardize"` supersedes and
+    // subsumes the narrower #920 `managed`/`semantic`/`traceability`/`audit`
+    // sub-form entries it replaces (substring matching means the shorter
+    // prefix already catches every longer one).
+    "aw standardize",
     // #1273 (epic #1270 R5): `aw td code-claim` folded into
     // `aw td create --from-source`.
     "aw td code-claim",
@@ -78,96 +79,6 @@ const AW_EC_BEGIN_MARKER: &str = "AW-EC-BEGIN";
 pub(crate) struct TraceabilityCli {
     #[command(subcommand)]
     command: crate::cli::commands::Commands,
-}
-
-#[derive(Debug, Args)]
-// #920 (epic #914 slice F): `aw standardize` is retired down to `audit`
-// only. `managed`/`semantic`/`traceability` `report`/`next`/`run` are gone --
-// `aw health` absorbs the read (coverage/next.command already sourced from
-// the same inventory/coverage library code below) and slice-E worker verbs
-// (`aw td promote`, `aw td create --from-source`, `aw wi create`, ...) absorb the
-// mutating remediation. The subcommand is required (not `Option`): with only
-// `audit` left, a bare `aw standardize --project <p>` would just be a second,
-// narrower copy of `aw health --project <p>` -- exactly the duplicated read
-// surface this slice removes. Run `aw health --project <p>` instead.
-// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
-pub struct StandardizeArgs {
-    /// Project name from aw.toml.
-    #[arg(long, global = true)]
-    pub project: Option<String>,
-    #[command(subcommand)]
-    pub command: StandardizeCommand,
-}
-
-#[derive(Debug, Subcommand)]
-// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
-pub enum StandardizeCommand {
-    /// Audit-first preservation protocol for quality standardization.
-    Audit(StandardizeAuditArgs),
-}
-
-#[derive(Debug, Args)]
-// @spec apps/agentic-workflow/tech-design/surface/specs/aw-standardize-audit-first-quality.md#schema
-pub struct StandardizeAuditArgs {
-    #[command(subcommand)]
-    pub command: StandardizeAuditCommand,
-}
-
-#[derive(Debug, Subcommand)]
-// @spec apps/agentic-workflow/tech-design/surface/specs/aw-standardize-audit-first-quality.md#schema
-pub enum StandardizeAuditCommand {
-    /// Check whether the preservation audit baseline exists.
-    Check(StandardizeAuditCheckArgs),
-    /// Record a bounded preservation audit fixture for the project.
-    Record(StandardizeAuditRecordArgs),
-}
-
-#[derive(Debug, Args, Clone)]
-#[command(after_help = r#"Output schema (JSON default):
-{
-  "audit_required": bool,
-  "audit_path": string,
-  "surfaces_to_preserve": [string]
-}"#)]
-// @spec apps/agentic-workflow/tech-design/surface/specs/aw-standardize-audit-first-quality.md#schema
-pub struct StandardizeAuditCheckArgs {
-    /// Override workspace scopes. Repeatable; supports simple glob prefixes like `projects/app/**`.
-    #[arg(long = "scope")]
-    pub scopes: Vec<String>,
-    /// DEPRECATED compatibility no-op. Standardize emits JSON by default.
-    #[arg(long, hide = true)]
-    pub json: bool,
-    /// Emit the legacy human-readable output.
-    #[arg(long)]
-    pub human: bool,
-    /// Pretty-print the JSON output.
-    #[arg(long)]
-    pub pretty: bool,
-}
-
-#[derive(Debug, Args, Clone)]
-#[command(after_help = r#"Output schema (JSON default):
-{
-  "project": string,
-  "scope": string | null,
-  "surfaces": [{ "kind": string, "name": string, "preserve": string }],
-  "quality_debt": [string],
-  "safe_levers": [{ "name": string, "risk": string }]
-}"#)]
-// @spec apps/agentic-workflow/tech-design/surface/specs/aw-standardize-audit-first-quality.md#schema
-pub struct StandardizeAuditRecordArgs {
-    /// Override workspace scopes. Repeatable; supports simple glob prefixes like `projects/app/**`.
-    #[arg(long = "scope")]
-    pub scopes: Vec<String>,
-    /// DEPRECATED compatibility no-op. Standardize emits JSON by default.
-    #[arg(long, hide = true)]
-    pub json: bool,
-    /// Emit the legacy human-readable output.
-    #[arg(long)]
-    pub human: bool,
-    /// Pretty-print the JSON output.
-    #[arg(long)]
-    pub pretty: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -401,6 +312,7 @@ pub(crate) struct ProjectHealthStandardizeCoverage {
     pub regenerable: RegenerabilityCoverage,
     pub stack_migration: StackMigrationCoverage,
     pub drift_marker: DriftMarkerCoverage,
+    pub takeover_audit: TakeoverAuditCoverage,
 }
 
 /// Issue #1276: one `crate::generate::audit::audit_file_unified` finding
@@ -458,6 +370,84 @@ impl DriftMarkerCoverage {
                     .iter()
                     .find(|f| f.kind == StandardizeActionKind::IssueMarkerGap)
             })
+    }
+}
+
+/// Issue #1278 (epic #1270 R7): health-axis projection of the retired
+/// `aw standardize audit check` protocol (`standardize_audit::
+/// evaluate_audit_decision`), reused as-is. Brownfield-only: a project that
+/// has never run the preservation audit simply has `recorded = false` and an
+/// empty `surfaces_to_preserve`/debt/lever count -- not-applicable rather
+/// than red, since a fresh or already-generator-authoritative project never
+/// needs this record. `quality_debt_count`/`safe_lever_count` are populated
+/// from the recorded `standardize_audit::PreservationAudit` fixture on disk
+/// when `recorded` is true.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
+pub struct TakeoverAuditCoverage {
+    pub project: String,
+    pub recorded: bool,
+    pub audit_path: String,
+    pub surfaces_to_preserve: Vec<String>,
+    pub quality_debt_count: usize,
+    pub safe_lever_count: usize,
+}
+
+/// Issue #1278: computes `TakeoverAuditCoverage` from
+/// `standardize_audit::evaluate_audit_decision` (the same decision function
+/// `aw standardize audit check` used to call directly) plus, when a record
+/// already exists on disk, the recorded `PreservationAudit` fixture's debt
+/// and lever counts. `action_kind` is fixed to `PromoteHandwrite` -- any
+/// quality-changing action kind evaluates identically here since this axis
+/// only reports whether *a* preservation audit has been recorded, not which
+/// action requested it.
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
+pub(crate) fn takeover_audit_coverage(project_root: &Path, project: &str) -> TakeoverAuditCoverage {
+    let decision = standardize_audit::evaluate_audit_decision(
+        project_root,
+        project,
+        &[],
+        StandardizeActionKind::PromoteHandwrite,
+    );
+    let recorded = !decision.audit_required;
+    let (quality_debt_count, safe_lever_count) = if recorded {
+        fs::read_to_string(&decision.audit_path)
+            .ok()
+            .and_then(|body| {
+                serde_json::from_str::<standardize_audit::PreservationAudit>(&body).ok()
+            })
+            .map(|audit| (audit.quality_debt.len(), audit.safe_levers.len()))
+            .unwrap_or((0, 0))
+    } else {
+        (0, 0)
+    };
+    TakeoverAuditCoverage {
+        project: project.to_string(),
+        recorded,
+        audit_path: decision.audit_path,
+        surfaces_to_preserve: decision.surfaces_to_preserve,
+        quality_debt_count,
+        safe_lever_count,
+    }
+}
+
+/// Issue #1278: the axis's only worker-verb routing site (deliberately not
+/// wired into `project_health_next_command`'s top-level priority chain --
+/// this is a brownfield-only, advisory axis; a project that has never taken
+/// over a preservation audit is not-applicable, not a production blocker).
+/// Mirrors `drift_marker_health_worker_command`'s "concrete verb when
+/// derivable, else a read-only pointer" shape: unrecorded routes to the
+/// relocated `aw td audit-record` remediation verb (#919's `aw td promote`
+/// precedent for folding a standalone remediation action into `aw td`);
+/// already-recorded routes to the read-only `aw health` section pointer.
+pub(crate) fn takeover_audit_health_worker_command(
+    project: &str,
+    coverage: &TakeoverAuditCoverage,
+) -> String {
+    if coverage.recorded {
+        format!("aw health --project {project} takeover-audit --verbose")
+    } else {
+        format!("aw td audit-record --project {project}")
     }
 }
 
@@ -718,14 +708,6 @@ struct SpecViolation {
     reason: String,
 }
 
-// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
-pub async fn run(args: StandardizeArgs) -> Result<()> {
-    let project = args.project;
-    match args.command {
-        StandardizeCommand::Audit(a) => run_audit_stage(project.as_deref(), a).await,
-    }
-}
-
 fn print_json<T: Serialize>(value: &T, pretty: bool) -> Result<()> {
     if pretty {
         println!("{}", serde_json::to_string_pretty(value)?);
@@ -739,39 +721,26 @@ fn require_standardize_project<'a>(project: Option<&'a str>) -> Result<&'a str> 
     project.ok_or_else(|| anyhow::anyhow!("standardize requires --project <project>"))
 }
 
-async fn run_audit_stage(project: Option<&str>, args: StandardizeAuditArgs) -> Result<()> {
-    match args.command {
-        StandardizeAuditCommand::Check(a) => run_audit_check(project, a).await,
-        StandardizeAuditCommand::Record(a) => run_audit_record(project, a).await,
-    }
-}
-
-async fn run_audit_check(project: Option<&str>, args: StandardizeAuditCheckArgs) -> Result<()> {
+/// Issue #1278 (epic #1270 R7): the former `aw standardize audit record`
+/// action, rehomed as `aw td audit-record` (mirroring the `aw td promote`
+/// precedent, #919, for folding a standalone remediation action into the
+/// `aw td` lifecycle verb tree). `aw standardize audit check`'s reporting
+/// moved to the `aw health` takeover-audit axis (`takeover_audit_coverage`
+/// above) instead of a second read-only command, since `CLAUDE.md` reserves
+/// mutation-free reporting for `aw health` and this verb still mutates
+/// (writes the recorded fixture to disk).
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
+pub(crate) async fn run_audit_record(
+    project: Option<&str>,
+    scopes: &[String],
+    json: bool,
+    human: bool,
+    pretty: bool,
+) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let project =
         resolve_standardize_project_name(&project_root, require_standardize_project(project)?)?;
-    let decision = standardize_audit::evaluate_audit_decision(
-        &project_root,
-        &project,
-        &args.scopes,
-        StandardizeActionKind::PromoteHandwrite,
-    );
-    if !args.human {
-        print_json(&decision, args.pretty || args.json)?;
-    } else if decision.audit_required {
-        println!("audit required: {}", decision.audit_path);
-        println!("preserve: {}", decision.surfaces_to_preserve.join(", "));
-    } else {
-        println!("audit present: {}", decision.audit_path);
-    }
-    Ok(())
-}
-
-async fn run_audit_record(project: Option<&str>, args: StandardizeAuditRecordArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let project =
-        resolve_standardize_project_name(&project_root, require_standardize_project(project)?)?;
-    let audit = standardize_audit::fixture_audit(&project, &args.scopes);
+    let audit = standardize_audit::fixture_audit(&project, scopes);
     let path = standardize_audit::audit_path(&project_root, &project);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -780,8 +749,8 @@ async fn run_audit_record(project: Option<&str>, args: StandardizeAuditRecordArg
     let body = serde_json::to_string_pretty(&audit)?;
     fs::write(&path, format!("{body}\n"))
         .with_context(|| format!("failed to write {}", path.display()))?;
-    if !args.human {
-        print_json(&audit, args.pretty || args.json)?;
+    if !human {
+        print_json(&audit, pretty || json)?;
     } else {
         println!("recorded preservation audit: {}", path.display());
     }
@@ -969,6 +938,7 @@ pub(crate) fn project_health_standardize_coverage(
         .filter(|f| f.language == "rust")
         .count();
     let drift_marker = drift_marker_coverage(&project, total_rust_files, &inventory.rust_findings);
+    let takeover_audit = takeover_audit_coverage(&project_root, &project);
 
     Ok(ProjectHealthStandardizeCoverage {
         managed: inventory.coverage,
@@ -977,6 +947,7 @@ pub(crate) fn project_health_standardize_coverage(
         regenerable,
         stack_migration,
         drift_marker,
+        takeover_audit,
     })
 }
 
@@ -8856,13 +8827,9 @@ command_refs:
             "aw td check",
             "aw td gen",
             "aw td code-check",
-            "aw standardize",
-            // #920 (epic #914 slice F): `aw standardize traceability` (and
-            // its `report`/`next`/`run` stage subcommands) are retired --
-            // only `aw standardize audit` (and its `check`/`record`
-            // subcommands) remain live.
-            "aw standardize audit",
-            "aw standardize audit check",
+            // #1278 (epic #1270 R7): `aw standardize` is fully retired; the
+            // relocated `audit record` remediation verb lives here instead.
+            "aw td audit-record",
         ] {
             assert!(
                 inventory.contains_key(path),
@@ -8986,17 +8953,21 @@ command_refs:
     }
 
     #[test]
-    fn deleted_command_paths_920_hits_flag_active_doc_deleted_standardize_layer_ref() {
-        // #920 (epic #914 slice F): `aw standardize` is retired down to
-        // `audit` only. Each of the removed layer drivers must still be
-        // caught when a scanned active doc references them.
+    fn deleted_command_paths_1278_hits_flag_active_doc_deleted_standardize_namespace_ref() {
+        // #1278 (epic #1270 R7): `aw standardize` is fully retired -- every
+        // sub-form, including the former `audit check`/`audit record` that
+        // survived #920, must be caught when a scanned active doc still
+        // references them.
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
             "AGENTS.md",
             "Run `aw standardize managed run --project demo` to drive coverage.\n\
              Follow with `aw standardize semantic next` and\n\
-             `aw standardize traceability report --project demo`.\n",
+             `aw standardize traceability report --project demo`.\n\
+             Then `aw standardize audit check --project demo` and\n\
+             `aw standardize audit record --project demo`. A bare\n\
+             `aw standardize --project demo` is also retired.\n",
         );
 
         let inventory = runtime_command_inventory();
@@ -9007,30 +8978,23 @@ command_refs:
             .map(|b| b.target.as_str())
             .collect();
 
-        for expected in [
-            "aw standardize managed",
-            "aw standardize semantic",
-            "aw standardize traceability",
-        ] {
-            assert!(
-                deleted_targets.contains(expected),
-                "expected {expected:?} to be flagged as a deleted-command ref, got {deleted_targets:?}"
-            );
-        }
+        assert!(
+            deleted_targets.contains("aw standardize"),
+            "expected the bare `aw standardize` prefix to be flagged as a deleted-command ref, got {deleted_targets:?}"
+        );
     }
 
     #[test]
-    fn deleted_command_paths_920_does_not_false_positive_on_standardize_audit() {
-        // `aw standardize audit` (and a bare `aw standardize --project <p>`
-        // reference) must not match the retired `managed`/`semantic`/
-        // `traceability` layer-driver literals.
+    fn deleted_command_paths_1278_does_not_false_positive_on_relocated_audit_record() {
+        // The relocated `aw td audit-record` and the read-only `aw health`
+        // takeover-audit axis pointer must not match the retired
+        // `aw standardize` namespace literal.
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
             "AGENTS.md",
-            "Run `aw standardize audit check --project demo` first, then\n\
-             `aw standardize audit record --project demo`. A bare\n\
-             `aw standardize --project demo` requires an explicit subcommand.\n",
+            "Run `aw td audit-record --project demo` to record the preservation\n\
+             audit, then check `aw health --project demo takeover-audit --verbose`.\n",
         );
 
         let inventory = runtime_command_inventory();

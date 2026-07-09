@@ -221,7 +221,7 @@ Gate Inventory:
 ID: existing-project-standardization
 Type: DeveloperTool
 Surfaces:
-- CLI: `aw standardize` + `aw health` - brownfield takeover guidance and readiness rollup.
+- CLI: `aw health` (takeover-audit axis) + `aw td audit-record` - brownfield takeover guidance and readiness rollup (#1278, epic #1270 R7: `aw standardize` namespace retired, reporting folded into `aw health`, `audit record` rehomed to `aw td`).
 EC Dimensions:
 - behavior: `cargo test -p agentic-workflow --test cli_tests standardize_subcommands_registered` - takeover command surface and readiness reporting.
 Root WI: -

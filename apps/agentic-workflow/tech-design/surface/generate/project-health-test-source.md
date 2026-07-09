@@ -42,8 +42,8 @@ use agentic_workflow::cli::regenerability_policy::RegenerabilityAuthority;
 use agentic_workflow::cli::standardize::{
     DependencyPolicyFinding, DriftMarkerCoverage, DriftMarkerFinding, GeneratorPrimitiveGap,
     MarkerCounts, RegenerabilityCoverage, SemanticCoverage, SemanticGap, StackMigrationCoverage,
-    StandardizationCoverage, StandardizeActionKind, TraceabilityBlocker, TraceabilityBlockerKind,
-    TraceabilityCoverage, WorkspaceStackMigration,
+    StandardizationCoverage, StandardizeActionKind, TakeoverAuditCoverage, TraceabilityBlocker,
+    TraceabilityBlockerKind, TraceabilityCoverage, WorkspaceStackMigration,
 };
 use agentic_workflow::cli::Commands;
 use agentic_workflow::models::{
@@ -117,28 +117,31 @@ fn project_option_propagates_to_nested_project_commands() {
         _ => panic!("expected capability command"),
     }
 
-    let command = parse_cli(["aw", "standardize", "audit", "check", "--project", "demo"]);
+    // #1278 (epic #1270 R7): `aw standardize audit record` rehomed as
+    // `aw td audit-record` -- exercise the same leading/trailing --project
+    // propagation shape the retired `standardize` case above used to cover.
+    let command = parse_cli(["aw", "td", "audit-record", "--project", "demo"]);
     match command {
-        Commands::Standardize(args) => {
+        Commands::Td(args) => {
             assert_eq!(args.project.as_deref(), Some("demo"));
             assert!(matches!(
                 args.command,
-                agentic_workflow::cli::standardize::StandardizeCommand::Audit(_)
+                agentic_workflow::cli::td::TdCommand::AuditRecord(_)
             ));
         }
-        _ => panic!("expected standardize command"),
+        _ => panic!("expected td command"),
     }
 
-    let command = parse_cli(["aw", "standardize", "--project", "demo", "audit", "check"]);
+    let command = parse_cli(["aw", "td", "--project", "demo", "audit-record"]);
     match command {
-        Commands::Standardize(args) => {
+        Commands::Td(args) => {
             assert_eq!(args.project.as_deref(), Some("demo"));
             assert!(matches!(
                 args.command,
-                agentic_workflow::cli::standardize::StandardizeCommand::Audit(_)
+                agentic_workflow::cli::td::TdCommand::AuditRecord(_)
             ));
         }
-        _ => panic!("expected standardize command"),
+        _ => panic!("expected td command"),
     }
 
     let command = parse_cli(["aw", "generator", "--project", "demo", "check"]);
@@ -911,6 +914,76 @@ fn project_health_next_command_routes_to_drift_marker_remediation_when_otherwise
     );
 }
 
+// #1278 (epic #1270 R7) AC2/AC3: the folded-in takeover-audit axis reports
+// "not_applicable" (not a blocker) on a fresh project that has never
+// recorded a preservation audit -- brownfield-only, advisory semantics.
+#[test]
+fn project_health_takeover_audit_axis_is_not_applicable_on_fresh_project() {
+    let report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    assert!(!report.takeover_audit.recorded);
+
+    let summary = project_health_summary(&report);
+    let axis = &summary["axes"]["takeover_audit"];
+    assert_eq!(axis["status"].as_str(), Some("not_applicable"));
+    assert_eq!(axis["recorded"].as_bool(), Some(false));
+
+    let section = project_health_section_summary(&report, ProjectHealthSection::TakeoverAudit);
+    assert_eq!(section["data"]["recorded"].as_bool(), Some(false));
+    assert_eq!(
+        section["data"]["next_command"].as_str(),
+        Some("aw td audit-record --project demo")
+    );
+}
+
+// #1278 AC1/AC3: once a preservation audit has been recorded, the axis
+// reports the recorded counts and its `next_command` points back at the
+// read-only health section instead of the mutating record verb.
+#[test]
+fn project_health_takeover_audit_axis_reports_recorded_state() {
+    let mut report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    report.takeover_audit = TakeoverAuditCoverage {
+        project: "demo".to_string(),
+        recorded: true,
+        audit_path: ".aw/standardize/audit/demo.json".to_string(),
+        surfaces_to_preserve: vec!["demo:routes".to_string(), "demo:commands".to_string()],
+        quality_debt_count: 1,
+        safe_lever_count: 2,
+    };
+
+    let summary = project_health_summary(&report);
+    let axis = &summary["axes"]["takeover_audit"];
+    assert_eq!(axis["status"].as_str(), Some("recorded"));
+    assert_eq!(axis["recorded"].as_bool(), Some(true));
+    assert_eq!(axis["surfaces_to_preserve_count"].as_u64(), Some(2));
+    assert_eq!(axis["quality_debt_count"].as_u64(), Some(1));
+    assert_eq!(axis["safe_lever_count"].as_u64(), Some(2));
+
+    let section = project_health_section_summary(&report, ProjectHealthSection::TakeoverAudit);
+    assert_eq!(section["data"]["recorded"].as_bool(), Some(true));
+    assert_eq!(
+        section["data"]["next_command"].as_str(),
+        Some("aw health --project demo takeover-audit --verbose")
+    );
+}
+
 #[test]
 fn project_health_summary_points_to_full_verify_when_gates_are_missing() {
     let mut report = ProjectHealthReport::from_components(
@@ -1670,5 +1743,20 @@ changes:
       projects/demo/src/lib.rs` -- `project_health_next_command` names the
       slice-E worker verb for the top managed-layer gap directly via the new
       `managed_health_worker_command` helper in `src/cli/standardize.rs`.
+      #1278 (epic #1270 R7): `aw standardize` is retired entirely, so the
+      `project_option_propagates_to_nested_project_commands` case's
+      `Commands::Standardize`/`StandardizeCommand::Audit` parse-shape
+      assertions are replaced with the equivalent `aw td audit-record`
+      leading/trailing `--project` propagation shape. Two new tests
+      (`project_health_takeover_audit_axis_is_not_applicable_on_fresh_project`,
+      `project_health_takeover_audit_axis_reports_recorded_state`) cover the
+      new `report.takeover_audit` field and its `axes.takeover_audit`
+      summary / `ProjectHealthSection::TakeoverAudit` detail projection: a
+      fresh project (never recorded a preservation audit) reports
+      `status=not_applicable` (brownfield-only, advisory -- never a
+      production blocker) with `next_command` pointing at `aw td
+      audit-record`, and a project with a recorded audit reports
+      `status=recorded` with its counts and `next_command` pointing back at
+      the read-only `aw health ... takeover-audit --verbose` section.
 ```
 

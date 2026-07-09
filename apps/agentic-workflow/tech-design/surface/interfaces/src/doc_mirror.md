@@ -133,21 +133,19 @@ pub fn agents_block_from_claude_block(block: &str) -> String {
 
 /// Top-level `Commands` verbs rendered into the generated "Workflow CLI"
 /// table inside `aw:start` — the delivery-lifecycle nouns (work-item,
-/// tech-design, external-contract, capability, health, and existing-project
-/// takeover). Everything else agent-facing lands in [`SUPPORT_TABLE_VERBS`].
-/// A static allowlist, not a clap `is_hide_set()` filter: no top-level verb
-/// is actually clap-hidden today, so hide-based membership would leave most
-/// verbs (`new`, `generator`, `conf`, `report-issue`, ...) unclassified by
-/// either table instead of giving every relevant verb one home.
-pub const WORKFLOW_TABLE_VERBS: &[&str] = &[
-    "wi",
-    "capability",
-    "td",
-    "ec",
-    "health",
-    "conf",
-    "standardize",
-];
+/// tech-design, external-contract, capability, health). Everything else
+/// agent-facing lands in [`SUPPORT_TABLE_VERBS`]. A static allowlist, not a
+/// clap `is_hide_set()` filter: no top-level verb is actually clap-hidden
+/// today, so hide-based membership would leave most verbs (`new`,
+/// `generator`, `conf`, `report-issue`, ...) unclassified by either table
+/// instead of giving every relevant verb one home.
+///
+/// `standardize` was removed by #1278 (epic #1270 R7): the namespace is
+/// fully retired -- `aw standardize audit check`'s reporting folded into
+/// `aw health`'s takeover-audit axis (already covered by the `health` row
+/// below) and `audit record` rehomed as `aw td audit-record` (covered by the
+/// `td` row).
+pub const WORKFLOW_TABLE_VERBS: &[&str] = &["wi", "capability", "td", "ec", "health", "conf"];
 
 /// Top-level `Commands` verbs rendered into the generated "Support CLI"
 /// table: the CLI-convention trio (`llm`/`upgrade`/`issue` — see "CLI
@@ -315,7 +313,7 @@ pub fn agents_skill_body_from_claude_skill_body(body: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// One row of the repo-root README's generated Projects table: a top-level
-/// `projects/<name>` entry sourced from `.aw/config.toml`'s `[[projects]]`
+/// `projects/<name>` entry sourced from `aw.toml`'s `[[projects]]`
 /// registry.
 struct ConfigProjectRow {
     name: String,
@@ -344,7 +342,7 @@ fn is_top_level_project_path(path: &str) -> bool {
     }
 }
 
-/// Scan `.aw/config.toml`'s text for every top-level `[[projects]]` entry —
+/// Scan `aw.toml`'s text for every top-level `[[projects]]` entry —
 /// both the hand-written registry and the auto-generated `# BEGIN/END AW
 /// SYNC` block, since the Projects table's source of truth is "registered
 /// in config.toml", not which section registered it. Nested array tables
@@ -415,18 +413,18 @@ fn first_brief_sentence(readme_text: &str) -> Option<String> {
 }
 
 /// Render the repo-root README's generated Projects table from
-/// `<project_root>/.aw/config.toml`'s top-level `[[projects]]` registry, one
+/// `<project_root>/aw.toml`'s top-level `[[projects]]` registry, one
 /// row per entry in scan order, with each row's one-liner sourced from that
 /// project's own `README.md` `## Brief` first sentence (see
 /// [`first_brief_sentence`]).
 ///
 /// # Errors
 ///
-/// Returns an error if `.aw/config.toml` cannot be read, or if any resolved
+/// Returns an error if `aw.toml` cannot be read, or if any resolved
 /// project's `README.md` cannot be read or has no `## Brief` sentence — both
 /// indicate a genuinely broken registry entry, not optional input.
 pub fn render_projects_table(project_root: &std::path::Path) -> anyhow::Result<String> {
-    let config_text = std::fs::read_to_string(project_root.join(".aw/config.toml"))?;
+    let config_text = std::fs::read_to_string(project_root.join("aw.toml"))?;
     let rows = parse_top_level_project_rows(&config_text);
 
     let mut out = String::from("| Project | What it is |\n|---------|------------|\n");
@@ -456,7 +454,7 @@ pub fn render_projects_table(project_root: &std::path::Path) -> anyhow::Result<S
 
 /// Regenerate `doc_text`'s Projects table between
 /// [`PROJECTS_TABLE_START`]/[`PROJECTS_TABLE_END`] from
-/// `<project_root>/.aw/config.toml` (issue #985). Callers gate on the
+/// `<project_root>/aw.toml` (issue #985). Callers gate on the
 /// markers already being present in `doc_text` — the table is opt-in per
 /// document (the README projection only touches README.md when it already
 /// carries the markers).
@@ -899,7 +897,7 @@ path = "projects/aw-duplicate"
         let root = tmp.path();
         std::fs::create_dir_all(root.join(".aw")).unwrap();
         std::fs::write(
-            root.join(".aw/config.toml"),
+            root.join("aw.toml"),
             "[[projects]]\nname = \"demo\"\npath = \"projects/demo\"\n",
         )
         .unwrap();
@@ -921,7 +919,7 @@ path = "projects/aw-duplicate"
         let root = tmp.path();
         std::fs::create_dir_all(root.join(".aw")).unwrap();
         std::fs::write(
-            root.join(".aw/config.toml"),
+            root.join("aw.toml"),
             "[[projects]]\nname = \"demo\"\npath = \"projects/demo\"\n",
         )
         .unwrap();
@@ -1066,7 +1064,6 @@ path = "projects/aw-duplicate"
     }
 }
 // CODEGEN-END
-
 ```
 
 ## Changes

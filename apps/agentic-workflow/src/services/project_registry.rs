@@ -890,10 +890,7 @@ test_cmd = "cargo test -p jet"
             .find(|project| project.name == "jet")
             .unwrap();
         assert_eq!(jet.path, PathBuf::from("apps/jet"));
-        assert_eq!(
-            jet.tech_design_dir.as_deref(),
-            Some("apps/jet/tech-design")
-        );
+        assert_eq!(jet.tech_design_dir.as_deref(), Some("apps/jet/tech-design"));
         assert_eq!(
             jet.workspaces[0].test_cmd.as_deref(),
             Some("cargo test -p jet")
