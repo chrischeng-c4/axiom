@@ -548,127 +548,127 @@ requirements:
     text: "Across N sequential client transactions in transaction mode, the number of distinct physical backend connections opened is far fewer than the client/transaction count (idle reuse via BackendPool::acquire() is exercised, not a fresh connect per transaction)."
     kind: integration
     risk: high
-    verify: "pool_modes::transaction_mode_reuses_backend_connections_across_sequential_transactions"
+    verify: pool_modes::transaction_mode_reuses_backend_connections_across_sequential_transactions
   ac1b_concurrent_transactions_isolated_on_distinct_backends:
     id: AC1
     text: "Concurrent transactions from different clients are correctly isolated: each holds its own distinct leased backend connection at the same time, with no frame cross-talk between them."
     kind: integration
     risk: high
-    verify: "pool_modes::concurrent_transactions_isolated_on_distinct_backends"
+    verify: pool_modes::concurrent_transactions_isolated_on_distinct_backends
   ac2_no_session_state_leak_across_leases:
     id: AC2
     text: "A SET/temp-table fixture proves no session-state leak across transaction-mode leases: a value set (or temp table created) by one transaction on a backend is not observable by the next transaction that reuses the same backend connection, because DISCARD ALL ran between owners."
     kind: regression
     risk: high
-    verify: "pool_modes::reset_between_owners_prevents_session_state_leak_across_transaction_leases"
+    verify: pool_modes::reset_between_owners_prevents_session_state_leak_across_transaction_leases
   ac3a_saturation_wait_then_acquire_succeeds:
     id: AC3
     text: "When the backend pool is saturated, a waiting client that is unblocked by another lease's release within acquire_timeout successfully acquires a backend and proceeds — it is never silently dropped."
     kind: integration
     risk: medium
-    verify: "pool_modes::saturation_wait_then_acquire_succeeds_when_lease_frees"
+    verify: pool_modes::saturation_wait_then_acquire_succeeds_when_lease_frees
   ac3b_saturation_timeout_produces_typed_error:
     id: AC3
     text: "When the backend pool stays saturated past acquire_timeout, the waiting client receives a typed wire ErrorResponse (SQLSTATE 53300, PoolRejectionReason::BackendPoolSaturated) and its socket is closed cleanly — it never hangs indefinitely."
     kind: integration
     risk: high
-    verify: "pool_modes::saturation_timeout_produces_typed_error_response"
+    verify: pool_modes::saturation_timeout_produces_typed_error_response
   ac4_churn_100_cycles_holds_backend_count_stable:
     id: AC4
     text: "A churn test running 100+ acquire/release cycles (mixed ReturnToIdle and Close dispositions, mixed session/transaction activity) holds the backend connection count stable throughout, with no leaked connection or file descriptor at the end."
     kind: regression
     risk: high
-    verify: "pool_modes::churn_100_cycles_holds_backend_count_stable_no_leak"
+    verify: pool_modes::churn_100_cycles_holds_backend_count_stable_no_leak
   ac5_stats_api_matches_fixture_expectations:
     id: AC5
     text: "PoolStats (frontend_active, backend_active, backend_idle) reports counts matching fixture expectations at each phase of a scripted sequence: before any client connects, after admission, after a transaction lease is acquired, and after it is released back to idle."
     kind: functional
     risk: medium
-    verify: "pool_modes::stats_api_reports_expected_counts_at_each_phase"
+    verify: pool_modes::stats_api_reports_expected_counts_at_each_phase
   r1a_acquire_reuses_idle_after_liveness_pass:
     id: R1
     text: "BackendPool::acquire() returns an existing idle connection (not a fresh connect) when the idle set is non-empty and the popped connection's non-blocking liveness peek succeeds."
     kind: functional
     risk: medium
-    verify: "pool::acquire_reuses_idle_connection_after_liveness_check_passes"
+    verify: pool::acquire_reuses_idle_connection_after_liveness_check_passes
   r1b_acquire_drops_dead_idle_and_retries:
     id: R1
     text: "BackendPool::acquire() drops an idle connection whose liveness peek indicates the peer is gone, frees its capacity slot, and continues the acquire attempt (fresh-connect or wait) rather than handing back a dead connection."
     kind: functional
     risk: medium
-    verify: "pool::acquire_drops_dead_idle_connection_and_retries"
+    verify: pool::acquire_drops_dead_idle_connection_and_retries
   r1c_reset_sent_before_return_to_idle:
     id: R1
     text: "BackendPool::release(id, stream, LeaseDisposition::ReturnToIdle) sends DISCARD ALL and awaits its ReadyForQuery before the connection is added to the idle set."
     kind: functional
     risk: high
-    verify: "pool::release_return_to_idle_sends_discard_all_before_reuse"
+    verify: pool::release_return_to_idle_sends_discard_all_before_reuse
   r1d_reset_failure_closes_instead_of_reuse:
     id: R1
     text: "When the DISCARD ALL reset itself fails (backend EOF/error/timeout during reset), release() closes the connection and frees its capacity slot instead of adding it to the idle set — a failed reset never yields a reused connection."
     kind: regression
     risk: high
-    verify: "pool::release_return_to_idle_closes_connection_when_reset_fails"
+    verify: pool::release_return_to_idle_closes_connection_when_reset_fails
   r2a_transaction_lease_boundaries_track_ready_for_query:
     id: R2
     text: "In transaction mode, a backend lease is acquired on the first frontend frame after the client is idle-with-no-lease, and released back through LeaseDisposition::ReturnToIdle exactly when the leased backend's ReadyForQuery reports TransactionStatus::Idle."
     kind: functional
     risk: high
-    verify: "pool::transaction_lease_acquired_on_first_frame_and_released_on_ready_for_query_idle"
+    verify: pool::transaction_lease_acquired_on_first_frame_and_released_on_ready_for_query_idle
   r2b_session_mode_holds_one_lease_for_whole_session:
     id: R2
     text: "In session mode, exactly one backend lease is held for the entire session lifetime (acquire_fresh() at connect, release(..., Close) at teardown) — session mode's per-message relay/auth behavior is otherwise unchanged from WI #1288."
     kind: regression
     risk: medium
-    verify: "pool::session_mode_lease_held_for_whole_session_unchanged_from_1288"
+    verify: pool::session_mode_lease_held_for_whole_session_unchanged_from_1288
   r3a_acquire_waits_then_succeeds:
     id: R3
     text: "BackendPool::acquire() blocks a caller when the pool is at max_backend_connections with an empty idle set, and returns a lease as soon as another holder's release() frees a slot, provided this happens within acquire_timeout."
     kind: functional
     risk: medium
-    verify: "pool::acquire_waits_for_release_when_saturated_then_succeeds"
+    verify: pool::acquire_waits_for_release_when_saturated_then_succeeds
   r3b_acquire_times_out_with_saturated_error:
     id: R3
     text: "BackendPool::acquire() returns PoolError::Saturated after waiting acquire_timeout with no slot freed, rather than blocking indefinitely."
     kind: functional
     risk: high
-    verify: "pool::acquire_times_out_with_saturated_error_after_acquire_timeout"
+    verify: pool::acquire_times_out_with_saturated_error_after_acquire_timeout
   r3c_saturated_error_maps_to_typed_response:
     id: R3
     text: "PoolError::Saturated maps to PoolRejectionReason::BackendPoolSaturated, whose synthesized_error_response() produces a wire ErrorResponse with SQLSTATE 53300."
     kind: functional
     risk: medium
-    verify: "pool::saturated_pool_error_maps_to_synthesized_error_response_53300"
+    verify: pool::saturated_pool_error_maps_to_synthesized_error_response_53300
   r4_stats_snapshot_composes_frontend_and_backend_counts:
     id: R4
     text: "PoolStats::snapshot composes ConnectionBudget::active() (frontend_active) with BackendPool's own backend_active/backend_idle counters into one consistent snapshot."
     kind: functional
     risk: low
-    verify: "pool::stats_snapshot_reports_frontend_backend_active_and_idle_counts"
+    verify: pool::stats_snapshot_reports_frontend_backend_active_and_idle_counts
   r5_dropped_lease_without_release_does_not_leak_capacity:
     id: R5
     text: "If a BackendLease is dropped without an explicit release() call (e.g. task panic/cancellation), the pool's capacity accounting still frees the slot (RAII-style guard on the lease) rather than leaking it permanently."
     kind: regression
     risk: medium
-    verify: "pool::dropped_lease_without_explicit_release_does_not_leak_capacity_slot"
+    verify: pool::dropped_lease_without_explicit_release_does_not_leak_capacity_slot
 ---
 flowchart TD
-    ac1a_transaction_mode_reuses_backend_connections["AC1: transaction mode reuses backend connections<br/>pool_modes::transaction_mode_reuses_backend_connections_across_sequential_transactions"]
-    ac1b_concurrent_transactions_isolated_on_distinct_backends["AC1: concurrent transactions isolated<br/>pool_modes::concurrent_transactions_isolated_on_distinct_backends"]
-    ac2_no_session_state_leak_across_leases["AC2: no session-state leak across leases<br/>pool_modes::reset_between_owners_prevents_session_state_leak_across_transaction_leases"]
-    ac3a_saturation_wait_then_acquire_succeeds["AC3: saturation wait-then-acquire succeeds<br/>pool_modes::saturation_wait_then_acquire_succeeds_when_lease_frees"]
-    ac3b_saturation_timeout_produces_typed_error["AC3: saturation timeout produces typed error<br/>pool_modes::saturation_timeout_produces_typed_error_response"]
-    ac4_churn_100_cycles_holds_backend_count_stable["AC4: 100+ cycle churn, no leak<br/>pool_modes::churn_100_cycles_holds_backend_count_stable_no_leak"]
-    ac5_stats_api_matches_fixture_expectations["AC5: stats API matches fixture<br/>pool_modes::stats_api_reports_expected_counts_at_each_phase"]
-    r1a_acquire_reuses_idle_after_liveness_pass["R1: acquire reuses idle after liveness pass<br/>pool::acquire_reuses_idle_connection_after_liveness_check_passes"]
-    r1b_acquire_drops_dead_idle_and_retries["R1: acquire drops dead idle, retries<br/>pool::acquire_drops_dead_idle_connection_and_retries"]
-    r1c_reset_sent_before_return_to_idle["R1: reset sent before return-to-idle<br/>pool::release_return_to_idle_sends_discard_all_before_reuse"]
-    r1d_reset_failure_closes_instead_of_reuse["R1: reset failure closes, not reuse<br/>pool::release_return_to_idle_closes_connection_when_reset_fails"]
-    r2a_transaction_lease_boundaries_track_ready_for_query["R2: lease boundaries track ReadyForQuery<br/>pool::transaction_lease_acquired_on_first_frame_and_released_on_ready_for_query_idle"]
-    r2b_session_mode_holds_one_lease_for_whole_session["R2: session mode holds one lease whole session<br/>pool::session_mode_lease_held_for_whole_session_unchanged_from_1288"]
-    r3a_acquire_waits_then_succeeds["R3: acquire waits then succeeds<br/>pool::acquire_waits_for_release_when_saturated_then_succeeds"]
-    r3b_acquire_times_out_with_saturated_error["R3: acquire times out with Saturated<br/>pool::acquire_times_out_with_saturated_error_after_acquire_timeout"]
-    r3c_saturated_error_maps_to_typed_response["R3: Saturated maps to typed response<br/>pool::saturated_pool_error_maps_to_synthesized_error_response_53300"]
-    r4_stats_snapshot_composes_frontend_and_backend_counts["R4: stats snapshot composes counts<br/>pool::stats_snapshot_reports_frontend_backend_active_and_idle_counts"]
-    r5_dropped_lease_without_release_does_not_leak_capacity["R5: dropped lease does not leak capacity<br/>pool::dropped_lease_without_explicit_release_does_not_leak_capacity_slot"]
+    ac1[AC1 ac1a transaction mode reuses backend connections] --> pool_modes_transaction_mode_reuses_backend_connections_across_sequential_transactions[pool_modes::transaction_mode_reuses_backend_connections_across_sequential_transactions]
+    ac1[AC1 ac1b concurrent transactions isolated on distinct backends] --> pool_modes_concurrent_transactions_isolated_on_distinct_backends[pool_modes::concurrent_transactions_isolated_on_distinct_backends]
+    r1[R1 r1a acquire reuses idle after liveness pass] --> pool_acquire_reuses_idle_connection_after_liveness_check_passes[pool::acquire_reuses_idle_connection_after_liveness_check_passes]
+    r1[R1 r1b acquire drops dead idle and retries] --> pool_acquire_drops_dead_idle_connection_and_retries[pool::acquire_drops_dead_idle_connection_and_retries]
+    r1[R1 r1c reset sent before return to idle] --> pool_release_return_to_idle_sends_discard_all_before_reuse[pool::release_return_to_idle_sends_discard_all_before_reuse]
+    r1[R1 r1d reset failure closes instead of reuse] --> pool_release_return_to_idle_closes_connection_when_reset_fails[pool::release_return_to_idle_closes_connection_when_reset_fails]
+    ac2[AC2 ac2 no session state leak across leases] --> pool_modes_reset_between_owners_prevents_session_state_leak_across_transaction_leases[pool_modes::reset_between_owners_prevents_session_state_leak_across_transaction_leases]
+    r2[R2 r2a transaction lease boundaries track ready for query] --> pool_transaction_lease_acquired_on_first_frame_and_released_on_ready_for_query_idle[pool::transaction_lease_acquired_on_first_frame_and_released_on_ready_for_query_idle]
+    r2[R2 r2b session mode holds one lease for whole session] --> pool_session_mode_lease_held_for_whole_session_unchanged_from_1288[pool::session_mode_lease_held_for_whole_session_unchanged_from_1288]
+    ac3[AC3 ac3a saturation wait then acquire succeeds] --> pool_modes_saturation_wait_then_acquire_succeeds_when_lease_frees[pool_modes::saturation_wait_then_acquire_succeeds_when_lease_frees]
+    ac3[AC3 ac3b saturation timeout produces typed error] --> pool_modes_saturation_timeout_produces_typed_error_response[pool_modes::saturation_timeout_produces_typed_error_response]
+    r3[R3 r3a acquire waits then succeeds] --> pool_acquire_waits_for_release_when_saturated_then_succeeds[pool::acquire_waits_for_release_when_saturated_then_succeeds]
+    r3[R3 r3b acquire times out with saturated error] --> pool_acquire_times_out_with_saturated_error_after_acquire_timeout[pool::acquire_times_out_with_saturated_error_after_acquire_timeout]
+    r3[R3 r3c saturated error maps to typed response] --> pool_saturated_pool_error_maps_to_synthesized_error_response_53300[pool::saturated_pool_error_maps_to_synthesized_error_response_53300]
+    ac4[AC4 ac4 churn 100 cycles holds backend count stable] --> pool_modes_churn_100_cycles_holds_backend_count_stable_no_leak[pool_modes::churn_100_cycles_holds_backend_count_stable_no_leak]
+    r4[R4 r4 stats snapshot composes frontend and backend counts] --> pool_stats_snapshot_reports_frontend_backend_active_and_idle_counts[pool::stats_snapshot_reports_frontend_backend_active_and_idle_counts]
+    ac5[AC5 ac5 stats api matches fixture expectations] --> pool_modes_stats_api_reports_expected_counts_at_each_phase[pool_modes::stats_api_reports_expected_counts_at_each_phase]
+    r5[R5 r5 dropped lease without release does not leak capacity] --> pool_dropped_lease_without_explicit_release_does_not_leak_capacity_slot[pool::dropped_lease_without_explicit_release_does_not_leak_capacity_slot]
 ```
