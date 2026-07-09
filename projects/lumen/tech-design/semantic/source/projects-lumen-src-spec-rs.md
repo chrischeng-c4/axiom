@@ -22,14 +22,14 @@ Public API manifest for `projects/lumen/src/spec.rs` generated from AST during S
 |------|--------|------|------------|------|-----------|
 | `field_catalog` | projects/lumen/src/spec.rs | function | pub | 184 | field_catalog() -> Value |
 | `json_schema_json` | projects/lumen/src/spec.rs | function | pub | 30 | json_schema_json() -> String |
-| `llm_auth_md` | projects/lumen/src/spec.rs | function | pub | 346 | llm_auth_md() -> String |
-| `llm_deployment_md` | projects/lumen/src/spec.rs | function | pub | 244 | llm_deployment_md() -> String |
-| `llm_integration_md` | projects/lumen/src/spec.rs | function | pub | 588 | llm_integration_md() -> String |
+| `llm_auth_md` | projects/lumen/src/spec.rs | function | pub | 348 | llm_auth_md() -> String |
+| `llm_deployment_md` | projects/lumen/src/spec.rs | function | pub | 246 | llm_deployment_md() -> String |
+| `llm_integration_md` | projects/lumen/src/spec.rs | function | pub | 611 | llm_integration_md() -> String |
 | `llm_outline_md` | projects/lumen/src/spec.rs | function | pub | 213 | llm_outline_md() -> String |
-| `llm_quickstart_md` | projects/lumen/src/spec.rs | function | pub | 628 | llm_quickstart_md() -> String |
-| `llm_recipes_md` | projects/lumen/src/spec.rs | function | pub | 688 | llm_recipes_md() -> String |
-| `llm_storage_md` | projects/lumen/src/spec.rs | function | pub | 714 | llm_storage_md() -> String |
-| `llm_workflow_md` | projects/lumen/src/spec.rs | function | pub | 420 | llm_workflow_md() -> String |
+| `llm_quickstart_md` | projects/lumen/src/spec.rs | function | pub | 651 | llm_quickstart_md() -> String |
+| `llm_recipes_md` | projects/lumen/src/spec.rs | function | pub | 711 | llm_recipes_md() -> String |
+| `llm_storage_md` | projects/lumen/src/spec.rs | function | pub | 737 | llm_storage_md() -> String |
+| `llm_workflow_md` | projects/lumen/src/spec.rs | function | pub | 422 | llm_workflow_md() -> String |
 | `openapi_json` | projects/lumen/src/spec.rs | function | pub | 15 | openapi_json() -> String |
 | `openapi_yaml` | projects/lumen/src/spec.rs | function | pub | 23 | openapi_yaml() -> String |
 | `query_shapes` | projects/lumen/src/spec.rs | function | pub | 113 | query_shapes() -> Value |
@@ -258,7 +258,9 @@ Use the smallest topic that answers the task:
 
 - `lumen llm --topic workflow` — product model, declare→ingest→search→hydrate, query
   flavor choices, batch search (`POST /collections:search`), full-replacement
-  writes (`PUT /collections/{id}/docs:replace`), connection, and non-goals.
+  writes (`PUT /collections/{id}/docs:replace`), QUERY-first search
+  (RFC 10008 `QUERY /collections/{id}` and `QUERY /collections`, POST always
+  available), connection, and non-goals.
 - `lumen llm --topic integration` — recommended Postgres/AlloyDB adapter boundary:
   outbox or CDC, external Pub/Sub retry/DLQ ownership, HTTP writes into lumen,
   and no direct external writes to lumen's internal WAL.
@@ -476,9 +478,30 @@ hydrate the hits against your own store.
    `examples/consumer_pg_logical.py`. Re-writing `(external_id, field)` fully
    re-indexes that field.
 3. **Search** — `POST /collections/{id}/search` with a query (relevance +
-   filters + sort). You get back ranked `external_id`s + scores.
+   filters + sort). You get back ranked `external_id`s + scores. Prefer the
+   `QUERY /collections/{id}` twin when your stack supports it — see "QUERY
+   method (RFC 10008)" below.
 4. **Hydrate** — look the returned `external_id`s up in YOUR store to get the
    full records. lumen never had them.
+
+## QUERY method (RFC 10008)
+Policy: **QUERY-first, POST-always-available** (epic #1296 R1). `QUERY
+/collections/{id}` and `QUERY /collections` are dual-registered twins of
+`POST /collections/{id}/search` and `POST /collections:search`: same request
+body (`SearchRequest` / `BatchSearchRequest`), same handler, and a
+byte-identical response for identical bodies.
+
+- Prefer `QUERY` when your HTTP client, proxy, and cache layer support it —
+  RFC 10008 QUERY tells intermediaries the request is safe, idempotent, and
+  cacheable, which `POST` cannot express.
+- `POST` is the permanent fallback, not a deprecated path — every QUERY
+  endpoint keeps its POST twin forever, so clients, proxies, and load
+  balancers that can't emit `QUERY` (older HTTP libraries, some
+  intermediaries) stay fully supported.
+- `Content-Type: application/json` is mandatory on `QUERY` requests; a
+  missing or mismatched `Content-Type` returns 415, same as the POST twin.
+- `OPTIONS`/`HEAD` on both targets advertise `Accept-Query: application/json`
+  and list `QUERY` in `Allow`.
 
 ## Batch search (multi-collection fan-out)
 `POST /collections:search` is an msearch-style batch of independent

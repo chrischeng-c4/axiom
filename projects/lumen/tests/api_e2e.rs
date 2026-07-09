@@ -1137,4 +1137,248 @@ async fn openapi_spec_served() {
     assert!(body["paths"]["/collections/{collection_id}/search"].is_object());
     assert!(body["paths"]["/collections/{collection_id}/duplicates"].is_object());
 }
+
+// ---------------------------------------------------------------------------
+// QUERY (RFC 10008) — dual-registered POST twins (#1297, epic #1296 R1)
+// ---------------------------------------------------------------------------
+
+/// `http::Method` has no `QUERY` constant yet; construct it the same way
+/// `src/api.rs`'s interim dispatch does.
+fn query_method() -> axum::http::Method {
+    axum::http::Method::from_bytes(b"QUERY").expect("QUERY is a valid method token")
+}
+
+/// Batch-search analog of `zero_timing`: `BatchSearchResponse` nests each
+/// item's `SearchResponse` (with its own `took_ms`/`took_us`) inside
+/// `results[i].response` — zero those out before comparing the rest of the
+/// body byte-for-byte.
+fn zero_batch_timing(mut v: Value) -> Value {
+    if let Some(results) = v.get_mut("results").and_then(|r| r.as_array_mut()) {
+        for item in results.iter_mut() {
+            if let Some(response) = item.get_mut("response") {
+                *response = zero_timing(response.take());
+            }
+        }
+    }
+    v
+}
+
+/// AC1: `QUERY /collections/{collection_id}` must return a byte-identical
+/// body to its `POST /collections/{collection_id}/search` twin, for a plain
+/// lexical (`term`) query.
+#[tokio::test]
+async fn query_single_search_byte_identical_to_post_twin_lexical() {
+    let s = server();
+    s.put("/collections/users")
+        .json(&json!({ "fields": { "email": { "type": "keyword" } } }))
+        .await
+        .assert_status_ok();
+    s.post("/collections/users/index")
+        .json(&json!({ "items": [
+            { "external_id": "u1", "field": "email", "value": "a@x.com" },
+            { "external_id": "u2", "field": "email", "value": "b@y.com" }
+        ]}))
+        .await
+        .assert_status_ok();
+
+    let query = json!({
+        "query": { "term": { "field": "email", "value": "a@x.com" } },
+        "limit": 10
+    });
+
+    let post_resp = s.post("/collections/users/search").json(&query).await;
+    post_resp.assert_status_ok();
+
+    let query_resp = s
+        .method(query_method(), "/collections/users")
+        .json(&query)
+        .await;
+    query_resp.assert_status_ok();
+
+    assert_eq!(
+        zero_timing(query_resp.json::<Value>()),
+        zero_timing(post_resp.json::<Value>()),
+        "QUERY /collections/{{id}} must be byte-identical to its POST twin (modulo took_ms/took_us)"
+    );
+}
+
+/// AC1: the kNN case of the QUERY/POST twin-parity contract.
+#[tokio::test]
+async fn query_single_search_byte_identical_to_post_twin_knn() {
+    let s = server();
+    s.put("/collections/items")
+        .json(&json!({
+            "fields": { "embedding": { "type": "vector", "dim": 3, "metric": "cosine" } }
+        }))
+        .await
+        .assert_status_ok();
+    s.post("/collections/items/index")
+        .json(&json!({ "items": [
+            { "external_id": "e1", "field": "embedding", "value": [1.0, 0.0, 0.0] },
+            { "external_id": "e2", "field": "embedding", "value": [0.0, 1.0, 0.0] }
+        ]}))
+        .await
+        .assert_status_ok();
+
+    let query = json!({
+        "query": { "knn": { "field": "embedding", "vector": [1.0, 0.0, 0.0], "k": 5 } },
+        "limit": 5
+    });
+
+    let post_resp = s.post("/collections/items/search").json(&query).await;
+    post_resp.assert_status_ok();
+
+    let query_resp = s
+        .method(query_method(), "/collections/items")
+        .json(&query)
+        .await;
+    query_resp.assert_status_ok();
+
+    assert_eq!(
+        zero_timing(query_resp.json::<Value>()),
+        zero_timing(post_resp.json::<Value>()),
+        "QUERY /collections/{{id}} (knn) must be byte-identical to its POST twin (modulo took_ms/took_us)"
+    );
+}
+
+/// AC1: `QUERY /collections` must return a byte-identical body to its `POST
+/// /collections:search` twin for an identical `BatchSearchRequest`.
+#[tokio::test]
+async fn query_batch_search_byte_identical_to_post_twin() {
+    let s = server();
+    s.put("/collections/users")
+        .json(&json!({ "fields": { "tags": { "type": "keyword", "multi": true } } }))
+        .await
+        .assert_status_ok();
+    s.post("/collections/users/index")
+        .json(&json!({ "items": [
+            { "external_id": "u1", "field": "tags", "value": ["rust", "db"] },
+            { "external_id": "u2", "field": "tags", "value": ["go"] }
+        ]}))
+        .await
+        .assert_status_ok();
+
+    s.put("/collections/posts")
+        .json(&json!({ "fields": { "body": { "type": "text" } } }))
+        .await
+        .assert_status_ok();
+    s.post("/collections/posts/index")
+        .json(&json!({ "items": [
+            { "external_id": "p1", "field": "body", "value": "rust engineer" },
+            { "external_id": "p2", "field": "body", "value": "go backend" }
+        ]}))
+        .await
+        .assert_status_ok();
+
+    let batch = json!({ "searches": [
+        {
+            "collection": "users",
+            "query": { "term": { "field": "tags", "value": "rust" } },
+            "limit": 10
+        },
+        {
+            "collection": "posts",
+            "query": { "match": { "field": "body", "text": "rust" } },
+            "limit": 10
+        }
+    ]});
+
+    let post_resp = s.post("/collections:search").json(&batch).await;
+    post_resp.assert_status_ok();
+
+    let query_resp = s.method(query_method(), "/collections").json(&batch).await;
+    query_resp.assert_status_ok();
+
+    assert_eq!(
+        zero_batch_timing(query_resp.json::<Value>()),
+        zero_batch_timing(post_resp.json::<Value>()),
+        "QUERY /collections must be byte-identical to its POST /collections:search twin (modulo took_ms/took_us)"
+    );
+}
+
+/// AC2: `Content-Type` is mandatory on QUERY (RFC 10008) — both targets
+/// reject a missing `Content-Type` with 415, same as their POST twins do via
+/// the shared `Json` extractor.
+#[tokio::test]
+async fn query_missing_content_type_returns_415() {
+    let s = server();
+    let raw = serde_json::to_vec(&json!({
+        "query": { "match_all": {} },
+        "limit": 10
+    }))
+    .unwrap();
+
+    let resp = s
+        .method(query_method(), "/collections/users")
+        .bytes(raw.clone().into())
+        .await;
+    resp.assert_status(axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+    let batch_raw = serde_json::to_vec(&json!({ "searches": [] })).unwrap();
+    let resp = s
+        .method(query_method(), "/collections")
+        .bytes(batch_raw.into())
+        .await;
+    resp.assert_status(axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+    // A mismatched Content-Type is rejected the same way as a missing one.
+    let resp = s
+        .method(query_method(), "/collections/users")
+        .bytes(raw.into())
+        .content_type("text/plain")
+        .await;
+    resp.assert_status(axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
+/// AC3: `OPTIONS`/`HEAD` on `/collections/{collection_id}` advertise
+/// `Accept-Query: application/json` and list `QUERY` in `Allow`.
+#[tokio::test]
+async fn query_options_and_head_advertise_accept_query_on_collection_id() {
+    let s = server();
+    for method in [axum::http::Method::OPTIONS, axum::http::Method::HEAD] {
+        let resp = s.method(method.clone(), "/collections/users").await;
+        assert_eq!(
+            resp.headers()
+                .get("accept-query")
+                .and_then(|v| v.to_str().ok()),
+            Some("application/json"),
+            "{method} /collections/{{id}} must advertise Accept-Query"
+        );
+        let allow = resp
+            .headers()
+            .get(axum::http::header::ALLOW)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        assert!(
+            allow.contains("QUERY"),
+            "{method} /collections/{{id}} Allow must include QUERY: {allow}"
+        );
+    }
+}
+
+/// AC3: `OPTIONS`/`HEAD` on `/collections` advertise `Accept-Query:
+/// application/json` and list `QUERY` in `Allow`.
+#[tokio::test]
+async fn query_options_and_head_advertise_accept_query_on_collections() {
+    let s = server();
+    for method in [axum::http::Method::OPTIONS, axum::http::Method::HEAD] {
+        let resp = s.method(method.clone(), "/collections").await;
+        assert_eq!(
+            resp.headers()
+                .get("accept-query")
+                .and_then(|v| v.to_str().ok()),
+            Some("application/json"),
+            "{method} /collections must advertise Accept-Query"
+        );
+        let allow = resp
+            .headers()
+            .get(axum::http::header::ALLOW)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        assert!(
+            allow.contains("QUERY"),
+            "{method} /collections Allow must include QUERY: {allow}"
+        );
+    }
+}
 // CODEGEN-END
