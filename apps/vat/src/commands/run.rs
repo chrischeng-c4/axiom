@@ -785,11 +785,7 @@ fn run_configured(
             &cwd,
             logs_dir,
             &run_env,
-            if force_hermetic_proxy {
-                Some(sandbox_backend.as_ref())
-            } else {
-                None
-            },
+            service_sandbox_backend(force_hermetic_proxy, sandbox_backend.as_ref()),
             &rootfs,
         ) {
             Ok(handle) => handle,
@@ -1443,6 +1439,26 @@ fn prepare_cluster_service(
         cluster: Some(record),
         owned_by_vat: true,
     })
+}
+
+/// vat's own spawned services (emulators, the http-mock/record-replay proxy)
+/// are intentionally NEVER sandboxed on the real (non-hermetic-proxy) path —
+/// they need their own network access to serve/forward regardless of the
+/// run's `--isolation`/`[network].egress`. The single exception is the
+/// hermetic-proxy mode, where the proxy itself is deliberately wrapped so it
+/// becomes the sole egress point; that mode is unrelated to this WI's
+/// runner-mode coverage and is unchanged here. See #1301 (R2/AC2): this
+/// helper is the explicit, testable decision point for that exemption,
+/// rather than an inlined `if` at the `start_service` call site.
+fn service_sandbox_backend(
+    force_hermetic_proxy: bool,
+    backend: &dyn sandbox::Sandbox,
+) -> Option<&dyn sandbox::Sandbox> {
+    if force_hermetic_proxy {
+        Some(backend)
+    } else {
+        None
+    }
 }
 
 fn start_service(
@@ -3590,6 +3606,24 @@ mod tests {
         assert_eq!(
             service_start_command(&preset_plan, Some(&TestSandbox), Path::new("/vat/root")),
             preset_plan.command
+        );
+    }
+
+    /// UT3 (#1301 R2/AC2): the real (non-hermetic-proxy) service call path
+    /// never threads a `Some(sandbox)` backend into `service_start_command` —
+    /// vat's own spawned services (emulators, http-mock/record-replay proxy)
+    /// stay unsandboxed by construction, not by a permissive default. The
+    /// hermetic-proxy mode is the one deliberate exception, asserted here
+    /// too so the boundary of the exemption is explicit.
+    #[test]
+    fn start_service_call_site_never_sandboxes_real_services() {
+        assert!(
+            service_sandbox_backend(false, &TestSandbox).is_none(),
+            "real (non-hermetic-proxy) services must never be sandbox-wrapped"
+        );
+        assert!(
+            service_sandbox_backend(true, &TestSandbox).is_some(),
+            "hermetic-proxy mode is the sole intentional exception"
         );
     }
 
