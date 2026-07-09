@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:5c856338" tracker="pending-tracker" reason="Checked-in operator control-plane Namespace/ServiceAccount/ClusterRole/ClusterRoleBinding fixture (namespace tape-system, namespace-substituted at render time), mirroring relay's k8s/operator/rbac.yaml."
+// TODO: hand-write content for `apps/tape/k8s/operator/rbac.yaml`.
+// HANDWRITE-END

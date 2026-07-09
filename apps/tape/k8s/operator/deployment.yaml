@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:d0385829" tracker="pending-tracker" reason="Checked-in operator control-plane Deployment fixture running `tape k8s operator run` (built with --features operator), mirroring relay's k8s/operator/deployment.yaml."
+// TODO: hand-write content for `apps/tape/k8s/operator/deployment.yaml`.
+// HANDWRITE-END

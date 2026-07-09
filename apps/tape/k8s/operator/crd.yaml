@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:5758991b" tracker="pending-tracker" reason="Checked-in TapeSpec CustomResourceDefinition YAML fixture (group tape.dev, v1alpha1, kind Tape) -- the default (kube-free) build's tape k8s crd render source; captured from the operator-feature build's live generation so the two stay in sync."
+// TODO: hand-write content for `apps/tape/k8s/operator/crd.yaml`.
+// HANDWRITE-END

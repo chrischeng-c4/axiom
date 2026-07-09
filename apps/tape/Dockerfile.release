@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:1137802a" tracker="pending-tracker" reason="Production image fetching a published tape@<version> release tarball (TARGETARCH-selected, sha256-verified) into a distroless nonroot runtime, mirroring relay's Dockerfile.release."
+// TODO: hand-write content for `apps/tape/Dockerfile.release`.
+// HANDWRITE-END
