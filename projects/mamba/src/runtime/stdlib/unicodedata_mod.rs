@@ -124,7 +124,7 @@ fn method_arg(args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn ucd_name(_self_v: MbValue, args: MbValue) -> MbValue {
-    mb_unicodedata_name(method_arg(args))
+    mb_unicodedata_name_impl(method_arg(args), MbValue::none(), false)
 }
 
 unsafe extern "C" fn ucd_category(_self_v: MbValue, args: MbValue) -> MbValue {
@@ -300,8 +300,9 @@ fn require_single_char(c: MbValue, func: &str) -> Option<char> {
 }
 
 pub fn mb_unicodedata_name(c: MbValue) -> MbValue {
-    let s = extract_str(c).unwrap_or_default();
-    let ch = s.chars().next().unwrap_or(' ');
+    let Some(ch) = require_single_char(c, "name") else {
+        return MbValue::none();
+    };
     let name = format!("UNICODE CHAR {:04X}", ch as u32);
     MbValue::from_ptr(MbObject::new_str(name))
 }
@@ -385,8 +386,9 @@ pub fn mb_unicodedata_decimal(c: MbValue, default: MbValue) -> MbValue {
 /// decimal(chr[, default]) -> int. CPython raises ValueError when the
 /// character is not a decimal digit and no `default` was supplied.
 fn mb_unicodedata_decimal_impl(c: MbValue, default: MbValue, has_default: bool) -> MbValue {
-    let s = extract_str(c).unwrap_or_default();
-    let ch = s.chars().next().unwrap_or(' ');
+    let Some(ch) = require_single_char(c, "decimal") else {
+        return MbValue::none();
+    };
     match ch.to_digit(10) {
         Some(d) => MbValue::from_int(d as i64),
         None if has_default => default,
@@ -500,8 +502,9 @@ pub fn mb_unicodedata_digit(c: MbValue, default: MbValue) -> MbValue {
 /// digit(chr[, default]) -> int. CPython raises ValueError when the character
 /// is not a digit and no `default` was supplied.
 fn mb_unicodedata_digit_impl(c: MbValue, default: MbValue, has_default: bool) -> MbValue {
-    let s = extract_str(c).unwrap_or_default();
-    let ch = s.chars().next().unwrap_or(' ');
+    let Some(ch) = require_single_char(c, "digit") else {
+        return MbValue::none();
+    };
     match ch.to_digit(10) {
         Some(d) => MbValue::from_int(d as i64),
         None if has_default => default,
@@ -751,8 +754,9 @@ pub fn mb_unicodedata_numeric(c: MbValue, default: MbValue) -> MbValue {
 /// as '½' whose exact value this placeholder cannot yet compute — is never
 /// turned into an error; it falls through to the existing value/default path.
 fn mb_unicodedata_numeric_impl(c: MbValue, default: MbValue, has_default: bool) -> MbValue {
-    let s = extract_str(c).unwrap_or_default();
-    let ch = s.chars().next().unwrap_or(' ');
+    let Some(ch) = require_single_char(c, "numeric") else {
+        return MbValue::none();
+    };
     if !ch.is_numeric() && !has_default {
         return raise_value_error("not a numeric character");
     }

@@ -134,6 +134,16 @@ fn extract_args(args: MbValue) -> Vec<MbValue> {
         .unwrap_or_default()
 }
 
+fn extract_str(v: MbValue) -> Option<String> {
+    v.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Str(ref s) = (*p).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    })
+}
+
 fn is_bytes_like(v: MbValue) -> bool {
     v.as_ptr()
         .map(|p| unsafe { matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) })
@@ -152,6 +162,20 @@ unsafe extern "C" fn base_handler_write(_self_v: MbValue, args: MbValue) -> MbVa
         return raise_type_error("BaseHandler.write() argument must be bytes-like");
     }
     MbValue::none()
+}
+
+unsafe extern "C" fn dispatch_make_server(args: *const MbValue, nargs: usize) -> MbValue {
+    let items = if nargs == 0 || args.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args, nargs) }
+    };
+    if let Some(host) = items.first().copied() {
+        if extract_str(host).is_none() {
+            return raise_type_error("make_server() host must be str");
+        }
+    }
+    MbValue::from_ptr(MbObject::new_dict())
 }
 
 fn register_variadic_method_class(class_name: &str, method_name: &str, addr: usize) {
@@ -225,7 +249,7 @@ fn register_wsgiref_simple_server() {
         ("WSGIServer", shell_addr(next_shell_slot())),
         ("WSGIRequestHandler", shell_addr(next_shell_slot())),
         ("ServerHandler", shell_addr(next_shell_slot())),
-        ("make_server", shell_addr(next_shell_slot())),
+        ("make_server", dispatch_make_server as *const () as usize),
         ("demo_app", dispatch_empty_list as *const () as usize),
     ];
     for (name, addr) in dispatchers {

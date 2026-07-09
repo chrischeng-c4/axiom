@@ -370,6 +370,16 @@ unsafe extern "C" fn dispatch_urlopen(args_ptr: *const MbValue, nargs: usize) ->
     mb_urllib_urlopen(a.get(0).copied().unwrap_or_else(MbValue::none))
 }
 
+unsafe extern "C" fn dispatch_proxy_bypass(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if let Some(host) = a.first().copied() {
+        if extract_str(host).is_none() {
+            return raise_type_error("proxy_bypass() host must be str");
+        }
+    }
+    MbValue::from_bool(false)
+}
+
 unsafe extern "C" fn dispatch_urldefrag(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     mb_urllib_urldefrag(a.get(0).copied().unwrap_or_else(MbValue::none))
@@ -613,6 +623,7 @@ pub fn register() {
     // non-callable string.
     let request_dispatchers: &[(&str, usize)] = &[
         ("urlopen", dispatch_urlopen as *const () as usize),
+        ("proxy_bypass", dispatch_proxy_bypass as *const () as usize),
         ("quote", dispatch_quote as *const () as usize),
         ("unquote", dispatch_unquote as *const () as usize),
     ];
@@ -1414,7 +1425,9 @@ pub fn mb_urllib_quote_full(
             b
         }
         None => {
-            let s = extract_str(val).unwrap_or_default();
+            let Some(s) = extract_str(val) else {
+                return raise_type_error("quote() argument must be str or bytes");
+            };
             let errs = extract_str(errors).unwrap_or_else(|| "strict".to_string());
             match encode_str_with(&s, enc.as_deref().unwrap_or("utf-8"), &errs) {
                 Some(b) => b,
@@ -1451,7 +1464,12 @@ pub fn mb_urllib_quote_from_bytes(val: MbValue, safe: MbValue) -> MbValue {
 pub fn mb_urllib_quote_plus(val: MbValue, safe: MbValue) -> MbValue {
     let bytes = match extract_bytes_like(val) {
         Some(b) => b,
-        None => extract_str(val).unwrap_or_default().into_bytes(),
+        None => {
+            let Some(s) = extract_str(val) else {
+                return raise_type_error("quote_plus() argument must be str or bytes");
+            };
+            s.into_bytes()
+        }
     };
     // CPython: when the string already contains '+' or a space, '+' is added
     // to the safe set so a literal space encodes as '+' and is then %-encoded
@@ -1754,6 +1772,13 @@ fn url_input_str(val: MbValue) -> String {
     extract_str(val).unwrap_or_default()
 }
 
+fn validate_url_input(val: MbValue, func: &str) -> bool {
+    val.is_none() || extract_str(val).is_some() || extract_bytes_like(val).is_some() || {
+        raise_type_error(&format!("{func}() argument must be str or bytes"));
+        false
+    }
+}
+
 /// urllib.parse.urlparse(url) → ParseResult (6 fields; ';params' split out of
 /// the last path segment). Bytes input yields all-bytes components.
 fn validate_netloc_brackets(netloc: &str) -> bool {
@@ -1770,6 +1795,9 @@ fn validate_netloc_brackets(netloc: &str) -> bool {
 }
 
 pub fn mb_urllib_urlparse(val: MbValue) -> MbValue {
+    if !validate_url_input(val, "urlparse") {
+        return MbValue::none();
+    }
     let as_bytes = input_is_bytes(val);
     let url = url_input_str(val);
     let (scheme, netloc, full_path, query, fragment) = urlsplit_parts(&url);
@@ -1808,6 +1836,9 @@ pub fn mb_urllib_urlparse(val: MbValue) -> MbValue {
 
 /// urllib.parse.urlsplit(url) → SplitResult (5 fields; params stay in path).
 pub fn mb_urllib_urlsplit(val: MbValue) -> MbValue {
+    if !validate_url_input(val, "urlsplit") {
+        return MbValue::none();
+    }
     let as_bytes = input_is_bytes(val);
     let url = url_input_str(val);
     let (scheme, netloc, path, query, fragment) = urlsplit_parts(&url);
@@ -2106,6 +2137,9 @@ pub fn mb_urllib_parse_qsl_opts(val: MbValue, opts: &QsOptions) -> MbValue {
 /// and `.fragment` attributes, matching CPython's DefragResult
 /// NamedTuple shape.
 pub fn mb_urllib_urldefrag(val: MbValue) -> MbValue {
+    if !validate_url_input(val, "urldefrag") {
+        return MbValue::none();
+    }
     let s = extract_str(val).unwrap_or_default();
     let (url, fragment) = match s.find('#') {
         Some(i) => (s[..i].to_string(), s[i + 1..].to_string()),
@@ -3281,7 +3315,13 @@ unsafe extern "C" fn rm_get_full_url(self_v: MbValue, _args: MbValue) -> MbValue
 
 unsafe extern "C" fn rm_get_header(self_v: MbValue, args: MbValue) -> MbValue {
     let a = req_args_vec(args);
-    let name = a.first().copied().and_then(extract_str).unwrap_or_default();
+    let name = match a.first().copied() {
+        Some(v) => match extract_str(v) {
+            Some(s) => s,
+            None => return raise_type_error("Request.get_header() header_name must be str"),
+        },
+        None => String::new(),
+    };
     let default = a.get(1).copied().unwrap_or_else(MbValue::none);
     if let Some(hd) = req_field(self_v, "headers").and_then(|v| v.as_ptr()) {
         unsafe {
