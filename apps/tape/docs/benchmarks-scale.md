@@ -1,0 +1,3 @@
+<!-- HANDWRITE-BEGIN gap="missing-generator:logic:7beae5a1" tracker="pending-tracker" reason="New docs page (mirrors projects/lumen/docs/benchmarks-scale.md shape, scoped to tape's actual gates): documents apps/tape/tests/tape_perf_gate.rs (local append/replay/checkpoint regression budget, no external peer win claims) and apps/tape/tests/tape_vs_nats_jetstream.rs (real nats-server -js 20k-event 128-byte-payload backlog replay, Tape zero-copy replay_refs >=1.5x win), how to reproduce both, and the explicit not-yet-calibrated peer list (Kafka/Redpanda/Pulsar/RabbitMQ Streams). No new benchmark classes invented." -->
+TODO: hand-write content for `apps/tape/docs/benchmarks-scale.md`.
+<!-- HANDWRITE-END -->
