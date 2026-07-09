@@ -32,14 +32,18 @@ use service_http::{ApiErr, MetricsProvider};
 use utoipa::ToSchema;
 
 use crate::metrics::TapeMetrics;
+use crate::raft::{TapeOutcome, TapeRaft};
 use crate::{ConsumerCheckpoint, TapeError, TapeEvent, TapeJournal};
 
 /// Shared application state: the journal (behind a `std::sync::Mutex` — an
 /// in-memory `BTreeMap` core with no async internal awaits), the per-op
 /// request metrics, the drain flag `/readyz` reports, the optional file the
 /// journal persists to on every mutation (`--store`, mirroring the CLI's
-/// `load_journal`/`save_journal`), and the bearer verifier the data-plane
-/// auth layer runs (#1326).
+/// `load_journal`/`save_journal`), the bearer verifier the data-plane auth
+/// layer runs (#1326), and the optional raft group (#1327) that replicates
+/// append/checkpoint-put in HA (`REPLICAS_PER_SHARD > 1`) mode. `raft` stays
+/// `None` in single-node serving — the direct-journal path below is
+/// unchanged.
 #[derive(Clone)]
 pub struct AppState {
     journal: Arc<Mutex<TapeJournal>>,
@@ -47,6 +51,7 @@ pub struct AppState {
     draining: Arc<AtomicBool>,
     store: Option<PathBuf>,
     verifier: Arc<StaticRoleMapVerifier>,
+    raft: Option<Arc<TapeRaft>>,
 }
 
 impl AppState {
@@ -61,6 +66,7 @@ impl AppState {
             draining: Arc::new(AtomicBool::new(false)),
             store,
             verifier: Arc::new(StaticRoleMapVerifier::open()),
+            raft: None,
         }
     }
 
@@ -81,6 +87,24 @@ impl AppState {
     /// The per-op request metrics `/metrics` renders.
     pub fn metrics(&self) -> Arc<TapeMetrics> {
         Arc::clone(&self.metrics)
+    }
+
+    /// The shared journal handle, for wiring a [`crate::raft::TapeRaft`]
+    /// group onto the SAME journal this state serves reads from (#1327).
+    pub fn journal_handle(&self) -> Arc<Mutex<TapeJournal>> {
+        Arc::clone(&self.journal)
+    }
+
+    /// Attach the raft group (auto-mode HA serve path, #1327). Once set,
+    /// `append`/`checkpoint_put` propose through it instead of mutating the
+    /// journal directly.
+    pub fn set_raft(&mut self, raft: Arc<TapeRaft>) {
+        self.raft = Some(raft);
+    }
+
+    /// The raft group this state proposes through, when running in HA mode.
+    pub fn raft(&self) -> Option<Arc<TapeRaft>> {
+        self.raft.clone()
     }
 
     /// Flip readiness to draining so `/readyz` returns 503. Called on
@@ -129,6 +153,7 @@ impl service_http::MetricsProvider for AppState {
 pub fn router(state: AppState) -> Router {
     let req_metrics = state.metrics();
     let verifier = state.verifier();
+    let raft = state.raft();
     let data_plane = Router::new()
         .route("/topics/{topic}/append", axum::routing::post(append))
         .route("/topics/{topic}/replay", get(replay))
@@ -161,10 +186,18 @@ pub fn router(state: AppState) -> Router {
     let probes =
         service_http::standard_probe_routes(probe_state, Some(metrics), crate::openapi::openapi);
 
-    probes
+    let app = probes
         .merge(data_plane)
         // One INFO-level tracing span per request — spans probes + data plane.
-        .layer(service_http::trace_layer())
+        .layer(service_http::trace_layer());
+
+    // Peer raft RPCs + leader forward + `/raftz` (#1327) — merged OUTSIDE the
+    // bearer-auth data plane, like the probes, since this is cluster traffic
+    // between tape nodes rather than a client-facing route.
+    match raft {
+        Some(raft) => app.merge(raft.router()),
+        None => app,
+    }
 }
 
 /// Request body for `POST /topics/{topic}/append`.
@@ -234,8 +267,42 @@ pub async fn append(
                 .into_response()
         }
     };
+    // Resolve the timestamp BEFORE touching raft so every replica applies the
+    // identical value (#1327) — same rule the direct-journal path already
+    // follows via `TapeJournal::append`'s own `Option<u64>` -> `now_ms()`
+    // fallback, just hoisted here so the proposed command carries it.
+    let timestamp_ms = req.timestamp_ms.unwrap_or_else(crate::now_ms);
+
+    if let Some(raft) = st.raft() {
+        // append is NOT idempotent (unlike a message_id-keyed publish), so an
+        // aged-out or failed outcome cannot be safely recomputed locally —
+        // surface 503 rather than silently re-appending a possible duplicate.
+        return match raft
+            .propose_append(topic, req.key, req.payload, timestamp_ms)
+            .await
+        {
+            Ok((_, Some(TapeOutcome::Appended(event)))) => (StatusCode::OK, Json(event)).into_response(),
+            Ok((_, Some(TapeOutcome::Checkpoint(_)))) => ApiErr::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "raft outcome kind mismatch for append",
+            )
+            .into_response(),
+            Ok((_, None)) => ApiErr::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "raft_unavailable",
+                "append outcome aged out before this node could read it back",
+            )
+            .into_response(),
+            Err(e) => {
+                ApiErr::new(StatusCode::SERVICE_UNAVAILABLE, "raft_unavailable", e.to_string())
+                    .into_response()
+            }
+        };
+    }
+
     let mut journal = st.journal.lock().expect("journal mutex poisoned");
-    let event = journal.append(topic, req.key, req.payload, req.timestamp_ms);
+    let event = journal.append(topic, req.key, req.payload, Some(timestamp_ms));
     if let Err(e) = st.persist(&journal) {
         return ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())
             .into_response();
@@ -325,6 +392,41 @@ pub async fn checkpoint_put(
                 .into_response()
         }
     };
+
+    if let Some(raft) = st.raft() {
+        let updated_at_ms = crate::now_ms();
+        return match raft
+            .propose_checkpoint(topic, consumer, req.offset, updated_at_ms)
+            .await
+        {
+            Ok((_, Some(TapeOutcome::Checkpoint(Ok(checkpoint))))) => {
+                (StatusCode::OK, Json(checkpoint)).into_response()
+            }
+            Ok((_, Some(TapeOutcome::Checkpoint(Err(e @ TapeError::StaleCheckpoint { .. }))))) => {
+                ApiErr::new(StatusCode::CONFLICT, "conflict", e.to_string()).into_response()
+            }
+            Ok((_, Some(TapeOutcome::Checkpoint(Err(e @ TapeError::CheckpointBeyondEnd { .. }))))) => {
+                ApiErr::new(StatusCode::CONFLICT, "conflict", e.to_string()).into_response()
+            }
+            Ok((_, Some(TapeOutcome::Appended(_)))) => ApiErr::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "raft outcome kind mismatch for checkpoint_put",
+            )
+            .into_response(),
+            Ok((_, None)) => ApiErr::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "raft_unavailable",
+                "checkpoint outcome aged out before this node could read it back",
+            )
+            .into_response(),
+            Err(e) => {
+                ApiErr::new(StatusCode::SERVICE_UNAVAILABLE, "raft_unavailable", e.to_string())
+                    .into_response()
+            }
+        };
+    }
+
     let mut journal = st.journal.lock().expect("journal mutex poisoned");
     match journal.put_checkpoint(topic, consumer, req.offset) {
         Ok(checkpoint) => {
