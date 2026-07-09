@@ -204,6 +204,69 @@ extern "C" fn type_params_invalid_test_disallowed_expressions(_self_v: MbValue) 
     MbValue::none()
 }
 
+extern "C" fn type_params_type_var_tuple_test_typevartuple_01(_self_v: MbValue) -> MbValue {
+    const CASES: &[(&str, &str)] = &[
+        (
+            "def func1[*A: str](): pass",
+            "cannot use bound with TypeVarTuple",
+        ),
+        (
+            "def func1[*A: (int, str)](): pass",
+            "cannot use constraints with TypeVarTuple",
+        ),
+        (
+            "class X[*A: str]: pass",
+            "cannot use bound with TypeVarTuple",
+        ),
+        (
+            "class X[*A: (int, str)]: pass",
+            "cannot use constraints with TypeVarTuple",
+        ),
+        (
+            "type X[*A: str] = int",
+            "cannot use bound with TypeVarTuple",
+        ),
+        (
+            "type X[*A: (int, str)] = int",
+            "cannot use constraints with TypeVarTuple",
+        ),
+    ];
+
+    for (source, expected_msg) in CASES {
+        if let Err(message) = expect_type_params_syntax_error(source, expected_msg) {
+            return raise_assertion_error(&message);
+        }
+    }
+    MbValue::none()
+}
+
+extern "C" fn type_params_type_var_param_spec_test_paramspec_01(_self_v: MbValue) -> MbValue {
+    const CASES: &[(&str, &str)] = &[
+        ("def func1[**A: str](): pass", "cannot use bound with ParamSpec"),
+        (
+            "def func1[**A: (int, str)](): pass",
+            "cannot use constraints with ParamSpec",
+        ),
+        ("class X[**A: str]: pass", "cannot use bound with ParamSpec"),
+        (
+            "class X[**A: (int, str)]: pass",
+            "cannot use constraints with ParamSpec",
+        ),
+        ("type X[**A: str] = int", "cannot use bound with ParamSpec"),
+        (
+            "type X[**A: (int, str)] = int",
+            "cannot use constraints with ParamSpec",
+        ),
+    ];
+
+    for (source, expected_msg) in CASES {
+        if let Err(message) = expect_type_params_syntax_error(source, expected_msg) {
+            return raise_assertion_error(&message);
+        }
+    }
+    MbValue::none()
+}
+
 extern "C" fn type_params_nonlocal_test_nonlocal_disallowed_01(_self_v: MbValue) -> MbValue {
     let source = r#"
 def outer():
@@ -316,6 +379,30 @@ fn register_type_params_wrapper_submodule(type_params_make_base: usize) {
         vec!["TestCase".to_string()],
         invalid_methods,
     );
+    let mut typevartuple_methods: HashMap<String, MbValue> = HashMap::new();
+    typevartuple_methods.insert(
+        "test_typevartuple_01".to_string(),
+        MbValue::from_func(
+            type_params_type_var_tuple_test_typevartuple_01 as *const () as usize,
+        ),
+    );
+    super::super::class::mb_class_register(
+        "TypeParamsTypeVarTupleTest",
+        vec!["TestCase".to_string()],
+        typevartuple_methods,
+    );
+    let mut paramspec_methods: HashMap<String, MbValue> = HashMap::new();
+    paramspec_methods.insert(
+        "test_paramspec_01".to_string(),
+        MbValue::from_func(
+            type_params_type_var_param_spec_test_paramspec_01 as *const () as usize,
+        ),
+    );
+    super::super::class::mb_class_register(
+        "TypeParamsTypeVarParamSpecTest",
+        vec!["TestCase".to_string()],
+        paramspec_methods,
+    );
     let mut nonlocal_methods: HashMap<String, MbValue> = HashMap::new();
     nonlocal_methods.insert(
         "test_nonlocal_disallowed_01".to_string(),
@@ -362,6 +449,18 @@ fn register_type_params_wrapper_submodule(type_params_make_base: usize) {
     attrs.insert(
         "TypeParamsInvalidTest".to_string(),
         MbValue::from_ptr(MbObject::new_str("TypeParamsInvalidTest".to_string())),
+    );
+    attrs.insert(
+        "TypeParamsTypeVarTupleTest".to_string(),
+        MbValue::from_ptr(MbObject::new_str(
+            "TypeParamsTypeVarTupleTest".to_string(),
+        )),
+    );
+    attrs.insert(
+        "TypeParamsTypeVarParamSpecTest".to_string(),
+        MbValue::from_ptr(MbObject::new_str(
+            "TypeParamsTypeVarParamSpecTest".to_string(),
+        )),
     );
     attrs.insert(
         "TypeParamsLazyEvaluationTest".to_string(),
