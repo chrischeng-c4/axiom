@@ -24,48 +24,48 @@ Public API manifest for `apps/agentic-workflow/src/state/manager.rs` generated f
 | `AgentLock` | apps/agentic-workflow/src/state/manager.rs | struct | pub | 39 |  |
 | `StalenessReport` | apps/agentic-workflow/src/state/manager.rs | struct | pub | 62 |  |
 | `StateManager` | apps/agentic-workflow/src/state/manager.rs | struct | pub | 46 |  |
-| `append_telemetry_call` | apps/agentic-workflow/src/state/manager.rs | function | pub | 774 | append_telemetry_call(&mut self, call: LlmCall) |
-| `change_dir` | apps/agentic-workflow/src/state/manager.rs | function | pub | 267 | change_dir(&self) -> &Path |
-| `check_staleness` | apps/agentic-workflow/src/state/manager.rs | function | pub | 562 | check_staleness(&self) -> Result<StalenessReport> |
-| `clear_delegation_guard` | apps/agentic-workflow/src/state/manager.rs | function | pub | 321 | clear_delegation_guard(&mut self) |
-| `clear_validations` | apps/agentic-workflow/src/state/manager.rs | function | pub | 685 | clear_validations(&mut self) |
-| `git_workflow` | apps/agentic-workflow/src/state/manager.rs | function | pub | 397 | git_workflow(&self) -> Option<&str> |
-| `has_stale` | apps/agentic-workflow/src/state/manager.rs | function | pub | 945 | has_stale(&self) -> bool |
-| `increment_iteration` | apps/agentic-workflow/src/state/manager.rs | function | pub | 364 | increment_iteration(&mut self) |
-| `increment_revision_count` | apps/agentic-workflow/src/state/manager.rs | function | pub | 381 | increment_revision_count(&mut self, stage: &str) |
-| `is_complete` | apps/agentic-workflow/src/state/manager.rs | function | pub | 950 | is_complete(&self) -> bool |
-| `is_delegation_stale` | apps/agentic-workflow/src/state/manager.rs | function | pub | 352 | is_delegation_stale(&self) -> bool |
-| `is_file_stale` | apps/agentic-workflow/src/state/manager.rs | function | pub | 543 | is_file_stale(&self, filename: &str) -> Result<bool> |
-| `is_fresh` | apps/agentic-workflow/src/state/manager.rs | function | pub | 955 | is_fresh(&self) -> bool |
-| `last_validation` | apps/agentic-workflow/src/state/manager.rs | function | pub | 680 | last_validation(&self, step: &str) -> Option<&ValidationEntry> |
+| `append_telemetry_call` | apps/agentic-workflow/src/state/manager.rs | function | pub | 782 | append_telemetry_call(&mut self, call: LlmCall) |
+| `change_dir` | apps/agentic-workflow/src/state/manager.rs | function | pub | 275 | change_dir(&self) -> &Path |
+| `check_staleness` | apps/agentic-workflow/src/state/manager.rs | function | pub | 570 | check_staleness(&self) -> Result<StalenessReport> |
+| `clear_delegation_guard` | apps/agentic-workflow/src/state/manager.rs | function | pub | 329 | clear_delegation_guard(&mut self) |
+| `clear_validations` | apps/agentic-workflow/src/state/manager.rs | function | pub | 693 | clear_validations(&mut self) |
+| `git_workflow` | apps/agentic-workflow/src/state/manager.rs | function | pub | 405 | git_workflow(&self) -> Option<&str> |
+| `has_stale` | apps/agentic-workflow/src/state/manager.rs | function | pub | 953 | has_stale(&self) -> bool |
+| `increment_iteration` | apps/agentic-workflow/src/state/manager.rs | function | pub | 372 | increment_iteration(&mut self) |
+| `increment_revision_count` | apps/agentic-workflow/src/state/manager.rs | function | pub | 389 | increment_revision_count(&mut self, stage: &str) |
+| `is_complete` | apps/agentic-workflow/src/state/manager.rs | function | pub | 958 | is_complete(&self) -> bool |
+| `is_delegation_stale` | apps/agentic-workflow/src/state/manager.rs | function | pub | 360 | is_delegation_stale(&self) -> bool |
+| `is_file_stale` | apps/agentic-workflow/src/state/manager.rs | function | pub | 551 | is_file_stale(&self, filename: &str) -> Result<bool> |
+| `is_fresh` | apps/agentic-workflow/src/state/manager.rs | function | pub | 963 | is_fresh(&self) -> bool |
+| `last_validation` | apps/agentic-workflow/src/state/manager.rs | function | pub | 688 | last_validation(&self, step: &str) -> Option<&ValidationEntry> |
 | `load` | apps/agentic-workflow/src/state/manager.rs | function | pub | 78 | load(change_dir: impl Into<PathBuf>) -> Result<Self> |
-| `mark_spec_revised` | apps/agentic-workflow/src/state/manager.rs | function | pub | 457 | mark_spec_revised(&mut self) -> Result<()> |
-| `phase` | apps/agentic-workflow/src/state/manager.rs | function | pub | 301 | phase(&self) -> &StatePhase |
-| `record_challenge_validation` | apps/agentic-workflow/src/state/manager.rs | function | pub | 649 | record_challenge_validation(         &mut self,         verdict: &str,         issues_parsed: u32,         high: u32,         medium: u32,         low: u32,     ) |
-| `record_llm_call` | apps/agentic-workflow/src/state/manager.rs | function | pub | 704 | record_llm_call(         &mut self,         step: &str,         model: Option<String>,         tokens_in: Option<u64>,         tokens_out: Option<u64>,         duration_ms: Option<u64>,         cost_per_1m_input: Option<f64>,         cost_per_1m_output: Option<f64>,     ) |
-| `record_validation` | apps/agentic-workflow/src/state/manager.rs | function | pub | 615 | record_validation(         &mut self,         step: impl Into<String>,         mode: ValidationMode,         valid: bool,         high: u32,         medium: u32,         low: u32,         errors: Vec<String>,         warnings: Vec<String>,     ) |
-| `revision_count` | apps/agentic-workflow/src/state/manager.rs | function | pub | 376 | revision_count(&self, stage: &str) -> u32 |
-| `rollback_delegation` | apps/agentic-workflow/src/state/manager.rs | function | pub | 327 | rollback_delegation(&mut self) |
-| `run_blocking_io` | apps/agentic-workflow/src/state/manager.rs | function | pub | 859 | run_blocking_io(build_fut: F) -> Result<T> |
-| `save` | apps/agentic-workflow/src/state/manager.rs | function | pub | 189 | save(&mut self) -> Result<()> |
-| `save_if_dirty` | apps/agentic-workflow/src/state/manager.rs | function | pub | 248 | save_if_dirty(&mut self) -> Result<()> |
-| `session_id` | apps/agentic-workflow/src/state/manager.rs | function | pub | 408 | session_id(&self) -> Option<&str> |
-| `set_delegation_guard` | apps/agentic-workflow/src/state/manager.rs | function | pub | 310 | set_delegation_guard(&mut self, allowed_phases: Vec<StatePhase>, action: &str) |
-| `set_git_workflow` | apps/agentic-workflow/src/state/manager.rs | function | pub | 391 | set_git_workflow(&mut self, workflow: String) |
-| `set_last_action` | apps/agentic-workflow/src/state/manager.rs | function | pub | 370 | set_last_action(&mut self, action: impl Into<String>) |
-| `set_phase` | apps/agentic-workflow/src/state/manager.rs | function | pub | 278 | set_phase(&mut self, phase: StatePhase) -> Result<()> |
-| `set_session_id` | apps/agentic-workflow/src/state/manager.rs | function | pub | 402 | set_session_id(&mut self, session_id: String) |
-| `state` | apps/agentic-workflow/src/state/manager.rs | function | pub | 256 | state(&self) -> &State |
-| `state_mut` | apps/agentic-workflow/src/state/manager.rs | function | pub | 261 | state_mut(&mut self) -> &mut State |
-| `telemetry_summary` | apps/agentic-workflow/src/state/manager.rs | function | pub | 792 | telemetry_summary(&self) -> Option<&Telemetry> |
-| `total_files` | apps/agentic-workflow/src/state/manager.rs | function | pub | 960 | total_files(&self) -> usize |
-| `try_acquire_agent_lock` | apps/agentic-workflow/src/state/manager.rs | function | pub | 338 | try_acquire_agent_lock(&self) -> Result<AgentLock> |
-| `update_all_checksums` | apps/agentic-workflow/src/state/manager.rs | function | pub | 516 | update_all_checksums(&mut self) -> Result<()> |
-| `update_checksum` | apps/agentic-workflow/src/state/manager.rs | function | pub | 490 | update_checksum(&mut self, filename: &str) -> Result<()> |
-| `update_phase_from_proposal_verdict` | apps/agentic-workflow/src/state/manager.rs | function | pub | 415 | update_phase_from_proposal_verdict(&mut self, verdict: &str) -> Result<()> |
-| `update_phase_from_review` | apps/agentic-workflow/src/state/manager.rs | function | pub | 474 | update_phase_from_review(&mut self, verdict: &str) -> Result<()> |
-| `update_phase_from_spec_verdict` | apps/agentic-workflow/src/state/manager.rs | function | pub | 429 | update_phase_from_spec_verdict(         &mut self,         verdict: &str,         is_last_spec: bool,     ) -> Result<()> |
-| `update_phase_from_verdict` | apps/agentic-workflow/src/state/manager.rs | function | pub | 466 | update_phase_from_verdict(&mut self, verdict: &str) -> Result<()> |
+| `mark_spec_revised` | apps/agentic-workflow/src/state/manager.rs | function | pub | 465 | mark_spec_revised(&mut self) -> Result<()> |
+| `phase` | apps/agentic-workflow/src/state/manager.rs | function | pub | 309 | phase(&self) -> &StatePhase |
+| `record_challenge_validation` | apps/agentic-workflow/src/state/manager.rs | function | pub | 657 | record_challenge_validation(         &mut self,         verdict: &str,         issues_parsed: u32,         high: u32,         medium: u32,         low: u32,     ) |
+| `record_llm_call` | apps/agentic-workflow/src/state/manager.rs | function | pub | 712 | record_llm_call(         &mut self,         step: &str,         model: Option<String>,         tokens_in: Option<u64>,         tokens_out: Option<u64>,         duration_ms: Option<u64>,         cost_per_1m_input: Option<f64>,         cost_per_1m_output: Option<f64>,     ) |
+| `record_validation` | apps/agentic-workflow/src/state/manager.rs | function | pub | 623 | record_validation(         &mut self,         step: impl Into<String>,         mode: ValidationMode,         valid: bool,         high: u32,         medium: u32,         low: u32,         errors: Vec<String>,         warnings: Vec<String>,     ) |
+| `revision_count` | apps/agentic-workflow/src/state/manager.rs | function | pub | 384 | revision_count(&self, stage: &str) -> u32 |
+| `rollback_delegation` | apps/agentic-workflow/src/state/manager.rs | function | pub | 335 | rollback_delegation(&mut self) |
+| `run_blocking_io` | apps/agentic-workflow/src/state/manager.rs | function | pub(crate) | 1015 | run_blocking_io<T, F, Fut>(build_fut: F) -> Result<T> |
+| `save` | apps/agentic-workflow/src/state/manager.rs | function | pub | 197 | save(&mut self) -> Result<()> |
+| `save_if_dirty` | apps/agentic-workflow/src/state/manager.rs | function | pub | 256 | save_if_dirty(&mut self) -> Result<()> |
+| `session_id` | apps/agentic-workflow/src/state/manager.rs | function | pub | 416 | session_id(&self) -> Option<&str> |
+| `set_delegation_guard` | apps/agentic-workflow/src/state/manager.rs | function | pub | 318 | set_delegation_guard(&mut self, allowed_phases: Vec<StatePhase>, action: &str) |
+| `set_git_workflow` | apps/agentic-workflow/src/state/manager.rs | function | pub | 399 | set_git_workflow(&mut self, workflow: String) |
+| `set_last_action` | apps/agentic-workflow/src/state/manager.rs | function | pub | 378 | set_last_action(&mut self, action: impl Into<String>) |
+| `set_phase` | apps/agentic-workflow/src/state/manager.rs | function | pub | 286 | set_phase(&mut self, phase: StatePhase) -> Result<()> |
+| `set_session_id` | apps/agentic-workflow/src/state/manager.rs | function | pub | 410 | set_session_id(&mut self, session_id: String) |
+| `state` | apps/agentic-workflow/src/state/manager.rs | function | pub | 264 | state(&self) -> &State |
+| `state_mut` | apps/agentic-workflow/src/state/manager.rs | function | pub | 269 | state_mut(&mut self) -> &mut State |
+| `telemetry_summary` | apps/agentic-workflow/src/state/manager.rs | function | pub | 800 | telemetry_summary(&self) -> Option<&Telemetry> |
+| `total_files` | apps/agentic-workflow/src/state/manager.rs | function | pub | 968 | total_files(&self) -> usize |
+| `try_acquire_agent_lock` | apps/agentic-workflow/src/state/manager.rs | function | pub | 346 | try_acquire_agent_lock(&self) -> Result<AgentLock> |
+| `update_all_checksums` | apps/agentic-workflow/src/state/manager.rs | function | pub | 524 | update_all_checksums(&mut self) -> Result<()> |
+| `update_checksum` | apps/agentic-workflow/src/state/manager.rs | function | pub | 498 | update_checksum(&mut self, filename: &str) -> Result<()> |
+| `update_phase_from_proposal_verdict` | apps/agentic-workflow/src/state/manager.rs | function | pub | 423 | update_phase_from_proposal_verdict(&mut self, verdict: &str) -> Result<()> |
+| `update_phase_from_review` | apps/agentic-workflow/src/state/manager.rs | function | pub | 482 | update_phase_from_review(&mut self, verdict: &str) -> Result<()> |
+| `update_phase_from_spec_verdict` | apps/agentic-workflow/src/state/manager.rs | function | pub | 437 | update_phase_from_spec_verdict(         &mut self,         verdict: &str,         is_last_spec: bool,     ) -> Result<()> |
+| `update_phase_from_verdict` | apps/agentic-workflow/src/state/manager.rs | function | pub | 474 | update_phase_from_verdict(&mut self, verdict: &str) -> Result<()> |
 ## Schema
 <!-- type: schema lang: yaml -->
 
@@ -146,6 +146,8 @@ definitions:
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/state/manager.rs -->
 ```rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/interfaces/state/manager.md#source
+// CODEGEN-BEGIN
 //! StateManager — issue frontmatter + meta.yaml
 //!
 //! Workflow state (phase, branch, iteration, task tracking) lives in issue frontmatter.
@@ -231,12 +233,20 @@ impl StateManager {
             .unwrap_or("unknown")
             .to_string();
 
-        // Derive project root from change_dir: .aw/changes/{id} → root
-        let project_root = change_dir
-            .parent() // .aw/changes
-            .and_then(|p| p.parent()) // .aw
-            .and_then(|p| p.parent()) // project/worktree root
-            .map(|p| p.to_path_buf());
+        // Derive project root: prefer the `.project-root` marker recorded
+        // by `workspace::changes_path`/`change_path` for the current
+        // `/tmp/aw/workspaces/<slug>/changes/{id}` runtime layout. Fall
+        // back to the legacy 3-parent walk (`.aw/changes/{id}` → root) for
+        // change dirs created before this mechanism existed or built by
+        // hand (e.g. tests using the legacy 2-level shape directly).
+        let project_root = crate::shared::workspace::project_root_for_change_dir(&change_dir)
+            .or_else(|| {
+                change_dir
+                    .parent() // .aw/changes
+                    .and_then(|p| p.parent()) // .aw
+                    .and_then(|p| p.parent()) // project/worktree root
+                    .map(|p| p.to_path_buf())
+            });
 
         // R5: reject legacy STATE.yaml — users must migrate.
         let state_path = change_dir.join("STATE.yaml");
@@ -1040,7 +1050,7 @@ fn phase_display(phase: &StatePhase) -> String {
 /// Staleness report for a change
 /// Load workflow state from issue frontmatter (primary state store).
 ///
-/// Reads the issue file at `.aw/issues/{open,closed}/{slug}.md`,
+/// Reads the issue file from the temp issue working copy,
 /// extracts phase/branch/iteration/etc from frontmatter, and builds a State.
 fn load_state_from_issue(project_root: &Path, slug: &str) -> Result<State> {
     use crate::issues::IssueBackend;
@@ -1125,7 +1135,7 @@ mod tests {
 
         // R4: StateManager::save() requires a backing issue file. Create a
         // minimal valid issue for slug `test-change` so sync_to_issue() succeeds.
-        let issues_dir = temp_dir.path().join(".aw/issues/open");
+        let issues_dir = crate::shared::workspace::issues_path(temp_dir.path()).join("open");
         std::fs::create_dir_all(&issues_dir).unwrap();
         let issue_content = "---\n\
             type: refactor\n\
@@ -1725,7 +1735,7 @@ mod tests {
             .join(".aw/changes")
             .join("change-without-issue");
         std::fs::create_dir_all(&change_dir).unwrap();
-        // Deliberately do NOT create .aw/issues/open/change-without-issue.md
+        // Deliberately do NOT create a temp issue working copy.
         (temp, change_dir)
     }
 
@@ -1822,6 +1832,8 @@ iteration: 1
         );
     }
 }
+
+// CODEGEN-END
 ```
 
 ## Changes

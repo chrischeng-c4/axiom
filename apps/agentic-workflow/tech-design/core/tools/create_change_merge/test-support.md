@@ -27,6 +27,8 @@ Public API manifest for `apps/agentic-workflow/src/tools/create_change_merge.rs`
 <!-- type: source lang: rust -->
 
 ````rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/tools/create_change_merge/test-support.md#source
+// CODEGEN-BEGIN
 #[cfg(test)]
 mod test_support {
     use super::*;
@@ -35,9 +37,9 @@ mod test_support {
 
     pub(super) fn setup_change(change_id: &str, phase: StatePhase) -> TempDir {
         let tmp = TempDir::new().unwrap();
-        let change_dir = tmp.path().join(".aw/changes").join(change_id);
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), change_id);
         std::fs::create_dir_all(&change_dir).unwrap();
-        std::fs::create_dir_all(tmp.path().join(".aw/tech-design")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("tech-design")).unwrap();
         // R4: save() needs an issue backing change_id.
         crate::test_util::write_minimal_issue(tmp.path(), change_id);
 
@@ -52,9 +54,9 @@ auto_pr = false
 
 [agentic_workflow.tech_design_platform]
 type = "local"
-path = ".aw/tech-design"
+path = "tech-design"
 "#;
-        std::fs::write(tmp.path().join(".aw/config.toml"), config_content).unwrap();
+        std::fs::write(tmp.path().join("aw.toml"), config_content).unwrap();
 
         let mut sm = StateManager::load(&change_dir).unwrap();
         sm.state_mut().phase = phase;
@@ -63,6 +65,7 @@ path = ".aw/tech-design"
         tmp
     }
 }
+// CODEGEN-END
 ````
 
 ## Changes
