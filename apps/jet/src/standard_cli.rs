@@ -577,6 +577,24 @@ mod tests {
             .unwrap_or_default();
         assert_eq!(message, "still broken");
     }
+
+    #[tokio::test]
+    async fn issue_comment_dry_run_returns_ok_without_network_credential() {
+        // SAFETY: mutates process env for the duration of this test only, to
+        // prove the dry-run path never needs a GitHub credential.
+        unsafe {
+            std::env::remove_var("GITHUB_TOKEN");
+            std::env::remove_var("GH_TOKEN");
+        }
+        let matches = issue_command()
+            .try_get_matches_from(["issue", "comment", "928", "--dry-run", "still", "broken"])
+            .expect("parse issue comment");
+        let result = run_issue(&matches).await;
+        assert!(
+            result.is_ok(),
+            "dry-run comment should succeed without a GitHub credential, got: {result:?}"
+        );
+    }
 }
 
 // </HANDWRITE>
