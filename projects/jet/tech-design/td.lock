@@ -2,10 +2,10 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = "projects/jet/tech-design"
-generated_at = "2026-07-09T04:55:10.599966+00:00"
-digest = "sha256:3ea73ca3d02d4f9c4fe1f5b7d7fa0b3aca518df4d1edaa8b5ebc35e05b2d4339"
-source_digest = "sha256:3ea73ca3d02d4f9c4fe1f5b7d7fa0b3aca518df4d1edaa8b5ebc35e05b2d4339"
-ir_digest = "sha256:67febdc03aad146c25d07f543761e2b1d730523f22cb8e9855d742ff76e52e41"
+generated_at = "2026-07-09T05:33:01.630711+00:00"
+digest = "sha256:55afb3688938ab808664f94b455d1329c6d9ad386c0f6b5198ff2426d1024fbc"
+source_digest = "sha256:55afb3688938ab808664f94b455d1329c6d9ad386c0f6b5198ff2426d1024fbc"
+ir_digest = "sha256:3407881736be05fd4f26d944914bd26f2babd3bfac7cb5b99952b0614e51a934"
 
 [[files]]
 path = "logic/jet-lib-dts-isolateddeclarations-false-positive-on-arrow-functio.md"
@@ -23,6 +23,12 @@ section_count = 3
 path = "logic/jet-lib-dts-isolateddeclarations-false-positive-on-nested-plain.md"
 digest = "sha256:001bc107b11218f010f6f46e66d19e1790c2c86666d9f07e5c7575b14cb022b0"
 ir_digest = "sha256:58934dd3edadd567191ea6ae0cf41c6d71c65af316b69f140dbb1c779568f094"
+section_count = 3
+
+[[files]]
+path = "logic/jet-lib-dts-isolateddeclarations-object-assign-computed-key-stil.md"
+digest = "sha256:2bdef66d8dce9c4d94c8ae7af32fb9b55855d9211e9df016a8d0b19bd33bb680"
+ir_digest = "sha256:e7b7802f5113923033ed24f4f95a3ec958c9cbfd26c8c00c5a6b771f64869340"
 section_count = 3
 
 [[files]]
