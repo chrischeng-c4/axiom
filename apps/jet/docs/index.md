@@ -1,7 +1,7 @@
 ---
 layout: home
 hero:
-  name: cclab
+  name: Jet
   text: High-performance dev tools
   tagline: Build tools, package managers, and runtimes — all in Rust.
   actions:
@@ -12,8 +12,4 @@ features:
   - title: Jet
     details: Fast JavaScript/TypeScript bundler and package manager. Replaces Vite + pnpm.
     link: /getting-started
-  - title: Mamba
-    details: Force-typed Python compiler with Cranelift backend. (Docs coming soon)
-  - title: SDD
-    details: Spec-Driven Development workflow engine. (Docs coming soon)
 ---
