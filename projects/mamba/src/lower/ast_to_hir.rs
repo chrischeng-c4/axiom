@@ -6844,6 +6844,13 @@ impl<'a> AstLowerer<'a> {
             ast::Stmt::Nonlocal(names) => {
                 let mut syms: Vec<SymbolId> = Vec::new();
                 for n in names {
+                    if self.active_type_params.contains(n.as_str()) {
+                        self.errors.push(MambaError::syntax(
+                            stmt.span,
+                            format!("nonlocal binding not allowed for type parameter '{n}'"),
+                        ));
+                        continue;
+                    }
                     // Look up in outer function scope first to get the same
                     // synthetic SymbolId. Module globals do not satisfy
                     // `nonlocal`; CPython raises SyntaxError for that case.
