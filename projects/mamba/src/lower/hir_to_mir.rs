@@ -1251,6 +1251,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
                 class_name.clone(),
                 cls.name,
                 cls.runtime_base_exprs.clone(),
+                cls.class_kwargs.clone(),
             ));
         }
         if let Some(base_list_expr) = &cls.runtime_base_list_expr {
@@ -1258,6 +1259,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
                 class_name.clone(),
                 cls.name,
                 base_list_expr.clone(),
+                cls.class_kwargs.clone(),
             ));
         }
         // P2-R3: Store class-level attribute assignments for emission at the
@@ -1501,10 +1503,10 @@ struct HirToMir<'a> {
     classes_needing_textual_registration: HashSet<u32>,
     /// Class base expressions that must be evaluated at the class statement's
     /// textual runtime position, e.g. `class Derived(base):` inside a loop.
-    pending_runtime_class_bases: Vec<(String, SymbolId, Vec<HirExpr>)>,
+    pending_runtime_class_bases: Vec<(String, SymbolId, Vec<HirExpr>, Vec<(String, HirExpr)>)>,
     /// Materialized runtime base-list expressions for starred class bases,
     /// e.g. `class Derived[T](*bases): ...`.
-    pending_runtime_class_base_lists: Vec<(String, SymbolId, HirExpr)>,
+    pending_runtime_class_base_lists: Vec<(String, SymbolId, HirExpr, Vec<(String, HirExpr)>)>,
     /// P2-R3: Class-level attribute assignments to emit after class registration.
     /// (class_name, class_symbol_id, attr_name, class_body_local_symbol, value_expr)
     /// Emitted at the class's ClassDefPlaceholder position (textual order) so
@@ -6104,7 +6106,8 @@ impl<'a> HirToMir<'a> {
                 i += 1;
                 continue;
             }
-            let (class_name, _, base_exprs) = self.pending_runtime_class_bases.remove(i);
+            let (class_name, _, base_exprs, class_kwargs) =
+                self.pending_runtime_class_bases.remove(i);
             let cls_vreg = self.emit_str_const(&class_name);
             let mut base_vregs = Vec::new();
             for expr in &base_exprs {
@@ -6117,6 +6120,7 @@ impl<'a> HirToMir<'a> {
                 elements: base_vregs,
                 ty: self.tcx.any(),
             });
+            self.emit_runtime_class_kwargs(cls_vreg, &class_kwargs);
             self.current_stmts.push(MirInst::CallExtern {
                 dest: None,
                 name: "mb_class_update_bases".to_string(),
@@ -6131,10 +6135,12 @@ impl<'a> HirToMir<'a> {
                 i += 1;
                 continue;
             }
-            let (class_name, _, base_list_expr) = self.pending_runtime_class_base_lists.remove(i);
+            let (class_name, _, base_list_expr, class_kwargs) =
+                self.pending_runtime_class_base_lists.remove(i);
             let cls_vreg = self.emit_str_const(&class_name);
             let raw = self.lower_expr(&base_list_expr);
             let bases_list = self.box_operand(raw, base_list_expr.ty());
+            self.emit_runtime_class_kwargs(cls_vreg, &class_kwargs);
             self.current_stmts.push(MirInst::CallExtern {
                 dest: None,
                 name: "mb_class_update_bases".to_string(),
@@ -6142,6 +6148,38 @@ impl<'a> HirToMir<'a> {
                 ty: self.tcx.none(),
             });
         }
+    }
+
+    fn emit_runtime_class_kwargs(&mut self, name_vreg: VReg, class_kwargs: &[(String, HirExpr)]) {
+        if class_kwargs.is_empty() {
+            return;
+        }
+
+        let mut key_vregs = Vec::new();
+        let mut val_vregs = Vec::new();
+        for (kwarg_name, kwarg_expr) in class_kwargs {
+            key_vregs.push(self.emit_str_const(kwarg_name));
+            let val_vreg = self.lower_expr(kwarg_expr);
+            val_vregs.push(self.box_operand(val_vreg, kwarg_expr.ty()));
+        }
+        let keys_list = self.fresh_vreg();
+        self.current_stmts.push(MirInst::MakeList {
+            dest: keys_list,
+            elements: key_vregs,
+            ty: self.tcx.any(),
+        });
+        let vals_list = self.fresh_vreg();
+        self.current_stmts.push(MirInst::MakeList {
+            dest: vals_list,
+            elements: val_vregs,
+            ty: self.tcx.any(),
+        });
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_class_set_kwargs".to_string(),
+            args: vec![name_vreg, keys_list, vals_list],
+            ty: self.tcx.none(),
+        });
     }
 
     /// Convert an expression condition to a 0/1 bool value for branch instructions.
