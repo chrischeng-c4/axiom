@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:40c58be5" tracker="pending-tracker" reason="Prometheus scrape config targeting tape's /metrics endpoint (mirrors projects/lumen/observability/prometheus.yml), scraping the otel-collector's Prometheus exporter port."
+// TODO: hand-write content for `apps/tape/observability/prometheus.yml`.
+// HANDWRITE-END
