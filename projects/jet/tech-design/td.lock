@@ -2,10 +2,10 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = "projects/jet/tech-design"
-generated_at = "2026-07-09T12:58:53.279184+00:00"
-digest = "sha256:08de1865a0aea40fccfc9ce093a9fbd5babc2a1872d1d7bbacf51221425e331c"
-source_digest = "sha256:08de1865a0aea40fccfc9ce093a9fbd5babc2a1872d1d7bbacf51221425e331c"
-ir_digest = "sha256:af31e08fd2066b1825b29d12fc675406759a487f6ea6b5dd8226958dbdb669c1"
+generated_at = "2026-07-09T13:26:33.642101+00:00"
+digest = "sha256:dddd81fcceb432e863d6b50e4d9e1345366c7f9ba4a425659a6d71abcd279c85"
+source_digest = "sha256:dddd81fcceb432e863d6b50e4d9e1345366c7f9ba4a425659a6d71abcd279c85"
+ir_digest = "sha256:c722f656433d6b8efb61a2a68b4b1beaad9fbeb2184b64520a7de4f4b1bf2f5f"
 
 [[files]]
 path = "config/jet-transform-resolver-nx-tsconfig-path-aliases-never-wired-into.md"
@@ -24,6 +24,12 @@ path = "logic/jet-build-lib-dts-object-literal-d-ts-emission-silently-truncate.m
 digest = "sha256:0db24c5a1a383d0e109b44fcc08092f436fa38b0b45d2bd1e23ff6eb300c0d27"
 ir_digest = "sha256:853dc8b0411cac907bab94a7c340be4802c51b9dc4ee6216f7a9b41df52f0ab0"
 section_count = 3
+
+[[files]]
+path = "logic/jet-docs-site-carries-cclab-era-branding-after-move-to-projects.md"
+digest = "sha256:599db506d170db7c1508b5d4cdbca5a6df3ccb73766a5a51de44ba3bb48178f4"
+ir_digest = "sha256:842618fa7f26b137c2e80d6be496121bf029a79e57a4c40a01cacbb0e5b018ae"
+section_count = 4
 
 [[files]]
 path = "logic/jet-install-401-on-tarball-download-despite-valid-npmrc-authtoke.md"
