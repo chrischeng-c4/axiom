@@ -173,3 +173,25 @@ flowchart TD
     r4[R4 no stale root doc references remain] --> rg_n_projects_jet_layout_md_glob_projects_jet_tech_design[! rg -n "projects/jet/LAYOUT.md" --glob '!projects/jet/tech-design/**']
     r5[R5 no new root uppercase meta doc introduced] --> find_projects_jet_maxdepth_1_regex_a_z_a_z_md[find projects/jet -maxdepth 1 -regex '.*/[A-Z][A-Z_-]*\.md']
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/jet/docs/architecture/layout.md
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: "Scoped home for the layout path-role map and crate/package naming conventions, replacing the project-root uppercase meta doc; content copied verbatim from the retired projects/jet/LAYOUT.md."
+  - path: projects/jet/LAYOUT.md
+    action: delete
+    section: logic
+    impl_mode: hand-written
+    reason: "Removes the project-root uppercase meta doc once its content is preserved at the scoped docs/architecture/layout.md path, per WI #1169 acceptance criteria."
+  - path: projects/jet/README.md
+    action: update
+    section: config
+    impl_mode: hand-written
+    reason: "Repoints the Source map table row from projects/jet/LAYOUT.md to projects/jet/docs/architecture/layout.md and registers the jet-project-architecture-and-authoring-clarity capability (Capability Index row + H3 field-style section + work-root table) so the migration is capability-tracked; already applied ahead of this TD per standard aw-td-writer capability-registration practice."
+```
