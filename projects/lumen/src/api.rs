@@ -16,8 +16,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use axum::{
-    extract::{Extension, Path, Query, State},
-    http::StatusCode,
+    extract::{Extension, FromRequest, Path, Query, Request, State},
+    http::{Method, StatusCode},
     middleware::from_fn_with_state,
     response::{IntoResponse, Json},
     routing::{delete, get, post, put},
@@ -429,10 +429,33 @@ pub fn router(state: AppState) -> Router {
     // them without a token even when auth is required.
     let auth_state = Arc::new(LumenVerifier::new(state.auth.clone()));
     let data_plane = Router::new()
-        .route("/collections", get(list_collections))
+        .route(
+            "/collections",
+            get(list_collections)
+                .options(collections_query_probe)
+                .head(collections_query_probe)
+                // Epic #1296 R1: `QUERY /collections` is a dual-registered
+                // twin of `POST /collections:search` (#1271 batch search).
+                // Axum has no native `Method::QUERY` support yet
+                // (tokio-rs/axum#3799, PR #3801 open), so this is the interim
+                // dispatch — `fallback` runs for any method not explicitly
+                // registered above (`GET`, `OPTIONS`, `HEAD`), and the
+                // handler re-checks by hand. Replace with a native
+                // `MethodFilter::QUERY` combinator once that PR lands.
+                .fallback(collections_query_dispatch),
+        )
         .route(
             "/collections/{collection_id}",
-            put(create_collection).delete(drop_collection),
+            put(create_collection)
+                .delete(drop_collection)
+                .options(collection_id_query_probe)
+                .head(collection_id_query_probe)
+                // Epic #1296 R1: `QUERY /collections/{collection_id}` is a
+                // dual-registered twin of `POST
+                // /collections/{collection_id}/search`. See the
+                // `/collections` route above for the interim-fallback
+                // rationale.
+                .fallback(collection_id_query_dispatch),
         )
         .route("/collections/{collection_id}/index", post(index))
         .route(
@@ -887,17 +910,35 @@ async fn search(
     Path(collection_id): Path<String>,
     Json(req): Json<SearchRequest>,
 ) -> Result<Json<SearchResponse>, ApiErr> {
-    auth.ensure(&collection_id, Role::Read)?;
-    let _consistency = read_consistency_from(&headers);
+    Ok(Json(search_core(
+        &state,
+        &auth,
+        &headers,
+        &collection_id,
+        req,
+    )?))
+}
+
+/// Shared implementation behind `POST /collections/{collection_id}/search`
+/// and its `QUERY /collections/{collection_id}` twin
+/// ([`collection_id_query_dispatch`], epic #1296 R1: every QUERY endpoint
+/// keeps a POST twin — same handler, identical response).
+fn search_core(
+    state: &AppState,
+    auth: &AuthContext,
+    headers: &HeaderMap,
+    collection_id: &str,
+    req: SearchRequest,
+) -> Result<SearchResponse, ApiErr> {
+    auth.ensure(collection_id, Role::Read)?;
+    let _consistency = read_consistency_from(headers);
     // Standalone and legacy external-log builds satisfy this locally. Primary-
     // replica mode will enforce leader/bounded/any against the live cluster
     // state once the raft_core-backed surface is wired.
-    Ok(Json(
-        state
-            .search_backend
-            .search(&collection_id, req)
-            .map_err(ApiErr::from)?,
-    ))
+    state
+        .search_backend
+        .search(collection_id, req)
+        .map_err(ApiErr::from)
 }
 
 /// msearch-style batch search: N independent `(collection, SearchRequest)`
@@ -927,6 +968,18 @@ async fn batch_search(
     headers: HeaderMap,
     Json(req): Json<BatchSearchRequest>,
 ) -> Result<Json<BatchSearchResponse>, ApiErr> {
+    Ok(Json(batch_search_core(&state, &auth, &headers, req).await?))
+}
+
+/// Shared implementation behind `POST /collections:search` and its `QUERY
+/// /collections` twin ([`collections_query_dispatch`], epic #1296 R1: every
+/// QUERY endpoint keeps a POST twin — same handler, identical response).
+async fn batch_search_core(
+    state: &AppState,
+    auth: &AuthContext,
+    headers: &HeaderMap,
+    req: BatchSearchRequest,
+) -> Result<BatchSearchResponse, ApiErr> {
     if req.searches.len() > MAX_BATCH_SEARCH_SIZE {
         return Err(ApiErr::new(
             StatusCode::BAD_REQUEST,
@@ -937,7 +990,7 @@ async fn batch_search(
             ),
         ));
     }
-    let _consistency = read_consistency_from(&headers);
+    let _consistency = read_consistency_from(headers);
     let results = join_all(req.searches.into_iter().map(|item| {
         let state = state.clone();
         let auth = auth.clone();
@@ -952,7 +1005,107 @@ async fn batch_search(
         }
     }))
     .await;
-    Ok(Json(BatchSearchResponse { results }))
+    Ok(BatchSearchResponse { results })
+}
+
+// ---------------------------------------------------------------------------
+// QUERY (RFC 10008) — dual-registered POST twins (epic #1296 R1)
+// ---------------------------------------------------------------------------
+//
+// axum has no native `Method::QUERY`/`MethodFilter::QUERY` yet
+// (tokio-rs/axum#3799, PR #3801 open). The interim dispatch below registers
+// each route's `fallback` — the handler axum calls for any method not
+// explicitly claimed by that route's `get`/`post`/`put`/`delete`/`options`/
+// `head` combinators — and re-checks the method by hand via
+// `Method::from_bytes(b"QUERY")`. Replace `is_query_method` and both
+// `*_query_dispatch` fallbacks with native `MethodFilter::QUERY` combinators
+// once that PR lands; `*_query_probe` (OPTIONS/HEAD) can move to ordinary
+// combinators unchanged.
+
+/// `true` for the RFC 10008 QUERY method. `http::Method` has no `QUERY`
+/// constant yet, so this matches the wire token the same way
+/// `Method::from_bytes(b"QUERY")` would.
+fn is_query_method(method: &Method) -> bool {
+    Method::from_bytes(b"QUERY").is_ok_and(|query| *method == query)
+}
+
+/// 405 for any method that reaches a QUERY-dispatch fallback without
+/// actually being QUERY. Normal traffic never hits this arm — `PUT`/
+/// `DELETE`/`GET`/`OPTIONS`/`HEAD` are all claimed by explicit combinators
+/// ahead of the fallback — it only guards stray/unsupported methods.
+fn query_method_not_allowed(allow: &'static str) -> axum::response::Response {
+    axum::response::Response::builder()
+        .status(StatusCode::METHOD_NOT_ALLOWED)
+        .header(axum::http::header::ALLOW, allow)
+        .body(axum::body::Body::empty())
+        .expect("static not-allowed headers are always valid")
+}
+
+/// `OPTIONS`/`HEAD` probe response shared by both QUERY targets: advertises
+/// `Accept-Query: application/json` (RFC 10008 discovery) and lists the
+/// target's full method set, QUERY included, in `Allow`.
+fn query_probe_response(allow: &'static str) -> axum::response::Response {
+    axum::response::Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .header(axum::http::header::ALLOW, allow)
+        .header("accept-query", "application/json")
+        .body(axum::body::Body::empty())
+        .expect("static probe headers are always valid")
+}
+
+async fn collection_id_query_probe() -> axum::response::Response {
+    query_probe_response("PUT, DELETE, QUERY, OPTIONS, HEAD")
+}
+
+async fn collections_query_probe() -> axum::response::Response {
+    query_probe_response("GET, QUERY, OPTIONS, HEAD")
+}
+
+/// `QUERY /collections/{collection_id}` — dual-registered twin of `POST
+/// /collections/{collection_id}/search` (same [`search_core`] handler,
+/// identical response for identical bodies). Content-Type is mandatory on
+/// QUERY per RFC 10008; reusing [`Json`]'s own `FromRequest` for the body
+/// gives that for free — missing/mismatched `Content-Type` rejects with 415,
+/// byte-identical to what the POST twin already returns for the same input.
+async fn collection_id_query_dispatch(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(collection_id): Path<String>,
+    request: Request,
+) -> axum::response::Response {
+    if !is_query_method(request.method()) {
+        return query_method_not_allowed("PUT, DELETE, QUERY, OPTIONS, HEAD");
+    }
+    let headers = request.headers().clone();
+    match Json::<SearchRequest>::from_request(request, &state).await {
+        Ok(Json(req)) => match search_core(&state, &auth, &headers, &collection_id, req) {
+            Ok(resp) => Json(resp).into_response(),
+            Err(e) => e.into_response(),
+        },
+        Err(rejection) => rejection.into_response(),
+    }
+}
+
+/// `QUERY /collections` — dual-registered twin of `POST /collections:search`
+/// (same [`batch_search_core`] handler, identical response for identical
+/// bodies). See [`collection_id_query_dispatch`] for the Content-Type/415
+/// and interim-fallback rationale.
+async fn collections_query_dispatch(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    request: Request,
+) -> axum::response::Response {
+    if !is_query_method(request.method()) {
+        return query_method_not_allowed("GET, QUERY, OPTIONS, HEAD");
+    }
+    let headers = request.headers().clone();
+    match Json::<BatchSearchRequest>::from_request(request, &state).await {
+        Ok(Json(req)) => match batch_search_core(&state, &auth, &headers, req).await {
+            Ok(resp) => Json(resp).into_response(),
+            Err(e) => e.into_response(),
+        },
+        Err(rejection) => rejection.into_response(),
+    }
 }
 
 /// Classify one batch item's search failure into a

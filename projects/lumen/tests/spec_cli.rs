@@ -665,6 +665,40 @@ fn llm_outline_mentions_batch_search() {
     );
 }
 
+/// #1297 (epic #1296 R1): the workflow topic must recommend the RFC 10008
+/// `QUERY` method for search — `QUERY /collections/{id}` + `QUERY
+/// /collections` as dual-registered twins of the POST search endpoints —
+/// and always document `POST` as the permanent, always-available fallback,
+/// never a deprecated path.
+#[test]
+fn llm_workflow_documents_query_method_first_with_post_fallback() {
+    let g = llm_workflow_md();
+    for needle in [
+        "QUERY method (RFC 10008)",
+        "QUERY-first, POST-always-available",
+        "QUERY /collections/{id}",
+        "QUERY /collections",
+        "byte-identical response",
+        "is the permanent fallback",
+        "Content-Type: application/json` is mandatory",
+        "Accept-Query: application/json",
+    ] {
+        assert!(g.contains(needle), "workflow missing QUERY `{needle}`");
+    }
+}
+
+/// #1297: the outline must point an agent at QUERY-first search guidance
+/// from the workflow topic entry, mirroring the batch-search outline pointer
+/// (#1271).
+#[test]
+fn llm_outline_mentions_query_first() {
+    let outline = llm_outline_md();
+    assert!(
+        outline.contains("QUERY-first"),
+        "outline should point at QUERY-first search: {outline}"
+    );
+}
+
 /// #1292: the workflow topic must document the docs:replace full-replacement
 /// write surface — implicit field deletion, doc-level LWW `version`, the
 /// `/index`-vs-`docs:replace` division rule, and the single-resource sugar
