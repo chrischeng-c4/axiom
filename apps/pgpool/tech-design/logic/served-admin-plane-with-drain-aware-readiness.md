@@ -394,3 +394,126 @@ existing_serve_args:
   source: "apps/pgpool/src/bin/pgpool.rs ServeArgs (WI #1288/#1289, unchanged)"
   fields: [bind, backend_host, backend_port, backend_connect_timeout_ms, drain_timeout_ms, pool_acquire_timeout_ms]
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: apps-pgpool-admin-plane-verification
+requirements:
+  r1_admin_router_serves_all_routes:
+    id: R1
+    text: "Building the admin Router from AdminState registers exactly /healthz, /readyz, /metrics, /openapi.json, /docs, GET /pools, GET /pools/{pool}/stats, and POST /drain; an unmatched path returns axum's default 404."
+    kind: functional
+    risk: medium
+    verify: admin::router_registers_exact_route_set
+  r1_healthz_always_200_regardless_of_drain:
+    id: R1
+    text: "GET /healthz returns 200 'ok' both before and after DrainController::start_drain() is called - liveness never reflects drain state."
+    kind: functional
+    risk: medium
+    verify: admin::healthz_returns_200_regardless_of_drain_state
+  r2_post_drain_flips_shared_controller:
+    id: R2
+    text: "POST /drain calls the same shared DrainController held by AdminState; a subsequent GET /readyz on the same router observes Draining, proving the HTTP verb and the signal path share one controller instance rather than independent copies."
+    kind: regression
+    risk: high
+    verify: admin::post_drain_flips_shared_drain_controller_observed_by_readyz
+  r2_post_drain_idempotent:
+    id: R2
+    text: "Calling POST /drain twice in a row both return 200 Json(DrainResponse{draining:true}) and never error or panic; the watch channel stays Draining."
+    kind: regression
+    risk: medium
+    verify: admin::repeated_post_drain_is_idempotent
+  r2_readyz_200_when_not_draining:
+    id: R2
+    text: "GET /readyz returns 200 with a body reporting status 'ok' when AdminState.drain.is_draining() is false."
+    kind: functional
+    risk: high
+    verify: admin::readyz_returns_200_ok_when_not_draining
+  r2_readyz_503_after_drain_signal:
+    id: R2
+    text: "After calling AdminState.drain.start_drain() directly (simulating the signal-handler path), GET /readyz returns 503 with status 'draining'."
+    kind: functional
+    risk: high
+    verify: admin::readyz_returns_503_draining_after_start_drain
+  r3_pool_stats_found_returns_live_values:
+    id: R3
+    text: "GET /pools/{pool}/stats for a name present in AdminState.pools returns 200 Json(PoolStats) whose frontend_active/backend_active/backend_idle change between two calls when the underlying ConnectionBudget/BackendPool state changes between them (proves live reads, not a cached snapshot)."
+    kind: functional
+    risk: high
+    verify: admin::pool_stats_reflects_live_budget_and_pool_state
+  r3_pool_stats_unknown_name_404:
+    id: R3
+    text: "GET /pools/{pool}/stats for a name absent from AdminState.pools returns 404 with a body naming the unknown pool."
+    kind: functional
+    risk: medium
+    verify: admin::pool_stats_returns_404_for_unknown_pool_name
+  r3_pools_lists_every_named_pool:
+    id: R3
+    text: "GET /pools returns 200 Json(PoolList) with one PoolStats entry per AdminState.pools member, each entry's name/mode copied from NamedPool and frontend_active/backend_active/backend_idle read from that pool's live ConnectionBudget/BackendPool::stats()."
+    kind: functional
+    risk: high
+    verify: admin::pools_endpoint_lists_one_entry_per_named_pool
+  r4_metrics_renders_prometheus_gauges:
+    id: R4
+    text: "GET /metrics returns content-type text/plain;version=0.0.4 and body text containing pgpool_frontend_active, pgpool_backend_active, and pgpool_backend_idle gauge lines, each labeled pool=\"<name>\", one triple per AdminState.pools entry."
+    kind: functional
+    risk: high
+    verify: admin::metrics_renders_prometheus_text_format_gauges_per_pool
+  r4_metrics_values_match_live_stats:
+    id: R4
+    text: "The numeric values rendered in /metrics for a given pool equal that pool's ConnectionBudget::active() and BackendPool::stats().{backend_active,backend_idle} at request time."
+    kind: regression
+    risk: medium
+    verify: admin::metrics_gauge_values_match_pool_stats_at_request_time
+  r5_openapi_json_matches_spec_value_exactly:
+    id: R5
+    text: "GET /openapi.json returns 200 with a JSON body that is byte-for-byte serde_json::Value-equal to pgpool::spec::openapi(), the same Value `pgpool spec --format openapi` serializes offline (R4/AC3 single source of truth)."
+    kind: regression
+    risk: high
+    verify: admin::openapi_json_endpoint_matches_spec_openapi_value_exactly
+  r5_served_route_set_matches_offline_routes_inventory:
+    id: R5
+    text: "The admin Router's registered method+path set (collected via axum test harness) equals the route list pgpool::spec::routes_json() declares offline, so no route drifts between the offline inventory and the served plane."
+    kind: regression
+    risk: high
+    verify: admin::served_route_set_matches_offline_routes_json_inventory
+  r6_docs_serves_swagger_ui_referencing_openapi_json:
+    id: R6
+    text: "GET /docs returns 200 text/html whose body references /openapi.json as the Swagger UI spec URL."
+    kind: functional
+    risk: low
+    verify: admin::docs_serves_swagger_ui_html_referencing_openapi_json
+  r7_share_drain_wires_tcp_config_not_a_fresh_controller:
+    id: R7
+    text: "The TcpServerConfig constructed in serve() carries the SAME DrainController clone passed to AdminState (compared via DrainController's shared watch-channel identity), not the fresh DrainController::new() TcpServerConfig::new() would otherwise construct by default."
+    kind: regression
+    risk: high
+    verify: admin::serve_wires_shared_drain_controller_into_tcp_server_config
+  r7_signal_task_calls_start_drain_on_shared_controller:
+    id: R7
+    text: "Triggering the signal task's underlying future (via a test seam substituting a manually-resolved shutdown future for server_core::signal::wait_shutdown_signal()) calls start_drain() on the exact shared controller instance AdminState and TcpServerConfig both hold."
+    kind: functional
+    risk: high
+    verify: admin::signal_task_calls_start_drain_on_the_shared_controller
+---
+flowchart TD
+    r1[R1 r1 admin router serves all routes] --> admin_router_registers_exact_route_set[admin::router_registers_exact_route_set]
+    r1[R1 r1 healthz always 200 regardless of drain] --> admin_healthz_returns_200_regardless_of_drain_state[admin::healthz_returns_200_regardless_of_drain_state]
+    r2[R2 r2 post drain flips shared controller] --> admin_post_drain_flips_shared_drain_controller_observed_by_readyz[admin::post_drain_flips_shared_drain_controller_observed_by_readyz]
+    r2[R2 r2 post drain idempotent] --> admin_repeated_post_drain_is_idempotent[admin::repeated_post_drain_is_idempotent]
+    r2[R2 r2 readyz 200 when not draining] --> admin_readyz_returns_200_ok_when_not_draining[admin::readyz_returns_200_ok_when_not_draining]
+    r2[R2 r2 readyz 503 after drain signal] --> admin_readyz_returns_503_draining_after_start_drain[admin::readyz_returns_503_draining_after_start_drain]
+    r3[R3 r3 pool stats found returns live values] --> admin_pool_stats_reflects_live_budget_and_pool_state[admin::pool_stats_reflects_live_budget_and_pool_state]
+    r3[R3 r3 pool stats unknown name 404] --> admin_pool_stats_returns_404_for_unknown_pool_name[admin::pool_stats_returns_404_for_unknown_pool_name]
+    r3[R3 r3 pools lists every named pool] --> admin_pools_endpoint_lists_one_entry_per_named_pool[admin::pools_endpoint_lists_one_entry_per_named_pool]
+    r4[R4 r4 metrics renders prometheus gauges] --> admin_metrics_renders_prometheus_text_format_gauges_per_pool[admin::metrics_renders_prometheus_text_format_gauges_per_pool]
+    r4[R4 r4 metrics values match live stats] --> admin_metrics_gauge_values_match_pool_stats_at_request_time[admin::metrics_gauge_values_match_pool_stats_at_request_time]
+    r5[R5 r5 openapi json matches spec value exactly] --> admin_openapi_json_endpoint_matches_spec_openapi_value_exactly[admin::openapi_json_endpoint_matches_spec_openapi_value_exactly]
+    r5[R5 r5 served route set matches offline routes inventory] --> admin_served_route_set_matches_offline_routes_json_inventory[admin::served_route_set_matches_offline_routes_json_inventory]
+    r6[R6 r6 docs serves swagger ui referencing openapi json] --> admin_docs_serves_swagger_ui_html_referencing_openapi_json[admin::docs_serves_swagger_ui_html_referencing_openapi_json]
+    r7[R7 r7 share drain wires tcp config not a fresh controller] --> admin_serve_wires_shared_drain_controller_into_tcp_server_config[admin::serve_wires_shared_drain_controller_into_tcp_server_config]
+    r7[R7 r7 signal task calls start drain on shared controller] --> admin_signal_task_calls_start_drain_on_the_shared_controller[admin::signal_task_calls_start_drain_on_the_shared_controller]
+```
