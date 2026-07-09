@@ -171,7 +171,6 @@ flowchart TD
     r4[R4 no stale root doc references remain] --> rg_n_projects_jet_layout_md_glob_projects_jet_tech_design[! rg -n "projects/jet/LAYOUT.md" --glob '!projects/jet/tech-design/**']
     r5[R5 no new root uppercase meta doc introduced] --> find_projects_jet_maxdepth_1_regex_a_z_a_z_md[find projects/jet -maxdepth 1 -regex '.*/[A-Z][A-Z_-]*\.md']
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
