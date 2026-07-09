@@ -53,7 +53,6 @@ Scope for WI #937 (`projects/jet/src/bundler/dts.rs`): `annotated_expression_typ
 This closes the `expr as Type` false-positive family without intersecting the sibling variants tracked separately in #1238 (Object.assign+computed-key body), #1263 (nested object literals), and #1264 (arrow function without explicit return type returning a typed object literal) — none of those source shapes pass through an `as_expression`/`satisfies_expression` node, so this logic path leaves their still-open false positives unchanged.
 
 The `unit-test` section pins deterministic regression coverage for both positions plus a negative case: prior tests exercised an `as`-cast on an object-literal-with-async-method const shape and a local-object-then-cast function return, but none pinned the WI's exact plain-object-literal `{ a: 1 } as Foo` const-initializer shape, and no test pairs the two `as`-cast regressions with an explicit negative case proving a genuinely untyped/uninferrable expression (no `as`/`satisfies` wrapper, no explicit annotation) still fails loud once this inference path exists.
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
