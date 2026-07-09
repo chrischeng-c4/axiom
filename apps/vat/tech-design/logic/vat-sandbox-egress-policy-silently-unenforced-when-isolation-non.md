@@ -45,7 +45,6 @@ edges:
   - { from: seatbelt_run, to: effect }
 ---
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
