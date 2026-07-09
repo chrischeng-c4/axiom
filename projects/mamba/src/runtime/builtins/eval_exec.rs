@@ -508,6 +508,7 @@ struct ExecFunctionBinding {
     name: String,
     is_async: bool,
     globals: Option<MbValue>,
+    locals: Option<MbValue>,
     captures: Vec<ExecFrame>,
     capture_scopes: Vec<ExecFrameScope>,
     function: ExecFunction,
@@ -1402,18 +1403,60 @@ struct ExecTemporaryName {
     previous: Option<ExecMaskedName>,
 }
 
-fn exec_type_param_value(param: &crate::parser::ast::TypeParam) -> MbValue {
+fn exec_type_param_thunk(
+    ctx: &ExecContext,
+    body: crate::source::span::Spanned<crate::parser::ast::Expr>,
+) -> MbValue {
+    let function = ExecFunction {
+        params: Vec::new(),
+        defaults: Vec::new(),
+        body: vec![crate::source::span::Spanned::new(
+            crate::parser::ast::Stmt::Return(Some(body.clone())),
+            body.span,
+        )],
+    };
+    make_exec_function_body_value("<lambda>", false, function, ctx, None)
+}
+
+fn exec_type_param_value(ctx: &ExecContext, param: &crate::parser::ast::TypeParam) -> MbValue {
     let kind = match param.kind {
         crate::parser::ast::TypeParamKind::TypeVar => 0,
         crate::parser::ast::TypeParamKind::TypeVarTuple => 1,
         crate::parser::ast::TypeParamKind::ParamSpec => 2,
     };
+    let bound_thunk = param
+        .bound
+        .as_ref()
+        .map(|bound| exec_type_param_thunk(ctx, bound.clone()))
+        .unwrap_or_else(MbValue::none);
+    let constraints_thunk = param
+        .constraints
+        .as_ref()
+        .map(|constraints| {
+            let span = constraints
+                .first()
+                .map(|constraint| constraint.span)
+                .unwrap_or(crate::source::span::Span::default());
+            exec_type_param_thunk(
+                ctx,
+                crate::source::span::Spanned::new(
+                    crate::parser::ast::Expr::TupleLit(constraints.clone()),
+                    span,
+                ),
+            )
+        })
+        .unwrap_or_else(MbValue::none);
+    let default_thunk = param
+        .default
+        .as_ref()
+        .map(|default| exec_type_param_thunk(ctx, default.clone()))
+        .unwrap_or_else(MbValue::none);
     crate::runtime::pep695::mb_pep695_typevar(
         MbValue::from_ptr(MbObject::new_str(param.name.clone())),
         MbValue::from_int(kind),
-        MbValue::none(),
-        MbValue::none(),
-        MbValue::none(),
+        bound_thunk,
+        constraints_thunk,
+        default_thunk,
     )
 }
 
@@ -1424,7 +1467,7 @@ fn exec_bind_temporary_type_params(
     let mut bindings = Vec::with_capacity(type_params.len());
     for param in type_params {
         let previous = exec_take_name_binding(ctx, &param.name);
-        exec_store_name(ctx, &param.name, exec_type_param_value(param));
+        exec_store_name(ctx, &param.name, exec_type_param_value(ctx, param));
         bindings.push(ExecTemporaryName {
             name: param.name.clone(),
             previous,
@@ -1582,6 +1625,12 @@ fn make_exec_function_body_value(
             crate::runtime::rc::retain_if_ptr(globals);
         }
     }
+    let locals = ctx.locals;
+    if let Some(locals) = locals {
+        unsafe {
+            crate::runtime::rc::retain_if_ptr(locals);
+        }
+    }
     for default in &function.defaults {
         if let Some(value) = default {
             unsafe {
@@ -1598,6 +1647,7 @@ fn make_exec_function_body_value(
             name: name.to_string(),
             is_async,
             globals,
+            locals,
             captures,
             capture_scopes,
             function,
@@ -1776,6 +1826,7 @@ pub fn mb_exec_function_call(func: MbValue, args: Vec<MbValue>) -> MbValue {
         if let Some(binding) = binding {
             let mut ctx = ExecContext {
                 globals: binding.globals,
+                locals: binding.locals,
                 frames: binding.captures,
                 frame_scopes: binding.capture_scopes,
                 ..ExecContext::default()
@@ -4944,6 +4995,68 @@ mod tests {
         assert_eq!(
             crate::runtime::exception::current_exception_type().as_deref(),
             Some("NameError")
+        );
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_exec_with_globals_locals_pep695_method_bound_reads_exec_locals() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        let locals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals_locals(
+            MbValue::from_ptr(MbObject::new_str(
+                "glb = 'global'\nclass X:\n    cls = 'class'\n    def foo[T: glb, U: cls](self):\n        pass\n"
+                    .to_string(),
+            )),
+            globals,
+            locals,
+        );
+        assert_eq!(
+            crate::runtime::exception::mb_has_exception().as_bool(),
+            Some(false)
+        );
+
+        let cls = crate::runtime::dict_ops::mb_dict_get(
+            locals,
+            MbValue::from_ptr(MbObject::new_str("X".to_string())),
+            MbValue::none(),
+        );
+        let method = crate::runtime::class::mb_getattr(
+            cls,
+            MbValue::from_ptr(MbObject::new_str("foo".to_string())),
+        );
+        let type_params = crate::runtime::class::mb_getattr(
+            method,
+            MbValue::from_ptr(MbObject::new_str("__type_params__".to_string())),
+        );
+        let params = extract_items(type_params);
+        assert_eq!(params.len(), 2);
+
+        let t_bound = crate::runtime::class::mb_getattr(
+            params[0],
+            MbValue::from_ptr(MbObject::new_str("__bound__".to_string())),
+        );
+        let u_bound = crate::runtime::class::mb_getattr(
+            params[1],
+            MbValue::from_ptr(MbObject::new_str("__bound__".to_string())),
+        );
+
+        let bound_text = |value: MbValue| {
+            value.as_ptr().and_then(|ptr| unsafe {
+                match &(*ptr).data {
+                    ObjData::Str(text) => Some(text.clone()),
+                    _ => None,
+                }
+            })
+        };
+
+        assert_eq!(bound_text(t_bound).as_deref(), Some("global"));
+        assert_eq!(bound_text(u_bound).as_deref(), Some("class"));
+        assert_eq!(
+            crate::runtime::exception::mb_has_exception().as_bool(),
+            Some(false)
         );
         crate::runtime::exception::mb_clear_exception();
     }
