@@ -107,7 +107,6 @@ flowchart TD
     r3[R3 arrow multi statement body return object literal still errors] --> cargo_test_p_jet_lib_bundler_dts_tests_uninferrable_exported_const_arrow_multi_statement_body_return_object_literal_errors[cargo test -p jet --lib bundler::dts::tests::uninferrable_exported_const_arrow_multi_statement_body_return_object_literal_errors]
     r4[R4 arrow concise body without return type still errors] --> cargo_test_p_jet_lib_bundler_dts_tests_exported_const_arrow_without_return_type_errors[cargo test -p jet --lib bundler::dts::tests::exported_const_arrow_without_return_type_errors]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
