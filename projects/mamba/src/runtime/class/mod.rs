@@ -13459,19 +13459,7 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
             } = (*ptr).data
             {
                 if class_name == "re.Match" {
-                    let guard = fields.read().unwrap();
-                    if let Some(i) = key.as_int() {
-                        return guard
-                            .get(&format!("group_{i}"))
-                            .copied()
-                            .unwrap_or_else(MbValue::none);
-                    }
-                    if let Some(nm) = extract_str(key) {
-                        return guard
-                            .get(&format!("group_name_{nm}"))
-                            .copied()
-                            .unwrap_or_else(MbValue::none);
-                    }
+                    return super::stdlib::re_mod::mb_re_match_getitem(obj, key);
                 }
                 // collections.deque[i] — index the backing `_items` list with
                 // deque bounds semantics (CPython: "deque index out of range").
@@ -19436,6 +19424,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     // the given group (0 = full match), or the full match when
                     // called with no args.
                     if name == "group" || name == "__getitem__" {
+                        drop(guard);
                         let arg_items: Vec<MbValue> = args
                             .as_ptr()
                             .and_then(|p| {
@@ -19446,46 +19435,8 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                 }
                             })
                             .unwrap_or_default();
-                        let count = guard
-                            .get("_group_count")
-                            .and_then(|v| v.as_int())
-                            .unwrap_or(0);
                         let lookup = |key: MbValue| -> MbValue {
-                            if let Some(i) = key.as_int() {
-                                // An index beyond the pattern's group count is
-                                // IndexError; an unmatched group is None.
-                                if i < 0 || i > count {
-                                    super::exception::mb_raise(
-                                        MbValue::from_ptr(MbObject::new_str(
-                                            "IndexError".to_string(),
-                                        )),
-                                        MbValue::from_ptr(MbObject::new_str(
-                                            "no such group".to_string(),
-                                        )),
-                                    );
-                                    return MbValue::none();
-                                }
-                                let k = format!("group_{}", i);
-                                return guard.get(&k).copied().unwrap_or(MbValue::none());
-                            }
-                            if let Some(nm) = extract_str(key) {
-                                let k = format!("group_name_{}", nm);
-                                return match guard.get(&k).copied() {
-                                    Some(v) => v,
-                                    None => {
-                                        super::exception::mb_raise(
-                                            MbValue::from_ptr(MbObject::new_str(
-                                                "IndexError".to_string(),
-                                            )),
-                                            MbValue::from_ptr(MbObject::new_str(
-                                                "no such group".to_string(),
-                                            )),
-                                        );
-                                        MbValue::none()
-                                    }
-                                };
-                            }
-                            MbValue::none()
+                            super::stdlib::re_mod::mb_re_match_getitem(receiver, key)
                         };
                         // group(i, j, ...) with 2+ selectors returns a tuple.
                         if arg_items.len() >= 2 {
