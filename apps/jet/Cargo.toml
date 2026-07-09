@@ -274,6 +274,9 @@ path = "tests/stories/controls.rs"
 [[test]]
 name = "stories_build"
 path = "tests/stories/stories_build.rs"
+[[test]]
+name = "stories_parity_fixture"
+path = "tests/stories_parity_fixture.rs"
 
 # tests/task-runner/ — jet task running replaces Nx/Turbo-style workspace task execution
 [[test]]
