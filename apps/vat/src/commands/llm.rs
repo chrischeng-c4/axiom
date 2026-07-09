@@ -35,6 +35,10 @@ evidence afterward.
   `"type":"result"`.
 - After a retained run, inspect `vat state <id>`, `vat diff <id>`, and
   `vat logs <id> [runner|service-id]`.
+- Use `vat fork <id> [--name N]` to branch a retained vat into a new runnable
+  copy that carries its lineage, and `vat snapshot <id> [--name N]` to freeze
+  one into an immutable, non-runnable point-in-time copy.
+- Use `vat gpu --json` to report the GPU every vat on this host can reach.
 - Use `vat --help` for flag syntax and `vat <command> --help` for command flags.
 
 ## vat.toml Contract
@@ -47,6 +51,9 @@ default_runner = "e2e"
 base = "."
 workdir = "."
 keep = "failed" # failed | always | never
+
+[network]
+egress = "open" # open | localhost-only | deny
 
 [[services]]
 id = "pg"
@@ -215,6 +222,30 @@ network = "hermetic"       # open | hermetic
   connection pooling or raise the host limit, e.g.
   `sudo sysctl -w kern.ipc.somaxconn=1024`.
 
+## Isolation and Egress
+
+- `--isolation none|seatbelt` (also `vat.toml`-less default: `none`) picks the
+  sandbox backend. `none` runs the command as a plain host process confined
+  only by the copy-on-write rootfs — full native GPU/IO, zero syscall
+  confinement. `seatbelt` wraps it in a macOS `sandbox-exec` profile that
+  confines writes to the rootfs + temp and can enforce `[network].egress`;
+  Metal still works because it's still a host process.
+- `[network].egress` (or per-scenario `network = "hermetic"`, which implies
+  `localhost-only`) is `open` (default, no restriction), `localhost-only`
+  (deny outbound except loopback + unix sockets — vat's local
+  emulators/http-mock proxy stay reachable), or `deny` (block all outbound,
+  including localhost).
+- Egress enforcement fails closed, not silently: picking a backend that
+  cannot actually enforce a non-`open` egress policy is a hard error, not a
+  warn-and-continue. `--isolation none` with `[network].egress` set to
+  anything but `open` refuses to run. `--isolation seatbelt` with
+  `sandbox-exec` unavailable on the host and a non-`open` policy also refuses
+  to run, rather than silently falling back to the unconfined `none` backend;
+  it only falls back when the policy is already `open`.
+- This applies uniformly to both direct-command mode (`vat run -- <cmd>`) and
+  runner-mode `vat.toml` commands — a declared runner cannot bypass the
+  spec's isolation/egress policy.
+
 ## Command Patterns
 
 - `vat run`: select the default runner, prepare or clone service images, start
@@ -248,6 +279,14 @@ network = "hermetic"       # open | hermetic
 - `vat cluster create [--backend auto|kind|k3d|minikube] [--name N]`: create a
   standalone local Kubernetes cluster (outlives a run); `vat cluster ls --json`,
   `vat cluster kubeconfig <name>`, and `vat cluster delete <name>` manage it.
+- `vat fork <id> [--name N]`: copy-on-write fork a retained vat's rootfs into a
+  new runnable vat that records the source as its lineage; the fork is
+  independent afterward (writes to one do not affect the other).
+- `vat snapshot <id> [--name N]`: freeze a retained vat's rootfs into an
+  immutable snapshot for later inspection or forking; a snapshot itself is not
+  runnable.
+- `vat gpu --json`: report the GPU(s) every vat on this host can reach,
+  independent of any specific vat or run.
 
 ## Retention
 
