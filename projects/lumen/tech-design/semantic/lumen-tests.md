@@ -680,6 +680,42 @@ semantic_domain:
           - name: "replace_docs_over_limit_returns_400"
             kind: "function"
             public: false
+          - name: "read_consistency_peer"
+            kind: "function"
+            public: false
+          - name: "read_consistency_server"
+            kind: "function"
+            public: false
+          - name: "index_one_doc"
+            kind: "function"
+            public: false
+          - name: "search_with_consistency"
+            kind: "function"
+            public: false
+          - name: "bounded_zero_rejects_lagged_follower"
+            kind: "function"
+            public: false
+          - name: "bounded_within_lag_allows_follower"
+            kind: "function"
+            public: false
+          - name: "leader_consistency_fails_clearly_with_no_reachable_leader"
+            kind: "function"
+            public: false
+          - name: "leader_consistency_rejects_follower_when_leader_is_elsewhere"
+            kind: "function"
+            public: false
+          - name: "leader_pod_serves_leader_consistency_and_default_omitted_header"
+            kind: "function"
+            public: false
+          - name: "omitted_header_on_follower_defaults_to_leader_and_is_rejected"
+            kind: "function"
+            public: false
+          - name: "any_consistency_stays_unconstrained_on_lagged_leaderless_follower"
+            kind: "function"
+            public: false
+          - name: "batch_search_enforces_read_consistency_too"
+            kind: "function"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
