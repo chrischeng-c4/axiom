@@ -441,6 +441,21 @@ pub(crate) fn is_completed_coroutine(coro_handle: MbValue) -> bool {
     COMPLETED_COROUTINES.read().unwrap().contains(id as u64)
 }
 
+pub(crate) fn is_live_coroutine(coro_handle: MbValue) -> bool {
+    let Some(id) = coro_handle.as_int() else {
+        return false;
+    };
+    COROUTINES.read().unwrap().contains_key(&(id as u64))
+}
+
+pub(crate) fn live_await_target_coroutine(coro_like: MbValue) -> Option<MbValue> {
+    if is_live_coroutine(coro_like) {
+        return Some(coro_like);
+    }
+    let target = coroutine_wrapper_target(coro_like)?;
+    is_live_coroutine(target).then_some(target)
+}
+
 pub(crate) fn await_target_coroutine(coro_like: MbValue) -> Option<MbValue> {
     if is_known_coroutine(coro_like) {
         return Some(coro_like);
@@ -1169,6 +1184,27 @@ mod tests {
             Some("RuntimeError")
         );
         super::super::exception::mb_clear_exception();
+        mb_coroutine_release(coro);
+    }
+
+    #[test]
+    fn test_live_await_target_coroutine_skips_tombstones() {
+        let name = MbValue::from_ptr(MbObject::new_str("done_coro".to_string()));
+        let locals = MbValue::from_ptr(MbObject::new_list(vec![]));
+        let coro = mb_coroutine_new(name, locals);
+        let wrapper = mb_coroutine_await_wrapper(coro);
+
+        assert_eq!(live_await_target_coroutine(coro), Some(coro));
+        assert_eq!(live_await_target_coroutine(wrapper), Some(coro));
+
+        mb_coroutine_complete(coro, MbValue::from_int(123));
+        tombstone_completed_coroutine(coro);
+
+        assert_eq!(await_target_coroutine(coro), Some(coro));
+        assert_eq!(await_target_coroutine(wrapper), Some(coro));
+        assert_eq!(live_await_target_coroutine(coro), None);
+        assert_eq!(live_await_target_coroutine(wrapper), None);
+
         mb_coroutine_release(coro);
     }
 

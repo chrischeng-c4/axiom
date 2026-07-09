@@ -180,6 +180,19 @@ fn raise_non_awaitable(awaitable: MbValue) -> MbValue {
 }
 
 fn await_iterator(iterator: MbValue) -> MbValue {
+    if let Some(resumed) = try_resume_live_coroutine_like(iterator, MbValue::none()) {
+        match resumed {
+            AwaitResume::Yield(yielded) => {
+                if super::exception::current_exception_type().is_some() {
+                    return MbValue::none();
+                }
+                mb_coroutine_suspend_current(iterator);
+                return yielded;
+            }
+            AwaitResume::Complete(result) => return result,
+        }
+    }
+
     if super::async_rt::is_known_coroutine(iterator) {
         match resume_await_iterator(iterator, MbValue::none()) {
             AwaitResume::Yield(yielded) => {
@@ -249,6 +262,20 @@ pub(crate) enum AwaitResume {
     Complete(MbValue),
 }
 
+fn try_resume_live_coroutine_like(iterator: MbValue, value: MbValue) -> Option<AwaitResume> {
+    let coro = super::async_rt::live_await_target_coroutine(iterator)?;
+    Some(
+        match super::async_rt::mb_coroutine_send_for_await(coro, value) {
+            super::async_rt::CoroutineAwaitPoll::Yielded(yielded) => AwaitResume::Yield(yielded),
+            super::async_rt::CoroutineAwaitPoll::Complete(result) => {
+                super::async_rt::tombstone_completed_coroutine(coro);
+                AwaitResume::Complete(result)
+            }
+            super::async_rt::CoroutineAwaitPoll::Error => AwaitResume::Yield(MbValue::none()),
+        },
+    )
+}
+
 pub(crate) fn stop_iteration_exception_value() -> MbValue {
     let exc = super::exception::mb_get_exception();
     let Some(ptr) = exc.as_ptr() else {
@@ -278,6 +305,10 @@ pub(crate) fn stop_iteration_exception_value() -> MbValue {
 }
 
 fn resume_await_iterator(iterator: MbValue, value: MbValue) -> AwaitResume {
+    if let Some(resumed) = try_resume_live_coroutine_like(iterator, value) {
+        return resumed;
+    }
+
     if let Some(polled) = poll_asyncio_future(iterator) {
         return match polled {
             FuturePoll::Pending => AwaitResume::Yield(iterator),
