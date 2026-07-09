@@ -204,6 +204,23 @@ extern "C" fn type_params_invalid_test_disallowed_expressions(_self_v: MbValue) 
     MbValue::none()
 }
 
+extern "C" fn type_params_nonlocal_test_nonlocal_disallowed_01(_self_v: MbValue) -> MbValue {
+    let source = r#"
+def outer():
+    X = 1
+    def inner[X]():
+        nonlocal X
+    return X
+"#;
+    if let Err(message) = expect_type_params_syntax_error(
+        source,
+        "nonlocal binding not allowed for type parameter 'X'",
+    ) {
+        return raise_assertion_error(&message);
+    }
+    MbValue::none()
+}
+
 extern "C" fn type_params_lazy_evaluation_test_qualname(_self_v: MbValue) -> MbValue {
     let ns = super::super::dict_ops::mb_dict_new();
     super::super::dict_ops::mb_dict_setitem(
@@ -270,6 +287,18 @@ fn register_type_params_wrapper_submodule(type_params_make_base: usize) {
         vec!["TestCase".to_string()],
         invalid_methods,
     );
+    let mut nonlocal_methods: HashMap<String, MbValue> = HashMap::new();
+    nonlocal_methods.insert(
+        "test_nonlocal_disallowed_01".to_string(),
+        MbValue::from_func(
+            type_params_nonlocal_test_nonlocal_disallowed_01 as *const () as usize,
+        ),
+    );
+    super::super::class::mb_class_register(
+        "TypeParamsNonlocalTest",
+        vec!["TestCase".to_string()],
+        nonlocal_methods,
+    );
     let mut lazy_eval_methods: HashMap<String, MbValue> = HashMap::new();
     lazy_eval_methods.insert(
         "test_qualname".to_string(),
@@ -298,6 +327,10 @@ fn register_type_params_wrapper_submodule(type_params_make_base: usize) {
         MbValue::from_ptr(MbObject::new_str(
             "TypeParamsLazyEvaluationTest".to_string(),
         )),
+    );
+    attrs.insert(
+        "TypeParamsNonlocalTest".to_string(),
+        MbValue::from_ptr(MbObject::new_str("TypeParamsNonlocalTest".to_string())),
     );
     super::register_module("test.test_type_params", attrs);
 }
