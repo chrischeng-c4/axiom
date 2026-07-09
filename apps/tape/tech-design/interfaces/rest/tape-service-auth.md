@@ -149,7 +149,6 @@ flowchart TD
     r6[R6 serve flags] --> src_bin_tape_rs_tests_cli_parse_surface[src/bin/tape.rs::tests::cli_parse_surface]
     r7[R7 verifier fail fast] --> tests_service_auth_rs_resolve_fails_fast_on_missing_or_bad_registry[tests/service_auth.rs::resolve_fails_fast_on_missing_or_bad_registry]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
