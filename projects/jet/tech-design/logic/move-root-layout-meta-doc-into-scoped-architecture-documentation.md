@@ -127,3 +127,49 @@ meta_doc_migration:
       allowed_contexts:
         - projects/jet/tech-design (historical TD text that explicitly names the retired root doc)
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: jet-project-architecture-and-authoring-clarity-verification
+requirements:
+  legacy_root_doc_removed:
+    id: R1
+    text: "projects/jet/LAYOUT.md no longer exists as a project-root uppercase meta doc."
+    kind: functional
+    risk: medium
+    verify: test ! -e projects/jet/LAYOUT.md
+  no_new_root_uppercase_meta_doc_introduced:
+    id: R5
+    text: "No new project-root uppercase meta doc replaces projects/jet/LAYOUT.md; README.md and CAPABILITIES.md remain the only Jet project-root uppercase meta docs."
+    kind: regression
+    risk: low
+    verify: find projects/jet -maxdepth 1 -regex '.*/[A-Z][A-Z_-]*\.md'
+  no_stale_root_doc_references_remain:
+    id: R4
+    text: "No live reference outside the TD historical record still points at the retired projects/jet/LAYOUT.md path."
+    kind: regression
+    risk: medium
+    verify: ! rg -n "projects/jet/LAYOUT.md" --glob '!projects/jet/tech-design/**'
+  readme_source_map_repointed:
+    id: R3
+    text: "The Jet README Source map row references projects/jet/docs/architecture/layout.md instead of the retired projects/jet/LAYOUT.md path."
+    kind: regression
+    risk: medium
+    verify: grep -q 'projects/jet/docs/architecture/layout.md' projects/jet/README.md
+  scoped_doc_preserves_content:
+    id: R2
+    text: "projects/jet/docs/architecture/layout.md exists and preserves the top-level path map and crate/package naming conventions from the retired root doc."
+    kind: functional
+    risk: high
+    verify: test -e projects/jet/docs/architecture/layout.md && grep -q 'Cargo package name' projects/jet/docs/architecture/layout.md
+---
+flowchart TD
+    r1[R1 legacy root doc removed] --> test_e_projects_jet_layout_md[test ! -e projects/jet/LAYOUT.md]
+    r2[R2 scoped doc preserves content] --> test_e_projects_jet_docs_architecture_layout_md_grep_q_cargo_package_name_projects_jet_docs_architecture_layout_md[test -e projects/jet/docs/architecture/layout.md && grep -q 'Cargo package name' projects/jet/docs/architecture/layout.md]
+    r3[R3 readme source map repointed] --> grep_q_projects_jet_docs_architecture_layout_md_projects_jet_readme_md[grep -q 'projects/jet/docs/architecture/layout.md' projects/jet/README.md]
+    r4[R4 no stale root doc references remain] --> rg_n_projects_jet_layout_md_glob_projects_jet_tech_design[! rg -n "projects/jet/LAYOUT.md" --glob '!projects/jet/tech-design/**']
+    r5[R5 no new root uppercase meta doc introduced] --> find_projects_jet_maxdepth_1_regex_a_z_a_z_md[find projects/jet -maxdepth 1 -regex '.*/[A-Z][A-Z_-]*\.md']
+```
