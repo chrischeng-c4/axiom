@@ -366,8 +366,9 @@ unsafe extern "C" fn m_row_getitem(self_v: MbValue, args: MbValue) -> MbValue {
                 }
             }
         }
+        return MbValue::none();
     }
-    MbValue::none()
+    raise_type_error("Row indices must be integers or strings")
 }
 
 /// Register `Connection` / `Cursor` and the DB-API exception taxonomy as real
@@ -1290,6 +1291,7 @@ pub fn mb_sqlite3_cursor(conn: MbValue) -> MbValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::super::exception::{current_exception_type, mb_clear_exception};
 
     fn s(val: &str) -> MbValue {
         MbValue::from_ptr(MbObject::new_str(val.to_string()))
@@ -1387,6 +1389,38 @@ mod tests {
             inst_field(cursor, "rowcount").and_then(|v| v.as_int()),
             Some(-1)
         );
+    }
+
+    #[test]
+    fn test_row_getitem_rejects_non_int_non_str_key() {
+        mb_clear_exception();
+        let row = new_instance_with_fields(ROW_CLASS, FxHashMap::default());
+        let wrong_key = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(7)]));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![wrong_key]));
+        let result = unsafe { m_row_getitem(row, args) };
+        assert!(result.is_none());
+        assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        mb_clear_exception();
+    }
+
+    #[test]
+    fn test_row_getitem_keeps_none_for_missing_int_and_str_keys() {
+        mb_clear_exception();
+        let row = build_row(
+            &[RValue::Int(11)],
+            &[String::from("answer")],
+            Some(s(ROW_CLASS)),
+        );
+
+        let int_args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(9)]));
+        let int_result = unsafe { m_row_getitem(row, int_args) };
+        assert!(int_result.is_none());
+        assert_eq!(current_exception_type(), None);
+
+        let str_args = MbValue::from_ptr(MbObject::new_list(vec![s("missing")]));
+        let str_result = unsafe { m_row_getitem(row, str_args) };
+        assert!(str_result.is_none());
+        assert_eq!(current_exception_type(), None);
     }
 
     #[test]
