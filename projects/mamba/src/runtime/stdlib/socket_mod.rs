@@ -1012,6 +1012,56 @@ mod tests {
             m_close(items[1], MbValue::none());
         }
     }
+
+    #[test]
+    fn test_socket_makefile_mode_rejects_non_string_before_fd_lookup() {
+        super::super::exception::mb_clear_exception();
+        let result = socket_makefile_mode(Some(MbValue::from_int(1)));
+        assert!(result.is_none());
+        let exc = super::super::exception::mb_catch_exception();
+        assert_eq!(
+            super::super::exception::get_exception_type_pub(exc).as_deref(),
+            Some("TypeError")
+        );
+        assert_eq!(
+            super::super::exception::get_exception_message_pub(exc).as_deref(),
+            Some("socket.makefile() argument 'mode' must be str")
+        );
+    }
+
+    #[test]
+    fn test_socket_makefile_mode_rejects_invalid_literal() {
+        super::super::exception::mb_clear_exception();
+        let result =
+            socket_makefile_mode(Some(MbValue::from_ptr(MbObject::new_str("a".to_string()))));
+        assert!(result.is_none());
+        let exc = super::super::exception::mb_catch_exception();
+        assert_eq!(
+            super::super::exception::get_exception_type_pub(exc).as_deref(),
+            Some("ValueError")
+        );
+        assert_eq!(
+            super::super::exception::get_exception_message_pub(exc).as_deref(),
+            Some("invalid mode 'a' (only r, w, b allowed)")
+        );
+    }
+
+    #[test]
+    fn test_socket_makefile_mode_accepts_supported_literals() {
+        let accepted = [
+            "", "r", "w", "rw", "wr", "b", "rb", "br", "wb", "bw", "rwb", "rbw", "wrb", "wbr",
+            "brw", "bwr",
+        ];
+        for mode in accepted {
+            assert_eq!(
+                socket_makefile_mode(Some(MbValue::from_ptr(
+                    MbObject::new_str(mode.to_string(),)
+                )))
+                .as_deref(),
+                Some(mode)
+            );
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1836,14 +1886,12 @@ const SOCKFILE_CLASS: &str = "socket._socketfile";
 
 unsafe extern "C" fn m_makefile(self_v: MbValue, args: MbValue) -> MbValue {
     let a = args_vec(args);
+    let Some(mode) = socket_makefile_mode(a.first().copied()) else {
+        return MbValue::none();
+    };
     let Some(fd) = sock_fd_or_raise(self_v) else {
         return MbValue::none();
     };
-    let mode = a
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_else(|| "r".to_string());
     let newfd = unsafe { libc::dup(fd as c_int) };
     if newfd < 0 {
         return raise_os_errno("makefile");
@@ -1856,16 +1904,68 @@ unsafe extern "C" fn m_makefile(self_v: MbValue, args: MbValue) -> MbValue {
             f.insert("_fd".into(), MbValue::from_int(newfd as i64));
             f.insert(
                 "_readable".into(),
-                MbValue::from_bool(mode.contains('r') || mode.contains('+')),
+                MbValue::from_bool(socket_makefile_readable(&mode)),
             );
             f.insert(
                 "_writable".into(),
-                MbValue::from_bool(mode.contains('w') || mode.contains('a') || mode.contains('+')),
+                MbValue::from_bool(socket_makefile_writable(&mode)),
             );
             f.insert("mode".into(), MbValue::from_ptr(MbObject::new_str(mode)));
         }
     }
     MbValue::from_ptr(inst)
+}
+
+fn socket_makefile_mode(mode: Option<MbValue>) -> Option<String> {
+    let mode = match mode {
+        None => "r".to_string(),
+        Some(value) if value.is_none() => "r".to_string(),
+        Some(value) => match extract_str(value) {
+            Some(mode) => mode,
+            None => {
+                raise_type_error("socket.makefile() argument 'mode' must be str");
+                return None;
+            }
+        },
+    };
+    if socket_makefile_mode_is_valid(&mode) {
+        Some(mode)
+    } else {
+        raise(
+            "ValueError",
+            &format!("invalid mode '{mode}' (only r, w, b allowed)"),
+        );
+        None
+    }
+}
+
+fn socket_makefile_mode_is_valid(mode: &str) -> bool {
+    matches!(
+        mode,
+        "" | "r"
+            | "w"
+            | "rw"
+            | "wr"
+            | "b"
+            | "rb"
+            | "br"
+            | "wb"
+            | "bw"
+            | "rwb"
+            | "rbw"
+            | "wrb"
+            | "wbr"
+            | "brw"
+            | "bwr"
+    )
+}
+
+fn socket_makefile_readable(mode: &str) -> bool {
+    !socket_makefile_writable(mode) || mode.contains('r')
+}
+
+fn socket_makefile_writable(mode: &str) -> bool {
+    mode.contains('w')
 }
 
 /// Raise the closed-file ValueError when the wrapper's fd is gone.
