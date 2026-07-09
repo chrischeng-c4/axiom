@@ -486,6 +486,7 @@ struct ExecContext {
     annotation_class_globals: Option<HashSet<String>>,
     globals: Option<MbValue>,
     locals: Option<MbValue>,
+    prepared_class_namespaces: Vec<MbValue>,
 }
 
 type ExecFrame = Arc<RwLock<FxHashMap<String, MbValue>>>;
@@ -543,6 +544,7 @@ fn exec_pep695_class_annotation_context(ctx: &ExecContext) -> ExecContext {
             annotation_class_globals: None,
             globals: ctx.globals,
             locals: ctx.locals,
+            prepared_class_namespaces: ctx.prepared_class_namespaces.clone(),
         };
     }
 
@@ -564,6 +566,7 @@ fn exec_pep695_class_annotation_context(ctx: &ExecContext) -> ExecContext {
             .map(|scope| scope.declared_globals.clone()),
         globals: ctx.globals,
         locals: ctx.locals,
+        prepared_class_namespaces: ctx.prepared_class_namespaces.clone(),
     }
 }
 
@@ -1338,6 +1341,22 @@ fn exec_lookup_global_name(ctx: &ExecContext, name: &str) -> Option<MbValue> {
     }
 }
 
+fn exec_lookup_prepared_class_namespace(ctx: &ExecContext, name: &str) -> Option<MbValue> {
+    let namespace = *ctx.prepared_class_namespaces.last()?;
+    let value = crate::runtime::class::mb_obj_getitem(
+        namespace,
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+    );
+    if exec_has_pending_exception() {
+        if crate::runtime::exception::current_exception_type().as_deref() == Some("KeyError") {
+            crate::runtime::exception::mb_clear_exception();
+            return None;
+        }
+        return Some(MbValue::none());
+    }
+    Some(value)
+}
+
 fn exec_lookup_name(ctx: &ExecContext, name: &str) -> Option<MbValue> {
     if exec_current_scope_declares_global(ctx, name) {
         return exec_lookup_global_name(ctx, name);
@@ -1380,6 +1399,9 @@ fn exec_lookup_name(ctx: &ExecContext, name: &str) -> Option<MbValue> {
                 if let Some(&value) = frame.read().unwrap().get(name) {
                     return Some(value);
                 }
+            }
+            if let Some(value) = exec_lookup_prepared_class_namespace(ctx, name) {
+                return Some(value);
             }
             for (frame, scope) in ctx.frames.iter().zip(ctx.frame_scopes.iter()).rev().skip(1) {
                 if !scope.is_function {
@@ -3166,6 +3188,26 @@ fn exec_class_metaclass_name(
     crate::runtime::class::resolve_class_name(value)
 }
 
+fn exec_call_metaclass_prepare(
+    meta_name: &str,
+    class_name: MbValue,
+    bases: MbValue,
+) -> Option<MbValue> {
+    let prepare = crate::runtime::class::lookup_method(meta_name, "__prepare__");
+    if prepare.is_none() {
+        return None;
+    }
+    let namespace = mb_call_spread(
+        prepare,
+        MbValue::from_ptr(MbObject::new_list(vec![class_name, bases])),
+    );
+    if namespace.is_none() && !exec_has_pending_exception() {
+        None
+    } else {
+        Some(namespace)
+    }
+}
+
 fn exec_assignment_target_names(expr: &crate::parser::ast::Expr, out: &mut Vec<String>) -> bool {
     use crate::parser::ast::Expr;
     match expr {
@@ -3416,6 +3458,21 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                 }
                 let generic_metadata =
                     exec_prepare_class_generic_metadata(ctx, type_params, base_values);
+                let prepared_namespace = explicit_metaclass.as_deref().and_then(|meta_name| {
+                    let prepare_bases = MbValue::from_ptr(MbObject::new_tuple(extract_items(
+                        generic_metadata.runtime_bases,
+                    )));
+                    let namespace =
+                        exec_call_metaclass_prepare(meta_name, class_name, prepare_bases)?;
+                    if exec_has_pending_exception() || namespace.is_none() {
+                        None
+                    } else {
+                        Some(namespace)
+                    }
+                });
+                if exec_has_pending_exception() {
+                    break 'class_def ExecFlow::Normal;
+                }
                 crate::runtime::class::mb_class_define_multi(
                     class_name,
                     generic_metadata.runtime_bases,
@@ -3445,9 +3502,16 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                 if let Some(match_args) = match_args {
                     crate::runtime::class::mb_class_set_match_args(class_name, match_args);
                 }
-                if let Some(namespace) =
-                    exec_class_body_namespace(ctx, body, !type_params.is_empty())
-                {
+                if let Some(namespace) = {
+                    if let Some(namespace) = prepared_namespace {
+                        ctx.prepared_class_namespaces.push(namespace);
+                    }
+                    let namespace = exec_class_body_namespace(ctx, body, !type_params.is_empty());
+                    if prepared_namespace.is_some() {
+                        ctx.prepared_class_namespaces.pop();
+                    }
+                    namespace
+                } {
                     for (attr, value) in namespace {
                         crate::runtime::class::mb_class_set_class_attr(
                             class_name,
