@@ -145,3 +145,37 @@ requirementDiagram
       verifies: services_never_wrapped
     }
 ```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: vat-runner-sandbox-deny-egress
+    name: "runner-mode command with EgressPolicy::Deny is denied outbound network, same as direct-mode"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: sandbox-applied-to-runner-mode-commands
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat --test vat_runner_sandbox -- --nocapture"
+    assertions:
+      - "AC4: a `vat run <runner>` with `--isolation seatbelt` + `[network].egress = deny` denies a runner command's outbound connection (loopback and non-loopback alike), exit code non-zero, matching the existing direct-mode `vat_sandbox_egress` proof for EgressPolicy::Deny. Skips cleanly off-macOS / no sandbox-exec / no bash."
+  - id: vat-runner-sandbox-service-exemption
+    name: "vat's own spawned services stay unsandboxed under runner-mode Deny egress (intentional exemption, not an oversight)"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: sandbox-applied-to-runner-mode-commands
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat --test vat_runner_sandbox -- --nocapture"
+    assertions:
+      - "AC2/R2: in the same `vat run` invoked with `[network].egress = deny`, a declared service (started via start_service, never sandbox_wrap'd) still binds/serves and remains reachable on its local port, while a sibling runner attempting outbound network under the same run is denied — proving the services exemption is enforced by construction, not a byproduct of a permissive default."
+  - id: vat-runner-sandbox-build
+    name: "default + lean build compile"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: sandbox-applied-to-runner-mode-commands
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo build -p vat --no-default-features"
+    assertions:
+      - "vat compiles with and without default features."
+```
