@@ -21,13 +21,14 @@ Public API manifest for `projects/lumen/src/metrics.rs` generated from AST durin
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `Metrics` | projects/lumen/src/metrics.rs | struct | pub | 28 |  |
-| `incr_collection_created` | projects/lumen/src/metrics.rs | function | pub | 63 | incr_collection_created(&self, fields: u64) |
-| `incr_duplicates` | projects/lumen/src/metrics.rs | function | pub | 59 | incr_duplicates(&self) |
-| `incr_index` | projects/lumen/src/metrics.rs | function | pub | 48 | incr_index(&self, items: u64, bytes: u64) |
-| `new` | projects/lumen/src/metrics.rs | function | pub | 44 | new() -> Self |
-| `observe_search` | projects/lumen/src/metrics.rs | function | pub | 53 | observe_search(&self, latency_ms: u64) |
-| `render` | projects/lumen/src/metrics.rs | function | pub | 74 | render(&self) -> String |
-| `set_storage_bytes` | projects/lumen/src/metrics.rs | function | pub | 68 | set_storage_bytes(&self, bytes: u64) |
+| `incr_collection_created` | projects/lumen/src/metrics.rs | function | pub | 73 | incr_collection_created(&self, fields: u64) |
+| `incr_duplicates` | projects/lumen/src/metrics.rs | function | pub | 64 | incr_duplicates(&self) |
+| `incr_index` | projects/lumen/src/metrics.rs | function | pub | 53 | incr_index(&self, items: u64, bytes: u64) |
+| `incr_replace_skipped` | projects/lumen/src/metrics.rs | function | pub | 69 | incr_replace_skipped(&self, fields: u64) |
+| `new` | projects/lumen/src/metrics.rs | function | pub | 49 | new() -> Self |
+| `observe_search` | projects/lumen/src/metrics.rs | function | pub | 58 | observe_search(&self, latency_ms: u64) |
+| `render` | projects/lumen/src/metrics.rs | function | pub | 84 | render(&self) -> String |
+| `set_storage_bytes` | projects/lumen/src/metrics.rs | function | pub | 78 | set_storage_bytes(&self, bytes: u64) |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -71,6 +72,11 @@ pub struct Metrics {
     pub storage_bytes: Gauge,
     pub posting_cache_hits_total: Counter,
     pub posting_cache_misses_total: Counter,
+    /// #1293: `docs:replace` server-side no-op suppression — fields whose
+    /// incoming value matched the currently indexed state and were skipped
+    /// (no posting-list rewrite, no HNSW tombstone/reinsert). Distinct from
+    /// `index_writes_total`, which only ever counts fields actually written.
+    pub replace_fields_skipped_total: Counter,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-metrics-rs.md#source
@@ -92,6 +98,11 @@ impl Metrics {
 
     pub fn incr_duplicates(&self) {
         self.duplicates_requests_total.incr();
+    }
+
+    /// #1293: record `n` `docs:replace` fields skipped as unchanged no-ops.
+    pub fn incr_replace_skipped(&self, fields: u64) {
+        self.replace_fields_skipped_total.add(fields);
     }
 
     pub fn incr_collection_created(&self, fields: u64) {
@@ -173,6 +184,12 @@ impl Metrics {
                 "Posting cache miss count.",
                 self.posting_cache_misses_total.get(),
             ),
+            Sample::new(
+                "lumen_replace_fields_skipped_total",
+                "counter",
+                "Total docs:replace fields skipped as unchanged no-ops.",
+                self.replace_fields_skipped_total.get(),
+            ),
         ];
         service_metrics::render(&samples)
     }
@@ -193,6 +210,7 @@ mod tests {
             "lumen_search_latency_ms_sum",
             "lumen_storage_bytes",
             "lumen_posting_cache_hits_total",
+            "lumen_replace_fields_skipped_total",
         ] {
             assert!(out.contains(name), "expected {name} in:\n{out}");
         }
@@ -213,6 +231,7 @@ mod tests {
         m.set_storage_bytes(2048);
         m.posting_cache_hits_total.add(5);
         m.posting_cache_misses_total.add(2);
+        m.incr_replace_skipped(6);
         let out = m.render();
         let golden = "# HELP lumen_index_writes_total Total index items applied.\n\
 # TYPE lumen_index_writes_total counter\n\
@@ -246,15 +265,17 @@ lumen_storage_bytes 2048\n\
 lumen_posting_cache_hits_total 5\n\
 # HELP lumen_posting_cache_misses_total Posting cache miss count.\n\
 # TYPE lumen_posting_cache_misses_total counter\n\
-lumen_posting_cache_misses_total 2\n";
+lumen_posting_cache_misses_total 2\n\
+# HELP lumen_replace_fields_skipped_total Total docs:replace fields skipped as unchanged no-ops.\n\
+# TYPE lumen_replace_fields_skipped_total counter\n\
+lumen_replace_fields_skipped_total 6\n";
         assert_eq!(
             out, golden,
-            "render() diverged from the pre-refactor capture"
+            "render() diverged from the pre-refactor capture (#1293 added lumen_replace_fields_skipped_total)"
         );
     }
 }
 // CODEGEN-END
-
 ````
 
 ## Changes
