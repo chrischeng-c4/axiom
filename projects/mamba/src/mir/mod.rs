@@ -1,6 +1,13 @@
 use crate::resolve::SymbolId;
 use crate::types::TypeId;
 
+mod escape_analysis;
+
+pub use escape_analysis::{
+    analyze_literal_escapes, LiteralEscapeAnalysis, LiteralEscapeClassification, LiteralEscapeInfo,
+    LiteralEscapeKind,
+};
+
 /// A virtual register in SSA form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VReg(pub u32);
@@ -283,6 +290,7 @@ mod tests {
     use crate::resolve::SymbolId;
     use crate::types::TypeContext;
 
+    mod escape_analysis;
     mod escape_analysis_gate;
 
     #[test]
