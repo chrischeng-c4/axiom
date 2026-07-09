@@ -1666,6 +1666,9 @@ pub fn mb_class_update_bases(name: MbValue, bases_list: MbValue) {
         }
     }
     let mro = compute_mro(&class_name, &bases);
+    let bases_for_hook = bases.clone();
+    let class_kwargs: HashMap<String, MbValue> =
+        KWARGS_REGISTRY.with(|reg| reg.borrow_mut().remove(&class_name).unwrap_or_default());
     CLASS_REGISTRY.with(|reg| {
         if let Some(cls) = reg.borrow_mut().get_mut(&class_name) {
             cls.bases = bases;
@@ -1694,6 +1697,37 @@ pub fn mb_class_update_bases(name: MbValue, bases_list: MbValue) {
             .unwrap_or_default()
     });
     install_abc_mixins(&class_name, &mro);
+
+    let cls_val = MbValue::from_ptr(MbObject::new_str(class_name.clone()));
+    for base_name in &bases_for_hook {
+        let hook = lookup_method(base_name, "__init_subclass__");
+        if !hook.is_none() {
+            let addr = extract_func_addr(hook);
+            if addr != 0 {
+                let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
+                if is_registered {
+                    let pos_args = MbValue::from_ptr(MbObject::new_list(vec![cls_val]));
+                    let kwargs_dict = if class_kwargs.is_empty() {
+                        MbValue::from_ptr(MbObject::new_dict())
+                    } else {
+                        build_kwargs_dict(&class_kwargs)
+                    };
+                    super::builtins::mb_call_spread_kwargs(hook, pos_args, kwargs_dict);
+                }
+            }
+        } else if !class_kwargs.is_empty()
+            && base_name != "typing.Generic"
+            && base_name != "typing.typing.Generic"
+        {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "__init_subclass__() takes no keyword arguments".to_string(),
+                )),
+            );
+            return;
+        }
+    }
 }
 
 /// R10: Store class keyword arguments for __init_subclass__ dispatch.
