@@ -1435,6 +1435,71 @@ fn exec_store_name(ctx: &mut ExecContext, name: &str, value: MbValue) {
     }
 }
 
+fn exec_store_scope_annotation(
+    ctx: &mut ExecContext,
+    name: &str,
+    ty: &crate::source::span::Spanned<crate::parser::ast::TypeExpr>,
+) {
+    if ctx.frame_scopes.last().is_some_and(|scope| scope.is_function) {
+        return;
+    }
+
+    let mut annotation_ctx = exec_pep695_class_annotation_context(ctx);
+    let Some(value) = exec_eval_annotation_type_expr(&mut annotation_ctx, &ty.node) else {
+        return;
+    };
+
+    let key = MbValue::from_ptr(MbObject::new_str("__annotations__".to_string()));
+    let annotations = if let Some(frame) = ctx.frames.last() {
+        let existing = {
+            let guard = frame.read().unwrap();
+            guard.get("__annotations__").copied()
+        };
+        if let Some(annotations) = existing {
+            annotations
+        } else {
+            let annotations = crate::runtime::dict_ops::mb_dict_new();
+            frame
+                .write()
+                .unwrap()
+                .insert("__annotations__".to_string(), annotations);
+            annotations
+        }
+    } else if let Some(locals) = ctx.locals {
+        if crate::runtime::dict_ops::mb_dict_contains(locals, key)
+            .as_bool()
+            .unwrap_or(false)
+        {
+            crate::runtime::dict_ops::mb_dict_get(locals, key, MbValue::none())
+        } else {
+            let annotations = crate::runtime::dict_ops::mb_dict_new();
+            crate::runtime::dict_ops::mb_dict_setitem(locals, key, annotations);
+            annotations
+        }
+    } else if let Some(globals) = ctx.globals {
+        if crate::runtime::dict_ops::mb_dict_contains(globals, key)
+            .as_bool()
+            .unwrap_or(false)
+        {
+            crate::runtime::dict_ops::mb_dict_get(globals, key, MbValue::none())
+        } else {
+            let annotations = crate::runtime::dict_ops::mb_dict_new();
+            crate::runtime::dict_ops::mb_dict_setitem(globals, key, annotations);
+            annotations
+        }
+    } else {
+        let annotations = crate::runtime::dict_ops::mb_dict_new();
+        exec_store_global(ctx, "__annotations__", annotations);
+        annotations
+    };
+
+    crate::runtime::dict_ops::mb_dict_setitem(
+        annotations,
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+        value,
+    );
+}
+
 enum ExecMaskedNameScope {
     Frame(ExecFrame),
     Locals,
@@ -3086,6 +3151,10 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                     exec_store_name(ctx, name, assigned);
                 }
             }
+            ExecFlow::Normal
+        }
+        Stmt::BareAnnotation { name, ty } => {
+            exec_store_scope_annotation(ctx, name, ty);
             ExecFlow::Normal
         }
         Stmt::ClassDef {
@@ -5171,6 +5240,56 @@ mod tests {
             }
         });
         assert_eq!(name_text.as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn test_exec_generic_class_bare_annotation_named_like_type_param_keeps_annotations() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(
+            MbValue::from_ptr(MbObject::new_str(
+                "class ClassA[X]:\n    X: int\n".to_string(),
+            )),
+            globals,
+        );
+
+        assert_eq!(
+            crate::runtime::exception::mb_has_exception().as_bool(),
+            Some(false)
+        );
+
+        let cls = crate::runtime::dict_ops::mb_dict_get(
+            globals,
+            MbValue::from_ptr(MbObject::new_str("ClassA".to_string())),
+            MbValue::none(),
+        );
+        let type_params = crate::runtime::class::mb_getattr(
+            cls,
+            MbValue::from_ptr(MbObject::new_str("__type_params__".to_string())),
+        );
+        let params = extract_items(type_params);
+        assert_eq!(params.len(), 1);
+        let param_name = crate::runtime::class::mb_getattr(
+            params[0],
+            MbValue::from_ptr(MbObject::new_str("__name__".to_string())),
+        );
+        assert_eq!(eval_str_value(param_name).as_deref(), Some("X"));
+
+        let annotations = crate::runtime::class::mb_getattr(
+            cls,
+            MbValue::from_ptr(MbObject::new_str("__annotations__".to_string())),
+        );
+        let annotation = crate::runtime::dict_ops::mb_dict_get(
+            annotations,
+            MbValue::from_ptr(MbObject::new_str("X".to_string())),
+            MbValue::none(),
+        );
+        let int_obj = crate::runtime::class::mb_builtin_type_obj(MbValue::from_ptr(
+            MbObject::new_str("int".to_string()),
+        ));
+        assert_eq!(annotation.to_bits(), int_obj.to_bits());
     }
 
     #[test]
