@@ -108,3 +108,20 @@ flowchart TD
     r3[R3 arrow multi statement body return object literal still errors] --> cargo_test_p_jet_lib_bundler_dts_tests_uninferrable_exported_const_arrow_multi_statement_body_return_object_literal_errors[cargo test -p jet --lib bundler::dts::tests::uninferrable_exported_const_arrow_multi_statement_body_return_object_literal_errors]
     r4[R4 arrow concise body without return type still errors] --> cargo_test_p_jet_lib_bundler_dts_tests_exported_const_arrow_without_return_type_errors[cargo test -p jet --lib bundler::dts::tests::exported_const_arrow_without_return_type_errors]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/jet/src/bundler/dts.rs
+    action: update
+    section: logic
+    impl_mode: hand-written
+    reason: "Empirically re-verified against WI #1264's exact minimal repro (`jet build --lib --format esm --dts` on a standalone `export const funcReturningTypedObject = (a: string, b: number = 1) => { return { fromOutsource: (x: string): Promise<string> => Promise.resolve(x), toOutsource: (y?: string): string => y ?? a, }; };`) still fails on the current source tree, so this is a genuine analyzer gap (not an already-implemented case pinned only by tests, contrast WI #937). Add `infer_arrow_body_return_object_type` and wire it into `infer_variable_declarator_type` immediately after `infer_arrow_function_type`: for an arrow function value with no explicit `return_type` field whose body is a `statement_block` containing exactly one `return_statement` of an `object` node, delegate member typing to the existing `infer_object_literal_type` routine and emit `(params) => { member: Type; ... }`; any other body shape keeps falling through unchanged to the existing fail-loud isolatedDeclarations diagnostic. Scoped to the shape named in the issue only; does not intersect #1263 (nested object literals), #1238 (Object.assign+computed-key), or #1262 (property truncation after Object.assign spread)."
+  - path: projects/jet/src/bundler/dts.rs
+    action: update
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Add the R1-R4 regression tests specified in the unit-test section to the existing `mod tests` block: R1 pins the WI #1264 minimal-repro positive case; R2 and R3 are negative controls proving the new inference path stays scoped to a single-statement return-of-a-fully-typed-object-literal body; R4 re-asserts the pre-existing concise-body negative test is untouched by the new statement_block-only path."
+```
