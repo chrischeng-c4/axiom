@@ -102,7 +102,6 @@ commands:
       - "Service/emulator spawns (start_service) remain unwrapped by sandbox_wrap — they keep network to serve/forward regardless of --isolation/[network].egress. This WI adds an explicit test proving that exemption is intentional, not an oversight."
       - "`--isolation none` (default) is unchanged."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
