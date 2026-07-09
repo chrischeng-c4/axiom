@@ -966,7 +966,7 @@ mod test_support {
 
     pub(super) fn setup_change(change_id: &str, phase: StatePhase) -> TempDir {
         let tmp = TempDir::new().unwrap();
-        let change_dir = tmp.path().join(".aw/changes").join(change_id);
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), change_id);
         std::fs::create_dir_all(&change_dir).unwrap();
         std::fs::create_dir_all(tmp.path().join("tech-design")).unwrap();
         // R4: save() needs an issue backing change_id.
@@ -1006,7 +1006,7 @@ mod workflow_tests {
     #[tokio::test]
     async fn test_programmatic_merge_with_main_spec_ref() {
         let tmp = setup_change("pm-test", StatePhase::ChangeImplementationReviewed);
-        let change_dir = tmp.path().join(".aw/changes/pm-test");
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), "pm-test");
         std::fs::create_dir_all(change_dir.join("specs")).unwrap();
 
         // merge_strategy is dead code — no longer stripped, so omit from input
@@ -1064,7 +1064,7 @@ mod workflow_tests {
     async fn test_missing_main_spec_ref_rejected() {
         // Null main_spec_ref is now a hard error — no fallback to spec_id.md.
         let tmp = setup_change("pm-noref", StatePhase::ChangeImplementationReviewed);
-        let change_dir = tmp.path().join(".aw/changes/pm-noref");
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), "pm-noref");
         std::fs::create_dir_all(change_dir.join("specs")).unwrap();
 
         let spec_content =
@@ -1089,7 +1089,7 @@ mod workflow_tests {
     async fn test_root_level_path_rejected() {
         // main_spec_ref without '/' is a hard error — merge aborted, no files written.
         let tmp = setup_change("pm-rootpath", StatePhase::ChangeImplementationReviewed);
-        let change_dir = tmp.path().join(".aw/changes/pm-rootpath");
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), "pm-rootpath");
         std::fs::create_dir_all(change_dir.join("specs")).unwrap();
 
         let spec_content =
@@ -1121,7 +1121,7 @@ mod workflow_tests {
     async fn test_audit_log_create() {
         // When target does not exist, audit_log must contain "audit: create tech-design/..."
         let tmp = setup_change("pm-audit-create", StatePhase::ChangeImplementationReviewed);
-        let change_dir = tmp.path().join(".aw/changes/pm-audit-create");
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), "pm-audit-create");
         std::fs::create_dir_all(change_dir.join("specs")).unwrap();
 
         let spec_content = "---\nid: new-spec\nmain_spec_ref: sdd/logic/new-spec.md\n---\n\n# New Spec\n\nContent.\n";
@@ -1151,7 +1151,8 @@ mod workflow_tests {
             "pm-audit-section-merge",
             StatePhase::ChangeImplementationReviewed,
         );
-        let change_dir = tmp.path().join(".aw/changes/pm-audit-section-merge");
+        let change_dir =
+            crate::shared::workspace::change_path(tmp.path(), "pm-audit-section-merge");
         std::fs::create_dir_all(change_dir.join("specs")).unwrap();
 
         // Pre-create the target file with existing sections
@@ -1204,7 +1205,7 @@ mod workflow_tests {
     async fn test_validation_aborts_before_write() {
         // When any spec fails path validation, NO files must be written (all-or-nothing).
         let tmp = setup_change("pm-abort", StatePhase::ChangeImplementationReviewed);
-        let change_dir = tmp.path().join(".aw/changes/pm-abort");
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), "pm-abort");
         std::fs::create_dir_all(change_dir.join("specs")).unwrap();
 
         // Valid spec — listed first alphabetically
@@ -1244,7 +1245,7 @@ mod workflow_tests {
         }
 
         let tmp = setup_change("pm-3way-clean", StatePhase::ChangeImplementationReviewed);
-        let change_dir = tmp.path().join(".aw/changes/pm-3way-clean");
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), "pm-3way-clean");
         std::fs::create_dir_all(change_dir.join("specs")).unwrap();
 
         // Base content (snapshot at change-init time) — has two sections
@@ -1325,7 +1326,7 @@ mod workflow_tests {
         }
 
         let tmp = setup_change("pm-3way-conflict", StatePhase::ChangeImplementationReviewed);
-        let change_dir = tmp.path().join(".aw/changes/pm-3way-conflict");
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), "pm-3way-conflict");
         std::fs::create_dir_all(change_dir.join("specs")).unwrap();
 
         // Base content
@@ -1372,7 +1373,7 @@ mod workflow_tests {
     async fn test_base_md_skipped_by_find_specs() {
         // Verify that .base.md files are not included in find_specs_to_merge() results
         let tmp = setup_change("pm-skip-base", StatePhase::ChangeImplementationReviewed);
-        let change_dir = tmp.path().join(".aw/changes/pm-skip-base");
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), "pm-skip-base");
         let specs_dir = change_dir.join("specs");
         std::fs::create_dir_all(&specs_dir).unwrap();
 
@@ -1403,7 +1404,7 @@ mod workflow_tests {
         // Verify specs without .base.md use section-merge behavior when target exists
         // REQ: bug-create-change-merge-archive-moves-not-committed-sp (defect 2)
         let tmp = setup_change("pm-no-base", StatePhase::ChangeImplementationReviewed);
-        let change_dir = tmp.path().join(".aw/changes/pm-no-base");
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), "pm-no-base");
         std::fs::create_dir_all(change_dir.join("specs")).unwrap();
 
         // Pre-create target file with existing sections
@@ -1472,7 +1473,7 @@ mod workflow_tests {
         }
 
         let tmp = setup_change("pm-audit-3way", StatePhase::ChangeImplementationReviewed);
-        let change_dir = tmp.path().join(".aw/changes/pm-audit-3way");
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), "pm-audit-3way");
         std::fs::create_dir_all(change_dir.join("specs")).unwrap();
 
         // Use identical content for base and main (trivial merge — theirs wins cleanly)
@@ -1513,7 +1514,8 @@ mod workflow_tests {
             "enhancement-merge-closes",
             StatePhase::ChangeImplementationReviewed,
         );
-        let change_dir = tmp.path().join(".aw/changes/enhancement-merge-closes");
+        let change_dir =
+            crate::shared::workspace::change_path(tmp.path(), "enhancement-merge-closes");
         std::fs::create_dir_all(change_dir.join("specs")).unwrap();
 
         // Create a matching open issue
@@ -1576,7 +1578,7 @@ mod workflow_tests {
     #[tokio::test]
     async fn test_programmatic_merge_no_specs() {
         let tmp = setup_change("pm-empty", StatePhase::ChangeImplementationReviewed);
-        let change_dir = tmp.path().join(".aw/changes/pm-empty");
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), "pm-empty");
         std::fs::create_dir_all(change_dir.join("specs")).unwrap();
         // No spec files
 
@@ -1652,7 +1654,7 @@ mod preflight_worktree_tests {
 
         // Set up a valid change inside the worktree
         let wt_root = main.join(&wt_rel);
-        let change_dir = wt_root.join(".aw/changes").join(slug);
+        let change_dir = crate::shared::workspace::change_path(&wt_root, slug);
         std::fs::create_dir_all(change_dir.join("specs")).unwrap();
         std::fs::create_dir_all(wt_root.join("tech-design")).unwrap();
 
@@ -1703,7 +1705,7 @@ mod preflight_worktree_tests {
             "change_dir must still exist after G1 abort"
         );
         assert!(
-            !wt_root.join(".aw/archive").exists(),
+            !crate::shared::workspace::archive_path(&wt_root).exists(),
             "no archive should be created when G1 aborts"
         );
     }
@@ -1724,7 +1726,7 @@ mod preflight_worktree_tests {
         // that the directory exists).
         let main_root = tmp.path();
         let wt_root = main_root.join(".aw/worktrees").join(slug);
-        let change_dir = wt_root.join(".aw/changes").join(slug);
+        let change_dir = crate::shared::workspace::change_path(&wt_root, slug);
         std::fs::create_dir_all(change_dir.join("specs")).unwrap();
         std::fs::create_dir_all(wt_root.join("tech-design")).unwrap();
         std::fs::create_dir_all(main_root.join("tech-design")).unwrap();
@@ -1780,20 +1782,27 @@ mod preflight_worktree_tests {
              is the only path for main to receive it"
         );
 
-        // Verify: archive landed inside worktree
+        // Verify: archive landed under the shared runtime workspace. Under
+        // the /tmp/aw workspace layout a worktree and its main checkout
+        // resolve to the identical workspace identity (see
+        // `issue_workspace_identity_root`), so there is exactly one
+        // physical archive location regardless of whether the merge was
+        // invoked with `project_root` = main or the worktree — never a
+        // literal `.aw/archive` under either checkout root.
         assert!(
             !change_dir.exists(),
             "change_dir should be moved to archive"
         );
-        let wt_archive_parent = wt_root.join(".aw/archive");
-        assert!(
-            wt_archive_parent.exists(),
-            "archive dir should be inside the worktree"
+        let archive_dir = PathBuf::from(parsed["archive_path"].as_str().unwrap());
+        assert!(archive_dir.exists(), "archive dir should exist");
+        assert_eq!(
+            crate::shared::workspace::archive_path(main_root),
+            crate::shared::workspace::archive_path(&wt_root),
+            "main root and its worktree must resolve to the identical archive location"
         );
-        let main_archive_parent = main_root.join(".aw/archive");
         assert!(
-            !main_archive_parent.exists(),
-            "archive must NOT be written to main"
+            !main_root.join(".aw/archive").exists(),
+            "archive must NOT be written to the legacy in-repo .aw/archive path"
         );
     }
 }

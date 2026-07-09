@@ -29,6 +29,8 @@ Public API manifest for `apps/agentic-workflow/src/tools/clarifications.rs` gene
 <!-- type: source lang: rust -->
 
 ````rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/tools/clarifications/tests.md#source
+// CODEGEN-BEGIN
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,7 +65,8 @@ mod tests {
         assert_eq!(parsed["next"], "sdd_run_change");
         assert!(parsed["artifacts"].as_array().unwrap().len() >= 1);
 
-        let file_path = project_root.join(".aw/changes/add-oauth/context_clarifications.md");
+        let file_path = crate::shared::workspace::change_path(project_root, "add-oauth")
+            .join("context_clarifications.md");
         assert!(file_path.exists());
 
         let content = std::fs::read_to_string(&file_path).unwrap();
@@ -116,7 +119,8 @@ mod tests {
         let parsed: Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["questions_count"], 2);
 
-        let file_path = project_root.join(".aw/changes/multi-test/context_clarifications.md");
+        let file_path = crate::shared::workspace::change_path(project_root, "multi-test")
+            .join("context_clarifications.md");
         let content = std::fs::read_to_string(&file_path).unwrap();
         assert!(content.contains("## Q1: First Topic"));
         assert!(content.contains("## Q2: Second Topic"));
@@ -163,12 +167,14 @@ mod tests {
         assert_eq!(parsed["next"], "sdd_run_change");
 
         // Verify appended content in pre_clarifications.md (service_append writes here)
-        let file_path = project_root.join(".aw/changes/append-mcp-test/pre_clarifications.md");
+        let file_path = crate::shared::workspace::change_path(project_root, "append-mcp-test")
+            .join("pre_clarifications.md");
         let content = std::fs::read_to_string(&file_path).unwrap();
         assert!(content.contains("## Issue #188"));
         assert!(content.contains("### Q1: Auth Method"));
     }
 }
+// CODEGEN-END
 ````
 
 ## Changes

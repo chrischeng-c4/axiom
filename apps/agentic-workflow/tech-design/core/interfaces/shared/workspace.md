@@ -21,29 +21,33 @@ Public API manifest for `apps/agentic-workflow/src/shared/workspace.rs` generate
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ARCHIVE_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 49 |  |
-| `AW_TMP_ROOT` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 43 |  |
-| `CHANGES_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 46 |  |
-| `CONFIG_FILE` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 20 |  |
-| `ISSUES_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 34 |  |
-| `PAYLOADS_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 40 |  |
-| `SYNC_BEGIN_MARKER` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 24 |  |
-| `SYNC_END_MARKER` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 28 |  |
-| `TECH_DESIGN_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 31 |  |
-| `WORKITEMS_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 37 |  |
-| `WORKSPACE_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 17 |  |
-| `archive_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 236 | archive_path(project_root: &Path) -> PathBuf |
-| `aw_tmp_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 59 | aw_tmp_path() -> PathBuf |
-| `change_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 230 | change_path(project_root: &Path, change_id: &str) -> PathBuf |
-| `changes_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 224 | changes_path(project_root: &Path) -> PathBuf |
-| `config_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 74 | config_path(project_root: &Path) -> PathBuf |
+| `ARCHIVE_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 51 |  |
+| `AW_TMP_ROOT` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 45 |  |
+| `CHANGES_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 48 |  |
+| `CONFIG_FILE` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 19 |  |
+| `ISSUES_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 33 |  |
+| `PAYLOADS_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 42 |  |
+| `SYNC_BEGIN_MARKER` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 23 |  |
+| `SYNC_END_MARKER` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 27 |  |
+| `TECH_DESIGN_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 30 |  |
+| `WORKITEMS_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 36 |  |
+| `WORKSPACE_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 16 |  |
+| `WORKTREES_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 39 |  |
+| `archive_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 309 | archive_path(project_root: &Path) -> PathBuf |
+| `aw_tmp_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 61 | aw_tmp_path() -> PathBuf |
+| `change_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 302 | change_path(project_root: &Path, change_id: &str) -> PathBuf |
+| `changes_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 293 | changes_path(project_root: &Path) -> PathBuf |
+| `config_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 76 | config_path(project_root: &Path) -> PathBuf |
 | `issues_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 157 | issues_path(project_root: &Path) -> PathBuf |
 | `payloads_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 176 | payloads_path(project_root: &Path) -> PathBuf |
+| `project_root_for_change_dir` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 277 | project_root_for_change_dir(change_dir: &Path) -> Option<PathBuf> |
 | `project_tech_design_paths` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 95 | project_tech_design_paths(project_root: &Path) -> Vec<(String, PathBuf)> |
-| `tech_design_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 84 | tech_design_path(project_root: &Path) -> PathBuf |
+| `tech_design_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 85 | tech_design_path(project_root: &Path) -> PathBuf |
 | `workitems_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 164 | workitems_path(project_root: &Path) -> PathBuf |
-| `workspace_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 53 | workspace_path(project_root: &Path) -> PathBuf |
-| `workspace_runtime_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 66 | workspace_runtime_path(project_root: &Path) -> PathBuf |
+| `workspace_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 55 | workspace_path(project_root: &Path) -> PathBuf |
+| `workspace_runtime_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 68 | workspace_runtime_path(project_root: &Path) -> PathBuf |
+| `worktree_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 323 | worktree_path(project_root: &Path, change_id: &str) -> PathBuf |
+| `worktrees_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 316 | worktrees_path(project_root: &Path) -> PathBuf |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
@@ -54,9 +58,8 @@ Public API manifest for `apps/agentic-workflow/src/shared/workspace.rs` generate
 // CODEGEN-BEGIN
 //! Agentic Workflow workspace directory constants and path helpers.
 //!
-//! Versioned Agentic Workflow state lives under a single top-level `.aw/`
-//! directory in the consumer's project root, following the dev-tool convention
-//! of hidden dot-prefix state dirs (`.git/`, `.cargo/`, `.claude/`).
+//! Versioned Agentic Workflow config lives in top-level `aw.toml` in the
+//! consumer's project root.
 //! Ephemeral runtime/cache state lives under `/tmp/aw`.
 //!
 //! Centralizing these constants here makes future renames a one-line change.
@@ -65,17 +68,17 @@ use std::path::{Path, PathBuf};
 
 use crate::services::project_registry::resolve_td_root_from_config;
 
-/// Top-level workspace directory name.
+/// Legacy top-level workspace directory name.
 pub const WORKSPACE_DIR: &str = ".aw";
 
-/// Config file name (inside workspace dir).
-pub const CONFIG_FILE: &str = "config.toml";
+/// Root Agentic Workflow config file name.
+pub const CONFIG_FILE: &str = "aw.toml";
 
-/// Begin marker for the auto-generated [[projects]] block in config.toml.
+/// Begin marker for the auto-generated [[projects]] block in aw.toml.
 // @spec apps/agentic-workflow/tech-design/surface/specs/sync-command.md#R2
 pub const SYNC_BEGIN_MARKER: &str = "# BEGIN AW SYNC \u{2014} auto-generated, do not edit by hand";
 
-/// End marker for the auto-generated [[projects]] block in config.toml.
+/// End marker for the auto-generated [[projects]] block in aw.toml.
 // @spec apps/agentic-workflow/tech-design/surface/specs/sync-command.md#R2
 pub const SYNC_END_MARKER: &str = "# END AW SYNC";
 
@@ -87,6 +90,9 @@ pub const ISSUES_DIR: &str = "issues";
 
 /// Work-item draft and planning artifact directory.
 pub const WORKITEMS_DIR: &str = "workitems";
+
+/// Per-change git worktree directory.
+pub const WORKTREES_DIR: &str = "worktrees";
 
 /// Ephemeral payload round-trip artifact directory.
 pub const PAYLOADS_DIR: &str = "payloads";
@@ -100,7 +106,7 @@ pub const CHANGES_DIR: &str = "changes";
 /// Completed change archive directory.
 pub const ARCHIVE_DIR: &str = "archive";
 
-/// Path to the workspace root: `{project_root}/.aw`
+/// Path to the legacy workspace root: `{project_root}/.aw`
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
 pub fn workspace_path(project_root: &Path) -> PathBuf {
     project_root.join(WORKSPACE_DIR)
@@ -121,24 +127,22 @@ pub fn workspace_runtime_path(project_root: &Path) -> PathBuf {
         .join(workspace_cache_slug(project_root))
 }
 
-/// Path to the config file: `{project_root}/.aw/config.toml`
+/// Path to the config file: `{project_root}/aw.toml`
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
 pub fn config_path(project_root: &Path) -> PathBuf {
-    workspace_path(project_root).join(CONFIG_FILE)
+    project_root.join(CONFIG_FILE)
 }
 
-/// Path to the default tech design directory.
+/// Path to the default repo-level tech design directory.
 ///
-/// Reads `[agentic_workflow.tech_design_platform].path` from `.aw/config.toml` when it
-/// is present, and falls back to `{project_root}/.aw/tech-design` for
-/// workspaces.
+/// Reads `[agentic_workflow.tech_design_platform].path` from `aw.toml` when it
+/// is present, and falls back to `{project_root}/tech-design`.
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
 pub fn tech_design_path(project_root: &Path) -> PathBuf {
-    configured_tech_design_base(project_root)
-        .unwrap_or_else(|| workspace_path(project_root).join(TECH_DESIGN_DIR))
+    configured_tech_design_base(project_root).unwrap_or_else(|| project_root.join(TECH_DESIGN_DIR))
 }
 
-/// Return all registered project TD roots resolved from `.aw/config.toml`.
+/// Return all registered project TD roots resolved from `aw.toml`.
 ///
 /// Per-project `td_path` values are resolved by the same primitive used by TD
 /// creation. Invalid rows are skipped here so callers can still render the
@@ -230,6 +234,10 @@ pub fn payloads_path(project_root: &Path) -> PathBuf {
 }
 
 fn workspace_cache_slug(project_root: &Path) -> String {
+    if let Some(slug) = runtime_workspace_slug(project_root) {
+        return slug;
+    }
+
     let identity_root = issue_workspace_identity_root(project_root);
     let resolved = identity_root.canonicalize().unwrap_or(identity_root);
     let raw = resolved.to_string_lossy();
@@ -252,6 +260,27 @@ fn workspace_cache_slug(project_root: &Path) -> String {
     }
 }
 
+fn runtime_workspace_slug(project_root: &Path) -> Option<String> {
+    let components: Vec<String> = project_root
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    let workspaces_index = components
+        .windows(2)
+        .position(|window| window[0] == "aw" && window[1] == "workspaces")?;
+    let slug = components.get(workspaces_index + 2)?;
+    if slug.is_empty() {
+        return None;
+    }
+    if components.get(workspaces_index + 3).map(String::as_str) == Some(WORKTREES_DIR) {
+        return Some(slug.clone());
+    }
+    if components.len() == workspaces_index + 3 {
+        return Some(slug.clone());
+    }
+    None
+}
+
 fn issue_workspace_identity_root(project_root: &Path) -> PathBuf {
     let Some(worktrees_dir) = project_root.parent() else {
         return project_root.to_path_buf();
@@ -271,22 +300,84 @@ fn issue_workspace_identity_root(project_root: &Path) -> PathBuf {
         .unwrap_or_else(|| project_root.to_path_buf())
 }
 
-/// Path to the changes directory: `{project_root}/.aw/changes`
+/// Marker file recording the literal `project_root` that produced a given
+/// workspace runtime dir, so change-dir consumers (`StateManager::load`)
+/// can resolve `project_root` by walking up from a `change_dir` instead of
+/// re-deriving it from path-shape arithmetic that breaks once the runtime
+/// layout nests deeper than the legacy `.aw/changes/{id}` shape.
+const PROJECT_ROOT_MARKER: &str = ".project-root";
+
+/// Record `project_root` at the workspace runtime root so `StateManager::load`
+/// (and other `change_dir`-only consumers) can look it back up. Idempotent —
+/// only writes when the marker is missing or stale.
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
-pub fn changes_path(project_root: &Path) -> PathBuf {
-    workspace_path(project_root).join(CHANGES_DIR)
+fn record_workspace_project_root(runtime_root: &Path, project_root: &Path) {
+    let marker = runtime_root.join(PROJECT_ROOT_MARKER);
+    let value = project_root.to_string_lossy().into_owned();
+    if let Ok(existing) = std::fs::read_to_string(&marker) {
+        if existing == value {
+            return;
+        }
+    }
+    if std::fs::create_dir_all(runtime_root).is_ok() {
+        let _ = std::fs::write(&marker, value);
+    }
 }
 
-/// Path to a specific change directory: `{project_root}/.aw/changes/{change_id}`
+/// Resolve the `project_root` recorded for a `change_dir` under the runtime
+/// workspace layout, by walking up from `change_dir` looking for the
+/// `.project-root` marker written by `changes_path`/`change_path`. Returns
+/// `None` for legacy change dirs that predate this mechanism (callers fall
+/// back to path-shape derivation).
+/// @spec apps/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
+pub fn project_root_for_change_dir(change_dir: &Path) -> Option<PathBuf> {
+    for ancestor in change_dir.ancestors() {
+        let marker = ancestor.join(PROJECT_ROOT_MARKER);
+        if let Ok(content) = std::fs::read_to_string(&marker) {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                return Some(PathBuf::from(trimmed));
+            }
+        }
+    }
+    None
+}
+
+/// Path to the changes directory:
+/// `/tmp/aw/workspaces/<workspace>/changes`.
+/// @spec apps/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
+pub fn changes_path(project_root: &Path) -> PathBuf {
+    let runtime_root = workspace_runtime_path(project_root);
+    record_workspace_project_root(&runtime_root, project_root);
+    runtime_root.join(CHANGES_DIR)
+}
+
+/// Path to a specific change directory:
+/// `/tmp/aw/workspaces/<workspace>/changes/{change_id}`.
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
 pub fn change_path(project_root: &Path, change_id: &str) -> PathBuf {
     changes_path(project_root).join(change_id)
 }
 
-/// Path to the archive directory: `{project_root}/.aw/archive`
+/// Path to the archive directory:
+/// `/tmp/aw/workspaces/<workspace>/archive`.
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
 pub fn archive_path(project_root: &Path) -> PathBuf {
-    workspace_path(project_root).join(ARCHIVE_DIR)
+    workspace_runtime_path(project_root).join(ARCHIVE_DIR)
+}
+
+/// Path to the per-change git worktree root:
+/// `/tmp/aw/workspaces/<workspace>/worktrees`.
+/// @spec apps/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
+pub fn worktrees_path(project_root: &Path) -> PathBuf {
+    workspace_runtime_path(project_root).join(WORKTREES_DIR)
+}
+
+/// Path to a specific per-change git worktree:
+/// `/tmp/aw/workspaces/<workspace>/worktrees/{change_id}`.
+/// @spec apps/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
+pub fn worktree_path(project_root: &Path, change_id: &str) -> PathBuf {
+    worktrees_path(project_root).join(change_id)
 }
 
 #[cfg(test)]
@@ -333,6 +424,23 @@ mod tests {
         assert_eq!(workitems.file_name().unwrap(), WORKITEMS_DIR);
         assert_eq!(workitems.parent(), payloads_path(root).parent());
         assert_eq!(workitems.parent(), issues_path(root).parent());
+    }
+
+    #[test]
+    fn changes_archive_and_worktrees_live_under_workspace_runtime_root() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let changes = changes_path(root);
+        let archive = archive_path(root);
+        let worktrees = worktrees_path(root);
+
+        assert!(changes.starts_with(aw_tmp_path().join("workspaces")));
+        assert!(archive.starts_with(aw_tmp_path().join("workspaces")));
+        assert!(worktrees.starts_with(aw_tmp_path().join("workspaces")));
+        assert_eq!(changes.parent(), issues_path(root).parent());
+        assert_eq!(archive.parent(), issues_path(root).parent());
+        assert_eq!(worktrees.parent(), issues_path(root).parent());
     }
 }
 

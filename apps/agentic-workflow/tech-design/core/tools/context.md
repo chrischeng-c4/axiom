@@ -29,6 +29,8 @@ Public API manifest for `apps/agentic-workflow/src/tools/context.rs` generated f
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/tools/context.rs -->
 ```rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/tools/context.md#source
+// CODEGEN-BEGIN
 //! sdd_create_context MCP Tool
 //!
 //! Creates structured context artifact files (spec_context.md, knowledge_context.md,
@@ -583,7 +585,8 @@ mod tests {
         let result = execute(&args, project_root).unwrap();
         assert!(result.contains("spec_context.md"));
 
-        let file_path = project_root.join(".aw/changes/test-change/spec_context.md");
+        let file_path = crate::shared::workspace::change_path(project_root, "test-change")
+            .join("spec_context.md");
         let written = std::fs::read_to_string(&file_path).unwrap();
         assert!(written.contains("type: spec_context"));
         assert!(written.contains("stage: spec"));
@@ -620,7 +623,8 @@ mod tests {
         let result = execute(&args, project_root).unwrap();
         assert!(result.contains("knowledge_context.md"));
 
-        let file_path = project_root.join(".aw/changes/test-change/knowledge_context.md");
+        let file_path = crate::shared::workspace::change_path(project_root, "test-change")
+            .join("knowledge_context.md");
         let written = std::fs::read_to_string(&file_path).unwrap();
         assert!(written.contains("type: knowledge_context"));
         assert!(written.contains("scanned_categories:"));
@@ -655,7 +659,8 @@ mod tests {
         let result = execute(&args, project_root).unwrap();
         assert!(result.contains("codebase_context.md"));
 
-        let file_path = project_root.join(".aw/changes/test-change/codebase_context.md");
+        let file_path = crate::shared::workspace::change_path(project_root, "test-change")
+            .join("codebase_context.md");
         let written = std::fs::read_to_string(&file_path).unwrap();
         assert!(written.contains("type: codebase_context"));
         assert!(written.contains("lens_tools_used:"));
@@ -855,6 +860,7 @@ mod tests {
         );
     }
 }
+// CODEGEN-END
 ```
 
 ## Changes

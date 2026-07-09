@@ -220,7 +220,8 @@ mod tests {
         let result = create_clarifications(input, project_root).unwrap();
         assert!(result.contains("✓ Clarifications written"));
 
-        let file_path = project_root.join(".aw/changes/add-oauth/pre_clarifications.md");
+        let change_dir = crate::shared::workspace::change_path(project_root, "add-oauth");
+        let file_path = change_dir.join("pre_clarifications.md");
         assert!(file_path.exists());
 
         let content = std::fs::read_to_string(&file_path).unwrap();
@@ -230,7 +231,6 @@ mod tests {
         assert!(content.contains("**Question**: Which OAuth providers?"));
 
         // Verify state was initialized (STATE.yaml is deprecated; check via StateManager)
-        let change_dir = project_root.join(".aw/changes/add-oauth");
         let sm = StateManager::load(&change_dir).unwrap();
         assert_eq!(*sm.phase(), StatePhase::ChangeInited);
     }
@@ -282,7 +282,8 @@ mod tests {
         let result = create_clarifications(input, project_root).unwrap();
         assert!(result.contains("Questions: 2"));
 
-        let file_path = project_root.join(".aw/changes/multi-test/pre_clarifications.md");
+        let change_dir = crate::shared::workspace::change_path(project_root, "multi-test");
+        let file_path = change_dir.join("pre_clarifications.md");
         let content = std::fs::read_to_string(&file_path).unwrap();
         assert!(content.contains("## Q1: First Topic"));
         assert!(content.contains("## Q2: Second Topic"));
@@ -323,7 +324,8 @@ mod tests {
         assert!(result.contains("State: clarified"));
 
         // Verify file contents
-        let file_path = project_root.join(".aw/changes/append-test/pre_clarifications.md");
+        let change_dir = crate::shared::workspace::change_path(project_root, "append-test");
+        let file_path = change_dir.join("pre_clarifications.md");
         let content = std::fs::read_to_string(&file_path).unwrap();
 
         // Should have both initial and per-issue content
@@ -338,7 +340,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory without pre_clarifications.md
-        let change_dir = project_root.join(".aw/changes/new-append");
+        let change_dir = crate::shared::workspace::change_path(project_root, "new-append");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         // Create backing issue so StateManager can load and save
@@ -359,7 +361,7 @@ mod tests {
         assert!(result.contains("✓ Clarifications appended"));
 
         // Verify file was created with frontmatter
-        let file_path = project_root.join(".aw/changes/new-append/pre_clarifications.md");
+        let file_path = change_dir.join("pre_clarifications.md");
         assert!(file_path.exists());
         let content = std::fs::read_to_string(&file_path).unwrap();
         assert!(content.contains("---"));
@@ -399,7 +401,8 @@ mod tests {
         };
         append_clarifications(append_input, project_root).unwrap();
 
-        let file_path = project_root.join(".aw/changes/no-issue-test/pre_clarifications.md");
+        let change_dir = crate::shared::workspace::change_path(project_root, "no-issue-test");
+        let file_path = change_dir.join("pre_clarifications.md");
         let content = std::fs::read_to_string(&file_path).unwrap();
 
         assert!(content.contains("## Additional Clarifications"));
