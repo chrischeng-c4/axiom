@@ -175,7 +175,6 @@ flowchart TD
     r7[R7 topology from standard env] --> libs_raft_host_src_cluster_rs_tests_shared_exercised_via_tape_s_clustertopology_from_env_call[libs/raft-host/src/cluster.rs::tests (shared, exercised via tape's ClusterTopology::from_env call)]
     r8[R8 single node regression] --> cargo_test_p_tape[cargo test -p tape]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
