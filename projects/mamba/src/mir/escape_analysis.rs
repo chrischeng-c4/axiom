@@ -1,4 +1,5 @@
 use super::{MirBody, MirInst, Terminator, VReg};
+use crate::types::{Ty, TypeContext, TypeId};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +73,115 @@ pub fn analyze_literal_escapes(body: &MirBody) -> LiteralEscapeAnalysis {
     }
 
     analysis
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypedListElementKind {
+    Int,
+    Float,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TypedListLayoutInfo {
+    pub element_kind: TypedListElementKind,
+    pub escape_classification: LiteralEscapeClassification,
+}
+
+impl TypedListLayoutInfo {
+    pub fn is_eligible(self) -> bool {
+        matches!(
+            self.escape_classification,
+            LiteralEscapeClassification::NonEscaping
+        )
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TypedListLayoutAnalysis {
+    candidates: HashMap<VReg, TypedListLayoutInfo>,
+    order: Vec<VReg>,
+}
+
+impl TypedListLayoutAnalysis {
+    pub fn get(&self, vreg: VReg) -> Option<&TypedListLayoutInfo> {
+        self.candidates.get(&vreg)
+    }
+
+    pub fn element_kind(&self, vreg: VReg) -> Option<TypedListElementKind> {
+        self.get(vreg).map(|info| info.element_kind)
+    }
+
+    pub fn escape_classification(&self, vreg: VReg) -> Option<LiteralEscapeClassification> {
+        self.get(vreg).map(|info| info.escape_classification)
+    }
+
+    pub fn is_eligible(&self, vreg: VReg) -> bool {
+        self.get(vreg).is_some_and(|info| info.is_eligible())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (VReg, &TypedListLayoutInfo)> {
+        let candidates = &self.candidates;
+        self.order.iter().copied().map(move |vreg| {
+            (
+                vreg,
+                candidates
+                    .get(&vreg)
+                    .expect("typed-list candidate order must stay in sync"),
+            )
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.candidates.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.candidates.is_empty()
+    }
+}
+
+pub fn analyze_typed_list_layouts(body: &MirBody, tcx: &TypeContext) -> TypedListLayoutAnalysis {
+    let literal_escapes = analyze_literal_escapes(body);
+    let mut candidates = HashMap::new();
+    let mut order = Vec::new();
+
+    for block in &body.blocks {
+        for inst in &block.stmts {
+            let MirInst::MakeList { dest, ty, .. } = inst else {
+                continue;
+            };
+            let Some(element_kind) = scalar_typed_list_element_kind(*ty, tcx) else {
+                continue;
+            };
+            let escape_classification = literal_escapes
+                .classification(*dest)
+                .unwrap_or(LiteralEscapeClassification::Escaping);
+            if candidates
+                .insert(
+                    *dest,
+                    TypedListLayoutInfo {
+                        element_kind,
+                        escape_classification,
+                    },
+                )
+                .is_none()
+            {
+                order.push(*dest);
+            }
+        }
+    }
+
+    order.sort_by_key(|vreg| vreg.0);
+
+    TypedListLayoutAnalysis { candidates, order }
+}
+
+fn scalar_typed_list_element_kind(ty: TypeId, tcx: &TypeContext) -> Option<TypedListElementKind> {
+    match tcx.get(ty) {
+        Ty::List(element_ty) if *element_ty == tcx.int() => Some(TypedListElementKind::Int),
+        Ty::List(element_ty) if *element_ty == tcx.float() => Some(TypedListElementKind::Float),
+        _ => None,
+    }
 }
 
 fn collect_literal_kinds(body: &MirBody) -> HashMap<VReg, LiteralEscapeKind> {

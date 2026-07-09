@@ -4,8 +4,9 @@ use crate::types::TypeId;
 mod escape_analysis;
 
 pub use escape_analysis::{
-    analyze_literal_escapes, LiteralEscapeAnalysis, LiteralEscapeClassification, LiteralEscapeInfo,
-    LiteralEscapeKind,
+    analyze_literal_escapes, analyze_typed_list_layouts, LiteralEscapeAnalysis,
+    LiteralEscapeClassification, LiteralEscapeInfo, LiteralEscapeKind, TypedListElementKind,
+    TypedListLayoutAnalysis, TypedListLayoutInfo,
 };
 
 /// A virtual register in SSA form.
@@ -292,6 +293,7 @@ mod tests {
 
     mod escape_analysis;
     mod escape_analysis_gate;
+    mod typed_list_layout;
 
     #[test]
     fn test_vreg_equality_and_hash() {
