@@ -47,7 +47,6 @@ edges:
   - { from: exempttest, to: effect }
 ---
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
