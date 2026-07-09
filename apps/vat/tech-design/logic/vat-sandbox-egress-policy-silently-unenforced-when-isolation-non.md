@@ -94,7 +94,6 @@ requirementDiagram
       verifies: seatbelt_unavailable_open_falls_back
     }
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
