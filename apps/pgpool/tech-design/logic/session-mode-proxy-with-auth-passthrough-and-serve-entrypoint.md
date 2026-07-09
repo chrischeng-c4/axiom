@@ -382,7 +382,6 @@ max_frontend_connections:
   source: "RuntimePlan::max_frontend_connections"
   default: 10000        # ConnectionBudget::new(10_000); checked inside SessionHandler::handle, not via tcp_server::TcpServerConfig.connection_budget (see Schema: SessionProxyConfig.frontend_budget)
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
