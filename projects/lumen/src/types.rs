@@ -644,9 +644,11 @@ pub enum ReplaceDocResult {
     Ok {
         /// Number of fields written from this item's `fields` map.
         fields_written: u32,
-        /// Number of fields skipped as unchanged no-ops. Structurally
-        /// present but always `0` in this WI — real no-op suppression is a
-        /// follow-up.
+        /// Number of fields skipped as unchanged no-ops: the incoming
+        /// value matched the currently indexed state, so no posting-list
+        /// rewrite and no HNSW tombstone/reinsert happened for that field
+        /// (#1293 server-side no-op suppression). `0` when every field
+        /// actually changed, or when this is the doc's first write.
         fields_skipped: u32,
     },
     Dropped {

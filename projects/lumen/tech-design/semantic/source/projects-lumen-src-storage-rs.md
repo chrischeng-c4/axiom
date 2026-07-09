@@ -20,61 +20,61 @@ Public API manifest for `projects/lumen/src/storage.rs` generated from AST durin
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ApplyOutcome` | projects/lumen/src/storage.rs | enum | pub | 4421 |  |
-| `CollectionSnapshot` | projects/lumen/src/storage.rs | struct | pub | 8423 |  |
+| `ApplyOutcome` | projects/lumen/src/storage.rs | enum | pub | 4566 |  |
+| `CollectionSnapshot` | projects/lumen/src/storage.rs | struct | pub | 8590 |  |
 | `DropOutcome` | projects/lumen/src/storage.rs | enum | pub | 65 |  |
-| `Engine` | projects/lumen/src/storage.rs | struct | pub | 2925 |  |
-| `FieldIndexSnapshot` | projects/lumen/src/storage.rs | enum | pub | 8433 |  |
+| `Engine` | projects/lumen/src/storage.rs | struct | pub | 2937 |  |
+| `FieldIndexSnapshot` | projects/lumen/src/storage.rs | enum | pub | 8600 |  |
 | `MAX_INDEX_ITEMS` | projects/lumen/src/storage.rs | constant | pub | 56 |  |
 | `MAX_SORT_KEYS` | projects/lumen/src/storage.rs | constant | pub | 61 |  |
 | `Postings` | projects/lumen/src/storage.rs | struct | pub | 322 |  |
-| `SnapshotV1` | projects/lumen/src/storage.rs | struct | pub | 8414 |  |
+| `SnapshotV1` | projects/lumen/src/storage.rs | struct | pub | 8581 |  |
 | `SortableF64` | projects/lumen/src/storage.rs | struct | pub | 113 |  |
 | `StorageError` | projects/lumen/src/storage.rs | enum | pub | 78 |  |
-| `__collection_schema` | projects/lumen/src/storage.rs | function | pub | 9943 | __collection_schema(         &self,         collection_id: &str,     ) -> Result<BTreeMap<String, FieldSpec>> |
-| `__field_forward_probe` | projects/lumen/src/storage.rs | function | pub | 9980 | __field_forward_probe(         &self,         collection_id: &str,         field: &str,     ) -> Result<(usize, usize, bool)> |
-| `__open_collection_from_segments` | projects/lumen/src/storage.rs | function | pub | 9959 | __open_collection_from_segments(         collection_id: &str,         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<std::sync::Arc<Engine>> |
-| `__seal_collection_to_segments` | projects/lumen/src/storage.rs | function | pub | 9927 | __seal_collection_to_segments(         &self,         collection_id: &str,         dir: &std::path::Path,         applied_seq: u64,     ) -> Result<()> |
-| `__seal_hash_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9863 | __seal_hash_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
-| `__seal_keyword_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9673 | __seal_keyword_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
-| `__seal_number_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9610 | __seal_number_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
-| `__seal_set_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9739 | __seal_set_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
-| `__seal_text_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9807 | __seal_text_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
-| `__seal_vector_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9900 | __seal_vector_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
-| `add_field` | projects/lumen/src/storage.rs | function | pub | 3128 | add_field(&self, collection_id: &str, field_name: &str, spec: FieldSpec) -> Result<u32> |
-| `apply_raft_entry` | projects/lumen/src/storage.rs | function | pub | 4379 | apply_raft_entry(&self, entry: crate::log_entry::RaftLogEntry) -> Result<ApplyOutcome> |
+| `__collection_schema` | projects/lumen/src/storage.rs | function | pub | 10112 | __collection_schema(         &self,         collection_id: &str,     ) -> Result<BTreeMap<String, FieldSpec>> |
+| `__field_forward_probe` | projects/lumen/src/storage.rs | function | pub | 10149 | __field_forward_probe(         &self,         collection_id: &str,         field: &str,     ) -> Result<(usize, usize, bool)> |
+| `__open_collection_from_segments` | projects/lumen/src/storage.rs | function | pub | 10128 | __open_collection_from_segments(         collection_id: &str,         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<std::sync::Arc<Engine>> |
+| `__seal_collection_to_segments` | projects/lumen/src/storage.rs | function | pub | 10096 | __seal_collection_to_segments(         &self,         collection_id: &str,         dir: &std::path::Path,         applied_seq: u64,     ) -> Result<()> |
+| `__seal_hash_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10032 | __seal_hash_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `__seal_keyword_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9842 | __seal_keyword_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `__seal_number_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9779 | __seal_number_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `__seal_set_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9908 | __seal_set_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `__seal_text_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9976 | __seal_text_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `__seal_vector_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10069 | __seal_vector_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `add_field` | projects/lumen/src/storage.rs | function | pub | 3140 | add_field(&self, collection_id: &str, field_name: &str, spec: FieldSpec) -> Result<u32> |
+| `apply_raft_entry` | projects/lumen/src/storage.rs | function | pub | 4524 | apply_raft_entry(&self, entry: crate::log_entry::RaftLogEntry) -> Result<ApplyOutcome> |
 | `bits` | projects/lumen/src/storage.rs | function | pub | 150 | bits(self) -> u64 |
-| `create_collection` | projects/lumen/src/storage.rs | function | pub | 2984 | create_collection(         &self,         collection_id: &str,         req: CreateCollectionRequest,     ) -> Result<CreateCollectionResponse> |
-| `delete` | projects/lumen/src/storage.rs | function | pub | 3358 | delete(         &self,         collection_id: &str,         external_id: &str,         field: Option<&str>,     ) -> Result<()> |
+| `create_collection` | projects/lumen/src/storage.rs | function | pub | 2996 | create_collection(         &self,         collection_id: &str,         req: CreateCollectionRequest,     ) -> Result<CreateCollectionResponse> |
+| `delete` | projects/lumen/src/storage.rs | function | pub | 3370 | delete(         &self,         collection_id: &str,         external_id: &str,         field: Option<&str>,     ) -> Result<()> |
 | `docids` | projects/lumen/src/storage.rs | function | pub | 339 | docids(&self) -> &[u32] |
-| `drop_collection` | projects/lumen/src/storage.rs | function | pub | 3053 | drop_collection(&self, collection_id: &str, force: bool) -> Result<DropOutcome> |
-| `drop_field` | projects/lumen/src/storage.rs | function | pub | 3073 | drop_field(&self, collection_id: &str, field_name: &str) -> Result<u32> |
-| `duplicates` | projects/lumen/src/storage.rs | function | pub | 4134 | duplicates(         &self,         collection_id: &str,         req: DuplicatesRequest,     ) -> Result<DuplicatesResponse> |
-| `flush_to_segments` | projects/lumen/src/storage.rs | function | pub | 9460 | flush_to_segments(&self, dir: &std::path::Path, up_to_seq: u64) -> Result<()> |
+| `drop_collection` | projects/lumen/src/storage.rs | function | pub | 3065 | drop_collection(&self, collection_id: &str, force: bool) -> Result<DropOutcome> |
+| `drop_field` | projects/lumen/src/storage.rs | function | pub | 3085 | drop_field(&self, collection_id: &str, field_name: &str) -> Result<u32> |
+| `duplicates` | projects/lumen/src/storage.rs | function | pub | 4279 | duplicates(         &self,         collection_id: &str,         req: DuplicatesRequest,     ) -> Result<DuplicatesResponse> |
+| `flush_to_segments` | projects/lumen/src/storage.rs | function | pub | 9629 | flush_to_segments(&self, dir: &std::path::Path, up_to_seq: u64) -> Result<()> |
 | `from_bits` | projects/lumen/src/storage.rs | function | pub | 158 | from_bits(bits: u64) -> Self |
 | `from_sorted` | projects/lumen/src/storage.rs | function | pub | 333 | from_sorted(docids: Vec<u32>, tfs: Vec<u32>) -> Self |
-| `index` | projects/lumen/src/storage.rs | function | pub | 3167 | index(&self, collection_id: &str, req: IndexRequest) -> Result<IndexResponse> |
-| `is_draining` | projects/lumen/src/storage.rs | function | pub | 2963 | is_draining(&self) -> bool |
-| `list_collections` | projects/lumen/src/storage.rs | function | pub | 3155 | list_collections(&self) -> Result<Vec<String>> |
-| `metrics` | projects/lumen/src/storage.rs | function | pub | 2951 | metrics(&self) -> &Metrics |
+| `index` | projects/lumen/src/storage.rs | function | pub | 3179 | index(&self, collection_id: &str, req: IndexRequest) -> Result<IndexResponse> |
+| `is_draining` | projects/lumen/src/storage.rs | function | pub | 2975 | is_draining(&self) -> bool |
+| `list_collections` | projects/lumen/src/storage.rs | function | pub | 3167 | list_collections(&self) -> Result<Vec<String>> |
+| `metrics` | projects/lumen/src/storage.rs | function | pub | 2963 | metrics(&self) -> &Metrics |
 | `new` | projects/lumen/src/storage.rs | function | pub | 119 | new(x: f64) -> Result<Self> |
-| `new` | projects/lumen/src/storage.rs | function | pub | 2947 | new() -> Self |
-| `number_value_for_external_id` | projects/lumen/src/storage.rs | function | pub | 3578 | number_value_for_external_id(         &self,         collection_id: &str,         external_id: &str,         field: &str,     ) -> Result<Option<f64>> |
-| `open_from_segments` | projects/lumen/src/storage.rs | function | pub | 9271 | open_from_segments(         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<Self> |
-| `reopen_from_segment_dir` | projects/lumen/src/storage.rs | function | pub | 9504 | reopen_from_segment_dir(&self, dir: &std::path::Path) -> Result<u64> |
-| `replace_docs` | projects/lumen/src/storage.rs | function | pub | 3417 | replace_docs(         &self,         collection_id: &str,         req: ReplaceDocsRequest,     ) -> Result<ReplaceDocsResponse> |
-| `restore` | projects/lumen/src/storage.rs | function | pub | 4305 | restore(&self, snap: SnapshotV1) -> Result<()> |
-| `seal_to_segments` | projects/lumen/src/storage.rs | function | pub | 9236 | seal_to_segments(&mut self, dir: &std::path::Path, applied_seq: u64) -> Result<()> |
-| `search` | projects/lumen/src/storage.rs | function | pub | 3606 | search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> |
-| `search_fast_string_term` | projects/lumen/src/storage.rs | function | pub | 4075 | search_fast_string_term(         &self,         collection_id: &str,         field: &str,         value: &str,         limit: u32,     ) -> Result<SearchResponse> |
-| `segment_field_probe` | projects/lumen/src/storage.rs | function | pub | 9546 | segment_field_probe(&self, collection_id: &str, field: &str) -> Result<(usize, bool)> |
-| `snapshot` | projects/lumen/src/storage.rs | function | pub | 4290 | snapshot(&self) -> Result<SnapshotV1> |
-| `start_drain` | projects/lumen/src/storage.rs | function | pub | 2959 | start_drain(&self) |
-| `stats` | projects/lumen/src/storage.rs | function | pub | 4323 | stats(&self, collection_id: &str) -> Result<StatsResponse> |
-| `sweep_deleted` | projects/lumen/src/storage.rs | function | pub | 3103 | sweep_deleted(&self, grace: Duration) -> Result<usize> |
+| `new` | projects/lumen/src/storage.rs | function | pub | 2959 | new() -> Self |
+| `number_value_for_external_id` | projects/lumen/src/storage.rs | function | pub | 3723 | number_value_for_external_id(         &self,         collection_id: &str,         external_id: &str,         field: &str,     ) -> Result<Option<f64>> |
+| `open_from_segments` | projects/lumen/src/storage.rs | function | pub | 9439 | open_from_segments(         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<Self> |
+| `reopen_from_segment_dir` | projects/lumen/src/storage.rs | function | pub | 9673 | reopen_from_segment_dir(&self, dir: &std::path::Path) -> Result<u64> |
+| `replace_docs` | projects/lumen/src/storage.rs | function | pub | 3429 | replace_docs(         &self,         collection_id: &str,         req: ReplaceDocsRequest,     ) -> Result<ReplaceDocsResponse> |
+| `restore` | projects/lumen/src/storage.rs | function | pub | 4450 | restore(&self, snap: SnapshotV1) -> Result<()> |
+| `seal_to_segments` | projects/lumen/src/storage.rs | function | pub | 9404 | seal_to_segments(&mut self, dir: &std::path::Path, applied_seq: u64) -> Result<()> |
+| `search` | projects/lumen/src/storage.rs | function | pub | 3751 | search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> |
+| `search_fast_string_term` | projects/lumen/src/storage.rs | function | pub | 4220 | search_fast_string_term(         &self,         collection_id: &str,         field: &str,         value: &str,         limit: u32,     ) -> Result<SearchResponse> |
+| `segment_field_probe` | projects/lumen/src/storage.rs | function | pub | 9715 | segment_field_probe(&self, collection_id: &str, field: &str) -> Result<(usize, bool)> |
+| `snapshot` | projects/lumen/src/storage.rs | function | pub | 4435 | snapshot(&self) -> Result<SnapshotV1> |
+| `start_drain` | projects/lumen/src/storage.rs | function | pub | 2971 | start_drain(&self) |
+| `stats` | projects/lumen/src/storage.rs | function | pub | 4468 | stats(&self, collection_id: &str) -> Result<StatsResponse> |
+| `sweep_deleted` | projects/lumen/src/storage.rs | function | pub | 3115 | sweep_deleted(&self, grace: Duration) -> Result<usize> |
 | `tfs` | projects/lumen/src/storage.rs | function | pub | 343 | tfs(&self) -> &[u32] |
 | `to_f64` | projects/lumen/src/storage.rs | function | pub | 135 | to_f64(self) -> f64 |
-| `validate_query` | projects/lumen/src/storage.rs | function | pub | 4688 | validate_query(root: &QueryNode) -> std::result::Result<(), StorageError> |
+| `validate_query` | projects/lumen/src/storage.rs | function | pub | 4855 | validate_query(root: &QueryNode) -> std::result::Result<(), StorageError> |
 
 ## Source
 <!-- type: rust-source-unit lang: rust -->
@@ -2898,6 +2898,17 @@ struct Collection {
     /// a strictly-older versioned replace drops the entire item. In-memory
     /// only (reconstructed by WAL replay), same as `cell_versions`.
     doc_versions: FastHashMap<u32, u64>,
+    /// #1293: `docs:replace` no-op suppression side cache. Sparse `doc-id →
+    /// field-name → FxHash content checksum` of the last value actually
+    /// *written* to a `text`/`vector` field via `docs:replace` — the only
+    /// two field types with no cheap forward-value accessor to compare
+    /// against directly (see `Engine::replace_value_unchanged`). Populated
+    /// and read only by the replace path; the `/index` merge path never
+    /// touches it. In-memory only, same as `cell_versions`/`doc_versions` —
+    /// a missing entry after a restart just means the next replace of that
+    /// field always applies (safe: writing is never wrong, only silently
+    /// skipping would be).
+    field_checksums: FastHashMap<u32, FastHashMap<String, u64>>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
@@ -2919,6 +2930,7 @@ impl Collection {
             search_cache: RwLock::new(FastHashMap::default()),
             cell_versions: FastHashMap::default(),
             doc_versions: FastHashMap::default(),
+            field_checksums: FastHashMap::default(),
         })
     }
 
@@ -3531,27 +3543,40 @@ impl Engine {
 
         let mut results = Vec::with_capacity(req.docs.len());
         let mut total_fields_written = 0u64;
+        let mut total_fields_skipped = 0u64;
+        let mut total_bytes = 0u64;
         let mut any_written = false;
         for item in req.docs {
-            let result = Self::replace_one_doc(collection_id, coll, item);
-            if let ReplaceDocResult::Ok { fields_written, .. } = &result {
+            let (result, bytes) = Self::replace_one_doc(collection_id, coll, item);
+            if let ReplaceDocResult::Ok {
+                fields_written,
+                fields_skipped,
+            } = &result
+            {
                 any_written = true;
                 total_fields_written += *fields_written as u64;
+                total_fields_skipped += *fields_skipped as u64;
+                total_bytes += bytes;
             }
             results.push(result);
         }
         if any_written {
             coll.last_indexed_at = Some(std::time::SystemTime::now());
         }
-        metrics.incr_index(total_fields_written, 0);
+        metrics.incr_index(total_fields_written, total_bytes);
+        metrics.incr_replace_skipped(total_fields_skipped);
         Ok(ReplaceDocsResponse { results })
     }
 
     /// Apply one [`ReplaceDocItem`], full-replacement at doc granularity.
     /// Fields absent from `item.fields` but present on the doc today are
-    /// dropped; fields present in both are re-applied (drop-then-reapply,
-    /// the same field-granularity replacement `index_collection` already
-    /// uses); fields new to the doc are added.
+    /// dropped; fields present in both are compared against the currently
+    /// indexed state (see [`Engine::replace_value_unchanged`]) and, when
+    /// equal, skipped entirely — no `drop_eid`, no `apply_value`, no
+    /// posting-list rewrite or HNSW tombstone/reinsert (#1293); fields new
+    /// to the doc, or whose value changed, are re-applied (drop-then-
+    /// reapply, the same field-granularity replacement `index_collection`
+    /// already uses).
     ///
     /// Every field is type-checked against the schema *before* any
     /// mutation happens, so a per-item error (unknown field, type
@@ -3559,11 +3584,16 @@ impl Engine {
     /// unlike `index_collection`'s partial-apply-on-error, docs:replace is
     /// framed as an atomic full replacement and a partially-applied doc
     /// would break that guarantee.
+    ///
+    /// Returns the per-item result plus the total bytes actually written
+    /// (0 for a fully-skipped item, `Dropped`, or `Error`), which the
+    /// caller feeds into `Metrics::incr_index` so a byte-identical resend
+    /// leaves `lumen_index_bytes_total` unmoved.
     fn replace_one_doc(
         collection_id: &str,
         coll: &mut Collection,
         item: ReplaceDocItem,
-    ) -> ReplaceDocResult {
+    ) -> (ReplaceDocResult, u64) {
         let (id, new_doc_in_request) = coll
             .interner
             .intern_owned_with_status(item.external_id.clone());
@@ -3575,29 +3605,38 @@ impl Engine {
         if let Some(v) = item.version {
             if let Some(stored) = coll.doc_versions.get(&id).copied() {
                 if stored >= v {
-                    return ReplaceDocResult::Dropped {
-                        current_version: stored,
-                    };
+                    return (
+                        ReplaceDocResult::Dropped {
+                            current_version: stored,
+                        },
+                        0,
+                    );
                 }
             }
         }
 
         for (field_name, value) in &item.fields {
             let Some(fi) = coll.fields.get(field_name.as_str()) else {
-                return ReplaceDocResult::Error {
-                    code: "unknown_field".to_string(),
-                    message: StorageError::UnknownField {
-                        collection: collection_id.to_string(),
-                        field: field_name.clone(),
-                    }
-                    .to_string(),
-                };
+                return (
+                    ReplaceDocResult::Error {
+                        code: "unknown_field".to_string(),
+                        message: StorageError::UnknownField {
+                            collection: collection_id.to_string(),
+                            field: field_name.clone(),
+                        }
+                        .to_string(),
+                    },
+                    0,
+                );
             };
             if let Err(e) = validate_value(fi, value, field_name) {
-                return ReplaceDocResult::Error {
-                    code: "type_mismatch".to_string(),
-                    message: e.to_string(),
-                };
+                return (
+                    ReplaceDocResult::Error {
+                        code: "type_mismatch".to_string(),
+                        message: e.to_string(),
+                    },
+                    0,
+                );
             }
         }
 
@@ -3616,29 +3655,56 @@ impl Engine {
                 if let Some(fi) = coll.fields.get_mut(f.as_str()) {
                     fi.drop_eid(id, &eid);
                 }
+                // The field is gone; drop its stale replace-path checksum
+                // (see `replace_value_unchanged`) so it can never be
+                // mistakenly compared against if the field is re-added
+                // later without a fresh write in between.
+                if let Some(sub) = coll.field_checksums.get_mut(&id) {
+                    sub.remove(f);
+                }
             }
         }
 
         let mut fields_written = 0u32;
+        let mut fields_skipped = 0u32;
+        let mut bytes_written = 0u64;
         for (field_name, value) in &item.fields {
+            let is_delta = old_fields.contains(field_name);
+            if is_delta && Self::replace_value_unchanged(coll, id, field_name, value) {
+                // Server-side no-op suppression (#1293): the incoming value
+                // is byte-identical to what's already indexed — skip the
+                // drop/reapply entirely so unchanged fields never rewrite a
+                // posting list or tombstone+reinsert an HNSW vector.
+                fields_skipped += 1;
+                continue;
+            }
             let fi = coll
                 .fields
                 .get_mut(field_name.as_str())
                 .expect("field presence validated above");
-            if old_fields.contains(field_name) {
+            if is_delta {
                 fi.drop_eid(id, &eid);
             }
-            if let Err(e) = apply_value(fi, id, &eid, value, field_name) {
-                return ReplaceDocResult::Error {
-                    code: "apply_failed".to_string(),
-                    message: e.to_string(),
-                };
-            }
+            let bytes = match apply_value(fi, id, &eid, value, field_name) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    return (
+                        ReplaceDocResult::Error {
+                            code: "apply_failed".to_string(),
+                            message: e.to_string(),
+                        },
+                        0,
+                    );
+                }
+            };
+            Self::record_replace_checksum(coll, id, field_name, value);
             fields_written += 1;
+            bytes_written += bytes;
         }
 
         if item.fields.is_empty() {
             coll.eid_fields.remove(&id);
+            coll.field_checksums.remove(&id);
         } else {
             coll.eid_fields.insert(
                 id,
@@ -3649,10 +3715,89 @@ impl Engine {
             coll.doc_versions.insert(id, v);
         }
 
-        ReplaceDocResult::Ok {
-            fields_written,
-            fields_skipped: 0,
+        (
+            ReplaceDocResult::Ok {
+                fields_written,
+                fields_skipped,
+            },
+            bytes_written,
+        )
+    }
+
+    /// Read-only per-(doc,field) equality check against the currently
+    /// indexed state — the no-op suppression decision for `docs:replace`
+    /// (#1293). Only called for a field the doc already had (`old_fields`);
+    /// a brand-new field is never "unchanged".
+    ///
+    /// - `keyword`/`number`/`set`/`hash` compare the exact indexed value:
+    ///   each backend already keeps a forward accessor (`keyword_at`,
+    ///   `number_at`, `set_members`, `hash_at`) for predicate/delete use, so
+    ///   equality is a real value compare, no extra storage.
+    /// - `text` has no raw forward store (only tokenized postings — the
+    ///   original string isn't recoverable), and `vector` deliberately
+    ///   avoids a full f32 compare (the point is to skip the expensive
+    ///   HNSW tombstone/reinsert, not pay an equivalent cost checking it).
+    ///   Both instead compare a stored FxHash checksum of the last
+    ///   *replaced* value, kept in `Collection::field_checksums` — a
+    ///   replace-path-only side cache, never persisted and never touched
+    ///   by the `/index` merge path (out of scope; #1293 Scope). A missing
+    ///   checksum (field never replaced before, or last written via
+    ///   `/index`) is always treated as "changed": the safe default is to
+    ///   write, never to silently skip.
+    fn replace_value_unchanged(
+        coll: &Collection,
+        id: u32,
+        field_name: &str,
+        value: &FieldValue,
+    ) -> bool {
+        let Some(fi) = coll.fields.get(field_name) else {
+            return false;
+        };
+        match (fi, value) {
+            (FieldIndex::Keyword(k), FieldValue::String(s)) => {
+                k.keyword_at(id).as_deref() == Some(s.as_str())
+            }
+            (FieldIndex::Number(n), FieldValue::Number(x)) => {
+                SortableF64::new(*x).is_ok_and(|key| n.number_at(id) == Some(key))
+            }
+            (FieldIndex::Set(s), FieldValue::StringList(elems)) => {
+                let want: BTreeSet<String> = elems.iter().cloned().collect();
+                s.set_members(id) == Some(want)
+            }
+            (FieldIndex::Hash(h), FieldValue::String(s)) => parse_hash(s).ok() == h.hash_at(id),
+            (FieldIndex::Text { .. }, FieldValue::String(s)) => coll
+                .field_checksums
+                .get(&id)
+                .and_then(|m| m.get(field_name))
+                .is_some_and(|&cs| cs == checksum_bytes(s.as_bytes())),
+            (FieldIndex::Vector { .. }, FieldValue::Vector(v)) => coll
+                .field_checksums
+                .get(&id)
+                .and_then(|m| m.get(field_name))
+                .is_some_and(|&cs| cs == checksum_f32(v)),
+            _ => false,
         }
+    }
+
+    /// After actually writing a `text`/`vector` field on the replace path,
+    /// remember its content checksum for the next `replace_value_unchanged`
+    /// comparison (see that function for why only these two types need a
+    /// side cache). No-op for every other field type.
+    fn record_replace_checksum(
+        coll: &mut Collection,
+        id: u32,
+        field_name: &str,
+        value: &FieldValue,
+    ) {
+        let checksum = match (coll.fields.get(field_name), value) {
+            (Some(FieldIndex::Text { .. }), FieldValue::String(s)) => checksum_bytes(s.as_bytes()),
+            (Some(FieldIndex::Vector { .. }), FieldValue::Vector(v)) => checksum_f32(v),
+            _ => return,
+        };
+        coll.field_checksums
+            .entry(id)
+            .or_default()
+            .insert(field_name.to_string(), checksum);
     }
 
     // -- Search -------------------------------------------------------------
@@ -4693,6 +4838,28 @@ fn value_kind(v: &FieldValue) -> &'static str {
         FieldValue::Vector(_) => "f32[]",
         FieldValue::StringList(_) => "string[]",
     }
+}
+
+/// FxHash content checksum of a `text` field's raw string, used only by
+/// `docs:replace`'s no-op suppression (`Engine::replace_value_unchanged` /
+/// `Engine::record_replace_checksum`) — see those for why `text` compares a
+/// checksum instead of the raw value.
+fn checksum_bytes(bytes: &[u8]) -> u64 {
+    let mut hasher = FxHasher::default();
+    hasher.write(bytes);
+    hasher.finish()
+}
+
+/// FxHash content checksum of a `vector` field's raw `f32` values (hashed
+/// via their bit patterns, not their text form), used only by
+/// `docs:replace`'s no-op suppression — the whole point is avoiding a full
+/// f32 compare (or an HNSW round trip) just to detect "unchanged".
+fn checksum_f32(v: &[f32]) -> u64 {
+    let mut hasher = FxHasher::default();
+    for x in v {
+        hasher.write_u32(x.to_bits());
+    }
+    hasher.finish()
 }
 
 /// Non-mutating type-check mirroring [`apply_value`]'s match arms, used by
@@ -8729,6 +8896,7 @@ impl Collection {
             search_cache: RwLock::new(FastHashMap::default()),
             cell_versions: FastHashMap::default(),
             doc_versions: FastHashMap::default(),
+            field_checksums: FastHashMap::default(),
         })
     }
 }
@@ -9402,6 +9570,7 @@ impl Collection {
             search_cache: RwLock::new(FastHashMap::default()),
             cell_versions: FastHashMap::default(),
             doc_versions: FastHashMap::default(),
+            field_checksums: FastHashMap::default(),
         })
     }
 }

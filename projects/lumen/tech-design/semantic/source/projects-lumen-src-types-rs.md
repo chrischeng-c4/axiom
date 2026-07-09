@@ -21,21 +21,21 @@ Public API manifest for `projects/lumen/src/types.rs` generated from AST during 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `Analyzer` | projects/lumen/src/types.rs | enum | pub | 147 |  |
-| `ApiError` | projects/lumen/src/types.rs | struct | pub | 786 |  |
+| `ApiError` | projects/lumen/src/types.rs | struct | pub | 788 |  |
 | `BatchSearchItem` | projects/lumen/src/types.rs | struct | pub | 545 |  |
 | `BatchSearchRequest` | projects/lumen/src/types.rs | struct | pub | 533 |  |
 | `BatchSearchResponse` | projects/lumen/src/types.rs | struct | pub | 556 |  |
 | `BatchSearchResult` | projects/lumen/src/types.rs | enum | pub | 568 |  |
-| `CacheStats` | projects/lumen/src/types.rs | struct | pub | 765 |  |
+| `CacheStats` | projects/lumen/src/types.rs | struct | pub | 767 |  |
 | `CreateCollectionRequest` | projects/lumen/src/types.rs | struct | pub | 21 |  |
 | `CreateCollectionResponse` | projects/lumen/src/types.rs | struct | pub | 28 |  |
-| `DuplicateGroup` | projects/lumen/src/types.rs | struct | pub | 700 |  |
+| `DuplicateGroup` | projects/lumen/src/types.rs | struct | pub | 702 |  |
 | `DuplicatedQuery` | projects/lumen/src/types.rs | struct | pub | 375 |  |
-| `DuplicatesRequest` | projects/lumen/src/types.rs | struct | pub | 681 |  |
-| `DuplicatesResponse` | projects/lumen/src/types.rs | struct | pub | 707 |  |
+| `DuplicatesRequest` | projects/lumen/src/types.rs | struct | pub | 683 |  |
+| `DuplicatesResponse` | projects/lumen/src/types.rs | struct | pub | 709 |  |
 | `ExistsQuery` | projects/lumen/src/types.rs | struct | pub | 367 |  |
 | `FieldSpec` | projects/lumen/src/types.rs | struct | pub | 41 |  |
-| `FieldStats` | projects/lumen/src/types.rs | struct | pub | 743 |  |
+| `FieldStats` | projects/lumen/src/types.rs | struct | pub | 745 |  |
 | `FieldType` | projects/lumen/src/types.rs | enum | pub | 74 |  |
 | `FieldValue` | projects/lumen/src/types.rs | enum | pub | 193 |  |
 | `HammingQuery` | projects/lumen/src/types.rs | struct | pub | 400 |  |
@@ -51,7 +51,7 @@ Public API manifest for `projects/lumen/src/types.rs` generated from AST during 
 | `MatchQuery` | projects/lumen/src/types.rs | struct | pub | 421 |  |
 | `QueryNode` | projects/lumen/src/types.rs | enum | pub | 317 |  |
 | `RangeQuery` | projects/lumen/src/types.rs | struct | pub | 477 |  |
-| `ReplaceDocBody` | projects/lumen/src/types.rs | struct | pub | 669 |  |
+| `ReplaceDocBody` | projects/lumen/src/types.rs | struct | pub | 671 |  |
 | `ReplaceDocItem` | projects/lumen/src/types.rs | struct | pub | 605 |  |
 | `ReplaceDocResult` | projects/lumen/src/types.rs | enum | pub | 643 |  |
 | `ReplaceDocsRequest` | projects/lumen/src/types.rs | struct | pub | 596 |  |
@@ -63,16 +63,16 @@ Public API manifest for `projects/lumen/src/types.rs` generated from AST during 
 | `SortMissing` | projects/lumen/src/types.rs | enum | pub | 287 |  |
 | `SortOrder` | projects/lumen/src/types.rs | enum | pub | 300 |  |
 | `SortSpec` | projects/lumen/src/types.rs | struct | pub | 270 |  |
-| `StatsResponse` | projects/lumen/src/types.rs | struct | pub | 726 |  |
-| `StorageStats` | projects/lumen/src/types.rs | struct | pub | 759 |  |
+| `StatsResponse` | projects/lumen/src/types.rs | struct | pub | 728 |  |
+| `StorageStats` | projects/lumen/src/types.rs | struct | pub | 761 |  |
 | `TermQuery` | projects/lumen/src/types.rs | struct | pub | 442 |  |
 | `TermsQuery` | projects/lumen/src/types.rs | struct | pub | 449 |  |
 | `VectorBackend` | projects/lumen/src/types.rs | enum | pub | 101 |  |
 | `VectorMetric` | projects/lumen/src/types.rs | enum | pub | 90 |  |
 | `VectorQuantize` | projects/lumen/src/types.rs | enum | pub | 127 |  |
 | `VectorSpec` | projects/lumen/src/types.rs | struct | pub | 136 |  |
-| `normalize` | projects/lumen/src/types.rs | function | pub | 800 | normalize(mut self) -> Self |
-| `vector_spec` | projects/lumen/src/types.rs | function | pub | 818 | vector_spec(&self) -> anyhow::Result<Option<VectorSpec>> |
+| `normalize` | projects/lumen/src/types.rs | function | pub | 802 | normalize(mut self) -> Self |
+| `vector_spec` | projects/lumen/src/types.rs | function | pub | 820 | vector_spec(&self) -> anyhow::Result<Option<VectorSpec>> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -723,9 +723,11 @@ pub enum ReplaceDocResult {
     Ok {
         /// Number of fields written from this item's `fields` map.
         fields_written: u32,
-        /// Number of fields skipped as unchanged no-ops. Structurally
-        /// present but always `0` in this WI — real no-op suppression is a
-        /// follow-up.
+        /// Number of fields skipped as unchanged no-ops: the incoming
+        /// value matched the currently indexed state, so no posting-list
+        /// rewrite and no HNSW tombstone/reinsert happened for that field
+        /// (#1293 server-side no-op suppression). `0` when every field
+        /// actually changed, or when this is the doc's first write.
         fields_skipped: u32,
     },
     Dropped {
