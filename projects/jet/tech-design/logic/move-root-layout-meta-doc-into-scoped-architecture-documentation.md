@@ -126,7 +126,6 @@ meta_doc_migration:
       allowed_contexts:
         - projects/jet/tech-design (historical TD text that explicitly names the retired root doc)
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
