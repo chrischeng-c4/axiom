@@ -15,7 +15,7 @@ promises from inference alone.
 
 - Human API: `/aw:capability <prompt>`.
 - Agent API: use `aw capability report|next|draft|apply-draft|init|migrate|run|check|sweep`,
-  `aw standardize audit --project <project>`, `aw wi list/show`, and `aw td ...`
+  `aw health --project <project> takeover-audit`, `aw wi list/show`, and `aw td ...`
   as needed to gather evidence.
 - Artifact: `cap_path`, defaulting to the project README when configured or
   implied by `[[projects]].path`.

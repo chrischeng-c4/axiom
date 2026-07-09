@@ -70,7 +70,7 @@ AW uses canonical agent-facing command names for the main lifecycle:
 |---|---|---|
 | `aw capability` | Product capabilities | Define the project capability tree, claims, maturity, release scope, and required external contracts. |
 | `aw ec` | External Contracts | Define behavior, efficiency, security, and stability contracts; generate tests and tool configs. |
-| `aw td` | Tech Design + code artifacts | Describe implementation design and own generated-code verbs: `gen`, `gen-source`, `fill`, `code-check`, and `code-claim`. TD output is a candidate implementation that iterates until EC and health gates pass. |
+| `aw td` | Tech Design + code artifacts | Describe implementation design and own generated-code verbs: `gen`, `gen-source`, `fill`, `code-check`, and `create --from-source`. TD output is a candidate implementation that iterates until EC and health gates pass. |
 | `aw health` | Project health | Aggregate capabilities, EC, TD, CB, tests, claim closure, locks, and blocker status. |
 
 The canonical flow for greenfield projects is:
@@ -86,7 +86,7 @@ tool manifests first, then TD/CB/code work drives those contracts green.
 The canonical flow for brownfield projects is:
 
 ```text
-aw capability check -> aw ec check/gen -> aw td claim/code-claim/gen/fill -> aw health
+aw capability check -> aw ec check/gen -> aw td claim/create --from-source/gen/fill -> aw health
 ```
 
 Brownfield starts by adding capabilities around existing behavior, then

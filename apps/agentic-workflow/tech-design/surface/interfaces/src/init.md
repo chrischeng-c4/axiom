@@ -69,8 +69,6 @@ const SKILL_CB_FILL: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-cb-fill/SKILL.md");
 const SKILL_CB_CLAIM: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-cb-claim/SKILL.md");
-const SKILL_STANDARDIZE: &str =
-    include_str!("../../templates/cli/mainthread/skills/aw-standardize/SKILL.md");
 const SKILL_BUILD_RELEASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-build-release/SKILL.md");
 const SKILL_CHAT_LISTEN: &str =
@@ -1269,7 +1267,6 @@ fn aw_skill_entries() -> Vec<(&'static str, &'static str)> {
         ("aw-td-create", SKILL_TD_CREATE),
         ("aw-cb-fill", SKILL_CB_FILL),
         ("aw-cb-claim", SKILL_CB_CLAIM),
-        ("aw-standardize", SKILL_STANDARDIZE),
         ("aw-build-release", SKILL_BUILD_RELEASE),
         ("aw-chat-listen", SKILL_CHAT_LISTEN),
         ("aw-health", SKILL_HEALTH),
@@ -1381,6 +1378,11 @@ fn deprecated_skill_names() -> Vec<&'static str> {
         // Removed: `aw td merge` no longer exists (LINEAR lifecycle;
         // `aw td code-check` is the terminal step).
         "aw-merge",
+        // Removed: the `aw standardize` namespace no longer exists (#1278,
+        // epic #1270 R7). `audit check` reporting folded into `aw health`'s
+        // `takeover-audit` axis; `audit record` rehomed as `aw td
+        // audit-record`.
+        "aw-standardize",
     ]
 }
 
@@ -2120,7 +2122,6 @@ auth_method = "cli"
             "aw-gemini-explore-codebase",
             "aw-capability",
             "aw-wi",
-            "aw-standardize",
             "aw-health",
             // REQ: R12 — active support skills
             "aw-build-debug",
@@ -2201,6 +2202,27 @@ auth_method = "cli"
         assert!(
             !skills_dir.join("aw-merge").exists(),
             "removed aw-merge skill should be pruned"
+        );
+    }
+
+    // #1281: install_claude_skills prunes the removed aw-standardize skill
+    // (`aw standardize` no longer exists; folded into `aw health`'s
+    // `takeover-audit` axis and `aw td audit-record`, #1278).
+    #[test]
+    fn test_install_claude_skills_prunes_aw_standardize() {
+        let tmp = TempDir::new().unwrap();
+        let skills_dir = tmp.path().join("skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+
+        let aw_standardize_dir = skills_dir.join("aw-standardize");
+        fs::create_dir_all(&aw_standardize_dir).unwrap();
+        fs::write(aw_standardize_dir.join("SKILL.md"), "# aw-standardize").unwrap();
+
+        install_claude_skills(&skills_dir).unwrap();
+
+        assert!(
+            !skills_dir.join("aw-standardize").exists(),
+            "removed aw-standardize skill should be pruned"
         );
     }
 
