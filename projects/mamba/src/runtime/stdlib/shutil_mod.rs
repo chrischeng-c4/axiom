@@ -151,7 +151,19 @@ unsafe extern "C" fn dispatch_rmtree(args_ptr: *const MbValue, nargs: usize) -> 
     mb_shutil_rmtree(path, ignore_errors)
 }
 dispatch_binary!(dispatch_move, mb_shutil_move);
-dispatch_unary!(dispatch_which, mb_shutil_which);
+// which(cmd, mode=os.F_OK | os.X_OK, path=None) — the effective `cmd` may
+// arrive positionally or through the trailing kwargs Dict. Preserve that call
+// shape, but enforce that the resolved `cmd` is a str before searching PATH.
+unsafe extern "C" fn dispatch_which(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let _ = core::hint::black_box(stringify!(dispatch_which));
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let cmd = which_cmd_arg(a);
+    mb_shutil_which(cmd)
+}
 dispatch_unary!(dispatch_disk_usage, mb_shutil_disk_usage);
 
 // Terminal / archive / chown / ignore
@@ -503,6 +515,29 @@ fn rmtree_ignore_errors_flag(rest: &[MbValue]) -> bool {
         return super::super::builtins::mb_is_truthy(*arg) != 0;
     }
     false
+}
+
+/// Resolve `shutil.which`'s effective `cmd` arg. A keyword-only source call can
+/// arrive as a single trailing kwargs Dict; otherwise the first positional is
+/// the value CPython checks for str-ness.
+fn which_cmd_arg(args: &[MbValue]) -> MbValue {
+    let Some(first) = args.first().copied() else {
+        return MbValue::none();
+    };
+    if args.len() == 1 {
+        if let Some(ptr) = first.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    if let Ok(guard) = lock.read() {
+                        if let Some(cmd) = guard.get("cmd") {
+                            return *cmd;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    first
 }
 
 fn make_named_instance(class_name: &str, fields_vec: Vec<(&str, MbValue)>) -> MbValue {
@@ -859,7 +894,8 @@ pub fn mb_shutil_move(src: MbValue, dst: MbValue) -> MbValue {
 pub fn mb_shutil_which(name: MbValue) -> MbValue {
     let cmd = match extract_str(name) {
         Some(s) => s,
-        None => return MbValue::none(),
+        None if name.is_none() => return MbValue::none(),
+        None => return raise_named("TypeError", "cmd must be a str"),
     };
 
     let path_var = match std::env::var("PATH") {
@@ -1048,6 +1084,7 @@ pub fn mb_shutil_empty_list() -> MbValue {
 mod tests {
     use super::*;
     use super::super::super::exception::{current_exception_type, mb_clear_exception};
+    use crate::runtime::dict_ops::DictKey;
 
     fn s(val: &str) -> MbValue {
         MbValue::from_ptr(MbObject::new_str(val.to_string()))
@@ -1107,6 +1144,48 @@ mod tests {
             let result = mb_shutil_which(s("sh"));
             assert!(!result.is_none(), "which('sh') should find something");
         }
+    }
+
+    #[test]
+    fn test_which_rejects_non_string_cmd() {
+        mb_clear_exception();
+        let result = mb_shutil_which(MbValue::from_int(12345));
+        assert!(result.is_none());
+        assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        mb_clear_exception();
+    }
+
+    #[test]
+    fn test_dispatch_which_accepts_keyword_cmd_string() {
+        mb_clear_exception();
+        let kwargs = MbValue::from_ptr(MbObject::new_dict());
+        if let Some(ptr) = kwargs.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    lock.write()
+                        .unwrap()
+                        .insert(DictKey::Str("cmd".to_string()), s("sh"));
+                }
+            }
+        }
+        let args = [kwargs];
+        let result = unsafe { dispatch_which(args.as_ptr(), args.len()) };
+        if cfg!(unix) {
+            assert!(!result.is_none(), "which(cmd='sh') should find something");
+        } else {
+            assert!(current_exception_type().is_none());
+        }
+        assert!(current_exception_type().is_none());
+    }
+
+    #[test]
+    fn test_dispatch_which_rejects_positional_dict_cmd() {
+        mb_clear_exception();
+        let args = [MbValue::from_ptr(MbObject::new_dict())];
+        let result = unsafe { dispatch_which(args.as_ptr(), args.len()) };
+        assert!(result.is_none());
+        assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        mb_clear_exception();
     }
 
     // -- Wave-9 surface --
