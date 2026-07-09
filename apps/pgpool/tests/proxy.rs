@@ -1189,3 +1189,7 @@ async fn drain_timeout_elapses_and_abandons_still_running_session() {
         .expect("server task");
 }
 // </HANDWRITE>
+// SPEC-MANAGED: apps/pgpool/tech-design/logic/session-mode-proxy-with-auth-passthrough-and-serve-entrypoint.md#unit-test
+// CODEGEN-BEGIN
+
+// CODEGEN-END
