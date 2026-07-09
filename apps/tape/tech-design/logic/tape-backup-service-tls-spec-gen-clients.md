@@ -31,6 +31,71 @@ fill_sections: [logic, unit-test, changes]
 <!-- type: logic lang: mermaid -->
 
 ```mermaid
+---
+id: tape-backup-service-tls-spec-gen-clients-flow
+entry: route
+nodes:
+  route:
+    kind: start
+    label: "tape binary gains Backup subcommand behind feature backup; Spec gains a gen subcommand; server.rs gains GET /admin/backup"
+  admin_req:
+    kind: process
+    label: "GET /admin/backup arrives on the existing bearer-auth data plane"
+  admin_auth:
+    kind: decision
+    label: "authorize principal, admin on '*'"
+  admin_deny:
+    kind: terminal
+    label: "403 forbidden ApiErr envelope"
+  admin_snap:
+    kind: process
+    label: "tape::raft::snapshot_bytes(journal_handle, applied_index) -- reuses JournalSnapshot shape from TapeStateMachine::snapshot/restore (#1327)"
+  admin_ok:
+    kind: terminal
+    label: "200 application/json JournalSnapshot bytes"
+  cli_backup:
+    kind: process
+    label: "tape backup --url --dest --token --retention-secs, feature backup; without feature: nonzero exit + rebuild hint"
+  backup_fetch:
+    kind: process
+    label: "backup::fetch_snapshot_bytes: reqwest GET {url}/admin/backup, optional Bearer, non-2xx bails with status+body"
+  backup_ship:
+    kind: process
+    label: "backup::run_backup: service_backup::sink_from_destination(dest) + run_backup_once(sink, now, bytes, retention)"
+  backup_done:
+    kind: terminal
+    label: "print BackupRunResult JSON"
+  cli_spec_gen:
+    kind: process
+    label: "tape spec gen --lang ts|py|rust --out DIR --http fetch|axios"
+  spec_gen_call:
+    kind: process
+    label: "cclab_openapi_codegen::generate(tape::spec::openapi_json(), opts)"
+  spec_gen_done:
+    kind: terminal
+    label: "write generated files under --out; print each path"
+  clients_dir:
+    kind: terminal
+    label: "apps/tape/clients/: Makefile + README.md + openapi.json, mirrors lumen's clients/ layout"
+  peer_tls_note:
+    kind: terminal
+    label: "apps/tape/src/peer_tls.rs UNCHANGED -- #1327 already delivered the config-surface + fail-fast validation scope; no new TLS code lands here"
+edges:
+  - { from: route, to: admin_req }
+  - { from: admin_req, to: admin_auth }
+  - { from: admin_auth, to: admin_deny, label: "denied" }
+  - { from: admin_auth, to: admin_snap, label: "admin on *" }
+  - { from: admin_snap, to: admin_ok }
+  - { from: route, to: cli_backup, label: "tape backup" }
+  - { from: cli_backup, to: backup_fetch }
+  - { from: backup_fetch, to: backup_ship }
+  - { from: backup_ship, to: backup_done }
+  - { from: route, to: cli_spec_gen, label: "tape spec gen" }
+  - { from: cli_spec_gen, to: spec_gen_call }
+  - { from: spec_gen_call, to: spec_gen_done }
+  - { from: route, to: clients_dir, label: "clients scaffold" }
+  - { from: route, to: peer_tls_note, label: "scope check #1327" }
+---
 flowchart TD
     route[tape binary gains Backup subcommand behind feature backup; Spec gains a gen subcommand; server.rs gains GET /admin/backup] --> admin_req[GET /admin/backup arrives on the existing bearer-auth data plane]
     admin_req --> admin_auth{authorize principal, admin on '*'}
@@ -99,7 +164,6 @@ flowchart TD
     r5[R5 clients scaffold present] --> manual_apps_tape_clients_makefile_readme_md_openapi_json_exist[manual: apps/tape/clients/{Makefile,README.md,openapi.json} exist]
     r6[R6 peer tls unchanged] --> peer_tls_tests_existing_unmodified_still_pass[peer_tls::tests (existing, unmodified) still pass]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
