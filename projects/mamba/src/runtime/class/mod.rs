@@ -11481,6 +11481,18 @@ pub(crate) fn class_bool_is_blocked(class_name: &str) -> bool {
 /// Returns Err with a message for inconsistent hierarchies (Python's TypeError).
 fn compute_mro(name: &str, bases: &[String]) -> Vec<String> {
     let mut mro = vec![name.to_string()];
+    if bases.iter().any(|base| base == "object")
+        && bases
+            .iter()
+            .any(|base| matches!(base.as_str(), "typing.Generic" | "typing.typing.Generic"))
+    {
+        super::exception::set_current_exception(super::exception::MbException::new(
+            "TypeError",
+            "Cannot create a consistent method resolution order (MRO) for bases object, Generic",
+        ));
+        mro.extend(bases.iter().cloned());
+        return mro;
+    }
     // For single inheritance, MRO is just: class → base → base's base → ...
     // For multiple inheritance, use C3
     if bases.len() <= 1 {
@@ -23344,6 +23356,26 @@ mod tests {
             crate::runtime::exception::current_exception_type().as_deref(),
             Some("TypeError"),
             "inconsistent MRO should set a pending TypeError"
+        );
+        crate::runtime::exception::clear_current_exception();
+    }
+
+    #[test]
+    fn test_pep695_explicit_object_and_generic_sets_typeerror() {
+        crate::runtime::exception::clear_current_exception();
+        mb_class_register(
+            "Pep695ExplicitObjectMro001",
+            vec!["object".to_string(), "typing.Generic".to_string()],
+            HashMap::new(),
+        );
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        let exc = crate::runtime::exception::mb_get_current_exception();
+        assert_eq!(
+            exc.msg,
+            "Cannot create a consistent method resolution order (MRO) for bases object, Generic"
         );
         crate::runtime::exception::clear_current_exception();
     }
