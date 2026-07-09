@@ -71,3 +71,42 @@ WI #1264 (commit `75cb5e5ca`) fixed `split_top_level` and `split_once_top_level`
 This TD stays scoped to the arrow-property form of the Object.assign+computed-key shape (`key: (params): ReturnType => Object.assign(...)`), which is textually and structurally distinct from the METHOD-SHORTHAND form (`key(params): ReturnType { return Object.assign(...); }`) already pinned by the pre-existing `infers_object_literal_method_with_object_assign_computed_key_body` test (added for WI #1263/#1262 investigation) — both forms now pass, through different code paths (`infer_arrow_function_type_from_text` for the arrow-property form vs. `infer_object_method_member_type`'s pure-text signature match for the method-shorthand form), and this TD adds coverage only for the arrow-property form the issue's exact repro uses.
 
 Entanglement with WI #1262 (still open): the empirical finding above — that the SAME shared `split_top_level` bracket-depth defect manifested as silent property truncation for a multi-property object at an intermediate commit — is direct evidence the two issues share a code path. However, on current `app/jet` HEAD, the moderate multi-property (2-property) reproductions of this entanglement no longer truncate; WI #1262's real-world 11-method trigger is not reproduced by this TD's probes and remains a distinct, still-open investigation. This TD adds one non-regression requirement (R2, below) pinning that a multi-property object literal with an `Object.assign`+computed-key-bodied arrow property followed by a sibling property does NOT truncate, to guard the shared `split_top_level` code path against regressing back to either failure mode without claiming WI #1262's full real-world shape is covered.
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: jet-dts-object-assign-computed-key-arrow-property-inference-verification
+requirements:
+  object_assign_computed_key_arrow_property_chained_calls_minimal_repro:
+    id: R1
+    text: "WI #1238 minimal repro: an exported const object literal with a single arrow-function property carrying its own explicit return type, whose concise body is `Object.assign({}, ...chain.of.calls.map((pair) => { ...; return { [computed]: value }; }))` (the issue's exact `_Query.parse` shape: chained `.replace().split().filter().map()` calls, a block-bodied `.map()` callback with array destructuring and a computed-key returned object literal), emits `export declare const _Query: { parse: (search: string) => Record<string, string>; };` instead of an isolatedDeclarations error."
+    kind: functional
+    risk: medium
+    verify: cargo test -p jet --lib bundler::dts::tests::infers_exported_const_object_assign_computed_key_arrow_property_chained_calls_signature
+  object_assign_computed_key_arrow_property_followed_by_sibling_member_no_truncation:
+    id: R2
+    text: "Non-regression control pinning the entanglement with the still-open WI #1262 (silent property truncation): the same Object.assign+computed-key arrow-property shape as R1, followed by a sibling object-literal member (e.g. `stringify: (obj: Record<string, string>): string => Object.keys(obj).join('&')`), emits BOTH members in the output (`parse` and `stringify`) -- proving the shared split_top_level bracket-depth fix that resolves R1 also keeps multi-property objects of this shape from silently dropping later sibling members, without claiming WI #1262's full real-world (11-method) shape is covered."
+    kind: regression
+    risk: high
+    verify: cargo test -p jet --lib bundler::dts::tests::infers_object_assign_computed_key_arrow_property_followed_by_sibling_member_signature
+  object_assign_computed_key_arrow_property_without_explicit_return_type_still_errors:
+    id: R3
+    text: "Negative control: the same Object.assign+computed-key arrow-property shape as R1, but with the arrow's own explicit return type annotation removed (e.g. `parse: (rows: Array<{ key: string }>) => Object.assign({}, ...rows.map((row) => ({ [row.key]: 1 })))`), must still raise an isolatedDeclarations error, proving the inference only fires because the arrow itself carries an explicit return type (infer_arrow_function_type_from_text never inspects the Object.assign(...) body) and does not silently widen to genuinely untyped members."
+    kind: regression
+    risk: high
+    verify: cargo test -p jet --lib bundler::dts::tests::uninferrable_object_assign_computed_key_arrow_property_without_explicit_return_type_errors
+  object_assign_computed_key_method_shorthand_form_unaffected:
+    id: R4
+    text: "No-regression control on the pre-existing method-shorthand form of the Object.assign+computed-key shape (added for the #1262/#1263 investigation): `render(rows: Array<{ key: string }>): Record<string, number> { return Object.assign({}, ...rows.map((row) => ({ [row.key]: 1 }))); }` must keep resolving through the existing infer_object_method_member_type text-signature-match path unchanged, proving the arrow-property form this TD covers and the pre-existing method-shorthand form use distinct, non-interfering code paths."
+    kind: regression
+    risk: low
+    verify: cargo test -p jet --lib bundler::dts::tests::infers_object_literal_method_with_object_assign_computed_key_body
+---
+flowchart TD
+    r1[R1 object assign computed key arrow property chained calls minimal repro] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_exported_const_object_assign_computed_key_arrow_property_chained_calls_signature[cargo test -p jet --lib bundler::dts::tests::infers_exported_const_object_assign_computed_key_arrow_property_chained_calls_signature]
+    r2[R2 object assign computed key arrow property followed by sibling member no truncation] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_object_assign_computed_key_arrow_property_followed_by_sibling_member_signature[cargo test -p jet --lib bundler::dts::tests::infers_object_assign_computed_key_arrow_property_followed_by_sibling_member_signature]
+    r3[R3 object assign computed key arrow property without explicit return type still errors] --> cargo_test_p_jet_lib_bundler_dts_tests_uninferrable_object_assign_computed_key_arrow_property_without_explicit_return_type_errors[cargo test -p jet --lib bundler::dts::tests::uninferrable_object_assign_computed_key_arrow_property_without_explicit_return_type_errors]
+    r4[R4 object assign computed key method shorthand form unaffected] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_object_literal_method_with_object_assign_computed_key_body[cargo test -p jet --lib bundler::dts::tests::infers_object_literal_method_with_object_assign_computed_key_body]
+```
