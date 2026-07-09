@@ -150,7 +150,6 @@ parity_fixture_suite:
     - "rg -n 'mdx.rs|optimizer.rs' projects/jet/tech-design/semantic/jet-stories.md"
     - "aw td check projects/jet/tech-design/validate/jet-stories-close-epic-1001-ac2-ac3-readme-parity-evidence-td-so.md"
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
