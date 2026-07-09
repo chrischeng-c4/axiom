@@ -19,7 +19,7 @@ path = "src/bin/pgpool.rs"
 [dependencies]
 anyhow = { workspace = true }
 bytes = { workspace = true }
-clap = { workspace = true }
+clap = { workspace = true, features = ["env"] }
 cli-std = { path = "../../libs/cli-std", default-features = false }
 http-server = { path = "../../libs/http-server" }
 serde = { workspace = true }
@@ -29,6 +29,10 @@ server-core = { path = "../../libs/server-core" }
 tcp-server = { path = "../../libs/tcp-server" }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio-postgres = "0.7"
 
 [build-dependencies]
 build-stamp = { path = "../../libs/build-stamp" }

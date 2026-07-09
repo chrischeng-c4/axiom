@@ -51,11 +51,18 @@ Start with:
 ```text
 pgpool runtime-plan
 pgpool spec --format routes
+pgpool serve
 ```
 
-The current slice is intentionally an app scaffold and runtime plan. PostgreSQL
-wire handling, backend pools, platform adapters, and k8s operator artifacts are
-separate work roots.
+`pgpool serve` is the session-mode proxy entrypoint: it binds the frontend
+(defaulting to the `RuntimePlan`'s frontend bind, `--bind`/`PGPOOL_FRONTEND_BIND`
+to override), admits each client against its own connection budget, dials the
+single configured Postgres backend (`--backend-host`/`--backend-port`, bounded
+by `--backend-connect-timeout-ms`), relays the startup/auth handshake and query
+traffic frame-aware without ever persisting credential bytes, and drains
+in-flight sessions on SIGTERM/SIGINT within `--drain-timeout-ms`. Backend
+pools (session pooling beyond 1:1), platform adapters, and k8s operator
+artifacts remain separate work roots.
 "#
 }
 

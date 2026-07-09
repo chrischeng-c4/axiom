@@ -27,6 +27,9 @@ enum Command {
     Upgrade(UpgradeArgs),
     /// Search, view, file, and comment on pgpool issues.
     Issue(IssueArgs),
+    /// Run the session-mode PostgreSQL proxy: bind the frontend, dial the
+    /// configured backend per client, and relay until drain/shutdown.
+    Serve(ServeArgs),
 }
 
 #[derive(clap::Args)]
@@ -68,6 +71,33 @@ struct UpgradeArgs {
     /// Skip the confirmation prompt.
     #[arg(short = 'y', long)]
     yes: bool,
+}
+
+/// Config section of the session-mode-proxy TD: exact env/flag/default
+/// surface for `pgpool serve`.
+#[derive(clap::Args)]
+struct ServeArgs {
+    /// Postgres backend host this session-mode proxy dials per client.
+    #[arg(long, env = "PGPOOL_BACKEND_HOST", default_value = "127.0.0.1")]
+    backend_host: String,
+    /// Postgres backend port.
+    #[arg(long, env = "PGPOOL_BACKEND_PORT", default_value_t = 5432)]
+    backend_port: u16,
+    /// Bound on the backend TCP connect, in milliseconds.
+    #[arg(
+        long,
+        env = "PGPOOL_BACKEND_CONNECT_TIMEOUT_MS",
+        default_value_t = 5000
+    )]
+    backend_connect_timeout_ms: u64,
+    /// Override the frontend bind address (`host:port`); defaults to the
+    /// `RuntimePlan`'s frontend bind (`0.0.0.0:6432`) unchanged.
+    #[arg(long, env = "PGPOOL_FRONTEND_BIND")]
+    bind: Option<String>,
+    /// Grace window for in-flight sessions after SIGTERM/SIGINT, in
+    /// milliseconds.
+    #[arg(long, env = "PGPOOL_DRAIN_TIMEOUT_MS", default_value_t = 30000)]
+    drain_timeout_ms: u64,
 }
 
 #[derive(clap::Args)]
@@ -181,6 +211,7 @@ async fn main() -> Result<()> {
             .await
         }
         Command::Issue(args) => issue(args).await,
+        Command::Serve(args) => serve(args).await,
     }
 }
 
@@ -268,5 +299,59 @@ async fn issue(args: IssueArgs) -> Result<()> {
             .await
         }
     }
+}
+
+/// `cli_serve_entry` in the TD Logic flowchart: build a `TcpServerConfig`
+/// from `RuntimePlan` with NO tcp-server-level `ConnectionBudget` wired in
+/// (the `SessionHandler` enforces its own admission so a rejection can
+/// write a wire-level `ErrorResponse` before closing), then bind and serve.
+async fn serve(args: ServeArgs) -> Result<()> {
+    let plan = pgpool::default_runtime_plan();
+
+    let frontend_bind = match &args.bind {
+        Some(addr) => {
+            let addr: std::net::SocketAddr = addr.parse()?;
+            server_core::BindConfig {
+                host: addr.ip(),
+                port: addr.port(),
+            }
+        }
+        None => plan.frontend_bind.clone(),
+    };
+
+    let proxy_config = pgpool::proxy::SessionProxyConfig {
+        backend: pgpool::proxy::BackendEndpointConfig {
+            host: args.backend_host,
+            port: args.backend_port,
+        },
+        frontend_budget: plan.frontend_budget(),
+        backend_connect_timeout: std::time::Duration::from_millis(args.backend_connect_timeout_ms),
+        drain_timeout: std::time::Duration::from_millis(args.drain_timeout_ms),
+        wire: pgpool::wire::WireCodecConfig::default(),
+    };
+
+    let server_config = tcp_server::TcpServerConfig::new(frontend_bind)
+        .with_socket_options(plan.frontend_socket)
+        .with_drain_timeout(proxy_config.drain_timeout);
+
+    let handler = pgpool::proxy::SessionHandler::new(proxy_config);
+
+    let listener = tcp_server::bind(&server_config).await?;
+    println!("pgpool serve: listening on {}", listener.local_addr()?);
+    println!(
+        "pgpool serve: backend {}:{}",
+        handler.config().backend.host,
+        handler.config().backend.port
+    );
+
+    tcp_server::serve(
+        listener,
+        server_config,
+        handler,
+        server_core::signal::wait_shutdown_signal(),
+    )
+    .await;
+
+    Ok(())
 }
 // </HANDWRITE>

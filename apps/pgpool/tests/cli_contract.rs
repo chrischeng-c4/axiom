@@ -43,3 +43,20 @@ fn routes_include_admin_and_postgres_frontend() {
     assert!(stdout.contains("/pools/{pool}/stats"));
     assert!(stdout.contains("postgresql-wire"));
 }
+
+/// verify: cli_contract::help_and_llm_workflow_topic_mention_serve (AC5)
+#[test]
+fn help_and_llm_workflow_topic_mention_serve() {
+    let help = pgpool().arg("--help").output().expect("run pgpool help");
+    assert!(help.status.success());
+    let help_stdout = String::from_utf8(help.stdout).expect("utf8");
+    assert!(help_stdout.contains("serve"));
+
+    let llm = pgpool()
+        .args(["llm", "--topic", "workflow"])
+        .output()
+        .expect("run llm workflow topic");
+    assert!(llm.status.success());
+    let llm_stdout = String::from_utf8(llm.stdout).expect("utf8");
+    assert!(llm_stdout.contains("pgpool serve"));
+}
