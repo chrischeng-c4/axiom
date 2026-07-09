@@ -127,7 +127,7 @@ async fn test_code_check_retry_completes_partial_terminal_failure() {
         .unwrap();
 
     std::fs::create_dir_all(root.join(".aw")).unwrap();
-    std::fs::write(root.join(".aw/config.toml"), "").unwrap();
+    std::fs::write(root.join("aw.toml"), "").unwrap();
 
     use agentic_workflow::issues::types::{td_phase, IssueType};
     use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
@@ -273,6 +273,184 @@ async fn test_code_check_retry_completes_partial_terminal_failure() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// #807 / #1275: terminal `aw td code-check` must refuse to perform ANY
+// mutation (the phase-advancing `backend.update`, remote closure, branch
+// landing, terminal commit, or lock release) while a file in the WI's own
+// touched scope is dirty in git — the exact shape that let a WI's
+// implementation sit uncommitted while the issue still closed (Jet #797).
+// ---------------------------------------------------------------------------
+
+/// AC1a: an untracked touched-scope file (never `git add`ed at all) must
+/// refuse completion, naming the dirty file and a remediation next command,
+/// and must leave the issue completely untouched — no phase advance, no
+/// close, no `Cb-CodeCheck` trailer commit.
+#[tokio::test]
+async fn test_code_check_refuses_dirty_touched_scope_untracked() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, IssueState, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    write_847_changes_spec(root, &[("src/demo.rs", "create")]);
+    // The WI's own touched-scope file: present on disk but never `git add`ed
+    // — the exact "implementation sitting uncommitted" shape from #807.
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/demo.rs"), "// implemented\n").unwrap();
+
+    let slug = "dirty-scope-untracked-test";
+    seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
+
+    let output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "code-check refusal still exits 0 (protocol is the stdout envelope): {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\"action\":\"error\""),
+        "an untracked touched-scope file must refuse with an error envelope, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("src/demo.rs"),
+        "error message must name the dirty touched file, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("git commit") || stdout.contains("git restore"),
+        "error message must carry a commit-or-restore remediation next step, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains(&format!("aw td code-check {slug}")),
+        "error message must name the re-run command, got:\n{}",
+        stdout
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend
+        .get(slug)
+        .await
+        .expect("read back issue")
+        .expect("issue still present");
+    assert_eq!(
+        after.phase.as_deref(),
+        Some(td_phase::CB_FILLED),
+        "a dirty-scope refusal must not advance phase past cb_filled"
+    );
+    assert_ne!(
+        after.state,
+        IssueState::Closed,
+        "a dirty-scope refusal must not close the issue, got: {:?}",
+        after.state
+    );
+    assert_eq!(
+        count_cb_code_check_trailer_commits(&git, root),
+        0,
+        "a dirty-scope refusal must not land any Cb-CodeCheck trailer commit"
+    );
+}
+
+/// AC1b: a touched-scope file that was already committed on an earlier run
+/// but has since been modified again (dirty-but-tracked, not merely
+/// untracked) must also refuse completion — the gate scans `git status
+/// --porcelain` broadly, not only untracked entries.
+#[tokio::test]
+async fn test_code_check_refuses_dirty_touched_scope_modified_tracked() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, IssueState, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    write_847_changes_spec(root, &[("src/demo.rs", "create")]);
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/demo.rs"), "// implemented\n").unwrap();
+    commit_all(&git, root);
+    // Modify the already-committed touched file again, without committing —
+    // ordinary tracked-file dirt, distinct from the untracked case above.
+    std::fs::write(root.join("src/demo.rs"), "// implemented\n// more\n").unwrap();
+
+    let slug = "dirty-scope-modified-test";
+    seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
+
+    let output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "code-check refusal still exits 0 (protocol is the stdout envelope): {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\"action\":\"error\""),
+        "a modified-but-uncommitted touched-scope file must refuse with an error envelope, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("src/demo.rs"),
+        "error message must name the dirty touched file, got:\n{}",
+        stdout
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend
+        .get(slug)
+        .await
+        .expect("read back issue")
+        .expect("issue still present");
+    assert_eq!(
+        after.phase.as_deref(),
+        Some(td_phase::CB_FILLED),
+        "a dirty-scope refusal must not advance phase past cb_filled"
+    );
+    assert_ne!(
+        after.state,
+        IssueState::Closed,
+        "a dirty-scope refusal must not close the issue, got: {:?}",
+        after.state
+    );
+    assert_eq!(
+        count_cb_code_check_trailer_commits(&git, root),
+        0,
+        "a dirty-scope refusal must not land any Cb-CodeCheck trailer commit"
+    );
+}
+
 /// #842 AC1-AC4: a main-launched lifecycle whose `td-<slug>` branch still
 /// holds an implementation commit — the shape left behind once `td create`
 /// provisions `td-<slug>` from `main` and every later TD/CB verb (gen, fill,
@@ -325,11 +503,11 @@ async fn test_code_check_lands_td_slug_branch_onto_main() {
             .unwrap();
     }
     std::fs::write(root.join("README.md"), "seed\n").unwrap();
-    // `.aw/config.toml` is committed as part of the seed commit (as it
+    // `aw.toml` is committed as part of the seed commit (as it
     // would be in a real project) so the working tree is clean going into
     // the landing step's dirty-tree guard below.
     std::fs::create_dir_all(root.join(".aw")).unwrap();
-    std::fs::write(root.join(".aw/config.toml"), "").unwrap();
+    std::fs::write(root.join("aw.toml"), "").unwrap();
     Command::new(&git)
         .arg("-C")
         .arg(root)
@@ -564,7 +742,7 @@ async fn test_code_check_lands_td_slug_branch_onto_main() {
 // phase-advancing `backend.update`, so a refusal leaves the issue untouched).
 // ---------------------------------------------------------------------------
 
-/// Seed a fresh git repo + empty `.aw/config.toml`, matching the setup the
+/// Seed a fresh git repo + empty `aw.toml`, matching the setup the
 /// `#846` retry tests above use, minus the `td_merged` issue seed (fresh
 /// #847 tests seed their own issue at a pre-terminal phase).
 fn init_847_seed_repo(git: &std::path::Path, root: &std::path::Path) {
@@ -590,7 +768,7 @@ fn init_847_seed_repo(git: &std::path::Path, root: &std::path::Path) {
     }
     std::fs::write(root.join("README.md"), "seed\n").unwrap();
     std::fs::create_dir_all(root.join(".aw")).unwrap();
-    std::fs::write(root.join(".aw/config.toml"), "").unwrap();
+    std::fs::write(root.join("aw.toml"), "").unwrap();
     Command::new(git)
         .arg("-C")
         .arg(root)
@@ -605,13 +783,39 @@ fn init_847_seed_repo(git: &std::path::Path, root: &std::path::Path) {
         .unwrap();
 }
 
+/// Commit every current working-tree change (`git add -A && git commit`).
+/// Real `aw td gen`/`aw td fill` already commit generated/filled
+/// implementation files before terminal `aw td code-check` ever runs
+/// (`commit_lifecycle` in td.rs, `stage_and_commit_cb_fill` in cb_fill.rs);
+/// fixtures below that hand-write a WI's touched-scope file directly
+/// (simulating a hand-written `impl_mode` completion with no gen/fill step)
+/// must commit it the same way so they stay a realistic "ready for
+/// code-check" precondition and don't trip the #807/#1275 clean-touched-
+/// scope precondition for a reason unrelated to the gate each test targets.
+fn commit_all(git: &std::path::Path, root: &std::path::Path) {
+    use std::process::Command;
+
+    Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "-A"])
+        .status()
+        .unwrap();
+    Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "wip: touched-scope fixture"])
+        .status()
+        .unwrap();
+}
+
 /// Repo-root-relative path `write_847_changes_spec` always writes to —
 /// shared by `#847`/`#854` tests as the `Issue.implements` entry that scopes
 /// both terminal gates to this WI's own spec (issue #854).
 const DEMO_SPEC_REL: &str = ".aw/tech-design/specs/demo.md";
 
 /// Write a minimal TD spec at `.aw/tech-design/specs/demo.md` (the default
-/// `tech_design_path` fallback for an empty `.aw/config.toml`) whose
+/// `tech_design_path` fallback for an empty `aw.toml`) whose
 /// `## Changes` section lists the given `(path, action)` entries, each
 /// `impl_mode: hand-written` so `aw td gen` would have emitted nothing —
 /// the exact "gen-code skipped" shape the gate detects.
@@ -850,6 +1054,7 @@ async fn test_code_check_partial_implementation_completes() {
     // Partial presence: one of the two declared paths actually exists.
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(root.join("src/demo.rs"), "// implemented\n").unwrap();
+    commit_all(&git, root);
 
     let slug = "empty-impl-gate-partial-test";
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
@@ -950,6 +1155,7 @@ async fn test_code_check_ignores_unrelated_marker_outside_wi_scope() {
     // the exact repro from issue #854 (an inherited unfilled marker from
     // other unmerged work on the same checkout).
     write_854_marker_file(root, "src/unrelated.rs", "unrelated-marker", false);
+    commit_all(&git, root);
 
     // Issue #859 part a2: seeded at cb_genned (not cb_filled) so this
     // fixture still exercises `run_cb_check_gate_scoped` at code-check's
@@ -1015,8 +1221,12 @@ async fn test_code_check_blocks_on_marker_inside_wi_scope() {
     write_847_changes_spec(root, &[("src/demo.rs", "create")]);
     // The WI's own Changes-listed file exists on disk (so the #847
     // empty-implementation gate does not fire) but still carries an
-    // unfilled HANDWRITE marker.
+    // unfilled HANDWRITE marker. Committed so this test isolates the marker
+    // gate from the #807/#1275 clean-touched-scope precondition, which
+    // would otherwise refuse first (also naming `src/demo.rs`) for an
+    // unrelated reason.
     write_854_marker_file(root, "src/demo.rs", "demo-marker", false);
+    commit_all(&git, root);
 
     // Issue #859 part a2: seeded at cb_genned — see comment in
     // `test_code_check_ignores_unrelated_marker_outside_wi_scope` above.
@@ -1223,6 +1433,7 @@ async fn test_code_check_folds_lock_release_into_single_write() {
     init_847_seed_repo(&git, root);
     write_847_changes_spec(root, &[("src/demo.rs", "create")]);
     write_854_marker_file(root, "src/demo.rs", "demo-marker", true);
+    commit_all(&git, root);
 
     let slug = "fold-lock-release-test";
     let projection = WorkflowProjection {
@@ -1574,7 +1785,7 @@ async fn test_code_check_consumes_implements_populated_by_real_td_create() {
 /// project-root-artifact scanning stays a no-op and the managed inventory
 /// is exactly the files under `src/`) so
 /// `standardize::project_touched_scope_standardization` has a scope to
-/// walk. Overwrites the empty `.aw/config.toml` `init_847_seed_repo` seeds;
+/// walk. Overwrites the empty `aw.toml` `init_847_seed_repo` seeds;
 /// standardize reads config straight off disk, so this does not need a
 /// commit (and the terminal gate's `branch_changed_files` diffs commits,
 /// not working-tree state, so it does not leak into any test's touched-file
@@ -1584,7 +1795,7 @@ fn write_932_project_config(root: &std::path::Path, project: &str) {
         "[[projects]]\nname = \"{project}\"\n\n[[projects.workspaces]]\npaths = [\"src/**\"]\n"
     );
     std::fs::create_dir_all(root.join(".aw")).unwrap();
-    std::fs::write(root.join(".aw/config.toml"), content).unwrap();
+    std::fs::write(root.join("aw.toml"), content).unwrap();
 }
 
 /// A managed, CODEGEN-marked source file — counts toward
@@ -1711,6 +1922,7 @@ async fn test_code_check_blocks_touched_unmarked_file_post_bootstrap() {
     // empty-implementation gate does not fire) but carries no marker at all.
     write_932_unmarked_file(root, "src/touched.rs");
     write_847_changes_spec(root, &[("src/touched.rs", "create")]);
+    commit_all(&git, root);
 
     let slug = "touched-scope-unmarked-blocks-test";
     seed_932_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo").await;
@@ -1788,6 +2000,7 @@ async fn test_code_check_warns_touched_unmarked_file_pre_bootstrap() {
     // The WI's own touched file: also unmarked.
     write_932_unmarked_file(root, "src/touched.rs");
     write_847_changes_spec(root, &[("src/touched.rs", "create")]);
+    commit_all(&git, root);
 
     let slug = "touched-scope-unmarked-warns-test";
     seed_932_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo").await;
@@ -1858,6 +2071,7 @@ async fn test_code_check_blocks_touched_handwrite_missing_tracker_post_bootstrap
     write_932_codegen_file(root, "src/baseline.rs");
     write_932_handwrite_missing_tracker_file(root, "src/touched.rs");
     write_847_changes_spec(root, &[("src/touched.rs", "modify")]);
+    commit_all(&git, root);
 
     let slug = "touched-scope-attr-gap-blocks-test";
     seed_932_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo").await;
@@ -1939,6 +2153,7 @@ async fn test_code_check_touched_scope_ignores_unrelated_unmarked_file() {
     // The WI's own touched file: properly CODEGEN-marked, no violation.
     write_932_codegen_file(root, "src/touched.rs");
     write_847_changes_spec(root, &[("src/touched.rs", "modify")]);
+    commit_all(&git, root);
 
     let slug = "touched-scope-ignores-unrelated-test";
     seed_932_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo").await;
