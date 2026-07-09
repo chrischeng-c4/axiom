@@ -2,16 +2,58 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-08T05:47:10.019671+00:00"
-digest = "sha256:a6cdea798cab15874d52b54d0c78ecee4bb95d8edf69370df7e9dd5fa369342a"
-source_digest = "sha256:a6cdea798cab15874d52b54d0c78ecee4bb95d8edf69370df7e9dd5fa369342a"
-ir_digest = "sha256:b375efb2cfafdce975011d168c2a3c0feee1e2eeb1c54277a0014aadc6f9fe53"
+generated_at = "2026-07-09T15:41:17.193837+00:00"
+digest = "sha256:d8759dd654a8423255160888f6a58eb4f6335ba834606ccc479371d6763a1ead"
+source_digest = "sha256:d8759dd654a8423255160888f6a58eb4f6335ba834606ccc479371d6763a1ead"
+ir_digest = "sha256:759ca7369223801c3e0f7f17021d358af60f4fa55640f32b0de9a18e5ba36ae3"
 
 [[files]]
 path = "README.md"
 digest = "sha256:dc7fb8fe7a4210bf50824fc477078de4b62f30208e3c506f7756e1ab5c787104"
 ir_digest = "sha256:ffd60e3aff92c538315b70c3984361efaa6fab25e0af61264310a39a68b8cfcd"
 section_count = 0
+
+[[files]]
+path = "interfaces/rest/service-http-shell-h2c-serve-standard-endpoints.md"
+digest = "sha256:c07f9ef9265216014ef464a0e0d4aa5dfe01f36a2c2abcb57138a8c5e08ad6d5"
+ir_digest = "sha256:54a47ef3cff55c82145b2ced587c29a6928e915c43092bb3671217fe1fd7c5ec"
+section_count = 3
+
+[[files]]
+path = "interfaces/rest/tape-service-auth.md"
+digest = "sha256:6153519a5ea3e6d405cba97558e66850b627b0a61cabfc02402612a8e25444d2"
+ir_digest = "sha256:08d2e53f4bd35197f47fde2df1486c37a1c4aaa092a2df29d78fc8cb09cd538f"
+section_count = 3
+
+[[files]]
+path = "logic/tape-backup-service-tls-spec-gen-clients.md"
+digest = "sha256:e5e306fd402b26da5af549a2a4ab53e049241c25dfe002f55aa8e68ff41d4ad6"
+ir_digest = "sha256:cf15f79a5cd6a2e3533bbb1a727646dbc70358fdd303280f60265c44df60a6ef"
+section_count = 3
+
+[[files]]
+path = "logic/tape-docs-scripts-traits-polish.md"
+digest = "sha256:52b51cd8cfea8502716763575e7fdf4d31a58bdb56896fcd25647b6834ba6526"
+ir_digest = "sha256:c7a5b5f18bea036f68c24f3b8f9d5b6b76c259f22e994add7abea737c59a7b86"
+section_count = 3
+
+[[files]]
+path = "logic/tape-operator-k8s-dockerfile-cli.md"
+digest = "sha256:28e2a16ce98228be5a97c824afca2949abe7cd75e915423fabf5ec729e7c9b30"
+ir_digest = "sha256:0165a40acac06a3aa22126b07ae1c86da2250a72e59e3a85f5b2641cf7f8820a"
+section_count = 3
+
+[[files]]
+path = "logic/tape-raft-host-primary-replicas.md"
+digest = "sha256:72ee950649d4c5ac6d73eb95f22e512a5d8dc0bb91806f0ff349d12b6489fae7"
+ir_digest = "sha256:3ecb0fd4bb6e6e967a940d43cc4b397a55c4c335d78903401ec4af00d8752a03"
+section_count = 3
+
+[[files]]
+path = "logic/tape-vat-meter-guard-ec-gates-observability.md"
+digest = "sha256:7c91920c00a15094d73136a5c04d501c9a91022d0343194be462d6098deec1e0"
+ir_digest = "sha256:36794e07a7da5e89aea35046c796a7d4fea5833646953f7084350860ad6c076d"
+section_count = 3
 
 [[files]]
 path = "semantic/source/apps-tape-build-rs.md"

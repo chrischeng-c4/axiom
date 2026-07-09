@@ -3,10 +3,9 @@ project = "tape"
 ir_kind = "ec"
 ec_path = "apps/tape/external-contracts"
 inventory_path = "apps/tape/aw.toml"
-generated_at = "2026-07-08T07:14:38.230339+00:00"
-ir_digest = "sha256:9e06bbab904314bbd38236af752f41973d001905165030a25dd89d42bc4e3fd0"
-source_digest = "sha256:69828575e591490eea55484ccf39c6d90fd8148a6de671d6a47b2596575b7c23"
-tool_contracts = []
+generated_at = "2026-07-09T15:16:07.048191+00:00"
+ir_digest = "sha256:6f5164ce2f6bb4f9eb1d311862ca0d646dd994fed00d18daf2205ead814f03b6"
+source_digest = "sha256:a6fdf53c4312c3abe2970291958005e4b2636d9f5e6742b83069fd4193fa1ce6"
 
 [[sources]]
 path = "apps/tape/external-contracts/claim-closure/production-claims.md"
@@ -19,6 +18,14 @@ digest = "sha256:acf0ef8e87dfefa731d7c9a42a11f9875cf036ff22a39a4178030f48f2702f7
 [[sources]]
 path = "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md"
 digest = "sha256:24410664ddfa350036d4582529142a565dc8aa9eb26ddf9a10226c1b2f4b362f"
+
+[[sources]]
+path = "apps/tape/external-contracts/competitor-performance/efficiency/meter-gate.md"
+digest = "sha256:e3decb42b51843f683863bfbcf67dc3980871d92afa0ef5d897b59540661cf68"
+
+[[sources]]
+path = "apps/tape/external-contracts/security-hardening/security/security-evidence.md"
+digest = "sha256:7d9a1ec9e98468c0d0765652377501ba67f11d2a2858440c92c8002febf1723d"
 
 [[cases]]
 id = "tape-chainable-output-conformance"
@@ -182,6 +189,44 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:fab80980e713c8b4338a6e39e034ca6e2cae18d5eafec5402c6fd63de4c377b4"
 
 [[cases]]
+id = "tape-meter-performance-gate"
+capability_id = "competitor-performance"
+claim_id = "topic-replay-competitor-performance-baseline"
+contract_id = "tape-meter-throughput-ratchet"
+dimension = "efficiency"
+source_ref = "apps/tape/external-contracts/competitor-performance/efficiency/meter-gate.md#tape-meter-performance-gate"
+test_path = "apps/tape/tests/benchmark_tape_meter_performance_gate.rs"
+command = "cd apps/tape && ../../target/debug/vat run meter-perf"
+required_for_production = true
+assertions = [
+    "The local Tape performance regression gate passes for append, replay, and checkpoint operations.",
+    "Tape's NATS JetStream local backlog replay win is backed by a real-service benchmark gate.",
+    "The gate is executed by meter inside a vat workspace, not by a direct-cargo-only dispatch path.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:6af0c6c92f963355964a02165eb739f823f91c1c82cadd3826c54d1309cbf191"
+
+[[cases]]
+id = "tape-security-hardening-guard-scan"
+capability_id = "security-hardening"
+claim_id = "guard-static-runtime-evidence"
+contract_id = "tape-guard-security-report"
+dimension = "security"
+source_ref = "apps/tape/external-contracts/security-hardening/security/security-evidence.md#tape-security-hardening-guard-scan"
+test_path = "apps/tape/tests/security_tape_security_hardening_guard_scan.rs"
+command = "cd apps/tape && ../../target/debug/vat run guard-security"
+required_for_production = false
+assertions = [
+    "guard scan over apps/tape reports no untriaged Docker, Kubernetes, or static security findings.",
+    "guard attaches meter evidence for tape's bearer-auth request-boundary smoke (cli_contract auth-relevant cases).",
+    "The security evidence runs inside vat so generated reports and transient files do not mutate the host checkout.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:a932d79f12a0ad61761c34c64872f848f82c4df303cfdffbe27ad5dde51ad7df"
+
+[[cases]]
 id = "tape-standard-operational-endpoints"
 capability_id = "standard-operational-endpoints"
 claim_id = "standard-service-route-inventory"
@@ -213,3 +258,23 @@ assertions = [
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:b9fa06a36dc692732a6c90e79082746bd7a6ac5017ba77dd2e99e98b56999c14"
+
+[[tool_contracts]]
+id = "tape-guard-security"
+tool = "guard"
+dimension = "security"
+source_ref = "apps/tape/external-contracts/security-hardening/security/security-evidence.md#tape-guard-security"
+manifest_path = "apps/tape/guard-tape-security.toml"
+command = "cd apps/tape && ../../target/debug/vat run guard-security"
+content_digest = "sha256:922264b30cda807de231f2f3d2f94232ae3508b731283dd0a8ea2ad5ec95bd18"
+digest = "sha256:b7534a2e8da44fa2a8a01ae464457088cd6ddc05931d8d40148705a418509ebb"
+
+[[tool_contracts]]
+id = "tape-meter-performance"
+tool = "meter"
+dimension = "efficiency"
+source_ref = "apps/tape/external-contracts/competitor-performance/efficiency/meter-gate.md#tape-meter-performance"
+manifest_path = "apps/tape/meter-tape-performance.toml"
+command = "cd apps/tape && ../../target/debug/vat run meter-perf"
+content_digest = "sha256:f5479a59ab66bf97873041dc86ace84b890fc557b6ccfa680ce823cf35748f95"
+digest = "sha256:14dc63269076053de61d79ec0b3dd5156de76429067a735208c3e82611bcbd49"

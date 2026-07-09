@@ -6,11 +6,22 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
+use utoipa::ToSchema;
 
+pub mod auth;
+#[cfg(feature = "backup")]
+pub mod backup;
 pub mod bench;
+pub mod metrics;
+pub mod openapi;
+#[cfg(feature = "operator")]
+pub mod operator;
+pub mod peer_tls;
+pub mod raft;
+pub mod server;
 pub mod spec;
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum TapeError {
     #[error("checkpoint offset {new_offset} is behind existing offset {current_offset}")]
     StaleCheckpoint {
@@ -21,7 +32,7 @@ pub enum TapeError {
     CheckpointBeyondEnd { offset: u64, end_offset: u64 },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct TapeEvent {
     pub topic: String,
     pub offset: u64,
@@ -31,7 +42,7 @@ pub struct TapeEvent {
     pub payload: Value,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ConsumerCheckpoint {
     pub topic: String,
     pub consumer: String,
@@ -110,6 +121,19 @@ impl TapeJournal {
         consumer: impl Into<String>,
         offset: u64,
     ) -> Result<ConsumerCheckpoint, TapeError> {
+        self.put_checkpoint_at(topic, consumer, offset, now_ms())
+    }
+
+    /// Same validation/ordering as [`Self::put_checkpoint`], parameterized on
+    /// the timestamp so raft replicas apply an identical `updated_at_ms`
+    /// instead of each computing `now_ms()` independently (#1327).
+    pub fn put_checkpoint_at(
+        &mut self,
+        topic: impl Into<String>,
+        consumer: impl Into<String>,
+        offset: u64,
+        updated_at_ms: u64,
+    ) -> Result<ConsumerCheckpoint, TapeError> {
         let topic = topic.into();
         let consumer = consumer.into();
         let end_offset = self.end_offset(&topic);
@@ -129,7 +153,7 @@ impl TapeJournal {
             topic,
             consumer,
             offset,
-            updated_at_ms: now_ms(),
+            updated_at_ms,
         };
         self.checkpoints.insert(key, checkpoint.clone());
         Ok(checkpoint)
@@ -149,7 +173,7 @@ fn checkpoint_key(topic: &str, consumer: &str) -> String {
     format!("{topic}\u{1f}{consumer}")
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)

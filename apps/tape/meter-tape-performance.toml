@@ -1,0 +1,9 @@
+# SPEC-MANAGED: apps/tape/external-contracts/competitor-performance/efficiency/meter-gate.md#tape-meter-performance
+# CODEGEN-BEGIN
+# AW-EC-TOOL-BEGIN
+delegate_command = "cd apps/tape && ../../target/debug/vat run meter-perf"
+project = "tape"
+source_contract = "tape-meter-performance-gate"
+version = 1
+# AW-EC-TOOL-END
+# CODEGEN-END

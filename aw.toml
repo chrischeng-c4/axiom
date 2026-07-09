@@ -192,6 +192,8 @@ path = "apps/tape"
 td_path = "apps/tape/tech-design"
 cap_path = "apps/tape/README.md"
 label = "app:tape"
+ec.efficiency = { tool = "meter", meter = "apps/tape", command = "cd apps/tape && ../../target/debug/vat run meter-perf" }
+ec.security = { tool = "guard", dir = "apps/tape", command = "cd apps/tape && ../../target/debug/vat run guard-security" }
 
 [[projects.workspaces]]
 name = "tape"
