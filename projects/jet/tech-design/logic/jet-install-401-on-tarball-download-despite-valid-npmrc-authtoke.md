@@ -108,3 +108,25 @@ flowchart TD
     r3[R3 download package sends no auth header when no token configured] --> cargo_test_p_jet_lib_pkg_manager_registry_tests_download_package_sends_no_auth_header_when_no_token_configured[cargo test -p jet --lib pkg_manager::registry::tests::download_package_sends_no_auth_header_when_no_token_configured]
     r4[R4 download package returns tarball bytes on authenticated success] --> cargo_test_p_jet_lib_pkg_manager_registry_tests_download_package_returns_tarball_bytes_on_authenticated_success[cargo test -p jet --lib pkg_manager::registry::tests::download_package_returns_tarball_bytes_on_authenticated_success]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/jet/src/pkg_manager/registry.rs
+    action: update
+    section: logic
+    impl_mode: hand-written
+    reason: "Empirically confirmed on the current app/jet source tree (cargo build -p jet; read RegistryClient::get_package_metadata and RegistryClient::download_package side by side in projects/jet/src/pkg_manager/registry.rs) that get_package_metadata (lines 493-501) calls self.npmrc.auth_token_for(registry) and attaches an Authorization: Bearer <token> header before send, but download_package (lines 535-557) issues self.client.get(&version_meta.dist.tarball).send().await? with no equivalent auth_token_for lookup or header attachment, so scoped-registry (GCP Artifact Registry style) tarball downloads 401 even though the metadata fetch for the same host+path prefix succeeds (WI #1261). Fix: in download_package, after resolving version_meta.dist.tarball, call self.npmrc.auth_token_for(&version_meta.dist.tarball) and, when it returns Some(token), attach .header(\"Authorization\", format!(\"Bearer {}\", token)) to the request builder before .send().await?, mirroring the existing metadata-path shape exactly. No change to auth_token_for's matching logic (already proven correct for the metadata path) or to response handling."
+  - path: projects/jet/src/pkg_manager/registry.rs
+    action: update
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Add the R1-R4 regression tests specified in the unit-test section to the existing `mod tests` block in projects/jet/src/pkg_manager/registry.rs, using wiremock::MockServer to stand up local metadata + tarball endpoints: R1 pins the WI #1261 fix (tarball request now carries the configured Authorization header); R2 is a regression control proving the pre-existing metadata-path header attachment is untouched; R3 is a negative control proving no Authorization header is sent when no token is configured (no unconditional/blank header regression); R4 is a happy-path regression control proving response byte handling is unchanged by the added header-attachment step."
+  - path: projects/jet/Cargo.toml
+    action: update
+    section: unit-test
+    impl_mode: hand-written
+    reason: "The R1-R4 wiremock-based tests need `wiremock` as a dev-dependency of the jet crate; it is already declared in the workspace root Cargo.toml's [workspace.dependencies] (used by other projects) but is not yet pulled into projects/jet/Cargo.toml's [dev-dependencies]. Add `wiremock = { workspace = true }` there so `cargo test -p jet --lib pkg_manager::registry` can build the new tests."
+```
