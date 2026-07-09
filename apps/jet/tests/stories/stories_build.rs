@@ -510,6 +510,128 @@ fn build_compiles_scss_side_effect_imports_to_static_css() {
 }
 
 #[test]
+// @spec projects/jet/tech-design/logic/jet-stories-build-png-now-fixed-svg-partially-fixed-barrel-re-ex.md#unit-test
+fn build_compiles_bare_specifier_css_import_to_static_css() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+
+    write(
+        root.join("node_modules/@tw-tech/ds2/package.json"),
+        r#"{
+  "name": "@tw-tech/ds2",
+  "version": "1.0.0",
+  "exports": {
+    "./style.css": "./style.css"
+  }
+}"#,
+    );
+    write(
+        root.join("node_modules/@tw-tech/ds2/style.css"),
+        ".widget { color: blue; }\n",
+    );
+
+    write(
+        root.join("src/components/Widget.stories.tsx"),
+        "import { Widget } from './Widget';\nexport default { title: 'Components/Widget', component: Widget };\nexport const Primary = { args: {} };\n",
+    );
+    write(
+        root.join("src/components/Widget.tsx"),
+        "import '@tw-tech/ds2/style.css';\nexport const Widget = () => null;\n",
+    );
+
+    let out = root.join("dist-stories");
+    let result = build_stories_static(root, &out).expect("build");
+
+    let css_rel = Path::new("deps/@tw-tech/ds2/style.css");
+    let css_path = out.join(css_rel);
+    assert!(
+        css_path.is_file(),
+        "bare-specifier CSS import (via package.json exports) must emit a real CSS asset"
+    );
+    assert!(result.emitted.iter().any(|p| p == css_rel));
+
+    let css = fs::read_to_string(&css_path).expect("read css");
+    assert!(
+        css.contains(".widget") && css.contains("color"),
+        "compiled CSS should contain the source rule, got:\n{css}"
+    );
+    assert!(
+        !out.join("deps/@tw-tech/ds2/style.css.js").exists(),
+        "bare-specifier CSS must not fall through to a dangling deps/<pkg>/style.css.js dependency reference"
+    );
+
+    let component_js =
+        fs::read_to_string(out.join("modules/src/components/Widget.js")).expect("read component");
+    assert!(
+        !component_js.contains("style.css"),
+        "emitted JS should not keep a dangling import of the bare-specifier CSS: {component_js}"
+    );
+
+    let preview = fs::read_to_string(out.join("preview/components-widget--primary.html"))
+        .expect("read preview");
+    assert!(
+        preview.contains(r#"<link rel="stylesheet" href="../deps/@tw-tech/ds2/style.css" />"#),
+        "preview should link the compiled bare-specifier CSS with a relative URL: {preview}"
+    );
+}
+
+#[test]
+// @spec projects/jet/tech-design/logic/jet-stories-build-png-now-fixed-svg-partially-fixed-barrel-re-ex.md#unit-test
+fn build_compiles_bare_specifier_scss_import_via_css_pipeline() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+
+    write(
+        root.join("node_modules/@tw-tech/ds3/package.json"),
+        r#"{
+  "name": "@tw-tech/ds3",
+  "version": "1.0.0",
+  "exports": {
+    "./theme.scss": "./theme.scss"
+  }
+}"#,
+    );
+    write(
+        root.join("node_modules/@tw-tech/ds3/theme.scss"),
+        "$radius: 4px;\n.theme { &--rounded { border-radius: $radius; } }\n",
+    );
+
+    write(
+        root.join("src/components/Theme.stories.tsx"),
+        "import { Theme } from './Theme';\nexport default { title: 'Components/Theme', component: Theme };\nexport const Primary = { args: {} };\n",
+    );
+    write(
+        root.join("src/components/Theme.tsx"),
+        "import '@tw-tech/ds3/theme.scss';\nexport const Theme = () => null;\n",
+    );
+
+    let out = root.join("dist-stories");
+    let result = build_stories_static(root, &out).expect("build");
+
+    let css_rel = Path::new("deps/@tw-tech/ds3/theme.css");
+    let css_path = out.join(css_rel);
+    assert!(
+        css_path.is_file(),
+        "bare-specifier SCSS import must be compiled to a real CSS asset"
+    );
+    assert!(result.emitted.iter().any(|p| p == css_rel));
+
+    let css = fs::read_to_string(&css_path).expect("read css");
+    assert!(
+        css.contains(".theme--rounded") && css.contains("border-radius") && css.contains("4px"),
+        "SCSS nesting and variables should be compiled through the real CssPipeline, got:\n{css}"
+    );
+    assert!(
+        !out.join("deps/@tw-tech/ds3/theme.scss").exists(),
+        "raw Sass must not be copied verbatim"
+    );
+    assert!(
+        !out.join("deps/@tw-tech/ds3/theme.scss.js").exists(),
+        "bare-specifier SCSS must not fall through to a dangling deps/<pkg>/theme.scss.js dependency reference"
+    );
+}
+
+#[test]
 // @spec .aw/tech-design/projects/jet/logic/jet-stories-build-scss-is-never-compiled-scss-files-copied-verba.md#unit-test
 fn build_emits_svg_and_png_assets_as_url_strings() {
     let dir = TempDir::new().expect("temp dir");
