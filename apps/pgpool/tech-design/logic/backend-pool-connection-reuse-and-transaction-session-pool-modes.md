@@ -206,13 +206,13 @@ nodes:
     label: "RejectedAuthFailed: backend emitted ErrorResponse during the admission handshake, forwarded to the client verbatim"
   idle_no_lease:
     kind: normal
-    label: "IdleNoLease: client is admitted and holds no backend lease — either just after the admission handshake's backend was reset+returned to idle, or after a prior transaction's backend was reset+returned to idle (R1, R2)"
+    label: "IdleNoLease: client is admitted and holds no backend lease \u2014 either just after the admission handshake's backend was reset+returned to idle, or after a prior transaction's backend was reset+returned to idle (R1, R2)"
   acquiring_transaction:
     kind: normal
     label: "AcquiringTransaction: the client sent a frontend frame other than Terminate; BackendPool::acquire() is running (idle-reuse-preferring, may wait up to acquire_timeout) (R2, R3)"
   rejected_pool_saturated:
     kind: terminal
-    label: "RejectedPoolSaturated: acquire_timeout elapsed with no lease available; a synthesized ErrorResponse (53300) is written to this client only and its socket closed — every other admitted client and in-flight lease is unaffected (R3, AC3)"
+    label: "RejectedPoolSaturated: acquire_timeout elapsed with no lease available; a synthesized ErrorResponse (53300) is written to this client only and its socket closed \u2014 every other admitted client and in-flight lease is unaffected (R3, AC3)"
   transaction_active:
     kind: normal
     label: "TransactionActive: a backend lease is held; frames relay bidirectionally between this client and its leased backend until the backend's ReadyForQuery reports Idle again, or Terminate/EOF/FrameError ends the leg (R2)"
@@ -284,7 +284,6 @@ stateDiagram-v2
     rejected_pool_saturated --> [*]
     closed --> [*]
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
