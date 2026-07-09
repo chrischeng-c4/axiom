@@ -2,10 +2,16 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = "projects/jet/tech-design"
-generated_at = "2026-07-09T05:33:01.630711+00:00"
-digest = "sha256:55afb3688938ab808664f94b455d1329c6d9ad386c0f6b5198ff2426d1024fbc"
-source_digest = "sha256:55afb3688938ab808664f94b455d1329c6d9ad386c0f6b5198ff2426d1024fbc"
-ir_digest = "sha256:3407881736be05fd4f26d944914bd26f2babd3bfac7cb5b99952b0614e51a934"
+generated_at = "2026-07-09T05:49:18.729820+00:00"
+digest = "sha256:6fc404eef6ac6aab7713e49aad6be0678e1e8827b51257d888b3ad04688b1fa6"
+source_digest = "sha256:6fc404eef6ac6aab7713e49aad6be0678e1e8827b51257d888b3ad04688b1fa6"
+ir_digest = "sha256:fcbd7adc6044347363c3b852a85e333a791d01ef62e407949a5d593252bf9497"
+
+[[files]]
+path = "logic/jet-build-lib-dts-object-literal-d-ts-emission-silently-truncate.md"
+digest = "sha256:0db24c5a1a383d0e109b44fcc08092f436fa38b0b45d2bd1e23ff6eb300c0d27"
+ir_digest = "sha256:853dc8b0411cac907bab94a7c340be4802c51b9dc4ee6216f7a9b41df52f0ab0"
+section_count = 3
 
 [[files]]
 path = "logic/jet-lib-dts-isolateddeclarations-false-positive-on-arrow-functio.md"
