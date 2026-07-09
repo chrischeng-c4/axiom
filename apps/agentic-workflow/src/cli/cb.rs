@@ -4452,8 +4452,22 @@ async fn run_check_lifecycle_terminal(
     // reuses the issue exactly as read above. Every remaining step is
     // self-checking so a partial failure at any point can be recovered by
     // re-running `aw td code-check <slug>`.
-    let closed_issue = if is_retry {
-        issue
+    let (closed_issue, ec_gate_json) = if is_retry {
+        // Gate placement discipline (#858/#1275): a `td_merged` retry entry
+        // has already had this WI's fresh entry either evaluate the EC gate
+        // (and pass it, since a red gate refuses before phase ever
+        // advances) or find no inventory configured. Re-running
+        // `terminal_ec_gate_summary` here would re-pay a potentially
+        // expensive cargo-test-class command run on every retry of a
+        // partially-failed terminal close — exactly the duplicate-run
+        // class this issue's Scope forbids. Record that plainly instead of
+        // silently omitting the field.
+        (
+            issue,
+            serde_json::json!(
+                "not re-evaluated (terminal retry; already evaluated on the fresh entry that reached td_merged)"
+            ),
+        )
     } else {
         // Scope both terminal gates to this WI's own TD spec (issue #854)
         // instead of the whole worktree / whole `tech_design_path` tree —
@@ -4584,6 +4598,61 @@ async fn run_check_lifecycle_terminal(
             return Ok(true);
         }
 
+        // EC gate (issue #858, epic #1270 R1b): "the gate is EC" is the
+        // lifecycle's stated contract, but until this WI, terminal close
+        // ran no EC/verification gate at all — only the weaker
+        // drift/marker audits above. Consult the completing WI's project
+        // EC inventory here, before the first real mutation below
+        // (`backend.update`, which advances phase and closes the issue).
+        // Fresh-entry only (see the `is_retry` arm above) and placed after
+        // every cheap structural gate above it so an obviously-broken WI
+        // (dirty scope, unmarked files, empty implementation) never pays
+        // for a potentially expensive EC command run first.
+        let ec_gate_json = match project_label_for_wi(&issue)
+            .and_then(|project| crate::cli::ec::terminal_ec_gate_summary(project_root, project))
+        {
+            Some(summary) if !summary.clean => {
+                let failing: Vec<String> = summary
+                    .results
+                    .iter()
+                    .filter(|result| result.status != "passed")
+                    .map(|result| format!("{} (`{}`)", result.case_id, result.command))
+                    .collect();
+                let env = serde_json::json!({
+                    "action": "error",
+                    "slug": slug,
+                    "message": format!(
+                        "td code-check refused: {} of {} configured EC gate(s) failing for \
+                         project `{}`: {}; fix the failing gate(s), then re-run `aw ec gen \
+                         --project {} --verify` to confirm green before re-running `aw td \
+                         code-check {}`",
+                        summary.failed_count,
+                        summary.command_count,
+                        summary.project,
+                        failing.join(", "),
+                        summary.project,
+                        slug,
+                    ),
+                });
+                println!("{}", serde_json::to_string(&env)?);
+                return Ok(true);
+            }
+            Some(summary) => serde_json::json!({
+                "status": "passed",
+                "project": summary.project,
+                "commands_consulted": summary.command_count,
+                "cases": summary
+                    .results
+                    .iter()
+                    .map(|result| result.case_id.clone())
+                    .collect::<Vec<_>>(),
+            }),
+            // No resolvable project, or a resolvable project with no
+            // `[aw.ec.generated]` inventory configured: close proceeds, but
+            // never silently — the success envelope names this explicitly.
+            None => serde_json::json!("advisory (no inventory configured)"),
+        };
+
         // Issue #859 part b: fold the workflow-lock projection unlock into
         // this same patch instead of a separate `complete_issue_lock`
         // local write + remote push after the fact — `unlock_projection_for_
@@ -4617,7 +4686,7 @@ async fn run_check_lifecycle_terminal(
         // `Issue` — reuse it directly instead of a redundant second
         // `backend.get` that would just re-read the same write back off
         // disk.
-        backend.update(slug, &patch).await?
+        (backend.update(slug, &patch).await?, ec_gate_json)
     };
     let closed_path = backend.issue_path(&closed_issue);
 
@@ -4694,6 +4763,7 @@ async fn run_check_lifecycle_terminal(
             "td code-check passed; lifecycle closed"
         },
         "landing": landing_json,
+        "ec_gate": ec_gate_json,
     });
     println!("{}", serde_json::to_string(&env)?);
     Ok(true)

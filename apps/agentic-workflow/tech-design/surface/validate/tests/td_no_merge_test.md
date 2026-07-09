@@ -27,6 +27,8 @@ No public AST symbols.
 
 <!-- source-snapshot: path=apps/agentic-workflow/tests/cli/tests/td_no_merge_test.rs -->
 ```rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/validate/tests/td_no_merge_test.md#source
+// CODEGEN-BEGIN
 //! Regression tests proving the removed TD merge command is no longer part of the CLI surface.
 //!
 //! The `td merge`-removal clap-parsing assertions that used to live here
@@ -448,6 +450,356 @@ async fn test_code_check_refuses_dirty_touched_scope_modified_tracked() {
         count_cb_code_check_trailer_commits(&git, root),
         0,
         "a dirty-scope refusal must not land any Cb-CodeCheck trailer commit"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #858 (epic #1270 R1b): terminal `aw td code-check` must consult the
+// completing WI's configured EC inventory before the first real close
+// mutation (`backend.update`) — "the gate is EC" is the lifecycle's stated
+// contract, and until this issue terminal close ran no EC/verification gate
+// at all. A red configured gate refuses close with a remediation next
+// command; a green configured gate closes and records which cases were
+// consulted; a project with no EC inventory configured still closes, but
+// the envelope names that explicitly (never a silent pass).
+// ---------------------------------------------------------------------------
+
+/// Write a root `aw.toml` that both registers `project` as an AW project row
+/// (`[[projects]]`, `path = "."` — this flat single-directory fixture's
+/// source root *is* the repo root, so the same file doubles as the
+/// project-local EC inventory file `resolve_ec_project_context` looks up)
+/// and configures `[aw.ec.generated]` with one case per `(id, command)`
+/// pair. Trivially fast `sh -c` runners (`true` / `false`) stand in for a
+/// real EC command — `terminal_ec_gate_summary`'s `verify_ec_context` call
+/// only cares about exit status, not that the command is `cargo test`
+/// (tier-1b `ec.*` cross-CLI binding validation is a separate `aw ec
+/// check`/`gen` concern `verify_ec_context` never consults).
+fn write_858_ec_configured_aw_toml(root: &std::path::Path, project: &str, cases: &[(&str, &str)]) {
+    // `[[projects.workspaces]]` is required: the full `Project` model
+    // (`resolve_ec_project_context` -> `load_projects`, needed for
+    // `ec_bindings`) fails to deserialize a `[[projects]]` row with no
+    // workspace at all (`workspaces` has no `#[serde(default)]`).
+    let mut toml = format!(
+        "[[projects]]\nname = \"{project}\"\npath = \".\"\n\n\
+         [[projects.workspaces]]\nname = \"{project}\"\npaths = [\"**\"]\ntarget = \"rust\"\n\n\
+         [aw.ec.generated]\nversion = 1\nproject = \"{project}\"\n\
+         generated_from_td_digest = \"sha256:test\"\n\n"
+    );
+    for (id, command) in cases {
+        toml.push_str(&format!(
+            "[[aw.ec.generated.cases]]\n\
+             id = \"{id}\"\n\
+             capability_id = \"demo-capability\"\n\
+             contract_id = \"{id}\"\n\
+             category = \"behavior\"\n\
+             td_ref = \"td.md#{id}\"\n\
+             test_path = \"tests/{id}.rs\"\n\
+             command = \"{command}\"\n\
+             required_for_production = true\n\
+             assertions = []\n\n"
+        ));
+    }
+    std::fs::write(root.join("aw.toml"), toml).unwrap();
+}
+
+/// Same shape as `seed_847_open_issue` plus an `app:<project>` label so
+/// `project_label_for_wi` (and this WI's EC gate) resolve to `project`.
+/// `seed_847_open_issue` deliberately carries no project label, so the
+/// pre-existing #847/#854/#807 fixtures above stay unaffected by this gate
+/// (they resolve to `None` / advisory).
+async fn seed_858_open_issue_with_project(
+    root: &std::path::Path,
+    slug: &str,
+    phase: &str,
+    spec_rel: &str,
+    project: &str,
+) {
+    use agentic_workflow::issues::types::IssueType;
+    use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
+
+    let backend = LocalBackend::from_project_root(root);
+    let issue = Issue {
+        issue_type: IssueType::Enhancement,
+        title: format!("{slug} WI"),
+        state: IssueState::Open,
+        id: None,
+        github_id: None,
+        gitlab_id: None,
+        url: None,
+        author: None,
+        labels: vec![format!("phase:{}", phase), format!("app:{project}")],
+        created_at: Some(chrono::Utc::now().to_rfc3339()),
+        updated_at: Some(chrono::Utc::now().to_rfc3339()),
+        slug: slug.to_string(),
+        body: format!("# {slug} WI\n"),
+        related: Vec::new(),
+        implements: vec![spec_rel.to_string()],
+        phase: Some(phase.to_string()),
+        branch: None,
+        target_branch: None,
+        git_workflow: None,
+        change_id: None,
+        iteration: None,
+        current_task_id: None,
+        impl_spec_phase: None,
+        task_revisions: None,
+        revision_counts: None,
+        last_action: None,
+        session_id: None,
+        validation_errors: Vec::new(),
+        review_count: None,
+        flagged_sections: None,
+        fill_retry_count: None,
+        ship_status: None,
+        ship_commit: None,
+        regen_verified_at: None,
+    };
+    backend.create(&issue).await.expect("seed open issue");
+}
+
+/// AC1: a red (failing) configured EC gate must refuse terminal close,
+/// naming the failing case and routing to the `aw ec gen --verify`
+/// remediation command, and must not advance phase / close the issue / land
+/// any terminal commit.
+#[tokio::test]
+async fn test_code_check_refuses_configured_red_ec_gate() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, IssueState, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    write_858_ec_configured_aw_toml(root, "demo", &[("ec-red-case", "false")]);
+    write_847_changes_spec(root, &[("src/demo.rs", "create")]);
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/demo.rs"), "// implemented\n").unwrap();
+    commit_all(&git, root);
+
+    let slug = "ec-gate-red-test";
+    seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
+
+    let output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "code-check refusal still exits 0 (protocol is the stdout envelope): {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\"action\":\"error\""),
+        "a red configured EC gate must refuse with an error envelope, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("ec-red-case"),
+        "error message must name the failing EC case, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("aw ec gen") && stdout.contains("--verify"),
+        "error message must route to the EC remediation command, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains(&format!("aw td code-check {slug}")),
+        "error message must name the re-run command, got:\n{}",
+        stdout
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend
+        .get(slug)
+        .await
+        .expect("read back issue")
+        .expect("issue still present");
+    assert_eq!(
+        after.phase.as_deref(),
+        Some(td_phase::CB_FILLED),
+        "a red EC gate refusal must not advance phase past cb_filled"
+    );
+    assert_ne!(
+        after.state,
+        IssueState::Closed,
+        "a red EC gate refusal must not close the issue, got: {:?}",
+        after.state
+    );
+    assert_eq!(
+        count_cb_code_check_trailer_commits(&git, root),
+        0,
+        "a red EC gate refusal must not land any Cb-CodeCheck trailer commit"
+    );
+}
+
+/// AC2: a green (passing) configured EC gate must let terminal close
+/// proceed and record which gate(s) were consulted in the success envelope.
+#[tokio::test]
+async fn test_code_check_passes_configured_green_ec_gate_and_records_gates() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    write_858_ec_configured_aw_toml(root, "demo", &[("ec-green-case", "true")]);
+    write_847_changes_spec(root, &[("src/demo.rs", "create")]);
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/demo.rs"), "// implemented\n").unwrap();
+    commit_all(&git, root);
+
+    let slug = "ec-gate-green-test";
+    seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
+
+    let output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "a green configured EC gate should exit 0:\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("\"action\":\"done\""),
+        "a green configured EC gate must let completion through, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\"status\":\"passed\""),
+        "success envelope must record the EC gate as passed, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("ec-green-case"),
+        "success envelope must record the consulted EC case id, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\"commands_consulted\":1"),
+        "success envelope must record the consulted command count, got:\n{}",
+        stdout
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend
+        .get(slug)
+        .await
+        .expect("read back issue")
+        .expect("issue still present");
+    assert_eq!(
+        after.phase.as_deref(),
+        Some(td_phase::TD_MERGED),
+        "a green EC gate must still advance phase to td_merged"
+    );
+}
+
+/// AC3: a project with no `[aw.ec.generated]` inventory configured at all
+/// (but a resolvable project row) must still close — never a silent pass —
+/// with an explicit advisory marker in the success envelope.
+#[tokio::test]
+async fn test_code_check_no_ec_inventory_closes_with_advisory_marker() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    // A resolvable project row with no `[aw.ec.generated]` table at all —
+    // distinct from an unresolvable project (no row / no `app:` label),
+    // which the pre-existing #847/#854/#807 fixtures above already exercise
+    // implicitly and which also falls into this same advisory path.
+    std::fs::write(
+        root.join("aw.toml"),
+        "[[projects]]\nname = \"demo\"\npath = \".\"\n\n\
+         [[projects.workspaces]]\nname = \"demo\"\npaths = [\"**\"]\ntarget = \"rust\"\n",
+    )
+    .unwrap();
+    write_847_changes_spec(root, &[("src/demo.rs", "create")]);
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/demo.rs"), "// implemented\n").unwrap();
+    commit_all(&git, root);
+
+    let slug = "ec-gate-no-inventory-test";
+    seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
+
+    let output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "no-inventory code-check should exit 0:\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("\"action\":\"done\""),
+        "no configured EC inventory must not block completion, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\"ec_gate\":\"advisory (no inventory configured)\""),
+        "no configured EC inventory must carry the explicit advisory marker \
+         (never a silent pass), got:\n{}",
+        stdout
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend
+        .get(slug)
+        .await
+        .expect("read back issue")
+        .expect("issue still present");
+    assert_eq!(
+        after.phase.as_deref(),
+        Some(td_phase::TD_MERGED),
+        "the advisory path must still advance phase to td_merged"
     );
 }
 
@@ -2197,6 +2549,8 @@ async fn test_code_check_touched_scope_ignores_unrelated_unmarked_file() {
         "code-check must still advance phase to td_merged"
     );
 }
+
+// CODEGEN-END
 ```
 
 ## Changes
