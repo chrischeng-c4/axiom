@@ -151,3 +151,56 @@ parity_fixture_suite:
     - "rg -n 'mdx.rs|optimizer.rs' projects/jet/tech-design/semantic/jet-stories.md"
     - "aw td check projects/jet/tech-design/validate/jet-stories-close-epic-1001-ac2-ac3-readme-parity-evidence-td-so.md"
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: jet-stories-close-epic-1001-ac2-ac3-verification
+requirements:
+  no_stale_pre_epic_only_gate_inventory_remains:
+    id: R6
+    text: "README no longer describes the Component Workbench capability as only pre-epic scope (CSF discovery/manager/HMR/Controls/static export) with a stale 5-test Gate Inventory."
+    kind: regression
+    risk: low
+    verify: aw capability report --project jet
+  parity_fixture_files_exist:
+    id: R3
+    text: "The parity fixture suite (Widget.tsx, Widget.stories.tsx with decorators+argTypes+play(), Widget.mdx) exists under tests/stories/fixtures/parity/."
+    kind: functional
+    risk: medium
+    verify: test -e projects/jet/tests/stories/fixtures/parity/Widget.tsx && test -e projects/jet/tests/stories/fixtures/parity/Widget.stories.tsx && test -e projects/jet/tests/stories/fixtures/parity/Widget.mdx
+  parity_fixture_preserves_source_semantics:
+    id: R5
+    text: "The static build output for the fixture preserves the decorators, argTypes override, and play() call source text verbatim, and the MDX docs page resolves to the Interactive story."
+    kind: regression
+    risk: medium
+    verify: cargo test -p jet --test stories_parity_fixture -- --nocapture
+  parity_fixture_test_passes:
+    id: R4
+    text: "tests/stories_parity_fixture.rs asserts build_stories_static compiles the fixture with zero diagnostics and passes."
+    kind: functional
+    risk: high
+    verify: cargo test -p jet --test stories_parity_fixture
+  readme_gate_inventory_cites_feature_area_tests:
+    id: R1
+    text: "projects/jet/README.md Component Workbench detailed block cites at least the six concrete test paths for decorators/globals/loaders/autodocs, controls/toolbar/actions/interactions/a11y/source/docs/search/theme/index.json, toolbar measure/outline/zoom, MDX compile, MDX static export, and the headless play() runner."
+    kind: functional
+    risk: medium
+    verify: grep -c 'parses_render_path_core_fields\|static_manager_keeps_dev_feature_parity_checklist\|manager_toolbar_renders_viewport_background_zoom_and_custom_parameters\|compiles_core_doc_blocks\|mdx_docs_pages_render_core_blocks_in_static_export\|run_stories_smoke_tests' projects/jet/README.md
+  schema_source_units_include_mdx_and_optimizer:
+    id: R2
+    text: "jet-stories.md's schema source_units list includes both mdx.rs and optimizer.rs entries."
+    kind: functional
+    risk: medium
+    verify: grep -c 'projects/jet/src/stories/mdx.rs\|projects/jet/src/stories/optimizer.rs' projects/jet/tech-design/semantic/jet-stories.md
+---
+flowchart TD
+    r1[R1 readme gate inventory cites feature area tests] --> grep_c_parses_render_path_core_fields_static_manager_keeps_dev_feature_parity_checklist_manager_toolbar_renders_viewport_background_zoom_and_custom_parameters_compiles_core_doc_blocks_mdx_docs_pages_render_core_blocks_in_static_export_run_stories_smoke_tests_projects_jet_readme_md[grep -c 'parses_render_path_core_fields\|static_manager_keeps_dev_feature_parity_checklist\|manager_toolbar_renders_viewport_background_zoom_and_custom_parameters\|compiles_core_doc_blocks\|mdx_docs_pages_render_core_blocks_in_static_export\|run_stories_smoke_tests' projects/jet/README.md]
+    r2[R2 schema source units include mdx and optimizer] --> grep_c_projects_jet_src_stories_mdx_rs_projects_jet_src_stories_optimizer_rs_projects_jet_tech_design_semantic_jet_stories_md[grep -c 'projects/jet/src/stories/mdx.rs\|projects/jet/src/stories/optimizer.rs' projects/jet/tech-design/semantic/jet-stories.md]
+    r3[R3 parity fixture files exist] --> test_e_projects_jet_tests_stories_fixtures_parity_widget_tsx_test_e_projects_jet_tests_stories_fixtures_parity_widget_stories_tsx_test_e_projects_jet_tests_stories_fixtures_parity_widget_mdx[test -e projects/jet/tests/stories/fixtures/parity/Widget.tsx && test -e projects/jet/tests/stories/fixtures/parity/Widget.stories.tsx && test -e projects/jet/tests/stories/fixtures/parity/Widget.mdx]
+    r4[R4 parity fixture test passes] --> cargo_test_p_jet_test_stories_parity_fixture[cargo test -p jet --test stories_parity_fixture]
+    r5[R5 parity fixture preserves source semantics] --> cargo_test_p_jet_test_stories_parity_fixture_nocapture[cargo test -p jet --test stories_parity_fixture -- --nocapture]
+    r6[R6 no stale pre epic only gate inventory remains] --> aw_capability_report_project_jet[aw capability report --project jet]
+```
