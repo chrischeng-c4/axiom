@@ -22,7 +22,7 @@ path = "src/bin/tape-bench.rs"
 
 [dependencies]
 anyhow = { workspace = true }
-clap = { workspace = true }
+clap = { workspace = true, features = ["env"] }
 cli-std = { path = "../../libs/cli-std", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -30,10 +30,28 @@ serde_yaml = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 
+# Shared service shell (#1325): standard probe routes (/healthz /readyz
+# /metrics /openapi.json /docs), the h2c + HTTP/1.1 one-port serve loop,
+# SIGTERM-aware graceful drain, and the {error, message} ApiErr envelope.
+service-http = { path = "../../libs/service-http" }
+# Prometheus metric primitives (Counter/Latency + text-format render) for
+# TapeMetrics.
+service-metrics = { path = "../../libs/service-metrics" }
+axum = { workspace = true }
+utoipa = { workspace = true }
+# Serve-path tracing init (RUST_LOG wins, else info EnvFilter).
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
 [dev-dependencies]
 async-nats = { workspace = true }
 futures = { workspace = true }
 tempfile = "3"
+tokio = { workspace = true, features = ["full"] }
+reqwest = { workspace = true }
+h2c = { path = "../../libs/h2c" }
+http-body-util = "0.1"
+tower = { workspace = true, features = ["util"] }
 
 [build-dependencies]
 build-stamp = { path = "../../libs/build-stamp" }

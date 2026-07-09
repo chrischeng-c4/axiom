@@ -12816,16 +12816,26 @@ version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-nats",
+ "axum 0.8.9",
  "build-stamp",
  "clap",
  "cli-std",
  "futures",
+ "h2c",
+ "http-body-util",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "serde_yaml",
+ "service-http",
+ "service-metrics",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tower 0.5.3",
+ "tracing",
+ "tracing-subscriber",
+ "utoipa",
 ]
 
 [[package]]
