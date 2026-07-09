@@ -961,22 +961,35 @@ fn is_simple_annotation_name(annotation: &str) -> bool {
         && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
+fn lookup_annotation_type_param(params: MbValue, annotation: &str) -> Option<MbValue> {
+    let params_ptr = params.as_ptr()?;
+    unsafe {
+        let ObjData::Tuple(items) = &(*params_ptr).data else {
+            return None;
+        };
+        for item in items {
+            let name_attr = MbValue::from_ptr(MbObject::new_str("__name__".to_string()));
+            let name = extract_str(super::class::mb_getattr(*item, name_attr));
+            if name.as_deref() == Some(annotation) {
+                return Some(*item);
+            }
+        }
+    }
+    None
+}
+
 fn resolve_function_annotation_value(func: MbValue, annotation: String) -> MbValue {
     if is_simple_annotation_name(&annotation) {
-        let type_params =
-            super::pep695::func_attrs_get(func, "__type_params__").and_then(|params| params.as_ptr());
-        if let Some(params_ptr) = type_params {
-            unsafe {
-                if let ObjData::Tuple(items) = &(*params_ptr).data {
-                    for item in items {
-                        let name_attr =
-                            MbValue::from_ptr(MbObject::new_str("__name__".to_string()));
-                        let name = extract_str(super::class::mb_getattr(*item, name_attr));
-                        if name.as_deref() == Some(annotation.as_str()) {
-                            return *item;
-                        }
-                    }
-                }
+        if let Some(type_params) = super::pep695::func_attrs_get(func, "__type_params__") {
+            if let Some(param) = lookup_annotation_type_param(type_params, &annotation) {
+                return param;
+            }
+        }
+        if let Some(class_type_params) =
+            super::pep695::func_attrs_get(func, "__mb_class_type_params__")
+        {
+            if let Some(param) = lookup_annotation_type_param(class_type_params, &annotation) {
+                return param;
             }
         }
     }
@@ -2819,6 +2832,62 @@ mod tests {
             .map(|p| (p.has_default, p.default.as_int()))
             .collect();
         assert_eq!(got, vec![(true, Some(1)), (true, Some(2)), (true, Some(3))]);
+
+        cleanup_all_closures();
+    }
+
+    #[test]
+    fn test_func_annotations_fall_back_to_enclosing_class_type_params() {
+        cleanup_all_closures();
+        let name = MbValue::from_ptr(MbObject::new_str("meth".into()));
+        let func = MbValue::from_int(12);
+        let caps = MbValue::from_ptr(MbObject::new_list(vec![]));
+        let closure = mb_closure_new(name, func, caps);
+
+        let params = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_tuple(vec![
+                MbValue::from_ptr(MbObject::new_str("arg".into())),
+                MbValue::from_int(0),
+                MbValue::from_int(0),
+                MbValue::none(),
+                MbValue::from_ptr(MbObject::new_str("__T".into())),
+            ])),
+            MbValue::from_ptr(MbObject::new_tuple(vec![
+                MbValue::from_ptr(MbObject::new_str("arg2".into())),
+                MbValue::from_int(0),
+                MbValue::from_int(0),
+                MbValue::none(),
+                MbValue::from_ptr(MbObject::new_str("__U".into())),
+            ])),
+        ]));
+        mb_func_set_params(closure, params);
+
+        let class_t = super::pep695::make_typevar_instance("__T", 0, vec![], None);
+        let method_u = super::pep695::make_typevar_instance("__U", 0, vec![], None);
+        super::pep695::func_attrs_set(
+            closure,
+            MbValue::from_ptr(MbObject::new_str("__type_params__".into())),
+            MbValue::from_ptr(MbObject::new_tuple(vec![method_u])),
+        );
+        super::pep695::func_attrs_set(
+            closure,
+            MbValue::from_ptr(MbObject::new_str("__mb_class_type_params__".into())),
+            MbValue::from_ptr(MbObject::new_tuple(vec![class_t])),
+        );
+
+        let annotations = mb_func_get_annotations(closure);
+        let arg = super::dict_ops::mb_dict_get(
+            annotations,
+            MbValue::from_ptr(MbObject::new_str("arg".into())),
+            MbValue::none(),
+        );
+        let arg2 = super::dict_ops::mb_dict_get(
+            annotations,
+            MbValue::from_ptr(MbObject::new_str("arg2".into())),
+            MbValue::none(),
+        );
+        assert_eq!(arg.to_bits(), class_t.to_bits());
+        assert_eq!(arg2.to_bits(), method_u.to_bits());
 
         cleanup_all_closures();
     }

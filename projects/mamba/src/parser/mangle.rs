@@ -58,6 +58,7 @@ fn mangle_stmt(stmt: &mut Spanned<Stmt>, class: Option<&str>) {
         Stmt::FnDef {
             decorators,
             name,
+            type_params,
             params,
             body,
             ..
@@ -65,6 +66,7 @@ fn mangle_stmt(stmt: &mut Spanned<Stmt>, class: Option<&str>) {
         | Stmt::AsyncFnDef {
             decorators,
             name,
+            type_params,
             params,
             body,
             ..
@@ -73,6 +75,9 @@ fn mangle_stmt(stmt: &mut Spanned<Stmt>, class: Option<&str>) {
                 mangle_expr(d, class);
             }
             mangle_in_place(name, class);
+            for tp in type_params.iter_mut() {
+                mangle_type_param(tp, class);
+            }
             for p in params.iter_mut() {
                 mangle_param(p, class);
             }
@@ -84,6 +89,7 @@ fn mangle_stmt(stmt: &mut Spanned<Stmt>, class: Option<&str>) {
         Stmt::ClassDef {
             decorators,
             name,
+            type_params: _,
             bases,
             keyword_args,
             body,
@@ -222,7 +228,17 @@ fn mangle_stmt(stmt: &mut Spanned<Stmt>, class: Option<&str>) {
             }
             mangle_stmts(body, class);
         }
-        Stmt::BareAnnotation { name, .. } => mangle_in_place(name, class),
+        Stmt::BareAnnotation { name, .. } => {
+            mangle_in_place(name, class);
+        }
+        Stmt::TypeAlias {
+            type_params, value, ..
+        } => {
+            for tp in type_params.iter_mut() {
+                mangle_type_param(tp, class);
+            }
+            mangle_expr(value, class);
+        }
         Stmt::Global(names) | Stmt::Nonlocal(names) => {
             for n in names.iter_mut() {
                 mangle_in_place(n, class);
@@ -233,8 +249,7 @@ fn mangle_stmt(stmt: &mut Spanned<Stmt>, class: Option<&str>) {
         | Stmt::Pass
         | Stmt::Break
         | Stmt::Continue
-        | Stmt::Import { .. }
-        | Stmt::TypeAlias { .. } => {}
+        | Stmt::Import { .. } => {}
     }
 }
 
@@ -248,6 +263,20 @@ fn mangle_param(p: &mut Param, class: Option<&str>) {
     mangle_in_place(&mut p.name, class);
     if let Some(d) = &mut p.default {
         mangle_expr(d, class);
+    }
+}
+
+fn mangle_type_param(param: &mut TypeParam, class: Option<&str>) {
+    if let Some(bound) = &mut param.bound {
+        mangle_expr(bound, class);
+    }
+    if let Some(constraints) = &mut param.constraints {
+        for constraint in constraints.iter_mut() {
+            mangle_expr(constraint, class);
+        }
+    }
+    if let Some(default) = &mut param.default {
+        mangle_expr(default, class);
     }
 }
 

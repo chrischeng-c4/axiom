@@ -78,5 +78,7 @@ fn parse_exec_source(source: &str) -> Option<crate::parser::ast::Module> {
     let tokens = lexer::lex(source, file_id);
     let mut parser = Parser::new(tokens, source, file_id);
     parser.skip_newlines();
-    parser.parse_module().ok()
+    let mut module = parser.parse_module().ok()?;
+    crate::parser::mangle_private_names(&mut module);
+    Some(module)
 }

@@ -36,6 +36,27 @@ pub const TYPEVAR_INTRINSIC: &str = "__mb_pep695_typevar__";
 /// Name of the TypeAliasType-construction intrinsic (see `runtime::pep695`).
 pub const TYPE_ALIAS_INTRINSIC: &str = "__mb_pep695_type_alias__";
 
+fn private_binding_name(name: &str, class_name: Option<&str>) -> Name {
+    if !name.starts_with("__") || name.ends_with("__") {
+        return name.to_string();
+    }
+    let Some(class_name) = class_name else {
+        return name.to_string();
+    };
+    let class_name = class_name.trim_start_matches('_');
+    if class_name.is_empty() {
+        return name.to_string();
+    }
+    format!("_{class_name}{name}")
+}
+
+fn type_param_binding_names(type_params: &[TypeParam], class_name: Option<&str>) -> Vec<Name> {
+    type_params
+        .iter()
+        .map(|param| private_binding_name(&param.name, class_name))
+        .collect()
+}
+
 /// Desugar all PEP 695 constructs in a module (in place).
 pub fn desugar_module(module: &mut Module) {
     let hoist = desugar_block(&mut module.stmts, false, &[], None, None);
@@ -47,8 +68,8 @@ fn sp(node: Expr, span: Span) -> Spanned<Expr> {
     Spanned::new(node, span)
 }
 
-/// Build `name = __mb_pep695_typevar__("name", kind, bound, constraints, default)`.
-fn typevar_assign(param: &TypeParam, span: Span) -> Spanned<Stmt> {
+/// Build `binding_name = __mb_pep695_typevar__("name", kind, bound, constraints, default)`.
+fn typevar_assign(param: &TypeParam, binding_name: &str, span: Span) -> Spanned<Stmt> {
     let kind = match param.kind {
         TypeParamKind::TypeVar => 0,
         TypeParamKind::TypeVarTuple => 1,
@@ -96,7 +117,7 @@ fn typevar_assign(param: &TypeParam, span: Span) -> Spanned<Stmt> {
     };
     Spanned::new(
         Stmt::Assign {
-            target: sp(Expr::Ident(param.name.clone()), span),
+            target: sp(Expr::Ident(binding_name.to_string()), span),
             value: sp(call, span),
         },
         span,
@@ -104,12 +125,12 @@ fn typevar_assign(param: &TypeParam, span: Span) -> Spanned<Stmt> {
 }
 
 /// Build a `(P1, P2, ...)` tuple expression referencing the typevar bindings.
-fn params_tuple(type_params: &[TypeParam], span: Span) -> Spanned<Expr> {
+fn params_tuple(binding_names: &[Name], span: Span) -> Spanned<Expr> {
     sp(
         Expr::TupleLit(
-            type_params
+            binding_names
                 .iter()
-                .map(|p| sp(Expr::Ident(p.name.clone()), span))
+                .map(|name| sp(Expr::Ident(name.clone()), span))
                 .collect(),
         ),
         span,
@@ -120,18 +141,13 @@ fn params_tuple(type_params: &[TypeParam], span: Span) -> Spanned<Expr> {
 fn attr_tuple_assign(
     path: &[Name],
     attr: &str,
-    type_params: &[TypeParam],
+    binding_names: &[Name],
     span: Span,
 ) -> Spanned<Stmt> {
-    attr_assign(path, attr, params_tuple(type_params, span), span)
+    attr_assign(path, attr, params_tuple(binding_names, span), span)
 }
 
-fn attr_assign(
-    path: &[Name],
-    attr: &str,
-    value: Spanned<Expr>,
-    span: Span,
-) -> Spanned<Stmt> {
+fn attr_assign(path: &[Name], attr: &str, value: Spanned<Expr>, span: Span) -> Spanned<Stmt> {
     let mut object = sp(Expr::Ident(path[0].clone()), span);
     for seg in &path[1..] {
         object = sp(
@@ -190,6 +206,16 @@ fn class_type_param_expr(path: &[Name], index: usize, span: Span) -> Spanned<Exp
 
 fn del_ident(name: &str, span: Span) -> Spanned<Stmt> {
     Spanned::new(Stmt::Del(sp(Expr::Ident(name.to_string()), span)), span)
+}
+
+fn alias_ident(target: &str, source: &str, span: Span) -> Spanned<Stmt> {
+    Spanned::new(
+        Stmt::Assign {
+            target: sp(Expr::Ident(target.to_string()), span),
+            value: sp(Expr::Ident(source.to_string()), span),
+        },
+        span,
+    )
 }
 
 fn collect_target_names(expr: &Expr, out: &mut HashSet<Name>) {
@@ -332,6 +358,72 @@ fn collect_runtime_type_param_uses_in_params(
     for param in params {
         if let Some(default) = &param.default {
             collect_runtime_type_param_uses_expr(default, type_param_names, out, shadowed);
+        }
+    }
+}
+
+fn rewrite_current_type_param_bindings_in_params(
+    params: &mut [crate::parser::ast::Param],
+    bindings: &HashMap<Name, Name>,
+    shadowed: &mut HashSet<Name>,
+) {
+    for param in params {
+        if let Some(default) = &mut param.default {
+            rewrite_current_type_param_bindings_expr(default, bindings, shadowed);
+        }
+    }
+}
+
+fn collect_runtime_type_param_uses_in_type_params(
+    type_params: &[TypeParam],
+    type_param_names: &HashSet<Name>,
+    out: &mut HashSet<Name>,
+    shadowed: &mut HashSet<Name>,
+) {
+    for param in type_params {
+        let inserted = shadowed.insert(param.name.clone());
+        if let Some(bound) = &param.bound {
+            collect_runtime_type_param_uses_expr(bound, type_param_names, out, shadowed);
+        }
+        if let Some(constraints) = &param.constraints {
+            for constraint in constraints {
+                collect_runtime_type_param_uses_expr(
+                    constraint,
+                    type_param_names,
+                    out,
+                    shadowed,
+                );
+            }
+        }
+        if let Some(default) = &param.default {
+            collect_runtime_type_param_uses_expr(default, type_param_names, out, shadowed);
+        }
+        if inserted {
+            shadowed.remove(&param.name);
+        }
+    }
+}
+
+fn rewrite_current_type_param_bindings_in_type_params(
+    type_params: &mut [TypeParam],
+    bindings: &HashMap<Name, Name>,
+    shadowed: &mut HashSet<Name>,
+) {
+    for param in type_params {
+        let inserted = shadowed.insert(param.name.clone());
+        if let Some(bound) = &mut param.bound {
+            rewrite_current_type_param_bindings_expr(bound, bindings, shadowed);
+        }
+        if let Some(constraints) = &mut param.constraints {
+            for constraint in constraints {
+                rewrite_current_type_param_bindings_expr(constraint, bindings, shadowed);
+            }
+        }
+        if let Some(default) = &mut param.default {
+            rewrite_current_type_param_bindings_expr(default, bindings, shadowed);
+        }
+        if inserted {
+            shadowed.remove(&param.name);
         }
     }
 }
@@ -510,6 +602,161 @@ fn collect_runtime_type_param_uses_expr(
     }
 }
 
+fn rewrite_current_type_param_bindings_expr(
+    expr: &mut Spanned<Expr>,
+    bindings: &HashMap<Name, Name>,
+    shadowed: &mut HashSet<Name>,
+) {
+    match &mut expr.node {
+        Expr::Ident(name) if !shadowed.contains(name) => {
+            if let Some(binding) = bindings.get(name) {
+                *name = binding.clone();
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            rewrite_current_type_param_bindings_expr(lhs, bindings, shadowed);
+            rewrite_current_type_param_bindings_expr(rhs, bindings, shadowed);
+        }
+        Expr::UnaryOp { operand, .. }
+        | Expr::Starred(operand)
+        | Expr::YieldFrom(operand)
+        | Expr::Await(operand) => {
+            rewrite_current_type_param_bindings_expr(operand, bindings, shadowed);
+        }
+        Expr::Call { func, args } => {
+            rewrite_current_type_param_bindings_expr(func, bindings, shadowed);
+            for arg in args {
+                match arg {
+                    CallArg::Positional(value)
+                    | CallArg::StarArg(value)
+                    | CallArg::DoubleStarArg(value)
+                    | CallArg::Keyword { value, .. } => {
+                        rewrite_current_type_param_bindings_expr(value, bindings, shadowed);
+                    }
+                }
+            }
+        }
+        Expr::Attr { object, .. } => {
+            rewrite_current_type_param_bindings_expr(object, bindings, shadowed);
+        }
+        Expr::Index { object, index } => {
+            rewrite_current_type_param_bindings_expr(object, bindings, shadowed);
+            rewrite_current_type_param_bindings_expr(index, bindings, shadowed);
+        }
+        Expr::Slice { start, stop, step } => {
+            for part in [start, stop, step].into_iter().flatten() {
+                rewrite_current_type_param_bindings_expr(part, bindings, shadowed);
+            }
+        }
+        Expr::ListLit(items)
+        | Expr::SetLit(items)
+        | Expr::TupleLit(items)
+        | Expr::UnpackTarget(items) => {
+            for item in items {
+                rewrite_current_type_param_bindings_expr(item, bindings, shadowed);
+            }
+        }
+        Expr::DictLit(entries) => {
+            for (key, value) in entries {
+                if let Some(key) = key {
+                    rewrite_current_type_param_bindings_expr(key, bindings, shadowed);
+                }
+                rewrite_current_type_param_bindings_expr(value, bindings, shadowed);
+            }
+        }
+        Expr::IfExpr {
+            body,
+            condition,
+            else_body,
+        } => {
+            rewrite_current_type_param_bindings_expr(body, bindings, shadowed);
+            rewrite_current_type_param_bindings_expr(condition, bindings, shadowed);
+            rewrite_current_type_param_bindings_expr(else_body, bindings, shadowed);
+        }
+        Expr::Lambda { params, body } => {
+            rewrite_current_type_param_bindings_in_params(params, bindings, shadowed);
+            let added: Vec<Name> = params
+                .iter()
+                .filter_map(|param| {
+                    if shadowed.insert(param.name.clone()) {
+                        Some(param.name.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            rewrite_current_type_param_bindings_expr(body, bindings, shadowed);
+            for name in added {
+                shadowed.remove(&name);
+            }
+        }
+        Expr::ListComp {
+            element,
+            generators,
+        }
+        | Expr::SetComp {
+            element,
+            generators,
+        }
+        | Expr::GeneratorExpr {
+            element,
+            generators,
+        } => {
+            rewrite_current_type_param_bindings_comprehension(
+                element, generators, bindings, shadowed,
+            );
+        }
+        Expr::DictComp {
+            key,
+            value,
+            generators,
+        } => {
+            rewrite_current_type_param_bindings_comprehension(key, generators, bindings, shadowed);
+            rewrite_current_type_param_bindings_expr(value, bindings, shadowed);
+        }
+        Expr::FString(parts) => {
+            for part in parts {
+                if let crate::parser::ast::FStringPart::Expr(value, format) = part {
+                    rewrite_current_type_param_bindings_expr(value, bindings, shadowed);
+                    if let Some(format) = format {
+                        for part in format {
+                            if let crate::parser::ast::FStringPart::Expr(value, _) = part {
+                                rewrite_current_type_param_bindings_expr(
+                                    value, bindings, shadowed,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Expr::Yield(value) => {
+            if let Some(value) = value {
+                rewrite_current_type_param_bindings_expr(value, bindings, shadowed);
+            }
+        }
+        Expr::Walrus { target, value } => {
+            rewrite_current_type_param_bindings_expr(value, bindings, shadowed);
+            shadowed.insert(target.clone());
+        }
+        Expr::ChainedCompare { operands, .. } => {
+            for operand in operands {
+                rewrite_current_type_param_bindings_expr(operand, bindings, shadowed);
+            }
+        }
+        Expr::IntLit(_)
+        | Expr::BigIntLit(_)
+        | Expr::FloatLit(_)
+        | Expr::ComplexLit(_)
+        | Expr::StrLit(_)
+        | Expr::BytesLit(_)
+        | Expr::BoolLit(_)
+        | Expr::NoneLit
+        | Expr::Ellipsis
+        | Expr::Ident(_) => {}
+    }
+}
+
 fn collect_runtime_type_param_uses_comprehension(
     element: &Spanned<Expr>,
     generators: &[crate::parser::ast::Comprehension],
@@ -530,6 +777,30 @@ fn collect_runtime_type_param_uses_comprehension(
         }
     }
     collect_runtime_type_param_uses_expr(element, type_param_names, out, shadowed);
+    for name in added {
+        shadowed.remove(&name);
+    }
+}
+
+fn rewrite_current_type_param_bindings_comprehension(
+    element: &mut Spanned<Expr>,
+    generators: &mut [crate::parser::ast::Comprehension],
+    bindings: &HashMap<Name, Name>,
+    shadowed: &mut HashSet<Name>,
+) {
+    let mut added = Vec::new();
+    for generator in generators {
+        rewrite_current_type_param_bindings_expr(&mut generator.iter, bindings, shadowed);
+        for target in &generator.targets {
+            if shadowed.insert(target.clone()) {
+                added.push(target.clone());
+            }
+        }
+        for condition in &mut generator.conditions {
+            rewrite_current_type_param_bindings_expr(condition, bindings, shadowed);
+        }
+    }
+    rewrite_current_type_param_bindings_expr(element, bindings, shadowed);
     for name in added {
         shadowed.remove(&name);
     }
@@ -595,6 +866,12 @@ fn collect_runtime_type_param_uses_stmt(
             for decorator in decorators {
                 collect_runtime_type_param_uses_expr(decorator, type_param_names, out, shadowed);
             }
+            collect_runtime_type_param_uses_in_type_params(
+                type_params,
+                type_param_names,
+                out,
+                shadowed,
+            );
             for base in bases {
                 collect_runtime_type_param_uses_expr(base, type_param_names, out, shadowed);
             }
@@ -1127,7 +1404,10 @@ struct AfterItem {
     /// each enclosing class prepends its own name while bubbling up.
     path: Vec<Name>,
     /// `(attr, params)` assignments, e.g. `("__type_params__", [T])`.
-    attrs: Vec<(String, Vec<TypeParam>)>,
+    attrs: Vec<(String, Vec<Name>)>,
+    /// Extra deferred attribute writes whose values are not simple type-param
+    /// tuples.
+    extra_attrs: Vec<(String, Spanned<Expr>)>,
     span: Span,
 }
 
@@ -1155,24 +1435,95 @@ fn desugar_block(
         for (attr, tps) in &item.attrs {
             out.push(attr_tuple_assign(&item.path, attr, tps, item.span));
         }
+        for (attr, value) in &item.extra_attrs {
+            out.push(attr_assign(&item.path, attr, value.clone(), item.span));
+        }
     }
 
     for mut st in old {
-        let stmt_class_locals = in_class.then(|| collect_class_local_names(std::slice::from_ref(&st)));
+        let stmt_class_locals =
+            in_class.then(|| collect_class_local_names(std::slice::from_ref(&st)));
         let span = st.span;
         match &mut st.node {
             // ── class definitions (recursion + emission together) ──
             Stmt::ClassDef {
                 name,
                 type_params,
+                decorators,
+                bases,
+                keyword_args,
                 body,
                 ..
             } => {
                 let name = name.clone();
+                let binding_names = type_param_binding_names(type_params, Some(name.as_str()));
+                let binding_map: HashMap<Name, Name> = type_params
+                    .iter()
+                    .zip(binding_names.iter())
+                    .filter(|(param, binding_name)| &param.name != *binding_name)
+                    .map(|(param, binding_name)| (param.name.clone(), binding_name.clone()))
+                    .collect();
+                if !binding_map.is_empty() {
+                    rewrite_current_type_param_bindings_in_type_params(
+                        type_params,
+                        &binding_map,
+                        &mut HashSet::new(),
+                    );
+                    for decorator in decorators.iter_mut() {
+                        rewrite_current_type_param_bindings_expr(
+                            decorator,
+                            &binding_map,
+                            &mut HashSet::new(),
+                        );
+                    }
+                    for base in bases.iter_mut() {
+                        rewrite_current_type_param_bindings_expr(
+                            base,
+                            &binding_map,
+                            &mut HashSet::new(),
+                        );
+                    }
+                    for (_, value) in keyword_args.iter_mut() {
+                        rewrite_current_type_param_bindings_expr(
+                            value,
+                            &binding_map,
+                            &mut HashSet::new(),
+                        );
+                    }
+                }
                 let tps = type_params.clone();
-                let type_param_names: HashSet<Name> =
-                    tps.iter().map(|param| param.name.clone()).collect();
+                let type_param_names: HashSet<Name> = binding_names.iter().cloned().collect();
                 let mut runtime_type_param_uses = HashSet::new();
+                for decorator in decorators.iter() {
+                    collect_runtime_type_param_uses_expr(
+                        decorator,
+                        &type_param_names,
+                        &mut runtime_type_param_uses,
+                        &mut HashSet::new(),
+                    );
+                }
+                collect_runtime_type_param_uses_in_type_params(
+                    type_params,
+                    &type_param_names,
+                    &mut runtime_type_param_uses,
+                    &mut HashSet::new(),
+                );
+                for base in bases.iter() {
+                    collect_runtime_type_param_uses_expr(
+                        base,
+                        &type_param_names,
+                        &mut runtime_type_param_uses,
+                        &mut HashSet::new(),
+                    );
+                }
+                for (_, value) in keyword_args.iter() {
+                    collect_runtime_type_param_uses_expr(
+                        value,
+                        &type_param_names,
+                        &mut runtime_type_param_uses,
+                        &mut HashSet::new(),
+                    );
+                }
                 collect_runtime_type_param_uses_block(
                     body,
                     &type_param_names,
@@ -1181,31 +1532,31 @@ fn desugar_block(
                 );
                 let mut nested_path = class_path.to_vec();
                 nested_path.push(name.clone());
-                let nested_type_params: HashMap<Name, usize> = tps
+                let nested_type_params: HashMap<Name, usize> = binding_names
                     .iter()
                     .enumerate()
-                    .map(|(index, param)| (param.name.clone(), index))
+                    .map(|(index, binding_name)| (binding_name.clone(), index))
                     .collect();
-                let mut h = desugar_block(
-                    body,
-                    true,
-                    &nested_path,
-                    None,
-                    Some(&nested_type_params),
-                );
+                let mut h =
+                    desugar_block(body, true, &nested_path, None, Some(&nested_type_params));
                 // Items leaving this class body gain its name as path prefix.
                 for item in &mut h.after {
                     item.path.insert(0, name.clone());
                 }
-                let tv_assigns: Vec<Spanned<Stmt>> =
-                    tps.iter().map(|p| typevar_assign(p, span)).collect();
+                let mut tv_assigns: Vec<Spanned<Stmt>> = Vec::new();
+                for (param, binding_name) in tps.iter().zip(binding_names.iter()) {
+                    tv_assigns.push(typevar_assign(param, binding_name, span));
+                    if binding_name != &param.name {
+                        tv_assigns.push(alias_ident(&param.name, binding_name, span));
+                    }
+                }
                 let attrs = if tps.is_empty() {
                     Vec::new()
                 } else {
                     vec![
-                        ("__type_params__".to_string(), tps.clone()),
+                        ("__type_params__".to_string(), binding_names.clone()),
                         // Generic classes also expose a matching __parameters__.
-                        ("__parameters__".to_string(), tps.clone()),
+                        ("__parameters__".to_string(), binding_names.clone()),
                     ]
                 };
                 if in_class {
@@ -1220,6 +1571,7 @@ fn desugar_block(
                             tv_assigns: Vec::new(),
                             path: vec![name],
                             attrs,
+                            extra_attrs: Vec::new(),
                             span,
                         });
                     }
@@ -1228,12 +1580,17 @@ fn desugar_block(
                     out.extend(h.before);
                     out.extend(tv_assigns);
                     out.push(st);
-                    for (attr, ps) in &attrs {
-                        out.push(attr_tuple_assign(&[name.clone()], attr, ps, span));
+                    for (attr, binding_names) in &attrs {
+                        out.push(attr_tuple_assign(&[name.clone()], attr, binding_names, span));
                     }
-                    for param in &tps {
-                        if !runtime_type_param_uses.contains(&param.name) {
+                    for (param, binding_name) in tps.iter().zip(binding_names.iter()) {
+                        if binding_name != &param.name {
                             out.push(del_ident(&param.name, span));
+                        }
+                    }
+                    for binding_name in &binding_names {
+                        if !runtime_type_param_uses.contains(binding_name) {
+                            out.push(del_ident(binding_name, span));
                         }
                     }
                     for item in h.after {
@@ -1266,6 +1623,18 @@ fn desugar_block(
                 }
                 let name = name.clone();
                 let tps = type_params.clone();
+                let binding_names =
+                    type_param_binding_names(&tps, class_path.last().map(String::as_str));
+                let extra_attrs = class_type_params
+                    .filter(|type_params_by_name| !type_params_by_name.is_empty())
+                    .filter(|_| !class_path.is_empty())
+                    .map(|_| {
+                        vec![(
+                            "__mb_class_type_params__".to_string(),
+                            class_attr_expr(class_path, "__type_params__", span),
+                        )]
+                    })
+                    .unwrap_or_default();
                 let _ = desugar_block(body, false, &[], None, None);
                 if tps.is_empty() {
                     out.push(st);
@@ -1274,14 +1643,18 @@ fn desugar_block(
                             tv_assigns: Vec::new(),
                             path: vec![name],
                             attrs: vec![("__type_params__".to_string(), Vec::new())],
+                            extra_attrs,
                             span,
                         });
                     } else {
                         out.push(attr_tuple_assign(&[name], "__type_params__", &[], span));
                     }
                 } else {
-                    let tv_assigns: Vec<Spanned<Stmt>> =
-                        tps.iter().map(|p| typevar_assign(p, span)).collect();
+                    let tv_assigns: Vec<Spanned<Stmt>> = tps
+                        .iter()
+                        .zip(binding_names.iter())
+                        .map(|(param, binding_name)| typevar_assign(param, binding_name, span))
+                        .collect();
                     if in_class {
                         // Defer the whole wiring to after the enclosing class
                         // so a same-named class param's already-captured tuple
@@ -1290,7 +1663,8 @@ fn desugar_block(
                         hoist_up.after.push(AfterItem {
                             tv_assigns,
                             path: vec![name],
-                            attrs: vec![("__type_params__".to_string(), tps)],
+                            attrs: vec![("__type_params__".to_string(), binding_names)],
+                            extra_attrs,
                             span,
                         });
                     } else {
@@ -1303,7 +1677,12 @@ fn desugar_block(
                         // enclosing scope.
                         out.push(st);
                         out.extend(tv_assigns);
-                        out.push(attr_tuple_assign(&[name], "__type_params__", &tps, span));
+                        out.push(attr_tuple_assign(
+                            &[name],
+                            "__type_params__",
+                            &binding_names,
+                            span,
+                        ));
                     }
                 }
             }
@@ -1315,6 +1694,8 @@ fn desugar_block(
             } => {
                 let name = name.clone();
                 let tps = type_params.clone();
+                let binding_names =
+                    type_param_binding_names(&tps, class_path.last().map(String::as_str));
                 let mut value = value.clone();
                 if let (true, Some(type_params)) = (in_class, class_type_params) {
                     if !class_path.is_empty() {
@@ -1332,8 +1713,11 @@ fn desugar_block(
                 // Param typevars must exist when the alias's constructor call
                 // runs (it captures the params tuple eagerly), so they go
                 // before the (outermost) class statement when in a class body.
-                let tv_assigns: Vec<Spanned<Stmt>> =
-                    tps.iter().map(|p| typevar_assign(p, span)).collect();
+                let tv_assigns: Vec<Spanned<Stmt>> = tps
+                    .iter()
+                    .zip(binding_names.iter())
+                    .map(|(param, binding_name)| typevar_assign(param, binding_name, span))
+                    .collect();
                 if in_class {
                     hoist_up.before.extend(tv_assigns);
                 } else {
@@ -1373,7 +1757,7 @@ fn desugar_block(
                     args: vec![
                         CallArg::Positional(sp(Expr::StrLit(name.clone()), span)),
                         CallArg::Positional(thunk),
-                        CallArg::Positional(params_tuple(&tps, span)),
+                        CallArg::Positional(params_tuple(&binding_names, span)),
                     ],
                 };
                 out.push(Spanned::new(
@@ -1743,6 +2127,171 @@ mod tests {
             },
             other => panic!("expected Assign, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn private_class_typevar_binding_uses_mangled_scope_name() {
+        let m = desugared("class Foo[__T]:\n    param = __T\n");
+        let Stmt::Assign { target, value } = &m.stmts[0].node else {
+            panic!("expected hoisted typevar assignment");
+        };
+        assert!(matches!(&target.node, Expr::Ident(name) if name == "_Foo__T"));
+        let Expr::Call { args, .. } = &value.node else {
+            panic!("expected typevar constructor");
+        };
+        assert!(matches!(
+            args.first(),
+            Some(CallArg::Positional(arg)) if matches!(&arg.node, Expr::StrLit(name) if name == "__T")
+        ));
+        let Stmt::Assign { value, .. } = &m.stmts[2].node else {
+            panic!("expected __type_params__ assignment");
+        };
+        let Expr::TupleLit(items) = &value.node else {
+            panic!("expected params tuple");
+        };
+        assert!(matches!(
+            items.first(),
+            Some(item) if matches!(&item.node, Expr::Ident(name) if name == "_Foo__T")
+        ));
+    }
+
+    #[test]
+    fn private_class_bound_keeps_referenced_mangled_binding_alive() {
+        let m = desugared("class Foo[__T, __U: __T]:\n    pass\n");
+        assert!(m.stmts.iter().any(|stmt| {
+            matches!(
+                &stmt.node,
+                Stmt::Del(expr) if matches!(&expr.node, Expr::Ident(name) if name == "_Foo__U")
+            )
+        }));
+        assert!(!m.stmts.iter().any(|stmt| {
+            matches!(
+                &stmt.node,
+                Stmt::Del(expr) if matches!(&expr.node, Expr::Ident(name) if name == "_Foo__T")
+            )
+        }));
+    }
+
+    #[test]
+    fn private_class_base_lazy_expr_uses_mangled_type_param_binding() {
+        let m = desugared("class Foo[__T](make_base(lambda: __T)):\n    pass\n");
+        let class_bases = m
+            .stmts
+            .iter()
+            .find_map(|stmt| match &stmt.node {
+                Stmt::ClassDef { name, bases, .. } if name == "Foo" => Some(bases),
+                _ => None,
+            })
+            .expect("expected Foo class");
+        let Expr::Call { args, .. } = &class_bases[0].node else {
+            panic!("expected base constructor call");
+        };
+        let Some(CallArg::Positional(arg)) = args.first() else {
+            panic!("expected lambda base argument");
+        };
+        let Expr::Lambda { body, .. } = &arg.node else {
+            panic!("expected lazy base lambda");
+        };
+        assert!(matches!(&body.node, Expr::Ident(name) if name == "_Foo__T"));
+        assert!(!m.stmts.iter().any(|stmt| {
+            matches!(
+                &stmt.node,
+                Stmt::Del(expr) if matches!(&expr.node, Expr::Ident(name) if name == "_Foo__T")
+            )
+        }));
+    }
+
+    #[test]
+    fn method_annotations_capture_enclosing_class_type_params() {
+        let m = desugared("class Foo[T]:\n    def meth(self, arg: T):\n        return arg\n");
+        assert!(m.stmts.iter().any(|stmt| {
+            matches!(
+                &stmt.node,
+                Stmt::Assign { target, value }
+                    if matches!(
+                        &target.node,
+                        Expr::Attr { object, attr }
+                            if attr == "__mb_class_type_params__"
+                                && matches!(
+                                    &object.node,
+                                    Expr::Attr { object: cls, attr: meth }
+                                        if meth == "meth"
+                                            && matches!(&cls.node, Expr::Ident(name) if name == "Foo")
+                                )
+                    )
+                        && matches!(
+                            &value.node,
+                            Expr::Attr { object, attr }
+                                if attr == "__type_params__"
+                                    && matches!(&object.node, Expr::Ident(name) if name == "Foo")
+                        )
+            )
+        }));
+    }
+
+    #[test]
+    fn private_method_and_alias_typevar_bindings_use_mangled_scope_names() {
+        let m = desugared(
+            "class Foo:\n    def meth[__U](self):\n        return __U\n    type Alias[__V] = __V\n",
+        );
+        assert!(matches!(
+            &m.stmts[0].node,
+            Stmt::Assign { target, value }
+                if matches!(&target.node, Expr::Ident(name) if name == "_Foo__V")
+                    && matches!(
+                        &value.node,
+                        Expr::Call { args, .. }
+                            if matches!(
+                                args.first(),
+                                Some(CallArg::Positional(arg))
+                                    if matches!(&arg.node, Expr::StrLit(name) if name == "__V")
+                            )
+                    )
+        ));
+        assert!(matches!(
+            &m.stmts[2].node,
+            Stmt::Assign { target, value }
+                if matches!(&target.node, Expr::Ident(name) if name == "_Foo__U")
+                    && matches!(
+                        &value.node,
+                        Expr::Call { args, .. }
+                            if matches!(
+                                args.first(),
+                                Some(CallArg::Positional(arg))
+                                    if matches!(&arg.node, Expr::StrLit(name) if name == "__U")
+                            )
+                    )
+        ));
+        let Stmt::Assign { target, value } = &m.stmts[4].node else {
+            panic!("expected real alias assignment");
+        };
+        assert!(matches!(&target.node, Expr::Ident(name) if name == "Alias"));
+        let Expr::Call { args, .. } = &value.node else {
+            panic!("expected type alias constructor");
+        };
+        assert!(matches!(
+            args.get(2),
+            Some(CallArg::Positional(arg))
+                if matches!(
+                    &arg.node,
+                    Expr::TupleLit(items)
+                        if matches!(
+                            items.first(),
+                            Some(item)
+                                if matches!(&item.node, Expr::Ident(name) if name == "_Foo__V")
+                        )
+                )
+        ));
+        let Stmt::Assign { value, .. } = &m.stmts[3].node else {
+            panic!("expected method __type_params__ assignment");
+        };
+        let Expr::TupleLit(items) = &value.node else {
+            panic!("expected method params tuple");
+        };
+        assert!(matches!(
+            items.first(),
+            Some(item) if matches!(&item.node, Expr::Ident(name) if name == "_Foo__U")
+        ));
     }
 
     #[test]
