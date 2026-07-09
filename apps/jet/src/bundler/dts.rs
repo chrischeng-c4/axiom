@@ -1950,5 +1950,82 @@ export const uploadApi = {
         );
         assert!(dts.contains("export declare const VALUE: number;"));
     }
+
+    #[test]
+    fn infers_exported_const_plain_object_literal_as_expression_signature() {
+        // R1 (#937): minimal repro -- a plain object-literal `expr as Type`
+        // const initializer must emit the asserted type with the initializer
+        // dropped, not an isolatedDeclarations error.
+        let src = r#"interface Foo {
+    a: number;
+}
+export const asCastConst = { a: 1 } as Foo;
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare const asCastConst: Foo;"),
+            "plain object-literal as-expression should use its asserted type, got:\n{dts}"
+        );
+        assert!(
+            !dts.contains("{ a: 1 }"),
+            "const initializer must be dropped, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_function_return_via_local_variable_as_expression() {
+        // R2 (#937): minimal repro -- a function that assigns to a local
+        // variable and returns it cast via `x as Type` must resolve through
+        // the cast, not the (unresolvable) local variable.
+        let src = r#"interface Foo {
+    a: number;
+}
+export function asCastReturn() {
+    const x: unknown = { a: 1 };
+    return x as Foo;
+}
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare function asCastReturn(): Foo;"),
+            "local-variable-then-cast return should use its asserted type, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_const_identifier_as_expression_signature() {
+        // R3 (#937): WI #937 cited real-code `SpAlert` shape -- a bare
+        // identifier cast via `as Type`, confirming the fix is not limited
+        // to object-literal initializers.
+        let src = r#"interface AlertInterface {
+    type: string;
+}
+export const SpAlert = Alert as AlertInterface;
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare const SpAlert: AlertInterface;"),
+            "identifier as-expression should use its asserted type, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn uninferrable_exported_function_return_of_local_variable_without_as_expression_errors() {
+        // R4 (#937): negative control -- same local-variable-return shape as
+        // R2 but with the `as Foo` cast removed. Must still raise an
+        // isolatedDeclarations error, proving `annotated_expression_type`
+        // stays scoped to explicit `as`/`satisfies` casts and does not
+        // broaden return-expression inference to uncast local variables.
+        let src = r#"export function notCast() {
+    const x: unknown = { a: 1 };
+    return x;
+}
+"#;
+        let err = emit_declarations(src).unwrap_err();
+        assert!(
+            err.to_string().contains("isolatedDeclarations"),
+            "uncast local-variable return must stay fail-loud, got: {err}"
+        );
+    }
 }
 // </HANDWRITE>
