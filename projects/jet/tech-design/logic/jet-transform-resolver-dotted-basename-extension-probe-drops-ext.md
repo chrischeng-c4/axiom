@@ -72,3 +72,42 @@ Root cause: both extension-probe call sites in `projects/jet/src/transform/modul
 The sibling graph-walk resolver at `projects/jet/src/resolver/mod.rs::append_extension` already does this correctly: it builds the OS string by direct concatenation (`base.as_os_str().to_os_string()` then `path.push("."); path.push(ext.trim_start_matches('.'))`), which is agnostic to any `.` already present in the base name — the full original path is always preserved and the extension is only ever appended, never substituted. `resolver/mod.rs::try_extensions` calls this helper per candidate extension and is out of scope for this fix (already correct, per WI Out of Scope).
 
 Fix (R1): add a private `append_extension(base: &Path, ext: &str) -> PathBuf` helper to `projects/jet/src/transform/modules.rs` — functionally identical to (and directly modeled on) `resolver/mod.rs::append_extension` — and replace every `let mut p = candidate.to_path_buf(); p.set_extension(&ext[1..]); p` / `test_path.set_extension(&ext[1..])` call site (`lookup_file_module_id_with_extensions`, and both probe loops inside `resolve_module_path`) with `append_extension(&candidate, ext)` / `append_extension(&test_path_base, ext)`. The candidate/extension lists themselves (`["", ".js", ".jsx", ".ts", ".tsx", ".json"]` for `lookup_file_module_id_with_extensions`; `["", ".js", ".jsx", ".ts", ".tsx"]` for `resolve_module_path`'s two loops) are unchanged — this fix is scoped purely to how each extension candidate path is built, not which extensions are probed or in what order, and does not touch `resolver/mod.rs`, `alias.rs`, TS path-alias resolution, or Node builtin polyfill wiring (all explicitly Out of Scope on WI #1304).
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: jet-transform-resolver-dotted-basename-extension-probe-verification
+requirements:
+  append_extension_preserves_dotted_basename_unit:
+    id: R4
+    text: "Isolated unit-level pin on the new transform/modules.rs append_extension helper itself (introduced to mirror resolver/mod.rs::append_extension): appending extension 'ts' to base path '.../router.config' must yield '.../router.config.ts', not '.../router.ts' -- pinning the exact string-concatenation semantics (append, never replace-after-last-dot) that R1-R3 depend on at the full-pipeline level."
+    kind: functional
+    risk: low
+    verify: cargo test -p jet --lib transform::modules::tests::append_extension_appends_without_replacing_dotted_basename
+  dotted_basename_extensionless_relative_import_resolves_full_pipeline:
+    id: R1
+    text: "WI #1304 AC1 minimal repro at the full Bundler::bundle() pipeline level: an entry module with a relative import of a dotted-basename file with no extension, e.g. import x from './router.config' resolving on disk to router.config.ts, must resolve through the complete bundle (build_graph -> resolve_module_path -> transform -> generate_bundle): the emitted BundleOutput.code must contain no literal unresolved specifier string (no require('./router.config') / require(\"./router.config\") substring survives), and the target module's transformed body (a unique marker token from router.config.ts) must be present in the bundle's _mods map."
+    kind: functional
+    risk: high
+    verify: cargo test -p jet --lib transform::modules::tests::bundle_resolves_dotted_basename_extensionless_relative_import
+  legacy_cjs_nested_dotted_basename_relative_import_resolves_full_pipeline:
+    id: R2
+    text: "WI #1304 AC2: the equivalent full Bundler::bundle() pipeline regression test for a legacy-CJS-style nested relative import with a dotted basename inside a library-style subdirectory, e.g. require('../../modules/es6.object.assign') resolving on disk to modules/es6.object.assign.js, must resolve through the complete bundle with no literal unresolved specifier string surviving in BundleOutput.code (no require('../../modules/es6.object.assign') substring) and the target module's transformed body present in _mods."
+    kind: functional
+    risk: high
+    verify: cargo test -p jet --lib transform::modules::tests::bundle_resolves_legacy_cjs_nested_dotted_basename_relative_import
+  plain_extensionless_relative_import_regression_control:
+    id: R3
+    text: "Negative/no-regression control at the same full-pipeline level: a relative import of a plain (non-dotted) extensionless basename, e.g. import x from './utils' resolving to utils.ts, must continue to resolve exactly as before the fix (no literal unresolved specifier string in BundleOutput.code, target body present in _mods) -- proving the switch from PathBuf::set_extension to the new append_extension helper does not change behavior for the already-correct non-dotted-basename case."
+    kind: regression
+    risk: medium
+    verify: cargo test -p jet --lib transform::modules::tests::bundle_resolves_plain_extensionless_relative_import_unchanged
+---
+flowchart TD
+    r1[R1 dotted basename extensionless relative import resolves full pipeline] --> cargo_test_p_jet_lib_transform_modules_tests_bundle_resolves_dotted_basename_extensionless_relative_import[cargo test -p jet --lib transform::modules::tests::bundle_resolves_dotted_basename_extensionless_relative_import]
+    r2[R2 legacy cjs nested dotted basename relative import resolves full pipeline] --> cargo_test_p_jet_lib_transform_modules_tests_bundle_resolves_legacy_cjs_nested_dotted_basename_relative_import[cargo test -p jet --lib transform::modules::tests::bundle_resolves_legacy_cjs_nested_dotted_basename_relative_import]
+    r3[R3 plain extensionless relative import regression control] --> cargo_test_p_jet_lib_transform_modules_tests_bundle_resolves_plain_extensionless_relative_import_unchanged[cargo test -p jet --lib transform::modules::tests::bundle_resolves_plain_extensionless_relative_import_unchanged]
+    r4[R4 append extension preserves dotted basename unit] --> cargo_test_p_jet_lib_transform_modules_tests_append_extension_appends_without_replacing_dotted_basename[cargo test -p jet --lib transform::modules::tests::append_extension_appends_without_replacing_dotted_basename]
+```
