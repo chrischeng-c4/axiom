@@ -191,7 +191,12 @@ pub fn query_shapes() -> Value {
               "request": { "query": { "range": { "field": "price", "gte": 100 } },
                            "sort": [ { "field": "price", "order": "asc" } ], "track_total": false, "limit": 20 } },
             { "name": "duplicates", "description": "find external_ids sharing a value (POST /collections/{id}/duplicates)",
-              "request": { "field": "email", "min_group_size": 2, "limit": 100 } }
+              "request": { "field": "email", "min_group_size": 2, "limit": 100 } },
+            { "name": "index", "description": "index one or more field values (POST /collections/{id}/index); the wire shape is FLAT — {items:[{external_id,field,value}]} — not the nested {id, fields:{...}} shape a caller might assume",
+              "request": { "items": [
+                  { "external_id": "row-42", "field": "email", "value": "person@example.com" },
+                  { "external_id": "row-42", "field": "price", "value": 79 }
+              ] } }
         ]
     })
 }
@@ -255,6 +260,13 @@ Use the smallest topic that answers the task:
 - `lumen spec --format openapi-yaml` — OpenAPI YAML for LLM/agent reading.
 - `lumen spec` — OpenAPI JSON, JSON-schema, query-shape, field, analyzer, and
   vector metric catalogs.
+- `lumen connect` — manage a `kubectl port-forward` for the duration of a
+  wrapped command against a k8s-deployed Lumen instance (`--cr`/`--service` +
+  `--namespace`); resolves a bearer token from the deployment's
+  token-registry Secret and tears the port-forward down when the command exits.
+- `lumen query index|search|duplicates|collections list` — one-shot query
+  wrappers against a reachable node (`--url`/`LUMEN_URL`,
+  `--token`/`LUMEN_TOKEN`); request bodies match `lumen spec --shapes`.
 "#
     .to_string()
 }
@@ -724,6 +736,21 @@ The response is `{ "hits": [ { "external_id", "score" } ], ... }`. Fetch the ful
 records from YOUR store by those `external_id`s — lumen never stored them.
 
 More shapes: `lumen llm --topic recipes`. Full schema: `lumen spec`.
+
+## Agent-friendly one-shot wrappers
+No need to hand-build curl bodies or track a port-forward yourself:
+
+```bash
+lumen connect --namespace prod --cr search -- \
+  lumen query index --collection products --item 'p1:title=wireless earbuds'
+lumen query search --collection products --match 'title=earbuds' --limit 10
+lumen query duplicates --collection products --field email
+lumen query collections list
+```
+
+`lumen connect` manages the `kubectl port-forward` and sets
+`LUMEN_URL`/`LUMEN_TOKEN` for the wrapped command; `lumen query *` assembles
+the exact wire body (same shapes as `lumen spec --shapes`).
 "#
     .to_string()
 }
