@@ -2009,6 +2009,19 @@ fn pattern_is_bytes(pattern: MbValue) -> bool {
     false
 }
 
+pub(crate) fn validate_sub_replacement(repl: MbValue) -> bool {
+    if extract_str(repl).is_some()
+        || super::super::builtins::mb_callable(repl).as_bool() == Some(true)
+    {
+        return true;
+    }
+    raise_type_error(&format!(
+        "expected string or bytes-like object or callable, got '{}'",
+        super::super::builtins::value_type_name(repl)
+    ));
+    false
+}
+
 fn sub_engine(
     pattern: MbValue,
     repl: MbValue,
@@ -2038,6 +2051,9 @@ fn sub_engine(
     }
     let pat = extract_str(pattern)?;
     let text = extract_str(string)?;
+    if !validate_sub_replacement(repl) {
+        return None;
+    }
     let template = extract_str(repl);
     let max_count = count.as_int().unwrap_or(0).max(0);
 
@@ -2549,6 +2565,18 @@ mod tests {
     fn test_sub() {
         let result = mb_re_sub(s("\\d+"), s("X"), s("abc123def456"));
         assert_eq!(extract_str(result).unwrap(), "abcXdefX");
+    }
+
+    #[test]
+    fn test_sub_wrong_replacement_type_raises_type_error() {
+        crate::runtime::exception::mb_clear_exception();
+        let result = mb_re_sub(s("\\d+"), MbValue::from_int(12345), s("abc123def456"));
+        assert_eq!(extract_str(result).as_deref(), Some("abc123def456"));
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        crate::runtime::exception::mb_clear_exception();
     }
 
     #[test]
