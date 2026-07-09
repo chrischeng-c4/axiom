@@ -316,9 +316,29 @@ unsafe extern "C" fn dispatch_register_archive_format(
     }
     MbValue::none()
 }
-dispatch_variadic_none!(dispatch_register_unpack_format);
 dispatch_variadic_none!(dispatch_unregister_archive_format);
 dispatch_variadic_none!(dispatch_unregister_unpack_format);
+
+/// register_unpack_format(name, extensions, function, extra_args=None,
+/// description='').
+/// Registration stays a no-op, but CPython still requires `name` to be a str
+/// when it is provided positionally.
+unsafe extern "C" fn dispatch_register_unpack_format(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    if let Some(name) = a.first().copied() {
+        if extract_str(name).is_none() {
+            return raise_named("TypeError", "name must be a str");
+        }
+    }
+    MbValue::none()
+}
 
 /// Register the shutil module.
 pub fn register() {
@@ -1027,6 +1047,7 @@ pub fn mb_shutil_empty_list() -> MbValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::super::exception::{current_exception_type, mb_clear_exception};
 
     fn s(val: &str) -> MbValue {
         MbValue::from_ptr(MbObject::new_str(val.to_string()))
@@ -1191,5 +1212,29 @@ mod tests {
         assert_eq!(name.as_deref(), Some("SameFileError"));
         let module = instance_field(err, "__module__").and_then(extract_str);
         assert_eq!(module.as_deref(), Some("shutil"));
+    }
+
+    #[test]
+    fn test_register_unpack_format_rejects_non_string_name() {
+        mb_clear_exception();
+        let args = [
+            MbValue::from_int(12345),
+            MbValue::none(),
+            MbValue::none(),
+            MbValue::none(),
+        ];
+        let out = unsafe { dispatch_register_unpack_format(args.as_ptr(), args.len()) };
+        assert!(out.is_none());
+        assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        mb_clear_exception();
+    }
+
+    #[test]
+    fn test_register_unpack_format_accepts_string_name() {
+        mb_clear_exception();
+        let args = [s("zip"), MbValue::none(), MbValue::none(), MbValue::none()];
+        let out = unsafe { dispatch_register_unpack_format(args.as_ptr(), args.len()) };
+        assert!(out.is_none());
+        assert!(current_exception_type().is_none());
     }
 }
