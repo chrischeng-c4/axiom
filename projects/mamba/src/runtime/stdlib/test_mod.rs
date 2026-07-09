@@ -1217,6 +1217,157 @@ fn register_support_submodules() {
         attrs
     }
 
+    fn str_value(s: &str) -> MbValue {
+        MbValue::from_ptr(MbObject::new_str(s.to_string()))
+    }
+
+    fn annotation_dict(entries: &[(&str, MbValue)]) -> MbValue {
+        let annotations = super::super::dict_ops::mb_dict_new();
+        for (name, value) in entries {
+            super::super::dict_ops::mb_dict_setitem(annotations, str_value(name), *value);
+        }
+        annotations
+    }
+
+    fn set_class_attr(class_name: &str, attr_name: &str, value: MbValue) {
+        super::super::class::mb_class_set_class_attr(
+            str_value(class_name),
+            str_value(attr_name),
+            value,
+        );
+    }
+
+    fn make_type_alias_stub(name: &str, module_name: &str, value_thunk: usize) -> MbValue {
+        let alias = super::super::pep695::mb_pep695_type_alias(
+            str_value(name),
+            MbValue::from_func(value_thunk),
+            MbValue::from_ptr(MbObject::new_tuple(vec![])),
+        );
+        super::super::pep695::instance_field_set_pub(alias, "__module__", str_value(module_name));
+        alias
+    }
+
+    fn register_module_class(module_name: &str, class_name: &str, exported_name: &str) -> MbValue {
+        super::super::class::mb_class_register(class_name, vec![], HashMap::new());
+        set_class_attr(class_name, "__module__", str_value(module_name));
+        set_class_attr(class_name, "__name__", str_value(exported_name));
+        super::super::builtins::make_type_object(class_name)
+    }
+
+    fn register_typinganndata_mod_generics_cache_submodule(value_thunk: usize) {
+        const MODULE_NAME: &str = "test.typinganndata.mod_generics_cache";
+        const A_CLASS: &str = "test.typinganndata.mod_generics_cache.A";
+        const OLD_STYLE_CLASS: &str = "test.typinganndata.mod_generics_cache.OldStyle";
+
+        let mut attrs = HashMap::new();
+        attrs.insert(
+            "A".to_string(),
+            register_module_class(MODULE_NAME, A_CLASS, "A"),
+        );
+        attrs.insert(
+            "Alias".to_string(),
+            make_type_alias_stub("Alias", MODULE_NAME, value_thunk),
+        );
+        attrs.insert(
+            "OldStyle".to_string(),
+            register_module_class(MODULE_NAME, OLD_STYLE_CLASS, "OldStyle"),
+        );
+        super::register_module(MODULE_NAME, attrs);
+    }
+
+    fn register_typinganndata_ann_module8_submodule(noop: usize) {
+        const MODULE_NAME: &str = "test.typinganndata.ann_module8";
+        const OUTER_CLASS: &str = "test.typinganndata.ann_module8.NoTypeCheck_Outer";
+        const INNER_CLASS: &str = "test.typinganndata.ann_module8.NoTypeCheck_Outer.Inner";
+
+        let inner = register_module_class(MODULE_NAME, INNER_CLASS, "Inner");
+        let outer = register_module_class(MODULE_NAME, OUTER_CLASS, "NoTypeCheck_Outer");
+        set_class_attr(OUTER_CLASS, "Inner", inner);
+
+        let mut attrs = make_attrs(&[("NoTypeCheck_function", noop)]);
+        attrs.insert("NoTypeCheck_Outer".to_string(), outer);
+        super::register_module(MODULE_NAME, attrs);
+    }
+
+    fn register_typinganndata_typed_dict_helper_submodule() {
+        const MODULE_NAME: &str = "test.typinganndata._typed_dict_helper";
+        const FOO_CLASS: &str = "_test_typinganndata_typed_dict_helper_Foo";
+        const FOO_GENERIC_CLASS: &str = "_test_typinganndata_typed_dict_helper_FooGeneric";
+        const VERY_ANNOTATED_CLASS: &str = "_test_typinganndata_typed_dict_helper_VeryAnnotated";
+
+        let int_type = super::super::builtins::make_type_object("int");
+
+        super::super::class::mb_class_register(
+            FOO_CLASS,
+            vec!["TypedDict".to_string()],
+            HashMap::new(),
+        );
+        set_class_attr(FOO_CLASS, "__module__", str_value(MODULE_NAME));
+        set_class_attr(FOO_CLASS, "__annotations__", annotation_dict(&[("a", int_type)]));
+
+        super::super::class::mb_class_register(
+            FOO_GENERIC_CLASS,
+            vec!["TypedDict".to_string(), "typing.Generic".to_string()],
+            HashMap::new(),
+        );
+        set_class_attr(FOO_GENERIC_CLASS, "__module__", str_value(MODULE_NAME));
+        set_class_attr(
+            FOO_GENERIC_CLASS,
+            "__annotations__",
+            annotation_dict(&[("a", int_type)]),
+        );
+
+        super::super::class::mb_class_register(
+            VERY_ANNOTATED_CLASS,
+            vec!["TypedDict".to_string()],
+            HashMap::new(),
+        );
+        set_class_attr(VERY_ANNOTATED_CLASS, "__module__", str_value(MODULE_NAME));
+        set_class_attr(
+            VERY_ANNOTATED_CLASS,
+            "__annotations__",
+            annotation_dict(&[("a", int_type)]),
+        );
+        set_class_attr(VERY_ANNOTATED_CLASS, "__total__", MbValue::from_bool(false));
+        set_class_attr(
+            VERY_ANNOTATED_CLASS,
+            "__required_keys__",
+            MbValue::from_ptr(MbObject::new_frozenset(vec![])),
+        );
+        set_class_attr(
+            VERY_ANNOTATED_CLASS,
+            "__optional_keys__",
+            MbValue::from_ptr(MbObject::new_frozenset(vec![str_value("a")])),
+        );
+
+        let mut attrs = HashMap::new();
+        attrs.insert(
+            "Foo".to_string(),
+            super::super::builtins::make_type_object(FOO_CLASS),
+        );
+        attrs.insert(
+            "FooGeneric".to_string(),
+            super::super::builtins::make_type_object(FOO_GENERIC_CLASS),
+        );
+        attrs.insert(
+            "VeryAnnotated".to_string(),
+            super::super::builtins::make_type_object(VERY_ANNOTATED_CLASS),
+        );
+        super::register_module(MODULE_NAME, attrs);
+
+        let helper_module = super::super::module::MODULES.with(|mods| {
+            mods.borrow_mut()
+                .get_mut(MODULE_NAME)
+                .map(super::super::module::module_to_value_and_cache)
+                .expect("registered typinganndata helper module")
+        });
+        super::super::module::mb_module_setattr(
+            str_value("test.typinganndata"),
+            str_value("_typed_dict_helper"),
+            helper_module,
+        );
+    }
+
     let support_entries: &[(&str, usize)] = &[
         ("assert_python_failure", assert_python_failure),
         ("assert_python_ok", assert_python_ok),
@@ -1488,16 +1639,21 @@ fn register_support_submodules() {
             ("ann_module6", noop),
             ("ann_module7", noop),
             ("ann_module8", noop),
+            ("ann_module695", noop),
+            ("mod_generics_cache", noop),
         ]),
     );
-    super::register_module("test.typinganndata.ann_module", make_attrs(&[]));
+    super::register_module("test.typinganndata.ann_module", make_attrs(&[("dec", identity)]));
     super::register_module("test.typinganndata.ann_module2", make_attrs(&[]));
     super::register_module("test.typinganndata.ann_module3", make_attrs(&[]));
     super::register_module("test.typinganndata.ann_module4", make_attrs(&[]));
     super::register_module("test.typinganndata.ann_module5", make_attrs(&[]));
     super::register_module("test.typinganndata.ann_module6", make_attrs(&[]));
     super::register_module("test.typinganndata.ann_module7", make_attrs(&[]));
-    super::register_module("test.typinganndata.ann_module8", make_attrs(&[]));
+    register_typinganndata_ann_module8_submodule(noop);
+    super::register_module("test.typinganndata.ann_module695", make_attrs(&[]));
+    register_typinganndata_mod_generics_cache_submodule(noop);
+    register_typinganndata_typed_dict_helper_submodule();
 }
 
 /// CamelCase -> snake_case converter (kept for backward compatibility / unit tests).
@@ -1915,5 +2071,42 @@ mod tests {
         let marker = MbValue::from_int(11);
         let decorated = class::mb_call1_val(decorator, marker);
         assert_eq!(decorated.as_int(), Some(11));
+    }
+
+    #[test]
+    fn test_register_support_submodules_installs_typinganndata_typed_dict_helper() {
+        register_support_submodules();
+
+        let helper = module::MODULES.with(|mods| {
+            mods.borrow()
+                .get("test.typinganndata")
+                .and_then(|m| m.attrs.get("_typed_dict_helper").copied())
+                .expect("test.typinganndata._typed_dict_helper")
+        });
+        let foo_generic = module::MODULES.with(|mods| {
+            mods.borrow()
+                .get("test.typinganndata._typed_dict_helper")
+                .and_then(|m| m.attrs.get("FooGeneric").copied())
+                .expect("test.typinganndata._typed_dict_helper.FooGeneric")
+        });
+        let mod_generics_cache = module::MODULES.with(|mods| {
+            mods.borrow()
+                .get("test.typinganndata")
+                .and_then(|m| m.attrs.get("mod_generics_cache").copied())
+                .expect("test.typinganndata.mod_generics_cache")
+        });
+        let ann_module8_outer = module::MODULES.with(|mods| {
+            mods.borrow()
+                .get("test.typinganndata.ann_module8")
+                .and_then(|m| m.attrs.get("NoTypeCheck_Outer").copied())
+                .expect("test.typinganndata.ann_module8.NoTypeCheck_Outer")
+        });
+
+        assert!(helper.as_ptr().is_some());
+        assert!(mod_generics_cache.as_ptr().is_some());
+        assert!(ann_module8_outer.as_ptr().is_some());
+        let alias = class::mb_obj_getitem(foo_generic, builtins::make_type_object("int"));
+        assert!(crate::runtime::exception::current_exception_type().is_none());
+        assert!(alias.as_ptr().is_some());
     }
 }
