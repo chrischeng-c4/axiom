@@ -110,7 +110,6 @@ flowchart TD
     r4[R4 flat object literal unchanged] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_plain_object_literal_const_signature[cargo test -p jet --lib bundler::dts::tests::infers_plain_object_literal_const_signature]
     r5[R5 object assign computed key member unaffected] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_object_literal_method_with_object_assign_computed_key_body[cargo test -p jet --lib bundler::dts::tests::infers_object_literal_method_with_object_assign_computed_key_body]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
