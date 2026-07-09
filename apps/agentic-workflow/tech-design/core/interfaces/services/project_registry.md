@@ -898,23 +898,23 @@ mod tests {
             r#"
 [[projects]]
 name = "jet"
-path = "projects/jet"
+path = "apps/jet"
 td_path = ".aw/tech-design/projects/jet"
 label = "app:jet"
 
 [[projects.workspaces]]
 name = "jet-full"
-paths = ["projects/jet/**"]
+paths = ["apps/jet/**"]
 target = "rust"
 test_cmd = "cargo test -p jet -p jet-wasm"
 
 [[projects]]
 name = "jet"
-path = "projects/jet"
+path = "apps/jet"
 
 [[projects.workspaces]]
 name = "jet"
-paths = ["projects/jet/**"]
+paths = ["apps/jet/**"]
 target = "rust"
 test_cmd = "cargo test -p jet"
 "#,
@@ -1201,14 +1201,14 @@ mod resolver_tests {
         let tmp = repo();
         let input = TdRootInput {
             name: "sdd".into(),
-            td_path: Some("projects/cgdb/tech_design".into()),
-            source_path: "projects/cgdb".into(),
+            td_path: Some("apps/cgdb/tech_design".into()),
+            source_path: "apps/cgdb".into(),
         };
         let out = resolve_td_root(&input, Some(".aw/tech-design"), tmp.path()).unwrap();
         assert_eq!(out.precedence, "td_path");
         assert_eq!(
             PathBuf::from(&out.root),
-            tmp.path().join("projects/cgdb/tech_design")
+            tmp.path().join("apps/cgdb/tech_design")
         );
     }
 

@@ -166,7 +166,7 @@ impl FontFace {
 
 - Parent epic [#1700](https://github.com/chrischeng-c4/cclab/issues/1700) — text pass
   (glyph rasterization, shaping, atlas upload, font fallback).
-- `projects/jet/wasm/src/text/font_face.rs` — existing rustybuzz-based
+- `apps/jet/wasm/src/text/font_face.rs` — existing rustybuzz-based
   wrapper. Same "owned-bytes + lazy-reparse" idiom this slice adopts,
   but for the canvas-based shaping path; the WebGPU text pipeline
   needs its own ttf-parser-only wrapper since the renderer crate

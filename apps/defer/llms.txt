@@ -1,4 +1,4 @@
-<!-- SPEC-MANAGED: projects/defer/tech-design/logic/repo-taxonomy-move-defer-from-projects-defer-to-apps-defer.md#schema -->
+<!-- SPEC-MANAGED: apps/defer/tech-design/logic/repo-taxonomy-move-defer-from-projects-defer-to-apps-defer.md#schema -->
 <!-- CODEGEN-BEGIN -->
 # defer Agent Context
 
@@ -6,8 +6,8 @@
 
 ## Tech Design
 
-- [Tech Design](../../projects/defer/tech-design): implementation source of truth.
-- Validate: `aw td check projects/defer/tech-design`.
+- [Tech Design](../../apps/defer/tech-design): implementation source of truth.
+- Validate: `aw td check apps/defer/tech-design`.
 
 ## Capability Map
 

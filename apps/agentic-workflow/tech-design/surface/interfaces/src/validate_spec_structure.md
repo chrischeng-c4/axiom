@@ -448,7 +448,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let score_dir = tmp.path().join(".aw");
         std::fs::create_dir_all(&score_dir).unwrap();
-        std::fs::create_dir_all(tmp.path().join("projects/cgdb/tech_design")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("apps/cgdb/tech_design")).unwrap();
         std::fs::write(
             score_dir.join("config.toml"),
             r#"
@@ -457,15 +457,15 @@ path = ".aw/tech-design"
 
 [[projects]]
 name = "cgdb"
-path = "projects/cgdb"
-td_path = "projects/cgdb/tech_design"
+path = "apps/cgdb"
+td_path = "apps/cgdb/tech_design"
 "#,
         )
         .unwrap();
 
         let roots = discover_spec_roots(tmp.path());
 
-        assert_eq!(roots, vec![tmp.path().join("projects/cgdb/tech_design")]);
+        assert_eq!(roots, vec![tmp.path().join("apps/cgdb/tech_design")]);
     }
 
     #[test]

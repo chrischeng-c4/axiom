@@ -12,5 +12,5 @@ crate-type = ["rlib"]
 
 [dependencies]
 cclab-mamba-registry = { path = "../cclab-mamba-registry" }
-qc = { package = "meter", path = "../../projects/meter" }
+qc = { package = "meter", path = "../../apps/meter" }
 linkme.workspace = true

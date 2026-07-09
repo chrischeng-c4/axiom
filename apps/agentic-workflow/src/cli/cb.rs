@@ -3449,13 +3449,13 @@ paths = ["examples/fixture_platform/backend/**"]
     fn cb_gen_force_regen_collects_spec_refs_from_file_source_root() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        let td_root = root.join("projects/cap/tech-design");
+        let td_root = root.join("apps/cap/tech-design");
         let source_file = root.join("install.sh");
         std::fs::create_dir_all(&td_root).unwrap();
         std::fs::write(td_root.join("install.md"), "# install\n").unwrap();
         std::fs::write(
             &source_file,
-            "# SPEC-MANAGED: projects/cap/tech-design/install.md#source\n",
+            "# SPEC-MANAGED: apps/cap/tech-design/install.md#source\n",
         )
         .unwrap();
 
@@ -3781,14 +3781,14 @@ changes:
         report.td_semantic_public_symbols = 3;
 
         let summary =
-            cb_verify_summary_from_report(report, vec!["projects/jet/src/lib.rs".to_string()]);
+            cb_verify_summary_from_report(report, vec!["apps/jet/src/lib.rs".to_string()]);
 
         assert!(!summary.clean);
         assert_eq!(summary.public_api_covered, 3);
         assert_eq!(summary.public_api_total, 3);
         assert_eq!(
             summary.failures,
-            vec!["projects/jet/src/lib.rs: differs after TD replay"]
+            vec!["apps/jet/src/lib.rs: differs after TD replay"]
         );
     }
 
@@ -4075,7 +4075,7 @@ pub fn signature_only() -> Result<()>
     #[test]
     fn cb_verify_source_scope_collection_skips_dependency_dirs_and_symlink_cycles() {
         let dir = tempfile::tempdir().unwrap();
-        let source_root = dir.path().join("projects/jet");
+        let source_root = dir.path().join("apps/jet");
         std::fs::create_dir_all(source_root.join("src")).unwrap();
         std::fs::create_dir_all(source_root.join("node_modules/pkg")).unwrap();
         std::fs::create_dir_all(source_root.join("target/debug")).unwrap();

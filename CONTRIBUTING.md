@@ -675,7 +675,7 @@ them with `libs/build-stamp`'s `stamp("<PREFIX>")`, not a hand-rolled
 provides only its clap surface, that `ToolInfo`, and (for `llm`) its topic list;
 the crate does the rest. The network paths (`upgrade` install, `issue`
 search/view/create) sit behind cli-std's `online` feature — enable it in release
-builds. Reference adopters: `projects/jet` and `projects/lumen`.
+builds. Reference adopters: `apps/jet` and `projects/lumen`.
 
 - **`llm`** — `cli_std::llm::render(project, version, topics, topic, format)`. The
   tool supplies `&[cli_std::llm::Topic]` (`id`/`summary`/`body` — the one in-code

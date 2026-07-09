@@ -58,7 +58,7 @@ Defer's app-facing source root resolves through `apps/defer` without changing
 the GitHub label, AW project name, persistent branch convention, or TD bucket
 identity.
 Gate Inventory:
-- verified: projects/defer/tech-design/logic/repo-taxonomy-move-defer-from-projects-defer-to-apps-defer.md
+- verified: apps/defer/tech-design/logic/repo-taxonomy-move-defer-from-projects-defer-to-apps-defer.md
 - verified: `aw capability check --project defer`
 - verified: `aw wi list --project defer --state open`
 - verified: stale source-root scan permits only preserved TD-bucket references
@@ -99,11 +99,11 @@ Promise:
 Defer remains stable under sustained scheduled-task load, retries, DLQ writes,
 and restart cycles without losing committed tasks or duplicating terminal acks.
 Gate Inventory:
-- projects/defer/tests/task_lifecycle.rs; projects/defer/tests/rate_limits.rs
+- apps/defer/tests/task_lifecycle.rs; apps/defer/tests/rate_limits.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| delayed-task-soak-and-recovery | epic | #766 | partial | passing | smoke | projects/defer/tests/task_lifecycle.rs; projects/defer/tests/rate_limits.rs |
+| delayed-task-soak-and-recovery | epic | #766 | partial | passing | smoke | apps/defer/tests/task_lifecycle.rs; apps/defer/tests/rate_limits.rs |
 
 ### Security Hardening
 
@@ -178,12 +178,12 @@ failure, cancellation, or dead-letter handoff. Task priority is `u8`
 (`0..=255`, default `10`); it is applied only after the task is due and the
 queue can dispatch more work.
 Gate Inventory:
-- projects/defer/tests/task_lifecycle.rs
+- apps/defer/tests/task_lifecycle.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| delayed-task-state-machine | epic | #766 | implemented | passing | conformance | projects/defer/tests/task_lifecycle.rs |
-| due-task-priority-ordering | epic | #766 | implemented | passing | conformance | projects/defer/tests/task_lifecycle.rs |
+| delayed-task-state-machine | epic | #766 | implemented | passing | conformance | apps/defer/tests/task_lifecycle.rs |
+| due-task-priority-ordering | epic | #766 | implemented | passing | conformance | apps/defer/tests/task_lifecycle.rs |
 
 ### HTTP Dispatch And Retries
 
@@ -198,11 +198,11 @@ Promise:
 Defer dispatches tasks to HTTP targets with bounded retries, dedupe keys, and
 explicit dead-letter behavior.
 Gate Inventory:
-- projects/defer/tests/task_lifecycle.rs; pending: projects/defer/tests/http_dispatch.rs
+- apps/defer/tests/task_lifecycle.rs; pending: apps/defer/tests/http_dispatch.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| http-target-attempt-contract | epic | #766 | partial | passing | smoke | projects/defer/tests/task_lifecycle.rs; pending HTTP target dispatch gate |
+| http-target-attempt-contract | epic | #766 | partial | passing | smoke | apps/defer/tests/task_lifecycle.rs; pending HTTP target dispatch gate |
 
 ### Queue Rate Limits
 
@@ -217,11 +217,11 @@ Promise:
 Defer enforces Cloud Tasks-style per-queue controls, rate limits, and
 concurrency limits before dispatching tasks to external targets.
 Gate Inventory:
-- projects/defer/tests/rate_limits.rs; projects/defer/tests/task_lifecycle.rs
+- apps/defer/tests/rate_limits.rs; apps/defer/tests/task_lifecycle.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| per-queue-rate-limit-contract | epic | #766 | implemented | passing | conformance | projects/defer/tests/rate_limits.rs; projects/defer/tests/task_lifecycle.rs |
+| per-queue-rate-limit-contract | epic | #766 | implemented | passing | conformance | apps/defer/tests/rate_limits.rs; apps/defer/tests/task_lifecycle.rs |
 
 ### HTTP/2 API List
 

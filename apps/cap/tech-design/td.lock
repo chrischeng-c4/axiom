@@ -1,0 +1,121 @@
+version = 1
+project = "cap"
+td_path = "apps/cap/tech-design"
+generated_at = "2026-06-30T04:47:04.039369+00:00"
+digest = "sha256:19b72517d0a9e0e8ef0937c08b23be6e9bb3fd613b1128d8eccd6936ff568c76"
+
+[[files]]
+path = "interfaces/cli/adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std.md"
+digest = "sha256:da3e77bc56b0527cc5e106dcba88643418ad9cdb23375b81ffe16705a98f3a4e"
+
+[[files]]
+path = "logic/add-per-session-queue-with-observe-command-barriers.md"
+digest = "sha256:a67b9c027362d2fab27b1653e825333d025496ff714b5fc7d0642280947691bc"
+
+[[files]]
+path = "logic/add-workload-sensitive-native-command-gates.md"
+digest = "sha256:44256b12421a809779a00e6eccc7d56c7408d9cab761bea9179b191e7c71953a"
+
+[[files]]
+path = "logic/cap-hook-auto-command-optimizer-whitelist.md"
+digest = "sha256:646c91520fdcf634f139e1170e7f72d52db14d8a160ecb94eb5095495d7122b6"
+
+[[files]]
+path = "logic/design-resident-light-shell-with-dynamic-bash-fallback.md"
+digest = "sha256:5b6173a8fc1ea980604535d3a772a93ae642a11c60e7e0cdbf8ef46d2a839968"
+
+[[files]]
+path = "logic/expand-high-volume-native-command-coverage.md"
+digest = "sha256:b4bacb8c71bd3484c2b048b1062e59cb32713a269312e3118e05b1cd31f0ac3d"
+
+[[files]]
+path = "logic/external-contracts.md"
+digest = "sha256:7e84cbcd94237ba65f037c0fa1dfcb131c9f7ddac9ac6becd23ebac6790e7aec"
+
+[[files]]
+path = "semantic/cap-benches.md"
+digest = "sha256:4e4177698b62759b4992eb00975845389a6b1d5ca5faf4da98a969ac515e5819"
+
+[[files]]
+path = "semantic/cap-build-script.md"
+digest = "sha256:08bde24eefa37179308f9d3226da76a0335440b602d262ae48878bb8dae295d5"
+
+[[files]]
+path = "semantic/cap-install-script.md"
+digest = "sha256:e885508afb302a67436050c737d649298dd8f331105bd5c5bd71dda9dca4035b"
+
+[[files]]
+path = "semantic/cap-projects-cap.md"
+digest = "sha256:8d75f95a24f0e99e6a25e53f684bf24a1e64afc95c4636e31e3144bb277e7c34"
+
+[[files]]
+path = "semantic/cap-src.md"
+digest = "sha256:2bf5fa89440b1031748c3c100d0597311608be574a3718421141671ebca70ad0"
+
+[[files]]
+path = "semantic/cap-tests.md"
+digest = "sha256:67835808e7d022e0e9f7d9f616637a5a97f8f1cb55619db6d91c5e182e945081"
+
+[[files]]
+path = "semantic/source/build.md"
+digest = "sha256:77bee60504dd46a61ea9f1d82832b958feaf3ffec82d6f690d67e55347ed46b7"
+
+[[files]]
+path = "semantic/source/cli.md"
+digest = "sha256:59b56ee87b4058a9b7f98897514113a45055ce918ac787a65063fdfc080af3e3"
+
+[[files]]
+path = "semantic/source/config.md"
+digest = "sha256:ebc0d839785f50d6dbace6b0b7b7d58612aa9c07d2139b7c3a998cae1c36bc1a"
+
+[[files]]
+path = "semantic/source/daemon.md"
+digest = "sha256:914513b0d0883461e92b01a6ec89ab8b7d345b07115646ab3208542cdc2162ec"
+
+[[files]]
+path = "semantic/source/eventlog.md"
+digest = "sha256:ff269c5ea5389d3f6fc93f85372588273aca50bb222d06453803c8a515072007"
+
+[[files]]
+path = "semantic/source/full_main.md"
+digest = "sha256:07a4eac01ff058db98121b8afcbb12c12a67495bdd68202cae729660d9e31dc3"
+
+[[files]]
+path = "semantic/source/hook-install.md"
+digest = "sha256:326e558dc9cf5f65641d5ce601c1f7dc8f772e135da1409335f310309426180e"
+
+[[files]]
+path = "semantic/source/hook.md"
+digest = "sha256:33d1908aa95f27f24fe2abc71235acf9102781c3aed18f84923389937020728a"
+
+[[files]]
+path = "semantic/source/lib.md"
+digest = "sha256:b8b4a989151eb2c5464f1095fa478a9e96b6d10a8dad7e225954658d9056fb5b"
+
+[[files]]
+path = "semantic/source/projects-cap-benches-command_resources-rs.md"
+digest = "sha256:5abb69dbe1c3cd0ec54a9b43220456499be3d9993696630f2db7726f9f8b27ca"
+
+[[files]]
+path = "semantic/source/projects-cap-tests-behavior-cap-command-replacement-parity-rs.md"
+digest = "sha256:d5b5c53f92907bd02a5cd41535e6e2123fa3b75edd8179b047dd000a2fd7ec33"
+
+[[files]]
+path = "semantic/source/reap.md"
+digest = "sha256:1ed5ff5d2c2687d4f4d7821330ffeb1e9628584cff7290d7f2a03b654ffb93df"
+
+[[files]]
+path = "semantic/source/resident-shell.md"
+digest = "sha256:c9e354f013ea7e09801f33f3a07dada5fd1a1e82ce7d6de9212233c8ff70a698"
+
+[[files]]
+path = "semantic/source/sampler.md"
+digest = "sha256:98d3aa382d0fb80da594ff7f4c678515de5edb1734412431980e31dbe9af1fc6"
+
+[[files]]
+path = "semantic/source/session-queue.md"
+digest = "sha256:c5f9dc1182cb0cd457656a3cf3a8ff6d1fd0061d1d3b3587bd059a1a30a7d849"
+
+[[files]]
+path = "semantic/source/throttle.md"
+digest = "sha256:1043f4373c90186c5c6f30208b3372f65820ab45e085a11f2e7b4cddc79b212b"

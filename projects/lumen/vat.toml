@@ -3,7 +3,7 @@
 # re-invokes rig inside the clone, and the outer `rig run --vat` lifts the
 # inner report back out.
 #
-# Prereqs on the host: `projects/rig/build.sh debug` (installs ~/.cargo/bin/rig),
+# Prereqs on the host: `apps/rig/build.sh debug` (installs ~/.cargo/bin/rig),
 # `cargo build --release -p lumen --bin lumen`, `brew install toxiproxy`.
 version = 1
 name = "lumen-rig"
@@ -117,7 +117,7 @@ for i in range(2000):
     items.append({"external_id": external_id, "field": "age", "value": 20 + (i % 50)})
 send("POST", "/collections/docs/index", {"items": items})
 PY
-exec "$VAT_WORKSPACE_BASE/target/debug/arena" run --spec "$VAT_WORKSPACE_BASE/projects/arena/examples/lumen-vs-pg.toml"
+exec "$VAT_WORKSPACE_BASE/target/debug/arena" run --spec "$VAT_WORKSPACE_BASE/apps/arena/examples/lumen-vs-pg.toml"
 """,
 ]
 timeout_s = 900
@@ -158,7 +158,7 @@ for i in range(2000):
     items.append({"external_id": external_id, "field": "age", "value": 20 + (i % 50)})
 send("POST", "/collections/docs/index", {"items": items})
 PY
-exec "$VAT_WORKSPACE_BASE/target/debug/arena" run --spec "$VAT_WORKSPACE_BASE/projects/arena/examples/lumen-vs-opensearch.toml"
+exec "$VAT_WORKSPACE_BASE/target/debug/arena" run --spec "$VAT_WORKSPACE_BASE/apps/arena/examples/lumen-vs-opensearch.toml"
 """,
 ]
 timeout_s = 900

@@ -6408,11 +6408,11 @@ mod tests {
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| package-manager | #3779 | auditing | Replace package manager flows. | smoke | projects/jet/validation/pkg-manager.toml |
+| package-manager | #3779 | auditing | Replace package manager flows. | smoke | apps/jet/validation/pkg-manager.toml |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Lockfile parity | epic | #3779 | partial | planned | smoke | projects/jet/validation/pkg-manager.toml |
+| Lockfile parity | epic | #3779 | partial | planned | smoke | apps/jet/validation/pkg-manager.toml |
 "#;
         let document =
             crate::cli::capability::parse_capability_document(cap_body, Path::new("README.md"))
@@ -6572,7 +6572,7 @@ Generator ownership is complete; package-manager roadmap remains open.
             "jet",
             "Jet capability plan",
             "github",
-            Path::new("/repo/projects/jet/README.md"),
+            Path::new("/repo/apps/jet/README.md"),
             &map,
             &[],
             &candidates,
@@ -6605,7 +6605,7 @@ Generator ownership is complete; package-manager roadmap remains open.
             "jet",
             "Jet capability plan",
             "unavailable",
-            Path::new("/repo/projects/jet/README.md"),
+            Path::new("/repo/apps/jet/README.md"),
             &map,
             &[],
             &candidates,
@@ -6683,7 +6683,7 @@ Generator ownership is complete; package-manager roadmap remains open.
             "jet",
             "Jet capability plan",
             "github",
-            Path::new("/repo/projects/jet/README.md"),
+            Path::new("/repo/apps/jet/README.md"),
             &map,
             &[],
             &candidates,
@@ -6870,7 +6870,7 @@ Generator ownership is complete; package-manager roadmap remains open.
 [[projects]]
 name = "jet"
 aliases = ["j"]
-path = "projects/jet"
+path = "apps/jet"
 label = "app:jet"
 
 [[projects]]
@@ -6883,7 +6883,7 @@ label = "app:score"
         .unwrap();
         assert_eq!(
             resolve_capability_path(tmp.path(), "j", None).unwrap(),
-            tmp.path().join("projects/jet/README.md")
+            tmp.path().join("apps/jet/README.md")
         );
         assert_eq!(
             resolve_capability_path(tmp.path(), "score", None).unwrap(),

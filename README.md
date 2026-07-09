@@ -10,27 +10,24 @@ details.
 | Project | What it is |
 |---------|------------|
 | [agentic-workflow](apps/agentic-workflow/README.md) | Workflow protocol and CLI chain for capability-driven project takeover, work-item planning, TD/CB lifecycle execution, and production-readiness rollup. |
-| [cap](projects/cap/README.md) | `cap` keeps heavy local commands (`cargo test`, `uv run`, `pnpm build`, …) from eating the whole machine. |
-| [vat](projects/vat/README.md) | `vat` is a local development test runner for the one operator Docker was never designed for: a coding/ML agent. |
-| [loom](projects/loom/README.md) | Loom is the workflow scheduler in the Axiom service stack. |
-| [preview](projects/preview/README.md) | `preview` manages MR-scoped UAT preview environments for GKE. |
+| [cap](apps/cap/README.md) | `cap` keeps heavy local commands (`cargo test`, `uv run`, `pnpm build`, …) from eating the whole machine. |
+| [vat](apps/vat/README.md) | `vat` is a local development test runner for the one operator Docker was never designed for: a coding/ML agent. |
+| [loom](apps/loom/README.md) | Loom is the workflow scheduler in the Axiom service stack. |
+| [preview](apps/preview/README.md) | `preview` manages MR-scoped UAT preview environments for GKE. |
 | [tape](apps/tape/README.md) | Tape is the topic replay journal in the Axiom service stack. |
 | [defer](apps/defer/README.md) | Defer is the Cloud Tasks-like delayed task dispatch service in the Axiom stack. |
-| [cube](projects/cube/README.md) | Cube is the OLAP service in the Axiom service stack. |
-| [beam](projects/beam/README.md) | Beam is the GPU vector database in the Axiom service stack. |
-| [arena](projects/arena/README.md) | N-target competitive comparison runner — fan one workload across targets, ratio + ratchet-gate, one agent-readable JSON report. |
-| [guard](projects/guard/README.md) | Security posture gate for the cclab ecosystem. |
-| [rig](projects/rig/README.md) | Declarative test-scenario harness engine for the cclab ecosystem. |
+| [cube](apps/cube/README.md) | Cube is the OLAP service in the Axiom service stack. |
+| [beam](apps/beam/README.md) | Beam is the GPU vector database in the Axiom service stack. |
+| [arena](apps/arena/README.md) | N-target competitive comparison runner — fan one workload across targets, ratio + ratchet-gate, one agent-readable JSON report. |
+| [guard](apps/guard/README.md) | Security posture gate for the cclab ecosystem. |
+| [rig](apps/rig/README.md) | Declarative test-scenario harness engine for the cclab ecosystem. |
 | [mamba](projects/mamba/README.md) | Force-typed Python compiler. |
 | [lumen](projects/lumen/README.md) | A K8s-native, log-replicated search specialist. |
-| [jet](projects/jet/README.md) | Jet is a Rust-native frontend toolchain. |
+| [jet](apps/jet/README.md) | Jet is a Rust-native frontend toolchain. |
 | [relay](apps/relay/README.md) | `relay` is the durable ordered-log and queue broker in the Axiom stack. |
 | [keep](apps/keep/README.md) | Cloud-native, multi-core key-value / claim-check store — the loom/relay data plane and a Redis / Dragonfly replacement. |
-| [cgdb](projects/cgdb/README.md) | Cgdb is a local graph database for agentic codebase understanding. |
-| [httpkit-demo](projects/httpkit-demo/README.md) | httpkit-demo is a generated demo consumer of the `mambalibs.http` framework. |
-| [meter](projects/meter/README.md) | Local resource measurement for agent-driven Rust development. |
-| [qc](projects/qc/README.md) | Qc is the planned agent-facing quality-control CLI surface for structured reports, security findings, and performance boundary-cost findings. |
-| [queue](projects/queue/README.md) | Queue is the Rust distributed-task-queue library surface for cclab. |
+| [cgdb](apps/cgdb/README.md) | Cgdb is a local graph database for agentic codebase understanding. |
+| [meter](apps/meter/README.md) | Local resource measurement for agent-driven Rust development. |
 <!-- aw:projects-table:end -->
 
 ## Shared Libraries
@@ -38,8 +35,8 @@ details.
 Services and tools compose the internal libraries below instead of
 reimplementing transport, auth, metrics, codegen, replication, durable local
 storage, backup, or operator plumbing locally. Shared service capabilities
-belong in `libs/*`; projects supply domain behavior and wiring. Libraries have no user-facing CLI
-or release pipeline; those surfaces belong under `projects/`.
+belong in `libs/*`; apps supply domain behavior and wiring. Libraries have no
+user-facing CLI or release pipeline; those surfaces belong under `apps/`.
 
 | Library | What it is |
 |---------|------------|
@@ -74,23 +71,23 @@ an installer yet are marked _coming soon_.
 | Project | Binary | Install |
 |---------|--------|---------|
 | [agentic-workflow](apps/agentic-workflow/README.md) | `aw` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/agentic-workflow/install.sh \| sh` |
-| [arena](projects/arena/README.md) | `arena` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/arena/install.sh \| sh` |
-| [cap](projects/cap/README.md) | `cap` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/cap/install.sh \| sh` |
-| [guard](projects/guard/README.md) | `guard` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/guard/install.sh \| sh` |
-| [jet](projects/jet/README.md) | `jet` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/jet/install.sh \| sh` |
-| [beam](projects/beam/README.md) | `beam` | _coming soon_ |
-| [cube](projects/cube/README.md) | `cube` | _coming soon_ |
+| [arena](apps/arena/README.md) | `arena` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/arena/install.sh \| sh` |
+| [cap](apps/cap/README.md) | `cap` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/cap/install.sh \| sh` |
+| [guard](apps/guard/README.md) | `guard` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/guard/install.sh \| sh` |
+| [jet](apps/jet/README.md) | `jet` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/jet/install.sh \| sh` |
+| [beam](apps/beam/README.md) | `beam` | _coming soon_ |
+| [cube](apps/cube/README.md) | `cube` | _coming soon_ |
 | [defer](apps/defer/README.md) | `defer` | _coming soon_ |
 | [keep](apps/keep/README.md) | `keep` | _coming soon_ |
-| [loom](projects/loom/README.md) | `loom` | _coming soon_ |
+| [loom](apps/loom/README.md) | `loom` | _coming soon_ |
 | [lumen](projects/lumen/README.md) | `lumen` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/lumen/install.sh \| sh` |
 | [mamba](projects/mamba/README.md) | `mamba` | _coming soon_ |
-| [meter](projects/meter/README.md) | `meter` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/meter/install.sh \| sh` |
-| [preview](projects/preview/README.md) | `preview` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/preview/install.sh \| sh` |
+| [meter](apps/meter/README.md) | `meter` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/meter/install.sh \| sh` |
+| [preview](apps/preview/README.md) | `preview` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/preview/install.sh \| sh` |
 | [relay](apps/relay/README.md) | `relay` | _coming soon_ |
-| [rig](projects/rig/README.md) | `rig` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/rig/install.sh \| sh` |
+| [rig](apps/rig/README.md) | `rig` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/rig/install.sh \| sh` |
 | [tape](apps/tape/README.md) | `tape` | _coming soon_ |
-| [vat](projects/vat/README.md) | `vat` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/vat/install.sh \| sh` |
+| [vat](apps/vat/README.md) | `vat` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/vat/install.sh \| sh` |
 
 ## Runtime Evidence Loop
 

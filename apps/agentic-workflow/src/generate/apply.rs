@@ -5586,7 +5586,7 @@ changes:
     #[test]
     fn generate_code_for_entry_dispatches_module_facade_preamble_from_changes() {
         let entry = ChangeEntry {
-            path: "projects/cap/src/lib.rs".to_string(),
+            path: "apps/cap/src/lib.rs".to_string(),
             action: "modify".to_string(),
             description: Some("cap crate facade".to_string()),
             section_id: Some("exports".to_string()),
@@ -5608,7 +5608,7 @@ changes:
 
         let code = generate_code_for_entry(
             &entry,
-            "projects/cap/tech-design/semantic/cap-src.md",
+            "apps/cap/tech-design/semantic/cap-src.md",
             &[],
             "",
             None,
@@ -5623,7 +5623,7 @@ changes:
     #[test]
     fn generate_code_for_entry_dispatches_rust_source_payload_from_schema_change() {
         let entry = ChangeEntry {
-            path: "projects/cap/src/main.rs".to_string(),
+            path: "apps/cap/src/main.rs".to_string(),
             action: "modify".to_string(),
             description: Some("cap binary entrypoint".to_string()),
             section_id: Some("schema".to_string()),
@@ -5642,7 +5642,7 @@ changes:
 
         let code = generate_code_for_entry(
             &entry,
-            "projects/cap/tech-design/semantic/cap-src.md",
+            "apps/cap/tech-design/semantic/cap-src.md",
             &[],
             "",
             None,
@@ -8454,7 +8454,7 @@ mod source_backed_replay_tests {
     #[test]
     fn project_scoped_semantic_rust_schema_uses_source_backed_replay() {
         assert!(supports_source_backed_replay_for_spec(
-            "projects/jet/tools/manifest/src/lib.rs",
+            "apps/jet/tools/manifest/src/lib.rs",
             Some("schema"),
             ".aw/tech-design/projects/jet/semantic/jet-tools-manifest-src.md",
         ));
@@ -8463,7 +8463,7 @@ mod source_backed_replay_tests {
     #[test]
     fn project_scoped_non_semantic_rust_schema_still_needs_generator() {
         assert!(!supports_source_backed_replay_for_spec(
-            "projects/jet/tools/manifest/src/lib.rs",
+            "apps/jet/tools/manifest/src/lib.rs",
             Some("schema"),
             ".aw/tech-design/projects/jet/specs/jet-tools-manifest-src.md",
         ));

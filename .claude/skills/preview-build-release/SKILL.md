@@ -8,7 +8,7 @@ user-invocable: true
 
 Builds the preview CLI with the release cargo profile and installs
 `target/release/preview` to `~/.cargo/bin/preview` using the project-owned build
-script. This is a local release-profile build/install path; `projects/preview`
+script. This is a local release-profile build/install path; `apps/preview`
 does not yet have the release-prep commit/tag/GitHub Release contract used by
 the published project release skills.
 

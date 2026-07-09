@@ -18,7 +18,8 @@ merged `origin/main` state.
 - Request escalation for sandboxed commands that write Git refs/indexes or use
   the network, including `git fetch`, `git push`, and `gh`.
 - Do not delete the current branch unless the user explicitly asks. Preserve
-  persistent branches such as `project-*` and `lib-*`.
+  persistent branches such as `app/*`, `lib/*`, `project-mamba`, and
+  `project-lumen`.
 - Do not merge if required checks fail. Report the failing checks and stop.
 - If conflicts occur, resolve them correctly, stage the resolved files, and
   continue the rebase. Ask only when the right resolution cannot be determined.
