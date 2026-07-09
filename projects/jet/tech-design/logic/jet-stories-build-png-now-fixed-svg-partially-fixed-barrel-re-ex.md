@@ -93,3 +93,20 @@ flowchart TD
     r2[R2 bare specifier scss import compiles via css pipeline] --> cargo_test_p_jet_test_stories_build_build_compiles_bare_specifier_scss_import_via_css_pipeline[cargo test -p jet --test stories_build build_compiles_bare_specifier_scss_import_via_css_pipeline]
     r3[R3 bare specifier raw asset import still resolves as dep] --> cargo_test_p_jet_test_stories_build_build_emits_svg_and_png_assets_as_url_strings[cargo test -p jet --test stories_build build_emits_svg_and_png_assets_as_url_strings]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/jet/src/stories/build.rs
+    action: update
+    section: logic
+    impl_mode: hand-written
+    reason: "Add an is_style_path(&dep_file) check to rewrite_imports's bare-specifier branch (mirroring the existing relative-import branch), pushing a StyleAsset via the existing style_asset_for_file helper and recording the spec in style_specs for remove_static_import_for_spec, ahead of the existing is_raw_asset_path check. Reuses emit_style_asset/CssPipeline/inject_static_stylesheet_links unchanged - only the missing detection branch is added."
+  - path: projects/jet/tests/stories/stories_build.rs
+    action: update
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Add the R1-R2 regression tests specified in the unit-test section (bare-specifier .css and .scss imports resolving through a package.json exports subpath now compile and link correctly instead of producing a dangling deps/<pkg>/<name>.css.js reference); R3 is pinned by the pre-existing build_emits_svg_and_png_assets_as_url_strings test and needs no new test code."
+```
