@@ -211,7 +211,6 @@ docs_site_rebrand:
       command: "for f in $(find projects/jet/docs -name '*.md' -not -path '*/node_modules/*'); do link=\"/${f#projects/jet/docs/}\"; link=\"${link%.md}\"; grep -q -- \"$link\" projects/jet/docs/.vitepress/config.mjs || echo \"orphan: $f\"; done"
       expected: "no output (every markdown file's link path appears in the nav/sidebar config)"
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
