@@ -91,8 +91,13 @@ fn inst_set_field(inst: MbValue, key: &str, val: MbValue) {
 // used previously, now keyed off instance fields so the object is a real
 // `Connection` / `Cursor` instance (satisfying `isinstance`).
 
-/// `Connection.cursor()` → a fresh Cursor bound to this connection.
-unsafe extern "C" fn m_connection_cursor(self_v: MbValue, _args: MbValue) -> MbValue {
+/// `Connection.cursor([factory])` → a fresh Cursor bound to this connection.
+unsafe extern "C" fn m_connection_cursor(self_v: MbValue, args: MbValue) -> MbValue {
+    if let Some(factory) = args_vec(args).first().copied() {
+        if !sqlite_callback_looks_callable(factory) {
+            return raise_type_error("factory must be callable");
+        }
+    }
     mb_sqlite3_cursor(self_v)
 }
 
@@ -1407,7 +1412,7 @@ mod tests {
     fn test_row_getitem_keeps_none_for_missing_int_and_str_keys() {
         mb_clear_exception();
         let row = build_row(
-            &[RValue::Int(11)],
+            &[RValue::Integer(11)],
             &[String::from("answer")],
             Some(s(ROW_CLASS)),
         );
@@ -1420,6 +1425,29 @@ mod tests {
         let str_args = MbValue::from_ptr(MbObject::new_list(vec![s("missing")]));
         let str_result = unsafe { m_row_getitem(row, str_args) };
         assert!(str_result.is_none());
+        assert_eq!(current_exception_type(), None);
+    }
+
+    #[test]
+    fn test_connection_cursor_rejects_non_callable_factory() {
+        mb_clear_exception();
+        let conn = mb_sqlite3_connect(s(":memory:"));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(7)]));
+        let result = unsafe { m_connection_cursor(conn, args) };
+        assert!(result.is_none());
+        assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        mb_clear_exception();
+    }
+
+    #[test]
+    fn test_connection_cursor_accepts_callable_factory() {
+        mb_clear_exception();
+        let conn = mb_sqlite3_connect(s(":memory:"));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_func(
+            d_surface_stub as *const () as usize,
+        )]));
+        let result = unsafe { m_connection_cursor(conn, args) };
+        assert_eq!(instance_class(result), Some(CURSOR_CLASS.to_string()));
         assert_eq!(current_exception_type(), None);
     }
 
