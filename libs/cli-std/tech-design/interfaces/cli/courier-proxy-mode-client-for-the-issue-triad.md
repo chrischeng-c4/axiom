@@ -26,21 +26,21 @@ capability_refs:
 id: cli-std-courier-proxy-mode-client-contract
 entry: resolvers
 nodes:
-  resolvers: { kind: start, label: "lib.rs adds resolve_courier_url()/resolve_courier_token(): first non-blank AXIOM_COURIER_URL/AXIOM_COURIER_TOKEN, trimmed; blank counts as unset; else None -- mirrors resolve_github_token()'s env-resolution pattern" }
-  op_select: { kind: decision, label: "issue.rs online search/view/create/comment: which op" }
-  search_check: { kind: decision, label: "search: resolve_courier_url() Some(url)?" }
-  search_courier: { kind: process, label: "GET {courier_url}/v1/issues/{owner}/{name}?state=&q=&limit= with Authorization: Bearer <resolve_courier_token()>" }
-  search_direct: { kind: process, label: "unchanged: GET api.github.com/search/issues via crate::github_get + resolve_github_token()" }
-  view_check: { kind: decision, label: "view: resolve_courier_url() Some(url)?" }
-  view_courier: { kind: process, label: "GET {courier_url}/v1/issues/{owner}/{name}/{number} with Authorization: Bearer <resolve_courier_token()>" }
-  view_direct: { kind: process, label: "unchanged: GET api.github.com/repos/{repo}/issues/{number} via crate::github_get + resolve_github_token()" }
-  create_check: { kind: decision, label: "create: resolve_courier_url() Some(url)?" }
-  create_courier: { kind: process, label: "POST {courier_url}/v1/issues/{owner}/{name} (issue_payload body) with Authorization: Bearer <resolve_courier_token()>" }
-  create_direct: { kind: process, label: "unchanged: POST api.github.com/repos/{repo}/issues via submit_issue + resolve_github_token()" }
-  comment_check: { kind: decision, label: "comment: resolve_courier_url() Some(url)?" }
-  comment_courier: { kind: process, label: "POST {courier_url}/v1/issues/{owner}/{name}/{number}/comments (comment_payload body) with Authorization: Bearer <resolve_courier_token()> -- courier reopens then comments server-side, one round trip" }
-  comment_direct: { kind: process, label: "unchanged: PATCH+POST api.github.com reopen_issue then post_issue_comment via resolve_github_token()" }
-  out: { kind: terminal, label: "print result / next: done" }
+  resolvers: { kind: start, label: "pub fn resolve_courier_url() -> Option<String> and pub fn resolve_courier_token() -> Option<String> in lib.rs, cfg online: read env var, trim, None if empty, else Some(trimmed) -- same shape as resolve_github_token() -> Option<String>" }
+  op_select: { kind: decision, label: "issue.rs cfg online: search(tool,SearchOptions) view(tool,repo,number) create(tool,CreateOptions) comment(tool,repo,number,CommentOptions) -- which op" }
+  search_check: { kind: decision, label: "search: crate::resolve_courier_url() Some(url)?" }
+  search_courier: { kind: process, label: "http_client GET format(url v1 issues owner name) query state q limit header Authorization Bearer resolve_courier_token unwrap_or_default parse same JSON shape as api.github.com search response" }
+  search_direct: { kind: process, label: "unchanged crate::github_get GET api.github.com search issues q resolve_github_token" }
+  view_check: { kind: decision, label: "view: crate::resolve_courier_url() Some(url)?" }
+  view_courier: { kind: process, label: "http_client GET format(url v1 issues owner name number) header Authorization Bearer resolve_courier_token unwrap_or_default parse same JSON shape as api.github.com issue response" }
+  view_direct: { kind: process, label: "unchanged crate::github_get GET api.github.com repos issues number resolve_github_token" }
+  create_check: { kind: decision, label: "create: crate::resolve_courier_url() Some(url)?" }
+  create_courier: { kind: process, label: "http_client POST format(url v1 issues owner name) json issue_payload header Authorization Bearer resolve_courier_token unwrap_or_default parse same JSON shape as submit_issue" }
+  create_direct: { kind: process, label: "unchanged submit_issue POST api.github.com repos issues resolve_github_token" }
+  comment_check: { kind: decision, label: "comment: crate::resolve_courier_url() Some(url)?" }
+  comment_courier: { kind: process, label: "http_client POST format(url v1 issues owner name number comments) json comment_payload header Authorization Bearer resolve_courier_token unwrap_or_default -- courier reopens then comments server side one round trip" }
+  comment_direct: { kind: process, label: "unchanged reopen_issue then post_issue_comment PATCH POST api.github.com resolve_github_token" }
+  out: { kind: terminal, label: "return parsed result to caller, identical Result and struct shapes on both branches" }
 edges:
   - { from: resolvers, to: op_select }
   - { from: op_select, to: search_check, label: "search" }
@@ -65,20 +65,20 @@ edges:
   - { from: comment_direct, to: out }
 ---
 flowchart TD
-    resolvers([lib.rs adds resolve_courier_url resolve_courier_token first non-blank env trimmed else None mirrors resolve_github_token]) --> op_select{issue.rs online search view create comment which op}
+    resolvers([resolve_courier_url resolve_courier_token in lib.rs read env trim None if empty else Some same shape as resolve_github_token]) --> op_select{issue.rs search view create comment which op}
     op_select -->|search| search_check{search resolve_courier_url Some}
     op_select -->|view| view_check{view resolve_courier_url Some}
     op_select -->|create| create_check{create resolve_courier_url Some}
     op_select -->|comment| comment_check{comment resolve_courier_url Some}
-    search_check -->|Some| search_courier[GET courier_url v1 issues owner name state q limit Bearer courier token]
-    search_check -->|None| search_direct[unchanged GET api github com search issues via github_get resolve_github_token]
-    view_check -->|Some| view_courier[GET courier_url v1 issues owner name number Bearer courier token]
-    view_check -->|None| view_direct[unchanged GET api github com repos issues number via github_get resolve_github_token]
-    create_check -->|Some| create_courier[POST courier_url v1 issues owner name issue_payload body Bearer courier token]
-    create_check -->|None| create_direct[unchanged POST api github com repos issues via submit_issue resolve_github_token]
-    comment_check -->|Some| comment_courier[POST courier_url v1 issues owner name number comments comment_payload body Bearer courier token]
-    comment_check -->|None| comment_direct[unchanged PATCH POST api github com reopen_issue then post_issue_comment via resolve_github_token]
-    search_courier --> out([print result next done])
+    search_check -->|Some| search_courier[GET url v1 issues owner name query state q limit Bearer resolve_courier_token]
+    search_check -->|None| search_direct[unchanged github_get GET api github com search issues resolve_github_token]
+    view_check -->|Some| view_courier[GET url v1 issues owner name number Bearer resolve_courier_token]
+    view_check -->|None| view_direct[unchanged github_get GET api github com repos issues number resolve_github_token]
+    create_check -->|Some| create_courier[POST url v1 issues owner name issue_payload Bearer resolve_courier_token]
+    create_check -->|None| create_direct[unchanged submit_issue POST api github com repos issues resolve_github_token]
+    comment_check -->|Some| comment_courier[POST url v1 issues owner name number comments comment_payload Bearer resolve_courier_token]
+    comment_check -->|None| comment_direct[unchanged reopen_issue post_issue_comment api github com resolve_github_token]
+    search_courier --> out([return parsed result identical shape both branches])
     search_direct --> out
     view_courier --> out
     view_direct --> out
@@ -87,7 +87,6 @@ flowchart TD
     comment_courier --> out
     comment_direct --> out
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
