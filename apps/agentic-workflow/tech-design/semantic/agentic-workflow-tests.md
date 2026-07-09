@@ -147,6 +147,9 @@ semantic_domain:
           - name: "cb_review_to_merge_test"
             kind: "module"
             public: false
+          - name: "fixture_loop_test"
+            kind: "module"
+            public: false
           - name: "hook_pretooluse_write_scope"
             kind: "module"
             public: false
@@ -742,6 +745,17 @@ changes:
       `doc_mirror::TRAITS` and CONTRIBUTING.md's "Service archetype"
       section), alphabetically between `root_doc_mirror_test` and
       `standardize_test`.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/tests/cli_tests.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1279 (epic #1270 R8a): registers the new `fixture_loop_test`
+      module (self-contained fixture-loop e2e envelope follower driving
+      `aw td fill` -> `aw td code-check` to terminal `action:"done"`),
+      alphabetically between `chain_liveness_test` and
+      `in_place_lifecycle_test` in `tests/cli_tests.rs`'s own registration
+      order.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/tests/codegen_full_test.rs"
     action: modify
