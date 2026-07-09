@@ -537,6 +537,25 @@ unsafe extern "C" fn ctx_method_noop(_self_v: MbValue, _args: MbValue) -> MbValu
     MbValue::none()
 }
 
+/// `SSLContext.get_ca_certs(binary_form=False)` — TLS verification is still a
+/// stub, but the argument contract is typed: the optional argument may be
+/// omitted or provided as a real bool, and wrong-typed values raise
+/// TypeError. A successful call returns the empty cert list of the stubbed
+/// store.
+unsafe extern "C" fn ctx_get_ca_certs(_self_v: MbValue, args: MbValue) -> MbValue {
+    let (pos, kwargs) = split_method_kwargs(args, &["binary_form"]);
+    let arg = kwarg(kwargs, "binary_form").or_else(|| pos.first().copied());
+    if let Some(arg) = arg {
+        if arg.as_bool().is_none() {
+            return raise_err(
+                "TypeError",
+                &format!("binary_form must be bool, not {}", py_type_name(arg)),
+            );
+        }
+    }
+    MbValue::from_ptr(MbObject::new_list(vec![]))
+}
+
 // ── SSLContext property setters (mb_setattr hook) ───────────────────────────
 
 /// CPython property-setter semantics for SSLContext attribute writes.
@@ -1458,6 +1477,7 @@ fn register_ssl_classes() {
         let mut methods: HashMap<String, MbValue> = HashMap::new();
         methods.insert("__init__".to_string(), MbValue::from_func(init_addr));
         let typed: &[(&str, usize)] = &[
+            ("get_ca_certs", ctx_get_ca_certs as usize),
             ("get_ciphers", ctx_get_ciphers as usize),
             ("set_ciphers", ctx_set_ciphers as usize),
             ("session_stats", ctx_session_stats as usize),
@@ -1480,7 +1500,6 @@ fn register_ssl_classes() {
             "set_alpn_protocols",
             "set_npn_protocols",
             "cert_store_stats",
-            "get_ca_certs",
         ] {
             methods.insert(m.to_string(), MbValue::from_func(noop_addr));
         }
@@ -1935,4 +1954,85 @@ pub fn register() {
     }
     attrs.insert("_ssl".into(), ssl_accel_module);
     super::register_module("ssl", attrs);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::super::exception::{current_exception_type, mb_clear_exception};
+    use std::sync::Once;
+
+    fn register_ssl_once() {
+        static ONCE: Once = Once::new();
+        ONCE.call_once(register_ssl_classes);
+    }
+
+    fn ssl_context_instance() -> MbValue {
+        MbValue::from_ptr(MbObject::new_instance("SSLContext".to_string()))
+    }
+
+    fn list_args(items: Vec<MbValue>) -> MbValue {
+        MbValue::from_ptr(MbObject::new_list(items))
+    }
+
+    fn is_empty_list(value: MbValue) -> bool {
+        let Some(ptr) = value.as_ptr() else {
+            return false;
+        };
+        unsafe {
+            match &(*ptr).data {
+                ObjData::List(lock) => lock.read().unwrap().is_empty(),
+                _ => false,
+            }
+        }
+    }
+
+    #[test]
+    fn get_ca_certs_accepts_missing_and_bool() {
+        for args in [
+            MbValue::none(),
+            list_args(Vec::new()),
+            list_args(vec![MbValue::from_bool(false)]),
+            list_args(vec![MbValue::from_bool(true)]),
+        ] {
+            mb_clear_exception();
+            let result = unsafe { ctx_get_ca_certs(ssl_context_instance(), args) };
+            assert!(is_empty_list(result));
+            assert_eq!(current_exception_type(), None);
+        }
+    }
+
+    #[test]
+    fn get_ca_certs_rejects_non_bool_binary_form_direct() {
+        for bad in [
+            MbValue::none(),
+            MbValue::from_ptr(MbObject::new_str("not_a_bool".to_string())),
+            MbValue::from_ptr(MbObject::new_instance("_W".to_string())),
+        ] {
+            mb_clear_exception();
+            let result = unsafe { ctx_get_ca_certs(ssl_context_instance(), list_args(vec![bad])) };
+            assert!(result.is_none());
+            assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        }
+        mb_clear_exception();
+    }
+
+    #[test]
+    fn get_ca_certs_bound_method_rejects_non_bool_binary_form() {
+        register_ssl_once();
+        let method = super::super::super::class::mb_getattr(
+            ssl_context_instance(),
+            new_str("get_ca_certs"),
+        );
+        mb_clear_exception();
+        let result = super::super::super::builtins::mb_call_spread(
+            method,
+            list_args(vec![MbValue::from_ptr(MbObject::new_instance(
+                "_W".to_string(),
+            ))]),
+        );
+        assert!(result.is_none());
+        assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        mb_clear_exception();
+    }
 }
