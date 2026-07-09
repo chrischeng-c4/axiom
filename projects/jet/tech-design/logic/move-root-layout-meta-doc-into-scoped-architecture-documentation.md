@@ -97,7 +97,6 @@ flowchart TD
     fix --> verify_scope
     stale -- no --> done([Layout guide discoverable at docs/architecture/layout.md, linked from README])
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
