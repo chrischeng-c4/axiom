@@ -174,6 +174,11 @@ fn is_str_value(v: MbValue) -> bool {
         == Some(true)
 }
 
+fn is_mapping_like_value(v: MbValue) -> bool {
+    v.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+        || super::super::class::unwrap_dictlike_data(v).is_some()
+}
+
 fn shelve_kw_filename(v: MbValue) -> Option<Option<MbValue>> {
     let ptr = v.as_ptr()?;
     unsafe {
@@ -222,6 +227,22 @@ unsafe extern "C" fn dispatch_shelve_dbfilename_shelf(
     if let Some(filename) = positional.first().copied().or(kw_filename) {
         if !is_str_value(filename) {
             return raise_type_error("DbfilenameShelf.__init__() filename argument must be str");
+        }
+    }
+
+    dispatch_empty_dict(args_ptr, nargs)
+}
+
+unsafe extern "C" fn dispatch_shelve_shelf(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+
+    if let Some(dict_arg) = args.first().copied() {
+        if !is_mapping_like_value(dict_arg) {
+            return raise_type_error("Shelf.__init__() dict argument must be mapping-like");
         }
     }
 
@@ -529,12 +550,14 @@ fn register_shelve() {
         &[],
         &[],
     );
+    let shelf_addr = dispatch_shelve_shelf as *const () as usize;
+    attrs.insert("Shelf".into(), MbValue::from_func(shelf_addr));
     let dbfilename_shelf_addr = dispatch_shelve_dbfilename_shelf as *const () as usize;
     attrs.insert(
         "DbfilenameShelf".into(),
         MbValue::from_func(dbfilename_shelf_addr),
     );
-    register_addrs(&[dbfilename_shelf_addr]);
+    register_addrs(&[shelf_addr, dbfilename_shelf_addr]);
     super::register_module("shelve", attrs);
 }
 
@@ -726,6 +749,33 @@ mod tests {
     fn test_dbfilename_shelf_accepts_missing_filename() {
         clear_exc();
         let result = unsafe { dispatch_shelve_dbfilename_shelf(std::ptr::null(), 0) };
+        assert!(result.as_ptr().is_some());
+        assert!(raised_type().is_none());
+    }
+
+    #[test]
+    fn test_shelve_shelf_accepts_dict_argument() {
+        clear_exc();
+        let args = [MbValue::from_ptr(MbObject::new_dict())];
+        let result = unsafe { dispatch_shelve_shelf(args.as_ptr(), args.len()) };
+        assert!(result.as_ptr().is_some());
+        assert!(raised_type().is_none());
+    }
+
+    #[test]
+    fn test_shelve_shelf_rejects_plain_instance_argument() {
+        clear_exc();
+        let args = [MbValue::from_ptr(MbObject::new_instance("_W".to_string()))];
+        let result = unsafe { dispatch_shelve_shelf(args.as_ptr(), args.len()) };
+        assert!(result.is_none());
+        assert_eq!(raised_type().as_deref(), Some("TypeError"));
+        clear_exc();
+    }
+
+    #[test]
+    fn test_shelve_shelf_accepts_missing_dict_argument() {
+        clear_exc();
+        let result = unsafe { dispatch_shelve_shelf(std::ptr::null(), 0) };
         assert!(result.as_ptr().is_some());
         assert!(raised_type().is_none());
     }
