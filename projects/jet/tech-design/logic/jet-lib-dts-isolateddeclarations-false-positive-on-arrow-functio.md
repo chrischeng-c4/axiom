@@ -69,3 +69,42 @@ Scope for WI #1264 (`projects/jet/src/bundler/dts.rs`): empirically re-verified 
 Root cause: `infer_variable_declarator_type` (the entry point for inferring an untyped `const` initializer's declared type) tries, in order, `annotated_expression_type` (the `#937` `as`/`satisfies` path), `infer_arrow_function_type` (requires the arrow to carry its own explicit `return_type` field — the already-fixed #799 case), then `infer_object_literal_type` / `infer_single_arrow_property_object_literal_type` directly on the declarator's `value` node. When `value` is an `arrow_function` whose body is a `statement_block` (i.e. uses `{ return ...; }` rather than a concise `=> expr` body), none of those three fallbacks ever look *inside* the arrow's body — `infer_object_literal_type`/`infer_single_arrow_property_object_literal_type` both early-return `None` because `value.kind() == "arrow_function"`, not `"object"`. The returned object literal's own already-typed members are therefore never reached, and the declarator falls through to the fail-loud isolatedDeclarations diagnostic even though every property inside the returned object literal carries an explicit type (`tsc --isolatedDeclarations` accepts this shape and infers the return type from the returned literal).
 
 Fix: add `infer_arrow_body_return_object_type`, tried immediately after `infer_arrow_function_type` fails and before the direct object-literal fallbacks. It only fires for the narrow shape the issue names — arrow function, no explicit `return_type` field, `statement_block` body containing *exactly one* statement that is a `return_statement` whose returned expression is an `object` node — and then delegates member typing to the existing `infer_object_literal_type(returned_object, source)` routine (the same routine `const x = { ... }` initializers already use), so no new member-typing logic is introduced. Any other body shape (multiple statements, conditionals, loops, a non-object return expression, or an untyped/partially-typed object literal) still falls through unchanged to the existing fail-loud `isolatedDeclarations error` diagnostic — this keeps the fix scoped to exactly the shape in the issue and its real-world `fe-shared` `srcHelper` hit, and does not intersect the sibling false-positive variants tracked separately in #1263 (nested object literals returned from deeper call chains), #1238 (`Object.assign` + computed-key body shapes), and #1262 (property truncation after an `Object.assign` spread) — none of those shapes are a single bare `return { ... }` of a directly-typed object literal, so this logic path leaves their still-open false positives unchanged. Also distinct from the already-fixed #799/#865 case where the object literal is the const's *own* initializer (not returned from inside a function body) and the already-fixed #937 case where the returned/initializer expression carries an explicit `as`/`satisfies` cast.
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: jet-dts-arrow-body-return-object-inference-verification
+requirements:
+  arrow_body_return_partially_typed_object_literal_still_errors:
+    id: R2
+    text: "Negative control: the same single-return-of-object-literal arrow body shape as R1, but one property's arrow value has no explicit return type (e.g. `toOutsource: (y?: string) => y ?? a` instead of `(y?: string): string => y ?? a`), must still raise an isolatedDeclarations error, proving the new inference path only fires when every returned-object member is itself locally inferable and does not silently widen to genuinely untyped members."
+    kind: regression
+    risk: high
+    verify: cargo test -p jet --lib bundler::dts::tests::uninferrable_exported_const_arrow_body_return_partially_typed_object_literal_errors
+  arrow_body_single_return_typed_object_literal:
+    id: R1
+    text: "WI #1264 minimal repro: an exported const arrow function with no explicit return type, whose body is exactly one `return` of an object literal whose own properties all carry explicit types (`export const funcReturningTypedObject = (a: string, b: number = 1) => { return { fromOutsource: (x: string): Promise<string> => Promise.resolve(x), toOutsource: (y?: string): string => y ?? a, }; };`), emits `export declare const funcReturningTypedObject: (a: string, b?: number) => { fromOutsource: (x: string) => Promise<string>; toOutsource: (y?: string) => string; };` instead of an isolatedDeclarations error."
+    kind: functional
+    risk: medium
+    verify: cargo test -p jet --lib bundler::dts::tests::infers_exported_const_arrow_body_single_return_typed_object_literal_signature
+  arrow_concise_body_without_return_type_still_errors:
+    id: R4
+    text: "No-regression control on the existing sibling case: an exported const arrow function with a concise (non-block) body and no explicit return type (`export const delay = (ms: number) => Promise.resolve();`) must remain fail-loud with an isolatedDeclarations error — this pre-existing test must keep passing unchanged after the new `statement_block`-only inference path is added, proving the fix does not touch the concise-body code path."
+    kind: regression
+    risk: low
+    verify: cargo test -p jet --lib bundler::dts::tests::exported_const_arrow_without_return_type_errors
+  arrow_multi_statement_body_return_object_literal_still_errors:
+    id: R3
+    text: "Negative control: an exported const arrow function with no explicit return type whose body has more than one statement before returning a fully-typed object literal (e.g. a local variable assignment followed by `return { ... };`) must still raise an isolatedDeclarations error, proving the new inference is scoped to a body that is exactly one `return` statement and does not broaden to 'eventually returns an object literal'."
+    kind: regression
+    risk: high
+    verify: cargo test -p jet --lib bundler::dts::tests::uninferrable_exported_const_arrow_multi_statement_body_return_object_literal_errors
+---
+flowchart TD
+    r1[R1 arrow body single return typed object literal] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_exported_const_arrow_body_single_return_typed_object_literal_signature[cargo test -p jet --lib bundler::dts::tests::infers_exported_const_arrow_body_single_return_typed_object_literal_signature]
+    r2[R2 arrow body return partially typed object literal still errors] --> cargo_test_p_jet_lib_bundler_dts_tests_uninferrable_exported_const_arrow_body_return_partially_typed_object_literal_errors[cargo test -p jet --lib bundler::dts::tests::uninferrable_exported_const_arrow_body_return_partially_typed_object_literal_errors]
+    r3[R3 arrow multi statement body return object literal still errors] --> cargo_test_p_jet_lib_bundler_dts_tests_uninferrable_exported_const_arrow_multi_statement_body_return_object_literal_errors[cargo test -p jet --lib bundler::dts::tests::uninferrable_exported_const_arrow_multi_statement_body_return_object_literal_errors]
+    r4[R4 arrow concise body without return type still errors] --> cargo_test_p_jet_lib_bundler_dts_tests_exported_const_arrow_without_return_type_errors[cargo test -p jet --lib bundler::dts::tests::exported_const_arrow_without_return_type_errors]
+```
