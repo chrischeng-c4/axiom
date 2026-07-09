@@ -57,8 +57,6 @@ pub enum TdCommand {
     GenSource(super::cb::CbGenSourceArgs),
     /// Audit code-space files for TD generation drift and HANDWRITE gaps.
     CodeCheck(super::cb::CbCheckArgs),
-    /// Adopt existing code by generating a TD spec via the fillback pipeline.
-    CodeClaim(super::cb::CbClaimArgs),
     /// Fill HANDWRITE marker blocks in generated code.
     Fill(super::cb::CbFillArgs),
     /// Promote a HANDWRITE marker block to CODEGEN once its gap-blocker has
@@ -123,7 +121,10 @@ pub struct AstArgs {
 #[derive(Debug, Args)]
 /// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
 pub struct CreateArgs {
-    /// Issue slug.
+    /// Issue slug. Optional when `--from-source` is set: a slug is then
+    /// derived from the source path's file stem, matching the retired `aw
+    /// td code-claim`'s prior default.
+    #[arg(default_value = "")]
     pub slug: String,
     /// Apply mode: validate the spec in-place and emit dispatch envelope.
     #[arg(long)]
@@ -154,6 +155,32 @@ pub struct CreateArgs {
     /// Pretty-print the JSON envelope.
     #[arg(long)]
     pub pretty: bool,
+    /// Adopt an existing source file or directory into the score lifecycle
+    /// by generating a TD spec via the fillback pipeline, instead of
+    /// authoring a new TD from scratch. Folds the retired `aw td
+    /// code-claim` verb (epic #1270 R5 / #1273): the generated spec now
+    /// always targets the project-local `tech-design/` root — resolved via
+    /// `--project`, or inferred from the source path against the
+    /// configured project scopes when omitted — instead of the legacy
+    /// repo-root `.aw/tech-design` (#1243). The old standalone verb's
+    /// `--init` flag (`.aw/` workspace bootstrap) has no project-local
+    /// equivalent and is retired: a project's `tech-design/` root is
+    /// resolved from `aw.toml`, not created ad hoc.
+    #[arg(long)]
+    pub from_source: Option<String>,
+    /// With `--from-source`: tech-design group name for the generated
+    /// spec's output path. Inferred from the source path when omitted.
+    #[arg(long)]
+    pub group: Option<String>,
+    /// With `--from-source`: skip filing/linking a durable tracker
+    /// work-item for the adopted code path (see the retired code-claim's
+    /// `--no-issue`, issue #925).
+    #[arg(long)]
+    pub no_issue: bool,
+    /// With `--from-source`: suppress interactive clarification prompts.
+    /// Required for non-TTY environments such as agent dispatch and CI.
+    #[arg(long)]
+    pub non_interactive: bool,
 }
 
 #[derive(Debug, Args)]
@@ -2629,32 +2656,36 @@ pub async fn run(args: TdArgs) -> Result<()> {
             }
         }
         TdCommand::Create(a) => {
-            super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
-                .await?;
+            if a.from_source.is_some() {
+                // Folded `aw td code-claim` (#1273): same "any pending lock
+                // blocks it" guard the retired standalone verb used, since
+                // this mode has no single issue slug to scope the lock to.
+                super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
+            } else {
+                super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
+                    .await?;
+            }
         }
         TdCommand::Fill(a) => {
             super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
                 .await?;
         }
-        TdCommand::MigrateMermaid(_)
-        | TdCommand::Claim(_)
-        | TdCommand::CodeClaim(_)
-        | TdCommand::Promote(_) => {
+        TdCommand::MigrateMermaid(_) | TdCommand::Claim(_) | TdCommand::Promote(_) => {
             super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
         }
     }
+    let project = args.project.clone();
     match args.command {
-        TdCommand::Create(a) => run_create(a).await,
+        TdCommand::Create(a) => run_create(a, project.as_deref()).await,
         TdCommand::Validate(a) => run_validate(a).await,
         TdCommand::Check(a) => run_check(a),
         TdCommand::Ast(a) => run_ast(a),
         TdCommand::MigrateMermaid(a) => super::td_migrate::run(a).await,
-        TdCommand::Lock(a) => super::td_lock::run(args.project.as_deref(), a),
+        TdCommand::Lock(a) => super::td_lock::run(project.as_deref(), a),
         TdCommand::Claim(a) => run_claim(a).await,
         TdCommand::Gen(a) => super::cb::run_gen(a).await,
         TdCommand::GenSource(a) => super::cb::run_gen_source(a),
         TdCommand::CodeCheck(a) => super::cb::run_check(a).await,
-        TdCommand::CodeClaim(a) => super::cb::run_claim(a).await,
         TdCommand::Fill(a) => super::cb_fill::run(a).await,
         TdCommand::Promote(a) => run_promote(a),
     }
@@ -2723,12 +2754,44 @@ fn run_ast(args: AstArgs) -> Result<()> {
 
 // ── td create ────────────────────────────────────────────────────────
 
-async fn run_create(args: CreateArgs) -> Result<()> {
+async fn run_create(args: CreateArgs, project: Option<&str>) -> Result<()> {
+    if let Some(source_path) = args.from_source.clone() {
+        return run_create_from_source(&args, source_path, project).await;
+    }
+    if args.slug.trim().is_empty() {
+        anyhow::bail!(
+            "aw td create requires <slug> (or pass --from-source <code-path> to adopt existing \
+             code, folding the retired `aw td code-claim`)"
+        );
+    }
     if args.apply {
         run_create_apply(&args).await
     } else {
         run_create_brief(&args).await
     }
+}
+
+// `aw td create --from-source <code-path>` — folds the retired standalone
+// `aw td code-claim` verb (epic #1270 R5 / #1273). Wraps
+// `super::cb::run_claim`'s relocated entry point: the fillback pipeline
+// internals (AST scan, spec generation, tracker linkage, `Cb-Claim`
+// trailer commit) are unchanged, only the CLI surface moved and the
+// generated spec's output root is now always project-local (#1243) instead
+// of the legacy repo-root `.aw/tech-design`.
+async fn run_create_from_source(
+    args: &CreateArgs,
+    source_path: String,
+    project: Option<&str>,
+) -> Result<()> {
+    let claim_args = super::cb::CbClaimArgs {
+        code_path: source_path,
+        no_issue: args.no_issue,
+        group: args.group.clone(),
+        json: true,
+        non_interactive: args.non_interactive,
+        project: project.map(str::to_string),
+    };
+    super::cb::run_claim(claim_args).await
 }
 
 /// Brief mode: print context for the aw-td-author agent.

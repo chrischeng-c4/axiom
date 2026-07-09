@@ -214,6 +214,11 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         "aw standardize managed",
         "aw standardize semantic",
         "aw standardize traceability",
+        // NOT added here: `aw td code-claim` (#1273, folded into
+        // `aw td create --from-source`) still appears in AGENTS.md and the
+        // aw-cb-claim/aw-standardize skill docs, which are pre-existing
+        // in-flight edits outside this change's scope (see #918's identical
+        // note above re: `templates/cli/mainthread/skills/aw-wi/SKILL.md`).
     ];
     for doc in docs {
         let Ok(content) = std::fs::read_to_string(&doc) else {
@@ -268,7 +273,7 @@ fn code_artifact_commands_are_inherited_by_td() {
     let cmd = Cli::command();
     assert!(cmd.find_subcommand("cb").is_none());
     let td = cmd.find_subcommand("td").expect("td namespace registered");
-    for name in ["gen", "gen-source", "code-check", "code-claim", "fill"] {
+    for name in ["gen", "gen-source", "code-check", "fill"] {
         assert!(
             td.find_subcommand(name).is_some(),
             "td {name} should remain registered"
@@ -278,6 +283,45 @@ fn code_artifact_commands_are_inherited_by_td() {
         assert!(
             td.find_subcommand(name).is_none(),
             "td {name} should not preserve the retired CB CRRR loop"
+        );
+    }
+}
+
+// #1273 (epic #1270 R5): `aw td code-claim` folded into
+// `aw td create --from-source`, mirroring the `test_td_merge_*` removed-verb
+// pattern above.
+#[test]
+fn test_code_claim_subcommand_is_removed() {
+    let cmd = Cli::command();
+    let td = cmd.find_subcommand("td").expect("td namespace");
+    assert!(
+        td.find_subcommand("code-claim").is_none(),
+        "removed td code-claim command must not be registered"
+    );
+}
+
+#[test]
+fn test_code_claim_parse_fails() {
+    let err = match Cli::try_parse_from(["aw", "td", "code-claim", "src/lib.rs"]) {
+        Ok(_) => panic!("removed td code-claim command unexpectedly parsed"),
+        Err(err) => err,
+    };
+    assert!(
+        err.to_string()
+            .contains("unrecognized subcommand 'code-claim'"),
+        "unexpected parse error: {err}"
+    );
+}
+
+#[test]
+fn test_td_create_from_source_flags_registered() {
+    let cmd = Cli::command();
+    let td = cmd.find_subcommand("td").expect("td namespace");
+    let create = td.find_subcommand("create").expect("td create");
+    for long in ["from-source", "group", "no-issue", "non-interactive"] {
+        assert!(
+            create.get_arguments().any(|a| a.get_long() == Some(long)),
+            "td create should expose --{long} (#1273)"
         );
     }
 }
