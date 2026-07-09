@@ -637,6 +637,61 @@ fn lookup_file_or_directory_module_id(
         .or_else(|| lookup_directory_index_module_id(module_map, resolution_index, candidate))
 }
 
+/// Node builtins `resolver/mod.rs::resolve_browser_builtin` generates a real
+/// browser polyfill module for (gated on the `browser` export condition,
+/// which `jet build`'s `ResolveOptions::for_browser_production()` always
+/// sets). Mirrors `resolver/mod.rs`'s const of the same name 1:1 -- see WI
+/// #1306; `transform/modules.rs` and `resolver/mod.rs` share no common lib,
+/// the same intentional duplication precedent as `append_extension` (WI
+/// #1304).
+const NODE_BUILTINS_WITH_BROWSER_FALLBACK: &[&str] = &[
+    "assert",
+    "buffer",
+    "child_process",
+    "cluster",
+    "constants",
+    "crypto",
+    "dgram",
+    "dns",
+    "domain",
+    "events",
+    "fs",
+    "http",
+    "http2",
+    "https",
+    "module",
+    "net",
+    "os",
+    "path",
+    "perf_hooks",
+    "process",
+    "punycode",
+    "querystring",
+    "readline",
+    "stream",
+    "string_decoder",
+    "sys",
+    "timers",
+    "tls",
+    "tty",
+    "url",
+    "util",
+    "v8",
+    "vm",
+    "worker_threads",
+    "zlib",
+];
+
+/// Strips an optional `node:` prefix and checks the result against
+/// [`NODE_BUILTINS_WITH_BROWSER_FALLBACK`]. Mirrors
+/// `resolver/mod.rs::node_builtin_name` 1:1 -- see WI #1306.
+fn node_builtin_name(specifier: &str) -> Option<&str> {
+    let name = specifier.strip_prefix("node:").unwrap_or(specifier);
+    NODE_BUILTINS_WITH_BROWSER_FALLBACK
+        .contains(&name)
+        .then_some(name)
+}
+
 /// Appends `ext` to `base` via string concatenation rather than
 /// `PathBuf::set_extension`, which replaces everything after the LAST `.`
 /// in the file name. A dotted basename such as `router.config` must keep
@@ -1073,6 +1128,37 @@ fn resolve_module_path(
         if resolution_index.is_none() {
             if let Some(id) = resolve_bare_specifier_from_jet_store(path, module_map, current_dir) {
                 return format!("require({})", id);
+            }
+        }
+
+        // Node builtin browser polyfill fallback (WI #1306): every strategy
+        // above only knows how to resolve real `node_modules/<pkg>`
+        // directories, so a bare Node builtin specifier such as `crypto`
+        // (direct or transitive, e.g. via a dependency's own internal
+        // `require('crypto')`) falls through all of them, since no
+        // `node_modules/crypto` directory exists. `resolver/mod.rs`'s
+        // `resolve_browser_builtin` already generated and registered a real
+        // browser polyfill module at `<dir>/node_modules/.jet/polyfill-<
+        // builtin>.mjs` for this specifier during graph construction (see
+        // `build_graph`) -- reuse the same node_modules ancestor walk-up to
+        // probe that already-materialized path before giving up.
+        if let Some(builtin) = node_builtin_name(path) {
+            if let Some(dir) = current_dir {
+                let mut search_dir = Some(dir);
+                while let Some(d) = search_dir {
+                    let nm_dir = d.join("node_modules");
+                    if nm_dir.is_dir() {
+                        let candidate = nm_dir.join(".jet").join(format!("polyfill-{builtin}.mjs"));
+                        if let Some(id) = lookup_module_id_for_resolution(
+                            module_map,
+                            resolution_index,
+                            &candidate,
+                        ) {
+                            return format!("require({})", id);
+                        }
+                    }
+                    search_dir = d.parent();
+                }
             }
         }
     }
@@ -2186,6 +2272,175 @@ genCalc
                 output.code
             );
         }
+    }
+
+    // WI #1306 R4: isolated unit-level pin on node_builtin_name's exact
+    // matching and 'node:' prefix-stripping semantics.
+    #[test]
+    fn node_builtin_name_matches_known_builtins_and_strips_node_prefix() {
+        assert_eq!(node_builtin_name("crypto"), Some("crypto"));
+        assert_eq!(node_builtin_name("node:crypto"), Some("crypto"));
+        assert_eq!(node_builtin_name("react"), None);
+    }
+
+    fn write_node_builtin_fixture(
+        dir: &std::path::Path,
+        files: &[(&str, &str)],
+    ) -> std::path::PathBuf {
+        use std::io::Write;
+        for (name, contents) in files {
+            let path = dir.join(name);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            let mut f = std::fs::File::create(&path).unwrap();
+            f.write_all(contents.as_bytes()).unwrap();
+        }
+        dir.join(files[0].0)
+    }
+
+    fn node_builtin_polyfill_bundle_options(
+        fixture_root: &std::path::Path,
+        entry: std::path::PathBuf,
+    ) -> crate::bundler::BundleOptions {
+        let mut resolve_options = crate::resolver::ResolveOptions::for_browser_production();
+        resolve_options.base_dirs = vec![fixture_root.to_path_buf()];
+        crate::bundler::BundleOptions {
+            entry,
+            output_dir: fixture_root.join("dist"),
+            resolve_options,
+            ..Default::default()
+        }
+    }
+
+    // WI #1306 R1: a DIRECT Node builtin import (import { randomBytes } from
+    // 'crypto') must resolve end to end through the complete bundle pipeline
+    // to the browser polyfill module resolver/mod.rs::resolve_browser_builtin
+    // already generates -- no literal unresolved require('crypto') string
+    // must survive in the emitted bundle.
+    //
+    // The fixture root is canonicalized before use: `resolve_browser_builtin`
+    // resolves its polyfill path from the configured `base_dirs` while
+    // `build_graph` canonicalizes the entry path, so on platforms where the
+    // OS temp dir is itself a symlink (macOS `/var` -> `/private/var`) an
+    // un-canonicalized fixture root would make those two paths disagree by
+    // prefix even though they name the same file -- a tempdir artifact, not
+    // a real-world condition (ordinary project roots are not symlinked).
+    #[tokio::test]
+    async fn bundle_resolves_direct_node_builtin_import_to_generated_polyfill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let entry = write_node_builtin_fixture(
+            &root,
+            &[(
+                "entry.ts",
+                "import { randomBytes } from 'crypto';\nexport const x = randomBytes;\n",
+            )],
+        );
+
+        let opts = node_builtin_polyfill_bundle_options(&root, entry.clone());
+        let bundler = crate::bundler::Bundler::new(opts).unwrap();
+        let output = bundler
+            .bundle(entry)
+            .await
+            .expect("direct Node builtin import must resolve");
+
+        assert!(
+            !output.code.contains("require('crypto')") && !output.code.contains("require(\"crypto\")"),
+            "direct Node builtin import must not be left as a literal unresolved require string:\n{}",
+            output.code
+        );
+        assert!(
+            output.code.contains("globalThis.crypto"),
+            "generated crypto polyfill body must be reachable in the bundle:\n{}",
+            output.code
+        );
+    }
+
+    // WI #1306 R2: the WI's explicitly-called-out transitive case, mirroring
+    // the original bug report's seedrandom-shaped repro: a fixture
+    // node_modules dependency whose own source contains a bare
+    // require('crypto') call must have that call rewritten to reference the
+    // generated polyfill module id too -- not just the entry module.
+    //
+    // The fixture root is canonicalized before use -- see the comment on
+    // `bundle_resolves_direct_node_builtin_import_to_generated_polyfill`.
+    #[tokio::test]
+    async fn bundle_resolves_transitive_node_builtin_require_via_dependency() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let entry = write_node_builtin_fixture(
+            &root,
+            &[
+                (
+                    "entry.js",
+                    "var seedrandom = require('seedrandom-fixture');\nmodule.exports = seedrandom;\n",
+                ),
+                (
+                    "node_modules/seedrandom-fixture/index.js",
+                    "var crypto = require('crypto');\nmodule.exports = crypto;\n",
+                ),
+            ],
+        );
+
+        let opts = node_builtin_polyfill_bundle_options(&root, entry.clone());
+        let bundler = crate::bundler::Bundler::new(opts).unwrap();
+        let output = bundler
+            .bundle(entry)
+            .await
+            .expect("transitive Node builtin require must resolve");
+
+        assert!(
+            !output.code.contains("require('crypto')") && !output.code.contains("require(\"crypto\")"),
+            "transitive Node builtin require must not be left as a literal unresolved require string anywhere in the bundle:\n{}",
+            output.code
+        );
+        assert!(
+            output.code.contains("globalThis.crypto"),
+            "generated crypto polyfill body must be reachable in the bundle:\n{}",
+            output.code
+        );
+    }
+
+    // WI #1306 R3: no-regression control -- an ordinary (non-builtin) bare
+    // package import must continue to resolve exactly as before this fix,
+    // proving the new Node-builtin branch is reached only after (and does
+    // not interfere with) the pre-existing bare-specifier strategies.
+    #[tokio::test]
+    async fn bundle_resolves_ordinary_bare_package_import_unchanged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let entry = write_node_builtin_fixture(
+            tmp.path(),
+            &[
+                (
+                    "entry.js",
+                    "var pkg = require('ordinary-pkg');\nmodule.exports = pkg;\n",
+                ),
+                (
+                    "node_modules/ordinary-pkg/index.js",
+                    "module.exports = 'ORDINARY_PKG_MARKER_1306';\n",
+                ),
+            ],
+        );
+
+        let opts = node_builtin_polyfill_bundle_options(tmp.path(), entry.clone());
+        let bundler = crate::bundler::Bundler::new(opts).unwrap();
+        let output = bundler
+            .bundle(entry)
+            .await
+            .expect("ordinary bare package import must resolve");
+
+        assert!(
+            !output.code.contains("require('ordinary-pkg')")
+                && !output.code.contains("require(\"ordinary-pkg\")"),
+            "ordinary bare package import must not be left as a literal unresolved require string:\n{}",
+            output.code
+        );
+        assert!(
+            output.code.contains("ORDINARY_PKG_MARKER_1306"),
+            "target package module body must be present in the bundle:\n{}",
+            output.code
+        );
     }
 }
 // CODEGEN-END
