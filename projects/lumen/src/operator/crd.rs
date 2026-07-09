@@ -477,7 +477,16 @@ impl LumenSpec {
         } else if self.shard_count > 1 {
             self.shard_count as i32
         } else {
-            self.serving.autoscaling.min_replicas
+            // Single shard, single member, no raft consensus (#1317): every
+            // pod's `shard_index` (`ordinal % shard_count`) collapses to 0,
+            // so more than one live pod here means multiple uncoordinated
+            // local copies behind one Service — confirmed empirically on a
+            // kind cluster (a write via one pod is invisible on the others;
+            // a load-balanced Service returns divergent results for the
+            // same read). Clamp to exactly 1 regardless of the CR's
+            // `serving.autoscaling` bounds; CPU-driven scaling requires
+            // opting into `replicasPerShard > 1` (raft-HA).
+            1
         }
     }
 
