@@ -806,6 +806,9 @@ pub fn mb_socket_ntohl(value: MbValue) -> MbValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::super::exception::{
+        get_exception_message_pub, get_exception_type_pub, mb_catch_exception, mb_clear_exception,
+    };
 
     fn dict_get_bool(val: MbValue, key: &str) -> Option<bool> {
         val.as_ptr().and_then(|ptr| unsafe {
@@ -1015,33 +1018,33 @@ mod tests {
 
     #[test]
     fn test_socket_makefile_mode_rejects_non_string_before_fd_lookup() {
-        super::super::exception::mb_clear_exception();
+        mb_clear_exception();
         let result = socket_makefile_mode(Some(MbValue::from_int(1)));
         assert!(result.is_none());
-        let exc = super::super::exception::mb_catch_exception();
+        let exc = mb_catch_exception();
         assert_eq!(
-            super::super::exception::get_exception_type_pub(exc).as_deref(),
+            get_exception_type_pub(exc).as_deref(),
             Some("TypeError")
         );
         assert_eq!(
-            super::super::exception::get_exception_message_pub(exc).as_deref(),
+            get_exception_message_pub(exc).as_deref(),
             Some("socket.makefile() argument 'mode' must be str")
         );
     }
 
     #[test]
     fn test_socket_makefile_mode_rejects_invalid_literal() {
-        super::super::exception::mb_clear_exception();
+        mb_clear_exception();
         let result =
             socket_makefile_mode(Some(MbValue::from_ptr(MbObject::new_str("a".to_string()))));
         assert!(result.is_none());
-        let exc = super::super::exception::mb_catch_exception();
+        let exc = mb_catch_exception();
         assert_eq!(
-            super::super::exception::get_exception_type_pub(exc).as_deref(),
+            get_exception_type_pub(exc).as_deref(),
             Some("ValueError")
         );
         assert_eq!(
-            super::super::exception::get_exception_message_pub(exc).as_deref(),
+            get_exception_message_pub(exc).as_deref(),
             Some("invalid mode 'a' (only r, w, b allowed)")
         );
     }
