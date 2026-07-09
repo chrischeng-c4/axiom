@@ -9678,6 +9678,29 @@ impl<'a> HirToMir<'a> {
                 }
                 // Check if this is a builtin call that maps to an extern
                 if let Some(extern_name) = self.builtin_syms.get(&func_sym.0).cloned() {
+                    if extern_name == "mb_compile" {
+                        if let Some(bound_func) = self.sym_to_vreg.get(&func_sym).copied() {
+                            let boxed_args: Vec<VReg> = args
+                                .iter()
+                                .zip(arg_vregs.iter())
+                                .map(|(arg_expr, &vreg)| self.box_operand(vreg, arg_expr.ty()))
+                                .collect();
+                            let args_list = self.fresh_vreg();
+                            self.current_stmts.push(MirInst::MakeList {
+                                dest: args_list,
+                                elements: boxed_args,
+                                ty: self.tcx.any(),
+                            });
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(dest),
+                                name: "mb_call_spread".to_string(),
+                                args: vec![bound_func, args_list],
+                                ty: *ty,
+                            });
+                            self.emit_exception_propagate();
+                            return dest;
+                        }
+                    }
                     // HANDWRITE-BEGIN gap="standardize:projects-mamba-src-lower-hir-to-mir-rs" tracker="standardize-gap-projects-mamba-src-lower-hir-to-mir-rs" reason="introspection-builtins (issue: enhancement-mamba-introspection-builtins-globals-locals-vars-dir)."
                     // locals() and vars() (zero-arg) snapshot the current frame's
                     // local bindings. mamba's JIT keeps locals in VRegs without a
@@ -13749,6 +13772,105 @@ mod tests {
                 .iter()
                 .any(|s| matches!(s, MirInst::CallExtern { name, .. } if name == "mb_builtin_get")),
             "assigned builtin name must read the assigned value, not the builtin object"
+        );
+    }
+
+    #[test]
+    fn test_assigned_compile_name_does_not_lower_as_builtin_compile_call() {
+        use crate::resolve::SymbolKind;
+
+        let tcx = TypeContext::new();
+        let str_ty = tcx.str();
+        let any_ty = tcx.any();
+
+        let mut symbols = SymbolTable::new();
+        let compile_sym = symbols.define("compile".to_string(), SymbolKind::Function);
+        let hir = HirModule {
+            functions: Vec::new(),
+            classes: Vec::new(),
+            top_level: vec![
+                HirStmt::Assign {
+                    target: HirLValue::Var(compile_sym),
+                    value: HirExpr::StrLit("shadow".to_string(), str_ty),
+                    span: Span::dummy(),
+                },
+                HirStmt::Expr {
+                    expr: HirExpr::Call {
+                        func: Box::new(HirExpr::Var(compile_sym, any_ty)),
+                        args: vec![HirExpr::IntLit(1, tcx.int())],
+                        ty: any_ty,
+                    },
+                    span: Span::dummy(),
+                },
+            ],
+            imports: Vec::new(),
+            sym_names: std::collections::HashMap::new(),
+            sym_types: std::collections::HashMap::new(),
+            module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
+        };
+
+        let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
+        let all_stmts: Vec<_> = mir.bodies[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.stmts.iter())
+            .collect();
+
+        assert!(
+            !all_stmts
+                .iter()
+                .any(|s| matches!(s, MirInst::CallExtern { name, .. } if name == "mb_compile")),
+            "shadowed compile() must not bypass name resolution via the builtin compile intrinsic"
+        );
+    }
+
+    #[test]
+    fn test_unshadowed_compile_name_lowers_as_builtin_compile_call() {
+        use crate::resolve::SymbolKind;
+
+        let tcx = TypeContext::new();
+        let str_ty = tcx.str();
+        let any_ty = tcx.any();
+
+        let mut symbols = SymbolTable::new();
+        let compile_sym = symbols.define("compile".to_string(), SymbolKind::Function);
+        let hir = HirModule {
+            functions: Vec::new(),
+            classes: Vec::new(),
+            top_level: vec![HirStmt::Expr {
+                expr: HirExpr::Call {
+                    func: Box::new(HirExpr::Var(compile_sym, any_ty)),
+                    args: vec![
+                        HirExpr::StrLit("x = 1".to_string(), str_ty),
+                        HirExpr::StrLit("<test>".to_string(), str_ty),
+                        HirExpr::StrLit("exec".to_string(), str_ty),
+                    ],
+                    ty: any_ty,
+                },
+                span: Span::dummy(),
+            }],
+            imports: Vec::new(),
+            sym_names: std::collections::HashMap::new(),
+            sym_types: std::collections::HashMap::new(),
+            module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
+            boxed_param_funcs: HashSet::new(),
+        };
+
+        let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
+        let all_stmts: Vec<_> = mir.bodies[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.stmts.iter())
+            .collect();
+
+        assert!(
+            all_stmts
+                .iter()
+                .any(|s| matches!(s, MirInst::CallExtern { name, .. } if name == "mb_compile")),
+            "unshadowed compile() should keep the builtin compile fast path"
         );
     }
 
