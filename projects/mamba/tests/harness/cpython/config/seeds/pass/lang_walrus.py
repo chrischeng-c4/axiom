@@ -6,7 +6,7 @@
 #   3. Walrus inside comprehension binds in outer scope
 #   4. Walrus in lambda arguments rejected (SyntaxError) per PEP 572
 #
-# Known mamba quirk (see projects/mamba/issue-loop.md):
+# Known mamba quirk:
 #   `len(x)` returns a boxed-int that prints "20" but fails `== 20`
 #   against an int literal; subtraction (`n - 20 == 0`) works.
 
