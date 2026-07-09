@@ -115,7 +115,6 @@ flowchart TD
     r3[R3 ordinary bare package import regression control] --> cargo_test_p_jet_lib_transform_modules_tests_bundle_resolves_ordinary_bare_package_import_unchanged[cargo test -p jet --lib transform::modules::tests::bundle_resolves_ordinary_bare_package_import_unchanged]
     r4[R4 node builtin name matches known builtins and strips node prefix unit] --> cargo_test_p_jet_lib_transform_modules_tests_node_builtin_name_matches_known_builtins_and_strips_node_prefix[cargo test -p jet --lib transform::modules::tests::node_builtin_name_matches_known_builtins_and_strips_node_prefix]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
