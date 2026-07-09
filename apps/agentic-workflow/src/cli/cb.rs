@@ -2905,20 +2905,20 @@ fn collect_tree_files_inner(
 #[cfg(test)]
 mod tests {
     use super::{
-        cb_verify_summary_from_report, claim_issue_create_args, claim_issue_title,
-        classify_codegen_origin_spec, collect_force_regen_specs, collect_source_scope_files,
-        collect_tree_files, commit_cb_claim_trailer, commit_force_regen, compare_source_roots,
-        copy_tree, ensure_claim_issue, extract_cold_rebuild_target_paths,
-        extract_project_root_llms_target_paths, extract_spec_managed_ref,
-        extract_spec_managed_refs, format_rust_files, has_handwrite_ownership_marker,
-        is_minified_asset_file, repo_relative_code_path, resolve_project_force_regen_scope,
-        run_force_regen_specs, sample_count, sample_semantic_review_units,
-        spec_declares_source_section, td_public_symbol_semantic_coverage,
-        upsert_public_api_overview, upsert_public_api_overview_targets,
-        verify_force_regen_conformance, write_project_root_llms_targets, CbCodegenOriginClass,
-        CbCommand, CbGenArgs, ClaimIssueRef, ForceRegenConformanceReport, ForceRegenScope,
-        PublicApiManifestSymbol, PublicApiManifestTarget, PublicSymbolSemanticCoverage,
-        SemanticReviewUnit,
+        bare_code_check_guidance_envelope, cb_verify_summary_from_report, claim_issue_create_args,
+        claim_issue_title, classify_codegen_origin_spec, collect_force_regen_specs,
+        collect_source_scope_files, collect_tree_files, commit_cb_claim_trailer,
+        commit_force_regen, compare_source_roots, copy_tree, ensure_claim_issue,
+        extract_cold_rebuild_target_paths, extract_project_root_llms_target_paths,
+        extract_spec_managed_ref, extract_spec_managed_refs, format_rust_files,
+        has_handwrite_ownership_marker, is_minified_asset_file, repo_relative_code_path,
+        resolve_project_force_regen_scope, run_force_regen_specs, sample_count,
+        sample_semantic_review_units, spec_declares_source_section,
+        td_public_symbol_semantic_coverage, upsert_public_api_overview,
+        upsert_public_api_overview_targets, verify_force_regen_conformance,
+        write_project_root_llms_targets, CbCodegenOriginClass, CbCommand, CbGenArgs, ClaimIssueRef,
+        ForceRegenConformanceReport, ForceRegenScope, PublicApiManifestSymbol,
+        PublicApiManifestTarget, PublicSymbolSemanticCoverage, SemanticReviewUnit,
     };
     use crate::fillback::ast::{Symbol, SymbolKind};
     use clap::Parser;
@@ -4296,6 +4296,25 @@ pub fn signature_only() -> Result<()>
         let body = claim_test_git_log_body(dir.path());
         assert!(body.contains("Claim-Issue: adopted-lib"), "body:\n{body}");
     }
+
+    // #1276 AC2/AC3b: a bare, slug-less `aw td code-check` must print a
+    // guidance envelope pointing to `aw health --project <p> drift-marker`
+    // instead of `td::run_audit`'s whole-tree walker (the #844 livelock
+    // class) -- pinned directly on the pure envelope-builder `run_check`
+    // delegates to, since `run_check` itself needs a real project-root/git
+    // fixture.
+    #[test]
+    fn bare_code_check_guidance_envelope_points_to_health_drift_marker_axis() {
+        let env = bare_code_check_guidance_envelope("demo");
+        assert_eq!(env["action"].as_str(), Some("guidance"));
+        assert_eq!(
+            env["next"]["command"].as_str(),
+            Some("aw health --project demo drift-marker --verbose")
+        );
+        let message = env["message"].as_str().expect("message string");
+        assert!(message.contains("aw health --project demo"));
+        assert!(message.contains("drift_marker"));
+    }
 }
 
 /// True if `target` (an `aw td code-check <target>` argument) does not
@@ -4332,16 +4351,55 @@ pub async fn run_check(args: CbCheckArgs) -> Result<()> {
         {
             return Ok(());
         }
+
+        let td_args = AuditArgs {
+            path: Some(target.to_string()),
+            json: args.json,
+            group_by: args.group_by,
+            ready_only: false,
+            drift: false,
+        };
+        return td::run_audit(td_args);
     }
 
-    let td_args = AuditArgs {
-        path: args.target,
-        json: args.json,
-        group_by: args.group_by,
-        ready_only: false,
-        drift: false,
-    };
-    td::run_audit(td_args)
+    // Issue #1276: a bare, slug-less `aw td code-check` used to fall through
+    // to `td::run_audit`'s legacy whole-tree walker (the #844 livelock
+    // class) -- silently scanning every TD spec's `## Changes` entries
+    // against on-disk state. That read-only drift/marker-gap REPORTING now
+    // lives in `aw health --project <p>` as a dedicated axis (reusing the
+    // same `crate::generate::audit::audit_file_unified` engine via
+    // `standardize::collect_rust_audit_findings`); a bare invocation here
+    // just points there instead of doing the scan itself. Explicit
+    // human/utility invocations (`aw td code-check <target>`, a real path or
+    // slug) are unaffected and still audit that target directly above.
+    let project = project_root
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "<project>".to_string());
+    println!(
+        "{}",
+        serde_json::to_string(&bare_code_check_guidance_envelope(&project))?
+    );
+    Ok(())
+}
+
+/// Issue #1276: the guidance envelope a bare, slug-less `aw td code-check`
+/// prints instead of running `td::run_audit`'s whole-tree walker (see
+/// `run_check` above). Split out as a pure function so the shape is
+/// unit-testable without a real project-root/git fixture.
+fn bare_code_check_guidance_envelope(project: &str) -> serde_json::Value {
+    serde_json::json!({
+        "action": "guidance",
+        "message": format!(
+            "`aw td code-check` requires a slug or target path. Whole-project CODEGEN drift \
+             and HANDWRITE marker-gap reporting now lives in `aw health --project {project}` \
+             (see the `drift_marker` axis; add `-v/--verbose` or `drift-marker` section for \
+             per-file detail)."
+        ),
+        "next": {
+            "command": format!("aw health --project {project} drift-marker --verbose"),
+        },
+    })
 }
 
 /// Terminal `aw td code-check <slug>` — advances a fresh `cb_genned` /
