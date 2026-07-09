@@ -40,7 +40,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory first
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
         crate::test_util::write_minimal_issue(project_root, "test-change");
 
@@ -84,7 +84,8 @@ mod tests {
         assert!(result.contains("Created spec"));
 
         // Verify file was created
-        let spec_path = project_root.join(".aw/changes/test-change/specs/mcp-protocol.md");
+        let spec_path = crate::shared::workspace::change_path(project_root, "test-change")
+            .join("specs/mcp-protocol.md");
         assert!(spec_path.exists());
 
         let content = std::fs::read_to_string(&spec_path).unwrap();
@@ -105,7 +106,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         // Try to create http-api spec WITHOUT sequence diagram but WITH OpenAPI
@@ -163,7 +164,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         // Try to create http-api spec WITH sequence diagram but WITHOUT OpenAPI
@@ -210,7 +211,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         // Try to create data-model spec WITHOUT ERD or class diagram
@@ -256,7 +257,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         // Try to create workflow spec WITH state diagram but WITHOUT Serverless Workflow spec

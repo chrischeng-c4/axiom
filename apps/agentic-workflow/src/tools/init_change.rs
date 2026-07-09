@@ -664,7 +664,7 @@ mod tests {
 
         // Verify artifacts were created. R11: meta.yaml only written when
         // operational data non-empty. Change dir itself must exist.
-        let change_dir = tmp.path().join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), "test-change");
         assert!(change_dir.exists(), "change dir must be created");
         // user_input.md no longer written — issue body is the source of context
 
@@ -700,7 +700,7 @@ mod tests {
         let parsed: Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["status"], "ok");
 
-        let change_dir = tmp.path().join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), "test-change");
         // user_input.md no longer written
 
         let sm = StateManager::load(&change_dir).unwrap();
@@ -1061,10 +1061,7 @@ See tech_design/sdd/ for state machine specs.
         );
         let worktree_path = result.unwrap();
         assert!(worktree_path.exists(), "worktree directory should exist");
-        assert_eq!(
-            worktree_path,
-            tmp.path().join(format!(".aw/worktrees/{}", slug))
-        );
+        assert_eq!(worktree_path, workspace::worktree_path(tmp.path(), slug));
 
         // Verify branch was created
         let git = find_git_bin().unwrap();
@@ -1091,7 +1088,7 @@ See tech_design/sdd/ for state machine specs.
 
         // First creation
         create_worktree(tmp.path(), slug).unwrap();
-        assert!(tmp.path().join(format!(".aw/worktrees/{}", slug)).exists());
+        assert!(workspace::worktree_path(tmp.path(), slug).exists());
 
         // Second call on the same slug should auto-cleanup and recreate
         let result = create_worktree(tmp.path(), slug);
@@ -1100,7 +1097,7 @@ See tech_design/sdd/ for state machine specs.
             "create_worktree should succeed on stale state: {:?}",
             result.err()
         );
-        assert!(tmp.path().join(format!(".aw/worktrees/{}", slug)).exists());
+        assert!(workspace::worktree_path(tmp.path(), slug).exists());
     }
 
     // REQ: worktree-per-change — cleanup_stale_worktree is idempotent
@@ -1141,8 +1138,9 @@ See tech_design/sdd/ for state machine specs.
 
         assert_eq!(parsed["status"], "ok");
         assert_eq!(parsed["worktree_branch"], format!("cclab/{}", slug));
-        assert_eq!(parsed["worktree_path"], format!(".aw/worktrees/{}", slug));
-        assert!(tmp.path().join(format!(".aw/worktrees/{}", slug)).exists());
+        let worktree_path = crate::shared::workspace::worktree_path(tmp.path(), slug);
+        assert_eq!(parsed["worktree_path"], worktree_path.display().to_string());
+        assert!(worktree_path.exists());
     }
 
     // REQ: REQ-016 - Structured issue without optional sections
@@ -1253,7 +1251,7 @@ See tech_design/sdd/ for state machine specs.
         }
 
         // Pre-create a worktree directory (as if a previous run owned it).
-        std::fs::create_dir_all(tmp.path().join(format!(".aw/worktrees/{}", slug))).unwrap();
+        std::fs::create_dir_all(crate::shared::workspace::worktree_path(tmp.path(), slug)).unwrap();
 
         let args = json!({
             "project_path": tmp.path().to_str().unwrap(),
@@ -1288,7 +1286,7 @@ See tech_design/sdd/ for state machine specs.
         let result = execute_standalone(&args, tmp.path()).unwrap();
         let parsed: Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["status"], "ok");
-        assert!(tmp.path().join(format!(".aw/worktrees/{}", slug)).exists());
+        assert!(crate::shared::workspace::worktree_path(tmp.path(), slug).exists());
     }
 
     // ─── Refactor tests (T1, T2, T5, T6) ──────────────────────────────────
@@ -1461,15 +1459,9 @@ state: open\n\
 
         // Whether or not a worktree was created (depends on git availability),
         // the change dir must exist somewhere and must NOT have groups/.
-        let wt_change_dir = tmp
-            .path()
-            .join(format!(".aw/worktrees/{}/.aw/changes/{}", slug, slug));
-        let legacy_change_dir = tmp.path().join(format!(".aw/changes/{}", slug));
-        let change_dir = if wt_change_dir.exists() {
-            wt_change_dir
-        } else {
-            legacy_change_dir
-        };
+        // `workspace::change_path` resolves to the same runtime dir for both
+        // the main checkout root and its worktree root.
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), slug);
         assert!(change_dir.exists(), "change dir should exist");
 
         // R8 invariant: no groups/ nesting. Check both common ids.

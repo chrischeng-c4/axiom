@@ -2,12 +2,18 @@
 // CODEGEN-BEGIN
 //! `aw td migrate-mermaid` — convert legacy mermaid blocks via envelope dispatch.
 //!
-//! Two modes:
+//! Three modes:
 //!
 //! - **Enumerate** (default): scan the file, print one JSON dispatch envelope per
 //!   legacy mermaid block on stdout. Caller authors the YAML payload externally.
 //! - **Apply** (`--apply --block-id <id>`): read the payload from disk, render +
 //!   verify equivalence + atomic-write the converted block.
+//! - **Check** (`--check`): read-only scan of a file or directory that reports
+//!   a `legacy_block_count` summary instead of per-block envelopes. This is
+//!   the measurement this verb's `VERB_LIFECYCLE_REGISTRY` sunset criterion
+//!   (epic #1270 R6 / #1274) is defined against: the verb retires once
+//!   `aw td migrate-mermaid <project-td-root> --check` reports
+//!   `legacy_block_count: 0` for every configured project's tech-design root.
 //!
 //! No embedded LLM call lives here.
 //
@@ -16,7 +22,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::generate::diagrams::mermaid_plus::migrate::{
     apply_block_payload, enumerate_envelopes, MigrationOptions,
@@ -27,7 +33,8 @@ use crate::generate::diagrams::mermaid_plus::BlockMigrationStatus;
 // @spec apps/agentic-workflow/tech-design/core/generate/diagrams/mermaid_plus/migrate.md#cli
 #[derive(Debug, Args)]
 pub struct MigrateMermaidArgs {
-    /// Path to a TD spec file.
+    /// Path to a TD spec file, or (with `--check`) a directory to scan
+    /// recursively for legacy mermaid blocks in `.md` files.
     pub path: PathBuf,
 
     /// Apply mode: render + verify + atomic-write the payload for `--block-id`.
@@ -43,12 +50,82 @@ pub struct MigrateMermaidArgs {
     /// (`<project_root>/.aw/payloads/migrate-mermaid/<basename>-<block_id>.yaml`).
     #[arg(long = "payload-path")]
     pub payload_path: Option<PathBuf>,
+
+    /// Read-only scan mode: walk `path` (a single spec file, or a directory
+    /// scanned recursively for `.md` files) and print a JSON
+    /// `legacy_block_count` summary instead of per-block dispatch envelopes.
+    /// Mutually exclusive with `--apply`. This is the command the verb's
+    /// sunset criterion measures.
+    #[arg(long)]
+    pub check: bool,
+}
+
+/// Read-only summary emitted by `--check` — the measurement surface for this
+/// verb's `VERB_LIFECYCLE_REGISTRY` sunset criterion.
+/// @spec apps/agentic-workflow/tech-design/core/generate/diagrams/mermaid_plus/migrate.md#cli
+#[derive(Debug, serde::Serialize)]
+struct MigrateMermaidCheckReport {
+    scanned_root: String,
+    files_scanned: usize,
+    legacy_block_count: usize,
+    files_with_legacy_blocks: Vec<String>,
+}
+
+/// Walk `args.path` (file or directory) and report the remaining legacy
+/// mermaid block count without emitting per-block dispatch envelopes.
+/// @spec apps/agentic-workflow/tech-design/core/generate/diagrams/mermaid_plus/migrate.md#cli
+fn run_check_scan(args: &MigrateMermaidArgs, project_root: &Path) -> Result<()> {
+    let opts = MigrationOptions {
+        path: None,
+        apply: false,
+        block_id: None,
+        payload_path: None,
+        project_root: project_root.to_path_buf(),
+    };
+
+    let files: Vec<PathBuf> = if args.path.is_dir() {
+        walkdir::WalkDir::new(&args.path)
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_type().is_file())
+            .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("md"))
+            .map(|entry| entry.path().to_path_buf())
+            .collect()
+    } else {
+        vec![args.path.clone()]
+    };
+
+    let mut legacy_block_count = 0usize;
+    let mut files_with_legacy_blocks = Vec::new();
+    for file in &files {
+        let envelopes = enumerate_envelopes(file, &opts)?;
+        if !envelopes.is_empty() {
+            legacy_block_count += envelopes.len();
+            let rel = file.strip_prefix(project_root).unwrap_or(file);
+            files_with_legacy_blocks.push(rel.to_string_lossy().to_string());
+        }
+    }
+
+    let report = MigrateMermaidCheckReport {
+        scanned_root: args.path.display().to_string(),
+        files_scanned: files.len(),
+        legacy_block_count,
+        files_with_legacy_blocks,
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
 }
 
 // Entry point dispatched from `aw td migrate-mermaid`.
 // @spec apps/agentic-workflow/tech-design/core/generate/diagrams/mermaid_plus/migrate.md#cli
 pub async fn run(args: MigrateMermaidArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
+
+    if args.check {
+        anyhow::ensure!(!args.apply, "--check and --apply are mutually exclusive");
+        return run_check_scan(&args, &project_root);
+    }
+
     let opts = MigrationOptions {
         path: Some(args.path.clone()),
         apply: args.apply,
@@ -177,6 +254,99 @@ mod tests {
         assert!(log.contains("Lifecycle-Stage: Td-Migrate-Mermaid"));
         assert!(log.contains("TD-Block: 10-20"));
         assert!(log.contains("TD-Target: apps/agentic-workflow/tech-design/demo.md"));
+    }
+
+    // Regression fixture for `run_check_scan` — a legacy (frontmatter-less)
+    // mermaid block, matching `mermaid_plus::migrate::tests::LEGACY_FLOWCHART`.
+    const LEGACY_FLOWCHART: &str = concat!(
+        "\n# Sample TD\n\n",
+        "## Logic\n",
+        "<!-- type: logic lang: mermaid -->\n\n",
+        "```mermaid\n",
+        "flowchart TD\n",
+        "    a[Start] --> b{Check}\n",
+        "```\n",
+    );
+
+    // Regression fixture for `run_check_scan` — an already-migrated Mermaid
+    // Plus block (has YAML frontmatter), which must not count as legacy.
+    const PLUS_FLOWCHART: &str = concat!(
+        "\n## Logic\n",
+        "<!-- type: logic lang: mermaid -->\n\n",
+        "```mermaid\n",
+        "---\n",
+        "id: sample\n",
+        "entry: a\n",
+        "nodes:\n",
+        "  a: { kind: start, label: \"Start\" }\n",
+        "edges: []\n",
+        "---\n",
+        "flowchart TD\n",
+        "    a([Start])\n",
+        "```\n",
+    );
+
+    #[test]
+    fn check_scan_counts_legacy_blocks_across_a_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let td_dir = root.join("tech-design");
+        std::fs::create_dir_all(&td_dir).unwrap();
+        std::fs::write(td_dir.join("legacy.md"), LEGACY_FLOWCHART).unwrap();
+        std::fs::write(td_dir.join("plus.md"), PLUS_FLOWCHART).unwrap();
+        std::fs::write(td_dir.join("no-diagram.md"), "# Just prose\n").unwrap();
+
+        let args = MigrateMermaidArgs {
+            path: td_dir.clone(),
+            apply: false,
+            block_id: None,
+            payload_path: None,
+            check: true,
+        };
+        // `run_check_scan` prints its report to stdout; assert it succeeds
+        // and returns via its file-walk without invoking apply mode.
+        run_check_scan(&args, root).expect("check scan ok");
+    }
+
+    #[test]
+    fn check_scan_single_file_matches_enumerate_count() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let td = root.join("demo.md");
+        std::fs::write(&td, LEGACY_FLOWCHART).unwrap();
+
+        let opts = MigrationOptions {
+            project_root: root.to_path_buf(),
+            ..Default::default()
+        };
+        let envelopes = enumerate_envelopes(&td, &opts).expect("enumerate ok");
+        assert_eq!(
+            envelopes.len(),
+            1,
+            "fixture carries exactly one legacy block"
+        );
+
+        let args = MigrateMermaidArgs {
+            path: td,
+            apply: false,
+            block_id: None,
+            payload_path: None,
+            check: true,
+        };
+        run_check_scan(&args, root).expect("check scan ok");
+    }
+
+    #[tokio::test]
+    async fn check_and_apply_are_mutually_exclusive() {
+        let args = MigrateMermaidArgs {
+            path: PathBuf::from("unused.md"),
+            apply: true,
+            block_id: None,
+            payload_path: None,
+            check: true,
+        };
+        let err = run(args).await.expect_err("check + apply must be rejected");
+        assert!(err.to_string().contains("mutually exclusive"));
     }
 }
 

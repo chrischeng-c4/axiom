@@ -771,7 +771,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory structure
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         // Create proposal.md
@@ -811,7 +811,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory without specs
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         std::fs::write(change_dir.join("proposal.md"), "# Proposal").unwrap();
@@ -828,7 +828,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory without proposal
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
         std::fs::write(change_dir.join("tasks.md"), "# Tasks").unwrap();
 

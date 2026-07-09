@@ -31,8 +31,9 @@ use crate::overlay;
 use crate::sandbox;
 use crate::spec::{Base, EnvSpec, GpuRequest, Isolation};
 use crate::state::{
-    ArtifactRecord, ClusterRunRecord, ConfigRef, ProcessStatus, RouteRecord, RunRecord,
-    RunnerRunRecord, ScenarioRunRecord, ServiceRunRecord, Status, TestRunEvidence,
+    ArtifactRecord, ClusterRunRecord, ConfigRef, PlanEvidence, ProcessStatus, RouteRecord,
+    RunRecord, RunnerRunRecord, ScenarioRunRecord, ServiceRunRecord, Status, TestRunEvidence,
+    TopologyEvidence,
 };
 use crate::{id, store};
 
@@ -50,6 +51,8 @@ pub struct Args {
     pub gpu: GpuRequest,
     /// Direct mode prints full VatState JSON instead of a human summary.
     pub json: bool,
+    /// Opaque upstream execution plan to copy into the vat and expose to the runner.
+    pub plan: Option<PathBuf>,
     /// Per-invocation retention override for configured vat.toml runs.
     pub keep: Option<RetentionPolicy>,
 }
@@ -80,6 +83,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
         isolation,
         gpu,
         json,
+        plan,
         keep,
     } = args;
     match target {
@@ -95,6 +99,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
             isolation,
             gpu,
             json,
+            plan,
         }),
         Target::Runner { runner_ids } => exec_runner(RunnerArgs {
             base,
@@ -103,6 +108,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
             isolation,
             gpu,
             runner_ids,
+            plan,
             keep,
         }),
         Target::Scenario { scenario_id } => exec_scenario(ScenarioArgs {
@@ -112,6 +118,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
             isolation,
             gpu,
             scenario_id,
+            plan,
             keep,
         }),
     }
@@ -124,6 +131,7 @@ struct RunnerArgs {
     isolation: Isolation,
     gpu: GpuRequest,
     runner_ids: Vec<String>,
+    plan: Option<PathBuf>,
     keep: Option<RetentionPolicy>,
 }
 
@@ -136,6 +144,7 @@ struct DirectArgs {
     isolation: Isolation,
     gpu: GpuRequest,
     json: bool,
+    plan: Option<PathBuf>,
 }
 
 struct ScenarioArgs {
@@ -145,6 +154,7 @@ struct ScenarioArgs {
     isolation: Isolation,
     gpu: GpuRequest,
     scenario_id: String,
+    plan: Option<PathBuf>,
     keep: Option<RetentionPolicy>,
 }
 
@@ -201,6 +211,8 @@ fn exec_direct(args: DirectArgs) -> Result<ExitCode> {
         lineage,
     )
     .context("create vat")?;
+    attach_plan_file(&mut vat, args.plan.as_deref())?;
+    let spec = vat.meta.spec.clone();
 
     let command: Vec<String> = std::iter::once(args.program.clone())
         .chain(args.program_args.iter().cloned())
@@ -214,7 +226,7 @@ fn exec_direct(args: DirectArgs) -> Result<ExitCode> {
         duration_ms: None,
     });
     vat.save()?;
-    let backend = sandbox::pick(&spec);
+    let backend = sandbox::pick(&spec).map_err(anyhow::Error::msg)?;
     vat.log(
         Event::new(EventKind::RunStarted, format!("run: {}", command.join(" ")))
             .with_data(serde_json::json!({ "backend": backend.name() })),
@@ -358,6 +370,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         .context("create vat")?;
     let logs_dir = vat.dir.join(crate::paths::file::LOGS);
     std::fs::create_dir_all(&logs_dir).with_context(|| format!("create {}", logs_dir.display()))?;
+    let topology_services = configured_service_ids(&cfg, &runners, &[])?;
 
     vat.meta.status = Status::Running;
     vat.meta.test_run = Some(TestRunEvidence {
@@ -372,8 +385,16 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         runner: None,
         runners: Vec::new(),
         artifacts: Vec::new(),
+        plan: None,
+        topology: Some(TopologyEvidence {
+            runners: runners.iter().map(|runner| runner.id.clone()).collect(),
+            services: topology_services,
+            network: "open".to_string(),
+            hermetic: false,
+        }),
     });
     vat.save()?;
+    attach_plan_file(&mut vat, args.plan.as_deref())?;
     vat.log(Event::new(
         EventKind::RunStarted,
         format!("runner: {joined_ids}"),
@@ -566,8 +587,16 @@ fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
         runner: None,
         runners: Vec::new(),
         artifacts: Vec::new(),
+        plan: None,
+        topology: Some(TopologyEvidence {
+            runners: vec![runner.id.clone()],
+            services: extra_service_ids.clone(),
+            network: scenario_network_name(scenario.network).to_string(),
+            hermetic: scenario.network == ScenarioNetworkMode::Hermetic,
+        }),
     });
     vat.save()?;
+    attach_plan_file(&mut vat, args.plan.as_deref())?;
     vat.log(Event::new(
         EventKind::RunStarted,
         format!("scenario: {}", scenario.id),
@@ -639,6 +668,45 @@ fn process_exit_code(code: i32) -> ExitCode {
     }
 }
 
+fn attach_plan_file(vat: &mut store::Vat, plan_path: Option<&Path>) -> Result<()> {
+    let Some(plan_path) = plan_path else {
+        return Ok(());
+    };
+    let bytes = std::fs::read(plan_path)
+        .with_context(|| format!("read plan file {}", plan_path.display()))?;
+    let source_path = std::fs::canonicalize(plan_path)
+        .unwrap_or_else(|_| plan_path.to_path_buf())
+        .to_string_lossy()
+        .into_owned();
+    let dest_dir = vat.rootfs().join(".vat-plan");
+    std::fs::create_dir_all(&dest_dir).with_context(|| format!("create {}", dest_dir.display()))?;
+    let file_name = plan_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("plan.json");
+    let dest = dest_dir.join(file_name);
+    std::fs::write(&dest, &bytes).with_context(|| format!("write {}", dest.display()))?;
+    let evidence = PlanEvidence {
+        source_path,
+        rootfs_path: dest.to_string_lossy().into_owned(),
+        digest: digest_bytes(&bytes),
+    };
+    vat.meta
+        .spec
+        .env
+        .insert("VAT_PLAN_PATH".to_string(), evidence.rootfs_path.clone());
+    vat.meta
+        .spec
+        .env
+        .insert("VAT_PLAN_DIGEST".to_string(), evidence.digest.clone());
+    vat.meta.plan = Some(evidence.clone());
+    if let Some(test_run) = vat.meta.test_run.as_mut() {
+        test_run.plan = Some(evidence);
+    }
+    vat.save()
+}
+
 fn run_configured(
     vat: &mut store::Vat,
     cfg: &VatConfig,
@@ -655,9 +723,10 @@ fn run_configured(
     // Runner + setup-step commands run under the run's isolation backend
     // (seatbelt wraps them in sandbox-exec with the [network].egress policy; the
     // process backend is a passthrough). Picked once so any isolation/egress
-    // warning prints once. Services below are spawned RAW — they keep network.
+    // error surfaces once, before any runner/service work starts. Services
+    // below are spawned RAW — they keep network.
     let sandbox_spec = vat.meta.spec.clone();
-    let sandbox_backend = sandbox::pick(&sandbox_spec);
+    let sandbox_backend = sandbox::pick(&sandbox_spec).map_err(anyhow::Error::msg)?;
 
     // Services: the UNION of every runner's requires, order-preserving and
     // deduplicated — one shared instance set serves all concurrent runners.
@@ -716,11 +785,7 @@ fn run_configured(
             &cwd,
             logs_dir,
             &run_env,
-            if force_hermetic_proxy {
-                Some(sandbox_backend.as_ref())
-            } else {
-                None
-            },
+            service_sandbox_backend(force_hermetic_proxy, sandbox_backend.as_ref()),
             &rootfs,
         ) {
             Ok(handle) => handle,
@@ -826,6 +891,32 @@ fn scenario_service_ids(
         .collect())
 }
 
+fn configured_service_ids(
+    cfg: &VatConfig,
+    runners: &[RunnerConfig],
+    extra_service_ids: &[String],
+) -> Result<Vec<String>> {
+    let mut ids = Vec::new();
+    for service_id in extra_service_ids {
+        if !ids.contains(service_id) {
+            ids.push(service_id.clone());
+        }
+    }
+    for runner in runners {
+        for service_id in &runner.requires {
+            if !ids.contains(service_id) {
+                ids.push(service_id.clone());
+            }
+        }
+    }
+    Ok(
+        ordered_required_services(cfg, &ids.iter().map(String::as_str).collect::<Vec<_>>())?
+            .into_iter()
+            .map(|service| service.id.clone())
+            .collect(),
+    )
+}
+
 fn service_set_has_http_mock(cfg: &VatConfig, service_ids: &[String]) -> bool {
     service_ids.iter().any(|id| {
         cfg.service(id)
@@ -849,6 +940,10 @@ fn persist_scenario_topology(
 ) -> Result<()> {
     let routes = scenario_route_records(cfg, plans);
     if let Some(test_run) = vat.meta.test_run.as_mut() {
+        if let Some(topology) = test_run.topology.as_mut() {
+            topology.services = plans.iter().map(|plan| plan.id.clone()).collect();
+            topology.hermetic = force_hermetic_proxy;
+        }
         if let Some(scenario) = test_run.scenario.as_mut() {
             scenario.services = plans.iter().map(|plan| plan.id.clone()).collect();
             scenario.routes = routes;
@@ -1344,6 +1439,26 @@ fn prepare_cluster_service(
         cluster: Some(record),
         owned_by_vat: true,
     })
+}
+
+/// vat's own spawned services (emulators, the http-mock/record-replay proxy)
+/// are intentionally NEVER sandboxed on the real (non-hermetic-proxy) path —
+/// they need their own network access to serve/forward regardless of the
+/// run's `--isolation`/`[network].egress`. The single exception is the
+/// hermetic-proxy mode, where the proxy itself is deliberately wrapped so it
+/// becomes the sole egress point; that mode is unrelated to this WI's
+/// runner-mode coverage and is unchanged here. See #1301 (R2/AC2): this
+/// helper is the explicit, testable decision point for that exemption,
+/// rather than an inlined `if` at the `start_service` call site.
+fn service_sandbox_backend(
+    force_hermetic_proxy: bool,
+    backend: &dyn sandbox::Sandbox,
+) -> Option<&dyn sandbox::Sandbox> {
+    if force_hermetic_proxy {
+        Some(backend)
+    } else {
+        None
+    }
 }
 
 fn start_service(
@@ -3294,12 +3409,15 @@ mod tests {
     fn sandbox_wrap_wraps_runner_under_seatbelt_passthrough_under_none() {
         let cmd = vec!["echo".to_string(), "hi".to_string()];
 
-        // isolation=none → process backend → byte-identical passthrough (the
-        // shape services keep, since they bypass sandbox_wrap entirely).
+        // isolation=none + egress=open → process backend → byte-identical
+        // passthrough (the shape services keep, since they bypass
+        // sandbox_wrap entirely). This is the one combination that must keep
+        // succeeding unchanged (issue #1300 AC2).
         let none = sandbox::pick(&EnvSpec {
             isolation: Isolation::None,
             ..EnvSpec::default()
-        });
+        })
+        .expect("isolation=none + egress=open must still succeed");
         assert_eq!(
             sandbox_wrap(none.as_ref(), Path::new("/tmp/vat-x"), &cmd),
             cmd
@@ -3308,21 +3426,25 @@ mod tests {
         assert!(sandbox_wrap(none.as_ref(), Path::new("/tmp/vat-x"), &[]).is_empty());
 
         // isolation=seatbelt → runner cmd is wrapped in `sandbox-exec -p <profile>`
-        // (the same profile #518 proves denies external egress). Asserted only
-        // when the seatbelt backend is active (macOS + sandbox-exec).
-        let sb = sandbox::pick(&EnvSpec {
+        // (the same profile #518 proves denies external egress) when seatbelt is
+        // available; when it's unavailable (e.g. off-macOS CI), pick() now fails
+        // closed instead of silently falling back to the process backend (#1300).
+        match sandbox::pick(&EnvSpec {
             isolation: Isolation::Seatbelt,
             egress: crate::spec::EgressPolicy::LocalhostOnly,
             ..EnvSpec::default()
-        });
-        let wrapped = sandbox_wrap(sb.as_ref(), Path::new("/tmp/vat-x"), &cmd);
-        if sb.name() == "seatbelt" {
-            assert_eq!(wrapped[0], "sandbox-exec");
-            assert_eq!(wrapped[1], "-p");
-            // the original command is appended verbatim after the profile.
-            assert_eq!(&wrapped[wrapped.len() - 2..], cmd.as_slice());
-        } else {
-            assert_eq!(wrapped, cmd); // process fallback off-macOS
+        }) {
+            Ok(sb) => {
+                let wrapped = sandbox_wrap(sb.as_ref(), Path::new("/tmp/vat-x"), &cmd);
+                assert_eq!(sb.name(), "seatbelt");
+                assert_eq!(wrapped[0], "sandbox-exec");
+                assert_eq!(wrapped[1], "-p");
+                // the original command is appended verbatim after the profile.
+                assert_eq!(&wrapped[wrapped.len() - 2..], cmd.as_slice());
+            }
+            Err(message) => {
+                assert!(message.contains("sandbox-exec"), "message: {message}");
+            }
         }
     }
 
@@ -3484,6 +3606,24 @@ mod tests {
         assert_eq!(
             service_start_command(&preset_plan, Some(&TestSandbox), Path::new("/vat/root")),
             preset_plan.command
+        );
+    }
+
+    /// UT3 (#1301 R2/AC2): the real (non-hermetic-proxy) service call path
+    /// never threads a `Some(sandbox)` backend into `service_start_command` —
+    /// vat's own spawned services (emulators, http-mock/record-replay proxy)
+    /// stay unsandboxed by construction, not by a permissive default. The
+    /// hermetic-proxy mode is the one deliberate exception, asserted here
+    /// too so the boundary of the exemption is explicit.
+    #[test]
+    fn start_service_call_site_never_sandboxes_real_services() {
+        assert!(
+            service_sandbox_backend(false, &TestSandbox).is_none(),
+            "real (non-hermetic-proxy) services must never be sandbox-wrapped"
+        );
+        assert!(
+            service_sandbox_backend(true, &TestSandbox).is_some(),
+            "hermetic-proxy mode is the sole intentional exception"
         );
     }
 

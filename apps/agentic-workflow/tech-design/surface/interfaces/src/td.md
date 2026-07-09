@@ -125,8 +125,6 @@ pub enum TdCommand {
     GenSource(super::cb::CbGenSourceArgs),
     /// Audit code-space files for TD generation drift and HANDWRITE gaps.
     CodeCheck(super::cb::CbCheckArgs),
-    /// Adopt existing code by generating a TD spec via the fillback pipeline.
-    CodeClaim(super::cb::CbClaimArgs),
     /// Fill HANDWRITE marker blocks in generated code.
     Fill(super::cb::CbFillArgs),
     /// Promote a HANDWRITE marker block to CODEGEN once its gap-blocker has
@@ -191,7 +189,10 @@ pub struct AstArgs {
 #[derive(Debug, Args)]
 /// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
 pub struct CreateArgs {
-    /// Issue slug.
+    /// Issue slug. Optional when `--from-source` is set: a slug is then
+    /// derived from the source path's file stem, matching the retired `aw
+    /// td code-claim`'s prior default.
+    #[arg(default_value = "")]
     pub slug: String,
     /// Apply mode: validate the spec in-place and emit dispatch envelope.
     #[arg(long)]
@@ -222,6 +223,32 @@ pub struct CreateArgs {
     /// Pretty-print the JSON envelope.
     #[arg(long)]
     pub pretty: bool,
+    /// Adopt an existing source file or directory into the score lifecycle
+    /// by generating a TD spec via the fillback pipeline, instead of
+    /// authoring a new TD from scratch. Folds the retired `aw td
+    /// code-claim` verb (epic #1270 R5 / #1273): the generated spec now
+    /// always targets the project-local `tech-design/` root — resolved via
+    /// `--project`, or inferred from the source path against the
+    /// configured project scopes when omitted — instead of the legacy
+    /// repo-root `.aw/tech-design` (#1243). The old standalone verb's
+    /// `--init` flag (`.aw/` workspace bootstrap) has no project-local
+    /// equivalent and is retired: a project's `tech-design/` root is
+    /// resolved from `aw.toml`, not created ad hoc.
+    #[arg(long)]
+    pub from_source: Option<String>,
+    /// With `--from-source`: tech-design group name for the generated
+    /// spec's output path. Inferred from the source path when omitted.
+    #[arg(long)]
+    pub group: Option<String>,
+    /// With `--from-source`: skip filing/linking a durable tracker
+    /// work-item for the adopted code path (see the retired code-claim's
+    /// `--no-issue`, issue #925).
+    #[arg(long)]
+    pub no_issue: bool,
+    /// With `--from-source`: suppress interactive clarification prompts.
+    /// Required for non-TTY environments such as agent dispatch and CI.
+    #[arg(long)]
+    pub non_interactive: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1924,6 +1951,16 @@ fn derive_spec_dir_for_issue(issue: &Issue) -> String {
     derive_spec_dir_from_parts(&issue.labels, Some(&issue.title))
 }
 
+/// The `projects/<name>/...` → `apps/<name>/...` source-root move (#1211)
+/// left only `mamba` and `lumen` under the legacy `projects/` root; every
+/// other `app:<name>` label routes to `apps/`.
+fn app_source_root(app: &str) -> &'static str {
+    match app {
+        "mamba" | "lumen" => "projects",
+        _ => "apps",
+    }
+}
+
 fn derive_project_td_spec_dir(labels: &[String]) -> String {
     let concern = derive_td_concern(labels, None);
     for label in labels {
@@ -1940,17 +1977,20 @@ fn derive_project_td_spec_dir(labels: &[String]) -> String {
         if let Some(app) = label.strip_prefix("app:") {
             let app = app.trim();
             if !app.is_empty() {
-                let root = match app {
-                    "agentic-workflow" | "relay" => "apps",
-                    _ => "projects",
-                };
-                return format!("{root}/{}/tech-design/{concern}/", slugify_path_component(app));
+                let root = app_source_root(app);
+                return format!(
+                    "{root}/{}/tech-design/{concern}/",
+                    slugify_path_component(app)
+                );
             }
         }
         if let Some(lib) = label.strip_prefix("lib:") {
             let lib = lib.trim();
             if !lib.is_empty() {
-                return format!("libs/{}/tech-design/{concern}/", slugify_path_component(lib));
+                return format!(
+                    "libs/{}/tech-design/{concern}/",
+                    slugify_path_component(lib)
+                );
             }
         }
     }
@@ -1980,10 +2020,7 @@ fn derive_spec_dir_from_parts(labels: &[String], title: Option<&str>) -> String 
         if let Some(app) = label.strip_prefix("app:") {
             let app = app.trim();
             if !app.is_empty() {
-                let root = match app {
-                    "agentic-workflow" | "relay" => "apps",
-                    _ => "projects",
-                };
+                let root = app_source_root(app);
                 return format!("{root}/{}/{concern}/", slugify_path_component(app));
             }
         }
@@ -2318,7 +2355,7 @@ fn td_section_title(section: &str) -> String {
         .join(" ")
 }
 
-// ── JSON section payloads (Mermaid Plus contract/unit-test class, #1097) ──
+// ── JSON section payloads ────────────────────────────────────────────────
 //
 // Hand-authoring a structured Mermaid Plus section duplicates facts: the
 // YAML frontmatter and the diagram body both encode the same
@@ -2691,32 +2728,36 @@ pub async fn run(args: TdArgs) -> Result<()> {
             }
         }
         TdCommand::Create(a) => {
-            super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
-                .await?;
+            if a.from_source.is_some() {
+                // Folded `aw td code-claim` (#1273): same "any pending lock
+                // blocks it" guard the retired standalone verb used, since
+                // this mode has no single issue slug to scope the lock to.
+                super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
+            } else {
+                super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
+                    .await?;
+            }
         }
         TdCommand::Fill(a) => {
             super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
                 .await?;
         }
-        TdCommand::MigrateMermaid(_)
-        | TdCommand::Claim(_)
-        | TdCommand::CodeClaim(_)
-        | TdCommand::Promote(_) => {
+        TdCommand::MigrateMermaid(_) | TdCommand::Claim(_) | TdCommand::Promote(_) => {
             super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
         }
     }
+    let project = args.project.clone();
     match args.command {
-        TdCommand::Create(a) => run_create(a).await,
+        TdCommand::Create(a) => run_create(a, project.as_deref()).await,
         TdCommand::Validate(a) => run_validate(a).await,
         TdCommand::Check(a) => run_check(a),
         TdCommand::Ast(a) => run_ast(a),
         TdCommand::MigrateMermaid(a) => super::td_migrate::run(a).await,
-        TdCommand::Lock(a) => super::td_lock::run(args.project.as_deref(), a),
+        TdCommand::Lock(a) => super::td_lock::run(project.as_deref(), a),
         TdCommand::Claim(a) => run_claim(a).await,
         TdCommand::Gen(a) => super::cb::run_gen(a).await,
         TdCommand::GenSource(a) => super::cb::run_gen_source(a),
         TdCommand::CodeCheck(a) => super::cb::run_check(a).await,
-        TdCommand::CodeClaim(a) => super::cb::run_claim(a).await,
         TdCommand::Fill(a) => super::cb_fill::run(a).await,
         TdCommand::Promote(a) => run_promote(a),
     }
@@ -2785,12 +2826,44 @@ fn run_ast(args: AstArgs) -> Result<()> {
 
 // ── td create ────────────────────────────────────────────────────────
 
-async fn run_create(args: CreateArgs) -> Result<()> {
+async fn run_create(args: CreateArgs, project: Option<&str>) -> Result<()> {
+    if let Some(source_path) = args.from_source.clone() {
+        return run_create_from_source(&args, source_path, project).await;
+    }
+    if args.slug.trim().is_empty() {
+        anyhow::bail!(
+            "aw td create requires <slug> (or pass --from-source <code-path> to adopt existing \
+             code, folding the retired `aw td code-claim`)"
+        );
+    }
     if args.apply {
         run_create_apply(&args).await
     } else {
         run_create_brief(&args).await
     }
+}
+
+// `aw td create --from-source <code-path>` — folds the retired standalone
+// `aw td code-claim` verb (epic #1270 R5 / #1273). Wraps
+// `super::cb::run_claim`'s relocated entry point: the fillback pipeline
+// internals (AST scan, spec generation, tracker linkage, `Cb-Claim`
+// trailer commit) are unchanged, only the CLI surface moved and the
+// generated spec's output root is now always project-local (#1243) instead
+// of the legacy repo-root `.aw/tech-design`.
+async fn run_create_from_source(
+    args: &CreateArgs,
+    source_path: String,
+    project: Option<&str>,
+) -> Result<()> {
+    let claim_args = super::cb::CbClaimArgs {
+        code_path: source_path,
+        no_issue: args.no_issue,
+        group: args.group.clone(),
+        json: true,
+        non_interactive: args.non_interactive,
+        project: project.map(str::to_string),
+    };
+    super::cb::run_claim(claim_args).await
 }
 
 /// Brief mode: print context for the aw-td-author agent.
@@ -4754,7 +4827,7 @@ mod tests {
 
         assert_eq!(
             default_spec_path_for_issue(&issue, "3940", "apps/jet/specs/"),
-            ".aw/tech-design/projects/jet/specs/emit-parity-ready-jet-browser-observation-bundles.md"
+            ".aw/tech-design/apps/jet/specs/emit-parity-ready-jet-browser-observation-bundles.md"
         );
     }
 
@@ -4764,7 +4837,7 @@ mod tests {
 
         assert_eq!(
             default_spec_path_for_issue(&issue, "3940", "apps/jet/specs/"),
-            ".aw/tech-design/projects/jet/specs/issue-3940.md"
+            ".aw/tech-design/apps/jet/specs/issue-3940.md"
         );
     }
 
@@ -4773,7 +4846,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join(".aw")).unwrap();
         std::fs::write(
-            tmp.path().join(".aw/config.toml"),
+            tmp.path().join("aw.toml"),
             r#"
 [[projects]]
 name = "agentic-workflow"
@@ -5172,6 +5245,21 @@ label = "app:agentic-workflow"
     fn derive_spec_dir_preserves_crate_routing() {
         let labels = vec!["type:bug".to_string(), "crate:sdd".to_string()];
         assert_eq!(derive_spec_dir(&labels), "apps/agentic-workflow/logic/");
+    }
+
+    #[test]
+    fn derive_spec_dir_routes_legacy_projects_root_apps_by_default() {
+        // #1312: only mamba/lumen stayed under the legacy `projects/` root
+        // after the projects/ -> apps/ move; every other app: label routes
+        // to apps/.
+        let labels = vec!["type:enhancement".to_string(), "app:mamba".to_string()];
+        assert_eq!(derive_spec_dir(&labels), "projects/mamba/logic/");
+
+        let labels = vec!["type:enhancement".to_string(), "app:lumen".to_string()];
+        assert_eq!(derive_spec_dir(&labels), "projects/lumen/logic/");
+
+        let labels = vec!["type:enhancement".to_string(), "app:keep".to_string()];
+        assert_eq!(derive_spec_dir(&labels), "apps/keep/logic/");
     }
 
     #[test]
@@ -6350,7 +6438,7 @@ mod promote_tests {
     fn write_project_config(root: &std::path::Path) {
         write(
             root,
-            ".aw/config.toml",
+            "aw.toml",
             r#"
 [[projects]]
 name = "tool"

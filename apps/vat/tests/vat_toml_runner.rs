@@ -38,6 +38,116 @@ fn result_event(events: &[Value]) -> &Value {
 }
 
 #[test]
+fn vat_capabilities_json_reports_effective_backends() {
+    let output = Command::new(vat_bin())
+        .args(["capabilities", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["host"]["os"], std::env::consts::OS);
+    assert_eq!(json["host"]["arch"], std::env::consts::ARCH);
+    assert_eq!(json["workspace"]["diff_basis"], "size_mtime_manifest");
+    assert_eq!(json["services"]["external_attach"], true);
+    assert!(json["isolation"].as_array().unwrap().iter().any(|cap| {
+        cap["id"] == "process" && cap["implemented"] == true && cap["available"] == true
+    }));
+    assert!(json["isolation"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|cap| { cap["id"] == "linux-netns" && cap["implemented"] == false }));
+    assert!(
+        json["docker"]["cli"].is_boolean(),
+        "docker capability should be explicit even when Docker is absent"
+    );
+}
+
+#[test]
+fn vat_gc_dry_run_and_execute_prunes_successful_vats_safely() {
+    let project = tempfile::tempdir().unwrap();
+    let vat_home = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("input.txt"), "seed").unwrap();
+
+    let ok = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("VAT_HOME", vat_home.path())
+        .args(["run", "--json", "--", "sh", "-c", "true"])
+        .output()
+        .unwrap();
+    assert!(
+        ok.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&ok.stdout),
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let ok_state: Value = serde_json::from_slice(&ok.stdout).unwrap();
+    let ok_id = ok_state["id"].as_str().unwrap().to_string();
+
+    let failed = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("VAT_HOME", vat_home.path())
+        .args(["run", "--json", "--", "sh", "-c", "exit 7"])
+        .output()
+        .unwrap();
+    assert_eq!(failed.status.code(), Some(7));
+    let failed_state: Value = serde_json::from_slice(&failed.stdout).unwrap();
+    let failed_id = failed_state["id"].as_str().unwrap().to_string();
+
+    let dry_run = Command::new(vat_bin())
+        .env("VAT_HOME", vat_home.path())
+        .args(["gc", "--keep-last", "0", "--apparent", "--json"])
+        .output()
+        .unwrap();
+    assert!(dry_run.status.success());
+    let dry_json: Value = serde_json::from_slice(&dry_run.stdout).unwrap();
+    assert_eq!(dry_json["dry_run"], true);
+    assert_gc_entry(&dry_json, &ok_id, true, "candidate", false);
+    assert_gc_entry(&dry_json, &failed_id, false, "failed_retained", false);
+    assert!(vat_home.path().join("vats").join(&ok_id).exists());
+    assert!(vat_home.path().join("vats").join(&failed_id).exists());
+
+    let execute = Command::new(vat_bin())
+        .env("VAT_HOME", vat_home.path())
+        .args([
+            "gc",
+            "--keep-last",
+            "0",
+            "--execute",
+            "--apparent",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(execute.status.success());
+    let execute_json: Value = serde_json::from_slice(&execute.stdout).unwrap();
+    assert_eq!(execute_json["dry_run"], false);
+    assert_gc_entry(&execute_json, &ok_id, true, "candidate", true);
+    assert_gc_entry(&execute_json, &failed_id, false, "failed_retained", false);
+    assert!(!vat_home.path().join("vats").join(&ok_id).exists());
+    assert!(vat_home.path().join("vats").join(&failed_id).exists());
+}
+
+fn assert_gc_entry(json: &Value, id: &str, candidate: bool, reason: &str, deleted: bool) {
+    let entry = json["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == id)
+        .unwrap_or_else(|| panic!("missing gc entry for {id}: {json}"));
+    assert_eq!(entry["candidate"], candidate);
+    assert_eq!(entry["reason"], reason);
+    assert_eq!(entry["deleted"], deleted);
+    assert!(entry["apparent_size_bytes"].as_u64().is_some());
+}
+
+#[test]
 fn scenario_run_starts_app_dependency_and_runner() {
     if !python3_available() {
         return;
@@ -322,6 +432,219 @@ artifacts = ["runner-artifact.txt"]
         vat_home.path().join("vats").join(id).exists(),
         "always-retained run should stay inspectable"
     );
+}
+
+#[test]
+fn vat_plan_json_reports_runner_topology_without_creating_vat() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("vat.toml"),
+        r#"
+version = 1
+default_runner = "e2e"
+
+[workspace]
+base = "."
+workdir = "."
+keep = "failed"
+
+[[services]]
+id = "web"
+cmd = ["sh", "-c", "while :; do sleep 1; done"]
+ready_http = "http://127.0.0.1:{port}/"
+
+[[runners]]
+id = "e2e"
+requires = ["web"]
+cmd = ["sh", "-c", "true"]
+artifacts = ["test-results/**"]
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .args(["plan", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["selection"]["kind"], "runner");
+    assert_eq!(json["selection"]["runner_id"], "e2e");
+    assert_eq!(json["selection"]["reason"], "default_runner");
+    assert_eq!(json["services"][0]["id"], "web");
+    assert_eq!(json["services"][0]["backing"], "cmd");
+    assert!(json["env"]["services"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|value| value == "VAT_SERVICE_WEB_URL"));
+    assert_eq!(json["artifacts"][0], "test-results/**");
+    assert!(
+        !project.path().join(".vat").exists(),
+        "vat plan must not create a vat store"
+    );
+}
+
+#[test]
+fn vat_doctor_json_reports_unreachable_external_service() {
+    let project = tempfile::tempdir().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    std::fs::write(
+        project.path().join("vat.toml"),
+        format!(
+            r#"
+version = 1
+default_runner = "e2e"
+
+[[services]]
+id = "postgres"
+external = {{ host = "127.0.0.1", port = {port} }}
+
+[[runners]]
+id = "e2e"
+requires = ["postgres"]
+cmd = ["sh", "-c", "true"]
+"#
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .args(["doctor", "--json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["ok"], false);
+    assert!(json["checks"].as_array().unwrap().iter().any(|check| {
+        check["component"] == "external"
+            && check["id"] == "postgres"
+            && check["ok"] == false
+            && check["code"] == "external_tcp"
+    }));
+}
+
+#[test]
+fn vat_doctor_json_includes_capabilities_and_egress_check() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("vat.toml"),
+        r#"
+version = 1
+default_runner = "e2e"
+
+[network]
+egress = "localhost-only"
+
+[[runners]]
+id = "e2e"
+cmd = ["sh", "-c", "true"]
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .args(["doctor", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.code().is_some(),
+        "doctor should exit cleanly, got {:?}",
+        output.status
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["capabilities"]["host"]["os"], std::env::consts::OS);
+    let enforceable = json["capabilities"]["isolation"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|cap| {
+            (cap["id"] == "macos-seatbelt" || cap["id"] == "linux-netns")
+                && cap["available"] == true
+        });
+    let check = json["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| {
+            check["component"] == "isolation"
+                && check["id"] == "egress"
+                && check["code"] == "egress_enforcement"
+        })
+        .expect("doctor should report egress enforcement capability");
+    assert_eq!(check["ok"], enforceable);
+}
+
+#[test]
+fn vat_run_plan_records_plan_evidence_and_injects_env() {
+    let project = tempfile::tempdir().unwrap();
+    let vat_home = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("impact.json"), r#"{"tests":["unit"]}"#).unwrap();
+    std::fs::write(
+        project.path().join("vat.toml"),
+        r#"
+version = 1
+
+[workspace]
+keep = "always"
+
+[[runners]]
+id = "impacted"
+cmd = ["sh", "-c", "test -f \"$VAT_PLAN_PATH\" && grep -q unit \"$VAT_PLAN_PATH\" && test -n \"$VAT_PLAN_DIGEST\" && printf '%s' \"$VAT_PLAN_DIGEST\" > digest.txt"]
+artifacts = ["digest.txt"]
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("VAT_HOME", vat_home.path())
+        .args(["run", "--plan", "impact.json", "impacted"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let events = jsonl(&output.stdout);
+    let id = result_event(&events)["id"].as_str().unwrap();
+    let state_output = Command::new(vat_bin())
+        .env("VAT_HOME", vat_home.path())
+        .args(["state", id, "--compact"])
+        .output()
+        .unwrap();
+    assert!(state_output.status.success());
+    let json: Value = serde_json::from_slice(&state_output.stdout).unwrap();
+    assert_eq!(
+        json["plan"]["digest"], json["test_run"]["plan"]["digest"],
+        "top-level and test-run plan evidence should match"
+    );
+    assert!(json["test_run"]["plan"]["rootfs_path"]
+        .as_str()
+        .unwrap()
+        .contains(".vat-plan/impact.json"));
+    assert_eq!(json["test_run"]["topology"]["runners"][0], "impacted");
+    assert_eq!(
+        json["spec"]["env"]["VAT_PLAN_DIGEST"],
+        json["plan"]["digest"]
+    );
+    assert_eq!(json["test_run"]["artifacts"][0]["path"], "digest.txt");
 }
 
 #[test]

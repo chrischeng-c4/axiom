@@ -103,6 +103,8 @@ Public API manifest for `apps/agentic-workflow/src/cli/standardize.rs` generated
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/cli/standardize.rs -->
 `````rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
+// CODEGEN-BEGIN
 //! `aw standardize` — existing-project workflow guidance and bounded remediation.
 
 use anyhow::{bail, Context, Result};
@@ -164,6 +166,9 @@ const DELETED_COMMAND_PATHS: &[&str] = &[
     "aw standardize managed",
     "aw standardize semantic",
     "aw standardize traceability",
+    // #1273 (epic #1270 R5): `aw td code-claim` folded into
+    // `aw td create --from-source`.
+    "aw td code-claim",
 ];
 const AW_EC_BEGIN_MARKER: &str = "AW-EC-BEGIN";
 
@@ -182,14 +187,14 @@ pub(crate) struct TraceabilityCli {
 // only. `managed`/`semantic`/`traceability` `report`/`next`/`run` are gone --
 // `aw health` absorbs the read (coverage/next.command already sourced from
 // the same inventory/coverage library code below) and slice-E worker verbs
-// (`aw td promote`, `aw td code-claim`, `aw wi create`, ...) absorb the
+// (`aw td promote`, `aw td create --from-source`, `aw wi create`, ...) absorb the
 // mutating remediation. The subcommand is required (not `Option`): with only
 // `audit` left, a bare `aw standardize --project <p>` would just be a second,
 // narrower copy of `aw health --project <p>` -- exactly the duplicated read
 // surface this slice removes. Run `aw health --project <p>` instead.
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
 pub struct StandardizeArgs {
-    /// Project name from .aw/config.toml.
+    /// Project name from aw.toml.
     #[arg(long, global = true)]
     pub project: Option<String>,
     #[command(subcommand)]
@@ -1031,13 +1036,13 @@ pub(crate) fn project_health_standardize_coverage(
 /// `ProjectHealthReport`; those (and any other managed gap kind) fall back
 /// to the read-only `aw health --project <p> metrics --verbose` pointer,
 /// which surfaces the managed axis detail an agent needs to pick the next
-/// concrete `aw td code-claim`/`aw td promote` invocation by hand.
+/// concrete `aw td create --from-source`/`aw td promote` invocation by hand.
 pub(crate) fn managed_health_worker_command(
     project: &str,
     next_uncovered_file: Option<&str>,
 ) -> String {
     match next_uncovered_file {
-        Some(target) => format!("aw td code-claim {target}"),
+        Some(target) => format!("aw td create --from-source {target} --project {project}"),
         None => format!("aw health --project {project} metrics --verbose"),
     }
 }
@@ -3899,7 +3904,7 @@ struct ConfiguredWorkspace {
 }
 
 fn read_config_workspace_scopes(project_root: &Path) -> Result<Vec<ConfiguredScope>> {
-    let path = project_root.join(".aw/config.toml");
+    let path = project_root.join("aw.toml");
     if !path.is_file() {
         return Ok(Vec::new());
     }
@@ -3977,7 +3982,7 @@ fn configured_td_root(project_root: &Path, scope: &ConfiguredScope) -> Option<Pa
 }
 
 fn read_config_workspaces(project_root: &Path) -> Result<Vec<ConfiguredWorkspace>> {
-    let path = project_root.join(".aw/config.toml");
+    let path = project_root.join("aw.toml");
     if !path.is_file() {
         return Ok(Vec::new());
     }
@@ -6478,7 +6483,7 @@ fn is_operations_language(language: &str) -> bool {
 }
 
 // Resolve the TD output path for a source claim, consulting
-// `[[projects]].td_path` in `.aw/config.toml` first and falling back to
+// `[[projects]].td_path` in `aw.toml` first and falling back to
 // `<project.path>/tech-design`. This lets per-project `td_path` config
 // (e.g. `examples/fixture_platform/**` → `examples/fixture_platform/tech_design`)
 // keep legacy/external roots while convention-first projects write TDs inside
@@ -6864,7 +6869,7 @@ fn yaml_safe(s: &str) -> String {
 
 fn starter_spec_rel_for_source(rel: &str) -> String {
     let parts: Vec<&str> = rel.split('/').collect();
-    if parts.len() >= 4 && matches!(parts[0], "crates" | "projects") {
+    if parts.len() >= 4 && matches!(parts[0], "crates" | "projects" | "apps") {
         let root = parts[0];
         let crate_name = parts[1];
         let kind = parts[2];
@@ -6886,7 +6891,7 @@ fn starter_spec_rel_for_source(rel: &str) -> String {
 }
 
 fn starter_spec_base(root: &str, crate_name: &str) -> String {
-    if root == "projects" && crate_name == "agentic-workflow" {
+    if matches!(root, "projects" | "apps") && crate_name == "agentic-workflow" {
         "apps/agentic-workflow/tech-design/core".to_string()
     } else {
         format!(".aw/tech-design/{root}/{crate_name}")
@@ -6895,7 +6900,7 @@ fn starter_spec_base(root: &str, crate_name: &str) -> String {
 
 fn starter_spec_rel_for_crate_src(root: &str, crate_name: &str, rest: &[&str]) -> Option<String> {
     let module = rest.first()?;
-    if root == "projects" && crate_name == "agentic-workflow" && *module == "cli" {
+    if matches!(root, "projects" | "apps") && crate_name == "agentic-workflow" && *module == "cli" {
         let rel = if rest.len() > 1 {
             rest[1..].join("/")
         } else {
@@ -7206,13 +7211,13 @@ mod tests {
     fn write_traceability_config(root: &Path, workspace_scope: &str) {
         write(
             root,
-            ".aw/config.toml",
+            "aw.toml",
             &format!(
                 r#"
 [[projects]]
 name = "demo"
 path = "."
-td_path = ".aw/tech-design/demo"
+td_path = "tech-design/demo"
 cap_path = "README.md"
 label = "app:demo"
 
@@ -7299,7 +7304,7 @@ changes:
     }
 
     fn source_referencing_demo_td() -> &'static str {
-        "# SPEC-MANAGED: .aw/tech-design/demo/app.md#changes\n# CODEGEN-BEGIN\ndef handle():\n    return 1\n# CODEGEN-END\n"
+        "# SPEC-MANAGED: tech-design/demo/app.md#changes\n# CODEGEN-BEGIN\ndef handle():\n    return 1\n# CODEGEN-END\n"
     }
 
     fn traceability_coverage_for(root: &Path) -> TraceabilityCoverage {
@@ -7436,7 +7441,7 @@ changes:
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
-            ".aw/config.toml",
+            "aw.toml",
             r#"
 [[projects]]
 name = "tool"
@@ -7496,7 +7501,7 @@ target = "rust"
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
-            ".aw/config.toml",
+            "aw.toml",
             r#"
 [[projects]]
 name = "tool"
@@ -7583,7 +7588,7 @@ test_cmd = "cargo test -p tool"
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
-            ".aw/config.toml",
+            "aw.toml",
             r#"
 [[projects]]
 name = "tool"
@@ -7626,12 +7631,12 @@ test_cmd = "true"
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
-            ".aw/config.toml",
+            "aw.toml",
             r#"
 [[projects]]
 name = "tool"
 path = "projects/tool"
-td_path = ".aw/tech-design/projects/tool"
+td_path = "projects/tool/tech-design"
 label = "app:tool"
 
 [[projects.workspaces]]
@@ -7658,7 +7663,7 @@ test_cmd = "true"
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
-            ".aw/config.toml",
+            "aw.toml",
             r#"
 [[projects]]
 name = "tool"
@@ -7752,7 +7757,7 @@ target = "rust"
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
-            ".aw/config.toml",
+            "aw.toml",
             r#"
 [[projects]]
 name = "agentic-workflow"
@@ -7785,7 +7790,7 @@ target = "rust"
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
-            ".aw/config.toml",
+            "aw.toml",
             r#"
 [[projects]]
 name = "agentic-workflow"
@@ -7819,7 +7824,7 @@ paths = ["apps/jet/**"]
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
-            ".aw/config.toml",
+            "aw.toml",
             r#"
 [[projects]]
 name = "agentic-workflow"
@@ -7851,7 +7856,7 @@ paths = ["apps/jet/**"]
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
-            ".aw/config.toml",
+            "aw.toml",
             r#"
 [[projects]]
 name = "agentic-workflow"
@@ -7881,7 +7886,7 @@ paths = ["apps/agentic-workflow/**"]
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
-            ".aw/config.toml",
+            "aw.toml",
             r#"
 [[projects]]
 name = "cap"
@@ -8039,11 +8044,11 @@ paths = ["apps/cap/**"]
         write(
             tmp.path(),
             "src/lib.rs",
-            "// SPEC-MANAGED: .aw/tech-design/projects/demo/semantic/demo-src.md#schema\n// CODEGEN-BEGIN\npub fn demo() {}\n// CODEGEN-END\n",
+            "// SPEC-MANAGED: projects/demo/tech-design/semantic/demo-src.md#schema\n// CODEGEN-BEGIN\npub fn demo() {}\n// CODEGEN-END\n",
         );
         write(
             tmp.path(),
-            ".aw/tech-design/projects/demo/semantic/demo-src.md",
+            "projects/demo/tech-design/semantic/demo-src.md",
             r#"---
 id: demo-src
 ---
@@ -8110,11 +8115,11 @@ changes:
         write(
             tmp.path(),
             "src/lib.rs",
-            "// SPEC-MANAGED: .aw/tech-design/projects/demo/semantic/demo-src.md#source\n// CODEGEN-BEGIN\npub fn demo() {}\n// CODEGEN-END\n",
+            "// SPEC-MANAGED: projects/demo/tech-design/semantic/demo-src.md#source\n// CODEGEN-BEGIN\npub fn demo() {}\n// CODEGEN-END\n",
         );
         write(
             tmp.path(),
-            ".aw/tech-design/projects/demo/semantic/demo-src.md",
+            "projects/demo/tech-design/semantic/demo-src.md",
             r#"---
 id: demo-src
 ---
@@ -8188,11 +8193,11 @@ changes:
         write(
             tmp.path(),
             "src/lib.rs",
-            "// SPEC-MANAGED: .aw/tech-design/projects/demo/semantic/demo-src.md#source\n// CODEGEN-BEGIN\npub fn demo() {}\n// CODEGEN-END\n",
+            "// SPEC-MANAGED: projects/demo/tech-design/semantic/demo-src.md#source\n// CODEGEN-BEGIN\npub fn demo() {}\n// CODEGEN-END\n",
         );
         write(
             tmp.path(),
-            ".aw/tech-design/projects/demo/semantic/demo-src.md",
+            "projects/demo/tech-design/semantic/demo-src.md",
             r#"---
 id: demo-src
 ---
@@ -8263,11 +8268,11 @@ changes:
         write(
             tmp.path(),
             "build.sh",
-            "# SPEC-MANAGED: .aw/tech-design/projects/demo/semantic/demo-build.md#text-source-unit\n# CODEGEN-BEGIN\n#!/usr/bin/env bash\nset -euo pipefail\n# CODEGEN-END\n",
+            "# SPEC-MANAGED: projects/demo/tech-design/semantic/demo-build.md#text-source-unit\n# CODEGEN-BEGIN\n#!/usr/bin/env bash\nset -euo pipefail\n# CODEGEN-END\n",
         );
         write(
             tmp.path(),
-            ".aw/tech-design/projects/demo/semantic/demo-build.md",
+            "projects/demo/tech-design/semantic/demo-build.md",
             r#"---
 id: demo-build
 ---
@@ -8457,7 +8462,7 @@ changes:
         );
         write(
             tmp.path(),
-            ".aw/tech-design/src/app.md",
+            "tech-design/src/app.md",
             "---\nid: src-app\n---\n\n## Changes\n```yaml\nchanges:\n  - path: src/app.py\n    action: modify\n    impl_mode: hand-written\n```\n",
         );
 
@@ -8480,16 +8485,16 @@ changes:
         write(
             tmp.path(),
             "src/app.py",
-            "# SPEC-MANAGED: .aw/tech-design/features/app-api.md#changes\n# CODEGEN-BEGIN\ndef handle():\n    return 1\n# CODEGEN-END\n",
+            "# SPEC-MANAGED: tech-design/features/app-api.md#changes\n# CODEGEN-BEGIN\ndef handle():\n    return 1\n# CODEGEN-END\n",
         );
         write(
             tmp.path(),
-            ".aw/tech-design/features/app-api.md",
+            "tech-design/features/app-api.md",
             "---\nid: app-api\n---\n\n## Changes\n```yaml\nchanges:\n  - path: src/app.py\n    action: modify\n    impl_mode: generated\n```\n",
         );
         write(
             tmp.path(),
-            ".aw/tech-design/src/app.md",
+            "tech-design/src/app.md",
             "---\nid: src-app\n---\n\n## Changes\n```yaml\nchanges:\n  - path: src/app.py\n    action: modify\n    impl_mode: hand-written\n```\n",
         );
 
@@ -8503,7 +8508,7 @@ changes:
         assert_eq!(coverage.percent, 100.0);
         assert_eq!(
             coverage.coverage_map[0].td_section.as_deref(),
-            Some(".aw/tech-design/features/app-api.md")
+            Some("tech-design/features/app-api.md")
         );
     }
 
@@ -8513,16 +8518,16 @@ changes:
         write(
             tmp.path(),
             "src/app.rs",
-            "// SPEC-MANAGED: .aw/tech-design/features/app-api.md#changes\n// CODEGEN-BEGIN\npub fn handle() -> i32 { 1 }\n// CODEGEN-END\n",
+            "// SPEC-MANAGED: tech-design/features/app-api.md#changes\n// CODEGEN-BEGIN\npub fn handle() -> i32 { 1 }\n// CODEGEN-END\n",
         );
         write(
             tmp.path(),
             "tests/behavior_app_contract.rs",
-            "// SPEC-MANAGED: .aw/tech-design/features/external-contracts.md#app-contract\n// CODEGEN-BEGIN\n// AW-EC-BEGIN\n// @ec app-contract\n#[test]\n#[ignore = \"generated EC wrapper\"]\nfn app_contract() {}\n// AW-EC-END\n// CODEGEN-END\n",
+            "// SPEC-MANAGED: tech-design/features/external-contracts.md#app-contract\n// CODEGEN-BEGIN\n// AW-EC-BEGIN\n// @ec app-contract\n#[test]\n#[ignore = \"generated EC wrapper\"]\nfn app_contract() {}\n// AW-EC-END\n// CODEGEN-END\n",
         );
         write(
             tmp.path(),
-            ".aw/tech-design/features/app-api.md",
+            "tech-design/features/app-api.md",
             "---\nid: app-api\nfill_sections: [changes]\n---\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\ncoverage_kind: semantic\nchanges:\n  - path: src/app.rs\n    action: modify\n    impl_mode: generated\n```\n",
         );
 
@@ -8561,7 +8566,7 @@ changes:
         );
         write(
             tmp.path(),
-            ".aw/tech-design/features/a.md",
+            "tech-design/features/a.md",
             "---\nid: a\ntype: semantic\n---\n\n## Changes\n```yaml\nchanges:\n  - path: src/a.py\n    action: modify\n```\n",
         );
 
@@ -8625,7 +8630,7 @@ changes:
         write(tmp.path(), "src/app.py", source_referencing_demo_td());
         write(
             tmp.path(),
-            ".aw/tech-design/demo/app.md",
+            "tech-design/demo/app.md",
             valid_traceability_td(),
         );
 
@@ -8671,7 +8676,7 @@ changes:
         write(tmp.path(), "src/app.py", source_referencing_demo_td());
         write(
             tmp.path(),
-            ".aw/tech-design/demo/app.md",
+            "tech-design/demo/app.md",
             &valid_traceability_td_with_command_ref("aw demo run"),
         );
 
@@ -8694,7 +8699,7 @@ changes:
         write(tmp.path(), "src/app.py", source_referencing_demo_td());
         write(
             tmp.path(),
-            ".aw/tech-design/demo/app.md",
+            "tech-design/demo/app.md",
             valid_traceability_td(),
         );
 
@@ -8718,7 +8723,7 @@ changes:
         write(tmp.path(), "src/app.py", source_referencing_demo_td());
         write(
             tmp.path(),
-            ".aw/tech-design/demo/app.md",
+            "tech-design/demo/app.md",
             &valid_traceability_td_with_command_ref("aw missing command"),
         );
 
@@ -8742,7 +8747,7 @@ changes:
         write(tmp.path(), "docs/note.txt", "not a source file\n");
         write(
             tmp.path(),
-            ".aw/tech-design/demo/app.md",
+            "tech-design/demo/app.md",
             r#"---
 id: demo-td
 command_refs:
@@ -8773,7 +8778,7 @@ command_refs:
         write(tmp.path(), "src/app.py", source_referencing_demo_td());
         write(
             tmp.path(),
-            ".aw/tech-design/demo/app.md",
+            "tech-design/demo/app.md",
             &valid_traceability_td_with_command_ref("aw hidden run"),
         );
 
@@ -8797,7 +8802,7 @@ command_refs:
         write(tmp.path(), "src/app.py", source_referencing_demo_td());
         write(
             tmp.path(),
-            ".aw/tech-design/demo/app.md",
+            "tech-design/demo/app.md",
             "---\nid: demo-td\n---\n\n# Demo TD\n",
         );
 
@@ -8849,7 +8854,7 @@ command_refs:
         write(tmp.path(), "src/app.py", source_referencing_demo_td());
         write(
             tmp.path(),
-            ".aw/tech-design/demo/app.md",
+            "tech-design/demo/app.md",
             valid_traceability_td(),
         );
 
@@ -9020,7 +9025,7 @@ command_refs:
         write(tmp.path(), "docs/note.txt", "not a source file\n");
         write(
             tmp.path(),
-            ".aw/tech-design/demo/app.md",
+            "tech-design/demo/app.md",
             "---\nid: demo-td\n---\n\n# Demo TD\n",
         );
 
@@ -9029,7 +9034,7 @@ command_refs:
         assert_eq!(coverage.orphan_td_count, 1);
         assert!(!coverage.blockers.iter().any(|blocker| {
             blocker.kind == TraceabilityBlockerKind::TdNoCapabilityRef
-                && blocker.target == ".aw/tech-design/demo/app.md"
+                && blocker.target == "tech-design/demo/app.md"
         }));
     }
 
@@ -9041,7 +9046,7 @@ command_refs:
         write(tmp.path(), "docs/note.txt", "not a source file\n");
         write(
             tmp.path(),
-            ".aw/tech-design/demo/app.md",
+            "tech-design/demo/app.md",
             r#"---
 id: demo-td
 capability_refs:
@@ -9070,7 +9075,7 @@ capability_refs:
         write(tmp.path(), "docs/note.txt", "not a source file\n");
         write(
             tmp.path(),
-            ".aw/tech-design/demo/internal.md",
+            "tech-design/demo/internal.md",
             "---\nid: internal\ncapability_scope: internal\n---\n\n# Internal TD\n",
         );
 
@@ -9088,7 +9093,7 @@ capability_refs:
         write(tmp.path(), "src/app.py", source_referencing_demo_td());
         write(
             tmp.path(),
-            ".aw/tech-design/demo/app.md",
+            "tech-design/demo/app.md",
             r#"---
 id: internal
 capability_scope: internal
@@ -9110,7 +9115,7 @@ changes:
 
         assert!(coverage.blockers.iter().any(|blocker| {
             blocker.kind == TraceabilityBlockerKind::InternalTdHasSourceEdge
-                && blocker.target == ".aw/tech-design/demo/app.md"
+                && blocker.target == "tech-design/demo/app.md"
         }));
     }
 
@@ -9122,7 +9127,7 @@ changes:
         write(tmp.path(), "docs/note.txt", "not a source file\n");
         write(
             tmp.path(),
-            ".aw/tech-design/demo/app.md",
+            "tech-design/demo/app.md",
             r#"---
 id: demo-td
 capability_refs:
@@ -9167,7 +9172,7 @@ changes: []
         write(tmp.path(), "docs/note.txt", "not a source file\n");
         write(
             tmp.path(),
-            ".aw/tech-design/demo/external-contracts.md",
+            "tech-design/demo/external-contracts.md",
             r#"---
 id: demo-external-contracts
 capability_refs:
@@ -9225,7 +9230,7 @@ e2e_tests:
         write(tmp.path(), "docs/note.txt", "not a source file\n");
         write(
             tmp.path(),
-            ".aw/tech-design/demo/app.md",
+            "tech-design/demo/app.md",
             r#"---
 id: demo-td
 capability_refs:
@@ -9273,7 +9278,7 @@ changes:
         write(tmp.path(), "docs/note.txt", "not a source file\n");
         write(
             tmp.path(),
-            ".aw/tech-design/demo/app.md",
+            "tech-design/demo/app.md",
             r#"---
 id: demo-td
 capability_refs:
@@ -9326,7 +9331,7 @@ changes:
         write(tmp.path(), "docs/note.txt", "not a source file\n");
         write(
             tmp.path(),
-            ".aw/tech-design/demo/app.md",
+            "tech-design/demo/app.md",
             r#"---
 id: demo-td
 capability_refs:
@@ -9379,7 +9384,7 @@ changes:
         write(tmp.path(), "docs/note.txt", "not a source file\n");
         write(
             tmp.path(),
-            ".aw/tech-design/demo/app.md",
+            "tech-design/demo/app.md",
             r#"---
 id: demo-td
 capability_refs:
@@ -9432,7 +9437,7 @@ changes:
         write(tmp.path(), "docs/note.txt", "not a source file\n");
         write(
             tmp.path(),
-            ".aw/tech-design/demo/module.md",
+            "tech-design/demo/module.md",
             r#"---
 id: demo-td
 capability_refs:
@@ -9676,7 +9681,7 @@ changes:
         write(tmp.path(), "src/app.py", source_referencing_demo_td());
         write(
             tmp.path(),
-            ".aw/tech-design/demo/app.md",
+            "tech-design/demo/app.md",
             r#"---
 id: demo-td
 ---
@@ -9713,7 +9718,7 @@ changes:
         write(tmp.path(), "src/app.py", source_referencing_demo_td());
         write(
             tmp.path(),
-            ".aw/tech-design/demo/app.md",
+            "tech-design/demo/app.md",
             r#"---
 id: demo-legacy-td
 ---
@@ -9731,7 +9736,7 @@ changes:
         );
         write(
             tmp.path(),
-            ".aw/tech-design/demo/aggregate.md",
+            "tech-design/demo/aggregate.md",
             valid_traceability_td(),
         );
 
@@ -9796,7 +9801,7 @@ changes:
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
-            ".aw/config.toml",
+            "aw.toml",
             r#"
 [[projects]]
 name = "fixture_platform"
@@ -9978,9 +9983,7 @@ target = "python"
             },
             files: vec![SourceFile {
                 rel: "apps/agentic-workflow/tests/cli/tests/td_dirty_gate_test.rs".into(),
-                abs: PathBuf::from(
-                    "apps/agentic-workflow/tests/cli/tests/td_dirty_gate_test.rs",
-                ),
+                abs: PathBuf::from("apps/agentic-workflow/tests/cli/tests/td_dirty_gate_test.rs"),
                 language: "rust".into(),
                 markers: FileMarkers {
                     handwrite: true,
@@ -10140,6 +10143,7 @@ target = "python"
         );
     }
 }
+// CODEGEN-END
 `````
 
 ## Changes

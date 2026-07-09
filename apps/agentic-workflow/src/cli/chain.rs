@@ -271,8 +271,8 @@ const EMIT_REGISTRY: &[EmitSite] = &[
     },
     EmitSite {
         source: "standardize.rs:managed_health_worker_command (~:1298)",
-        sample: "aw td code-claim apps/agentic-workflow/src/cli/chain.rs",
-        note: "health managed-axis routing: unmarked file -> code-claim (#920)",
+        sample: "aw td create --from-source apps/agentic-workflow/src/cli/chain.rs --project agentic-workflow",
+        note: "health managed-axis routing: unmarked file -> td create --from-source (#920, folded per #1273)",
     },
     EmitSite {
         source: "standardize.rs:semantic_health_worker_command (~:1313)",
@@ -618,9 +618,10 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     VerbLifecycle {
         path: "td.migrate-mermaid",
         class: VerbLifecycleClass::Migration,
-        sunset_criterion: "retires once every legacy mermaid block in tech-design/ has been \
-                            converted to Mermaid Plus (no remaining legacy-block matches for \
-                            the migrator's detector)",
+        sunset_criterion: "retires once `aw td migrate-mermaid <project-td-root> --check` \
+                            reports `legacy_block_count: 0` for every configured project's \
+                            tech-design root (no remaining frontmatter-less legacy mermaid \
+                            blocks for the migrator's detector)",
     },
     VerbLifecycle {
         path: "td.lock",
@@ -646,11 +647,6 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         path: "td.code-check",
         class: VerbLifecycleClass::Core,
         sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "td.code-claim",
-        class: VerbLifecycleClass::Migration,
-        sunset_criterion: "folded into td create --from-source per epic #1270 R5 / #1273",
     },
     VerbLifecycle {
         path: "td.fill",
@@ -758,9 +754,11 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     VerbLifecycle {
         path: "capability.migrate",
         class: VerbLifecycleClass::Migration,
-        sunset_criterion: "retires once every configured project's capability map is authored \
-                            in canonical README Markdown (no remaining YAML `## Capability:` \
-                            sections or legacy capability tables left to convert)",
+        sunset_criterion: "retires once `aw capability sweep --skip-issue-inventory` reports \
+                            zero projects grouped under `next_action_kind: \
+                            \"format_migration_required\"` across all configured `cap_path`s \
+                            (no remaining YAML `## Capability:` sections or legacy capability \
+                            tables left to convert)",
     },
     VerbLifecycle {
         path: "capability.check",

@@ -606,7 +606,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
 
         // Place source file under a valid spec path with ≥4 components
-        let specs_dir = tmp.path().join(".aw/tech-design/crates/myapp/logic");
+        let specs_dir = tmp.path().join("tech-design/crates/myapp/logic");
         std::fs::create_dir_all(&specs_dir).unwrap();
         std::fs::write(
             specs_dir.join("existing.md"),
@@ -636,8 +636,8 @@ mod tests {
     fn test_prepare_modify_creates_base_snapshot() {
         let tmp = TempDir::new().unwrap();
 
-        // Place source file under .aw/tech-design/
-        let specs_dir = tmp.path().join(".aw/tech-design/crates/myapp/logic");
+        // Place source file under tech-design/
+        let specs_dir = tmp.path().join("tech-design/crates/myapp/logic");
         std::fs::create_dir_all(&specs_dir).unwrap();
         let original_content =
             "---\nid: existing\n---\n\n# Existing Spec\n\n## Overview\n\nOriginal content.\n";

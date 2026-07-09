@@ -85,12 +85,20 @@ impl StateManager {
             .unwrap_or("unknown")
             .to_string();
 
-        // Derive project root from change_dir: .aw/changes/{id} → root
-        let project_root = change_dir
-            .parent() // .aw/changes
-            .and_then(|p| p.parent()) // .aw
-            .and_then(|p| p.parent()) // project/worktree root
-            .map(|p| p.to_path_buf());
+        // Derive project root: prefer the `.project-root` marker recorded
+        // by `workspace::changes_path`/`change_path` for the current
+        // `/tmp/aw/workspaces/<slug>/changes/{id}` runtime layout. Fall
+        // back to the legacy 3-parent walk (`.aw/changes/{id}` → root) for
+        // change dirs created before this mechanism existed or built by
+        // hand (e.g. tests using the legacy 2-level shape directly).
+        let project_root = crate::shared::workspace::project_root_for_change_dir(&change_dir)
+            .or_else(|| {
+                change_dir
+                    .parent() // .aw/changes
+                    .and_then(|p| p.parent()) // .aw
+                    .and_then(|p| p.parent()) // project/worktree root
+                    .map(|p| p.to_path_buf())
+            });
 
         // R5: reject legacy STATE.yaml — users must migrate.
         let state_path = change_dir.join("STATE.yaml");

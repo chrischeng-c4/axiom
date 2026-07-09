@@ -539,7 +539,8 @@ mod tests {
         assert_eq!(parsed["next"], "sdd_run_change");
         assert!(parsed["artifacts"].as_array().unwrap().len() >= 1);
 
-        let file_path = project_root.join(".aw/changes/add-oauth/pre_clarifications.md");
+        let file_path = crate::shared::workspace::change_path(project_root, "add-oauth")
+            .join("pre_clarifications.md");
         assert!(file_path.exists());
 
         let content = std::fs::read_to_string(&file_path).unwrap();
@@ -592,7 +593,8 @@ mod tests {
         let parsed: Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["questions_count"], 2);
 
-        let file_path = project_root.join(".aw/changes/multi-test/pre_clarifications.md");
+        let file_path = crate::shared::workspace::change_path(project_root, "multi-test")
+            .join("pre_clarifications.md");
         let content = std::fs::read_to_string(&file_path).unwrap();
         assert!(content.contains("## Q1: First Topic"));
         assert!(content.contains("## Q2: Second Topic"));
@@ -639,7 +641,8 @@ mod tests {
         assert_eq!(parsed["next"], "sdd_run_change");
 
         // Verify content
-        let file_path = project_root.join(".aw/changes/append-mcp-test/pre_clarifications.md");
+        let file_path = crate::shared::workspace::change_path(project_root, "append-mcp-test")
+            .join("pre_clarifications.md");
         let content = std::fs::read_to_string(&file_path).unwrap();
         assert!(content.contains("## Q1: Initial Topic"));
         assert!(content.contains("## Issue #188"));

@@ -52,6 +52,8 @@ definitions:
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/spec_store.rs -->
 ````rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/logic/spec_store.md#source
+// CODEGEN-BEGIN
 //! Filesystem-backed implementation of [`SpecStore`].
 //!
 //! [`FileSystemSpecStore`] scans spec files under the `.aw/tech-design/` directory
@@ -84,7 +86,7 @@ impl FileSystemSpecStore {
     /// `{root}/.aw/tech-design/`.
     ///
     /// `scopes` maps spec group names to their parent subdirectory under
-    /// `.aw/tech-design/` (e.g. `{ "sdd" → "crates" }`). Pass an empty map
+    /// `.aw/tech-design/` (e.g. `{ "agentic-workflow" → "crates" }`). Pass an empty map
     /// to rely entirely on the fallback probe order.
     pub fn new(root: PathBuf, scopes: HashMap<String, String>) -> Self {
         Self { root, scopes }
@@ -114,6 +116,13 @@ impl FileSystemSpecStore {
     /// Returns `None` when the group cannot be found by any probe.
     fn resolve_group_dir(&self, group: &str) -> Option<PathBuf> {
         let specs_base = self.specs_base();
+        if group == "agentic-workflow" {
+            let candidate = self.root.join("apps/agentic-workflow/tech-design");
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+
         if let Ok(resolved) = resolve_td_root_from_config(&self.root, group) {
             let candidate = PathBuf::from(resolved.root);
             if candidate.exists() {
@@ -179,6 +188,16 @@ impl FileSystemSpecStore {
         matched as f32 / terms.len() as f32
     }
 
+    /// The `projects/<name>/...` → `apps/<name>/...` source-root move (#1211)
+    /// left only `mamba` and `lumen` under the legacy `projects/` root; every
+    /// other project routes to `apps/` (#1312/#1313 taxonomy).
+    fn project_source_root(project: &str) -> &'static str {
+        match project {
+            "mamba" | "lumen" => "projects",
+            _ => "apps",
+        }
+    }
+
     /// Return the path of a spec file relative to `{root}/.aw/tech-design/`.
     fn relative_spec_path(&self, abs_path: &Path) -> String {
         let specs_base = self.specs_base();
@@ -187,7 +206,7 @@ impl FileSystemSpecStore {
         }
         for (project, td_root) in workspace::project_tech_design_paths(&self.root) {
             if let Ok(rel) = abs_path.strip_prefix(&td_root) {
-                return PathBuf::from("projects")
+                return PathBuf::from(Self::project_source_root(&project))
                     .join(project)
                     .join(rel)
                     .to_string_lossy()
@@ -202,12 +221,26 @@ impl FileSystemSpecStore {
     }
 
     fn resolve_read_path(&self, path: &str) -> PathBuf {
-        if let Some(rest) = path.strip_prefix("projects/") {
-            let mut parts = rest.splitn(2, '/');
-            if let (Some(project), Some(project_rel)) = (parts.next(), parts.next()) {
-                for (name, td_root) in workspace::project_tech_design_paths(&self.root) {
-                    if name == project {
-                        return td_root.join(project_rel);
+        for root_prefix in ["apps/", "projects/"] {
+            if let Some(rest) = path.strip_prefix(root_prefix) {
+                let mut parts = rest.splitn(2, '/');
+                if let (Some(project), Some(project_rel)) = (parts.next(), parts.next()) {
+                    if project == "agentic-workflow" {
+                        let candidate = self
+                            .root
+                            .join("apps/agentic-workflow/tech-design")
+                            .join(project_rel);
+                        if candidate.exists() {
+                            return candidate;
+                        }
+                    }
+                    for (name, td_root) in workspace::project_tech_design_paths(&self.root) {
+                        if name == project {
+                            let candidate = td_root.join(project_rel);
+                            if candidate.exists() {
+                                return candidate;
+                            }
+                        }
                     }
                 }
             }
@@ -224,7 +257,11 @@ impl FileSystemSpecStore {
     fn candidate_files(&self) -> Vec<PathBuf> {
         let specs_base = self.specs_base();
         let configured_roots = workspace::project_tech_design_paths(&self.root);
-        if !specs_base.exists() && configured_roots.iter().all(|(_, path)| !path.exists()) {
+        let agentic_workflow_td = self.root.join("apps/agentic-workflow/tech-design");
+        if !specs_base.exists()
+            && !agentic_workflow_td.exists()
+            && configured_roots.iter().all(|(_, path)| !path.exists())
+        {
             return vec![];
         }
 
@@ -348,7 +385,7 @@ mod tests {
     }
 
     fn write_config(root: &Path, content: &str) {
-        let full = root.join(".aw/config.toml");
+        let full = root.join("aw.toml");
         std::fs::create_dir_all(full.parent().unwrap()).unwrap();
         std::fs::write(full, content).unwrap();
     }
@@ -371,7 +408,7 @@ mod tests {
         );
 
         let mut scopes = HashMap::new();
-        scopes.insert("sdd".to_string(), "projects".to_string());
+        scopes.insert("agentic-workflow".to_string(), "projects".to_string());
         let store = FileSystemSpecStore::new(root, scopes);
 
         let results = store.search("scope resolution").await.unwrap();
@@ -412,10 +449,13 @@ mod tests {
         );
 
         let mut scopes = HashMap::new();
-        scopes.insert("sdd".to_string(), "projects".to_string());
+        scopes.insert("agentic-workflow".to_string(), "projects".to_string());
         let store = FileSystemSpecStore::new(root, scopes);
 
-        let content = store.read("apps/agentic-workflow/state-machine.md").await.unwrap();
+        let content = store
+            .read("apps/agentic-workflow/core/state-machine.md")
+            .await
+            .unwrap();
         assert!(content.contains("State Machine"));
         assert!(content.contains("Transitions here."));
     }
@@ -443,7 +483,7 @@ mod tests {
         // Spec under crates/ (fallback tree)
         make_spec(
             &root,
-            ".aw/tech-design/crates/cclab-pg/query.md",
+            "tech-design/crates/cclab-pg/query.md",
             "# Query Builder\n\nPostgres query builder spec for database.\n",
         );
 
@@ -490,7 +530,7 @@ path = "docs/td"
             &root,
             r#"
 [agentic_workflow.tech_design_platform]
-path = ".aw/tech-design"
+path = "tech-design"
 
 [[projects]]
 name = "agentic-workflow"
@@ -505,22 +545,45 @@ td_path = "apps/agentic-workflow/tech-design"
         );
 
         let mut scopes = HashMap::new();
-        scopes.insert("sdd".to_string(), "projects".to_string());
+        scopes.insert("agentic-workflow".to_string(), "projects".to_string());
         let store = FileSystemSpecStore::new(root, scopes);
         let results = store.search("per project target").await.unwrap();
 
         assert!(!results.is_empty());
         assert_eq!(results[0].path, "apps/agentic-workflow/logic/runtime.md");
-        let content = store.read("apps/agentic-workflow/logic/runtime.md").await.unwrap();
+        let content = store
+            .read("apps/agentic-workflow/logic/runtime.md")
+            .await
+            .unwrap();
         assert!(content.contains("Runtime"));
+    }
+
+    // #1312/#1313: project_source_root routes every project except the
+    // legacy mamba/lumen holdouts to apps/, matching the projects/ -> apps/
+    // source-root move (#1211).
+    #[test]
+    fn test_project_source_root_routes_legacy_projects_root_apps_by_default() {
+        assert_eq!(
+            FileSystemSpecStore::project_source_root("mamba"),
+            "projects"
+        );
+        assert_eq!(
+            FileSystemSpecStore::project_source_root("lumen"),
+            "projects"
+        );
+        assert_eq!(
+            FileSystemSpecStore::project_source_root("agentic-workflow"),
+            "apps"
+        );
+        assert_eq!(FileSystemSpecStore::project_source_root("keep"), "apps");
     }
 
     // from_config is a semantic alias for new
     #[test]
     fn test_from_config_is_alias_for_new() {
-        let root = PathBuf::from("/tmp");
+        let root = PathBuf::from("/tmp/aw/test/root");
         let mut scopes = HashMap::new();
-        scopes.insert("sdd".to_string(), "projects".to_string());
+        scopes.insert("agentic-workflow".to_string(), "projects".to_string());
 
         let s1 = FileSystemSpecStore::new(root.clone(), scopes.clone());
         let s2 = FileSystemSpecStore::from_config(root.clone(), scopes.clone());
@@ -566,14 +629,14 @@ td_path = "apps/agentic-workflow/tech-design"
     fn test_resolve_group_dir_config_hit() {
         let temp = tempfile::TempDir::new().unwrap();
         let root = temp.path().to_path_buf();
-        let dir = root.join("apps/agentic-workflow/tech-design/core");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = root.join("apps/agentic-workflow/tech-design");
+        std::fs::create_dir_all(dir.join("core")).unwrap();
 
         let mut scopes = HashMap::new();
-        scopes.insert("sdd".to_string(), "projects".to_string());
+        scopes.insert("agentic-workflow".to_string(), "projects".to_string());
         let store = FileSystemSpecStore::new(root, scopes);
 
-        assert_eq!(store.resolve_group_dir("sdd"), Some(dir));
+        assert_eq!(store.resolve_group_dir("agentic-workflow"), Some(dir));
     }
 
     // Configured group but directory absent → None (no fallback for explicit config)
@@ -597,7 +660,7 @@ td_path = "apps/agentic-workflow/tech-design"
     fn test_resolve_group_dir_fallback_crates() {
         let temp = tempfile::TempDir::new().unwrap();
         let root = temp.path().to_path_buf();
-        let dir = root.join(".aw/tech-design/crates/my-group");
+        let dir = root.join("tech-design/crates/my-group");
         std::fs::create_dir_all(&dir).unwrap();
 
         let store = FileSystemSpecStore::new(root.clone(), HashMap::new());
@@ -609,7 +672,7 @@ td_path = "apps/agentic-workflow/tech-design"
     fn test_resolve_group_dir_fallback_projects() {
         let temp = tempfile::TempDir::new().unwrap();
         let root = temp.path().to_path_buf();
-        let dir = root.join(".aw/tech-design/projects/my-project");
+        let dir = root.join("tech-design/projects/my-project");
         std::fs::create_dir_all(&dir).unwrap();
 
         let store = FileSystemSpecStore::new(root.clone(), HashMap::new());
@@ -627,6 +690,8 @@ td_path = "apps/agentic-workflow/tech-design"
         assert_eq!(store.resolve_group_dir("unknown-group"), None);
     }
 }
+
+// CODEGEN-END
 ````
 
 ## Changes

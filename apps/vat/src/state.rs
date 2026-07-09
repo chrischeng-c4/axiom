@@ -72,6 +72,9 @@ pub struct VatMeta {
     /// Evidence for a vat.toml runner invocation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test_run: Option<TestRunEvidence>,
+    /// Opaque upstream execution plan attached with `vat run --plan`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<PlanEvidence>,
 }
 
 /// vat.toml config reference captured for one runner invocation.
@@ -197,6 +200,25 @@ pub struct ArtifactRecord {
     pub size_bytes: Option<u64>,
 }
 
+/// Opaque upstream plan file attached to a run.
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-state-rs.md#source
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanEvidence {
+    pub source_path: String,
+    pub rootfs_path: String,
+    pub digest: String,
+}
+
+/// Topology selected for one configured run.
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-state-rs.md#source
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopologyEvidence {
+    pub runners: Vec<String>,
+    pub services: Vec<String>,
+    pub network: String,
+    pub hermetic: bool,
+}
+
 /// Complete evidence bundle for one vat.toml runner invocation.
 /// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -217,6 +239,12 @@ pub struct TestRunEvidence {
     pub runners: Vec<RunnerRunRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub artifacts: Vec<ArtifactRecord>,
+    /// Opaque upstream execution plan attached with `vat run --plan`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<PlanEvidence>,
+    /// Runner/scenario topology selected before execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topology: Option<TopologyEvidence>,
 }
 
 /// Filesystem changes vs. the base manifest. Full lists; the projection
@@ -308,6 +336,8 @@ pub struct VatState {
     pub last_run: Option<RunRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub test_run: Option<TestRunEvidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<PlanEvidence>,
     pub workspace: WorkspaceInfo,
     pub changes: ChangeSummary,
     /// The GPU this vat can reach — the headline contrast with Docker-in-VM.

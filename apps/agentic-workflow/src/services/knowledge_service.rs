@@ -3,13 +3,14 @@
 //! Spec service - Business logic for writing main specs
 //!
 //! Previously "knowledge_service" — the knowledge concept has been merged into specs.
-//! All project documentation now lives in .aw/tech-design/.
+//! All project documentation now lives in `tech-design/` at the project root
+//! (`.aw/` is retired from the AW ecosystem; see `workspace::tech_design_path`).
 
 use crate::shared::workspace;
 use crate::Result;
 use std::path::Path;
 
-/// Write or update a spec in the main .aw/tech-design/ directory (for archive merge)
+/// Write or update a spec in the main `tech-design/` directory (for archive merge)
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/services/knowledge_service.md#source
 pub fn write_main_spec(path: &str, content: &str, project_root: &Path) -> Result<String> {
     let specs_dir = workspace::tech_design_path(project_root);
@@ -27,7 +28,7 @@ pub fn write_main_spec(path: &str, content: &str, project_root: &Path) -> Result
 
     // Security: ensure path is within specs directory
     if !file_path.starts_with(&specs_dir) {
-        anyhow::bail!("Invalid path: must be within .aw/tech-design/");
+        anyhow::bail!("Invalid path: must be within tech-design/");
     }
 
     // Create parent directories if needed
@@ -42,7 +43,7 @@ pub fn write_main_spec(path: &str, content: &str, project_root: &Path) -> Result
 
     let action = if is_update { "updated" } else { "created" };
     Ok(format!(
-        "✓ Spec {}: .aw/tech-design/{}",
+        "✓ Spec {}: tech-design/{}",
         action, normalized_path
     ))
 }
@@ -59,9 +60,9 @@ mod tests {
 
         let content = "---\ntitle: Test Spec\n---\n\n# Test Spec\n\nContent here.";
         let result = write_main_spec("test-spec.md", content, project_root).unwrap();
-        assert!(result.contains("✓ Spec created: .aw/tech-design/test-spec.md"));
+        assert!(result.contains("✓ Spec created: tech-design/test-spec.md"));
 
-        let file_path = project_root.join(".aw/tech-design/test-spec.md");
+        let file_path = project_root.join("tech-design/test-spec.md");
         assert!(file_path.exists());
         let file_content = std::fs::read_to_string(&file_path).unwrap();
         assert_eq!(file_content, content);

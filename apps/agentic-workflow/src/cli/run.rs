@@ -2588,7 +2588,7 @@ mod tests {
         assert_eq!(goal.payload_path, "/tmp/aw/goals/aw-run-project-demo.md");
         assert!(goal.goal_prompt.is_some());
         let payload = std::fs::read_to_string(&goal.payload_path).unwrap();
-        assert!(payload.contains("Drive the Agentic Workflow root `app:demo`"));
+        assert!(payload.contains("Drive the Agentic Workflow root `project:demo`"));
         assert!(payload.contains("aw run --project demo"));
     }
 
