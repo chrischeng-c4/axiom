@@ -60,3 +60,28 @@ Scope for WI #1262 (`projects/jet/src/bundler/dts.rs`): the dispatch instruction
 Root cause of why this is already fixed at scale (no change to Object.assign-handling logic needed, and no new scale-dependent defect found): the mechanism is identical to the one the #1238 TD already root-caused. `infer_arrow_function_type_from_text` resolves each member's own arrow head from its explicit return type annotation and never inspects the `Object.assign(...)` body at all, so the Object.assign call itself was never actually the obstacle. The real defect lived in `split_top_level(inner, ',')`, the single shared routine every object-literal member-splitting call site uses to find the OUTER object literal's property-separating commas. WI #1264's fix (commit `75cb5e5ca`) made this routine skip the arrow token's own trailing `>` (immediately after `=`) instead of miscounting it as a generic-close that decrements bracket depth. Because that miscount was the ONLY thing that ever let `Object.assign`'s internal top-level commas leak into the outer split, and the fix is applied once per `>` character scan with no dependency on how many members exist or how many Object.assign-valued members are present, the fix generalizes uniformly regardless of scale -- it is not a fix that happens to work for 2 properties and coincidentally fails at 11. WI #1262's own filed report (11-method truncation, only `parse` survives) was reproducing jet 0.4.16's PRE-#1264 state; on current `app/jet` HEAD (post commits `75cb5e5ca` and `d9ac6afea`, same as the #1238/#1263/#1264 siblings), the defect this WI describes is already fixed as a side effect of that shared-routine correction.
 
 **Family terminus**: this closes the `jet --lib --dts` isolatedDeclarations false-positive/truncation TD family. All four sibling WIs (#937 `expr as Type` explicit-annotation false positive, #1264 arrow-body-returns-typed-object-literal false positive, #1263 nested-plain-object-literal false positive, #1238 Object.assign+computed-key arrow-property false positive/truncation) are `td_merged`, and this TD's empirical work closes the one remaining open thread #1238 explicitly deferred -- WI #1262's real-world at-scale (11-method) silent-truncation symptom. No further open WI in this family references `projects/jet/src/bundler/dts.rs`'s object-literal member-splitting path as of this TD.
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: jet-dts-object-assign-multi-property-scale-truncation-verification-verification
+requirements:
+  object_assign_computed_key_arrow_property_multiple_members_same_literal_no_truncation:
+    id: R2
+    text: "Non-regression stress control: TWO separate Object.assign({}, ...arr.map(cb))-valued arrow properties in the same object literal (`parse` and `second`), each followed by further sibling properties -- a shape not covered by the #1238 TD's single-Object.assign probes -- emits all twelve members, proving the split_top_level bracket-depth fix generalizes to more than one Object.assign-valued member per literal."
+    kind: regression
+    risk: medium
+    verify: cargo test -p jet --lib bundler::dts::tests::infers_object_assign_computed_key_arrow_property_multiple_members_same_literal_signature
+  object_assign_computed_key_arrow_property_real_world_scale_no_truncation:
+    id: R1
+    text: "WI #1262's real-world-scale repro: an 11-method reconstruction of the issue's own \"Real-world impact\" description (fe-shared's `_Query`), with a single Object.assign({}, ...arr.map(cb))-valued arrow property (`parse`) followed by TEN sibling properties in the same object literal, emits ALL eleven members in the .d.ts (not just `parse`), matching tsc --isolatedDeclarations ground truth exactly, plus an explicit emitted-member-count assertion (== 11) so a partial-truncation regression that happens to preserve unrelated member text still fails the test."
+    kind: regression
+    risk: high
+    verify: cargo test -p jet --lib bundler::dts::tests::infers_object_assign_computed_key_arrow_property_at_real_world_scale_signature
+---
+flowchart TD
+    r1[R1 object assign computed key arrow property real world scale no truncation] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_object_assign_computed_key_arrow_property_at_real_world_scale_signature[cargo test -p jet --lib bundler::dts::tests::infers_object_assign_computed_key_arrow_property_at_real_world_scale_signature]
+    r2[R2 object assign computed key arrow property multiple members same literal no truncation] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_object_assign_computed_key_arrow_property_multiple_members_same_literal_signature[cargo test -p jet --lib bundler::dts::tests::infers_object_assign_computed_key_arrow_property_multiple_members_same_literal_signature]
+```
