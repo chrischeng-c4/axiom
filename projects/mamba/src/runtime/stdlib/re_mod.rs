@@ -730,6 +730,16 @@ fn extract_str(val: MbValue) -> Option<String> {
     })
 }
 
+fn extract_exact_str(val: MbValue) -> Option<String> {
+    val.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(s) = &(*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    })
+}
+
 fn is_bytes_like(val: MbValue) -> bool {
     val.as_ptr()
         .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) })
@@ -2230,7 +2240,12 @@ pub fn mb_re_split_max(pattern: MbValue, string: MbValue, maxsplit: MbValue) -> 
 pub fn mb_re_match_expand(match_inst: MbValue, template: MbValue) -> MbValue {
     let tmpl = match extract_str(template) {
         Some(s) => s,
-        None => return MbValue::none(),
+        None => {
+            return raise_type_error(&format!(
+                "template must be str or bytes-like, not {}",
+                super::super::builtins::value_type_name(template)
+            ))
+        }
     };
     let inst_ptr = match match_inst.as_ptr() {
         Some(p) => p,
@@ -2326,6 +2341,61 @@ pub fn mb_re_match_expand(match_inst: MbValue, template: MbValue) -> MbValue {
         }
     }
     MbValue::from_ptr(MbObject::new_str(out))
+}
+
+pub fn mb_re_match_getitem(match_inst: MbValue, key: MbValue) -> MbValue {
+    let Some(inst_ptr) = match_inst.as_ptr() else {
+        return MbValue::none();
+    };
+    let fields = unsafe {
+        if let ObjData::Instance {
+            class_name,
+            ref fields,
+        } = &(*inst_ptr).data
+        {
+            if class_name != "re.Match" {
+                return MbValue::none();
+            }
+            fields
+        } else {
+            return MbValue::none();
+        }
+    };
+
+    let guard = fields.read().unwrap();
+    let count = guard
+        .get("_group_count")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
+
+    if let Some(i) = key.as_int() {
+        if !(0..=count).contains(&i) {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+                MbValue::from_ptr(MbObject::new_str("no such group".to_string())),
+            );
+            return MbValue::none();
+        }
+        return guard
+            .get(&format!("group_{i}"))
+            .copied()
+            .unwrap_or_else(MbValue::none);
+    }
+
+    if let Some(name) = extract_exact_str(key) {
+        return match guard.get(&format!("group_name_{name}")).copied() {
+            Some(value) => value,
+            None => {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str("no such group".to_string())),
+                );
+                MbValue::none()
+            }
+        };
+    }
+
+    raise_type_error("group index must be int or str")
 }
 
 /// re.escape(string) -> string with regex meta-characters escaped
@@ -2720,6 +2790,54 @@ mod tests {
                 panic!("expected re.Match Instance");
             }
         }
+    }
+
+    #[test]
+    fn test_match_getitem_preserves_valid_lookup_and_rejects_wrong_key_type() {
+        let result = mb_re_match(s(r"(?P<first>\w+)"), s("alice"));
+        assert!(!result.is_none());
+
+        let full = mb_re_match_getitem(result, MbValue::from_int(0));
+        assert_eq!(extract_str(full).as_deref(), Some("alice"));
+
+        let named = mb_re_match_getitem(result, s("first"));
+        assert_eq!(extract_str(named).as_deref(), Some("alice"));
+
+        crate::runtime::exception::mb_clear_exception();
+        let via_method = crate::runtime::class::mb_call_method(
+            result,
+            s("__getitem__"),
+            MbValue::from_ptr(MbObject::new_list(vec![MbValue::none()])),
+        );
+        assert!(via_method.is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+
+        crate::runtime::exception::mb_clear_exception();
+        let via_subscript = crate::runtime::class::mb_obj_getitem(result, MbValue::none());
+        assert!(via_subscript.is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_match_expand_wrong_template_type_raises_type_error() {
+        let result = mb_re_match(s(r"(\w+)"), s("alice"));
+        assert!(!result.is_none());
+
+        crate::runtime::exception::mb_clear_exception();
+        let expanded = mb_re_match_expand(result, MbValue::from_int(12345));
+        assert!(expanded.is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        crate::runtime::exception::mb_clear_exception();
     }
 
     // -- Py3.12 conformance --
