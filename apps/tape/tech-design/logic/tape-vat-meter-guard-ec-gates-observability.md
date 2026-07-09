@@ -110,7 +110,6 @@ flowchart TD
     root_aw_toml --> observability[observability/ prometheus+otel-collector+grafana config; compose.yaml local dev stack]
     observability --> readme[README.md EC Gates Configured row drops pending language]
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
