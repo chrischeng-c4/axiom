@@ -82,6 +82,21 @@ pub struct Lease {
     /// process-group SIGKILL. Uses `tokio::time::Instant` so tests can
     /// drive it via `tokio::time::pause + advance`.
     pub kill_started_at: Option<tokio::time::Instant>,
+    /// Absolute wall-clock budget (`cap run --timeout`), or `None` if
+    /// disabled. Compared against elapsed time since `spawned_at`,
+    /// excluding `paused_total`/`paused_since` — see
+    /// `lease_elapsed_excluding_paused`.
+    pub timeout: Option<Duration>,
+    /// Idle (no-CPU-progress) budget (`cap run --idle-timeout`), or
+    /// `None` if disabled. Compared against `idle_ticks` — see
+    /// `Throttle::note_cpu_usage`.
+    pub idle_timeout: Option<Duration>,
+    /// Consecutive sampler ticks (while `Running`) with no observed
+    /// CPU activity. Reset to 0 the moment activity is observed;
+    /// never incremented while `Paused`, satisfying the same
+    /// paused-time exclusion as the absolute-timeout clock. Advanced
+    /// by `Throttle::note_cpu_usage`, read by `tick()`.
+    pub idle_ticks: u32,
 }
 
 #[derive(Debug)]
@@ -237,6 +252,8 @@ impl Throttle {
         program: String,
         label: String,
         cwd: String,
+        timeout: Option<Duration>,
+        idle_timeout: Option<Duration>,
     ) -> LeaseId {
         let mut st = self.state.lock().await;
         let id = st.next_id;
@@ -260,6 +277,9 @@ impl Throttle {
                 paused_since: None,
                 kill_envelope: None,
                 kill_started_at: None,
+                timeout,
+                idle_timeout,
+                idle_ticks: 0,
             },
         );
         id
@@ -289,6 +309,33 @@ impl Throttle {
             }
             if l.state == LeaseState::Pending {
                 l.state = LeaseState::Running;
+            }
+        }
+    }
+
+    /// Feed a fresh CPU% sample (keyed by `child_pid`) into every
+    /// lease that has an idle-timeout configured, advancing or
+    /// resetting its `idle_ticks` debounce counter. Must be called
+    /// once per sampler-loop iteration, before `tick()`, so `tick()`
+    /// observes this iteration's activity when deciding whether the
+    /// idle-timeout has fired. Deliberately excluded from `tick()`
+    /// itself so `tick()`'s existing 3-argument test surface is
+    /// unaffected — this is a separate, additive entry point.
+    ///
+    /// Only `Running` leases accrue idle ticks: a `Paused` lease is
+    /// SIGSTOPped by cap itself and would otherwise misreport as
+    /// "hung", so excluding it here satisfies the same paused-time
+    /// exclusion the absolute-timeout clock gets from `paused_total`.
+    pub async fn note_cpu_usage(&self, cpu_by_pid: &std::collections::HashMap<i32, f32>) {
+        let mut st = self.state.lock().await;
+        for l in st.leases.values_mut() {
+            if l.idle_timeout.is_none() || l.state != LeaseState::Running {
+                continue;
+            }
+            let Some(pid) = l.child_pid else { continue };
+            match cpu_by_pid.get(&pid) {
+                Some(pct) if *pct > 0.0 => l.idle_ticks = 0,
+                _ => l.idle_ticks = l.idle_ticks.saturating_add(1),
             }
         }
     }
@@ -377,6 +424,7 @@ impl Throttle {
         let trigger_samples = self.cfg.protect.trigger_samples.max(1);
         let kill_all_after = self.cfg.protect.kill_all_paused_after_ticks.max(1);
         let grace = std::time::Duration::from_secs(self.cfg.protect.kill_grace_secs);
+        let sample_interval_ms = self.cfg.protect.sample_interval_ms.max(1);
         let under_pause_pressure = free_mem_gb < pause_floor || cpu_over;
         let mut st = self.state.lock().await;
 
@@ -430,6 +478,97 @@ impl Throttle {
                 l.state = LeaseState::Killed;
             }
             return TickAction::EscalatedToKill { id };
+        }
+
+        // ── Per-lease wall-clock / idle-progress timeouts ─────────
+        // Independent of memory/CPU pressure, so this MUST run before
+        // the pressure-clear branch below (which returns early
+        // whenever there's headroom). A hung command typically has
+        // abundant free memory — that's exactly why pressure-based
+        // pause/kill can never see it — so gating this on pressure
+        // would defeat the whole point of the trigger.
+        let now_std = Instant::now();
+        let timed_out = st
+            .leases
+            .values()
+            .filter(|l| matches!(l.state, LeaseState::Running | LeaseState::Paused))
+            .find_map(|l| {
+                if let Some(timeout) = l.timeout {
+                    let elapsed = lease_elapsed_excluding_paused(l, now_std);
+                    if elapsed >= timeout {
+                        return Some((
+                            l.id,
+                            l.child_pid,
+                            KillClassification::AbsoluteTimeout,
+                            format!(
+                                "exceeded --timeout of {}s (ran {}s excluding paused time)",
+                                timeout.as_secs(),
+                                elapsed.as_secs()
+                            ),
+                        ));
+                    }
+                }
+                if l.state == LeaseState::Running {
+                    if let Some(idle_timeout) = l.idle_timeout {
+                        let threshold = idle_ticks_threshold(idle_timeout, sample_interval_ms);
+                        if l.idle_ticks >= threshold {
+                            return Some((
+                                l.id,
+                                l.child_pid,
+                                KillClassification::IdleTimeout,
+                                format!(
+                                    "no CPU progress for --idle-timeout of {}s \
+                                     ({} consecutive idle ticks)",
+                                    idle_timeout.as_secs(),
+                                    l.idle_ticks
+                                ),
+                            ));
+                        }
+                    }
+                }
+                None
+            });
+        if let Some((id, pid, classification, note)) = timed_out {
+            let victim_rss_gb = pid.and_then(rss_of).map(bytes_to_gb).unwrap_or(0.0);
+            let (victim_program, victim_label) = st
+                .leases
+                .get(&id)
+                .map(|l| (l.program.clone(), l.label.clone()))
+                .unwrap_or_default();
+            let envelope = build_envelope(
+                classification,
+                &victim_program,
+                &victim_label,
+                victim_rss_gb,
+                free_mem_gb,
+                kill_floor,
+                self.total_gb,
+                Vec::new(),
+                Some(note),
+            );
+            let skip_grace = self.cfg.protect.kill_grace_secs == 0;
+            return if skip_grace {
+                if let Some(pid) = pid {
+                    send_signal(pid, libc::SIGKILL);
+                }
+                if let Some(l) = st.leases.get_mut(&id) {
+                    l.state = LeaseState::Killed;
+                    l.kill_envelope = Some(envelope);
+                }
+                TickAction::KilledVictim { id, classification }
+            } else {
+                if let Some(pid) = pid {
+                    unsafe {
+                        let _ = libc::kill(pid, libc::SIGTERM);
+                    }
+                }
+                if let Some(l) = st.leases.get_mut(&id) {
+                    l.state = LeaseState::Killing;
+                    l.kill_started_at = Some(tokio::time::Instant::now());
+                    l.kill_envelope = Some(envelope);
+                }
+                TickAction::TermedVictim { id, classification }
+            };
         }
 
         // ── Above pause floor AND CPU ok: pressure clear ──────────
@@ -757,6 +896,31 @@ fn bytes_to_gb(b: u64) -> f64 {
     b as f64 / 1024.0 / 1024.0 / 1024.0
 }
 
+/// Wall-clock time since `spawned_at`, minus time spent `Paused`
+/// (both fully-elapsed pauses in `paused_total` and any pause still
+/// in flight). Returns `Duration::ZERO` if the lease never spawned.
+fn lease_elapsed_excluding_paused(l: &Lease, now: Instant) -> Duration {
+    let Some(spawned_at) = l.spawned_at else {
+        return Duration::ZERO;
+    };
+    let total = now.saturating_duration_since(spawned_at);
+    let mut paused = l.paused_total;
+    if let Some(since) = l.paused_since {
+        paused += now.saturating_duration_since(since);
+    }
+    total.saturating_sub(paused)
+}
+
+/// Convert an idle-timeout duration into a consecutive-tick count,
+/// debounced the same way the pause/kill floors debounce via
+/// `trigger_samples` — but keyed to the sampler's actual cadence
+/// instead of a fixed sample count, since `--idle-timeout` is
+/// specified in seconds.
+fn idle_ticks_threshold(idle_timeout: Duration, sample_interval_ms: u64) -> u32 {
+    let ticks = idle_timeout.as_millis() / sample_interval_ms.max(1) as u128;
+    ticks.max(1) as u32
+}
+
 /// Build the JSONL run-log record for a finished lease, or `None` if the
 /// command never actually started (no `spawned_at` — e.g. the client
 /// died during Acquire backpressure). Durations are computed from the
@@ -867,6 +1031,18 @@ fn build_envelope(
                  then `cap wait && {victim_label}`"
             ),
         },
+        KillClassification::AbsoluteTimeout => Action::RaiseTimeoutOrSplit {
+            hint: "raise --timeout, or split the command into smaller steps".to_string(),
+            next_step: format!(
+                "# exceeded its --timeout budget — raise it or break up the work: {victim_label}"
+            ),
+        },
+        KillClassification::IdleTimeout => Action::InvestigateHang {
+            hint: "no CPU progress observed — likely stuck (blocked I/O, deadlock)".to_string(),
+            next_step: format!(
+                "# investigate why `{victim_label}` stopped making progress before retrying"
+            ),
+        },
     };
 
     let mut human = String::new();
@@ -918,6 +1094,10 @@ fn classification_label(c: KillClassification) -> &'static str {
         KillClassification::External => {
             "external pressure (non-cap processes are eating the budget)"
         }
+        KillClassification::AbsoluteTimeout => {
+            "absolute timeout (exceeded --timeout wall-clock budget)"
+        }
+        KillClassification::IdleTimeout => "idle timeout (no CPU progress for --idle-timeout)",
     }
 }
 
@@ -925,7 +1105,9 @@ fn action_next_step(a: &Action) -> &str {
     match a {
         Action::WaitAndRetry { next_step, .. }
         | Action::ChangeStrategy { next_step, .. }
-        | Action::InspectAndWait { next_step, .. } => next_step.as_str(),
+        | Action::InspectAndWait { next_step, .. }
+        | Action::RaiseTimeoutOrSplit { next_step, .. }
+        | Action::InvestigateHang { next_step, .. } => next_step.as_str(),
     }
 }
 
@@ -966,7 +1148,7 @@ mod tests {
 
     async fn add_running(t: &Throttle, label: &str) -> LeaseId {
         let id = t
-            .register(1, label.into(), label.into(), String::new())
+            .register(1, label.into(), label.into(), String::new(), None, None)
             .await;
         // i32::MAX is virtually guaranteed not to exist; libc::kill
         // returns ESRCH which we ignore.
@@ -976,7 +1158,7 @@ mod tests {
 
     async fn add_running_pid(t: &Throttle, label: &str, pid: i32) -> LeaseId {
         let id = t
-            .register(1, label.into(), label.into(), String::new())
+            .register(1, label.into(), label.into(), String::new(), None, None)
             .await;
         t.attach_pid(id, pid).await;
         id
@@ -1243,7 +1425,7 @@ mod tests {
     async fn release_returns_envelope_after_kill() {
         let t = Throttle::new(cfg_with(2.0, 1), 2.0, 1.0, 16.0).expect("invariant");
         let a = t
-            .register(1, "cargo".into(), "cargo test".into(), String::new())
+            .register(1, "cargo".into(), "cargo test".into(), String::new(), None, None)
             .await;
         t.attach_pid(a, 999).await;
         let _ = t.tick(0.5, 0.0, NO_RSS).await; // forces kill (External, solo)
@@ -1269,7 +1451,7 @@ mod tests {
         // total=16, kill_floor=1.0, headroom=15. Victim RSS=16 GB → Oversize.
         let t = Throttle::new(cfg_with(2.0, 1), 2.0, 1.0, 16.0).expect("invariant");
         let a = t
-            .register(1, "cargo".into(), "cargo build -j16".into(), String::new())
+            .register(1, "cargo".into(), "cargo build -j16".into(), String::new(), None, None)
             .await;
         t.attach_pid(a, 700).await;
         let rss: &(dyn Fn(i32) -> Option<u64> + Send + Sync) = &|pid| {
@@ -1305,11 +1487,11 @@ mod tests {
     async fn envelope_action_for_competition_is_wait_and_retry() {
         let t = Throttle::new(cfg_with(2.0, 1), 2.0, 1.0, 16.0).expect("invariant");
         let a = t
-            .register(1, "cargo".into(), "cargo a".into(), String::new())
+            .register(1, "cargo".into(), "cargo a".into(), String::new(), None, None)
             .await;
         t.attach_pid(a, 800).await;
         let b = t
-            .register(1, "cargo".into(), "cargo b".into(), String::new())
+            .register(1, "cargo".into(), "cargo b".into(), String::new(), None, None)
             .await;
         t.attach_pid(b, 801).await;
         // Both running, biggest is a (8 GB RSS, fits in headroom=15)
@@ -1393,7 +1575,7 @@ mod tests {
         cfg.protect.kill_grace_secs = 3;
         let t = Throttle::new(cfg, 2.0, 1.0, 16.0).expect("invariant");
         let a = t
-            .register(1, "cargo".into(), "cargo test".into(), String::new())
+            .register(1, "cargo".into(), "cargo test".into(), String::new(), None, None)
             .await;
         t.attach_pid(a, i32::MAX).await;
 
@@ -1477,7 +1659,7 @@ mod tests {
         cfg.protect.kill_grace_secs = 2;
         let t = Throttle::new(cfg, 2.0, 1.0, 16.0).expect("invariant");
         let a = t
-            .register(1, "cargo".into(), "cargo test".into(), String::new())
+            .register(1, "cargo".into(), "cargo test".into(), String::new(), None, None)
             .await;
         t.attach_pid(a, i32::MAX).await;
         // Tick 1: kill zone → SIGTERM.
@@ -1588,6 +1770,8 @@ mod tests {
                 "cargo".into(),
                 "cargo test -p cap".into(),
                 "/tmp/proj".into(),
+                None,
+                None,
             )
             .await;
         // Queue time: the command waits before the client reports its PID.
@@ -1637,7 +1821,9 @@ mod tests {
         // A lease that registered but never reached Spawned (client died
         // during Acquire backpressure) didn't actually run → not logged.
         let t = throttle_with(2.0, 1);
-        let id = t.register(7, "ls".into(), "ls".into(), String::new()).await;
+        let id = t
+            .register(7, "ls".into(), "ls".into(), String::new(), None, None)
+            .await;
         let out = t.release(id, None).await;
         assert!(
             out.record.is_none(),
@@ -1654,6 +1840,184 @@ mod tests {
         assert!((snap.load_per_core - 0.42).abs() < 0.01);
         // Default pause_load_percent = 80 → 0.8.
         assert!((snap.load_pause_floor - 0.8).abs() < 0.01);
+    }
+
+    // ── Absolute + idle timeout tests ─────────────────────────────
+
+    #[tokio::test]
+    async fn absolute_timeout_fires_regardless_of_pressure() {
+        // Ample free memory (8.0 GB, well above pause/kill floors) —
+        // proves the timeout check is NOT gated on pressure.
+        let t = throttle_with(2.0, 1);
+        let id = t
+            .register(
+                1,
+                "hang".into(),
+                "hang".into(),
+                String::new(),
+                Some(Duration::from_millis(10)),
+                None,
+            )
+            .await;
+        t.attach_pid(id, i32::MAX).await;
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        match t.tick(8.0, 0.0, NO_RSS).await {
+            TickAction::KilledVictim { id: killed, classification } => {
+                assert_eq!(killed, id);
+                assert_eq!(classification, KillClassification::AbsoluteTimeout);
+            }
+            other => panic!("expected KilledVictim(AbsoluteTimeout), got {other:?}"),
+        }
+        let env = t
+            .release(id, None)
+            .await
+            .kill_envelope
+            .expect("timeout kill must surface an envelope");
+        assert!(matches!(env.action, Action::RaiseTimeoutOrSplit { .. }));
+    }
+
+    #[tokio::test]
+    async fn absolute_timeout_excludes_paused_duration() {
+        let t = throttle_with(2.0, 1);
+        let id = t
+            .register(
+                1,
+                "hang".into(),
+                "hang".into(),
+                String::new(),
+                Some(Duration::from_millis(20)),
+                None,
+            )
+            .await;
+        t.attach_pid(id, i32::MAX).await;
+        // Immediately mark Paused and backdate paused_since so the
+        // whole sleep below counts as paused time, not run time.
+        {
+            let mut st = t.state.lock().await;
+            let l = st.leases.get_mut(&id).unwrap();
+            l.state = LeaseState::Paused;
+            l.paused_since = Some(Instant::now());
+        }
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        // Pressure is clear (free=8.0), so a Paused lease may also
+        // legitimately Resume this same tick — either outcome proves
+        // the timeout branch did NOT treat it as timed out.
+        assert!(
+            matches!(
+                t.tick(8.0, 0.0, NO_RSS).await,
+                TickAction::Idle | TickAction::Resumed(_)
+            ),
+            "a fully-paused lease must not accrue timeout time"
+        );
+    }
+
+    #[tokio::test]
+    async fn idle_timeout_disabled_by_default_never_fires() {
+        let t = throttle_with(2.0, 1);
+        let id = t.register(1, "x".into(), "x".into(), String::new(), None, None).await;
+        t.attach_pid(id, i32::MAX).await;
+        let empty = HashMap::new();
+        for _ in 0..10 {
+            t.note_cpu_usage(&empty).await;
+        }
+        assert!(matches!(t.tick(8.0, 0.0, NO_RSS).await, TickAction::Idle));
+    }
+
+    #[tokio::test]
+    async fn idle_timeout_fires_after_debounced_no_progress_ticks() {
+        // sample_interval_ms defaults to 500; idle_timeout=1500ms →
+        // threshold = 3 debounced ticks with no observed CPU%.
+        let t = throttle_with(2.0, 1);
+        let id = t
+            .register(
+                1,
+                "hang".into(),
+                "hang".into(),
+                String::new(),
+                None,
+                Some(Duration::from_millis(1500)),
+            )
+            .await;
+        t.attach_pid(id, 424_242).await;
+        let empty = HashMap::new();
+        t.note_cpu_usage(&empty).await;
+        assert!(matches!(t.tick(8.0, 0.0, NO_RSS).await, TickAction::Idle));
+        t.note_cpu_usage(&empty).await;
+        assert!(matches!(t.tick(8.0, 0.0, NO_RSS).await, TickAction::Idle));
+        t.note_cpu_usage(&empty).await;
+        match t.tick(8.0, 0.0, NO_RSS).await {
+            TickAction::KilledVictim { id: killed, classification } => {
+                assert_eq!(killed, id);
+                assert_eq!(classification, KillClassification::IdleTimeout);
+            }
+            other => panic!("expected KilledVictim(IdleTimeout), got {other:?}"),
+        }
+        let env = t
+            .release(id, None)
+            .await
+            .kill_envelope
+            .expect("idle-timeout kill must surface an envelope");
+        assert!(matches!(env.action, Action::InvestigateHang { .. }));
+    }
+
+    #[tokio::test]
+    async fn idle_timeout_resets_on_observed_cpu_progress() {
+        let t = throttle_with(2.0, 1);
+        let id = t
+            .register(
+                1,
+                "hang".into(),
+                "hang".into(),
+                String::new(),
+                None,
+                Some(Duration::from_millis(1500)),
+            )
+            .await;
+        t.attach_pid(id, 424_243).await;
+        let empty = HashMap::new();
+        t.note_cpu_usage(&empty).await;
+        t.note_cpu_usage(&empty).await;
+        // Progress observed on the 3rd sample — resets the debounce
+        // counter, so the tick right after must NOT fire.
+        let mut busy = HashMap::new();
+        busy.insert(424_243, 12.5f32);
+        t.note_cpu_usage(&busy).await;
+        assert!(matches!(t.tick(8.0, 0.0, NO_RSS).await, TickAction::Idle));
+    }
+
+    #[tokio::test]
+    async fn idle_timeout_never_accrues_while_paused() {
+        let t = throttle_with(2.0, 1);
+        let id = t
+            .register(
+                1,
+                "hang".into(),
+                "hang".into(),
+                String::new(),
+                None,
+                Some(Duration::from_millis(1)), // threshold clamps to 1 tick
+            )
+            .await;
+        t.attach_pid(id, 424_244).await;
+        {
+            let mut st = t.state.lock().await;
+            st.leases.get_mut(&id).unwrap().state = LeaseState::Paused;
+        }
+        let empty = HashMap::new();
+        for _ in 0..5 {
+            t.note_cpu_usage(&empty).await;
+        }
+        let snap = t.snapshot(8.0, 0.0).await;
+        let _ = snap;
+        // A Paused lease is excluded from idle-timeout tick()'s check
+        // entirely (see the `l.state == LeaseState::Running` guard), so
+        // no kill can fire. Pressure is clear (free=8.0), so the lease
+        // may also legitimately Resume this same tick — either outcome
+        // proves the idle-timeout branch did not fire.
+        assert!(matches!(
+            t.tick(8.0, 0.0, NO_RSS).await,
+            TickAction::Idle | TickAction::Resumed(_)
+        ));
     }
 }
 // CODEGEN-END

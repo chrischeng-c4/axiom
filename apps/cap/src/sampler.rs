@@ -85,6 +85,62 @@ impl Default for RssSampler {
     }
 }
 
+/// Per-process CPU% lookup (usage since the last refresh), scoped to
+/// caller-provided PIDs. This is the idle-timeout proxy signal: a
+/// process making real forward progress accrues CPU; one blocked on
+/// stdin, a socket, or a deadlock reads ~0% every tick. `sysinfo`
+/// computes the since-last-refresh delta internally, so no manual
+/// cumulative-time bookkeeping is needed here — unlike RSS, which is
+/// an absolute snapshot, CPU% already comes as a rate.
+/// @spec apps/cap/tech-design/semantic/cap-src.md#schema
+pub struct CpuSampler {
+    sys: System,
+}
+
+/// @spec apps/cap/tech-design/semantic/cap-src.md#schema
+impl CpuSampler {
+    pub fn new() -> Self {
+        Self { sys: System::new() }
+    }
+
+    /// Refresh the named PIDs and return CPU% since the last refresh
+    /// for each one we could read. Dead / unknown PIDs are absent.
+    pub fn cpu_usage(&mut self, pids: &[i32]) -> HashMap<i32, f32> {
+        if pids.is_empty() {
+            return HashMap::new();
+        }
+        let pid_list: Vec<Pid> = pids
+            .iter()
+            .filter(|p| **p > 0)
+            .map(|p| Pid::from(*p as usize))
+            .collect();
+        if pid_list.is_empty() {
+            return HashMap::new();
+        }
+        self.sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&pid_list),
+            true,
+            ProcessRefreshKind::new().with_cpu(),
+        );
+        pids.iter()
+            .copied()
+            .filter(|p| *p > 0)
+            .filter_map(|p| {
+                self.sys
+                    .process(Pid::from(p as usize))
+                    .map(|proc| (p, proc.cpu_usage()))
+            })
+            .collect()
+    }
+}
+
+/// @spec apps/cap/tech-design/semantic/cap-src.md#schema
+impl Default for CpuSampler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// 1-minute load average normalized by core count. > 1.0 means the
 /// machine is oversubscribed; cap's CPU pause floor is a fraction of
 /// that (default 0.80 = "stop submitting once load > 80% of nproc").
@@ -167,5 +223,32 @@ impl Default for MemorySampler {
 
 fn bytes_to_gb(bytes: u64) -> f64 {
     bytes as f64 / 1024.0 / 1024.0 / 1024.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cpu_sampler_reports_current_pid_and_skips_unknown() {
+        let mut sampler = CpuSampler::new();
+        let me = std::process::id() as i32;
+        // First call establishes the sysinfo baseline; give it a
+        // moment before the second so a delta actually exists.
+        sampler.cpu_usage(&[me]);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let usage = sampler.cpu_usage(&[me, i32::MAX]);
+        assert!(usage.contains_key(&me), "own PID must be readable");
+        assert!(
+            !usage.contains_key(&i32::MAX),
+            "unknown/dead PID must be absent, not zero"
+        );
+    }
+
+    #[test]
+    fn cpu_sampler_empty_pids_returns_empty_map() {
+        let mut sampler = CpuSampler::new();
+        assert!(sampler.cpu_usage(&[]).is_empty());
+    }
 }
 // CODEGEN-END

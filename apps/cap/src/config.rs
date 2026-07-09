@@ -77,6 +77,13 @@ pub struct Protect {
     /// debounce keeps a sustained low-memory state from re-scanning
     /// every tick. Default: 10.
     pub reap_cooldown_secs: u64,
+    /// Absolute wall-clock budget (seconds) applied when `cap run`
+    /// didn't pass `--timeout`. `0` = disabled (default) — existing
+    /// behavior is unchanged unless a caller opts in.
+    pub default_timeout_secs: u64,
+    /// Idle (no-CPU-progress) budget (seconds) applied when `cap run`
+    /// didn't pass `--idle-timeout`. `0` = disabled (default).
+    pub default_idle_timeout_secs: u64,
 }
 
 /// @spec apps/cap/tech-design/semantic/cap-src.md#schema
@@ -118,6 +125,11 @@ impl Default for Protect {
             reap_enabled: true,
             reap_min_uptime_secs: 60,
             reap_cooldown_secs: 10,
+            // Both wall-clock triggers ship off by default — see field
+            // docs. Opt-in per `cap run --timeout`/`--idle-timeout` or
+            // by raising these in config.toml.
+            default_timeout_secs: 0,
+            default_idle_timeout_secs: 0,
         }
     }
 }
@@ -172,6 +184,14 @@ mod tests {
         );
         assert!(p.pause_used_percent <= 100 && p.kill_used_percent <= 100);
         assert!(p.min_free_gb > 0.0);
+        assert_eq!(
+            p.default_timeout_secs, 0,
+            "absolute timeout must default to disabled"
+        );
+        assert_eq!(
+            p.default_idle_timeout_secs, 0,
+            "idle timeout must default to disabled"
+        );
     }
 
     #[test]

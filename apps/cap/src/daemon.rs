@@ -20,7 +20,7 @@ use crate::eventlog::EventLog;
 use crate::paths;
 use crate::protocol::{LeaseId, Request, Response};
 use crate::reap::Reaper;
-use crate::sampler::{LoadSampler, MemorySampler, RssSampler};
+use crate::sampler::{CpuSampler, LoadSampler, MemorySampler, RssSampler};
 use crate::throttle::{Throttle, TickAction};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -175,6 +175,7 @@ async fn sampler_loop(throttle: Arc<Throttle>) {
         std::time::Duration::from_millis(throttle.config().protect.sample_interval_ms.max(50));
     let mut sampler = MemorySampler::new();
     let mut rss_sampler = RssSampler::new();
+    let mut cpu_sampler = CpuSampler::new();
     let load_sampler = LoadSampler::new();
     let mut reaper = Reaper::new();
     let kill_floor = throttle.kill_floor_gb();
@@ -188,6 +189,12 @@ async fn sampler_loop(throttle: Arc<Throttle>) {
         let rss_map = rss_sampler.rss_bytes(&pids);
         let rss_lookup: &(dyn Fn(i32) -> Option<u64> + Send + Sync) =
             &|pid| rss_map.get(&pid).copied();
+        // Idle-timeout bookkeeping: feed this tick's CPU% into every
+        // lease with `--idle-timeout` configured BEFORE calling
+        // tick(), so tick() sees the freshly-advanced `idle_ticks`
+        // debounce counter when it decides whether to fire.
+        let cpu_map = cpu_sampler.cpu_usage(&pids);
+        throttle.note_cpu_usage(&cpu_map).await;
         let action = throttle.tick(free, load, rss_lookup).await;
 
         // Reap path (Slice 6): when memory is below kill_floor and
@@ -327,7 +334,21 @@ async fn handle_conn(
                 if is_under_pressure_now(&throttle) {
                     let _ = throttle.wait_for_capacity(Some(SERVER_WAIT_CAP)).await;
                 }
-                let lease = throttle.register(a.client_pid, program, label, a.cwd).await;
+                // `None` defers to the config default; `Some(0)` (or a
+                // `0` default) means disabled — only a positive number
+                // of seconds becomes an active `Duration` budget.
+                let protect = &throttle.config().protect;
+                let timeout_secs = a.timeout_secs.unwrap_or(protect.default_timeout_secs);
+                let idle_timeout_secs = a
+                    .idle_timeout_secs
+                    .unwrap_or(protect.default_idle_timeout_secs);
+                let timeout = (timeout_secs > 0)
+                    .then(|| std::time::Duration::from_secs(timeout_secs));
+                let idle_timeout = (idle_timeout_secs > 0)
+                    .then(|| std::time::Duration::from_secs(idle_timeout_secs));
+                let lease = throttle
+                    .register(a.client_pid, program, label, a.cwd, timeout, idle_timeout)
+                    .await;
                 held_lease = Some(lease);
                 let nice = throttle.config().defaults.nice;
                 write_resp(&mut tx, &Response::Lease { lease, nice }).await?;

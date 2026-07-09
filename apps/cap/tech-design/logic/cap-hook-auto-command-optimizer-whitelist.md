@@ -95,21 +95,30 @@ changes:
       Add a cap-side planner for cap <cmd> argv and cap run command strings.
       Shell-free strings are parsed into argv and routed through the same
       replacement planner; strings requiring shell semantics fall back to
-      bash -c internally. The planner chooses native implementations only for
-      safe commands that satisfy a resource gate. The preferred dual-win gate
-      requires lower original-command CPU time and peak RSS. An RSS-fallback
-      gate is allowed when a tiny command is obstructed by platform
-      process-floor CPU cost but still lowers peak RSS enough to justify the
-      CPU regression.
-      The current dual-win replacements are simple high-entry-count ls, large
-      single-file sort, bounded sed -n range reads, recursive literal grep -R
-      searches, find -type f -name walks, du -sk stdout-discard runs, large
-      regular-file cat, and uniq stdout-discard runs over large
-      adjacent-duplicate files. There are no current default RSS-fallback
-      replacements. true, false, pwd, basename, dirname, head, tail, mkdir,
-      touch, awk, xargs, and pipe-shaped shell commands remain scout-only
-      candidates until their resource benchmark reaches the dual-win gate or a
-      material RSS-fallback gate.
+      bash -c internally. The planner chooses native implementations for safe
+      shell-free command subsets; tiny safe workloads may use the native path
+      even when CPU/RSS micro-benchmarks lose to the original command. Resource
+      gates remain benchmark regression checks for representative large rows,
+      not admission gates for small safe primitives.
+      The current native takeover surface includes true, false, pwd, echo,
+      narrow printf string forms, narrow integer seq, whoami, narrow id,
+      narrow uname, narrow test/bracket predicates, basename, dirname, ls, cat,
+      head, tail, mkdir, touch, uniq, find, du, sort, narrow cut, narrow tr, sed, recursive literal
+      single-file grep searches, grep -R searches, wc -l regular-file aggregates, narrow awk counts and first-field extraction,
+      xargs echo, xargs wc -l, which, command -v, and listed fused pipe shapes including
+      yes-to-head, ls pipelines, ls-sort-uniq producer pipelines, tail pipelines, sort pipelines, head producer pipelines,
+      tail producer pipelines, cat-head/tail producer pipelines, single-line producer pipelines, sed producer pipelines,
+      cat-sed producer pipelines, cat-awk producer pipelines, awk first-field producer pipelines, cut producer pipelines, cat-cut producer pipelines, cat-tr producer pipelines,
+      cat-uniq producer pipelines, sort-uniq producer pipelines,
+      grep-file pipelines, grep-file-sort-uniq producer pipelines, grep-file-cut producer pipelines, grep-file-awk producer pipelines, find-sort-uniq producer pipelines, printf-sort-uniq producer pipelines,
+      printf-grep-sort-uniq producer pipelines, seq-sort-uniq producer pipelines,
+      seq-grep-sort-uniq producer pipelines, awk-sort-uniq producer pipelines,
+      grep-r-sort-uniq producer pipelines, cat-grep-sort-uniq producer pipelines,
+      cat-to-cut, cat-sort,
+      tr pipelines, path-lookup pipelines, safe find type/name pipelines, find-default-xargs, find-xargs, find-sort,
+      find-sort-uniq, find-sort-xargs, and multi-stage find-sort pipelines.
+      Unsupported echo, printf, seq, id, uname, test, cut, tr, awk, xargs, sort, find, which, command,
+      and pipe-shaped shell commands keep compatibility fallback.
 
   - path: apps/cap/src/cli.rs
     action: modify
@@ -126,7 +135,7 @@ changes:
     impl_mode: hand-written
     description: >
       Update hook tests to assert thin cap run original-string wrapping for
-      simple commands, scout-only commands, and shell-sensitive commands, with
+      simple takeover commands, scout-only commands, and shell-sensitive commands, with
       no hook-level optimizer behavior.
 
   - path: apps/cap/src/command_planner.rs
@@ -134,17 +143,16 @@ changes:
     section: unit-test
     impl_mode: hand-written
     description: >
-      Add planner tests for resource-gated replacements, original-command
-      fallback, inactive tiny-command fallback, and unsupported command
-      fallback.
+      Add planner tests for shape-sensitive native takeover, original-command
+      fallback, and unsupported command fallback.
 
   - path: apps/cap/src/command_planner.rs
     action: modify
     section: logic
     impl_mode: hand-written
     description: >
-      Keep inactive native candidate code out of the active dispatch path so
-      only resource-gated replacements are claimed.
+      Keep unsupported native candidate code out of the active dispatch path so
+      only safe shell-free subsets are claimed.
 
   - path: apps/cap/src/cap_frontend.c
     action: modify
@@ -154,7 +162,7 @@ changes:
       Preserve original-command error behavior for public frontend direct
       dispatch. Active replacements must return matching nonzero exits and
       useful stderr diagnostics instead of silently failing. Provide a direct
-      run-string cat path so hook-emitted cap run cat keeps the dual-win gate.
+      run-string cat path so hook-emitted cap run cat keeps native takeover.
 
   - path: apps/cap/src/cap_fast_frontend.c
     action: modify
@@ -184,10 +192,10 @@ changes:
       Add a child-rusage benchmark harness that compares the actual cap
       same-name CLI surface and the hook-emitted cap run command-string surface
       against original system commands. Report median user+system CPU time and
-      platform-normalized peak RSS, fail when any gated replacement does not
-      satisfy its dual-win or RSS-fallback policy, and optionally print
-      candidate rows for incomplete command shapes, including mkdir, touch,
-      awk, xargs, and representative shell pipes.
+      platform-normalized peak RSS, fail when any resource-gated row does not
+      satisfy its dual-win, CPU-win, or RSS-fallback policy, and measure takeover rows
+      without CPU/RSS admission failure. Candidate rows remain only for
+      incomplete command shapes that do not yet have a safe native subset.
 
   - path: apps/cap/tests/behavior_cap_command_replacement_parity.rs
     action: add
@@ -233,10 +241,21 @@ e2e_tests:
       - "the Bash hook rewrites non-recursive commands to cap run original-command-string and does not expose same-name replacement decisions"
       - "cap run command-string parsing routes shell-free active replacements to the same fast implementation family as cap <cmd>"
       - "complex shell commands keep shell semantics by falling back internally to bash -c original"
-      - "simple high-entry-count ls, large single-file sort, bounded sed, recursive literal grep, find, du, cat, and uniq satisfy the dual-win cap replacement gate for both cap <cmd> and cap run command-string surfaces"
+      - "safe shell-free same-name subsets, including tiny primitives and large command workloads, route to cap native takeover for both cap <cmd> and cap run command-string surfaces"
       - "active replacements match original-command success output, missing-path error behavior, and quiet nonzero behavior"
-      - "true, false, pwd, basename, dirname, head, tail, mkdir, touch, awk, xargs, and shell pipes remain scout-only or compatibility-fallback candidates until they beat the dual-win gate or a material RSS-fallback gate"
-      - "gated replacements fail the benchmark when their dual-win or RSS-fallback resource policy is not satisfied"
+      - "find xargs-wc output producer pipe shapes route to active native replacements in the Rust planner and cap-fast frontend for direct, sorted, sorted-unique, and grep-filtered find path streams with supported count/head/tail/sort downstreams"
+      - "general finite line producers route xargs-wc output producer pipe shapes to active native replacements for direct cat/sort path lists plus filtered and sorted path-token streams with supported count/head/tail/sort downstreams"
+      - "plain echo, narrow printf, narrow seq, whoami, narrow id, narrow uname, narrow test/bracket predicates, narrow cut, narrow tr, single-file grep, narrow awk, xargs echo, xargs wc -l, which, command -v, and listed fused pipe shapes including yes-to-head, ls pipelines, ls-sort-uniq producer pipelines, tail pipelines, sort pipelines, sort-uniq-count, grep-file pipelines, grep-file-sort-uniq producer pipelines, find-sort-uniq producer pipelines, printf-sort-uniq producer pipelines, printf-grep-sort-uniq producer pipelines, seq-sort-uniq producer pipelines, seq-grep-sort-uniq producer pipelines, awk-sort-uniq producer pipelines, grep-r-sort-uniq producer pipelines, cat-grep-sort-uniq producer pipelines, grep-tail, grep-sort, grep-sort-uniq-count, cat-to-cut, cat-sed producer pipelines, cat-awk producer pipelines, cat-head/tail producer pipelines, cat-cut producer pipelines, cat-tr producer pipelines, cat-uniq producer pipelines, sort-uniq producer pipelines, cat-uniq, cat-sort, cat-sort-uniq-count, tr pipelines, path-lookup pipelines, safe find type/name pipelines, find-default-xargs, find-xargs, find-sort, find-sort-uniq, find-sort-uniq-count, find-sort-xargs, and multi-stage find-sort pipelines route to active native replacements while unsupported echo/printf/seq/id/uname/test/cut/tr/awk/xargs/sort/find/which/command/pipe shapes keep compatibility fallback"
+      - "grep-file-cut producer pipe shapes route to active native replacements for narrow cut field extraction and supported grep/count/head/tail/sort/xargs downstreams"
+      - "grep-file-awk producer pipe shapes route to active native replacements for narrow awk first-field extraction and supported grep/count/head/tail/sort/xargs downstreams"
+      - "unfiltered awk first-field producer pipe shapes route to active native replacements for direct awk and cat-to-awk inputs with supported count/head/tail/sort/xargs downstreams"
+      - "awk-grep producer pipe shapes route to active native replacements for direct awk and cat-to-awk first-field output with supported grep/count/head/tail/sort/xargs downstreams"
+      - "find-grep producer pipe shapes route to active native replacements for literal path filtering and supported count/head/tail/sort/xargs downstreams"
+      - "ls-grep producer pipe shapes route to active native replacements for literal entry filtering and supported count/head/tail/sort/xargs downstreams while cwd-sensitive xargs wc stays fallback"
+      - "sort-grep producer pipe shapes route to active native replacements for direct sort and cat-to-sort file output with supported grep/count/head/tail/sort/xargs downstreams"
+      - "uniq producer pipe shapes route to active native replacements for direct uniq file output with supported count/head/tail/sort/xargs and grep downstreams"
+      - "fused pipe replacements preserve Bash default pipeline behavior for covered upstream-error cases"
+      - "resource-gated benchmark rows still fail when their dual-win, CPU-win, or RSS-fallback policy is not satisfied, while takeover rows are measured without CPU/RSS admission failure"
 ```
 
 # Reviews
