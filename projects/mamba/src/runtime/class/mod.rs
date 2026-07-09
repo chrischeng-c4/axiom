@@ -19405,8 +19405,18 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         "fullmatch" => return super::stdlib::re_mod::mb_re_fullmatch(pat, a0),
                         "search" => return super::stdlib::re_mod::mb_re_search(pat, a0),
                         "findall" => return super::stdlib::re_mod::mb_re_findall(pat, a0),
-                        "sub" => return super::stdlib::re_mod::mb_re_sub_count(pat, a0, a1, a2),
-                        "subn" => return super::stdlib::re_mod::mb_re_subn_count(pat, a0, a1, a2),
+                        "sub" => {
+                            if !super::stdlib::re_mod::validate_sub_replacement(a0) {
+                                return MbValue::none();
+                            }
+                            return super::stdlib::re_mod::mb_re_sub_count(pat, a0, a1, a2);
+                        }
+                        "subn" => {
+                            if !super::stdlib::re_mod::validate_sub_replacement(a0) {
+                                return MbValue::none();
+                            }
+                            return super::stdlib::re_mod::mb_re_subn_count(pat, a0, a1, a2);
+                        }
                         "split" => return super::stdlib::re_mod::mb_re_split(pat, a0),
                         "finditer" => {
                             let pos = arg_items.get(1).copied().unwrap_or_else(MbValue::none);
