@@ -769,3 +769,7 @@ async fn stats_api_reports_expected_counts_at_each_phase() {
     stop_proxy(server, shutdown_tx).await;
 }
 // </HANDWRITE>
+// SPEC-MANAGED: apps/pgpool/tech-design/logic/backend-pool-connection-reuse-and-transaction-session-pool-modes.md#unit-test
+// CODEGEN-BEGIN
+
+// CODEGEN-END

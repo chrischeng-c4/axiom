@@ -707,3 +707,7 @@ async fn dropped_lease_without_explicit_release_does_not_leak_capacity_slot() {
     drop(second);
 }
 // </HANDWRITE>
+// SPEC-MANAGED: apps/pgpool/tech-design/logic/backend-pool-connection-reuse-and-transaction-session-pool-modes.md#unit-test
+// CODEGEN-BEGIN
+
+// CODEGEN-END
