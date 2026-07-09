@@ -107,17 +107,59 @@ flowchart TD
 
 ```mermaid
 ---
-id: (fill: spec-id)-verification
+id: tape-docs-scripts-traits-polish-verification
 requirements:
-  example_requirement:
+  deployment_handoff_doc:
     id: R1
-    text: "(fill: requirement text)"
+    text: "apps/tape/docs/deployment-handoff.md documents the real dockerfile/k8s-operator deploy path, bearer-auth flags, backup/restore, and raft HA env contract."
+    kind: functional
+    risk: low
+    verify: manual doc review against apps/tape/src/bin/tape.rs flag surface
+  benchmarks_scale_doc:
+    id: R2
+    text: "apps/tape/docs/benchmarks-scale.md documents the existing tape_perf_gate.rs and tape_vs_nats_jetstream.rs gates without inventing new benchmark classes."
+    kind: functional
+    risk: low
+    verify: cargo test -p tape --test tape_perf_gate --test tape_vs_nats_jetstream -- --nocapture
+  dev_single_script:
+    id: R3
+    text: "apps/tape/scripts/dev-single.sh boots a single-node tape serve process locally."
+    kind: functional
+    risk: low
+    verify: manual run of apps/tape/scripts/dev-single.sh then curl /healthz
+  dev_cluster_script:
+    id: R4
+    text: "apps/tape/scripts/dev-cluster.sh boots a 3-node local raft cluster using TAPE_DATA_DIR/TAPE_PEER_SERVICE/TAPE_PEERS and the REPLICAS_PER_SHARD/SHARD_COUNT/VOTER_COUNT/POD_NAME quartet."
     kind: functional
     risk: medium
-    verify: (fill: concrete verification target, e.g. a test name)
+    verify: manual run of apps/tape/scripts/dev-cluster.sh then curl each node and confirm raft convergence
+  readme_consistency:
+    id: R5
+    text: "apps/tape/README.md Capability Index rows are internally consistent with their section prose; Retention And Backfill, Long-Running Stability, and Security Hardening keep unchanged planned/not_ready maturity."
+    kind: regression
+    risk: low
+    verify: manual diff review of apps/tape/README.md
+  traits_review:
+    id: R6
+    text: "apps/tape/aw.toml traits list is reviewed against relay's precedent for kubernetes_native and only changed if genuinely warranted."
+    kind: functional
+    risk: low
+    verify: manual review of apps/tape/aw.toml and apps/relay/aw.toml
+  build_unaffected:
+    id: R7
+    text: "cargo build -p tape and cargo test -p tape stay green after doc/script-only changes."
+    kind: regression
+    risk: low
+    verify: cargo test -p tape
 ---
 flowchart TD
-    r1[R1 example requirement] --> fill_concrete_verification_target_e_g_a_test_name[(fill: concrete verification target, e.g. a test name)]
+    r1[R1 deployment handoff doc] --> manual_review_bin_tape_rs_flags[manual review vs apps/tape/src/bin/tape.rs flags]
+    r2[R2 benchmarks scale doc] --> cargo_test_perf_gate_jetstream[cargo test -p tape --test tape_perf_gate --test tape_vs_nats_jetstream]
+    r3[R3 dev-single.sh] --> manual_run_dev_single[manual run + curl /healthz]
+    r4[R4 dev-cluster.sh] --> manual_run_dev_cluster[manual run + cross-node curl convergence]
+    r5[R5 README consistency] --> manual_diff_review_readme[manual diff review of README.md]
+    r6[R6 traits review] --> manual_review_aw_toml[manual review of aw.toml vs relay/aw.toml]
+    r7[R7 build unaffected] --> cargo_test_p_tape[cargo test -p tape]
 ```
 ## Changes
 <!-- type: changes lang: yaml -->
