@@ -24,8 +24,9 @@ use crate::coordinator::WriteCoordinator;
 use crate::log_entry::RaftLogEntry;
 use crate::storage::{ApplyOutcome, DropOutcome, Engine};
 use crate::types::{
-    CreateCollectionRequest, CreateCollectionResponse, IndexRequest, IndexResponse, SearchHit,
-    SearchRequest, SearchResponse, SortOrder,
+    CreateCollectionRequest, CreateCollectionResponse, IndexRequest, IndexResponse, ReplaceDocItem,
+    ReplaceDocResult, ReplaceDocsRequest, ReplaceDocsResponse, SearchHit, SearchRequest,
+    SearchResponse, SortOrder,
 };
 
 pub const DEFAULT_VIRTUAL_BUCKET_COUNT: u32 = 4096;
@@ -418,6 +419,67 @@ impl WriteBackend for EngineShardWrite {
             bytes_written,
             shard_lag_ms,
         })
+    }
+
+    async fn replace_docs(
+        &self,
+        collection_id: String,
+        req: ReplaceDocsRequest,
+    ) -> Result<ReplaceDocsResponse> {
+        self.require_shards()?;
+        let total = req.docs.len();
+        let mut shard_reqs: Vec<Vec<ReplaceDocItem>> =
+            (0..self.writers.len()).map(|_| Vec::new()).collect();
+        let mut shard_positions: Vec<Vec<usize>> =
+            (0..self.writers.len()).map(|_| Vec::new()).collect();
+
+        for (idx, item) in req.docs.into_iter().enumerate() {
+            let shard = self
+                .shard_map
+                .route_document(&collection_id, None, &item.external_id)
+                .shard as usize;
+            shard_positions[shard].push(idx);
+            shard_reqs[shard].push(item);
+        }
+
+        let mut futures = Vec::new();
+        let mut shard_order = Vec::new();
+        for (shard, docs) in shard_reqs.into_iter().enumerate() {
+            if docs.is_empty() {
+                continue;
+            }
+            let writer = self.writers[shard].clone();
+            let collection_id = collection_id.clone();
+            shard_order.push(shard);
+            futures.push(async move {
+                writer
+                    .submit(RaftLogEntry::ReplaceDocs {
+                        collection_id,
+                        req: ReplaceDocsRequest { docs },
+                    })
+                    .await
+            });
+        }
+
+        let outcomes = try_join_all(futures).await?;
+        // Reassemble in the caller's original `req.docs` order — shard
+        // fan-out only preserves order *within* a shard, so each result
+        // is placed back at its origin index rather than appended in
+        // shard-completion order.
+        let mut results: Vec<Option<ReplaceDocResult>> = (0..total).map(|_| None).collect();
+        for (shard, outcome) in shard_order.into_iter().zip(outcomes) {
+            let ApplyOutcome::Replaced(resp) = outcome else {
+                bail!("unexpected apply outcome: {outcome:?}");
+            };
+            for (pos, result) in shard_positions[shard].iter().zip(resp.results) {
+                results[*pos] = Some(result);
+            }
+        }
+        let results: Vec<ReplaceDocResult> = results
+            .into_iter()
+            .map(|r| r.expect("every original index assigned exactly one shard result"))
+            .collect();
+        Ok(ReplaceDocsResponse { results })
     }
 
     async fn delete(

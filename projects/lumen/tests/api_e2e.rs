@@ -642,6 +642,243 @@ async fn batch_search_honors_per_item_limit_sort_and_cursor_resume() {
     assert_eq!(hits_a2, vec!["p3", "p4"]);
 }
 
+/// #1292 AC1: a field the doc had before, but that is absent from a later
+/// `docs:replace` item's `fields`, must be implicitly deleted — the doc's
+/// indexed state becomes exactly `fields`, not a merge with what was there.
+#[tokio::test]
+async fn replace_docs_implicit_delete_field_absent_from_replacement() {
+    let s = server();
+    s.put("/collections/rows")
+        .json(&json!({ "fields": {
+            "title": { "type": "text" },
+            "state": { "type": "keyword" }
+        }}))
+        .await
+        .assert_status_ok();
+
+    let find_open =
+        || json!({ "query": { "term": { "field": "state", "value": "open" } }, "limit": 10 });
+
+    s.put("/collections/rows/docs:replace")
+        .json(&json!({ "docs": [
+            { "external_id": "row-1", "fields": { "title": "hello world", "state": "open" } }
+        ]}))
+        .await
+        .assert_status_ok();
+
+    let resp = s.post("/collections/rows/search").json(&find_open()).await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(
+        body["hits"][0]["external_id"], "row-1",
+        "row-1 has state=open before replace: {body}"
+    );
+
+    // Replace again with `state` OMITTED.
+    let resp = s
+        .put("/collections/rows/docs:replace")
+        .json(&json!({ "docs": [
+            { "external_id": "row-1", "fields": { "title": "hello world" } }
+        ]}))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["results"][0]["status"], "ok");
+    assert_eq!(body["results"][0]["fields_written"], 1);
+    assert_eq!(body["results"][0]["fields_skipped"], 0);
+
+    // `state=open` no longer matches — the field was implicitly deleted.
+    let resp = s.post("/collections/rows/search").json(&find_open()).await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(
+        body["hits"].as_array().unwrap().len(),
+        0,
+        "state field must be implicitly deleted after replace omitted it: {body}"
+    );
+
+    // `title` is still indexed — only the omitted field was dropped, not
+    // the whole doc.
+    let resp = s
+        .post("/collections/rows/search")
+        .json(&json!({ "query": { "match": { "field": "title", "text": "hello" } }, "limit": 10 }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(
+        body["hits"][0]["external_id"], "row-1",
+        "title still indexed after replace: {body}"
+    );
+}
+
+/// #1292 AC2: doc-level LWW using the caller's source-row `version` — a
+/// strictly-older (or equal) version arriving later drops the *entire*
+/// item, reported as its own `dropped` status. Replaying the exact same
+/// request converges to the same visible doc state either way (idempotent
+/// PUT semantics).
+#[tokio::test]
+async fn replace_docs_stale_version_dropped_and_replay_is_idempotent() {
+    let s = server();
+    s.put("/collections/rows")
+        .json(&json!({ "fields": { "state": { "type": "keyword" } } }))
+        .await
+        .assert_status_ok();
+
+    let find_open =
+        || json!({ "query": { "term": { "field": "state", "value": "open" } }, "limit": 10 });
+
+    let write_v10 = json!({ "docs": [
+        { "external_id": "row-1", "version": 10, "fields": { "state": "open" } }
+    ]});
+    let resp = s
+        .put("/collections/rows/docs:replace")
+        .json(&write_v10)
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["results"][0]["status"], "ok");
+
+    // A strictly-older version arriving later drops the entire item.
+    let stale = json!({ "docs": [
+        { "external_id": "row-1", "version": 5, "fields": { "state": "closed" } }
+    ]});
+    let resp = s.put("/collections/rows/docs:replace").json(&stale).await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["results"][0]["status"], "dropped");
+    assert_eq!(body["results"][0]["current_version"], 10);
+
+    // The stale write never applied.
+    let resp = s.post("/collections/rows/search").json(&find_open()).await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["hits"][0]["external_id"], "row-1");
+
+    // Replaying the SAME request converges to the same state — idempotent
+    // PUT semantics — even though a same-version replay itself reports
+    // `dropped` (not strictly newer than what is already stored).
+    let resp = s
+        .put("/collections/rows/docs:replace")
+        .json(&write_v10)
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["results"][0]["status"], "dropped");
+    assert_eq!(body["results"][0]["current_version"], 10);
+
+    let resp = s.post("/collections/rows/search").json(&find_open()).await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(
+        body["hits"][0]["external_id"], "row-1",
+        "replay converges to the same state: {body}"
+    );
+}
+
+/// #1292 AC3: `PUT /collections/{id}/docs/{external_id}` is single-resource
+/// sugar — semantically identical to a one-item `docs:replace` batch,
+/// unwrapped back into a bare per-item result.
+#[tokio::test]
+async fn replace_doc_single_resource_identical_to_one_item_batch() {
+    let s = server();
+    s.put("/collections/rows")
+        .json(&json!({ "fields": {
+            "title": { "type": "text" },
+            "state": { "type": "keyword" }
+        }}))
+        .await
+        .assert_status_ok();
+
+    let batch_resp = s
+        .put("/collections/rows/docs:replace")
+        .json(&json!({ "docs": [
+            { "external_id": "row-1", "fields": { "title": "hello", "state": "open" } }
+        ]}))
+        .await;
+    batch_resp.assert_status_ok();
+    let batch_body: Value = batch_resp.json();
+    let batch_result = batch_body["results"][0].clone();
+
+    let single_resp = s
+        .put("/collections/rows/docs/row-2")
+        .json(&json!({ "fields": { "title": "hello", "state": "open" } }))
+        .await;
+    single_resp.assert_status_ok();
+    let single_body: Value = single_resp.json();
+    assert_eq!(
+        single_body, batch_result,
+        "single-resource PUT must match the one-item batch result: {single_body} vs {batch_result}"
+    );
+
+    let resp = s
+        .post("/collections/rows/search")
+        .json(&json!({ "query": { "term": { "field": "state", "value": "open" } }, "limit": 10 }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    let ids: Vec<&str> = body["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["external_id"].as_str().unwrap())
+        .collect();
+    assert!(
+        ids.contains(&"row-1") && ids.contains(&"row-2"),
+        "both docs indexed identically: {body}"
+    );
+}
+
+/// #1292 AC4: one bad item (an unknown field) never fails the batch — the
+/// batch-level status stays 200 and the failure is reported per-item
+/// alongside `ok` siblings.
+#[tokio::test]
+async fn replace_docs_partial_failure_reports_per_item_error_with_ok_siblings() {
+    let s = server();
+    s.put("/collections/rows")
+        .json(&json!({ "fields": { "state": { "type": "keyword" } } }))
+        .await
+        .assert_status_ok();
+
+    let ok_item = json!({ "external_id": "row-1", "fields": { "state": "open" } });
+    let bad_item = json!({ "external_id": "row-2", "fields": { "nope": "x" } });
+
+    let resp = s
+        .put("/collections/rows/docs:replace")
+        .json(&json!({ "docs": [ok_item.clone(), bad_item, ok_item] }))
+        .await;
+    // Batch-level status stays 200 — one bad item never fails the batch.
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    let results = body["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 3);
+
+    assert_eq!(results[0]["status"], "ok");
+    assert_eq!(results[1]["status"], "error");
+    assert_eq!(results[1]["code"], "unknown_field");
+    assert!(results[1]["message"].is_string());
+    assert_eq!(results[2]["status"], "ok");
+}
+
+/// #1292 AC4: a batch over [`lumen::types::MAX_BATCH_REPLACE_SIZE`] items is
+/// rejected with 400 before any item runs.
+#[tokio::test]
+async fn replace_docs_over_limit_returns_400() {
+    let s = server();
+    s.put("/collections/rows")
+        .json(&json!({ "fields": { "state": { "type": "keyword" } } }))
+        .await
+        .assert_status_ok();
+
+    let item = json!({ "external_id": "row-1", "fields": { "state": "open" } });
+    let docs: Vec<Value> = std::iter::repeat(item).take(33).collect();
+
+    let resp = s
+        .put("/collections/rows/docs:replace")
+        .json(&json!({ "docs": docs }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
+}
+
 #[tokio::test]
 async fn type_mismatch_422() {
     let s = server();

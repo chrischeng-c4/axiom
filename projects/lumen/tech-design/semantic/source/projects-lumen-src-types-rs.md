@@ -21,21 +21,21 @@ Public API manifest for `projects/lumen/src/types.rs` generated from AST during 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `Analyzer` | projects/lumen/src/types.rs | enum | pub | 147 |  |
-| `ApiError` | projects/lumen/src/types.rs | struct | pub | 684 |  |
+| `ApiError` | projects/lumen/src/types.rs | struct | pub | 786 |  |
 | `BatchSearchItem` | projects/lumen/src/types.rs | struct | pub | 545 |  |
 | `BatchSearchRequest` | projects/lumen/src/types.rs | struct | pub | 533 |  |
 | `BatchSearchResponse` | projects/lumen/src/types.rs | struct | pub | 556 |  |
 | `BatchSearchResult` | projects/lumen/src/types.rs | enum | pub | 568 |  |
-| `CacheStats` | projects/lumen/src/types.rs | struct | pub | 663 |  |
+| `CacheStats` | projects/lumen/src/types.rs | struct | pub | 765 |  |
 | `CreateCollectionRequest` | projects/lumen/src/types.rs | struct | pub | 21 |  |
 | `CreateCollectionResponse` | projects/lumen/src/types.rs | struct | pub | 28 |  |
-| `DuplicateGroup` | projects/lumen/src/types.rs | struct | pub | 598 |  |
+| `DuplicateGroup` | projects/lumen/src/types.rs | struct | pub | 700 |  |
 | `DuplicatedQuery` | projects/lumen/src/types.rs | struct | pub | 375 |  |
-| `DuplicatesRequest` | projects/lumen/src/types.rs | struct | pub | 579 |  |
-| `DuplicatesResponse` | projects/lumen/src/types.rs | struct | pub | 605 |  |
+| `DuplicatesRequest` | projects/lumen/src/types.rs | struct | pub | 681 |  |
+| `DuplicatesResponse` | projects/lumen/src/types.rs | struct | pub | 707 |  |
 | `ExistsQuery` | projects/lumen/src/types.rs | struct | pub | 367 |  |
 | `FieldSpec` | projects/lumen/src/types.rs | struct | pub | 41 |  |
-| `FieldStats` | projects/lumen/src/types.rs | struct | pub | 641 |  |
+| `FieldStats` | projects/lumen/src/types.rs | struct | pub | 743 |  |
 | `FieldType` | projects/lumen/src/types.rs | enum | pub | 74 |  |
 | `FieldValue` | projects/lumen/src/types.rs | enum | pub | 193 |  |
 | `HammingQuery` | projects/lumen/src/types.rs | struct | pub | 400 |  |
@@ -45,11 +45,17 @@ Public API manifest for `projects/lumen/src/types.rs` generated from AST during 
 | `IndexRequest` | projects/lumen/src/types.rs | struct | pub | 160 |  |
 | `IndexResponse` | projects/lumen/src/types.rs | struct | pub | 202 |  |
 | `KnnQuery` | projects/lumen/src/types.rs | struct | pub | 469 |  |
+| `MAX_BATCH_REPLACE_SIZE` | projects/lumen/src/types.rs | constant | pub | 580 |  |
 | `MAX_BATCH_SEARCH_SIZE` | projects/lumen/src/types.rs | constant | pub | 519 |  |
 | `MatchOp` | projects/lumen/src/types.rs | enum | pub | 431 |  |
 | `MatchQuery` | projects/lumen/src/types.rs | struct | pub | 421 |  |
 | `QueryNode` | projects/lumen/src/types.rs | enum | pub | 317 |  |
 | `RangeQuery` | projects/lumen/src/types.rs | struct | pub | 477 |  |
+| `ReplaceDocBody` | projects/lumen/src/types.rs | struct | pub | 669 |  |
+| `ReplaceDocItem` | projects/lumen/src/types.rs | struct | pub | 605 |  |
+| `ReplaceDocResult` | projects/lumen/src/types.rs | enum | pub | 643 |  |
+| `ReplaceDocsRequest` | projects/lumen/src/types.rs | struct | pub | 596 |  |
+| `ReplaceDocsResponse` | projects/lumen/src/types.rs | struct | pub | 624 |  |
 | `RrfQuery` | projects/lumen/src/types.rs | struct | pub | 385 |  |
 | `SearchHit` | projects/lumen/src/types.rs | struct | pub | 491 |  |
 | `SearchRequest` | projects/lumen/src/types.rs | struct | pub | 215 |  |
@@ -57,16 +63,16 @@ Public API manifest for `projects/lumen/src/types.rs` generated from AST during 
 | `SortMissing` | projects/lumen/src/types.rs | enum | pub | 287 |  |
 | `SortOrder` | projects/lumen/src/types.rs | enum | pub | 300 |  |
 | `SortSpec` | projects/lumen/src/types.rs | struct | pub | 270 |  |
-| `StatsResponse` | projects/lumen/src/types.rs | struct | pub | 624 |  |
-| `StorageStats` | projects/lumen/src/types.rs | struct | pub | 657 |  |
+| `StatsResponse` | projects/lumen/src/types.rs | struct | pub | 726 |  |
+| `StorageStats` | projects/lumen/src/types.rs | struct | pub | 759 |  |
 | `TermQuery` | projects/lumen/src/types.rs | struct | pub | 442 |  |
 | `TermsQuery` | projects/lumen/src/types.rs | struct | pub | 449 |  |
 | `VectorBackend` | projects/lumen/src/types.rs | enum | pub | 101 |  |
 | `VectorMetric` | projects/lumen/src/types.rs | enum | pub | 90 |  |
 | `VectorQuantize` | projects/lumen/src/types.rs | enum | pub | 127 |  |
 | `VectorSpec` | projects/lumen/src/types.rs | struct | pub | 136 |  |
-| `normalize` | projects/lumen/src/types.rs | function | pub | 698 | normalize(mut self) -> Self |
-| `vector_spec` | projects/lumen/src/types.rs | function | pub | 716 | vector_spec(&self) -> anyhow::Result<Option<VectorSpec>> |
+| `normalize` | projects/lumen/src/types.rs | function | pub | 800 | normalize(mut self) -> Self |
+| `vector_spec` | projects/lumen/src/types.rs | function | pub | 818 | vector_spec(&self) -> anyhow::Result<Option<VectorSpec>> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -641,6 +647,108 @@ pub struct BatchSearchResponse {
 pub enum BatchSearchResult {
     Ok { response: SearchResponse },
     Error { code: String, message: String },
+}
+
+// ---------------------------------------------------------------------------
+// Replace docs (full-replacement write)
+// ---------------------------------------------------------------------------
+
+/// Maximum number of items accepted in one [`ReplaceDocsRequest`]. Sibling
+/// knob to [`MAX_BATCH_SEARCH_SIZE`]; a request with more items than this
+/// is rejected with 400 before any per-item work starts.
+pub const MAX_BATCH_REPLACE_SIZE: usize = 32;
+
+/// `PUT /collections/{id}/docs:replace` body — a batch of full-replacement
+/// upserts. `docs:replace` is one literal path segment (AIP-136
+/// custom-method syntax) appended after `{collection_id}`, so it never
+/// collides with `/collections/{collection_id}/docs/{external_id}`.
+///
+/// Each item's `fields` becomes the doc's *entire* indexed state for that
+/// collection: declared schema fields the doc has today but that are
+/// absent from `fields` are implicitly deleted. Replaying the same request
+/// converges to the same state (PUT semantics) — this is a full
+/// replacement, not a merge; use `POST /collections/{id}/index` when a
+/// caller owns only some fields of a doc and wants to update those without
+/// touching the rest.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub struct ReplaceDocsRequest {
+    /// At most [`MAX_BATCH_REPLACE_SIZE`] items; a longer batch is rejected
+    /// with 400 before any item runs.
+    pub docs: Vec<ReplaceDocItem>,
+}
+
+/// One item of a [`ReplaceDocsRequest`]: the target doc's full field set.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub struct ReplaceDocItem {
+    pub external_id: String,
+    /// Optional doc-level version for last-write-wins, using the caller's
+    /// source-row version. Unlike [`IndexItem::version`]'s per-`(external_id,
+    /// field)` cell versioning, this is a single version for the whole doc:
+    /// a strictly-older version arriving later drops the *entire* item (all
+    /// fields), reported as [`ReplaceDocResult::Dropped`]. When absent, the
+    /// write applies in arrival order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u64>,
+    /// The doc's complete indexed field set. Declared schema fields absent
+    /// here are implicitly deleted from the doc.
+    pub fields: BTreeMap<String, FieldValue>,
+}
+
+/// `PUT /collections/{id}/docs:replace` response: one [`ReplaceDocResult`]
+/// per request item, in the same order and with the same length as `docs`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub struct ReplaceDocsResponse {
+    pub results: Vec<ReplaceDocResult>,
+}
+
+/// One batch-item outcome, tagged by `status`. A per-item failure (for
+/// example a type-mismatched field value) never fails the whole batch: the
+/// batch-level HTTP status stays 200 and the failure is reported here as
+/// `{"status":"error","code":"...","message":"..."}` alongside `{"status":
+/// "ok",...}` siblings.
+///
+/// Stale-version semantics (chosen over ok-with-no-write): an item whose
+/// `version` is strictly older than the doc's currently stored version is
+/// reported as its own `{"status":"dropped","current_version":...}`
+/// variant rather than folded into `ok` or `error` — that keeps "no write
+/// happened because a newer version already won" distinguishable from both
+/// "wrote successfully" and "this item failed validation".
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "status", rename_all = "lowercase")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub enum ReplaceDocResult {
+    Ok {
+        /// Number of fields written from this item's `fields` map.
+        fields_written: u32,
+        /// Number of fields skipped as unchanged no-ops. Structurally
+        /// present but always `0` in this WI — real no-op suppression is a
+        /// follow-up.
+        fields_skipped: u32,
+    },
+    Dropped {
+        /// The version currently stored for this doc, which won over the
+        /// stale `version` carried by the request item.
+        current_version: u64,
+    },
+    Error {
+        code: String,
+        message: String,
+    },
+}
+
+/// `PUT /collections/{id}/docs/{external_id}` body — single-resource sugar
+/// for one [`ReplaceDocItem`]. `external_id` comes from the path, so this
+/// carries only `version` and `fields`; posting it is semantically
+/// identical to sending a one-item [`ReplaceDocsRequest`] to `docs:replace`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub struct ReplaceDocBody {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u64>,
+    pub fields: BTreeMap<String, FieldValue>,
 }
 
 // ---------------------------------------------------------------------------

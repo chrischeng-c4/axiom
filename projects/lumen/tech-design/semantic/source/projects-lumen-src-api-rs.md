@@ -27,18 +27,19 @@ Public API manifest for `projects/lumen/src/api.rs` generated from AST during Sc
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 356 |  |
-| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 1208 |  |
-| `AppState` | projects/lumen/src/api.rs | struct | pub | 57 |  |
-| `new` | projects/lumen/src/api.rs | function | pub | 236 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
-| `open` | projects/lumen/src/api.rs | function | pub | 257 | open(engine: Arc<Engine>) -> Self |
-| `openapi` | projects/lumen/src/api.rs | function | pub | 1190 | openapi() -> utoipa::openapi::OpenApi |
-| `router` | projects/lumen/src/api.rs | function | pub | 395 | router(state: AppState) -> Router |
-| `with_cluster` | projects/lumen/src/api.rs | function | pub | 240 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
-| `with_components` | projects/lumen/src/api.rs | function | pub | 215 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<dyn WriteSink>,     ) -> Self |
-| `with_search_backend` | projects/lumen/src/api.rs | function | pub | 245 | with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self |
-| `with_wal` | projects/lumen/src/api.rs | function | pub | 207 | with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self |
-| `with_write_backend` | projects/lumen/src/api.rs | function | pub | 250 | with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self |
+| `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 386 |  |
+| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 1349 |  |
+| `AppState` | projects/lumen/src/api.rs | struct | pub | 59 |  |
+| `new` | projects/lumen/src/api.rs | function | pub | 259 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
+| `open` | projects/lumen/src/api.rs | function | pub | 280 | open(engine: Arc<Engine>) -> Self |
+| `openapi` | projects/lumen/src/api.rs | function | pub | 1331 | openapi() -> utoipa::openapi::OpenApi |
+| `router` | projects/lumen/src/api.rs | function | pub | 425 | router(state: AppState) -> Router |
+| `with_cluster` | projects/lumen/src/api.rs | function | pub | 263 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
+| `with_components` | projects/lumen/src/api.rs | function | pub | 238 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<dyn WriteSink>,     ) -> Self |
+| `with_search_backend` | projects/lumen/src/api.rs | function | pub | 268 | with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self |
+| `with_wal` | projects/lumen/src/api.rs | function | pub | 230 | with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self |
+| `with_write_backend` | projects/lumen/src/api.rs | function | pub | 273 | with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self |
+
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -91,9 +92,11 @@ use crate::types::{
     Analyzer, ApiError, BatchSearchRequest, BatchSearchResponse, BatchSearchResult, CacheStats,
     CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup, DuplicatesRequest,
     DuplicatesResponse, FieldSpec, FieldStats, FieldType, FieldValue, IndexItem, IndexRequest,
-    IndexResponse, KnnQuery, MatchOp, MatchQuery, QueryNode, RangeQuery, SearchHit, SearchRequest,
-    SearchResponse, StatsResponse, StorageStats, TermQuery, TermsQuery, VectorBackend,
-    VectorMetric, VectorQuantize, VectorSpec, MAX_BATCH_SEARCH_SIZE,
+    IndexResponse, KnnQuery, MatchOp, MatchQuery, QueryNode, RangeQuery, ReplaceDocBody,
+    ReplaceDocItem, ReplaceDocResult, ReplaceDocsRequest, ReplaceDocsResponse, SearchHit,
+    SearchRequest, SearchResponse, StatsResponse, StorageStats, TermQuery, TermsQuery,
+    VectorBackend, VectorMetric, VectorQuantize, VectorSpec, MAX_BATCH_REPLACE_SIZE,
+    MAX_BATCH_SEARCH_SIZE,
 };
 use crate::wal::{MemWal, SharedWal};
 
@@ -133,6 +136,12 @@ pub trait WriteBackend: Send + Sync {
     async fn drop_collection(&self, collection_id: String, force: bool) -> Result<DropOutcome>;
 
     async fn index(&self, collection_id: String, req: IndexRequest) -> Result<IndexResponse>;
+
+    async fn replace_docs(
+        &self,
+        collection_id: String,
+        req: ReplaceDocsRequest,
+    ) -> Result<ReplaceDocsResponse>;
 
     async fn delete(
         &self,
@@ -207,6 +216,21 @@ impl WriteBackend for LocalWriteBackend {
             .await?
         {
             ApplyOutcome::Indexed(r) => Ok(r),
+            other => Err(Self::unexpected(other)),
+        }
+    }
+
+    async fn replace_docs(
+        &self,
+        collection_id: String,
+        req: ReplaceDocsRequest,
+    ) -> Result<ReplaceDocsResponse> {
+        match self
+            .writer
+            .submit(RaftLogEntry::ReplaceDocs { collection_id, req })
+            .await?
+        {
+            ApplyOutcome::Replaced(r) => Ok(r),
             other => Err(Self::unexpected(other)),
         }
     }
@@ -337,6 +361,8 @@ impl AppState {
         drop_field,
         index,
         delete_external_id,
+        replace_docs,
+        replace_doc,
         search,
         batch_search,
         duplicates,
@@ -356,6 +382,11 @@ impl AppState {
         IndexItem,
         FieldValue,
         IndexResponse,
+        ReplaceDocsRequest,
+        ReplaceDocItem,
+        ReplaceDocsResponse,
+        ReplaceDocResult,
+        ReplaceDocBody,
         SearchRequest,
         QueryNode,
         MatchQuery,
@@ -453,6 +484,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/collections/{collection_id}/index/{external_id}",
             delete(delete_external_id),
+        )
+        .route(
+            "/collections/{collection_id}/docs:replace",
+            put(replace_docs),
+        )
+        .route(
+            "/collections/{collection_id}/docs/{external_id}",
+            put(replace_doc),
         )
         .route("/collections/{collection_id}/search", post(search))
         .route("/collections:search", post(batch_search))
@@ -770,6 +809,109 @@ async fn delete_external_id(
         .await
         .map_err(ApiErr::from)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Batch full-replacement upsert: each item's `fields` becomes the doc's
+/// entire indexed state, implicitly deleting any declared schema field the
+/// doc has today but that is absent from `fields`. `docs:replace` is one
+/// literal path segment (AIP-136 custom-method syntax) appended after
+/// `{collection_id}`, so it registers directly in axum next to
+/// `/collections/{collection_id}/docs/{external_id}` without any capture
+/// ambiguity — collection ids are validated to reject `:`.
+///
+/// PUT is deliberate: this is idempotent full replacement (plus optional
+/// doc-level last-write-wins), so replaying the same request converges to
+/// the same state. Own the *complete* row for a doc? Use `docs:replace`.
+/// Own only *some* fields and want to add/update those without touching
+/// the rest? Use `POST .../index` instead.
+///
+/// One bad item (unknown field, type mismatch) never fails the batch — the
+/// batch-level status stays 200 and that item's [`ReplaceDocResult`]
+/// carries the error. Only a malformed body or an over-limit batch returns
+/// 400.
+#[utoipa::path(
+    put,
+    path = "/collections/{collection_id}/docs:replace",
+    tag = "Index",
+    params(("collection_id" = String, Path, description = "Collection namespace")),
+    request_body = ReplaceDocsRequest,
+    responses(
+        (status = 200, description = "Per-item results, same order and length as `docs`", body = ReplaceDocsResponse),
+        (status = 400, description = "Malformed body or batch size over the limit", body = ApiError)
+    )
+)]
+async fn replace_docs(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(collection_id): Path<String>,
+    Json(req): Json<ReplaceDocsRequest>,
+) -> Result<Json<ReplaceDocsResponse>, ApiErr> {
+    auth.ensure(&collection_id, Role::Write)?;
+    if req.docs.len() > MAX_BATCH_REPLACE_SIZE {
+        return Err(ApiErr::new(
+            StatusCode::BAD_REQUEST,
+            "batch_too_large",
+            format!(
+                "batch has {} items, max is {MAX_BATCH_REPLACE_SIZE}",
+                req.docs.len()
+            ),
+        ));
+    }
+    let resp = state
+        .write_backend
+        .replace_docs(collection_id.clone(), req)
+        .await
+        .map_err(ApiErr::from)?;
+    Ok(Json(resp))
+}
+
+/// Single-resource sugar over `docs:replace`: exactly the one-item batch
+/// `{"docs": [{"external_id": ..., "version": ..., "fields": {...}}]}`,
+/// unwrapped back into a bare [`ReplaceDocResult`]. See [`replace_docs`]
+/// for the full-replacement / doc-level LWW semantics — the batch-level
+/// status stays 200 here too; a bad item comes back as
+/// `{"status":"error",...}` in the body rather than as an HTTP error.
+#[utoipa::path(
+    put,
+    path = "/collections/{collection_id}/docs/{external_id}",
+    tag = "Index",
+    params(
+        ("collection_id" = String, Path, description = "Collection namespace"),
+        ("external_id"   = String, Path, description = "Caller-owned identifier")
+    ),
+    request_body = ReplaceDocBody,
+    responses(
+        (status = 200, description = "Replacement result for this doc", body = ReplaceDocResult),
+        (status = 400, description = "Malformed body", body = ApiError)
+    )
+)]
+async fn replace_doc(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path((collection_id, external_id)): Path<(String, String)>,
+    Json(body): Json<ReplaceDocBody>,
+) -> Result<Json<ReplaceDocResult>, ApiErr> {
+    auth.ensure(&collection_id, Role::Write)?;
+    let req = ReplaceDocsRequest {
+        docs: vec![ReplaceDocItem {
+            external_id,
+            version: body.version,
+            fields: body.fields,
+        }],
+    };
+    let resp = state
+        .write_backend
+        .replace_docs(collection_id.clone(), req)
+        .await
+        .map_err(ApiErr::from)?;
+    let result = resp.results.into_iter().next().ok_or_else(|| {
+        ApiErr::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "no result for single-doc replace".to_string(),
+        )
+    })?;
+    Ok(Json(result))
 }
 
 // ---------------------------------------------------------------------------
