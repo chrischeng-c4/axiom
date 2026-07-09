@@ -109,7 +109,6 @@ flowchart TD
     r3[R3 object assign computed key arrow property without explicit return type still errors] --> cargo_test_p_jet_lib_bundler_dts_tests_uninferrable_object_assign_computed_key_arrow_property_without_explicit_return_type_errors[cargo test -p jet --lib bundler::dts::tests::uninferrable_object_assign_computed_key_arrow_property_without_explicit_return_type_errors]
     r4[R4 object assign computed key method shorthand form unaffected] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_object_literal_method_with_object_assign_computed_key_body[cargo test -p jet --lib bundler::dts::tests::infers_object_literal_method_with_object_assign_computed_key_body]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
