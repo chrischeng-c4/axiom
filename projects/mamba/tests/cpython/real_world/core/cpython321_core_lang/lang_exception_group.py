@@ -34,7 +34,7 @@
 # Emitting `MAMBA_ASSERTION_PASS: lang_exception_group N asserts` flips
 # the outcome to `AssertionPass`.
 #
-# Known mamba quirk (see projects/mamba/issue-loop.md):
+# Known mamba quirk:
 #   `len(eg.exceptions)` evaluated inside an `except*` branch returns
 #   an int that prints "2" but fails `== 2` against an int literal.
 #   Subtraction (`x - 2 == 0`) works. The except* assertions below use
