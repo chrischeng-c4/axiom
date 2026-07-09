@@ -2145,7 +2145,10 @@ pub fn mb_re_finditer(pattern: MbValue, string: MbValue) -> MbValue {
     let input_is_bytes = is_bytes_like(string);
     let pat = match extract_str(pattern) {
         Some(s) => s,
-        None => return MbValue::from_ptr(MbObject::new_list(vec![])),
+        None => {
+            raise_type_error("first argument must be string or compiled pattern");
+            return MbValue::none();
+        }
     };
     let text = match extract_str(string) {
         Some(s) => s,
@@ -2568,6 +2571,18 @@ mod tests {
     fn test_findall_wrong_pattern_type_raises_type_error() {
         crate::runtime::exception::mb_clear_exception();
         let result = mb_re_findall(MbValue::from_int(7), s("abc123"));
+        assert!(result.is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_finditer_wrong_pattern_type_raises_type_error() {
+        crate::runtime::exception::mb_clear_exception();
+        let result = mb_re_finditer(MbValue::from_int(7), s("abc123"));
         assert!(result.is_none());
         assert_eq!(
             crate::runtime::exception::current_exception_type().as_deref(),
