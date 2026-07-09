@@ -360,7 +360,7 @@ definitions:
         description: >-
           True when this lease required a brand-new TCP connect
           (acquire_fresh() always; acquire() only when the idle set was
-          empty and capacity allowed a new connect) — signals the caller
+          empty and capacity allowed a new connect) \u2014 signals the caller
           that a real startup+auth relay is required before the connection
           can carry client traffic; false means an already-authenticated
           idle connection was reused and only post-auth traffic should be
@@ -376,7 +376,7 @@ definitions:
     description: >-
       Error taxonomy from BackendPool::acquire()/acquire_fresh(); every
       variant is handled by the caller writing a typed wire ErrorResponse
-      (or forwarding the backend's own) and releasing any frontend permit —
+      (or forwarding the backend's own) and releasing any frontend permit \u2014
       never a panic, never a silent hang or drop.
     oneOf:
       - title: Saturated
@@ -412,7 +412,7 @@ definitions:
       backend_active:
         type: integer
         x-rust-type: usize
-        description: "Count of physical backend connections currently leased out (active) — includes both fresh and reused leases, both pool modes."
+        description: "Count of physical backend connections currently leased out (active) \u2014 includes both fresh and reused leases, both pool modes."
       backend_idle:
         type: integer
         x-rust-type: usize
@@ -424,7 +424,7 @@ definitions:
     required: [frontend_active, backend_active, backend_idle]
     description: >-
       The plain Rust stats API (R4) a later admin-plane WI surfaces over
-      HTTP (out of scope here — this slice ships only the Rust API);
+      HTTP (out of scope here \u2014 this slice ships only the Rust API);
       composes the existing server_core::ConnectionBudget::active()
       (frontend admission, unchanged from WI #1288) with BackendPoolStats
       (this TD) into one snapshot.
@@ -432,7 +432,7 @@ definitions:
       frontend_active:
         type: integer
         x-rust-type: usize
-        description: "ConnectionBudget::active() for the frontend listener — count of currently-admitted client connections, both pool modes."
+        description: "ConnectionBudget::active() for the frontend listener \u2014 count of currently-admitted client connections, both pool modes."
       backend_active:
         type: integer
         x-rust-type: usize
@@ -456,7 +456,7 @@ definitions:
     properties:
       frontend_budget:
         x-rust-type: server_core::ConnectionBudget
-        description: "Same admission primitive as SessionProxyConfig::frontend_budget — one shared frontend-connection cap regardless of pool mode."
+        description: "Same admission primitive as SessionProxyConfig::frontend_budget \u2014 one shared frontend-connection cap regardless of pool mode."
       backend_pool:
         x-rust-type: crate::pool::BackendPool
         description: "The shared, capacity-bounded backend pool this handler's admission handshakes and per-transaction leases draw from."
@@ -491,7 +491,7 @@ definitions:
       RuntimePlan::PoolMode: wraps the unchanged crate::proxy::SessionHandler
       for PoolMode::Session, or the new TransactionHandler for
       PoolMode::Transaction. pgpool serve constructs exactly one variant and
-      binds it to the single tcp-server listener — the mode is fixed for the
+      binds it to the single tcp-server listener \u2014 the mode is fixed for the
       process, not renegotiated per connection.
     oneOf:
       - title: Session
@@ -499,7 +499,6 @@ definitions:
       - title: Transaction
         $ref: "#/definitions/TransactionHandler"
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
