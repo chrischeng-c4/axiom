@@ -213,7 +213,6 @@ stateDiagram-v2
     draining --> exited: in-flight work drains or drain_timeout elapses
     exited --> [*]
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
