@@ -880,12 +880,47 @@ pub fn func_ret_anno(func: MbValue) -> Option<String> {
     FUNC_RET_ANNOS.with(|m| m.borrow().get(&key).cloned())
 }
 
+fn is_simple_annotation_name(annotation: &str) -> bool {
+    let mut chars = annotation.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
+fn resolve_function_annotation_value(func: MbValue, annotation: String) -> MbValue {
+    if is_simple_annotation_name(&annotation) {
+        let type_params =
+            super::pep695::func_attrs_get(func, "__type_params__").and_then(|params| params.as_ptr());
+        if let Some(params_ptr) = type_params {
+            unsafe {
+                if let ObjData::Tuple(items) = &(*params_ptr).data {
+                    for item in items {
+                        let name_attr =
+                            MbValue::from_ptr(MbObject::new_str("__name__".to_string()));
+                        let name = extract_str(super::class::mb_getattr(*item, name_attr));
+                        if name.as_deref() == Some(annotation.as_str()) {
+                            return *item;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    MbValue::from_ptr(MbObject::new_str(annotation))
+}
+
 /// Build a function's `__annotations__` dict from its registered parameter and
 /// return annotations (PEP 3107 / 526). Values are the textual annotations,
 /// matching mamba's module- and class-level `__annotations__`. Returns
 /// None-MbValue when the function is unregistered, an (possibly empty) dict
 /// otherwise — CPython exposes `__annotations__` on every function.
 pub fn mb_func_get_annotations(func: MbValue) -> MbValue {
+    if let Some(annotations) = super::pep695::func_attrs_get(func, "__annotations__") {
+        return annotations;
+    }
     let key = func.to_bits();
     let known = FUNC_PARAMS.with(|m| m.borrow().contains_key(&key))
         || FUNC_RET_ANNOS.with(|m| m.borrow().contains_key(&key));
@@ -897,14 +932,14 @@ pub fn mb_func_get_annotations(func: MbValue) -> MbValue {
         for p in params {
             if let Some(anno) = p.annotation {
                 let k = MbValue::from_ptr(MbObject::new_str(p.name.clone()));
-                let v = MbValue::from_ptr(MbObject::new_str(anno));
+                let v = resolve_function_annotation_value(func, anno);
                 super::dict_ops::mb_dict_setitem(dict, k, v);
             }
         }
     }
     if let Some(ret) = func_ret_anno(func) {
         let k = MbValue::from_ptr(MbObject::new_str("return".to_string()));
-        let v = MbValue::from_ptr(MbObject::new_str(ret));
+        let v = resolve_function_annotation_value(func, ret);
         super::dict_ops::mb_dict_setitem(dict, k, v);
     }
     dict
