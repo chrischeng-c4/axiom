@@ -162,7 +162,6 @@ flowchart TD
     r5[R5 no regression] --> cargo_test_p_tape[cargo test -p tape]
     r6[R6 observability config] --> manual_review_prometheus_yml_scrape_configs_target_matches_tape_s_exposed_port_compose_yaml_service_depends_on_graph_is_acyclic[manual review: prometheus.yml scrape_configs target matches tape's exposed port; compose.yaml service depends_on graph is acyclic]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
