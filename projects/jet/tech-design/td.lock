@@ -2,10 +2,10 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = "projects/jet/tech-design"
-generated_at = "2026-07-09T13:26:33.642101+00:00"
-digest = "sha256:dddd81fcceb432e863d6b50e4d9e1345366c7f9ba4a425659a6d71abcd279c85"
-source_digest = "sha256:dddd81fcceb432e863d6b50e4d9e1345366c7f9ba4a425659a6d71abcd279c85"
-ir_digest = "sha256:c722f656433d6b8efb61a2a68b4b1beaad9fbeb2184b64520a7de4f4b1bf2f5f"
+generated_at = "2026-07-09T14:46:15.021834+00:00"
+digest = "sha256:40c03e793498e5a1010bde3b57ce15b0482c360c6318fa46f249b7c076ebb7fc"
+source_digest = "sha256:40c03e793498e5a1010bde3b57ce15b0482c360c6318fa46f249b7c076ebb7fc"
+ir_digest = "sha256:ca003cf1548d73a6ea2e210969a9a1ac400e5742cd3b9858c84369dc75692ae8"
 
 [[files]]
 path = "config/jet-transform-resolver-nx-tsconfig-path-aliases-never-wired-into.md"
@@ -204,3 +204,9 @@ path = "semantic/jet-tests.md"
 digest = "sha256:cf388b52a08505ea0319a9dcb40e589296fce97d5a79426c989f29512b878096"
 ir_digest = "sha256:860a7c1882014c5b8af293a41fbcef90e5f022b8b9deaa08a670d9c10350c5d3"
 section_count = 3
+
+[[files]]
+path = "validate/jet-stories-close-epic-1001-ac2-ac3-readme-parity-evidence-td-so.md"
+digest = "sha256:4698d8aa53a12189255644a4102eb6f5cb8d32fc34e66be73f068677c23de1be"
+ir_digest = "sha256:e197ac4765c9edb620f9e8fab95c29815b6004de4acab11be698b81901cd70b5"
+section_count = 4
