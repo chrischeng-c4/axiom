@@ -424,6 +424,8 @@ Gate Inventory:
 - `test ! -e projects/jet/LAYOUT.md && ! grep -rl "projects/jet/LAYOUT.md" --include=*.md . | grep -v projects/jet/tech-design/logic/move-root-layout-meta-doc-into-scoped-architecture-documentation.md`
 Surfaces:
 - Docs: `projects/jet/docs/architecture/layout.md` - Scoped path-role map and crate/package naming conventions, linked from this README's Source map.
+EC Dimensions:
+- behavior: `test ! -e projects/jet/LAYOUT.md && ! grep -rl "projects/jet/LAYOUT.md" --include=*.md . | grep -v projects/jet/tech-design/logic/move-root-layout-meta-doc-into-scoped-architecture-documentation.md` - No project-root uppercase meta doc remains and no live reference still points at the retired path.
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
