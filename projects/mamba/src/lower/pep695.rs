@@ -27,7 +27,7 @@
 //! `__type_params__`, and class-body lazy aliases read class params back from
 //! that tuple to preserve CPython's out-of-scope `NameError` behavior.
 
-use crate::parser::ast::{CallArg, Expr, Module, Stmt, TypeParam, TypeParamKind};
+use crate::parser::ast::{CallArg, ExceptHandler, Expr, Module, Stmt, TypeParam, TypeParamKind};
 use crate::source::span::{Span, Spanned};
 use std::collections::{HashMap, HashSet};
 
@@ -206,6 +206,82 @@ fn class_type_param_expr(path: &[Name], index: usize, span: Span) -> Spanned<Exp
 
 fn del_ident(name: &str, span: Span) -> Spanned<Stmt> {
     Spanned::new(Stmt::Del(sp(Expr::Ident(name.to_string()), span)), span)
+}
+
+#[derive(Clone)]
+struct SavedBinding {
+    name: Name,
+    saved_name: Name,
+    had_name: Name,
+}
+
+fn saved_binding(name: &str, slot: usize, span: Span) -> SavedBinding {
+    SavedBinding {
+        name: name.to_string(),
+        saved_name: format!("__mb_pep695_saved_{}_{slot}", span.start),
+        had_name: format!("__mb_pep695_had_{}_{slot}", span.start),
+    }
+}
+
+fn assign_ident(name: &str, value: Spanned<Expr>, span: Span) -> Spanned<Stmt> {
+    Spanned::new(
+        Stmt::Assign {
+            target: sp(Expr::Ident(name.to_string()), span),
+            value,
+        },
+        span,
+    )
+}
+
+fn save_binding(binding: &SavedBinding, span: Span) -> Spanned<Stmt> {
+    Spanned::new(
+        Stmt::Try {
+            body: vec![
+                assign_ident(
+                    &binding.saved_name,
+                    sp(Expr::Ident(binding.name.clone()), span),
+                    span,
+                ),
+                assign_ident(&binding.had_name, sp(Expr::BoolLit(true), span), span),
+            ],
+            handlers: vec![ExceptHandler {
+                exc_type: Some(sp(Expr::Ident("NameError".to_string()), span)),
+                name: None,
+                body: vec![assign_ident(
+                    &binding.had_name,
+                    sp(Expr::BoolLit(false), span),
+                    span,
+                )],
+                is_star: false,
+                span,
+            }],
+            else_body: None,
+            finally_body: None,
+        },
+        span,
+    )
+}
+
+fn restore_or_delete_binding(binding: &SavedBinding, span: Span) -> Vec<Spanned<Stmt>> {
+    vec![
+        Spanned::new(
+            Stmt::If {
+                condition: sp(Expr::Ident(binding.had_name.clone()), span),
+                body: vec![
+                    assign_ident(
+                        &binding.name,
+                        sp(Expr::Ident(binding.saved_name.clone()), span),
+                        span,
+                    ),
+                    del_ident(&binding.saved_name, span),
+                ],
+                elif_clauses: Vec::new(),
+                else_body: Some(vec![del_ident(&binding.name, span)]),
+            },
+            span,
+        ),
+        del_ident(&binding.had_name, span),
+    ]
 }
 
 fn alias_ident(target: &str, source: &str, span: Span) -> Spanned<Stmt> {
@@ -1577,21 +1653,46 @@ fn desugar_block(
                     }
                     hoist_up.after.extend(h.after);
                 } else {
+                    let mut alias_saved_bindings: Vec<SavedBinding> = Vec::new();
+                    let mut temp_saved_bindings: Vec<SavedBinding> = Vec::new();
+                    let mut binding_slot = 0usize;
+                    for (param, binding_name) in tps.iter().zip(binding_names.iter()) {
+                        if binding_name != &param.name {
+                            alias_saved_bindings.push(saved_binding(
+                                &param.name,
+                                binding_slot,
+                                span,
+                            ));
+                            binding_slot += 1;
+                        }
+                    }
+                    for binding_name in &binding_names {
+                        if !runtime_type_param_uses.contains(binding_name) {
+                            temp_saved_bindings.push(saved_binding(
+                                binding_name,
+                                binding_slot,
+                                span,
+                            ));
+                            binding_slot += 1;
+                        }
+                    }
                     out.extend(h.before);
+                    for binding in &alias_saved_bindings {
+                        out.push(save_binding(binding, span));
+                    }
+                    for binding in &temp_saved_bindings {
+                        out.push(save_binding(binding, span));
+                    }
                     out.extend(tv_assigns);
                     out.push(st);
                     for (attr, binding_names) in &attrs {
                         out.push(attr_tuple_assign(&[name.clone()], attr, binding_names, span));
                     }
-                    for (param, binding_name) in tps.iter().zip(binding_names.iter()) {
-                        if binding_name != &param.name {
-                            out.push(del_ident(&param.name, span));
-                        }
+                    for binding in &alias_saved_bindings {
+                        out.extend(restore_or_delete_binding(binding, span));
                     }
-                    for binding_name in &binding_names {
-                        if !runtime_type_param_uses.contains(binding_name) {
-                            out.push(del_ident(binding_name, span));
-                        }
+                    for binding in &temp_saved_bindings {
+                        out.extend(restore_or_delete_binding(binding, span));
                     }
                     for item in h.after {
                         emit_after(&mut out, item);
