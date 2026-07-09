@@ -330,3 +330,58 @@ definitions:
             type: string
         description: "Underlying client or backend socket I/O error (reset, broken pipe, ...)."
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+# SessionProxyConfig — backend endpoint, admission, and timeout defaults for
+# `pgpool serve`'s session-mode (1:1) proxy. No pooling/transaction-mode or
+# TLS config lives here (out of scope for this slice). frontend_budget and
+# the frontend bind/socket options continue to come from RuntimePlan
+# (max_frontend_connections / frontend_bind / frontend_socket, see
+# apps/pgpool/src/lib.rs); this section adds only the backend-endpoint and
+# session-proxy-specific seam RuntimePlan does not yet own.
+
+# Backend endpoint (R3) — single configured Postgres backend this session-mode
+# proxy dials per client; env var takes precedence, CLI flag overrides env.
+backend_host:
+  env: PGPOOL_BACKEND_HOST
+  flag: --backend-host
+  default: "127.0.0.1"
+  description: "Host of the single configured Postgres backend."
+backend_port:
+  env: PGPOOL_BACKEND_PORT
+  flag: --backend-port
+  default: 5432
+  description: "Port of the single configured Postgres backend."
+
+# Backend connect timeout (R3 / AC3 rejected_backend_unreachable path).
+backend_connect_timeout_ms:
+  env: PGPOOL_BACKEND_CONNECT_TIMEOUT_MS
+  flag: --backend-connect-timeout-ms
+  default: 5000        # 5s; exceeding this produces RejectionReason::BackendUnreachable / SQLSTATE 08006
+
+# Frontend listener bind (R1) — reuses RuntimePlan::frontend_bind/frontend_socket
+# defaults (any:6432, TcpSocketOptions::default()); `pgpool serve` does not
+# introduce a second bind config, only surfaces the existing ones as CLI flags.
+frontend_bind_override:
+  env: PGPOOL_FRONTEND_BIND
+  flag: --bind
+  default: null        # null = use RuntimePlan::frontend_bind (0.0.0.0:6432) unchanged
+
+# Drain timeout (R4 / AC4) — bounds how long an in-flight session may keep
+# running after SIGTERM/SIGINT before the drain loop abandons it; shared by
+# tcp_server::TcpServerConfig.drain_timeout and SessionProxyConfig.drain_timeout
+# so there is one source of truth for the bounded-drain proof.
+drain_timeout_ms:
+  env: PGPOOL_DRAIN_TIMEOUT_MS
+  flag: --drain-timeout-ms
+  default: 30000        # 30s; matches server-core's shutdown_with_drain style bounded-wait convention
+
+# Frontend admission budget (R1 / AC3) — reused from RuntimePlan, not
+# reconfigured here; listed for traceability only.
+max_frontend_connections:
+  source: "RuntimePlan::max_frontend_connections"
+  default: 10000        # ConnectionBudget::new(10_000); checked inside SessionHandler::handle, not via tcp_server::TcpServerConfig.connection_budget (see Schema: SessionProxyConfig.frontend_budget)
+```
