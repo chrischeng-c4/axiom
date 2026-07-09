@@ -34,7 +34,9 @@ fn seatbelt_active() -> bool {
         isolation: Isolation::Seatbelt,
         ..EnvSpec::default()
     };
-    sandbox::pick(&spec).name() == "seatbelt"
+    sandbox::pick(&spec)
+        .map(|b| b.name() == "seatbelt")
+        .unwrap_or(false)
 }
 
 fn bash_available() -> bool {

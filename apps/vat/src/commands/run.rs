@@ -226,7 +226,7 @@ fn exec_direct(args: DirectArgs) -> Result<ExitCode> {
         duration_ms: None,
     });
     vat.save()?;
-    let backend = sandbox::pick(&spec);
+    let backend = sandbox::pick(&spec).map_err(anyhow::Error::msg)?;
     vat.log(
         Event::new(EventKind::RunStarted, format!("run: {}", command.join(" ")))
             .with_data(serde_json::json!({ "backend": backend.name() })),
@@ -723,9 +723,10 @@ fn run_configured(
     // Runner + setup-step commands run under the run's isolation backend
     // (seatbelt wraps them in sandbox-exec with the [network].egress policy; the
     // process backend is a passthrough). Picked once so any isolation/egress
-    // warning prints once. Services below are spawned RAW — they keep network.
+    // error surfaces once, before any runner/service work starts. Services
+    // below are spawned RAW — they keep network.
     let sandbox_spec = vat.meta.spec.clone();
-    let sandbox_backend = sandbox::pick(&sandbox_spec);
+    let sandbox_backend = sandbox::pick(&sandbox_spec).map_err(anyhow::Error::msg)?;
 
     // Services: the UNION of every runner's requires, order-preserving and
     // deduplicated — one shared instance set serves all concurrent runners.
@@ -3392,12 +3393,15 @@ mod tests {
     fn sandbox_wrap_wraps_runner_under_seatbelt_passthrough_under_none() {
         let cmd = vec!["echo".to_string(), "hi".to_string()];
 
-        // isolation=none → process backend → byte-identical passthrough (the
-        // shape services keep, since they bypass sandbox_wrap entirely).
+        // isolation=none + egress=open → process backend → byte-identical
+        // passthrough (the shape services keep, since they bypass
+        // sandbox_wrap entirely). This is the one combination that must keep
+        // succeeding unchanged (issue #1300 AC2).
         let none = sandbox::pick(&EnvSpec {
             isolation: Isolation::None,
             ..EnvSpec::default()
-        });
+        })
+        .expect("isolation=none + egress=open must still succeed");
         assert_eq!(
             sandbox_wrap(none.as_ref(), Path::new("/tmp/vat-x"), &cmd),
             cmd
@@ -3406,21 +3410,25 @@ mod tests {
         assert!(sandbox_wrap(none.as_ref(), Path::new("/tmp/vat-x"), &[]).is_empty());
 
         // isolation=seatbelt → runner cmd is wrapped in `sandbox-exec -p <profile>`
-        // (the same profile #518 proves denies external egress). Asserted only
-        // when the seatbelt backend is active (macOS + sandbox-exec).
-        let sb = sandbox::pick(&EnvSpec {
+        // (the same profile #518 proves denies external egress) when seatbelt is
+        // available; when it's unavailable (e.g. off-macOS CI), pick() now fails
+        // closed instead of silently falling back to the process backend (#1300).
+        match sandbox::pick(&EnvSpec {
             isolation: Isolation::Seatbelt,
             egress: crate::spec::EgressPolicy::LocalhostOnly,
             ..EnvSpec::default()
-        });
-        let wrapped = sandbox_wrap(sb.as_ref(), Path::new("/tmp/vat-x"), &cmd);
-        if sb.name() == "seatbelt" {
-            assert_eq!(wrapped[0], "sandbox-exec");
-            assert_eq!(wrapped[1], "-p");
-            // the original command is appended verbatim after the profile.
-            assert_eq!(&wrapped[wrapped.len() - 2..], cmd.as_slice());
-        } else {
-            assert_eq!(wrapped, cmd); // process fallback off-macOS
+        }) {
+            Ok(sb) => {
+                let wrapped = sandbox_wrap(sb.as_ref(), Path::new("/tmp/vat-x"), &cmd);
+                assert_eq!(sb.name(), "seatbelt");
+                assert_eq!(wrapped[0], "sandbox-exec");
+                assert_eq!(wrapped[1], "-p");
+                // the original command is appended verbatim after the profile.
+                assert_eq!(&wrapped[wrapped.len() - 2..], cmd.as_slice());
+            }
+            Err(message) => {
+                assert!(message.contains("sandbox-exec"), "message: {message}");
+            }
         }
     }
 

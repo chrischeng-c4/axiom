@@ -26,10 +26,13 @@ fn seatbelt_profile(egress: EgressPolicy) -> Option<String> {
         egress,
         ..EnvSpec::default()
     };
-    let backend = sandbox::pick(&spec);
-    if backend.name() != "seatbelt" {
-        return None; // process fallback (not macOS / sandbox-exec absent)
-    }
+    let backend = match sandbox::pick(&spec) {
+        Ok(backend) if backend.name() == "seatbelt" => backend,
+        // Either a process fallback (egress=open path) or a hard error
+        // (non-open egress + seatbelt unavailable, per #1300) — either way
+        // the seatbelt backend isn't active on this host, so skip cleanly.
+        _ => return None,
+    };
     // resolve() wraps as ["sandbox-exec", "-p", <profile>, <program>, ...].
     let (_prog, argv) = backend.resolve(Path::new("/tmp/vat-egress-test"), "true", &[]);
     assert_eq!(argv.first().map(String::as_str), Some("-p"));
