@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-09T10:11:34.530001+00:00"
-digest = "sha256:d8800ac7cc3c962a5d5310fab49e387241d5f6968715fbf9e8120317eefb739a"
-source_digest = "sha256:d8800ac7cc3c962a5d5310fab49e387241d5f6968715fbf9e8120317eefb739a"
-ir_digest = "sha256:bc568881c98f2ccdebcc8017a377104d07ae1aafe27f31eb6c3701c25769fc6a"
+generated_at = "2026-07-09T12:31:47.638504+00:00"
+digest = "sha256:6d352e5bf1b4fc01d00255ba2ecb1730f5f739f87dbb43bab649d7c3f27b5f53"
+source_digest = "sha256:6d352e5bf1b4fc01d00255ba2ecb1730f5f739f87dbb43bab649d7c3f27b5f53"
+ir_digest = "sha256:3421d5433cf60d592bc162bc04331c7d5556e1d452e6809945b3c9e378d00407"
 
 [[files]]
 path = "README.md"
@@ -23,6 +23,12 @@ section_count = 3
 path = "interfaces/rest/tape-service-auth.md"
 digest = "sha256:6153519a5ea3e6d405cba97558e66850b627b0a61cabfc02402612a8e25444d2"
 ir_digest = "sha256:08d2e53f4bd35197f47fde2df1486c37a1c4aaa092a2df29d78fc8cb09cd538f"
+section_count = 3
+
+[[files]]
+path = "logic/tape-raft-host-primary-replicas.md"
+digest = "sha256:72ee950649d4c5ac6d73eb95f22e512a5d8dc0bb91806f0ff349d12b6489fae7"
+ir_digest = "sha256:3ecb0fd4bb6e6e967a940d43cc4b397a55c4c335d78903401ec4af00d8752a03"
 section_count = 3
 
 [[files]]
