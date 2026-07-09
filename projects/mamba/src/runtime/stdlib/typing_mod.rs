@@ -1447,6 +1447,21 @@ pub fn mb_typing_get_origin(tp: MbValue) -> MbValue {
     if instance_class_of(tp).as_deref() == Some("UnionType") {
         return super::super::builtins::make_type_object("UnionType");
     }
+    if matches!(
+        instance_class_of(tp).as_deref(),
+        Some("GenericAlias") | Some("types.GenericAlias")
+    ) {
+        let origin_key = if instance_class_of(tp).as_deref() == Some("types.GenericAlias") {
+            "_origin"
+        } else {
+            "__origin__"
+        };
+        let origin = instance_field_of(tp, origin_key).unwrap_or_else(MbValue::none);
+        unsafe {
+            super::super::rc::retain_if_ptr(origin);
+        }
+        return origin;
+    }
     match alias_kind(tp).as_deref() {
         Some("union") => special_form("Union"),
         Some("annotated") => special_form("Annotated"),
@@ -1475,6 +1490,25 @@ pub fn mb_typing_get_args(tp: MbValue) -> MbValue {
             }
         }
         return MbValue::from_ptr(MbObject::new_tuple(out));
+    }
+    if matches!(
+        instance_class_of(tp).as_deref(),
+        Some("GenericAlias") | Some("types.GenericAlias")
+    ) {
+        let args_key = if instance_class_of(tp).as_deref() == Some("types.GenericAlias") {
+            "_args"
+        } else {
+            "__args__"
+        };
+        let args = instance_field_of(tp, args_key)
+            .map(tuple_items)
+            .unwrap_or_default();
+        for v in &args {
+            unsafe {
+                super::super::rc::retain_if_ptr(*v);
+            }
+        }
+        return MbValue::from_ptr(MbObject::new_tuple(args));
     }
     if alias_kind(tp).is_some() {
         let args = alias_args_vec(tp);
@@ -2139,6 +2173,34 @@ mod tests {
                     assert_eq!(s, "__main__.TypingBox1116[int]")
                 }
                 _ => panic!("expected repr string"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_type_alias_subscript_get_origin_and_args_match_cpython() {
+        let alias = super::super::pep695::mb_pep695_type_alias(
+            MbValue::from_ptr(MbObject::new_str("Pair".to_string())),
+            MbValue::none(),
+            MbValue::from_ptr(MbObject::new_tuple(vec![])),
+        );
+        let subscripted =
+            super::super::class::mb_obj_getitem(alias, super::super::builtins::make_type_object("int"));
+
+        let origin = mb_typing_get_origin(subscripted);
+        let args = mb_typing_get_args(subscripted);
+
+        assert_eq!(origin.to_bits(), alias.to_bits());
+        unsafe {
+            match &(*args.as_ptr().expect("args tuple")).data {
+                super::super::super::rc::ObjData::Tuple(items) => {
+                    assert_eq!(items.len(), 1);
+                    assert_eq!(
+                        items[0].to_bits(),
+                        super::super::builtins::make_type_object("int").to_bits()
+                    );
+                }
+                _ => panic!("expected args tuple"),
             }
         }
     }
