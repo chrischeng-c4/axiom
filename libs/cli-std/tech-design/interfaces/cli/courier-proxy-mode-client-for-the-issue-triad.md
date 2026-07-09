@@ -87,3 +87,77 @@ flowchart TD
     comment_courier --> out
     comment_direct --> out
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: cli-std-courier-proxy-mode-client-verification
+requirements:
+  comment_courier_routing:
+    id: R2d
+    text: "issue::comment() routes to POST {courier_url}/v1/issues/{owner}/{name}/{number}/comments with Authorization: Bearer <courier token> when resolve_courier_url() is Some"
+    kind: functional
+    risk: high
+    verify: comment_routes_through_courier_when_url_configured
+  create_courier_routing:
+    id: R2c
+    text: "issue::create() routes to POST {courier_url}/v1/issues/{owner}/{name} with Authorization: Bearer <courier token> when resolve_courier_url() is Some"
+    kind: functional
+    risk: high
+    verify: create_routes_through_courier_when_url_configured
+  fallback_byte_identical:
+    id: R2e
+    text: "when resolve_courier_url() is None, search/view/create/comment execute the pre-existing direct api.github.com code path completely unchanged"
+    kind: regression
+    risk: high
+    verify: issue_ops_fall_back_to_direct_github_when_courier_url_unset
+  resolve_courier_token_set:
+    id: R1c
+    text: "resolve_courier_token() returns Some(trimmed value) when AXIOM_COURIER_TOKEN is set to a non-blank string"
+    kind: functional
+    risk: medium
+    verify: resolve_courier_token_returns_some_when_env_set
+  resolve_courier_token_unset:
+    id: R1d
+    text: "resolve_courier_token() returns None when AXIOM_COURIER_TOKEN is unset or blank"
+    kind: functional
+    risk: medium
+    verify: resolve_courier_token_returns_none_when_env_unset_or_blank
+  resolve_courier_url_set:
+    id: R1a
+    text: "resolve_courier_url() returns Some(trimmed value) when AXIOM_COURIER_URL is set to a non-blank string"
+    kind: functional
+    risk: medium
+    verify: resolve_courier_url_returns_some_when_env_set
+  resolve_courier_url_unset:
+    id: R1b
+    text: "resolve_courier_url() returns None when AXIOM_COURIER_URL is unset or blank, mirroring resolve_github_token()'s blank-counts-as-unset convention"
+    kind: functional
+    risk: medium
+    verify: resolve_courier_url_returns_none_when_env_unset_or_blank
+  search_courier_routing:
+    id: R2a
+    text: "issue::search() routes to GET {courier_url}/v1/issues/{owner}/{name}?state=&q=&limit= with Authorization: Bearer <courier token> when resolve_courier_url() is Some"
+    kind: functional
+    risk: high
+    verify: search_routes_through_courier_when_url_configured
+  view_courier_routing:
+    id: R2b
+    text: "issue::view() routes to GET {courier_url}/v1/issues/{owner}/{name}/{number} with Authorization: Bearer <courier token> when resolve_courier_url() is Some"
+    kind: functional
+    risk: high
+    verify: view_routes_through_courier_when_url_configured
+---
+flowchart TD
+    r1a[R1a resolve courier url set] --> resolve_courier_url_returns_some_when_env_set[resolve_courier_url_returns_some_when_env_set]
+    r1b[R1b resolve courier url unset] --> resolve_courier_url_returns_none_when_env_unset_or_blank[resolve_courier_url_returns_none_when_env_unset_or_blank]
+    r1c[R1c resolve courier token set] --> resolve_courier_token_returns_some_when_env_set[resolve_courier_token_returns_some_when_env_set]
+    r1d[R1d resolve courier token unset] --> resolve_courier_token_returns_none_when_env_unset_or_blank[resolve_courier_token_returns_none_when_env_unset_or_blank]
+    r2a[R2a search courier routing] --> search_routes_through_courier_when_url_configured[search_routes_through_courier_when_url_configured]
+    r2b[R2b view courier routing] --> view_routes_through_courier_when_url_configured[view_routes_through_courier_when_url_configured]
+    r2c[R2c create courier routing] --> create_routes_through_courier_when_url_configured[create_routes_through_courier_when_url_configured]
+    r2d[R2d comment courier routing] --> comment_routes_through_courier_when_url_configured[comment_routes_through_courier_when_url_configured]
+    r2e[R2e fallback byte identical] --> issue_ops_fall_back_to_direct_github_when_courier_url_unset[issue_ops_fall_back_to_direct_github_when_courier_url_unset]
+```
