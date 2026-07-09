@@ -38,41 +38,48 @@ pub trait Sandbox {
     fn resolve(&self, rootfs: &Path, program: &str, args: &[String]) -> (String, Vec<String>);
 }
 
-/// Pick a backend for a spec. Falls back to the process backend on any
-/// platform that doesn't support the requested isolation, after warning —
-/// the workspace clone still applies, so the vat is never *less* isolated than
-/// plain `cd` + run.
+/// Pick a backend for a spec. Fails closed: if the selected backend cannot
+/// actually enforce a non-`Open` egress policy, this returns `Err` instead of
+/// silently downgrading to unrestricted network access. `Isolation::None` +
+/// `EgressPolicy::Open` (today's common case) is unaffected and always
+/// succeeds; the workspace clone still applies regardless of isolation, so a
+/// vat is never *less* isolated than plain `cd` + run on that front.
 /// @spec apps/vat/tech-design/semantic/source/projects-vat-src-sandbox-mod-rs.md#source
-pub fn pick(spec: &EnvSpec) -> Box<dyn Sandbox> {
+// HANDWRITE-BEGIN gap="missing-generator:logic:pick-fail-closed" tracker="pending-tracker" reason="Logic section edge: pick() must fail closed (return Err) instead of warn-and-continue when the selected backend cannot enforce a non-Open egress policy (isolation=none, or seatbelt requested but unavailable) — hand-written backend-selection logic per issue #1300."
+pub fn pick(spec: &EnvSpec) -> Result<Box<dyn Sandbox>, String> {
     match spec.isolation {
         Isolation::None => {
             if spec.egress != EgressPolicy::Open {
-                eprintln!(
-                    "vat: warning: [network].egress confinement requires --isolation seatbelt; \
-                     running without egress enforcement."
-                );
+                return Err(format!(
+                    "[network].egress is set to {:?}, but --isolation none cannot enforce it \
+                     (no sandbox backend confines egress); use --isolation seatbelt or set \
+                     egress to open.",
+                    spec.egress
+                ));
             }
-            Box::new(process::ProcessBackend)
+            Ok(Box::new(process::ProcessBackend))
         }
         Isolation::Seatbelt => {
             if cfg!(target_os = "macos") && seatbelt::available() {
-                Box::new(seatbelt::SeatbeltBackend {
+                Ok(Box::new(seatbelt::SeatbeltBackend {
                     egress: spec.egress,
-                })
+                }))
+            } else if spec.egress != EgressPolicy::Open {
+                Err(format!(
+                    "--isolation seatbelt was requested with [network].egress set to {:?}, \
+                     but sandbox-exec is unavailable on this host; falling back to the process \
+                     backend would silently drop egress enforcement, so refusing to run.",
+                    spec.egress
+                ))
             } else {
-                if spec.egress != EgressPolicy::Open {
-                    eprintln!(
-                        "vat: warning: seatbelt unavailable; [network].egress confinement \
-                         is not enforced."
-                    );
-                }
                 eprintln!(
                     "vat: seatbelt isolation requested but unavailable on this host; \
                      using process backend (workspace is still copy-on-write)."
                 );
-                Box::new(process::ProcessBackend)
+                Ok(Box::new(process::ProcessBackend))
             }
         }
     }
 }
+// HANDWRITE-END
 // CODEGEN-END

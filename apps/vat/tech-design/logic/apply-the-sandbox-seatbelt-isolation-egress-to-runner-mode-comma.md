@@ -7,8 +7,8 @@ capability_refs:
     role: primary
     gap: sandbox-applied-to-runner-mode-commands
     claim: sandbox-applied-to-runner-mode-commands
-    coverage: partial
-    rationale: "The sandbox is enforced only for direct mode today; applying it to runner mode makes seatbelt isolation + egress confinement protect the common `vat run <runner>` workflow, completing the network sandbox."
+    coverage: full
+    rationale: "Runner-mode commands (spawn_runner_process, run_setup_step) now resolve through sandbox::pick (fail-closed per #1300) and sandbox_wrap identically to the direct-mode path; #1301 added the EgressPolicy::Deny runner-mode denial proof and the explicit vat-service-exemption test that were the remaining coverage gap. See projects/vat/tech-design/logic/vat-sandbox-extend-seatbelt-isolation-egress-coverage-to-runner.md for the closing TD."
 ---
 
 # Apply the sandbox (seatbelt isolation + egress) to runner-mode commands
