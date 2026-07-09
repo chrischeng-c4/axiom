@@ -1,3 +1,30 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:6ff6dc3f" tracker="pending-tracker" reason="OTel collector config receiving OTLP gRPC from tape and re-exporting a Prometheus scrape target plus a trace exporter to Jaeger (mirrors projects/lumen/observability/otel-collector-config.yaml)."
-// TODO: hand-write content for `apps/tape/observability/otel-collector-config.yaml`.
-// HANDWRITE-END
+# otel-collector for tape's local dev stack. Tape does not push OTLP traces
+# or metrics yet (its only telemetry surface today is the pull-based
+# Prometheus /metrics endpoint, scraped directly -- see prometheus.yml), so
+# this collector currently receives nothing from tape; it is wired up ready
+# for when tape gains an OTLP trace exporter, mirroring the
+# lumen->collector->backends path so the local stack exercises the same
+# shape lumen already runs.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch: {}
+
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger, debug]

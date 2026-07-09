@@ -1,3 +1,14 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:23b5f04d" tracker="pending-tracker" reason="Grafana datasource provisioning wiring Prometheus + Jaeger (mirrors projects/lumen/observability/grafana-datasources.yaml)."
-// TODO: hand-write content for `apps/tape/observability/grafana-datasources.yaml`.
-// HANDWRITE-END
+# Grafana auto-provisioned datasources: Prometheus (tape's /metrics, scraped
+# directly) + Jaeger (ready for tape's traces once an OTLP exporter lands).
+# Anonymous admin is on (see compose.yaml) for local use.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+  - name: Jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686

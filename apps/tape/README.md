@@ -41,7 +41,7 @@ real-service external peer calibration remain separate work roots.
 | CLI Interface | #768 | implemented | verified | smoke | ready | `tape` CLI for local replay/admin, spec, and agent docs |
 | CLI Standard Surface | #768 | implemented | verified | smoke | ready | shared `llm`, `upgrade`, and `issue` command groups |
 | Chainable Output Conformance | #768 | implemented | verified | smoke | ready | replay/admin commands emit terminal `next:` hints |
-| EC Gates Configured | #768 | partial | verified | smoke | not_ready | crate smoke tests exist; vat/meter/guard EC inventory deferred |
+| EC Gates Configured | #768, #1330 | implemented | verified | smoke | ready | crate smoke tests + vat/meter/guard EC inventory (vat.toml, meter-tape-performance.toml, guard-tape-security.toml) |
 | Long-Running Stability | #768 | planned | planned | none | not_ready | soak, retention, compaction, and replay recovery gates |
 | Security Hardening | #768 | planned | planned | none | not_ready | producer/consumer authz, tenant isolation, audit, and secret rotation |
 | Competitor Feature Parity | #768 | implemented | verified | smoke | ready | Kafka/Redpanda/Pulsar/JetStream/RabbitMQ Streams replay matrix; feature win only over RabbitMQ topic exchange replay gap |
@@ -321,21 +321,26 @@ ID: ec-gates-configured
 Type: Devops
 Root WI: #768
 Status: confirmed
-Surfaces: Tests: `cargo test -p tape`; future Vat/Meter/Guard gates under `apps/tape/`.
-EC Dimensions: behavior: current smoke gate; efficiency/security/stability inventories pending
-Required Verification: smoke
+Surfaces: Tests: `cargo test -p tape`; Vat/Meter/Guard gates under `apps/tape/`.
+EC Dimensions: behavior: smoke gate; efficiency: meter-owned vat-isolated performance gate; security: guard-owned vat-isolated security gate; stability: inventory pending
+Required Verification: smoke, efficiency, security
 Promise:
-Keep the first Tape implementation behind executable gates now, then add
-vat/meter/guard EC inventories as the service grows beyond local replay smoke.
+Keep the first Tape implementation behind executable gates, with vat-isolated
+meter/guard EC inventories now wired up alongside the local replay smoke gate.
 Gate Inventory:
 - apps/tape/tests/cli_contract.rs
-- pending: apps/tape/vat.toml
-- pending: apps/tape/meter-tape-replay.toml
-- pending: apps/tape/guard-tape-security.toml
+- apps/tape/vat.toml
+- apps/tape/meter-tape-performance.toml
+- apps/tape/guard-tape-security.toml
+- apps/tape/external-contracts/competitor-performance/efficiency/meter-gate.md
+- apps/tape/external-contracts/security-hardening/security/security-evidence.md
+- apps/tape/observability/ (prometheus.yml, otel-collector-config.yaml, grafana-datasources.yaml)
+- apps/tape/compose.yaml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | crate-smoke-gate | epic | #768 | partial | passing | smoke | cargo test -p tape |
+| tape-vat-meter-guard-ec-gates-observability | change | #1330 | implemented | passing | smoke | apps/tape/vat.toml, apps/tape/meter-tape-performance.toml, apps/tape/guard-tape-security.toml |
 
 ### Kubernetes-Native Deployment
 

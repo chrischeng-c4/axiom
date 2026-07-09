@@ -1,3 +1,9 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:147f25de" tracker="pending-tracker" reason="SPEC-MANAGED guard-cli native manifest (mirrors apps/relay/guard-relay-security.toml): project=tape, source_contract=tape-security-hardening-guard-scan, delegate_command='cd apps/tape && ../../target/debug/vat run guard-security'."
-// TODO: hand-write content for `apps/tape/guard-tape-security.toml`.
-// HANDWRITE-END
+# SPEC-MANAGED: apps/tape/external-contracts/security-hardening/security/security-evidence.md#tape-guard-security
+# CODEGEN-BEGIN
+# AW-EC-TOOL-BEGIN
+delegate_command = "cd apps/tape && ../../target/debug/vat run guard-security"
+project = "tape"
+source_contract = "tape-security-hardening-guard-scan"
+version = 1
+# AW-EC-TOOL-END
+# CODEGEN-END

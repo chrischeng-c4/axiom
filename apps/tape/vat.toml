@@ -1,3 +1,72 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:d28ba17c" tracker="pending-tracker" reason="vat workspace for tape's EC dispatch (mirrors apps/relay/vat.toml): base=../.., workdir=apps/tape, setup builds meter-cli+guard-cli plus tape_perf_gate/tape_vs_nats_jetstream/cli_contract test binaries; runners meter-perf (delegates to cargo test -p tape --test tape_perf_gate --test tape_vs_nats_jetstream) and guard-security (guard scan apps/tape --profile security-lint --meter-command attaching auth-boundary smoke evidence)."
-// TODO: hand-write content for `apps/tape/vat.toml`.
-// HANDWRITE-END
+# vat workspace for tape's EC dispatch (mirrors apps/relay/vat.toml): vat
+# owns the COW workspace clone; runners re-invoke cargo/meter/guard inside
+# the clone so generated reports/transient files never mutate this checkout.
+#
+# Prereqs on the host: `cargo build -p meter-cli -p guard-cli` (installs
+# ../../target/debug/{meter,guard}), a working Rust toolchain for the tape
+# perf/security test binaries. tape's own tape_vs_nats_jetstream test starts
+# its own local nats-server subprocess and needs no vat-managed backing
+# service.
+version = 1
+name = "tape-ec"
+default_runner = "meter-perf"
+
+[workspace]
+base = "../.."
+workdir = "apps/tape"
+keep = "always"
+
+[env]
+PATH = "/Users/chrischeng/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/chrischeng/.cargo/bin"
+
+[[setup]]
+id = "build-aw-tools"
+cmd = ["cargo", "build", "-p", "meter-cli", "-p", "guard-cli"]
+
+[[setup]]
+id = "build-tape-ec-tests"
+cmd = [
+  "cargo",
+  "test",
+  "-p",
+  "tape",
+  "--test",
+  "tape_perf_gate",
+  "--test",
+  "tape_vs_nats_jetstream",
+  "--test",
+  "cli_contract",
+  "--no-run",
+]
+
+[[runners]]
+id = "meter-perf"
+cmd = [
+  "../../target/debug/meter",
+  "test",
+  "--",
+  "-p",
+  "tape",
+  "--test",
+  "tape_perf_gate",
+  "--test",
+  "tape_vs_nats_jetstream",
+  "--",
+  "--nocapture",
+]
+timeout_s = 600
+
+[[runners]]
+id = "guard-security"
+cmd = [
+  "../../target/debug/guard",
+  "scan",
+  ".",
+  "--profile",
+  "security-lint",
+  "--compact",
+  "--no-persist",
+  "--meter-command",
+  "../../target/debug/meter test -- -p tape --test cli_contract -- --nocapture",
+]
+timeout_s = 600
