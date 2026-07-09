@@ -53,6 +53,17 @@ pub struct AcquireRequest {
     pub cwd: String,
     pub label: Option<String>,
     pub client_pid: i32,
+    /// Absolute wall-clock budget in seconds, measured from `Spawned`
+    /// and excluding time spent `Paused`. `None` defers to the
+    /// daemon's `default_timeout_secs`; `Some(0)` explicitly disables
+    /// the trigger for this lease regardless of that default.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+    /// Kill the lease if it makes no CPU progress for this many
+    /// seconds (excluding time spent `Paused`). Same `None`/`Some(0)`
+    /// semantics as `timeout_secs`.
+    #[serde(default)]
+    pub idle_timeout_secs: Option<u64>,
 }
 
 /// Daemon → Client.
@@ -149,6 +160,15 @@ pub enum KillClassification {
     /// IDEs) are eating the budget. Agent should `cap wait` and let
     /// the system recover; retrying immediately will fail again.
     External,
+    /// The lease exceeded its `--timeout` wall-clock budget (excluding
+    /// `Paused` time). Not a memory-pressure kill — retrying as-is
+    /// will hit the same wall unless the budget is raised or the work
+    /// is split.
+    AbsoluteTimeout,
+    /// The lease made no CPU progress for `--idle-timeout` seconds
+    /// (excluding `Paused` time). Likely a hang (blocked I/O,
+    /// deadlock), not resource competition.
+    IdleTimeout,
 }
 
 /// @spec apps/cap/tech-design/semantic/cap-src.md#schema
@@ -197,6 +217,14 @@ pub enum Action {
         suggested_secs: u64,
         next_step: String,
     },
+    /// `AbsoluteTimeout` kill. Retrying as-is will hit the same wall —
+    /// agent should raise `--timeout` or split the work into smaller
+    /// steps.
+    RaiseTimeoutOrSplit { hint: String, next_step: String },
+    /// `IdleTimeout` kill. Not a resource-pressure kill — agent should
+    /// investigate why the command stopped making progress before
+    /// retrying.
+    InvestigateHang { hint: String, next_step: String },
 }
 
 /// Structured kill report — superseded the old `killed_reason: String`.
@@ -216,5 +244,37 @@ pub struct KillEnvelope {
     /// Pre-formatted multi-line message for `eprintln!` on the client.
     /// Agents that want structure should read the typed fields instead.
     pub human_message: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn acquire_request_timeout_fields_round_trip() {
+        let req = AcquireRequest {
+            program: "cargo".into(),
+            args: vec!["build".into()],
+            cwd: "/tmp".into(),
+            label: None,
+            client_pid: 1,
+            timeout_secs: Some(30),
+            idle_timeout_secs: Some(0),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: AcquireRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.timeout_secs, Some(30));
+        assert_eq!(parsed.idle_timeout_secs, Some(0));
+    }
+
+    #[test]
+    fn acquire_request_omitted_timeout_fields_default_to_none() {
+        // Old clients that never learned about these fields must still
+        // deserialize cleanly.
+        let json = r#"{"program":"ls","args":[],"cwd":"/tmp","label":null,"client_pid":1}"#;
+        let parsed: AcquireRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.timeout_secs, None);
+        assert_eq!(parsed.idle_timeout_secs, None);
+    }
 }
 // CODEGEN-END

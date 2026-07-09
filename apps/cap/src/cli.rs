@@ -268,6 +268,17 @@ pub struct RunArgs {
     /// Human-readable label shown in `cap status`.
     #[arg(long)]
     pub label: Option<String>,
+    /// Absolute wall-clock budget in seconds; SIGTERM→grace→SIGKILL
+    /// the lease once exceeded (excluding time spent paused). Omit to
+    /// use the daemon's `default_timeout_secs` (0 = disabled).
+    #[arg(long)]
+    pub timeout: Option<u64>,
+    /// Kill the lease if it makes no CPU progress for this many
+    /// seconds (excluding time spent paused) — catches hangs that
+    /// stay under the memory/CPU pressure floors. Omit to use the
+    /// daemon's `default_idle_timeout_secs` (0 = disabled).
+    #[arg(long)]
+    pub idle_timeout: Option<u64>,
     /// The command to run. Pass argv after `--`, or one Bash command string.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub command: Vec<String>,
@@ -361,6 +372,8 @@ pub async fn run() -> Result<ExitCode> {
             } else {
                 handle_run(RunArgs {
                     label: None,
+                    timeout: None,
+                    idle_timeout: None,
                     command: cli.passthrough,
                 })
                 .await
@@ -697,20 +710,32 @@ async fn handle_run(args: RunArgs) -> Result<ExitCode> {
                 }
             }
         }
+        let timeout = args.timeout;
+        let idle_timeout = args.idle_timeout;
         let session = ResidentLightShellSession::capture();
         return match session.run_command_string(&args.command[0], args.label)? {
             ResidentLightShellRun::Native(code) => Ok(code),
-            ResidentLightShellRun::BashFallback(external) => handle_external_run(external).await,
+            ResidentLightShellRun::BashFallback(external) => {
+                handle_external_run(external, timeout, idle_timeout).await
+            }
         };
     }
+    let timeout = args.timeout;
+    let idle_timeout = args.idle_timeout;
     let plan = command_planner::plan(&args.command, args.label);
     match plan {
         CommandPlan::Native(native) => command_planner::run_native(&native),
-        CommandPlan::External(external) => handle_external_run(external).await,
+        CommandPlan::External(external) => {
+            handle_external_run(external, timeout, idle_timeout).await
+        }
     }
 }
 
-async fn handle_external_run(plan: ExternalPlan) -> Result<ExitCode> {
+async fn handle_external_run(
+    plan: ExternalPlan,
+    timeout_secs: Option<u64>,
+    idle_timeout_secs: Option<u64>,
+) -> Result<ExitCode> {
     // The hook wraps EVERY agent Bash call in `cap`, so a broken or
     // unreachable daemon must degrade to "run it unthrottled" — never
     // to "the agent can't run anything". If we can't reach/spawn the
@@ -731,6 +756,8 @@ async fn handle_external_run(plan: ExternalPlan) -> Result<ExitCode> {
         &mut client,
         SpawnSpec::new(plan.program, plan.args),
         plan.label,
+        timeout_secs,
+        idle_timeout_secs,
     )
     .await?;
     if let Some(envelope) = &outcome.kill_envelope {
@@ -820,6 +847,43 @@ mod tests {
         assert_eq!(opts.message.as_deref(), Some("details"));
         assert_eq!(opts.label, vec!["app:cap"]);
         assert!(opts.dry_run);
+    }
+
+    #[test]
+    fn run_args_parse_timeout_and_idle_timeout_flags() {
+        let cli = Cli::try_parse_from([
+            "cap",
+            "run",
+            "--timeout",
+            "30",
+            "--idle-timeout",
+            "10",
+            "--",
+            "cargo",
+            "build",
+        ])
+        .expect("flags parse");
+        match cli.command {
+            Some(Cmd::Run(args)) => {
+                assert_eq!(args.timeout, Some(30));
+                assert_eq!(args.idle_timeout, Some(10));
+                assert_eq!(args.command, vec!["cargo", "build"]);
+            }
+            other => panic!("expected Cmd::Run, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_args_timeout_flags_are_optional() {
+        let cli = Cli::try_parse_from(["cap", "run", "--", "cargo", "build"])
+            .expect("flags parse");
+        match cli.command {
+            Some(Cmd::Run(args)) => {
+                assert_eq!(args.timeout, None);
+                assert_eq!(args.idle_timeout, None);
+            }
+            other => panic!("expected Cmd::Run, got {other:?}"),
+        }
     }
 }
 // CODEGEN-END

@@ -41,6 +41,8 @@ pub async fn managed_run(
     client: &mut Client,
     spec: SpawnSpec,
     label: Option<String>,
+    timeout_secs: Option<u64>,
+    idle_timeout_secs: Option<u64>,
 ) -> Result<ManagedOutcome> {
     let cwd = spec
         .cwd
@@ -56,6 +58,8 @@ pub async fn managed_run(
         cwd,
         label,
         client_pid: std::process::id() as i32,
+        timeout_secs,
+        idle_timeout_secs,
     });
     let (lease, nice) = match client.request(&acquire).await? {
         Response::Lease { lease, nice } => (lease, nice),
