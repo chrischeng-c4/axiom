@@ -512,6 +512,11 @@ fn rewrite_imports(
             else {
                 continue; // not installed locally — leave for the importmap
             };
+            if is_style_path(&dep_file) {
+                styles.push(style_asset_for_file(root, &dep_file));
+                style_specs.push(spec.clone());
+                continue;
+            }
             if is_raw_asset_path(&dep_file) {
                 if is_svg_component_reexport(code, &spec) {
                     svg_component_reexports.push((spec.clone(), dep_file.clone()));
