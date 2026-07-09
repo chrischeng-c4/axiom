@@ -372,6 +372,14 @@ pub struct Bundler {
     /// `define::replace_defines` after the transform step so that the bundler
     /// can eliminate dead code branches at build time.
     defines: HashMap<String, String>,
+    /// Nx/tsconfig path alias entries `(prefix, target)`, cloned from
+    /// `options.resolve_options.alias` in `Bundler::new` before
+    /// `resolve_options` moves into `ModuleResolver::new`. Threaded into the
+    /// codegen-time `ModuleResolutionIndex` by `transform_modules` (WI
+    /// #1305) so the same alias table `resolver/mod.rs::resolve_alias`
+    /// already consults during graph-walk resolution also reaches the
+    /// post-graph-walk resolver.
+    alias_entries: Vec<(String, PathBuf)>,
 }
 
 /// Compilation cache for incremental builds
@@ -399,6 +407,10 @@ impl Bundler {
         let minify = options.minify;
         let defines = options.defines.clone();
         let mut resolve_options = options.resolve_options;
+        // WI #1305: retain a copy of the already-loaded alias table before
+        // `resolve_options` moves into `ModuleResolver::new` below, so the
+        // codegen-time resolver (`transform_modules`) can also consult it.
+        let alias_entries = resolve_options.alias.clone();
         // Forward externalize_all_packages to the resolver
         if options.externalize_all_packages {
             resolve_options.externalize_all_packages = true;
@@ -417,6 +429,7 @@ impl Bundler {
             cache: Arc::new(CompilationCache::new()),
             minify,
             defines,
+            alias_entries,
             unresolved_deps: Mutex::new(Vec::new()),
             parsed_trees: Mutex::new(HashMap::new()),
         })
@@ -909,7 +922,10 @@ impl Bundler {
 
         tracing::debug!("Built module map with {} entries", module_map.len());
         let resolution_index =
-            crate::transform::modules::ModuleResolutionIndex::from_module_map(&module_map);
+            crate::transform::modules::ModuleResolutionIndex::from_module_map_and_aliases(
+                &module_map,
+                &self.alias_entries,
+            );
         let side_effect_free_module_ids =
             collect_side_effect_free_module_indices(&graph, &sorted_ids);
 

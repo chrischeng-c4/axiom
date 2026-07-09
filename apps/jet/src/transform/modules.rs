@@ -22,11 +22,28 @@ pub enum ModuleMapping {
 pub struct ModuleResolutionIndex {
     module_ids: HashMap<PathBuf, usize>,
     package_roots: HashMap<String, Vec<PathBuf>>,
+    /// Nx/tsconfig path alias entries `(prefix, target)`, threaded from
+    /// `ResolveOptions::alias` via `Bundler` (WI #1305) so the codegen-time
+    /// resolver can consult the same alias table `resolver/mod.rs::resolve_alias`
+    /// already used during graph-walk resolution. Empty for any caller that
+    /// builds this index via `from_module_map` (unchanged prior behavior).
+    alias_entries: Vec<(String, PathBuf)>,
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-transform.md#schema
 impl ModuleResolutionIndex {
     pub fn from_module_map(module_map: &HashMap<PathBuf, usize>) -> Self {
+        Self::from_module_map_and_aliases(module_map, &[])
+    }
+
+    /// As [`Self::from_module_map`], but also carries the Nx/tsconfig path
+    /// alias entries (WI #1305) so `resolve_module_path`'s alias-consultation
+    /// branch can re-derive and look up the same candidate path
+    /// `resolver/mod.rs::resolve_alias` already resolved during `build_graph`.
+    pub fn from_module_map_and_aliases(
+        module_map: &HashMap<PathBuf, usize>,
+        alias_entries: &[(String, PathBuf)],
+    ) -> Self {
         let mut seen = HashSet::new();
         let mut module_ids = HashMap::new();
         let mut package_roots: HashMap<String, Vec<PathBuf>> = HashMap::new();
@@ -47,6 +64,7 @@ impl ModuleResolutionIndex {
         Self {
             module_ids,
             package_roots,
+            alias_entries: alias_entries.to_vec(),
         }
     }
 }
@@ -1158,6 +1176,34 @@ fn resolve_module_path(
                         }
                     }
                     search_dir = d.parent();
+                }
+            }
+        }
+
+        // Nx/tsconfig path alias fallback (WI #1305): every strategy above
+        // only knows how to resolve real `node_modules/<pkg>` directories
+        // and `.jet-store`/package-root-indexed packages, so an internal Nx
+        // workspace library imported via its declared tsconfig path alias
+        // (e.g. `@operations/tech-platform-lib`) falls through all of them,
+        // since no such `node_modules` directory exists for it.
+        // `resolver/mod.rs::resolve_alias` already resolved and registered
+        // this same specifier's real module during `build_graph` — mirror
+        // its prefix-strip-and-join arithmetic 1:1 here and re-derive the
+        // same candidate path, then look it up via the existing
+        // `lookup_file_or_directory_module_id` helper.
+        if let Some(index) = resolution_index {
+            for (prefix, target) in &index.alias_entries {
+                if let Some(rest) = path.strip_prefix(prefix.as_str()) {
+                    let candidate = if rest.is_empty() {
+                        target.clone()
+                    } else {
+                        target.join(rest.trim_start_matches('/'))
+                    };
+                    if let Some(id) =
+                        lookup_file_or_directory_module_id(module_map, resolution_index, &candidate)
+                    {
+                        return format!("require({})", id);
+                    }
                 }
             }
         }
@@ -2440,6 +2486,246 @@ genCalc
             output.code.contains("ORDINARY_PKG_MARKER_1306"),
             "target package module body must be present in the bundle:\n{}",
             output.code
+        );
+    }
+
+    // WI #1305 R1/R2/R3: full Bundler::bundle() pipeline regressions proving
+    // an internal Nx workspace library imported via its declared tsconfig
+    // path alias resolves through resolve_module_path's new alias-
+    // consultation branch, driven through the real
+    // `AliasResolver::load(...).to_resolve_aliases()` loading path (not a
+    // hand-built alias Vec) exactly as `cli.rs::browser_production_resolve_options`
+    // does.
+    fn nx_alias_bundle_options(
+        fixture_root: &std::path::Path,
+        entry: std::path::PathBuf,
+    ) -> crate::bundler::BundleOptions {
+        let mut resolve_options = crate::resolver::ResolveOptions::for_browser_production();
+        resolve_options.base_dirs = vec![fixture_root.to_path_buf()];
+        resolve_options.alias = crate::resolver::alias::AliasResolver::load(
+            fixture_root,
+            &std::collections::HashMap::new(),
+        )
+        .to_resolve_aliases();
+        crate::bundler::BundleOptions {
+            entry,
+            output_dir: fixture_root.join("dist"),
+            resolve_options,
+            ..Default::default()
+        }
+    }
+
+    // WI #1305 R1/AC1/AC2: the WI's minimal repro at the full pipeline
+    // level -- an entry module imports an internal Nx workspace library via
+    // its declared tsconfig.base.json path alias
+    // (`@operations/tech-platform-lib`). No literal unresolved alias
+    // specifier may survive in the emitted bundle, and the aliased
+    // library's compiled body must be present in `_mods` via a
+    // `require(<id>)` reference.
+    #[tokio::test]
+    async fn bundle_resolves_nx_workspace_library_via_tsconfig_alias_full_pipeline() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        std::fs::write(
+            root.join("tsconfig.base.json"),
+            r#"{
+              "compilerOptions": {
+                "baseUrl": ".",
+                "paths": {
+                  "@operations/tech-platform-lib": ["libs/tech-platform-lib/src/index.ts"]
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let entry = write_node_builtin_fixture(
+            &root,
+            &[
+                (
+                    "entry.ts",
+                    "import { platformValue } from '@operations/tech-platform-lib';\nexport const x = platformValue;\n",
+                ),
+                (
+                    "libs/tech-platform-lib/src/index.ts",
+                    "export const platformValue = 'NX_ALIAS_LIB_MARKER';\n",
+                ),
+            ],
+        );
+
+        let opts = nx_alias_bundle_options(&root, entry.clone());
+        let bundler = crate::bundler::Bundler::new(opts).unwrap();
+        let output = bundler
+            .bundle(entry)
+            .await
+            .expect("Nx workspace library import via tsconfig path alias must resolve");
+
+        assert!(
+            !output.code.contains("require('@operations/tech-platform-lib')")
+                && !output
+                    .code
+                    .contains("require(\"@operations/tech-platform-lib\")"),
+            "aliased Nx workspace library import must not be left as a literal unresolved require string:\n{}",
+            output.code
+        );
+        assert!(
+            output.code.contains("NX_ALIAS_LIB_MARKER"),
+            "aliased library's compiled module body must be present in the bundle:\n{}",
+            output.code
+        );
+    }
+
+    // WI #1305 R2/AC3: no-regression control -- with resolve_options.alias
+    // populated (as it always is for `jet build --nx`), an ordinary bare
+    // node_modules package import must continue to resolve exactly as
+    // before this fix, proving the new alias-consultation branch is reached
+    // only after (and does not interfere with) the pre-existing
+    // node_modules ancestor walk-up / package-root-index bare-specifier
+    // resolution strategies.
+    #[tokio::test]
+    async fn bundle_resolves_ordinary_bare_package_import_unaffected_by_alias_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        std::fs::write(
+            root.join("tsconfig.base.json"),
+            r#"{
+              "compilerOptions": {
+                "baseUrl": ".",
+                "paths": {
+                  "@operations/tech-platform-lib": ["libs/tech-platform-lib/src/index.ts"]
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let entry = write_node_builtin_fixture(
+            &root,
+            &[
+                (
+                    "entry.js",
+                    "var pkg = require('ordinary-nx-pkg');\nmodule.exports = pkg;\n",
+                ),
+                (
+                    "node_modules/ordinary-nx-pkg/index.js",
+                    "module.exports = 'ORDINARY_NX_PKG_MARKER_1305';\n",
+                ),
+            ],
+        );
+
+        let opts = nx_alias_bundle_options(&root, entry.clone());
+        let bundler = crate::bundler::Bundler::new(opts).unwrap();
+        let output = bundler.bundle(entry).await.expect(
+            "ordinary bare package import must resolve even when the alias table is populated",
+        );
+
+        assert!(
+            !output.code.contains("require('ordinary-nx-pkg')")
+                && !output.code.contains("require(\"ordinary-nx-pkg\")"),
+            "ordinary bare package import must not be left as a literal unresolved require string:\n{}",
+            output.code
+        );
+        assert!(
+            output.code.contains("ORDINARY_NX_PKG_MARKER_1305"),
+            "target package module body must be present in the bundle:\n{}",
+            output.code
+        );
+    }
+
+    // WI #1305 R3: edge case pinning the alias_entries prefix-strip-and-join
+    // arithmetic's `rest.is_empty()` branch (mirrors
+    // `resolver/mod.rs::resolve_alias`'s own `candidate = target.clone()`
+    // branch 1:1) in the presence of a second, non-matching glob alias
+    // entry in the same list -- proving the exact-key entry resolves to its
+    // single target file (no further joinable subpath segment) rather than
+    // being shadowed or mis-joined by the other entry's arithmetic.
+    #[tokio::test]
+    async fn bundle_resolves_nx_alias_exact_prefix_match_with_empty_rest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        std::fs::write(
+            root.join("tsconfig.base.json"),
+            r#"{
+              "compilerOptions": {
+                "baseUrl": ".",
+                "paths": {
+                  "@operations/tech-platform-lib": ["libs/tech-platform-lib/src/index.ts"],
+                  "@operations/tech-platform-mock/*": ["libs/tech-platform-mock/src/*"]
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let entry = write_node_builtin_fixture(
+            &root,
+            &[
+                (
+                    "entry.ts",
+                    "import { platformValue } from '@operations/tech-platform-lib';\nexport const x = platformValue;\n",
+                ),
+                (
+                    "libs/tech-platform-lib/src/index.ts",
+                    "export const platformValue = 'NX_ALIAS_EXACT_PREFIX_MARKER';\n",
+                ),
+            ],
+        );
+
+        let opts = nx_alias_bundle_options(&root, entry.clone());
+        let bundler = crate::bundler::Bundler::new(opts).unwrap();
+        let output = bundler
+            .bundle(entry)
+            .await
+            .expect("exact-prefix-match alias with an empty rest segment must resolve");
+
+        assert!(
+            !output.code.contains("require('@operations/tech-platform-lib')")
+                && !output
+                    .code
+                    .contains("require(\"@operations/tech-platform-lib\")"),
+            "exact-prefix alias import must not be left as a literal unresolved require string:\n{}",
+            output.code
+        );
+        assert!(
+            output.code.contains("NX_ALIAS_EXACT_PREFIX_MARKER"),
+            "alias target entry file's compiled body must be present in the bundle:\n{}",
+            output.code
+        );
+    }
+
+    // WI #1305 R4: isolated unit-level pin (not full pipeline) on
+    // ModuleResolutionIndex::from_module_map_and_aliases and the new
+    // alias-consultation branch in resolve_module_path, proving prior
+    // fallback behavior is preserved on a miss: a resolution_index built
+    // with a non-empty alias_entries list, resolved against a bare
+    // specifier that does not match any alias prefix, must fall through to
+    // the pre-existing final literal require('<spec>') string exactly as
+    // before this fix, and from_module_map (empty alias_entries) must
+    // behave identically for the same specifier -- pinning that the new
+    // field/branch is purely additive.
+    #[test]
+    fn resolve_module_path_alias_miss_falls_through_to_unresolved_literal() {
+        let module_map: HashMap<PathBuf, usize> = HashMap::new();
+        let alias_entries = vec![(
+            "@operations/tech-platform-lib".to_string(),
+            PathBuf::from("/workspace/libs/tech-platform-lib/src/index.ts"),
+        )];
+        let with_alias =
+            ModuleResolutionIndex::from_module_map_and_aliases(&module_map, &alias_entries);
+        let without_alias = ModuleResolutionIndex::from_module_map(&module_map);
+
+        let specifier = "@some/unrelated-package";
+
+        let resolved_with_alias =
+            resolve_module_path(specifier, &module_map, Some(&with_alias), None);
+        let resolved_without_alias =
+            resolve_module_path(specifier, &module_map, Some(&without_alias), None);
+
+        assert_eq!(
+            resolved_with_alias,
+            format!("require('{}')", specifier),
+            "a non-matching specifier must fall through to the literal unresolved require string even when alias_entries is non-empty: {resolved_with_alias}"
+        );
+        assert_eq!(
+            resolved_with_alias, resolved_without_alias,
+            "an alias-miss must resolve identically whether or not alias_entries is populated: {resolved_with_alias} vs {resolved_without_alias}"
         );
     }
 }
