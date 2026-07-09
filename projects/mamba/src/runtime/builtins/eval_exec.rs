@@ -499,8 +499,15 @@ struct ExecFrameScope {
 }
 
 #[derive(Clone)]
+struct ExecParam {
+    name: String,
+    kind: crate::parser::ast::ParamKind,
+    kw_only: bool,
+}
+
+#[derive(Clone)]
 struct ExecFunction {
-    params: Vec<String>,
+    params: Vec<ExecParam>,
     defaults: Vec<Option<MbValue>>,
     body: Vec<crate::source::span::Spanned<crate::parser::ast::Stmt>>,
 }
@@ -1190,7 +1197,7 @@ fn exec_collect_scope_declarations(
 }
 
 fn exec_function_scope(
-    params: &[String],
+    params: &[ExecParam],
     body: &[crate::source::span::Spanned<crate::parser::ast::Stmt>],
 ) -> ExecFrameScope {
     let mut assigned = Vec::new();
@@ -1202,7 +1209,8 @@ fn exec_function_scope(
     let mut declared_nonlocals = HashSet::new();
     exec_collect_scope_declarations(body, &mut declared_globals, &mut declared_nonlocals);
 
-    let mut local_bindings: HashSet<String> = params.iter().cloned().collect();
+    let mut local_bindings: HashSet<String> =
+        params.iter().map(|param| param.name.clone()).collect();
     for name in assigned {
         if !declared_globals.contains(&name) && !declared_nonlocals.contains(&name) {
             local_bindings.insert(name);
@@ -2294,25 +2302,70 @@ fn exec_eval_dict_comp(
 }
 
 fn exec_call_function(ctx: &mut ExecContext, func: &ExecFunction, args: &[MbValue]) -> MbValue {
-    if args.len() > func.params.len() {
+    let positional_capacity = func
+        .params
+        .iter()
+        .filter(|param| {
+            matches!(param.kind, crate::parser::ast::ParamKind::Regular) && !param.kw_only
+        })
+        .count();
+    let has_star = func
+        .params
+        .iter()
+        .any(|param| matches!(param.kind, crate::parser::ast::ParamKind::Star));
+    if !has_star && args.len() > positional_capacity {
         exec_raise_type_error(format!(
             "function takes {} arguments but {} were given",
-            func.params.len(),
+            positional_capacity,
             args.len()
         ));
         return MbValue::none();
     }
     let mut frame = FxHashMap::default();
+    let mut arg_index = 0usize;
     for (idx, param) in func.params.iter().enumerate() {
-        let value = if let Some(value) = args.get(idx) {
-            *value
-        } else if let Some(Some(default)) = func.defaults.get(idx) {
-            *default
-        } else {
-            exec_raise_type_error(format!("missing required argument: '{param}'"));
-            return MbValue::none();
+        let value = match param.kind {
+            crate::parser::ast::ParamKind::Regular => {
+                if !param.kw_only {
+                    if let Some(value) = args.get(arg_index) {
+                        arg_index += 1;
+                        *value
+                    } else if let Some(Some(default)) = func.defaults.get(idx) {
+                        *default
+                    } else {
+                        exec_raise_type_error(format!(
+                            "missing required argument: '{}'",
+                            param.name
+                        ));
+                        return MbValue::none();
+                    }
+                } else if let Some(Some(default)) = func.defaults.get(idx) {
+                    *default
+                } else {
+                    exec_raise_type_error(format!("missing required argument: '{}'", param.name));
+                    return MbValue::none();
+                }
+            }
+            crate::parser::ast::ParamKind::Star => {
+                let remaining_positional = func.params[idx + 1..]
+                    .iter()
+                    .filter(|later| {
+                        matches!(later.kind, crate::parser::ast::ParamKind::Regular)
+                            && !later.kw_only
+                    })
+                    .count();
+                if args.len() < arg_index + remaining_positional {
+                    exec_raise_type_error(format!("missing required argument: '{}'", param.name));
+                    return MbValue::none();
+                }
+                let take = args.len().saturating_sub(arg_index + remaining_positional);
+                let star_args = args[arg_index..arg_index + take].to_vec();
+                arg_index += take;
+                MbValue::from_ptr(MbObject::new_tuple(star_args))
+            }
+            crate::parser::ast::ParamKind::DoubleStar => crate::runtime::dict_ops::mb_dict_new(),
         };
-        frame.insert(param.clone(), value);
+        frame.insert(param.name.clone(), value);
     }
     ctx.frames.push(exec_new_frame(frame));
     ctx.frame_scopes
@@ -2562,10 +2615,14 @@ fn exec_eval_expr(ctx: &mut ExecContext, expr: &crate::parser::ast::Expr) -> MbV
             MbValue::from_bool(true)
         }
         Expr::Lambda { params, body } => {
-            let mut param_names = Vec::with_capacity(params.len());
+            let mut exec_params = Vec::with_capacity(params.len());
             let mut defaults = Vec::with_capacity(params.len());
             for param in params {
-                param_names.push(param.name.clone());
+                exec_params.push(ExecParam {
+                    name: param.name.clone(),
+                    kind: param.kind,
+                    kw_only: param.kw_only,
+                });
                 let default = match &param.default {
                     Some(default) => {
                         let value = exec_eval_expr(ctx, &default.node);
@@ -2579,7 +2636,7 @@ fn exec_eval_expr(ctx: &mut ExecContext, expr: &crate::parser::ast::Expr) -> MbV
                 defaults.push(default);
             }
             let function = ExecFunction {
-                params: param_names,
+                params: exec_params,
                 defaults,
                 body: vec![crate::source::span::Spanned::new(
                     crate::parser::ast::Stmt::Return(Some((**body).clone())),
@@ -3164,10 +3221,14 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
             body,
             ..
         } => {
-            let mut param_names = Vec::with_capacity(params.len());
+            let mut exec_params = Vec::with_capacity(params.len());
             let mut defaults = Vec::with_capacity(params.len());
             for param in params {
-                param_names.push(param.name.clone());
+                exec_params.push(ExecParam {
+                    name: param.name.clone(),
+                    kind: param.kind,
+                    kw_only: param.kw_only,
+                });
                 let default = match &param.default {
                     Some(default) => {
                         let value = exec_eval_expr(ctx, &default.node);
@@ -3187,7 +3248,7 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                 return ExecFlow::Normal;
             };
             let function = ExecFunction {
-                params: param_names,
+                params: exec_params,
                 defaults,
                 body: body.clone(),
             };
@@ -3261,10 +3322,14 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
             ..
         } => {
             if decorators.is_empty() {
-                let mut param_names = Vec::with_capacity(params.len());
+                let mut exec_params = Vec::with_capacity(params.len());
                 let mut defaults = Vec::with_capacity(params.len());
                 for param in params {
-                    param_names.push(param.name.clone());
+                    exec_params.push(ExecParam {
+                        name: param.name.clone(),
+                        kind: param.kind,
+                        kw_only: param.kw_only,
+                    });
                     let default = match &param.default {
                         Some(default) => {
                             let value = exec_eval_expr(ctx, &default.node);
@@ -3285,7 +3350,7 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                 };
                 exec_commit_temporary_names(ctx, annotation_type_params);
                 let function = ExecFunction {
-                    params: param_names,
+                    params: exec_params,
                     defaults,
                     body: body.clone(),
                 };
@@ -5056,6 +5121,56 @@ mod tests {
             Some(false),
             "failed decorated generic function should not bind the function"
         );
+    }
+
+    #[test]
+    fn test_exec_generic_fn_star_param_named_like_type_param_packs_tuple() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(
+            MbValue::from_ptr(MbObject::new_str(
+                "def func[A](*A):\n    return A\n".to_string(),
+            )),
+            globals,
+        );
+
+        assert_eq!(
+            crate::runtime::exception::mb_has_exception().as_bool(),
+            Some(false)
+        );
+
+        let func = crate::runtime::dict_ops::mb_dict_get(
+            globals,
+            MbValue::from_ptr(MbObject::new_str("func".to_string())),
+            MbValue::none(),
+        );
+        let result = mb_call_spread(
+            func,
+            MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(1)])),
+        );
+        let items = extract_items(result);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].as_int(), Some(1));
+
+        let type_params = crate::runtime::class::mb_getattr(
+            func,
+            MbValue::from_ptr(MbObject::new_str("__type_params__".to_string())),
+        );
+        let params = extract_items(type_params);
+        assert_eq!(params.len(), 1);
+        let name = crate::runtime::class::mb_getattr(
+            params[0],
+            MbValue::from_ptr(MbObject::new_str("__name__".to_string())),
+        );
+        let name_text = name.as_ptr().and_then(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::Str(value) => Some(value.clone()),
+                _ => None,
+            }
+        });
+        assert_eq!(name_text.as_deref(), Some("A"));
     }
 
     #[test]
