@@ -6764,7 +6764,7 @@ fn yaml_safe(s: &str) -> String {
 
 fn starter_spec_rel_for_source(rel: &str) -> String {
     let parts: Vec<&str> = rel.split('/').collect();
-    if parts.len() >= 4 && matches!(parts[0], "crates" | "projects") {
+    if parts.len() >= 4 && matches!(parts[0], "crates" | "projects" | "apps") {
         let root = parts[0];
         let crate_name = parts[1];
         let kind = parts[2];
@@ -6786,7 +6786,7 @@ fn starter_spec_rel_for_source(rel: &str) -> String {
 }
 
 fn starter_spec_base(root: &str, crate_name: &str) -> String {
-    if root == "projects" && crate_name == "agentic-workflow" {
+    if matches!(root, "projects" | "apps") && crate_name == "agentic-workflow" {
         "apps/agentic-workflow/tech-design/core".to_string()
     } else {
         format!(".aw/tech-design/{root}/{crate_name}")
@@ -6795,7 +6795,7 @@ fn starter_spec_base(root: &str, crate_name: &str) -> String {
 
 fn starter_spec_rel_for_crate_src(root: &str, crate_name: &str, rest: &[&str]) -> Option<String> {
     let module = rest.first()?;
-    if root == "projects" && crate_name == "agentic-workflow" && *module == "cli" {
+    if matches!(root, "projects" | "apps") && crate_name == "agentic-workflow" && *module == "cli" {
         let rel = if rest.len() > 1 {
             rest[1..].join("/")
         } else {
