@@ -47,3 +47,33 @@ edges:
   - { from: exempttest, to: effect }
 ---
 ```
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-sandbox-runner-coverage.schema.json"
+title: "Runner-mode sandbox coverage: proof surface"
+type: object
+properties:
+  already_wired:
+    type: array
+    items: { type: string }
+    description: "Runner-mode call sites that already resolve through sandbox::pick (Result, fail-closed per #1300) and sandbox_wrap: spawn_runner_process (runner.cmd), run_setup_step (step.cmd)."
+  intentionally_unwrapped:
+    type: array
+    items: { type: string }
+    description: "vat-spawned services that must never be passed through sandbox_wrap: start_service (emulator/proxy spawns) — kept RAW so they retain network."
+  fail_closed:
+    type: object
+    description: "sandbox::pick's Result<Box<dyn Sandbox>, String> contract (issue #1300): isolation=none + non-Open egress errors; seatbelt requested + unavailable + non-Open egress errors; both propagate via `.map_err(anyhow::Error::msg)?` at every call site, runner-mode included."
+    properties:
+      ok: { type: string, description: "Box<dyn Sandbox> backend to thread into sandbox_wrap at runner/setup/service call sites." }
+      err: { type: string, description: "String explaining why the requested isolation/egress combination cannot be enforced; propagated, never downgraded." }
+  new_test_coverage:
+    type: array
+    items: { type: string }
+    description: "Regression proof this WI adds: (1) a runner-mode command with EgressPolicy::Deny is denied outbound network the same way direct-mode already is; (2) a service spawned in the same run still reaches the network under EgressPolicy::Deny, confirming the exemption is intentional."
+additionalProperties: true
+```
