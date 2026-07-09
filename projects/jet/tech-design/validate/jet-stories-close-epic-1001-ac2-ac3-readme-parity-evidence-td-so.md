@@ -204,3 +204,40 @@ flowchart TD
     r5[R5 parity fixture preserves source semantics] --> cargo_test_p_jet_test_stories_parity_fixture_nocapture[cargo test -p jet --test stories_parity_fixture -- --nocapture]
     r6[R6 no stale pre epic only gate inventory remains] --> aw_capability_report_project_jet[aw capability report --project jet]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/jet/README.md
+    action: update
+    section: config
+    impl_mode: hand-written
+    reason: "Rewrite the Component Workbench (Stories) summary row and detailed Promise/Gate Inventory/EC Dimensions block to enumerate the full shipped parity surface (decorators/parameters/globals/loaders/autodocs, controls, toolbar, measure/outline/highlight, actions, interactions/play, a11y, story source, MDX, manager UX, index.json, headless test runner) citing the six concrete test paths captured in this TD's Config section, replacing the stale pre-epic-1001 5-test Gate Inventory."
+  - path: projects/jet/tech-design/semantic/jet-stories.md
+    action: update
+    section: config
+    impl_mode: hand-written
+    reason: "Add mdx.rs and optimizer.rs entries to the schema section's source_units list (path/language/ownership_state/generator_primitives/symbols/source_evidence_node, matching the existing csf.rs/manager.rs entry shape), closing AC2."
+  - path: projects/jet/tests/stories/fixtures/parity/Widget.tsx
+    action: create
+    section: config
+    impl_mode: hand-written
+    reason: "Minimal React component fixture exposing a props surface (a string label prop + a numeric count prop) for the parity fixture's argTypes override and Controls-panel exercise."
+  - path: projects/jet/tests/stories/fixtures/parity/Widget.stories.tsx
+    action: create
+    section: config
+    impl_mode: hand-written
+    reason: "CSF story file for Widget.tsx: default-export meta with a decorator (wrapping preview markup) and an Interactive named-export story carrying an argTypes override plus a play() interaction, combining the three feature areas the epic #1001 external Storybook oracle harness alone previously covered."
+  - path: projects/jet/tests/stories/fixtures/parity/Widget.mdx
+    action: create
+    section: config
+    impl_mode: hand-written
+    reason: "MDX docs page wired to the Interactive story via a Story doc-block reference, giving in-repo evidence that decorators + play + argTypes + MDX compile and wire together for one story, closing the epic #1001 AC2 in-repo-evidence gap without an external Storybook install."
+  - path: projects/jet/tests/stories_parity_fixture.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Verifying test asserting build_stories_static compiles the Widget parity fixture with zero diagnostics, the emitted static module preserves the decorators/argTypes/play() source text verbatim, and the MDX docs page's compiled output resolves to the Interactive story — the concrete proof for AC3 and requirements R3-R5."
+```
