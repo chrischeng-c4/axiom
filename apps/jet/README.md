@@ -431,6 +431,7 @@ EC Dimensions:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Move root layout meta doc into scoped architecture documentation | change | #1169 | implemented | verified | smoke | `projects/jet/docs/architecture/layout.md` exists with the preserved path-role map and naming conventions; `projects/jet/LAYOUT.md` removed; README Source map row repointed — see `projects/jet/tech-design/logic/move-root-layout-meta-doc-into-scoped-architecture-documentation.md` |
+| Rebrand jet docs site and nav-link orphaned design notes | change | #1083 | planned | pending | smoke | `projects/jet/docs/index.md` hero/features, `.vitepress/config.mjs` title, and `package.json` name carry jet identity (no `cclab` branding, no non-jet placeholder features); every pre-existing hand-written design-note markdown file under `projects/jet/docs/` that the doc-relocation left unlinked is reachable from the VitePress nav/sidebar — see `projects/jet/tech-design/logic/jet-docs-site-carries-cclab-era-branding-after-move-to-projects.md` |
 
 ### Jet Agent-Facing CLI Standard Commands
 
