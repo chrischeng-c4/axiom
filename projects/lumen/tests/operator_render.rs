@@ -6,6 +6,8 @@
 //! probes, owner refs, Lumen-owned raft wiring, and observability toggles.
 #![cfg(feature = "operator")]
 
+use std::collections::BTreeMap;
+
 use kube::api::ObjectMeta;
 use lumen::operator::crd::{
     AuthMode, Autoscaling, LogFormat, ReshardPhase, ReshardPolicy, ReshardWorkflowSpec,
@@ -541,6 +543,80 @@ fn reshard_status_tracks_workflow_phases_with_capacity_policy() {
 }
 
 #[test]
+fn reshard_status_with_usage_falls_back_without_capacity_ceiling() {
+    // #1319 R1: `maxShardBytes` unset (recommendation-only) means there is
+    // nothing to compare usage against — falls straight back to
+    // `reshard_status()`, `maxObservedPercent` stays `None`.
+    let spec = dev_spec();
+    let mut usage = BTreeMap::new();
+    usage.insert(0u32, 999_999_999u64);
+    let status = spec.reshard_status_with_usage(&usage);
+    assert_eq!(status, spec.reshard_status());
+    assert_eq!(status.max_observed_percent, None);
+}
+
+#[test]
+fn reshard_status_with_usage_falls_back_when_usage_not_measured_yet() {
+    // Policy configured, but no usage sample yet this tick (empty map).
+    let mut spec = dev_spec();
+    spec.reshard_policy.max_shard_bytes = Some(1_000_000);
+    let status = spec.reshard_status_with_usage(&BTreeMap::new());
+    assert_eq!(status.max_observed_percent, None);
+    assert_eq!(status, spec.reshard_status());
+}
+
+#[test]
+fn reshard_status_with_usage_below_prepare_threshold() {
+    let mut spec = dev_spec();
+    spec.reshard_policy.max_shard_bytes = Some(1_000_000);
+    // Defaults: prepare 50%, urgent 85%.
+    let mut usage = BTreeMap::new();
+    usage.insert(0u32, 100_000u64); // 10%
+    let status = spec.reshard_status_with_usage(&usage);
+    assert_eq!(status.max_observed_percent, Some(10));
+    assert!(status.blocking_conditions.is_empty());
+    assert!(status.message.contains("below prepare threshold"));
+}
+
+#[test]
+fn reshard_status_with_usage_reports_prepare_threshold_crossed() {
+    let mut spec = dev_spec();
+    spec.reshard_policy.max_shard_bytes = Some(1_000_000);
+    let mut usage = BTreeMap::new();
+    usage.insert(0u32, 600_000u64); // 60%: past prepare(50), below urgent(85)
+    let status = spec.reshard_status_with_usage(&usage);
+    assert_eq!(status.max_observed_percent, Some(60));
+    assert_eq!(status.blocking_conditions, vec!["prepareThresholdCrossed"]);
+    assert!(status.message.contains("prepare threshold crossed"));
+}
+
+#[test]
+fn reshard_status_with_usage_reports_urgent_threshold_crossed() {
+    let mut spec = dev_spec();
+    spec.reshard_policy.max_shard_bytes = Some(1_000_000);
+    let mut usage = BTreeMap::new();
+    usage.insert(0u32, 900_000u64); // 90%: past urgent(85)
+    let status = spec.reshard_status_with_usage(&usage);
+    assert_eq!(status.max_observed_percent, Some(90));
+    assert_eq!(status.blocking_conditions, vec!["urgentThresholdCrossed"]);
+    assert!(status.message.contains("urgent threshold crossed"));
+}
+
+#[test]
+fn reshard_status_with_usage_picks_the_busiest_shard() {
+    let mut spec = dev_spec();
+    spec.shard_count = 3;
+    spec.reshard_policy.max_shard_bytes = Some(1_000_000);
+    let mut usage = BTreeMap::new();
+    usage.insert(0u32, 100_000u64);
+    usage.insert(1u32, 950_000u64); // busiest: 95%, urgent
+    usage.insert(2u32, 400_000u64);
+    let status = spec.reshard_status_with_usage(&usage);
+    assert_eq!(status.max_observed_percent, Some(95));
+    assert!(status.message.contains("shard 1"));
+}
+
+#[test]
 fn shard_map_assignments_are_exposed_to_serving_config() {
     let mut spec = dev_spec();
     spec.shard_count = 2;
@@ -647,6 +723,35 @@ fn crd_yaml_emits_lumen_definition() {
             "CRD should publish token registry shape in tokensSecret docs; missing `{needle}`: {yaml}"
         );
     }
+}
+
+#[test]
+fn crd_schema_reshard_recommendation_only_default_matches_runtime_default() {
+    // #1319 R3: the declared schema default for `status.reshard.recommendationOnly`
+    // must agree with the runtime default (`ReshardPolicy::default().max_shard_bytes
+    // .is_none() == true`, i.e. `LumenSpec::default().reshard_status()
+    // .recommendation_only == true` — see `dev_spec()`/`prod_spec()`, neither of
+    // which set `maxShardBytes`), not `bool::default()` (`false`).
+    let spec = dev_spec();
+    assert!(
+        spec.reshard_status().recommendation_only,
+        "runtime default: recommendationOnly should be true when maxShardBytes is unset"
+    );
+
+    let yaml = lumen::operator::crd_yaml();
+    let doc: serde_yaml::Value = serde_yaml::from_str(&yaml).expect("valid CRD yaml");
+    let versions = doc["spec"]["versions"].as_sequence().expect("versions");
+    let v1alpha1 = versions
+        .iter()
+        .find(|v| v["name"] == "v1alpha1")
+        .expect("v1alpha1 version");
+    let recommendation_only = &v1alpha1["schema"]["openAPIV3Schema"]["properties"]["status"]
+        ["properties"]["reshard"]["properties"]["recommendationOnly"];
+    assert_eq!(
+        recommendation_only["default"],
+        serde_yaml::Value::Bool(true),
+        "declared schema default must match the runtime default: {yaml}"
+    );
 }
 
 #[test]
