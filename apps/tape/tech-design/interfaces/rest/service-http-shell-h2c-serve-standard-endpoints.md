@@ -17,7 +17,65 @@ fill_sections: [logic, unit-test, changes]
 <!-- type: logic lang: mermaid -->
 
 ```mermaid
-(fill)
+---
+id: tape-service-http-shell-flow
+entry: boot
+nodes:
+  boot:
+    kind: start
+    label: "serve_main: parse ServeArgs (--bind/TAPE_BIND, --store/TAPE_STORE, --grace-secs/TAPE_GRACE_SECS default 10); init tracing (RUST_LOG wins, else info EnvFilter)"
+  state:
+    kind: process
+    label: "AppState::new: load TapeJournal from --store (or empty) behind std::sync::Mutex + Arc<TapeMetrics> + draining AtomicBool; AppState implements service_http::ReadinessHook and MetricsProvider"
+  build:
+    kind: process
+    label: "router(): topic data plane (append/replay/checkpoint) with route_layer(metrics::track) merged onto service_http::standard_probe_routes(state, Some(metrics), crate::openapi::openapi); outer service_http::trace_layer()"
+  serve:
+    kind: process
+    label: "service_http::serve(listener, app, shutdown_with_drain(start_drain, grace)) -- HTTP/1.1 + h2c on the one serve port"
+  req:
+    kind: decision
+    label: "Request arrives: probe route or /topics data plane?"
+  probes:
+    kind: process
+    label: "/healthz 200; /readyz 200 or 503 when ReadinessHook::is_draining; /metrics renders TapeMetrics through MetricsProvider; /openapi.json + /docs from crate::openapi::openapi"
+  data:
+    kind: process
+    label: "Handler locks the journal Mutex, calls TapeJournal::append/replay/put_checkpoint/checkpoint (unchanged lib.rs API), persists to --store on mutation, encodes JSON; decode/validation errors return ApiErr 400 bad_request, domain errors (stale/beyond-end checkpoint) return ApiErr 409 conflict"
+  track:
+    kind: process
+    label: "metrics::track route_layer middleware: map the matched route pattern to its op family (append/replay/checkpoint_get/checkpoint_put/other) and observe count + latency ms into TapeMetrics (service-metrics Latency primitives)"
+  sigterm:
+    kind: process
+    label: "SIGTERM or SIGINT: start_drain flips the draining AtomicBool so /readyz reports 503, the grace window holds, then the listener closes"
+  done:
+    kind: terminal
+    label: "Response returned on the same port; every error body is the shared {error, message} envelope"
+edges:
+  - { from: boot, to: state }
+  - { from: state, to: build }
+  - { from: build, to: serve }
+  - { from: serve, to: req, label: "request accepted" }
+  - { from: req, to: probes, label: "probe route" }
+  - { from: req, to: data, label: "/topics/{topic}/* route" }
+  - { from: data, to: track, label: "response recorded" }
+  - { from: probes, to: done }
+  - { from: track, to: done }
+  - { from: serve, to: sigterm, label: "shutdown signal" }
+  - { from: sigterm, to: done, label: "grace expired" }
+---
+flowchart TD
+    boot([serve_main: flags + tracing init]) --> state[AppState: journal + TapeMetrics + draining bool]
+    state --> build[router: standard probes merged with topics data plane + trace_layer]
+    build --> serve[service_http serve: h2c + HTTP/1.1 one port]
+    serve --> req{Probe or data plane?}
+    req -->|probe| probes[healthz readyz metrics openapi.json docs]
+    req -->|topics| data[lock journal, run TapeJournal op, encode; errors = ApiErr envelope]
+    data --> track[metrics track: per-op count + latency into TapeMetrics]
+    probes --> done([response])
+    track --> done
+    serve -->|SIGTERM| sigterm[start_drain: readyz 503, grace window, close]
+    sigterm --> done
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
