@@ -293,3 +293,85 @@ mod token_tests {
     }
 }
 // CODEGEN-END
+
+// SPEC-MANAGED: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#logic
+// HANDWRITE-BEGIN gap="cli-std-logic-flowchart-patch-fn" tracker="#1320" reason="the generic Mermaid-flowchart-to-Rust generator only synthesizes one brand-new function per diagram with todo!() bodies; it cannot target insertions into existing named functions, so resolve_courier_url()/resolve_courier_token() are hand-written to mirror resolve_github_token()'s env-resolution pattern exactly."
+/// Resolve the courier proxy URL from `$AXIOM_COURIER_URL`. Returns `None`
+/// when unset or blank (mirrors `resolve_github_token()`'s blank-counts-as-
+/// unset convention). When `Some`, `issue::{search,view,create,comment}`
+/// route through courier's `/v1/issues/...` endpoints instead of calling
+/// `api.github.com` directly.
+#[cfg(feature = "online")]
+/// @spec libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#logic
+pub(crate) fn resolve_courier_url() -> Option<String> {
+    resolve_courier_url_from(|var| std::env::var(var).ok())
+}
+
+/// Pure resolution (env lookup injected for testing): trim `$AXIOM_COURIER_URL`,
+/// `None` when unset or blank.
+#[cfg(feature = "online")]
+fn resolve_courier_url_from(env: impl Fn(&str) -> Option<String>) -> Option<String> {
+    env("AXIOM_COURIER_URL").and_then(|v| {
+        let v = v.trim().to_string();
+        (!v.is_empty()).then_some(v)
+    })
+}
+
+/// Resolve the courier proxy bearer token from `$AXIOM_COURIER_TOKEN`.
+/// Returns `None` when unset or blank. Sent as `Authorization: Bearer
+/// <token>` to courier -- this is the courier-issued client credential, not
+/// a personal GitHub token.
+#[cfg(feature = "online")]
+/// @spec libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#logic
+pub(crate) fn resolve_courier_token() -> Option<String> {
+    resolve_courier_token_from(|var| std::env::var(var).ok())
+}
+
+/// Pure resolution (env lookup injected for testing): trim `$AXIOM_COURIER_TOKEN`,
+/// `None` when unset or blank.
+#[cfg(feature = "online")]
+fn resolve_courier_token_from(env: impl Fn(&str) -> Option<String>) -> Option<String> {
+    env("AXIOM_COURIER_TOKEN").and_then(|v| {
+        let v = v.trim().to_string();
+        (!v.is_empty()).then_some(v)
+    })
+}
+
+#[cfg(all(test, feature = "online"))]
+mod courier_tests {
+    use super::{resolve_courier_token_from, resolve_courier_url_from};
+
+    #[test]
+    fn resolve_courier_url_returns_some_when_env_set() {
+        let got = resolve_courier_url_from(|v| {
+            (v == "AXIOM_COURIER_URL").then(|| "  https://courier.internal  ".to_string())
+        });
+        assert_eq!(got.as_deref(), Some("https://courier.internal"));
+    }
+
+    #[test]
+    fn resolve_courier_url_returns_none_when_env_unset_or_blank() {
+        assert_eq!(resolve_courier_url_from(|_| None), None);
+        let blank =
+            resolve_courier_url_from(|v| (v == "AXIOM_COURIER_URL").then(|| "   ".to_string()));
+        assert_eq!(blank, None);
+    }
+
+    #[test]
+    fn resolve_courier_token_returns_some_when_env_set() {
+        let got = resolve_courier_token_from(|v| {
+            (v == "AXIOM_COURIER_TOKEN").then(|| " secret-token ".to_string())
+        });
+        assert_eq!(got.as_deref(), Some("secret-token"));
+    }
+
+    #[test]
+    fn resolve_courier_token_returns_none_when_env_unset_or_blank() {
+        assert_eq!(resolve_courier_token_from(|_| None), None);
+        let blank = resolve_courier_token_from(|v| {
+            (v == "AXIOM_COURIER_TOKEN").then(|| "".to_string())
+        });
+        assert_eq!(blank, None);
+    }
+}
+// HANDWRITE-END

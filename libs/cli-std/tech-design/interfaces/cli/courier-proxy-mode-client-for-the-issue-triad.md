@@ -127,11 +127,11 @@ changes:
   - path: libs/cli-std/tech-design/semantic/source/libs-cli-std-src-lib-rs.md
     action: modify
     section: source
-    impl_mode: codegen
-    description: "Regenerate the rust-source-unit mirror for lib.rs so it includes resolve_courier_url()/resolve_courier_token() after aw td gen/fill."
+    impl_mode: hand-written
+    description: "gap=cli-std-rust-source-unit-mirror-sync tracker=#1320 reason: aw td gen SKIPped this change (no generator matches the .md extension + source section combination -- there is no automated rust-source-to-markdown-mirror generator for rust-source-unit TDs). Hand-synced the ## Source fenced block to the current, full, byte-identical content of libs/cli-std/src/lib.rs (verified clean via aw td code-check -- also fixed pre-existing unrelated drift in this mirror that predated this WI)."
   - path: libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md
     action: modify
     section: source
-    impl_mode: codegen
-    description: "Regenerate the rust-source-unit mirror for issue.rs so it includes the courier-proxy branches in search/view/create/comment after aw td gen/fill."
+    impl_mode: hand-written
+    description: "gap=cli-std-rust-source-unit-mirror-sync tracker=#1320 reason: same generator gap as the lib.rs mirror above. Hand-synced the ## Source fenced block to the current, full, byte-identical content of libs/cli-std/src/issue.rs, including the new courier-proxy branches in search/view/create/comment (verified clean via aw td code-check)."
 ```
