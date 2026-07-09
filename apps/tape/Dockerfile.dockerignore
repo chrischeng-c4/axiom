@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:ab7ad917" tracker="pending-tracker" reason="Trimmed build context for the repo-root-context Dockerfile builds (target, target-linux, .git, node_modules, markdown, pkg), mirroring relay's dockerignore."
+// TODO: hand-write content for `apps/tape/Dockerfile.dockerignore`.
+// HANDWRITE-END
