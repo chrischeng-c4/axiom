@@ -92,3 +92,16 @@ properties:
     description: "No new vat.toml or CLI flag. Reuses the existing --isolation flag and [network].egress from vat.toml; this WI does not add config, it closes the remaining regression-proof and doc-reconciliation gap for coverage that already applies --isolation/[network].egress to runner-mode commands (spawn_runner_process, run_setup_step) via the fail-closed sandbox::pick (#1300) + sandbox_wrap path, while start_service spawns stay intentionally unwrapped."
 additionalProperties: true
 ```
+
+## CLI
+<!-- type: cli lang: yaml -->
+
+```yaml
+commands:
+  - name: vat run
+    behavior:
+      - "No new flags. `--isolation seatbelt` and `[network].egress` already confine runner/step commands identically to `vat run -- <cmd>` (spawn_runner_process / run_setup_step both call sandbox_wrap(backend, rootfs, cmd) before command_with_logs)."
+      - "sandbox::pick(spec) is called once per `vat run` and now returns Result<Box<dyn Sandbox>, String> (issue #1300, fail-closed); run_configured propagates its Err via `.map_err(anyhow::Error::msg)?` before any service or runner work starts — an unenforceable isolation/egress combination aborts the whole run instead of silently degrading."
+      - "Service/emulator spawns (start_service) remain unwrapped by sandbox_wrap — they keep network to serve/forward regardless of --isolation/[network].egress. This WI adds an explicit test proving that exemption is intentional, not an oversight."
+      - "`--isolation none` (default) is unchanged."
+```
