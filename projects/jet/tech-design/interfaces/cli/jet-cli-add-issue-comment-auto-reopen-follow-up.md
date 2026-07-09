@@ -233,3 +233,25 @@ flowchart TD
     r5[R5 no duplicated github api logic in jet] --> rg_n_reqwest_http_client_github_com_repos_projects_jet_src_standard_cli_rs[! rg -n "reqwest::|http_client\(|github\.com/repos" projects/jet/src/standard_cli.rs]
     r6[R6 release build type checks comment path] --> cargo_build_p_jet_release[cargo build -p jet --release]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/jet/src/standard_cli.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Adds the `comment` subcommand to issue_command() (number/dry-run/message args) and the comment dispatch arm in run_issue() that builds cli_std::issue::CommentOptions and calls cli_std::issue::comment(&TOOL, opts); no GitHub API logic is duplicated in jet. Landed ahead of this TD (commit 97b7f320fa) per standard aw-td-writer retroactive-documentation practice for already-shipped code; this TD formalizes and capability-tracks it under WI #928."
+  - path: projects/jet/src/standard_cli.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Adds a new #[tokio::test] issue_comment_dry_run_returns_ok_without_network_credential to the existing `mod tests`, invoking run_issue on a parsed `issue comment <n> --dry-run` ArgMatches with GITHUB_TOKEN/GH_TOKEN unset and asserting Ok(()); closes R3 (dry-run wiring proof) and helps prove R6 (comment path type-checks in a release build). Not yet applied as of TD authoring; scoped for the handwrite fill step."
+  - path: projects/jet/README.md
+    action: update
+    section: config
+    impl_mode: hand-written
+    reason: "Registers the jet-cli-standard-commands capability (Capability Index row + H3 field-style contract + work-root table row for WI #928) so the comment auto-reopen follow-up is capability-tracked; already applied ahead of this TD per standard aw-td-writer capability-registration practice."
+```
