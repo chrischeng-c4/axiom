@@ -2,16 +2,22 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-08T05:47:10.019671+00:00"
-digest = "sha256:a6cdea798cab15874d52b54d0c78ecee4bb95d8edf69370df7e9dd5fa369342a"
-source_digest = "sha256:a6cdea798cab15874d52b54d0c78ecee4bb95d8edf69370df7e9dd5fa369342a"
-ir_digest = "sha256:b375efb2cfafdce975011d168c2a3c0feee1e2eeb1c54277a0014aadc6f9fe53"
+generated_at = "2026-07-09T09:43:35.609754+00:00"
+digest = "sha256:a2f19803a0133c064856dbc24277fe2ba4b304ce6c3395fac280ee4a1f914fc4"
+source_digest = "sha256:a2f19803a0133c064856dbc24277fe2ba4b304ce6c3395fac280ee4a1f914fc4"
+ir_digest = "sha256:0183d7a10e8753c0ffc1bbeeb0783c1aed0ebb57e4a1c562162682de79acfbe4"
 
 [[files]]
 path = "README.md"
 digest = "sha256:dc7fb8fe7a4210bf50824fc477078de4b62f30208e3c506f7756e1ab5c787104"
 ir_digest = "sha256:ffd60e3aff92c538315b70c3984361efaa6fab25e0af61264310a39a68b8cfcd"
 section_count = 0
+
+[[files]]
+path = "interfaces/rest/service-http-shell-h2c-serve-standard-endpoints.md"
+digest = "sha256:c07f9ef9265216014ef464a0e0d4aa5dfe01f36a2c2abcb57138a8c5e08ad6d5"
+ir_digest = "sha256:54a47ef3cff55c82145b2ced587c29a6928e915c43092bb3671217fe1fd7c5ec"
+section_count = 3
 
 [[files]]
 path = "semantic/source/apps-tape-build-rs.md"
