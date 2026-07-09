@@ -1,12 +1,27 @@
 // SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-openapi-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-//! OpenAPI 3.0 / 3.1 document model.
+//! OpenAPI 3.0 / 3.1 / 3.2 document model.
 //!
 //! A pragmatic deserialization subset: only the keywords the TypeScript
 //! generator consumes are modeled. Unknown fields are tolerated (no
 //! `deny_unknown_fields`) because real specs carry many keywords we ignore.
+//! `openapi` is deserialized as a bare `String` and never version-gated, so
+//! any `3.x` document — including 3.2 — parses without a hard compatibility
+//! check; older fixtures that omit the field entirely also still parse.
 //! 3.0 (`nullable: true`) and 3.1 (`type: ["T", "null"]`) nullability are both
 //! captured and reconciled by [`Schema::is_nullable`] / [`Schema::type_names`].
+//!
+//! OpenAPI 3.2 (RFC 10008 QUERY support) adds two path-item level keywords:
+//! - `query`: a sibling operation keyword alongside `get`/`put`/`post`/... for
+//!   the HTTP `QUERY` method (a read operation that carries a request body).
+//! - `additionalOperations`: a map of UPPERCASE HTTP method name → [`Operation`]
+//!   for methods with no dedicated keyword. Both are modeled on [`PathItem`] and
+//!   tolerated even when unused by [`crate::ir::operations::build`].
+//!
+//! [`Operation`] also captures arbitrary `x-*` vendor extensions (via
+//! `#[serde(flatten)]` into `extensions`) so the POST-twin fallback policy
+//! (`x-post-twin: <path>`) can be read back by [`crate::ir::operations`]
+//! without widening the typed schema.
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -56,6 +71,15 @@ pub struct PathItem {
     pub delete: Option<Operation>,
     #[serde(default)]
     pub patch: Option<Operation>,
+    /// OpenAPI 3.2: the `QUERY` method (RFC 10008), sibling of `get`/`post`/...
+    #[serde(default)]
+    pub query: Option<Operation>,
+    /// OpenAPI 3.2: methods with no dedicated keyword, keyed by UPPERCASE HTTP
+    /// method name (e.g. `"PURGE"`). Parsed and passed through; [`crate::ir::operations::build`]
+    /// emits an operation per entry unless the method name collides with a
+    /// keyword already handled above.
+    #[serde(rename = "additionalOperations", default)]
+    pub additional_operations: BTreeMap<String, Operation>,
     /// Path-level parameters merged into every operation under this path.
     #[serde(default)]
     pub parameters: Vec<RefOr<Parameter>>,
@@ -76,6 +100,11 @@ pub struct Operation {
     pub responses: BTreeMap<String, RefOr<Response>>,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Vendor extensions (`x-*` keys), captured verbatim. Used for the
+    /// POST-twin fallback policy's `x-post-twin: <path>` override; see
+    /// [`crate::ir::operations::OperationIR::post_twin_path`].
+    #[serde(flatten)]
+    pub extensions: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -251,6 +280,52 @@ mod tests {
         assert!(v31.is_nullable());
         assert_eq!(v30.type_names(), vec!["string".to_string()]);
         assert_eq!(v31.type_names(), vec!["string".to_string()]);
+    }
+
+    #[test]
+    fn parses_32_document_version_without_a_hard_gate() {
+        // No explicit version check exists (and none is added here): `openapi`
+        // is a bare `String`, so 3.2.x parses exactly like 3.0.x/3.1.x today.
+        let s: Spec = serde_json::from_str(
+            r##"{"openapi":"3.2.0","info":{"title":"T","version":"1"},"paths":{}}"##,
+        )
+        .unwrap();
+        assert_eq!(s.openapi, "3.2.0");
+    }
+
+    #[test]
+    fn path_item_parses_32_query_keyword_and_additional_operations() {
+        let item: PathItem = serde_json::from_str(
+            r##"{
+              "query": {"operationId": "searchPets", "responses": {"200": {"description": "ok"}}},
+              "additionalOperations": {
+                "PURGE": {"operationId": "purgePets", "responses": {"204": {"description": "no content"}}}
+              }
+            }"##,
+        )
+        .unwrap();
+        assert!(item.query.is_some());
+        assert_eq!(
+            item.query.unwrap().operation_id.as_deref(),
+            Some("searchPets")
+        );
+        assert_eq!(item.additional_operations.len(), 1);
+        assert_eq!(
+            item.additional_operations["PURGE"].operation_id.as_deref(),
+            Some("purgePets")
+        );
+    }
+
+    #[test]
+    fn operation_captures_x_post_twin_vendor_extension() {
+        let op: Operation = serde_json::from_str(
+            r##"{"operationId": "searchPets", "x-post-twin": "/pets/search", "responses": {}}"##,
+        )
+        .unwrap();
+        assert_eq!(
+            op.extensions.get("x-post-twin").and_then(|v| v.as_str()),
+            Some("/pets/search")
+        );
     }
 
     #[test]
