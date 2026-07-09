@@ -1175,6 +1175,7 @@ pub fn register() {
         ("search", dispatch_search as *const () as usize),
         ("match_", dispatch_match as *const () as usize),
         ("match", dispatch_match as *const () as usize),
+        ("prefixmatch", dispatch_match as *const () as usize),
         ("fullmatch", dispatch_fullmatch as *const () as usize),
         ("findall", dispatch_findall as *const () as usize),
         ("finditer", dispatch_finditer as *const () as usize),
@@ -1703,24 +1704,17 @@ fn reject_bad_re_args(pattern: MbValue, string: MbValue) -> bool {
             .map(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
             .unwrap_or(false)
     };
-    let raise_te = |msg: &str| {
-        super::super::exception::mb_raise(
-            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-            MbValue::from_ptr(MbObject::new_str(msg.to_string())),
-        );
-    };
-    let pat_str = is_str(pattern);
-    let pat_bytes = is_bytes(pattern);
-    if !pat_str && !pat_bytes {
-        raise_te("first argument must be string or compiled pattern");
+    if extract_pattern_str(pattern).is_none() {
+        raise_type_error("first argument must be string or compiled pattern");
         return true;
     }
-    if pat_str && is_bytes(string) {
-        raise_te("cannot use a string pattern on a bytes-like object");
+    let pat_bytes = pattern_is_bytes(pattern);
+    if !pat_bytes && is_bytes(string) {
+        raise_type_error("cannot use a string pattern on a bytes-like object");
         return true;
     }
     if pat_bytes && is_str(string) {
-        raise_te("cannot use a bytes pattern on a string-like object");
+        raise_type_error("cannot use a bytes pattern on a string-like object");
         return true;
     }
     false
@@ -1731,7 +1725,7 @@ pub fn mb_re_match(pattern: MbValue, string: MbValue) -> MbValue {
     if reject_bad_re_args(pattern, string) {
         return MbValue::none();
     }
-    let pat = match extract_str(pattern) {
+    let pat = match extract_pattern_str(pattern) {
         Some(s) => s,
         None => return MbValue::none(),
     };
@@ -2616,6 +2610,23 @@ mod tests {
     fn test_finditer_wrong_pattern_type_raises_type_error() {
         crate::runtime::exception::mb_clear_exception();
         let result = mb_re_finditer(MbValue::from_int(7), s("abc123"));
+        assert!(result.is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_prefixmatch_wrong_pattern_type_raises_type_error() {
+        register();
+        crate::runtime::exception::mb_clear_exception();
+        let prefixmatch = crate::runtime::module::mb_module_getattr(s("re"), s("prefixmatch"));
+        let result = crate::runtime::builtins::mb_call_spread(
+            prefixmatch,
+            MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(7), s("abc123")])),
+        );
         assert!(result.is_none());
         assert_eq!(
             crate::runtime::exception::current_exception_type().as_deref(),
