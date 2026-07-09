@@ -1062,6 +1062,29 @@ unsafe extern "C" fn typing_alias_repr_m(self_v: MbValue, _args: MbValue) -> MbV
     new_str_v(&alias_repr(self_v))
 }
 
+pub(crate) fn typing_alias_is_callable(alias: MbValue) -> bool {
+    if alias_kind(alias).as_deref() != Some("generic") {
+        return false;
+    }
+    let origin = instance_field_of(alias, "__origin__").unwrap_or_else(MbValue::none);
+    if origin.to_bits() == alias.to_bits() {
+        return false;
+    }
+    super::super::builtins::mb_callable(origin).as_bool() == Some(true)
+}
+
+unsafe extern "C" fn typing_alias_call_m(self_v: MbValue, args: MbValue) -> MbValue {
+    if !typing_alias_is_callable(self_v) {
+        super::super::builtins::raise_type_error(format!(
+            "'{}' object is not callable",
+            super::super::builtins::value_type_name(self_v)
+        ));
+        return MbValue::none();
+    }
+    let origin = instance_field_of(self_v, "__origin__").unwrap_or_else(MbValue::none);
+    super::super::builtins::mb_call_spread(origin, args)
+}
+
 unsafe extern "C" fn typing_sf_repr_m(self_v: MbValue, _args: MbValue) -> MbValue {
     let n = instance_field_of(self_v, "_name")
         .and_then(|x| extract_str(x))
@@ -1204,6 +1227,10 @@ fn ensure_typing_classes_registered() {
     ma.insert(
         "__repr__".to_string(),
         var(typing_alias_repr_m as *const () as usize),
+    );
+    ma.insert(
+        "__call__".to_string(),
+        var(typing_alias_call_m as *const () as usize),
     );
     super::super::class::mb_class_register("typing.Alias", vec![], ma);
     super::super::class::mb_class_register(
