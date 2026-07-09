@@ -4,8 +4,8 @@
 # surface (no shell/apt/curl in the final image). The sibling `Dockerfile` is
 # the from-source build for dev / CI.
 #
-#   docker build -f apps/tape/Dockerfile.release -t tape:0.4.3 \
-#     --build-arg TAPE_VERSION=tape@0.4.3 .
+#   docker build -f apps/tape/Dockerfile.release -t tape:0.4.4 \
+#     --build-arg TAPE_VERSION=tape@0.4.4 .
 #
 # The image arch (BuildKit TARGETARCH) selects the matching linux tarball:
 #   --platform linux/amd64 → x86_64-unknown-linux-gnu
@@ -13,7 +13,7 @@
 
 # ---- stage 1: fetch + verify the release binary (needs shell + curl) --------
 FROM debian:bookworm-slim AS fetch
-ARG TAPE_VERSION=tape@0.4.3
+ARG TAPE_VERSION=tape@0.4.4
 ARG TAPE_REPO=chrischeng-c4/axiom
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
