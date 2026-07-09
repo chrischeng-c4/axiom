@@ -321,10 +321,16 @@ path = ".aw/tech-design"
 
         // Create the worktree and a commit on the new branch so there's
         // something for step 3 to merge.
-        let wt_rel = format!(".aw/worktrees/{}", slug);
-        std::fs::create_dir_all(tmp.path().join(".aw/worktrees")).unwrap();
+        let wt_abs = crate::shared::workspace::worktree_path(tmp.path(), slug);
+        std::fs::create_dir_all(wt_abs.parent().unwrap()).unwrap();
         let add_out = std::process::Command::new(&git)
-            .args(["worktree", "add", "-b", &format!("cclab/{}", slug), &wt_rel])
+            .args([
+                "worktree",
+                "add",
+                "-b",
+                &format!("cclab/{}", slug),
+                wt_abs.to_str().unwrap(),
+            ])
             .current_dir(tmp.path())
             .output()
             .unwrap();
@@ -335,7 +341,6 @@ path = ".aw/tech-design"
         );
 
         // Write a file under cclab/ in the worktree so the status check picks it up.
-        let wt_abs = tmp.path().join(&wt_rel);
         std::fs::create_dir_all(wt_abs.join("cclab")).unwrap();
         std::fs::write(wt_abs.join("cclab/change-file.txt"), "worktree content\n").unwrap();
 

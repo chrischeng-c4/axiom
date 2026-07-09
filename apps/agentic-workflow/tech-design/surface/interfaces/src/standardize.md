@@ -8462,7 +8462,7 @@ changes:
         );
         write(
             tmp.path(),
-            ".aw/tech-design/src/app.md",
+            "tech-design/src/app.md",
             "---\nid: src-app\n---\n\n## Changes\n```yaml\nchanges:\n  - path: src/app.py\n    action: modify\n    impl_mode: hand-written\n```\n",
         );
 
@@ -8485,16 +8485,16 @@ changes:
         write(
             tmp.path(),
             "src/app.py",
-            "# SPEC-MANAGED: .aw/tech-design/features/app-api.md#changes\n# CODEGEN-BEGIN\ndef handle():\n    return 1\n# CODEGEN-END\n",
+            "# SPEC-MANAGED: tech-design/features/app-api.md#changes\n# CODEGEN-BEGIN\ndef handle():\n    return 1\n# CODEGEN-END\n",
         );
         write(
             tmp.path(),
-            ".aw/tech-design/features/app-api.md",
+            "tech-design/features/app-api.md",
             "---\nid: app-api\n---\n\n## Changes\n```yaml\nchanges:\n  - path: src/app.py\n    action: modify\n    impl_mode: generated\n```\n",
         );
         write(
             tmp.path(),
-            ".aw/tech-design/src/app.md",
+            "tech-design/src/app.md",
             "---\nid: src-app\n---\n\n## Changes\n```yaml\nchanges:\n  - path: src/app.py\n    action: modify\n    impl_mode: hand-written\n```\n",
         );
 
@@ -8508,7 +8508,7 @@ changes:
         assert_eq!(coverage.percent, 100.0);
         assert_eq!(
             coverage.coverage_map[0].td_section.as_deref(),
-            Some(".aw/tech-design/features/app-api.md")
+            Some("tech-design/features/app-api.md")
         );
     }
 
@@ -8518,16 +8518,16 @@ changes:
         write(
             tmp.path(),
             "src/app.rs",
-            "// SPEC-MANAGED: .aw/tech-design/features/app-api.md#changes\n// CODEGEN-BEGIN\npub fn handle() -> i32 { 1 }\n// CODEGEN-END\n",
+            "// SPEC-MANAGED: tech-design/features/app-api.md#changes\n// CODEGEN-BEGIN\npub fn handle() -> i32 { 1 }\n// CODEGEN-END\n",
         );
         write(
             tmp.path(),
             "tests/behavior_app_contract.rs",
-            "// SPEC-MANAGED: .aw/tech-design/features/external-contracts.md#app-contract\n// CODEGEN-BEGIN\n// AW-EC-BEGIN\n// @ec app-contract\n#[test]\n#[ignore = \"generated EC wrapper\"]\nfn app_contract() {}\n// AW-EC-END\n// CODEGEN-END\n",
+            "// SPEC-MANAGED: tech-design/features/external-contracts.md#app-contract\n// CODEGEN-BEGIN\n// AW-EC-BEGIN\n// @ec app-contract\n#[test]\n#[ignore = \"generated EC wrapper\"]\nfn app_contract() {}\n// AW-EC-END\n// CODEGEN-END\n",
         );
         write(
             tmp.path(),
-            ".aw/tech-design/features/app-api.md",
+            "tech-design/features/app-api.md",
             "---\nid: app-api\nfill_sections: [changes]\n---\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\ncoverage_kind: semantic\nchanges:\n  - path: src/app.rs\n    action: modify\n    impl_mode: generated\n```\n",
         );
 
@@ -8566,7 +8566,7 @@ changes:
         );
         write(
             tmp.path(),
-            ".aw/tech-design/features/a.md",
+            "tech-design/features/a.md",
             "---\nid: a\ntype: semantic\n---\n\n## Changes\n```yaml\nchanges:\n  - path: src/a.py\n    action: modify\n```\n",
         );
 

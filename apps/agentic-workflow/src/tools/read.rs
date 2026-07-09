@@ -65,7 +65,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path();
 
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
         std::fs::write(
             change_dir.join("proposal.md"),
@@ -87,7 +87,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path();
 
-        let specs_dir = project_root.join(".aw/changes/test-change/specs");
+        let specs_dir =
+            crate::shared::workspace::change_path(project_root, "test-change").join("specs");
         std::fs::create_dir_all(&specs_dir).unwrap();
         std::fs::write(
             specs_dir.join("my-feature.md"),
@@ -109,7 +110,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path();
 
-        let group_dir = project_root.join(".aw/tech-design/test-group");
+        let group_dir = crate::shared::workspace::tech_design_path(project_root).join("test-group");
         std::fs::create_dir_all(&group_dir).unwrap();
         std::fs::write(
             group_dir.join("test-spec.md"),
@@ -131,7 +132,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path();
 
-        let group_dir = project_root.join(".aw/tech-design/test-group");
+        let group_dir = crate::shared::workspace::tech_design_path(project_root).join("test-group");
         std::fs::create_dir_all(&group_dir).unwrap();
         std::fs::write(
             group_dir.join("auth.md"),
@@ -153,7 +154,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path();
 
-        let specs_dir = project_root.join(".aw/changes/test-change/specs");
+        let specs_dir =
+            crate::shared::workspace::change_path(project_root, "test-change").join("specs");
         std::fs::create_dir_all(&specs_dir).unwrap();
         std::fs::write(specs_dir.join("spec-a.md"), "# Spec A").unwrap();
 
@@ -171,7 +173,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path();
 
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
         std::fs::write(change_dir.join("proposal.md"), "# Proposal").unwrap();
         std::fs::write(change_dir.join("tasks.md"), "# Tasks").unwrap();

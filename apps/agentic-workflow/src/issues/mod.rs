@@ -249,9 +249,8 @@ mod resolve_tests {
     use tempfile::TempDir;
 
     fn write_config(dir: &Path, body: &str) {
-        let cfg_dir = dir.join(".aw");
-        fs::create_dir_all(&cfg_dir).unwrap();
-        fs::write(cfg_dir.join("config.toml"), body).unwrap();
+        fs::create_dir_all(dir).unwrap();
+        fs::write(dir.join("aw.toml"), body).unwrap();
     }
 
     #[test]

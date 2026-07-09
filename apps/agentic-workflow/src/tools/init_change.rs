@@ -1061,10 +1061,7 @@ See tech_design/sdd/ for state machine specs.
         );
         let worktree_path = result.unwrap();
         assert!(worktree_path.exists(), "worktree directory should exist");
-        assert_eq!(
-            worktree_path,
-            tmp.path().join(format!(".aw/worktrees/{}", slug))
-        );
+        assert_eq!(worktree_path, workspace::worktree_path(tmp.path(), slug));
 
         // Verify branch was created
         let git = find_git_bin().unwrap();
@@ -1091,7 +1088,7 @@ See tech_design/sdd/ for state machine specs.
 
         // First creation
         create_worktree(tmp.path(), slug).unwrap();
-        assert!(tmp.path().join(format!(".aw/worktrees/{}", slug)).exists());
+        assert!(workspace::worktree_path(tmp.path(), slug).exists());
 
         // Second call on the same slug should auto-cleanup and recreate
         let result = create_worktree(tmp.path(), slug);
@@ -1100,7 +1097,7 @@ See tech_design/sdd/ for state machine specs.
             "create_worktree should succeed on stale state: {:?}",
             result.err()
         );
-        assert!(tmp.path().join(format!(".aw/worktrees/{}", slug)).exists());
+        assert!(workspace::worktree_path(tmp.path(), slug).exists());
     }
 
     // REQ: worktree-per-change — cleanup_stale_worktree is idempotent

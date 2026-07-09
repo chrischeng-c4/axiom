@@ -1809,23 +1809,23 @@ mod tests {
 
         let content: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
-        // R13: deny rules for `.aw/tech-design/**` are installed.
+        // R13: deny rules for `tech-design/**` are installed.
         let deny = content["permissions"]["deny"]
             .as_array()
             .expect("permissions.deny should be present after fresh install");
         let rules: Vec<&str> = deny.iter().filter_map(|e| e.as_str()).collect();
         assert!(
-            rules.contains(&"Edit(.aw/tech-design/**)"),
+            rules.contains(&"Edit(tech-design/**)"),
             "deny list missing Edit rule, got {:?}",
             rules
         );
         assert!(
-            rules.contains(&"Write(.aw/tech-design/**)"),
+            rules.contains(&"Write(tech-design/**)"),
             "deny list missing Write rule, got {:?}",
             rules
         );
         assert!(
-            rules.contains(&"MultiEdit(.aw/tech-design/**)"),
+            rules.contains(&"MultiEdit(tech-design/**)"),
             "deny list missing MultiEdit rule, got {:?}",
             rules
         );
@@ -1870,17 +1870,13 @@ mod tests {
             rules
         );
         // Template rules merged.
-        assert!(rules.contains(&"Edit(.aw/tech-design/**)"), "{:?}", rules);
-        assert!(rules.contains(&"Write(.aw/tech-design/**)"), "{:?}", rules);
-        assert!(
-            rules.contains(&"MultiEdit(.aw/tech-design/**)"),
-            "{:?}",
-            rules
-        );
+        assert!(rules.contains(&"Edit(tech-design/**)"), "{:?}", rules);
+        assert!(rules.contains(&"Write(tech-design/**)"), "{:?}", rules);
+        assert!(rules.contains(&"MultiEdit(tech-design/**)"), "{:?}", rules);
         // No duplicates after second run.
         let edit_count = rules
             .iter()
-            .filter(|r| **r == "Edit(.aw/tech-design/**)")
+            .filter(|r| **r == "Edit(tech-design/**)")
             .count();
         assert_eq!(
             edit_count, 1,
@@ -2001,7 +1997,7 @@ mod tests {
         assert_eq!(outcome.target, target);
         assert!(outcome.assets_installed);
         assert!(target.join("aw.toml").exists());
-        assert!(target.join(".aw/tech-design").is_dir());
+        assert!(target.join("tech-design").is_dir());
         assert!(target.join("CLAUDE.md").exists());
         assert!(
             target.join(".claude/skills/aw-health/SKILL.md").exists(),
