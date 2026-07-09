@@ -1600,4 +1600,223 @@ async fn query_options_and_head_advertise_accept_query_on_collections() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Read-consistency enforcement in primary-replica mode (#1310)
+// ---------------------------------------------------------------------------
+//
+// `x-read-consistency` is parsed on every read but only actually constrains
+// which replica may answer once `AppState::cluster` is populated
+// (`with_cluster`) — standalone / legacy external-log builds (`cluster` is
+// `None`) satisfy every level trivially, covered by
+// `coverage_gaps_e2e::s3_read_consistency_header_accepted_on_search` (AC4).
+// These cases drive the primary-replica enforcement path directly.
+
+fn read_consistency_peer(pod_name: &str, role: lumen::raft::RaftRole) -> lumen::raft::PeerAddr {
+    lumen::raft::PeerAddr {
+        pod_name: pod_name.to_string(),
+        host: format!("{pod_name}.lumen-peer"),
+        raft_port: 8082,
+        client_port: 8080,
+        role,
+    }
+}
+
+/// Server backed by a single collection with one indexed doc, running with
+/// an injected primary-replica `ClusterState` for `lumen-1` (this pod).
+/// `peers` is the full shard membership (including this pod); `lag_ms` sets
+/// this pod's own `replication_lag_ms`.
+fn read_consistency_server(
+    role: lumen::raft::RaftRole,
+    peers: Vec<lumen::raft::PeerAddr>,
+    lag_ms: u64,
+) -> TestServer {
+    use std::sync::atomic::AtomicU64;
+
+    let cluster = Arc::new(lumen::raft::ClusterState {
+        pod_name: "lumen-1".to_string(),
+        shard_index: 0,
+        replica_index: 1,
+        role,
+        group: lumen::raft::RaftGroup {
+            shard_index: 0,
+            peers,
+        },
+        applied_index: AtomicU64::new(0),
+        leader_term: AtomicU64::new(1),
+        replication_lag_ms: AtomicU64::new(lag_ms),
+    });
+    let state =
+        lumen::api::AppState::open(Arc::new(lumen::storage::Engine::new())).with_cluster(cluster);
+    TestServer::new(lumen::api::router(state)).expect("test server")
+}
+
+async fn index_one_doc(s: &TestServer) {
+    s.put("/collections/users")
+        .json(&json!({ "fields": { "email": { "type": "keyword" } } }))
+        .await
+        .assert_status_ok();
+    s.post("/collections/users/index")
+        .json(&json!({
+            "items": [{ "external_id": "u1", "field": "email", "value": "a@x.com" }]
+        }))
+        .await
+        .assert_status_ok();
+}
+
+async fn search_with_consistency(s: &TestServer, level: &str) -> axum_test::TestResponse {
+    let mut req = s.post("/collections/users/search").json(&json!({
+        "query": { "term": { "field": "email", "value": "a@x.com" } },
+        "limit": 10
+    }));
+    if !level.is_empty() {
+        req = req.add_header("x-read-consistency", level);
+    }
+    req.await
+}
+
+/// AC1: `bounded(0)` against an artificially-lagged follower must not
+/// return that follower's (potentially stale) local results — it fails
+/// clearly instead.
+#[tokio::test]
+async fn bounded_zero_rejects_lagged_follower() {
+    use lumen::raft::RaftRole;
+    let leader = read_consistency_peer("lumen-0", RaftRole::Leader);
+    let this_pod = read_consistency_peer("lumen-1", RaftRole::Follower);
+    let s = read_consistency_server(RaftRole::Follower, vec![leader, this_pod], 250);
+    index_one_doc(&s).await;
+
+    let resp = search_with_consistency(&s, "bounded(0)").await;
+    resp.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = resp.json();
+    assert_eq!(body["error"], "read_consistency_lag_exceeded", "{body}");
+}
+
+/// A follower within the requested bound still answers `bounded(ms)`
+/// reads — the lag check is a real comparison, not a blanket reject.
+#[tokio::test]
+async fn bounded_within_lag_allows_follower() {
+    use lumen::raft::RaftRole;
+    let leader = read_consistency_peer("lumen-0", RaftRole::Leader);
+    let this_pod = read_consistency_peer("lumen-1", RaftRole::Follower);
+    let s = read_consistency_server(RaftRole::Follower, vec![leader, this_pod], 50);
+    index_one_doc(&s).await;
+
+    let resp = search_with_consistency(&s, "bounded(250)").await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["total"], 1, "{body}");
+}
+
+/// AC2: `leader` consistency against a shard with no reachable leader (no
+/// peer, including this pod, holds `RaftRole::Leader`) fails with a clear,
+/// distinguishable error rather than silently serving a stale/partial read.
+#[tokio::test]
+async fn leader_consistency_fails_clearly_with_no_reachable_leader() {
+    use lumen::raft::RaftRole;
+    let this_pod = read_consistency_peer("lumen-1", RaftRole::Follower);
+    let other = read_consistency_peer("lumen-4", RaftRole::Follower);
+    let s = read_consistency_server(RaftRole::Follower, vec![this_pod, other], 0);
+    index_one_doc(&s).await;
+
+    let resp = search_with_consistency(&s, "leader").await;
+    resp.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = resp.json();
+    assert_eq!(body["error"], "read_consistency_no_leader", "{body}");
+}
+
+/// `leader` consistency against a follower rejects even when a leader is
+/// known elsewhere in the shard — lumen has no read-forwarding surface, so
+/// the request must reach the leader pod directly rather than being served
+/// stale here.
+#[tokio::test]
+async fn leader_consistency_rejects_follower_when_leader_is_elsewhere() {
+    use lumen::raft::RaftRole;
+    let leader = read_consistency_peer("lumen-0", RaftRole::Leader);
+    let this_pod = read_consistency_peer("lumen-1", RaftRole::Follower);
+    let s = read_consistency_server(RaftRole::Follower, vec![leader, this_pod], 0);
+    index_one_doc(&s).await;
+
+    let resp = search_with_consistency(&s, "leader").await;
+    resp.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = resp.json();
+    assert_eq!(body["error"], "read_consistency_not_leader", "{body}");
+}
+
+/// `leader` consistency always succeeds on the pod that actually holds
+/// `RaftRole::Leader`, and the header-omitted default (`Leader`, per
+/// `ReadConsistency::from_header`) behaves identically — confirming that
+/// default is intentional and still exercised now that it's enforced
+/// (AC3).
+#[tokio::test]
+async fn leader_pod_serves_leader_consistency_and_default_omitted_header() {
+    use lumen::raft::RaftRole;
+    let this_pod = read_consistency_peer("lumen-0", RaftRole::Leader);
+    let follower = read_consistency_peer("lumen-1", RaftRole::Follower);
+    let s = read_consistency_server(RaftRole::Leader, vec![this_pod, follower], 0);
+    index_one_doc(&s).await;
+
+    for level in ["leader", ""] {
+        let resp = search_with_consistency(&s, level).await;
+        resp.assert_status_ok();
+        let body: Value = resp.json();
+        assert_eq!(body["total"], 1, "level={level:?} body={body}");
+    }
+}
+
+/// Header omitted on a non-leader replica in primary-replica mode falls
+/// back to `Leader` (the documented default) and is rejected exactly like
+/// an explicit `leader` header — the default's enforcement is not skipped.
+#[tokio::test]
+async fn omitted_header_on_follower_defaults_to_leader_and_is_rejected() {
+    use lumen::raft::RaftRole;
+    let leader = read_consistency_peer("lumen-0", RaftRole::Leader);
+    let this_pod = read_consistency_peer("lumen-1", RaftRole::Follower);
+    let s = read_consistency_server(RaftRole::Follower, vec![leader, this_pod], 0);
+    index_one_doc(&s).await;
+
+    let resp = search_with_consistency(&s, "").await;
+    resp.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+}
+
+/// AC3: `any` consistency stays unconstrained even on a badly-lagged
+/// follower with no reachable leader — today's de facto behavior,
+/// unaffected by the new enforcement.
+#[tokio::test]
+async fn any_consistency_stays_unconstrained_on_lagged_leaderless_follower() {
+    use lumen::raft::RaftRole;
+    let this_pod = read_consistency_peer("lumen-1", RaftRole::Follower);
+    let s = read_consistency_server(RaftRole::Follower, vec![this_pod], 999_999);
+    index_one_doc(&s).await;
+
+    let resp = search_with_consistency(&s, "any").await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["total"], 1, "{body}");
+}
+
+/// Batch search (`batch_search_core`) enforces the same per-request
+/// consistency as single search — the header is read once per batch and
+/// applied before any item is fanned out.
+#[tokio::test]
+async fn batch_search_enforces_read_consistency_too() {
+    use lumen::raft::RaftRole;
+    let leader = read_consistency_peer("lumen-0", RaftRole::Leader);
+    let this_pod = read_consistency_peer("lumen-1", RaftRole::Follower);
+    let s = read_consistency_server(RaftRole::Follower, vec![leader, this_pod], 250);
+    index_one_doc(&s).await;
+
+    let resp = s
+        .post("/collections:search")
+        .add_header("x-read-consistency", "bounded(0)")
+        .json(&json!({
+            "searches": [{
+                "collection": "users",
+                "query": { "term": { "field": "email", "value": "a@x.com" } },
+                "limit": 10
+            }]
+        }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+}
 // CODEGEN-END

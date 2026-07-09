@@ -11,6 +11,7 @@
 //! The contract for external consumers is `GET /openapi.json`,
 //! generated at runtime from this module.
 
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -40,7 +41,7 @@ use crate::auth::{auth_middleware, AuthConfig, AuthContext, LumenVerifier, Role}
 use crate::backup_sink::{BackupSink, LocalFsSink};
 use crate::coordinator::{WriteCoordinator, WriteSink};
 use crate::log_entry::RaftLogEntry;
-use crate::raft::{ClusterStateView, ReadConsistency};
+use crate::raft::{ClusterStateView, RaftRole, ReadConsistency};
 use crate::storage::{ApplyOutcome, DropOutcome, Engine, SnapshotV1, StorageError};
 use crate::types::{
     Analyzer, ApiError, BatchSearchRequest, BatchSearchResponse, BatchSearchResult, CacheStats,
@@ -561,6 +562,76 @@ fn read_consistency_from(headers: &HeaderMap) -> ReadConsistency {
     )
 }
 
+/// Enforces a resolved `x-read-consistency` against this pod's live
+/// per-shard cluster state (`AppState::cluster`) before a read reaches the
+/// local engine (#1310).
+///
+/// Standalone and legacy external-log builds (`state.cluster` is `None`)
+/// have exactly one authoritative copy per shard, so every consistency
+/// level is trivially satisfied there — this is a no-op, matching today's
+/// behavior unchanged. Primary-replica mode (`state.cluster` is `Some`) is
+/// the only place a request's resolved [`ReadConsistency`] can actually
+/// diverge from what gets served:
+/// - [`ReadConsistency::Any`] is unconstrained.
+/// - [`ReadConsistency::Leader`] only succeeds on the pod that currently
+///   holds `RaftRole::Leader` for this shard; lumen has no read-forwarding
+///   surface, so a non-leader replica rejects the request rather than
+///   silently serving a possibly-stale local copy.
+/// - [`ReadConsistency::Bounded`] succeeds on the leader (never stale) or
+///   on a follower/learner whose `replication_lag_ms` is at or under the
+///   requested bound; a replica over the bound rejects rather than
+///   silently serving a stale read.
+fn enforce_read_consistency(state: &AppState, consistency: ReadConsistency) -> Result<(), ApiErr> {
+    let Some(cluster) = state.cluster.as_ref() else {
+        return Ok(());
+    };
+    match consistency {
+        ReadConsistency::Any => Ok(()),
+        ReadConsistency::Leader => {
+            if cluster.role == RaftRole::Leader {
+                return Ok(());
+            }
+            Err(match cluster.group.leader() {
+                Some(leader) => ApiErr::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "read_consistency_not_leader",
+                    format!(
+                        "replica `{}` is not the shard {} leader (current leader is `{}`); \
+                         leader-consistency reads must reach it",
+                        cluster.pod_name, cluster.shard_index, leader.pod_name
+                    ),
+                ),
+                None => ApiErr::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "read_consistency_no_leader",
+                    format!(
+                        "shard {} has no reachable leader; leader-consistency reads cannot be satisfied",
+                        cluster.shard_index
+                    ),
+                ),
+            })
+        }
+        ReadConsistency::Bounded(bound_ms) => {
+            if cluster.role == RaftRole::Leader {
+                return Ok(());
+            }
+            let lag_ms = cluster.replication_lag_ms.load(Ordering::Relaxed);
+            if lag_ms <= bound_ms {
+                Ok(())
+            } else {
+                Err(ApiErr::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "read_consistency_lag_exceeded",
+                    format!(
+                        "replica `{}` lag {lag_ms}ms exceeds bounded({bound_ms}ms) consistency",
+                        cluster.pod_name
+                    ),
+                ))
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Admin
 // ---------------------------------------------------------------------------
@@ -934,10 +1005,8 @@ fn search_core(
     req: SearchRequest,
 ) -> Result<SearchResponse, ApiErr> {
     auth.ensure(collection_id, Role::Read)?;
-    let _consistency = read_consistency_from(headers);
-    // Standalone and legacy external-log builds satisfy this locally. Primary-
-    // replica mode will enforce leader/bounded/any against the live cluster
-    // state once the raft_core-backed surface is wired.
+    let consistency = read_consistency_from(headers);
+    enforce_read_consistency(state, consistency)?;
     state
         .search_backend
         .search(collection_id, req)
@@ -993,7 +1062,8 @@ async fn batch_search_core(
             ),
         ));
     }
-    let _consistency = read_consistency_from(headers);
+    let consistency = read_consistency_from(headers);
+    enforce_read_consistency(state, consistency)?;
     let results = join_all(req.searches.into_iter().map(|item| {
         let state = state.clone();
         let auth = auth.clone();
