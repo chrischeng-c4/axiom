@@ -97,7 +97,7 @@ Canonical field-style capability contracts below are machine-readable input for 
 | WASM And Multi-Target Execution | #818 | implemented | passing | smoke, conformance, corpus, negative | partial | Jet can sink the frontend app model into WASM, render it through canvas/WebGPU, and preserve browser-observable semantics through bridges. |
 | Browser, Trace, And Parity Infrastructure | #3786 | implemented | verified | smoke, conformance, corpus, negative | ready_for_basic | Jet BB is the executor for current gates, with isolated Playwright baseline evidence and trace substrate tests green. |
 | Library Build And Package Publishing | #168 | implemented | verified | conformance | partial | `jet build --lib` (ESM+CJS, externalized deps/peerDeps, multi-entry), preserve-modules ESM/CJS output, `.d.ts` emission, and `jet publish --build` with metadata validation + private-registry (`.npmrc` scoped) e2e all shipped and tested (A1-A3 merged). `partial`: IIFE lib output, class-member `.d.ts` reduction, and some CJS re-export edge cases are TODO follow-ups. |
-| Component Workbench (Stories) | #169 | implemented | verified | conformance | ready_for_basic | CSF `*.stories.tsx` discovery, the Stories dev manager + isolated preview, preview HMR, and a prop-type-derived Controls panel (B1-B3 + B2b). The earlier `partial` follow-ups have since shipped: hook-state-preserving React Refresh (#196), `node_modules` bare-import resolution for dev + static (#197), generic/cross-file/intersection prop-type controls (#198), CSF2 `Template.bind`/re-exported stories/spread args (#199), and `jet stories build` static export (#190). CSF-compatible, no Storybook runtime. |
+| Component Workbench (Stories) | #169 | implemented | verified | conformance | ready_for_basic | Full Storybook-replacement parity from epic #1001 (#981, #987-#1000, landed via PR #1070, evidence closed by #1343): CSF3/CSF2 discovery with decorators/parameters/globals/globalTypes/loaders/autodocs (`csf.rs::tests::parses_render_path_core_fields`); a native manager with controls, toolbar, measure/outline/highlight, actions, interactions/`play()`, a11y audit, story source, search, and theming (`stories_build.rs::static_manager_keeps_dev_feature_parity_checklist`, `manager.rs::tests::manager_toolbar_renders_viewport_background_zoom_and_custom_parameters`); MDX autodocs pages compiled dev + static (`mdx.rs::tests::compiles_core_doc_blocks`, `stories_build.rs::mdx_docs_pages_render_core_blocks_in_static_export`); a static `jet stories build` export with an `index.json` manifest; and a headless-Chromium `play()` interactions runner via `jet test --stories` (`cli.rs::run_stories_smoke_tests`). CSF-compatible, no Storybook runtime. |
 | Jet Project Architecture And Authoring Clarity | #1169 | implemented | verified | smoke | ready | Scoped layout/navigation guidance lives at `projects/jet/docs/architecture/layout.md` (path-role map + crate/package naming conventions), linked from this README's Source map; no project-root uppercase meta doc remains for Jet layout guidance. |
 | Jet Agent-Facing CLI Standard Commands | #928 | implemented | verified | smoke | ready | `jet llm` / `jet upgrade` / `jet issue {search,view,create,comment}` are wired to the shared `cli-std` crate; `jet issue comment <n> [message...]` reopens a closed issue before posting a diagnostics-rich follow-up comment, with `--dry-run` proving the request without a network mutation. |
 
@@ -383,20 +383,23 @@ Status: confirmed
 Type: DeveloperTool
 Required Verification: smoke, conformance, corpus, negative
 Promise:
-jet discovers and parses CSF `*.stories.tsx` (default-export meta + named-export stories), serves a jet-native manager UI (sidebar, isolated preview, toolbar) with HMR, and derives a live Controls panel from component prop types + `argTypes`. CSF/CSF2-compatible with no Storybook runtime dependency, with hook-state-preserving React Refresh, `node_modules` bare-import resolution, generic/cross-file prop-type controls, and a static `jet stories build` export (all shipped).
+jet discovers and parses CSF3/CSF2 `*.stories.tsx` (default-export meta + named-export stories) with decorators, `parameters`, `globals`/`globalTypes`, `loaders`, and the `autodocs` tag; serves a jet-native manager UI (sidebar, isolated preview, toolbar with viewport/background/zoom/measure/outline/highlight controls and keyboard shortcuts) with HMR; derives a live Controls panel from component prop types + `argTypes`; records actions and interaction/`play()` logs; runs an accessibility (a11y) audit panel; shows story source; compiles MDX autodocs pages (dev and static, wired to `<Canvas>`/`<Story>`/`<ArgTypes>`/`<Source>` doc blocks); emits a static, server-less `jet stories build` export with an `index.json` manifest; and executes `play()` interactions headlessly via `jet test --stories`. CSF/CSF2-compatible with no Storybook runtime dependency (all shipped by epic #1001, #981/#987-#1000, evidence closed by #1343).
 Gate Inventory:
-- `cargo test -p jet --test csf_discovery`
-- `cargo test -p jet --test manager`
-- `cargo test -p jet --test preview_hmr`
-- `cargo test -p jet --test controls`
-- `cargo test -p jet --test stories_build`
+- `cargo test -p jet --lib stories::csf::tests::parses_render_path_core_fields` — decorators/parameters/globals/globalTypes/loaders/autodocs-tag CSF render-path parsing
+- `cargo test -p jet --test stories_build static_manager_keeps_dev_feature_parity_checklist` — toolbar/controls/actions/interactions/a11y/story-source/docs/search/theme/index.json static-manager parity checklist
+- `cargo test -p jet --lib stories::manager::tests::manager_toolbar_renders_viewport_background_zoom_and_custom_parameters` — toolbar plus measure/outline/highlight, zoom, and keyboard-shortcut behavior
+- `cargo test -p jet --lib stories::mdx::tests::compiles_core_doc_blocks` — MDX docs-page compile (`Meta`/`Canvas`/`Story`/`ArgTypes`/`Source` doc blocks)
+- `cargo test -p jet --test stories_build mdx_docs_pages_render_core_blocks_in_static_export` — MDX docs pages wired into the static export
+- `jet test --stories` (`cli.rs::run_stories_smoke_tests`) — headless-Chromium `play()` interactions runner
+- `cargo test -p jet --test stories_parity_fixture` — in-repo fixture proving decorators + `argTypes` override + `play()` + MDX docs page compile and wire together for one story (#1343, AC2-equivalent evidence without an external Storybook install)
 Surfaces:
-- CLI: `jet stories` + `jet stories build` - Component workbench dev server and static export entrypoints.
-- UI: `jet stories` manager + preview - Sidebar, isolated story preview, toolbar, HMR, and controls panel surface.
+- CLI: `jet stories` + `jet stories build` + `jet test --stories` - Component workbench dev server, static export, and headless play()-interactions entrypoints.
+- UI: `jet stories` manager + preview - Sidebar, isolated story preview, toolbar, HMR, controls, actions, interactions, a11y, source, and MDX docs surface.
 EC Dimensions:
-- behavior: `cargo test -p jet --test stories_build` - Static workbench export, story preview modules, and relative URL behavior.
+- behavior: `cargo test -p jet --test stories_build` - Static workbench export, story preview modules, MDX docs pages, and relative URL behavior.
 - behavior: `cargo test -p jet --test manager` - Manager UI routing, story listing, isolated preview, and bare-import resolution behavior.
 - behavior: `cargo test -p jet --test controls` - Prop-type-derived controls and live arg edit behavior.
+- behavior: `cargo test -p jet --test stories_parity_fixture` - Decorators + argTypes + play() + MDX compiling and wiring together for one story, in-repo (no external Storybook install).
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -410,7 +413,7 @@ EC Dimensions:
 | Stories Bare-Import Resolution | change | #197 | implemented | verified | conformance | `cargo test -p jet --test manager` — node_modules bare-import resolution for stories dev and static export |
 | Generic / Cross-File Prop Controls | change | #198 | implemented | verified | conformance | `cargo test -p jet --test controls` — controls inferred from generic, cross-file, and intersection prop types |
 | CSF2 Template.bind + Re-Exports | change | #199 | implemented | verified | conformance | `cargo test -p jet --test csf_discovery` — CSF2 Template.bind, re-exported stories, and spread-args discovery |
-| Close Stories Parity Evidence Gaps From Epic 1001 | change | #1343 | planned | none | smoke | README Component Workbench row/detailed block enumerate the full shipped parity surface with concrete test-path citations, `jet-stories.md` `source_units` include `mdx.rs`/`optimizer.rs`, and an in-repo fixture combining decorators + play + argTypes + MDX passes — see `projects/jet/tech-design/logic/jet-stories-close-epic-1001-ac2-ac3-readme-parity-evidence-td-so.md` |
+| Close Stories Parity Evidence Gaps From Epic 1001 | change | #1343 | implemented | verified | smoke | `cargo test -p jet --test stories_parity_fixture` — README Component Workbench row/detailed block enumerate the full shipped parity surface with concrete test-path citations, `jet-stories.md` `source_units` include `mdx.rs`/`optimizer.rs`, and an in-repo fixture combining decorators + play + argTypes + MDX passes — see `projects/jet/tech-design/validate/jet-stories-close-epic-1001-ac2-ac3-readme-parity-evidence-td-so.md` |
 
 ### Jet Project Architecture And Authoring Clarity
 

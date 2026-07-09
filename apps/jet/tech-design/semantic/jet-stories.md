@@ -754,6 +754,130 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "apps/jet/src/stories"
+      - path: "apps/jet/src/stories/mdx.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["data_model", "service_method"]
+        symbols:
+          - name: "docs_pages"
+            kind: "function"
+            public: true
+          - name: "diagnostics"
+            kind: "function"
+            public: true
+          - name: "compile_mdx_doc"
+            kind: "function"
+            public: false
+          - name: "discover_mdx_files"
+            kind: "function"
+            public: false
+          - name: "ignored_entry"
+            kind: "function"
+            public: false
+          - name: "mdx_title"
+            kind: "function"
+            public: false
+          - name: "fallback_title"
+            kind: "function"
+            public: false
+          - name: "title_path_from_mdx_title"
+            kind: "function"
+            public: false
+          - name: "resolve_story_ref"
+            kind: "function"
+            public: false
+          - name: "first_story_for_title"
+            kind: "function"
+            public: false
+          - name: "attr_value"
+            kind: "function"
+            public: false
+          - name: "attr_expr"
+            kind: "function"
+            public: false
+          - name: "ensure_self_closing_doc_block"
+            kind: "function"
+            public: false
+          - name: "unsupported_jsx_tag"
+            kind: "function"
+            public: false
+          - name: "markdown_heading"
+            kind: "function"
+            public: false
+          - name: "flush_paragraph"
+            kind: "function"
+            public: false
+          - name: "render_argtypes_table"
+            kind: "function"
+            public: false
+          - name: "slug_for_docs_id"
+            kind: "function"
+            public: false
+          - name: "escape_html"
+            kind: "function"
+            public: false
+          - name: "tests"
+            kind: "module"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "apps/jet/src/stories"
+      - path: "apps/jet/src/stories/optimizer.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["config_surface", "service_method"]
+        symbols:
+          - name: "OPTIMIZED_PREFIX"
+            kind: "constant"
+            public: true
+          - name: "CACHE_VERSION"
+            kind: "constant"
+            public: false
+          - name: "optimized_route_for_specifier"
+            kind: "function"
+            public: true
+          - name: "optimized_dep_source"
+            kind: "function"
+            public: true
+          - name: "optimizer_temp_suffix"
+            kind: "function"
+            public: false
+          - name: "optimizer_entry_source"
+            kind: "function"
+            public: false
+          - name: "external_require_banner"
+            kind: "function"
+            public: false
+          - name: "is_optimizable_specifier"
+            kind: "function"
+            public: false
+          - name: "package_name"
+            kind: "function"
+            public: false
+          - name: "find_esbuild_binary"
+            kind: "function"
+            public: false
+          - name: "cache_file_name"
+            kind: "function"
+            public: false
+          - name: "sanitize_specifier"
+            kind: "function"
+            public: false
+          - name: "cache_hash"
+            kind: "function"
+            public: false
+          - name: "tests"
+            kind: "module"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "apps/jet/src/stories"
 ```
 
 ## Decision: MDX Compile Strategy (#996)
