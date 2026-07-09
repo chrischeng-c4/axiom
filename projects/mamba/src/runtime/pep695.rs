@@ -53,6 +53,25 @@ fn instance_field_set(inst: *mut MbObject, name: &str, value: MbValue) {
     }
 }
 
+fn make_paramspec_component(class_name: &str, origin: MbValue, name: &str) -> MbValue {
+    let inst = MbObject::new_instance(class_name.to_string());
+    instance_field_set(inst, "__origin__", origin);
+    instance_field_set(
+        inst,
+        "__name__",
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+    );
+    MbValue::from_ptr(inst)
+}
+
+fn attach_paramspec_components(inst: *mut MbObject, name: &str) {
+    let origin = MbValue::from_ptr(inst);
+    let args = make_paramspec_component("ParamSpecArgs", origin, &format!("{name}.args"));
+    let kwargs = make_paramspec_component("ParamSpecKwargs", origin, &format!("{name}.kwargs"));
+    instance_field_set(inst, "args", args);
+    instance_field_set(inst, "kwargs", kwargs);
+}
+
 /// `__mb_pep695_typevar__(name, kind, bound_thunk, constraints_thunk, default_thunk)`.
 ///
 /// kind: 0 = TypeVar, 1 = TypeVarTuple, 2 = ParamSpec. The thunks are
@@ -75,7 +94,7 @@ pub fn mb_pep695_typevar(
     instance_field_set(
         inst,
         "__name__",
-        MbValue::from_ptr(MbObject::new_str(name_str)),
+        MbValue::from_ptr(MbObject::new_str(name_str.clone())),
     );
     // `[ ]`-syntax params always infer variance (PEP 695).
     instance_field_set(inst, "__infer_variance__", MbValue::from_bool(true));
@@ -97,6 +116,9 @@ pub fn mb_pep695_typevar(
     }
     if !default_thunk.is_none() {
         instance_field_set(inst, DEFAULT_THUNK, default_thunk);
+    }
+    if class_name == "ParamSpec" {
+        attach_paramspec_components(inst, &name_str);
     }
     MbValue::from_ptr(inst)
 }
@@ -138,6 +160,9 @@ pub fn make_typevar_instance(
     );
     if let Some(default) = default {
         instance_field_set(inst, "__default__", default);
+    }
+    if class_name == "ParamSpec" {
+        attach_paramspec_components(inst, name);
     }
     MbValue::from_ptr(inst)
 }
