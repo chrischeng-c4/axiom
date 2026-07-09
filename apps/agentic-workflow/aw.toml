@@ -414,6 +414,18 @@ required_for_production = true
 assertions = ["TD created phase dispatches directly to generation in the linear lifecycle"]
 
 [[aw.ec.generated.cases]]
+id = "td-cb-lifecycle-automation-self-ec-fixture-loop-gate"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "self-ec-fixture-loop-gate"
+contract_id = "td-cb-lifecycle-automation-self-ec-fixture-loop-gate"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#td-cb-lifecycle-automation-self-ec-fixture-loop-gate"
+test_path = "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_self_ec_fixture_loop_gate.rs"
+command = "cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture"
+required_for_production = true
+assertions = ["fixture-loop e2e proof (#1279) gates aw's own terminal code-check as a hard, required-for-production EC case"]
+
+[[aw.ec.generated.cases]]
 id = "wi-create-help-command"
 capability_id = "work-item-planning"
 claim_id = "capability-to-epic-planning"
