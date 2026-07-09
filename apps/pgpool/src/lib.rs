@@ -91,6 +91,11 @@ pub fn runtime_plan_json() -> String {
 }
 // </HANDWRITE>
 
+// SPEC-MANAGED: apps/pgpool/tech-design/logic/pg-wire-message-codec-frontend-backend-frames.md#logic
+// <HANDWRITE gap="missing-generator:logic:pg-wire-codec" tracker="#1287" reason="Wire protocol codec needs generator primitives that do not exist yet.">
+pub mod wire;
+// </HANDWRITE>
+
 #[cfg(test)]
 mod tests {
     use super::*;

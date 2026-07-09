@@ -9307,6 +9307,7 @@ version = "0.4.3"
 dependencies = [
  "anyhow",
  "build-stamp",
+ "bytes",
  "clap",
  "cli-std",
  "http-server",
@@ -9315,6 +9316,7 @@ dependencies = [
  "serde_yaml",
  "server-core",
  "tcp-server",
+ "thiserror 2.0.18",
  "tokio",
 ]
 

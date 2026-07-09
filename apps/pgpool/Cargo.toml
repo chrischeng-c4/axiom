@@ -18,6 +18,7 @@ path = "src/bin/pgpool.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+bytes = { workspace = true }
 clap = { workspace = true }
 cli-std = { path = "../../libs/cli-std", default-features = false }
 http-server = { path = "../../libs/http-server" }
@@ -26,6 +27,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 server-core = { path = "../../libs/server-core" }
 tcp-server = { path = "../../libs/tcp-server" }
+thiserror = { workspace = true }
 tokio = { workspace = true }
 
 [build-dependencies]
