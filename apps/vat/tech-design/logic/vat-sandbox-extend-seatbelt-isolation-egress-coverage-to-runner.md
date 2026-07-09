@@ -77,3 +77,18 @@ properties:
     description: "Regression proof this WI adds: (1) a runner-mode command with EgressPolicy::Deny is denied outbound network the same way direct-mode already is; (2) a service spawned in the same run still reaches the network under EgressPolicy::Deny, confirming the exemption is intentional."
 additionalProperties: true
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-sandbox-runner-coverage-config.schema.json"
+title: "no new config surface"
+type: object
+properties:
+  note:
+    type: string
+    description: "No new vat.toml or CLI flag. Reuses the existing --isolation flag and [network].egress from vat.toml; this WI does not add config, it closes the remaining regression-proof and doc-reconciliation gap for coverage that already applies --isolation/[network].egress to runner-mode commands (spawn_runner_process, run_setup_step) via the fail-closed sandbox::pick (#1300) + sandbox_wrap path, while start_service spawns stay intentionally unwrapped."
+additionalProperties: true
+```
