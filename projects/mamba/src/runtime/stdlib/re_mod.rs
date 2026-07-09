@@ -2223,9 +2223,12 @@ pub fn mb_re_split(pattern: MbValue, string: MbValue) -> MbValue {
 /// re.split with maxsplit; captured separator groups are kept in the result
 /// (CPython semantics).
 pub fn mb_re_split_max(pattern: MbValue, string: MbValue, maxsplit: MbValue) -> MbValue {
-    let pat = match extract_str(pattern) {
+    let pat = match extract_pattern_str(pattern) {
         Some(s) => s,
-        None => return MbValue::from_ptr(MbObject::new_list(vec![])),
+        None => {
+            raise_type_error("first argument must be string or compiled pattern");
+            return MbValue::none();
+        }
     };
     let text = match extract_str(string) {
         Some(s) => s,
@@ -2680,6 +2683,18 @@ mod tests {
                 assert_eq!(extract_str(items[2]).unwrap(), "c");
             }
         }
+    }
+
+    #[test]
+    fn test_split_wrong_pattern_type_raises_type_error() {
+        crate::runtime::exception::mb_clear_exception();
+        let result = mb_re_split(MbValue::from_int(7), s("abc123"));
+        assert!(result.is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        crate::runtime::exception::mb_clear_exception();
     }
 
     #[test]
