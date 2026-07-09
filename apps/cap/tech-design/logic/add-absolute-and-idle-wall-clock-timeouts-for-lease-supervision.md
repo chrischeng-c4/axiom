@@ -214,3 +214,149 @@ flowchart TD
     r11[R11 run args expose timeout flags] --> cargo_test_p_cap_cli_tests_run_args_expose_timeout_flags[cargo test -p cap cli::tests::run_args_expose_timeout_flags]
     r12[R12 config default timeout fields default to disabled] --> cargo_test_p_cap_config_tests_default_timeout_fields_default_to_disabled[cargo test -p cap config::tests::default_timeout_fields_default_to_disabled]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/cap/src/throttle.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Add `timeout_secs`/`idle_timeout_secs` (registered via `register`/a new
+      setter) plus `last_cpu_active`/`idle_no_progress_run` bookkeeping
+      fields on `Lease`. `tick()` gains two new per-lease checks, evaluated
+      after the existing pause/kill pressure logic: an absolute-deadline
+      check (`now - spawned_at - paused_total >= timeout_secs`) and a
+      debounced idle no-progress check driven by a new `CpuLookup` closure
+      parameter (mirroring `RssLookup`). Both checks are skipped entirely
+      while the lease is `Paused`, and both feed the existing SIGTERM /
+      `Killing` / `kill_grace_secs` escalation path — no new kill
+      mechanism. Add `KillClassification::AbsoluteTimeout` /
+      `KillClassification::IdleTimeout` cases to `classify_kill`'s call
+      sites (`build_envelope`, `classification_label`, `action_next_step`).
+
+  - path: apps/cap/src/throttle.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: >
+      Add tests for: absolute-timeout kill after deadline; absolute-timeout
+      Paused-duration exclusion; absolute_timeout_secs == 0 never fires;
+      idle-timeout debounced no-progress kill; idle-timeout counter reset
+      on CPU progress; idle-timeout Paused-duration exclusion;
+      idle_timeout_secs == 0 never fires; KillEnvelope carries
+      AbsoluteTimeout/IdleTimeout classification and a distinct Action
+      variant. Use `tokio::time::pause`/`advance` (as the existing
+      `kill_grace_secs` escalation tests already do) to drive the wall-clock
+      deadline deterministically, and a fake `CpuLookup` closure (mirroring
+      `NO_RSS`) to script cumulative CPU-time sequences per tick.
+
+  - path: apps/cap/src/sampler.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Add `CpuSampler`, same shape as `RssSampler` (a thin `sysinfo::System`
+      wrapper scoped to a caller-provided PID list), returning cumulative
+      CPU time per pid via `ProcessRefreshKind::new().with_cpu()` and
+      `Process::accumulated_cpu_time()` (or the process-group leader's CPU
+      time, matching how RSS is read today). Sampled every tick alongside
+      the existing `sample_interval_ms` cadence in the daemon's sampler
+      loop.
+
+  - path: apps/cap/src/sampler.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: >
+      Add a `CpuSampler` test proving it returns cumulative CPU time keyed
+      by pid for a real running process (e.g. the test process itself) and
+      omits dead/unknown pids, matching `RssSampler`'s existing test shape.
+
+  - path: apps/cap/src/protocol.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Add `timeout_secs: Option<u64>` and `idle_timeout_secs: Option<u64>`
+      to `AcquireRequest`. Add `KillClassification::AbsoluteTimeout` and
+      `KillClassification::IdleTimeout` variants. Add a matching new
+      `Action` variant (e.g. `Action::TimedOut { kind, next_step }` or two
+      dedicated variants) distinct from `WaitAndRetry`/`ChangeStrategy`/
+      `InspectAndWait`, since a timeout kill is not a resource-competition
+      diagnosis and should not suggest `cap wait`.
+
+  - path: apps/cap/src/protocol.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: >
+      Add a serde round-trip test proving `AcquireRequest` with
+      `timeout_secs`/`idle_timeout_secs` omitted deserializes both fields as
+      `None`, and a test proving `KillClassification::AbsoluteTimeout` /
+      `IdleTimeout` serialize to the expected snake_case tags.
+
+  - path: apps/cap/src/cli.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Add `--timeout <secs>` and `--idle-timeout <secs>` (`Option<u64>`,
+      `#[arg(long)]`) to `RunArgs`. The run handler forwards both onto
+      `AcquireRequest`, falling back to `None` (which the daemon resolves
+      against `default_timeout_secs`/`default_idle_timeout_secs`) when
+      unset.
+
+  - path: apps/cap/src/cli.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: >
+      Add a clap-parsing test proving `cap run --timeout 30 --idle-timeout
+      10 -- <cmd>` populates both `RunArgs` fields, and that omitting both
+      flags leaves them `None`.
+
+  - path: apps/cap/src/config.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Add `default_timeout_secs: u64` and `default_idle_timeout_secs: u64`
+      to `Protect`, both defaulting to `0` (disabled) in
+      `Protect::default()` and via `#[serde(default)]`, so existing
+      `config.toml` files without these keys parse unchanged.
+
+  - path: apps/cap/src/config.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: >
+      Add a test proving `Protect::default()` and a config.toml lacking the
+      new keys both resolve `default_timeout_secs`/`default_idle_timeout_secs`
+      to `0`, matching the existing legacy-key-fallback test pattern.
+
+  - path: apps/cap/src/daemon.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      At `Request::Acquire` handling, resolve each lease's effective
+      `timeout_secs`/`idle_timeout_secs` as `a.timeout_secs.unwrap_or(cfg
+      default)` / `a.idle_timeout_secs.unwrap_or(cfg default)` and pass them
+      into `throttle.register(...)` (or a follow-up setter call) so `tick()`
+      has both values available per lease from the moment it starts running.
+
+  - path: apps/cap/README.md
+    action: modify
+    section: overview
+    impl_mode: hand-written
+    description: >
+      Document `cap run --timeout`/`--idle-timeout` and
+      `default_timeout_secs`/`default_idle_timeout_secs` under the
+      Command Lease Throttling capability's promise and gate inventory,
+      noting both triggers are default-disabled and reuse the existing
+      pause/kill escalation rather than adding a new kill mechanism.
+```
