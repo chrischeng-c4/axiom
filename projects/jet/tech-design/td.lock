@@ -2,16 +2,22 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = "projects/jet/tech-design"
-generated_at = "2026-07-09T12:38:03.849074+00:00"
-digest = "sha256:f277c3612fb781c4552d2779297837b14d7d2d983636b73da903c4424ab0e710"
-source_digest = "sha256:f277c3612fb781c4552d2779297837b14d7d2d983636b73da903c4424ab0e710"
-ir_digest = "sha256:30f497f2fb90593665f573c67a19bcf43a78471ff949933b3e2aea05038cc6e6"
+generated_at = "2026-07-09T12:58:53.279184+00:00"
+digest = "sha256:08de1865a0aea40fccfc9ce093a9fbd5babc2a1872d1d7bbacf51221425e331c"
+source_digest = "sha256:08de1865a0aea40fccfc9ce093a9fbd5babc2a1872d1d7bbacf51221425e331c"
+ir_digest = "sha256:af31e08fd2066b1825b29d12fc675406759a487f6ea6b5dd8226958dbdb669c1"
 
 [[files]]
 path = "config/jet-transform-resolver-nx-tsconfig-path-aliases-never-wired-into.md"
 digest = "sha256:6bc041a9e268180e74aa695ef52d3982575b1364a84fdeee64dff89a31301b2e"
 ir_digest = "sha256:dc6b85e29bd369b13818d91bb044c1d69ac9296f1883b0f457d19373a34b1194"
 section_count = 3
+
+[[files]]
+path = "interfaces/cli/jet-cli-add-issue-comment-auto-reopen-follow-up.md"
+digest = "sha256:4913cf522a9f2f86882fdff7e932865f1baf041bce70816a4d85e9318edbae0c"
+ir_digest = "sha256:6a0562d06b9c19b957a38f07144929554002245d274079563f913733e9a87f49"
+section_count = 4
 
 [[files]]
 path = "logic/jet-build-lib-dts-object-literal-d-ts-emission-silently-truncate.md"
