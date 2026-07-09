@@ -109,3 +109,70 @@ flowchart TD
     snap --> serve([auto-mode CLI contract: TAPE_DATA_DIR / TAPE_PEER_SERVICE / TAPE_PEERS / TAPE_PEER_TLS_*])
     floor --> serve
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: tape-raft-host-verification
+requirements:
+  applied_floor_survives_restart:
+    id: R2
+    text: "applied_index survives restart via the fsynced applied-<node>.idx marker in the raft data dir: a single-node group restarted from its data dir rejoins with applied state intact and cold-replay performs no double-apply (append does not duplicate, checkpoint-put does not re-run against a stale offset)."
+    kind: functional
+    risk: high
+    verify: tests/raft_persistence.rs::restart_rejoins_with_applied_state_intact
+  auto_mode_serve:
+    id: R3
+    text: "Auto-mode: bare `tape serve` with no cluster env keeps the direct-journal path (full pre-existing suite green, zero new required flags); with REPLICAS_PER_SHARD > 1 the serve path derives ClusterTopology::from_env('tape', TAPE_PEER_SERVICE, serve port, 'TAPE_PEERS'), spawns the host, mounts its router outside the bearer-auth /topics data plane, and append/checkpoint-put propose through the host -- a follower append is forwarded to the leader by the host and a direct POST to a follower's /raft/propose answers 421 not-leader."
+    kind: functional
+    risk: high
+    verify: tests/raft_cluster.rs::three_node_group_elects_replicates_forwards_and_fails_over
+  failover_no_committed_loss:
+    id: R5
+    text: "Leader failover verified via a live 3-node kill -9 test: killing the OS process hosting the leader (SIGKILL, not SIGTERM) forces the survivors to re-elect and continue accepting appends; every previously committed event remains readable on every survivor after replaying its persisted raft log and applied marker (no committed loss)."
+    kind: functional
+    risk: high
+    verify: tests/raft_failover.rs::three_node_live_process_kill_9_failover_no_committed_loss
+  peer_tls_config_surface_fail_fast:
+    id: R6
+    text: "tape::peer_tls::PeerTlsConfig::from_env() mirrors relay's config-surface-only contract: nothing set is Ok(None) (plain h2c); a partial TAPE_PEER_TLS_* triple is a startup error; a mis-pointed path names itself in the error; a complete PEM fixture builds both rustls server/client configs even though raft-host has no TLS seam to apply them to yet."
+    kind: functional
+    risk: medium
+    verify: src/peer_tls.rs::tests
+  single_node_regression:
+    id: R8
+    text: "cargo test -p tape stays fully green with the raft module compiled in (default feature set, no cluster env set): every pre-existing http_transport/service_auth/cli_contract test continues to exercise the direct-journal path unchanged."
+    kind: regression
+    risk: medium
+    verify: cargo test -p tape
+  snapshot_restore_whole_journal:
+    id: R4
+    text: "snapshot serializes the whole TapeJournal (topics + checkpoints, valid because tape never trims history) tagged with the applied index; restore replaces the journal wholesale and sets the applied floor to the snapshot's up_to. Exercised through the real host path: a small SnapshotPolicy threshold triggers compaction and a fresh node catches up via InstallSnapshot."
+    kind: functional
+    risk: high
+    verify: tests/raft_cluster.rs::fresh_node_catches_up_via_install_snapshot
+  state_machine_apply_and_outcome:
+    id: R1
+    text: "TapeStateMachine implements raft_host::RaftStateMachine over the shared Arc<Mutex<TapeJournal>>: apply decodes TapeCommand::Append/CheckpointPut and calls the unchanged, validated TapeJournal::append/put_checkpoint_at methods; the apply outcome (the appended TapeEvent, or the checkpoint Result) is claimable by raft index from an OutcomeWindow so a proposing handler returns the real domain result instead of a synthetic one. Verified end-to-end by a 3-node in-process group: an append proposed on the leader is applied and readable via the journal on ALL nodes, and a checkpoint-put's stale/beyond-end rejection surfaces to the caller unchanged."
+    kind: functional
+    risk: high
+    verify: tests/raft_cluster.rs::three_node_group_elects_replicates_forwards_and_fails_over
+  topology_from_standard_env:
+    id: R7
+    text: "tape derives its cluster topology exclusively from the standard downward-API quartet via raft-host (no local ordinal math): with POD_NAME/SHARD_COUNT/REPLICAS_PER_SHARD/VOTER_COUNT set, ClusterTopology::from_env('tape', ...) yields the replica node id, voter membership, and peer URLs honoring the TAPE_PEERS local override; replica_mode() is false when the env is unset or REPLICAS_PER_SHARD=1."
+    kind: regression
+    risk: low
+    verify: libs/raft-host/src/cluster.rs::tests (shared, exercised via tape's ClusterTopology::from_env call)
+---
+flowchart TD
+    r1[R1 state machine apply and outcome] --> tests_raft_cluster_rs_three_node_group_elects_replicates_forwards_and_fails_over[tests/raft_cluster.rs::three_node_group_elects_replicates_forwards_and_fails_over]
+    r3[R3 auto mode serve] --> tests_raft_cluster_rs_three_node_group_elects_replicates_forwards_and_fails_over
+    r2[R2 applied floor survives restart] --> tests_raft_persistence_rs_restart_rejoins_with_applied_state_intact[tests/raft_persistence.rs::restart_rejoins_with_applied_state_intact]
+    r4[R4 snapshot restore whole journal] --> tests_raft_cluster_rs_fresh_node_catches_up_via_install_snapshot[tests/raft_cluster.rs::fresh_node_catches_up_via_install_snapshot]
+    r5[R5 failover no committed loss] --> tests_raft_failover_rs_three_node_live_process_kill_9_failover_no_committed_loss[tests/raft_failover.rs::three_node_live_process_kill_9_failover_no_committed_loss]
+    r6[R6 peer tls config surface fail fast] --> src_peer_tls_rs_tests[src/peer_tls.rs::tests]
+    r7[R7 topology from standard env] --> libs_raft_host_src_cluster_rs_tests_shared_exercised_via_tape_s_clustertopology_from_env_call[libs/raft-host/src/cluster.rs::tests (shared, exercised via tape's ClusterTopology::from_env call)]
+    r8[R8 single node regression] --> cargo_test_p_tape[cargo test -p tape]
+```
