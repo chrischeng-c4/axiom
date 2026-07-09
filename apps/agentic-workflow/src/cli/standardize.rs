@@ -61,6 +61,9 @@ const DELETED_COMMAND_PATHS: &[&str] = &[
     "aw standardize managed",
     "aw standardize semantic",
     "aw standardize traceability",
+    // #1273 (epic #1270 R5): `aw td code-claim` folded into
+    // `aw td create --from-source`.
+    "aw td code-claim",
 ];
 const AW_EC_BEGIN_MARKER: &str = "AW-EC-BEGIN";
 
@@ -79,7 +82,7 @@ pub(crate) struct TraceabilityCli {
 // only. `managed`/`semantic`/`traceability` `report`/`next`/`run` are gone --
 // `aw health` absorbs the read (coverage/next.command already sourced from
 // the same inventory/coverage library code below) and slice-E worker verbs
-// (`aw td promote`, `aw td code-claim`, `aw wi create`, ...) absorb the
+// (`aw td promote`, `aw td create --from-source`, `aw wi create`, ...) absorb the
 // mutating remediation. The subcommand is required (not `Option`): with only
 // `audit` left, a bare `aw standardize --project <p>` would just be a second,
 // narrower copy of `aw health --project <p>` -- exactly the duplicated read
@@ -928,13 +931,13 @@ pub(crate) fn project_health_standardize_coverage(
 /// `ProjectHealthReport`; those (and any other managed gap kind) fall back
 /// to the read-only `aw health --project <p> metrics --verbose` pointer,
 /// which surfaces the managed axis detail an agent needs to pick the next
-/// concrete `aw td code-claim`/`aw td promote` invocation by hand.
+/// concrete `aw td create --from-source`/`aw td promote` invocation by hand.
 pub(crate) fn managed_health_worker_command(
     project: &str,
     next_uncovered_file: Option<&str>,
 ) -> String {
     match next_uncovered_file {
-        Some(target) => format!("aw td code-claim {target}"),
+        Some(target) => format!("aw td create --from-source {target} --project {project}"),
         None => format!("aw health --project {project} metrics --verbose"),
     }
 }
