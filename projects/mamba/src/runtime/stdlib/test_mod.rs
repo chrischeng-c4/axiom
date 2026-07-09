@@ -204,6 +204,57 @@ extern "C" fn type_params_invalid_test_disallowed_expressions(_self_v: MbValue) 
     MbValue::none()
 }
 
+extern "C" fn type_params_lazy_evaluation_test_qualname(_self_v: MbValue) -> MbValue {
+    let ns = super::super::dict_ops::mb_dict_new();
+    super::super::dict_ops::mb_dict_setitem(
+        ns,
+        MbValue::from_ptr(MbObject::new_str("__name__".to_string())),
+        MbValue::from_ptr(MbObject::new_str("test.test_type_params".to_string())),
+    );
+    let source = r#"
+class GlobalGenericClass[T]:
+    pass
+
+def global_generic_func[T]():
+    pass
+
+class _MambaTypeParamsLazyEvaluationHelper:
+    def test_qualname(self):
+        class Foo[T]:
+            pass
+
+        def func[T]():
+            pass
+
+        assert Foo.__qualname__ == "TypeParamsLazyEvaluationTest.test_qualname.<locals>.Foo"
+        assert func.__qualname__ == "TypeParamsLazyEvaluationTest.test_qualname.<locals>.func"
+        assert global_generic_func.__qualname__ == "global_generic_func"
+        assert GlobalGenericClass.__qualname__ == "GlobalGenericClass"
+
+_MambaTypeParamsLazyEvaluationHelper.test_qualname.__qualname__ = "TypeParamsLazyEvaluationTest.test_qualname"
+_MambaTypeParamsLazyEvaluationHelper().test_qualname()
+"#;
+    super::super::exception::mb_clear_exception();
+    let _ = super::super::builtins::mb_exec_with_globals(
+        MbValue::from_ptr(MbObject::new_str(source.to_string())),
+        ns,
+    );
+    match super::super::exception::current_exception_type().as_deref() {
+        None => MbValue::none(),
+        Some(exc_type) => {
+            let exc = super::super::exception::mb_catch_exception();
+            let msg = super::super::exception::get_exception_message_pub(exc)
+                .unwrap_or_else(|| exc_type.to_string());
+            unsafe {
+                super::super::rc::release_if_ptr(exc);
+            }
+            raise_assertion_error(&format!(
+                "TypeParamsLazyEvaluationTest.test_qualname failed: {exc_type}: {msg}"
+            ))
+        }
+    }
+}
+
 fn register_type_params_wrapper_submodule(type_params_make_base: usize) {
     let mut invalid_methods: HashMap<String, MbValue> = HashMap::new();
     invalid_methods.insert(
@@ -219,6 +270,16 @@ fn register_type_params_wrapper_submodule(type_params_make_base: usize) {
         vec!["TestCase".to_string()],
         invalid_methods,
     );
+    let mut lazy_eval_methods: HashMap<String, MbValue> = HashMap::new();
+    lazy_eval_methods.insert(
+        "test_qualname".to_string(),
+        MbValue::from_func(type_params_lazy_evaluation_test_qualname as *const () as usize),
+    );
+    super::super::class::mb_class_register(
+        "TypeParamsLazyEvaluationTest",
+        vec!["TestCase".to_string()],
+        lazy_eval_methods,
+    );
 
     let mut attrs = HashMap::new();
     attrs.insert(
@@ -231,6 +292,12 @@ fn register_type_params_wrapper_submodule(type_params_make_base: usize) {
     attrs.insert(
         "TypeParamsInvalidTest".to_string(),
         MbValue::from_ptr(MbObject::new_str("TypeParamsInvalidTest".to_string())),
+    );
+    attrs.insert(
+        "TypeParamsLazyEvaluationTest".to_string(),
+        MbValue::from_ptr(MbObject::new_str(
+            "TypeParamsLazyEvaluationTest".to_string(),
+        )),
     );
     super::register_module("test.test_type_params", attrs);
 }

@@ -25,6 +25,8 @@ pub struct MbClosure {
     pub refs: u32,
     /// Name of the function
     pub name: String,
+    /// Qualified name of the function, when known.
+    pub qualname: Option<String>,
     /// Docstring metadata copied onto this closure handle, when present.
     pub doc: Option<String>,
     /// Defining module metadata copied onto this closure handle, when present.
@@ -62,6 +64,61 @@ thread_local! {
         std::cell::RefCell::new(HashMap::new());
     static ACTIVE_MODULE_NAMES: std::cell::RefCell<Vec<String>> =
         std::cell::RefCell::new(Vec::new());
+    static ACTIVE_QUALNAME_CONTEXTS: std::cell::RefCell<Vec<QualnameContext>> =
+        std::cell::RefCell::new(Vec::new());
+}
+
+#[derive(Clone)]
+struct QualnameContext {
+    prefix: String,
+    uses_locals: bool,
+}
+
+fn derive_qualname(name: &str) -> String {
+    ACTIVE_QUALNAME_CONTEXTS.with(|contexts| {
+        let contexts = contexts.borrow();
+        let Some(ctx) = contexts.last() else {
+            return name.to_string();
+        };
+        if ctx.prefix.is_empty() {
+            return name.to_string();
+        }
+        if ctx.uses_locals {
+            format!("{}.<locals>.{name}", ctx.prefix)
+        } else {
+            format!("{}.{}", ctx.prefix, name)
+        }
+    })
+}
+
+pub(crate) fn current_definition_qualname(name: &str) -> String {
+    derive_qualname(name)
+}
+
+fn push_qualname_context(prefix: String, uses_locals: bool) {
+    if prefix.is_empty() {
+        return;
+    }
+    ACTIVE_QUALNAME_CONTEXTS.with(|contexts| {
+        contexts.borrow_mut().push(QualnameContext {
+            prefix,
+            uses_locals,
+        });
+    });
+}
+
+pub fn mb_pop_qualname_context() {
+    ACTIVE_QUALNAME_CONTEXTS.with(|contexts| {
+        contexts.borrow_mut().pop();
+    });
+}
+
+pub fn mb_push_class_qualname(name: MbValue) {
+    let class_name = extract_str(name).unwrap_or_default();
+    if class_name.is_empty() {
+        return;
+    }
+    push_qualname_context(derive_qualname(&class_name), false);
 }
 
 fn closure_slot_index(raw: i64) -> Option<usize> {
@@ -210,14 +267,25 @@ pub fn with_callable_module<R>(func: MbValue, call: impl FnOnce() -> R) -> R {
     let Some(module_name) = callable_module_name(func) else {
         return call();
     };
-    struct ModuleGuard;
-    impl Drop for ModuleGuard {
+    struct CallContextGuard {
+        pop_qualname: bool,
+    }
+    impl Drop for CallContextGuard {
         fn drop(&mut self) {
+            if self.pop_qualname {
+                mb_pop_qualname_context();
+            }
             pop_active_module_name();
         }
     }
+    let qualname =
+        extract_str(mb_func_get_qualname(func)).or_else(|| extract_str(mb_func_get_name(func)));
+    let pop_qualname = qualname.is_some();
     push_active_module_name(module_name);
-    let _guard = ModuleGuard;
+    if let Some(qualname) = qualname {
+        push_qualname_context(qualname, true);
+    }
+    let _guard = CallContextGuard { pop_qualname };
     call()
 }
 
@@ -231,6 +299,7 @@ pub fn mb_closure_new(name: MbValue, func: MbValue, captures: MbValue) -> MbValu
     let closure = MbClosure {
         refs: 1,
         name: closure_name,
+        qualname: None,
         doc: None,
         module: None,
         wrapped: None,
@@ -261,6 +330,7 @@ pub fn mb_closure_new_with_cells(name: MbValue, func: MbValue, capture_ids: MbVa
     let closure = MbClosure {
         refs: 1,
         name: closure_name,
+        qualname: None,
         doc: None,
         module: None,
         wrapped: None,
@@ -637,6 +707,8 @@ pub fn mb_property_new(fget: MbValue, fset: MbValue, fdel: MbValue) -> MbValue {
 thread_local! {
     static FUNC_NAMES: std::cell::RefCell<HashMap<u64, String>> =
         std::cell::RefCell::new(HashMap::new());
+    static FUNC_QUALNAMES: std::cell::RefCell<HashMap<u64, String>> =
+        std::cell::RefCell::new(HashMap::new());
     static FUNC_DOCS: std::cell::RefCell<HashMap<u64, String>> =
         std::cell::RefCell::new(HashMap::new());
     static FUNC_MODULES: std::cell::RefCell<HashMap<u64, String>> =
@@ -958,6 +1030,31 @@ pub fn mb_func_set_name(func: MbValue, name: MbValue) {
     FUNC_NAMES.with(|m| m.borrow_mut().insert(key, fname));
 }
 
+/// Register a function's qualified name.
+pub fn mb_func_set_qualname(func: MbValue, qualname: MbValue) {
+    let qualname = extract_str(qualname).unwrap_or_default();
+    if with_live_closure_mut(func, |closure| closure.qualname = Some(qualname.clone())).is_some() {
+        return;
+    }
+    if func.as_func().is_none() {
+        return;
+    }
+    let key = func.to_bits();
+    FUNC_QUALNAMES.with(|m| m.borrow_mut().insert(key, qualname));
+}
+
+/// Register both a function's simple name and the lexical qualname visible at
+/// its definition site.
+pub fn mb_func_prime_name(func: MbValue, name: MbValue) {
+    let simple_name = extract_str(name).unwrap_or_default();
+    mb_func_set_name(
+        func,
+        MbValue::from_ptr(MbObject::new_str(simple_name.clone())),
+    );
+    let qualname = derive_qualname(&simple_name);
+    mb_func_set_qualname(func, MbValue::from_ptr(MbObject::new_str(qualname)));
+}
+
 /// Get a function's registered name. Returns None-MbValue if not registered.
 pub fn mb_func_get_name(func: MbValue) -> MbValue {
     if let Some(name) = with_live_closure(func, |closure| closure.name.clone()) {
@@ -965,6 +1062,22 @@ pub fn mb_func_get_name(func: MbValue) -> MbValue {
     }
     let key = func.to_bits();
     FUNC_NAMES.with(|m| {
+        m.borrow()
+            .get(&key)
+            .map(|s| MbValue::from_ptr(MbObject::new_str(s.clone())))
+            .unwrap_or(MbValue::none())
+    })
+}
+
+/// Get a function's registered qualified name. Returns None-MbValue if absent.
+pub fn mb_func_get_qualname(func: MbValue) -> MbValue {
+    if let Some(qualname) = with_live_closure(func, |closure| closure.qualname.clone()) {
+        return qualname
+            .map(|s| MbValue::from_ptr(MbObject::new_str(s)))
+            .unwrap_or_else(MbValue::none);
+    }
+    let key = func.to_bits();
+    FUNC_QUALNAMES.with(|m| {
         m.borrow()
             .get(&key)
             .map(|s| MbValue::from_ptr(MbObject::new_str(s.clone())))
@@ -1992,11 +2105,13 @@ pub(crate) fn cleanup_all_closures() {
     let _ = CELLS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = ACTIVE_CELLS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = ACTIVE_MODULE_NAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = ACTIVE_QUALNAME_CONTEXTS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = GLOBAL_NAMESPACE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = GLOBAL_ID_NAMESPACE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = ACTIVE_MODULE_SYM_IDS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     MISSING_GLOBAL_RAISES_NAME_ERROR.with(|flag| flag.set(false));
     let _ = FUNC_NAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = FUNC_QUALNAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_DOCS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_MODULES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_ARGCOUNTS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
