@@ -2357,5 +2357,140 @@ export const SpAlert = Alert as AlertInterface;
             "multi-statement arrow body returning a typed object literal must stay fail-loud, got: {err}"
         );
     }
+
+    #[test]
+    fn infers_object_assign_computed_key_arrow_property_at_real_world_scale_signature() {
+        // R1 (#1262): WI's real-world-scale repro -- an 11-method
+        // reconstruction of the issue's own "Real-world impact" description
+        // (fe-shared's `_Query`), with a single Object.assign({},
+        // ...arr.map(cb))-valued arrow property (`parse`) followed by TEN
+        // sibling properties in the same object literal. On jet 0.4.16
+        // (pre-WI #1264's split_top_level bracket-depth fix), only `parse`
+        // survived and all ten siblings were silently dropped with no error.
+        // Must emit all eleven members, matching tsc's ground-truth output,
+        // proving the truncation does not resurface at real-world scale.
+        let src = r#"export const _Query = {
+    parse: (search: string): Record<string, string> =>
+        Object.assign(
+            {},
+            ...search
+                .replace(/^\?/, '')
+                .split('&')
+                .filter(Boolean)
+                .map((pair) => {
+                    const [key, value] = pair.split('=');
+                    return { [key]: value };
+                }),
+        ),
+    formatToQueryObject: (obj: Record<string, string>): string =>
+        Object.entries(obj)
+            .map(([k, v]) => `${k}=${v}`)
+            .join('&'),
+    getOperatorsInOrder: (obj: Record<string, string>): string[] =>
+        Object.keys(obj),
+    transformCase: (str: string): string => str.trim(),
+    camelCase: (str: string): string => str.replace(/-./g, (m) => m[1].toUpperCase()),
+    snakeCase: (str: string): string => str.replace(/([A-Z])/g, '_$1').toLowerCase(),
+    kebabCase: (str: string): string => str.replace(/([A-Z])/g, '-$1').toLowerCase(),
+    formatToQueryString: (obj: Record<string, string>): string =>
+        Object.entries(obj)
+            .map(([k, v]) => `${k}=${v}`)
+            .join('&'),
+    int: (str: string): number => parseInt(str, 10),
+    genOrderList: (list: string[]): string[] => [...list],
+    genOrderStrList: (list: string[]): string => list.join(','),
+};
+"#;
+        let dts = emit_declarations(src).unwrap();
+        let expected_members = [
+            "parse: (search: string) => Record<string, string>;",
+            "formatToQueryObject: (obj: Record<string, string>) => string;",
+            "getOperatorsInOrder: (obj: Record<string, string>) => string[];",
+            "transformCase: (str: string) => string;",
+            "camelCase: (str: string) => string;",
+            "snakeCase: (str: string) => string;",
+            "kebabCase: (str: string) => string;",
+            "formatToQueryString: (obj: Record<string, string>) => string;",
+            "int: (str: string) => number;",
+            "genOrderList: (list: string[]) => string[];",
+            "genOrderStrList: (list: string[]) => string;",
+        ];
+        for member in expected_members {
+            assert!(
+                dts.contains(member),
+                "expected member `{member}` missing from real-world-scale Object.assign object literal, got:\n{dts}"
+            );
+        }
+        // Truncation-detection assertion: count emitted top-level member
+        // signature lines directly rather than relying only on substring
+        // presence, so a partial-truncation regression that happens to
+        // preserve unrelated member text still fails this test.
+        let member_line_count = dts
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim();
+                trimmed.ends_with(';') && !trimmed.starts_with("export") && trimmed != "};"
+            })
+            .count();
+        assert_eq!(
+            member_line_count, 11,
+            "expected exactly 11 emitted members (silent truncation drops the tail), got {member_line_count}:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_object_assign_computed_key_arrow_property_multiple_members_same_literal_signature()
+    {
+        // R2 (#1262): non-regression stress control -- TWO separate
+        // Object.assign({}, ...arr.map(cb))-valued arrow properties in the
+        // same object literal (`parse` and `second`), each followed by
+        // further sibling properties, none of which was covered by the
+        // #1238 TD's single-Object.assign probes. Must emit all twelve
+        // members, proving the split_top_level fix generalizes to more than
+        // one Object.assign-valued member per literal.
+        let src = r#"export const _Query = {
+    simpleMethod: (x: number): number => x + 1,
+    parse: (search: string): Record<string, string> =>
+        Object.assign(
+            {},
+            ...search
+                .split('&')
+                .filter(Boolean)
+                .map((pair) => {
+                    const [key, value] = pair.split('=');
+                    return { [key]: value };
+                }),
+        ),
+    formatToQueryObject: (obj: Record<string, string>): string =>
+        Object.entries(obj)
+            .map(([k, v]) => `${k}=${v}`)
+            .join('&'),
+    int: (str: string): number => parseInt(str, 10),
+    second: (list: string[]): string[] =>
+        Object.assign(
+            [],
+            ...list.map((item) => {
+                return [item.trim()];
+            }),
+        ),
+    genOrderList: (list: string[]): string[] => [...list],
+};
+"#;
+        let dts = emit_declarations(src).unwrap();
+        let expected_members = [
+            "simpleMethod: (x: number) => number;",
+            "parse: (search: string) => Record<string, string>;",
+            "formatToQueryObject: (obj: Record<string, string>) => string;",
+            "int: (str: string) => number;",
+            "second: (list: string[]) => string[];",
+            "genOrderList: (list: string[]) => string[];",
+        ];
+        for member in expected_members {
+            assert!(
+                dts.contains(member),
+                "expected member `{member}` missing from dual-Object.assign object literal, got:\n{dts}"
+            );
+        }
+    }
 }
 // </HANDWRITE>
