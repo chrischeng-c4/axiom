@@ -90,7 +90,6 @@ properties:
     description: "No new vat.toml or CLI flag. Reuses the existing --isolation flag and [network].egress from vat.toml; this WI does not add config, it closes the remaining regression-proof and doc-reconciliation gap for coverage that already applies --isolation/[network].egress to runner-mode commands (spawn_runner_process, run_setup_step) via the fail-closed sandbox::pick (#1300) + sandbox_wrap path, while start_service spawns stay intentionally unwrapped."
 additionalProperties: true
 ```
-
 ## CLI
 <!-- type: cli lang: yaml -->
 
