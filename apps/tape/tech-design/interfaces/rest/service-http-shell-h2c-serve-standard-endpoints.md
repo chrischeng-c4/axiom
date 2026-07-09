@@ -84,6 +84,24 @@ flowchart TD
 ---
 id: tape-service-http-shell-verification
 requirements:
+  domain_round_trip:
+    id: R7
+    text: "POST /topics/{topic}/append, GET /topics/{topic}/replay, and GET/PUT /topics/{topic}/consumers/{consumer}/checkpoint wrap the unchanged TapeJournal API (src/lib.rs) end to end over HTTP, with no new domain behavior."
+    kind: regression
+    risk: medium
+    verify: tests/http_transport.rs::append_replay_checkpoint_round_trip_over_http
+  drain_readyz:
+    id: R3
+    text: "AppState implements service_http::ReadinessHook over a draining AtomicBool; start_drain() flips /readyz from 200 ok to 503 draining (the SIGTERM path calls it via shutdown_with_drain)."
+    kind: functional
+    risk: medium
+    verify: tests/http_transport.rs::readyz_flips_to_503_on_drain
+  error_envelope:
+    id: R6
+    text: "Handler error paths return the shared {error, message} ErrorEnvelope JSON (service_http::ApiErr) — bad JSON bodies 400 bad_request, stale/beyond-end checkpoint writes 409 conflict — while success JSON encodings are untouched."
+    kind: functional
+    risk: medium
+    verify: tests/http_transport.rs::errors_render_the_shared_envelope
   grace_flag:
     id: R1
     text: "The tape CLI gains a `serve` subcommand with --bind (TAPE_BIND, default 127.0.0.1:7137), --store (TAPE_STORE), and --grace-secs (TAPE_GRACE_SECS, default 10) feeding shutdown_with_drain's grace window; existing append/replay/checkpoint/spec/llm/upgrade/issue commands keep parsing unchanged."
@@ -96,36 +114,18 @@ requirements:
     kind: functional
     risk: high
     verify: tests/http_transport.rs::h2c_and_http11_share_the_serve_port
-  drain_readyz:
-    id: R3
-    text: "AppState implements service_http::ReadinessHook over a draining AtomicBool; start_drain() flips /readyz from 200 ok to 503 draining (the SIGTERM path calls it via shutdown_with_drain)."
-    kind: functional
-    risk: medium
-    verify: tests/http_transport.rs::readyz_flips_to_503_on_drain
-  probe_surface:
-    id: R4
-    text: "GET /healthz /readyz /metrics /openapi.json /docs all answer on the one serve port via service_http::standard_probe_routes merged with the topic data plane."
-    kind: functional
-    risk: medium
-    verify: tests/http_transport.rs::probe_surface_answers_on_serve_port
   metrics_counters:
     id: R5
     text: "TapeMetrics (service-metrics Latency primitives, recorded by the metrics::track route_layer) renders per-op tape request counters + latency into the Prometheus text /metrics serves after append/replay/checkpoint traffic."
     kind: functional
     risk: medium
     verify: tests/http_transport.rs::metrics_report_tape_request_counters_after_traffic
-  error_envelope:
-    id: R6
-    text: "Handler error paths return the shared {error, message} ErrorEnvelope JSON (service_http::ApiErr) -- bad JSON bodies 400 bad_request, stale/beyond-end checkpoint writes 409 conflict -- while success JSON encodings are untouched."
+  probe_surface:
+    id: R4
+    text: "GET /healthz /readyz /metrics /openapi.json /docs all answer on the one serve port via service_http::standard_probe_routes merged with the topic data plane."
     kind: functional
     risk: medium
-    verify: tests/http_transport.rs::errors_render_the_shared_envelope
-  domain_round_trip:
-    id: R7
-    text: "POST /topics/{topic}/append, GET /topics/{topic}/replay, and GET/PUT /topics/{topic}/consumers/{consumer}/checkpoint wrap the unchanged TapeJournal API (src/lib.rs) end to end over HTTP, with no new domain behavior."
-    kind: regression
-    risk: medium
-    verify: tests/http_transport.rs::append_replay_checkpoint_round_trip_over_http
+    verify: tests/http_transport.rs::probe_surface_answers_on_serve_port
 ---
 flowchart TD
     r1[R1 grace flag] --> src_bin_tape_rs_tests_cli_parse_surface[src/bin/tape.rs::tests::cli_parse_surface]
