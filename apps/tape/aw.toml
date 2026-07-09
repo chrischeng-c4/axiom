@@ -17,7 +17,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "tape"
-generated_from_td_digest = "sha256:75ce7af4f90f1b27dc94965f4e11c3788a131d1f870bd96beb00480ea47563d6"
+generated_from_td_digest = "sha256:73473ba517308b10dce9e32bd2ad2deb0e7e72410ce968864ed8fe7423de382e"
 
 [[aw.ec.generated.cases]]
 id = "tape-chainable-output-conformance"
@@ -154,6 +154,38 @@ assertions = [
 ]
 
 [[aw.ec.generated.cases]]
+id = "tape-meter-performance-gate"
+capability_id = "competitor-performance"
+claim_id = "topic-replay-competitor-performance-baseline"
+contract_id = "tape-meter-throughput-ratchet"
+category = "efficiency"
+td_ref = "apps/tape/external-contracts/competitor-performance/efficiency/meter-gate.md#tape-meter-performance-gate"
+test_path = "apps/tape/tests/benchmark_tape_meter_performance_gate.rs"
+command = "cd apps/tape && ../../target/debug/vat run meter-perf"
+required_for_production = true
+assertions = [
+    "The local Tape performance regression gate passes for append, replay, and checkpoint operations.",
+    "Tape's NATS JetStream local backlog replay win is backed by a real-service benchmark gate.",
+    "The gate is executed by meter inside a vat workspace, not by a direct-cargo-only dispatch path.",
+]
+
+[[aw.ec.generated.cases]]
+id = "tape-security-hardening-guard-scan"
+capability_id = "security-hardening"
+claim_id = "guard-static-runtime-evidence"
+contract_id = "tape-guard-security-report"
+category = "security"
+td_ref = "apps/tape/external-contracts/security-hardening/security/security-evidence.md#tape-security-hardening-guard-scan"
+test_path = "apps/tape/tests/security_tape_security_hardening_guard_scan.rs"
+command = "cd apps/tape && ../../target/debug/vat run guard-security"
+required_for_production = false
+assertions = [
+    "guard scan over apps/tape reports no untriaged Docker, Kubernetes, or static security findings.",
+    "guard attaches meter evidence for tape's bearer-auth request-boundary smoke (cli_contract auth-relevant cases).",
+    "The security evidence runs inside vat so generated reports and transient files do not mutate the host checkout.",
+]
+
+[[aw.ec.generated.cases]]
 id = "tape-standard-operational-endpoints"
 capability_id = "standard-operational-endpoints"
 claim_id = "standard-service-route-inventory"
@@ -179,4 +211,22 @@ assertions = [
     "Tape assigns ordered offsets per topic.",
     "Tape replays by offset and by timestamp.",
 ]
+
+[[aw.ec.generated.tool_manifests]]
+id = "tape-guard-security"
+tool = "guard"
+path = "apps/tape/guard-tape-security.toml"
+td_ref = "apps/tape/external-contracts/security-hardening/security/security-evidence.md#tape-guard-security"
+content_digest = "sha256:922264b30cda807de231f2f3d2f94232ae3508b731283dd0a8ea2ad5ec95bd18"
+command = "cd apps/tape && ../../target/debug/vat run guard-security"
+category = "security"
+
+[[aw.ec.generated.tool_manifests]]
+id = "tape-meter-performance"
+tool = "meter"
+path = "apps/tape/meter-tape-performance.toml"
+td_ref = "apps/tape/external-contracts/competitor-performance/efficiency/meter-gate.md#tape-meter-performance"
+content_digest = "sha256:f5479a59ab66bf97873041dc86ace84b890fc557b6ccfa680ce823cf35748f95"
+command = "cd apps/tape && ../../target/debug/vat run meter-perf"
+category = "efficiency"
 # AW-EC-END
