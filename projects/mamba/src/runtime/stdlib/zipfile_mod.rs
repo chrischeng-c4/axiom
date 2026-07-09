@@ -1248,6 +1248,28 @@ unsafe extern "C" fn d_zipfile_badzipfile(_args_ptr: *const MbValue, _nargs: usi
     make_instance("zipfile.BadZipFile", vec![])
 }
 
+unsafe extern "C" fn d_zip_path_glob_translator(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    crate::icf_guard!();
+    let a = unsafe { arg_slice(args_ptr, nargs) };
+    if let Some(seps) = a.first().copied() {
+        if !seps.is_none() && extract_str(seps).is_none() {
+            return raise_str("TypeError", "Translator() seps must be str");
+        }
+    }
+    make_instance("zipfile._path.glob.Translator", vec![])
+}
+
+unsafe extern "C" fn d_zip_path_glob_empty_str(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
+    crate::icf_guard!();
+    new_str("")
+}
+
 // ── Registration ──
 
 pub fn register() {
@@ -1303,6 +1325,36 @@ pub fn register() {
     );
 
     super::register_module("zipfile", attrs);
+
+    let path_attrs: HashMap<String, MbValue> = HashMap::new();
+    super::register_module("zipfile._path", path_attrs);
+
+    let mut glob_attrs: HashMap<String, MbValue> = HashMap::new();
+    let glob_dispatchers: Vec<(&str, usize)> = vec![
+        (
+            "Translator",
+            d_zip_path_glob_translator as *const () as usize,
+        ),
+        ("translate", d_zip_path_glob_empty_str as *const () as usize),
+        (
+            "translate_core",
+            d_zip_path_glob_empty_str as *const () as usize,
+        ),
+        ("match_dirs", d_zip_path_glob_empty_str as *const () as usize),
+        ("replace", d_zip_path_glob_empty_str as *const () as usize),
+        ("separate", d_zip_path_glob_empty_str as *const () as usize),
+    ];
+    for (name, addr) in glob_dispatchers {
+        glob_attrs.insert(name.to_string(), MbValue::from_func(addr));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+    }
+    super::super::module::register_native_type_name(
+        d_zip_path_glob_translator as *const () as usize as u64,
+        "zipfile._path.glob.Translator".to_string(),
+    );
+    super::register_module("zipfile._path.glob", glob_attrs);
 }
 
 fn register_zip_classes() {

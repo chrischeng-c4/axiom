@@ -221,6 +221,15 @@ unsafe extern "C" fn d_namedtuple(args_ptr: *const MbValue, nargs: usize) -> MbV
     // typing's fields are (name, type) pairs — extract just the names.
     use super::super::rc::ObjData;
     let name = a.first().copied().unwrap_or_else(MbValue::none);
+    if !name.is_none() && extract_str(name).is_none() {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "NamedTuple() typename must be str".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
     let fields_v = a.get(1).copied().unwrap_or_else(MbValue::none);
     if !name.is_none() && is_seq(fields_v) {
         let items: Vec<MbValue> = fields_v

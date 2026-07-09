@@ -5727,6 +5727,16 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
                 if let Some(result) = super::stdlib::ast_mod::mb_ast_construct_marker(s, &items) {
                     return result;
                 }
+                // Exception/warning class-name strings must construct through
+                // the exception core even when their class is locally
+                // registered, so specialized constructor fields and type
+                // walls (for example TOMLDecodeError.msg/doc/pos) run.
+                if super::exception::is_builtin_exception_name(s)
+                    || super::class::class_mro_any(s, super::exception::is_builtin_exception_name)
+                {
+                    let args_val = MbValue::from_ptr(MbObject::new_list(items));
+                    return super::exception::mb_exception_new_with_args(func, args_val);
+                }
                 if super::class::class_is_registered(s) {
                     let args_val = MbValue::from_ptr(MbObject::new_list(items));
                     return super::class::mb_instance_new_with_init(func, args_val);
@@ -5736,12 +5746,6 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
                 // indirectly (not via mb_call_method's dict-method dispatch)
                 // builds an exception instance, same as a bare `ValueError(...)`.
                 // Mirrors the kwargs variant's check in mb_call_spread_kwargs.
-                if super::exception::is_builtin_exception_name(s)
-                    || super::class::class_mro_any(s, super::exception::is_builtin_exception_name)
-                {
-                    let args_val = MbValue::from_ptr(MbObject::new_list(items));
-                    return super::exception::mb_exception_new_with_args(func, args_val);
-                }
             }
         }
     }
