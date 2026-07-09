@@ -175,6 +175,15 @@ impl<'a> Parser<'a> {
         } else {
             (Vec::new(), Vec::new())
         };
+        if !type_params.is_empty() {
+            self.validate_pep695_generic_exprs(&bases)?;
+            for (_, value) in &keyword_args {
+                self.validate_pep695_expr(
+                    value,
+                    super::stmt::Pep695ExprContext::GenericDefinition,
+                )?;
+            }
+        }
         self.expect(TokenKind::Colon)?;
         let was_in_class_body = self.in_class_body;
         self.in_class_body = true;
@@ -790,6 +799,7 @@ impl<'a> Parser<'a> {
         // PEP 695: the alias value is an arbitrary expression, evaluated
         // lazily at runtime (e.g. `type Lazy[T] = lambda: T`).
         let value = self.parse_expr()?;
+        self.validate_pep695_expr(&value, super::stmt::Pep695ExprContext::TypeAlias)?;
         self.skip_newlines();
         Ok(Spanned::new(
             Stmt::TypeAlias {
