@@ -339,6 +339,51 @@ unsafe extern "C" fn dispatch_io_text_encoding(args_ptr: *const MbValue, nargs: 
     dispatch_empty_str(args_ptr, nargs)
 }
 
+fn sched_kw_timefunc(v: MbValue) -> Option<Option<MbValue>> {
+    let ptr = v.as_ptr()?;
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Dict(lock) => {
+                let map = lock.read().unwrap();
+                if map
+                    .keys()
+                    .all(|key| matches!(key.as_str(), Some("timefunc") | Some("delayfunc")))
+                {
+                    Some(map.iter().find_map(|(key, value)| {
+                        (key.as_str() == Some("timefunc")).then_some(*value)
+                    }))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
+unsafe extern "C" fn dispatch_sched_scheduler(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+
+    let mut positional = args;
+    let mut kw_timefunc = None;
+    if let Some(timefunc) = args.last().copied().and_then(sched_kw_timefunc) {
+        positional = &args[..args.len().saturating_sub(1)];
+        kw_timefunc = timefunc;
+    }
+
+    if let Some(timefunc) = positional.first().copied().or(kw_timefunc) {
+        if super::super::builtins::mb_callable(timefunc).as_bool() != Some(true) {
+            return raise_type_error("scheduler() argument 'timefunc' must be callable");
+        }
+    }
+
+    dispatch_class_shell(args_ptr, nargs)
+}
+
 fn register_addrs(addrs: &[usize]) {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut set = s.borrow_mut();
@@ -592,8 +637,18 @@ pub fn register() {
 fn register_sched() {
     // `sched` top-level stdlib module (CPython 3.12). `scheduler` is the
     // event-scheduler class; `Event` is the per-event namedtuple. Both are
-    // callable shells — surface only checks existence/callability.
-    register_with("sched", &["scheduler", "Event"], &[], &[], &[]);
+    // callable shells, but `scheduler(timefunc=...)` must reject a non-callable
+    // `timefunc` to keep the strict type wall closed.
+    register_with(
+        "sched",
+        &["scheduler", "Event"],
+        &[(
+            "scheduler",
+            dispatch_sched_scheduler as *const () as usize,
+        )],
+        &[],
+        &[],
+    );
 }
 
 fn register_xml_sax_package() {
@@ -1434,4 +1489,54 @@ fn register_c_extensions() {
         ],
         &[("__version__", "1.0")],
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn clear_exc() {
+        super::super::super::exception::clear_current_exception();
+    }
+
+    fn raised_type() -> Option<String> {
+        super::super::super::exception::current_exception_type()
+    }
+
+    #[test]
+    fn test_sched_scheduler_rejects_non_callable_timefunc() {
+        clear_exc();
+        let args = [MbValue::from_ptr(MbObject::new_instance("_W".to_string()))];
+        let result = unsafe { dispatch_sched_scheduler(args.as_ptr(), args.len()) };
+        assert!(result.is_none());
+        assert_eq!(raised_type().as_deref(), Some("TypeError"));
+        clear_exc();
+    }
+
+    #[test]
+    fn test_sched_scheduler_accepts_callable_timefunc_shell() {
+        clear_exc();
+        let args = [MbValue::from_func(dispatch_empty_str as usize)];
+        let result = unsafe { dispatch_sched_scheduler(args.as_ptr(), args.len()) };
+        assert!(result.as_ptr().is_some());
+        assert!(raised_type().is_none());
+    }
+
+    #[test]
+    fn test_sched_scheduler_accepts_timefunc_from_kwargs_dict() {
+        clear_exc();
+        let kwargs = MbObject::new_dict();
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*kwargs).data {
+                lock.write().unwrap().insert(
+                    crate::runtime::dict_ops::DictKey::from("timefunc"),
+                    MbValue::from_func(dispatch_empty_str as usize),
+                );
+            }
+        }
+        let args = [MbValue::from_ptr(kwargs)];
+        let result = unsafe { dispatch_sched_scheduler(args.as_ptr(), args.len()) };
+        assert!(result.as_ptr().is_some());
+        assert!(raised_type().is_none());
+    }
 }
