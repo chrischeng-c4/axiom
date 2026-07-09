@@ -9,7 +9,7 @@ aliases: [aw:project-health]
 
 Human-facing entrypoint for Agentic Workflow project readiness. Use it when the
 user asks whether a project is healthy, production-ready, blocked, or why
-`aw wi run`/`aw capability run` / `aw standardize` cannot finish.
+`aw wi run`/`aw capability run` cannot finish.
 
 ## Project Resolution
 
