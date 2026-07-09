@@ -451,15 +451,17 @@ impl CodeStrategy {
         // distinct spec files. Previously every module landed at
         // `output_dir/<basename>.md`, which silently overwrote
         // collisions and polluted the tech_design root with sibling
-        // files. Project root is derived from output_dir as
-        // `<root>/.aw/tech-design`, so .parent().parent() recovers
-        // it. When the module path doesn't sit under project root
-        // (e.g. an absolute path passed via --path that points
-        // outside), fall back to the legacy flat name.
-        let project_root_for_mirror: Option<PathBuf> = output_dir
-            .parent()
-            .and_then(|p| p.parent())
-            .map(|p| p.to_path_buf());
+        // files. Project root is derived explicitly from output_dir's
+        // `tech-design` path component (#1313) rather than a fixed
+        // parent-arithmetic depth, since callers use both the
+        // single-level `<root>/tech-design` layout
+        // (`workspace::tech_design_path`) and the `<root>/tech-design/specs`
+        // layout (`aw td create --from-source`, #1273). When the module
+        // path doesn't sit under project root (e.g. an absolute path
+        // passed via --path that points outside), fall back to the
+        // legacy flat name.
+        let project_root_for_mirror: Option<PathBuf> =
+            project_root_from_tech_design_output(output_dir);
         for module in &context.modules {
             if module.symbols.is_empty() {
                 continue;
@@ -813,6 +815,28 @@ impl CodeStrategy {
         }
         println!();
     }
+}
+
+/// Resolve the project root that `generate_specs` should mirror source-tree
+/// paths against, from a `tech-design` output directory (#1313).
+///
+/// Walks `output_dir`'s ancestry looking for the `tech-design` path
+/// component and returns its parent — this handles both known output
+/// layouts without hardcoding a parent-arithmetic depth:
+/// - `<root>/tech-design` (`workspace::tech_design_path`, one level below
+///   root): the ancestor search finds `tech-design` at `output_dir` itself.
+/// - `<root>/tech-design/specs` (`aw td create --from-source`, #1273, two
+///   levels below root): the search finds `tech-design` one level up.
+///
+/// Returns `None` when no `tech-design` component is present in the path
+/// (e.g. a caller-supplied `--output-dir` outside the tech-design tree),
+/// matching the legacy flat-name fallback in `generate_specs`.
+fn project_root_from_tech_design_output(output_dir: &Path) -> Option<PathBuf> {
+    output_dir
+        .ancestors()
+        .find(|p| p.file_name().is_some_and(|n| n == "tech-design"))
+        .and_then(|p| p.parent())
+        .map(|p| p.to_path_buf())
 }
 
 /// Emit the LogicContent as Mermaid Plus YAML (frontmatter shape — no
@@ -1307,6 +1331,30 @@ enum InternalEnum {
         assert_ne!(a, b, "mirrored specs must contain distinct content");
         assert!(a.contains("UiRoot") || a.contains("ui_root"));
         assert!(b.contains("ViewerMod") || b.contains("viewer_mod"));
+    }
+
+    /// #1313: `project_root_from_tech_design_output` must recover the
+    /// correct project root for both known `tech-design` output layouts —
+    /// the single-level `<root>/tech-design` layout
+    /// (`workspace::tech_design_path`) and the two-level
+    /// `<root>/tech-design/specs` layout (`aw td create --from-source`,
+    /// #1273) — without a fixed parent-arithmetic depth.
+    #[test]
+    fn test_project_root_from_tech_design_output_both_layouts() {
+        let direct = Path::new("/repo/apps/agentic-workflow/tech-design");
+        assert_eq!(
+            project_root_from_tech_design_output(direct),
+            Some(PathBuf::from("/repo/apps/agentic-workflow"))
+        );
+
+        let nested = Path::new("/repo/apps/jet/tech-design/specs");
+        assert_eq!(
+            project_root_from_tech_design_output(nested),
+            Some(PathBuf::from("/repo/apps/jet"))
+        );
+
+        let no_tech_design = Path::new("/tmp/some/other/output");
+        assert_eq!(project_root_from_tech_design_output(no_tech_design), None);
     }
 
     #[test]

@@ -32,6 +32,8 @@ Public API manifest for `apps/agentic-workflow/src/cli/td_check_section_type.rs`
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/cli/td_check_section_type.rs -->
 ````rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/interfaces/src/td_check_section_type.md#source
+// CODEGEN-BEGIN
 
 //! `aw td check --section-type-conformance [<path>]` verb body.
 //!
@@ -50,8 +52,8 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-const REGISTRY_PROJECT: &str = "score";
-const REGISTRY_PROJECT_REL_PATH: &str = "specs/score-section-type-registry.md";
+const REGISTRY_PROJECT: &str = "agentic-workflow";
+const REGISTRY_PROJECT_REL_PATH: &str = "surface/specs/score-section-type-registry.md";
 
 const SEED_DEPRECATED: &[&str] = &["overview", "requirements", "doc"];
 
@@ -114,7 +116,7 @@ pub fn run(args: CheckArgs) -> Result<()> {
     let scope_root = match &args.path {
         Some(p) if p.is_absolute() => p.clone(),
         Some(p) => std::env::current_dir()?.join(p),
-        None => agentic_workflow::shared::workspace::tech_design_path(&project_root),
+        None => crate::shared::workspace::tech_design_path(&project_root),
     };
 
     let specs = collect_specs(&scope_root)?;
@@ -203,23 +205,45 @@ fn kind_label(k: &FindingKind) -> &'static str {
     }
 }
 
+// Resolve the section-type registry's absolute path from `project_root`.
+//
+// Self-hosting gap (#1302): `find_project_root()` walks up from CWD and
+// stops at the *first* `aw.toml`, so `cargo test -p agentic-workflow` run
+// from inside the `apps/agentic-workflow` crate itself lands on that
+// crate's own EC-generated `[project]` config rather than the monorepo
+// root's `[[projects]]` registry. When `resolve_td_root_from_config` can't
+// resolve `REGISTRY_PROJECT` from `project_root` directly, walk up its
+// ancestors looking for one whose config does resolve it before falling
+// back to the legacy flat layout.
+fn registry_abs_path(project_root: &Path) -> PathBuf {
+    if let Ok(resolved) = crate::services::project_registry::resolve_td_root_from_config(
+        project_root,
+        REGISTRY_PROJECT,
+    ) {
+        return PathBuf::from(resolved.root).join(REGISTRY_PROJECT_REL_PATH);
+    }
+    let mut ancestor = project_root.parent();
+    while let Some(dir) = ancestor {
+        if let Ok(resolved) =
+            crate::services::project_registry::resolve_td_root_from_config(dir, REGISTRY_PROJECT)
+        {
+            return PathBuf::from(resolved.root).join(REGISTRY_PROJECT_REL_PATH);
+        }
+        ancestor = dir.parent();
+    }
+    crate::shared::workspace::tech_design_path(project_root)
+        .join("projects")
+        .join(REGISTRY_PROJECT)
+        .join(REGISTRY_PROJECT_REL_PATH)
+}
+
 // Locate and parse the section-type registry's `## Schema` YAML block.
 // The block is a fenced ```yaml block immediately after the
 // `## Schema` heading + `<!-- type: schema lang: yaml -->` annotation.
 ///
 // @spec apps/agentic-workflow/tech-design/surface/specs/score-section-type-registry.md#schema
 fn load_registry(project_root: &Path) -> Result<Registry> {
-    let registry_abs = agentic_workflow::services::project_registry::resolve_td_root_from_config(
-        project_root,
-        REGISTRY_PROJECT,
-    )
-    .map(|resolved| PathBuf::from(resolved.root).join(REGISTRY_PROJECT_REL_PATH))
-    .unwrap_or_else(|_| {
-        agentic_workflow::shared::workspace::tech_design_path(project_root)
-            .join("projects")
-            .join(REGISTRY_PROJECT)
-            .join(REGISTRY_PROJECT_REL_PATH)
-    });
+    let registry_abs = registry_abs_path(project_root);
     let raw = std::fs::read_to_string(&registry_abs)
         .with_context(|| format!("read registry at {}", registry_abs.display()))?;
     let yaml_block = extract_yaml_block(&raw, "Schema")
@@ -440,7 +464,7 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentic_workflow::models::spec_rules::SectionType;
+    use crate::models::spec_rules::SectionType;
 
     #[test]
     fn parse_annotation_extracts_type() {
@@ -521,7 +545,9 @@ mod tests {
     #[test]
     fn collect_specs_accepts_configured_non_score_td_root() {
         let dir = tempfile::tempdir().unwrap();
-        let td_root = dir.path().join("projects/api/tech_design");
+        let td_root = dir
+            .path()
+            .join("projects/mamba/mambalibs/httpkit/tech_design");
         std::fs::create_dir_all(td_root.join("logic")).unwrap();
         let spec = td_root.join("logic/runtime.md");
         std::fs::write(&spec, "## Logic\n<!-- type: logic lang: mermaid -->\n").unwrap();
@@ -535,13 +561,13 @@ mod tests {
     fn load_registry_uses_score_project_td_path_from_config() {
         let dir = tempfile::tempdir().unwrap();
         let score_td = dir.path().join("apps/agentic-workflow/tech-design");
-        std::fs::create_dir_all(score_td.join("specs")).unwrap();
+        std::fs::create_dir_all(score_td.join("surface/specs")).unwrap();
         std::fs::create_dir_all(dir.path().join(".aw")).unwrap();
         std::fs::write(
-            dir.path().join(".aw/config.toml"),
+            dir.path().join("aw.toml"),
             r#"
 [agentic_workflow.tech_design_platform]
-path = ".aw/tech-design"
+path = "tech-design"
 
 [[projects]]
 name = "agentic-workflow"
@@ -613,6 +639,8 @@ properties:
         assert!(secs[1].annotation_type.is_none());
     }
 }
+
+// CODEGEN-END
 ````
 
 ## Changes
