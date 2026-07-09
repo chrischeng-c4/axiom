@@ -270,7 +270,6 @@ flowchart TD
     r6[R6 every design note nav linked] --> for_f_in_architecture_layout_architecture_reorg_plan_build_fails_loudly_on_unresolved_bare_specifiers_check_exits_non_zero_while_unimplemented_dev_server_source_analysis_utf8_safety_layout_box_slice_7a_library_publishing_migration_from_playwright_openapi_codegen_wasm_config_accept_shared_jet_sections_wasm_transpiler_boolean_usestate_literals_do_grep_q_f_projects_jet_docs_vitepress_config_mjs_exit_1_done[for f in architecture/layout architecture/reorg-plan build-fails-loudly-on-unresolved-bare-specifiers check-exits-non-zero-while-unimplemented dev-server-source-analysis-utf8-safety layout-box-slice-7a library-publishing migration-from-playwright openapi-codegen wasm-config-accept-shared-jet-sections wasm-transpiler-boolean-usestate-literals; do grep -q -- "/$f" projects/jet/docs/.vitepress/config.mjs || exit 1; done]
     r7[R7 no orphaned markdown remains] --> for_f_in_find_projects_jet_docs_name_md_not_path_node_modules_do_link_f_projects_jet_docs_link_link_md_grep_q_link_projects_jet_docs_vitepress_config_mjs_exit_1_done[for f in $(find projects/jet/docs -name '*.md' -not -path '*/node_modules/*'); do link="/${f#projects/jet/docs/}"; link="${link%.md}"; grep -q -- "$link" projects/jet/docs/.vitepress/config.mjs || exit 1; done]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
