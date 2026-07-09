@@ -117,7 +117,6 @@ flowchart TD
     print_preview --> done_dry([dry-run prints issue+state+comment, no network mutation])
     post_comment --> done_live([Issue open and carries new follow-up comment])
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
