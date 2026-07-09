@@ -76,6 +76,7 @@ pub mod socket_mod;
 pub mod sqlite3_mod;
 pub mod statistics_mod;
 pub mod string_constants_mod;
+pub mod string_templatelib_mod;
 pub mod subprocess_mod;
 pub mod tarfile_mod;
 pub mod textwrap_mod;
@@ -421,6 +422,7 @@ pub fn register_stdlib() {
     posixpath_mod::register();
     filecmp_mod::register();
     stringprep_mod::register();
+    string_templatelib_mod::register();
     netrc_mod::register();
     cgi_mod::register();
     ntpath_mod::register();
