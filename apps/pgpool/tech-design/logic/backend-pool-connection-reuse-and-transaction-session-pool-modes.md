@@ -503,7 +503,7 @@ definitions:
 <!-- type: config lang: yaml -->
 
 ```yaml
-# BackendPool config — capacity, timeouts, and reset/liveness defaults for
+# BackendPool config \u2014 capacity, timeouts, and reset/liveness defaults for
 # both pool modes. Reuses RuntimePlan::max_backend_connections and the
 # session-mode proxy's existing backend_host/backend_port/backend_connect_timeout_ms
 # (see session-mode-proxy-with-auth-passthrough-and-serve-entrypoint.md#config)
@@ -533,10 +533,9 @@ pool_mode:
 # Session mode continues to source its backend endpoint / backend_connect_timeout_ms
 # from SessionProxyConfig (see the session-mode proxy TD's Config section);
 # transaction mode's admission-handshake backend endpoint is the SAME
-# BackendEndpointConfig — no separate per-mode backend target in this slice,
+# BackendEndpointConfig \u2014 no separate per-mode backend target in this slice,
 # and no multiple-backend-database/user keying (adapter-boundary epic #1283).
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
