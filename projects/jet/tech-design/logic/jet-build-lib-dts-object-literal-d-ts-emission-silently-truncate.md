@@ -84,7 +84,6 @@ flowchart TD
     r1[R1 object assign computed key arrow property real world scale no truncation] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_object_assign_computed_key_arrow_property_at_real_world_scale_signature[cargo test -p jet --lib bundler::dts::tests::infers_object_assign_computed_key_arrow_property_at_real_world_scale_signature]
     r2[R2 object assign computed key arrow property multiple members same literal no truncation] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_object_assign_computed_key_arrow_property_multiple_members_same_literal_signature[cargo test -p jet --lib bundler::dts::tests::infers_object_assign_computed_key_arrow_property_multiple_members_same_literal_signature]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
