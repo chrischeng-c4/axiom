@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "projects/lumen/tech-design"
-generated_at = "2026-07-08T14:27:38.180036+00:00"
-digest = "sha256:b9818ef3fb5ccd0109ed56759b52e17f70efbe04964588633cfa01ca4de3d303"
-source_digest = "sha256:b9818ef3fb5ccd0109ed56759b52e17f70efbe04964588633cfa01ca4de3d303"
-ir_digest = "sha256:f986b5c89eeaa73ecafd73ee9f526d523c0fb686baecff2c931b1ad291197672"
+generated_at = "2026-07-09T05:15:31.404866+00:00"
+digest = "sha256:eaf975896cc4625e2f8596c27ca4d75c8dc7daf04b8d4bb3d0842be0497c37de"
+source_digest = "sha256:eaf975896cc4625e2f8596c27ca4d75c8dc7daf04b8d4bb3d0842be0497c37de"
+ir_digest = "sha256:07b9715692a1cef1f8ce31faab1b71c03dd52db4fa8a02cb82450f74a8b9f763"
 
 [[files]]
 path = "interfaces/cli/lumen-cli-add-dump-load-export-import-snapshot-verbs.md"
@@ -27,8 +27,8 @@ section_count = 5
 
 [[files]]
 path = "interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md"
-digest = "sha256:bfab3ece7a05af7a024d1f20f66996b0ec3f4c1c12967fb2dc68b0476ec58150"
-ir_digest = "sha256:ecbcaaf245d36dddd3db65be52f1cdac188c30b50bdf4de57f0fa4a980dd1549"
+digest = "sha256:50ebe10dfe75cd3ea01fb0954405f963ec0252757946ca1d7243638a1bd9ede7"
+ir_digest = "sha256:41781b1b29d9cef34f560e3de69e861024ef39876272e923b7b410bfd64635b2"
 section_count = 3
 
 [[files]]
@@ -267,8 +267,8 @@ section_count = 2
 
 [[files]]
 path = "semantic/lumen-tests.md"
-digest = "sha256:b38d8796aecc44357231b5b64e167a3b51cc74c9c876dbd94bf86aa0ccb9eec2"
-ir_digest = "sha256:bf460fad24b574179d52cccff8ca1299a12acb4320b9c73ead6a2f23cb7bd3a7"
+digest = "sha256:fe670a6ed56b872464cb2b790472a4bab706844aec6ac1e3b7bc1df947789e56"
+ir_digest = "sha256:5ba660d8f29b3080323a0a34c47b1ad4d3111d9f72b0fc80d7a117b689cd18ce"
 section_count = 3
 
 [[files]]
@@ -291,8 +291,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-lumen-src-api-rs.md"
-digest = "sha256:423ded8cae83fa5578f0a63a340989ec99451b1f0c68172e9eb0898341d23780"
-ir_digest = "sha256:6256b316d9a4fddee5de6ac3c1f9bc08e446d5fcff881a758fe7105dbf6b1324"
+digest = "sha256:ac7f4142926102e749dac1a3b224dbdba7bb8ac84b33e978380fd506ce885deb"
+ir_digest = "sha256:89ff0643a98d28327e6a48a09f05ee04567db024d0d784cb6cdc212a67f1f5a6"
 section_count = 3
 
 [[files]]
@@ -321,8 +321,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-lumen-src-bin-lumen-rs.md"
-digest = "sha256:70ef91d12324b3b460b4912ec95d9bf143a524d7ef3962d07cc56130cf2fcf03"
-ir_digest = "sha256:2e27f6d307865910a6e82a8a2149a3b05f1bcccabf5368109816512644d0cfe0"
+digest = "sha256:9c7f5e5706b8e6aebb51cffb737b4666d63cc69b3cd6b71839675dfa23e3e2f7"
+ir_digest = "sha256:7bfa8fcaf8b59cf845d7cc38fc0bd7492219abcefc38316e53ab3d8904df3077"
 section_count = 3
 
 [[files]]
@@ -447,14 +447,14 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-lumen-src-spec-rs.md"
-digest = "sha256:de52c99d0fef9ef1c3665e775094aabdbc7edec74777da183ae07462cd7858c5"
-ir_digest = "sha256:78fec8a7820f98110a22d8d89be272f644f57bcd92ec0f1367cd0fa86363fdeb"
+digest = "sha256:f021de1ff6a79d622c8e10e3229ccc620ceea6290acb7399c494e30f3080bbbf"
+ir_digest = "sha256:7cbfe91f99ed085949051c38bc8b9840dd5699da5019c163afc603219e8c27ee"
 section_count = 3
 
 [[files]]
 path = "semantic/source/projects-lumen-src-storage-rs.md"
-digest = "sha256:f10db3457cfbc80f70d71f9867abe022f8e46724246531d888bbd7fb583a8458"
-ir_digest = "sha256:6a7e58029a2775032751c2a40605ed0d090c23a251d4ba9f222fe8194df91123"
+digest = "sha256:48782b80911755584b96ce73f755503ff48c3fc83a531ceea74d6c92f01fd1ed"
+ir_digest = "sha256:f0891c7b56a344ee8f7ccb4ccacdc5cdd7e8f0cbb4c1a756037aa766da060ebd"
 section_count = 3
 
 [[files]]
@@ -471,8 +471,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-lumen-src-types-rs.md"
-digest = "sha256:5bcdc0664c705df4a7c73a5bea20e216e3f84484a6cd8c67770124aa77ba5b46"
-ir_digest = "sha256:fa66c521199971fee172f14729dc70dcdbf875cbf9316c1624891722e0f6815e"
+digest = "sha256:ae570a487a08a6e69d7946bc03ab3e2810fcb52b5e43f4c36f7679a812f3de6f"
+ir_digest = "sha256:a9a143bb4e9122a9a21757c677f841794b4a33e23bc79eb191096f7bb57a10bb"
 section_count = 3
 
 [[files]]

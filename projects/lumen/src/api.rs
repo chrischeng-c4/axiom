@@ -23,6 +23,7 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
+use futures::future::join_all;
 use serde::Deserialize;
 use service_http::{MetricsProvider, ReadinessHook};
 use utoipa::{
@@ -42,11 +43,12 @@ use crate::log_entry::RaftLogEntry;
 use crate::raft::{ClusterStateView, ReadConsistency};
 use crate::storage::{ApplyOutcome, DropOutcome, Engine, SnapshotV1, StorageError};
 use crate::types::{
-    Analyzer, ApiError, CacheStats, CreateCollectionRequest, CreateCollectionResponse,
-    DuplicateGroup, DuplicatesRequest, DuplicatesResponse, FieldSpec, FieldStats, FieldType,
-    FieldValue, IndexItem, IndexRequest, IndexResponse, KnnQuery, MatchOp, MatchQuery, QueryNode,
-    RangeQuery, SearchHit, SearchRequest, SearchResponse, StatsResponse, StorageStats, TermQuery,
-    TermsQuery, VectorBackend, VectorMetric, VectorQuantize, VectorSpec,
+    Analyzer, ApiError, BatchSearchRequest, BatchSearchResponse, BatchSearchResult, CacheStats,
+    CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup, DuplicatesRequest,
+    DuplicatesResponse, FieldSpec, FieldStats, FieldType, FieldValue, IndexItem, IndexRequest,
+    IndexResponse, KnnQuery, MatchOp, MatchQuery, QueryNode, RangeQuery, SearchHit, SearchRequest,
+    SearchResponse, StatsResponse, StorageStats, TermQuery, TermsQuery, VectorBackend,
+    VectorMetric, VectorQuantize, VectorSpec, MAX_BATCH_SEARCH_SIZE,
 };
 use crate::wal::{MemWal, SharedWal};
 
@@ -291,6 +293,7 @@ impl AppState {
         index,
         delete_external_id,
         search,
+        batch_search,
         duplicates,
         stats,
     ),
@@ -330,6 +333,10 @@ impl AppState {
         crate::types::SortMissing,
         SearchHit,
         SearchResponse,
+        BatchSearchRequest,
+        crate::types::BatchSearchItem,
+        BatchSearchResponse,
+        BatchSearchResult,
         DuplicatesRequest,
         DuplicateGroup,
         DuplicatesResponse,
@@ -403,6 +410,7 @@ pub fn router(state: AppState) -> Router {
             delete(delete_external_id),
         )
         .route("/collections/{collection_id}/search", post(search))
+        .route("/collections:search", post(batch_search))
         .route("/collections/{collection_id}/duplicates", post(duplicates))
         .route("/collections/{collection_id}/stats", get(stats))
         .route(
@@ -749,6 +757,102 @@ async fn search(
             .search(&collection_id, req)
             .map_err(ApiErr::from)?,
     ))
+}
+
+/// msearch-style batch search: N independent `(collection, SearchRequest)`
+/// items in one HTTP request, fanned out concurrently. `collections:search`
+/// is one literal path segment (AIP-136 custom-method syntax), so it
+/// registers directly in axum next to `/collections` and
+/// `/collections/{collection_id}` without any capture ambiguity.
+///
+/// One item failing (e.g. an unknown collection) never fails the batch —
+/// the batch-level status stays 200 and that item's [`BatchSearchResult`]
+/// carries the error. Only a malformed body or an over-limit batch returns
+/// 400. Cursors, sort, and collapse all stay per-item: there is no merged
+/// cursor and no cross-collection score merging.
+#[utoipa::path(
+    post,
+    path = "/collections:search",
+    tag = "Query",
+    request_body = BatchSearchRequest,
+    responses(
+        (status = 200, description = "Per-item results, same order and length as `searches`", body = BatchSearchResponse),
+        (status = 400, description = "Malformed body or batch size over the limit", body = ApiError)
+    )
+)]
+async fn batch_search(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
+    Json(req): Json<BatchSearchRequest>,
+) -> Result<Json<BatchSearchResponse>, ApiErr> {
+    if req.searches.len() > MAX_BATCH_SEARCH_SIZE {
+        return Err(ApiErr::new(
+            StatusCode::BAD_REQUEST,
+            "batch_too_large",
+            format!(
+                "batch has {} items, max is {MAX_BATCH_SEARCH_SIZE}",
+                req.searches.len()
+            ),
+        ));
+    }
+    let _consistency = read_consistency_from(&headers);
+    let results = join_all(req.searches.into_iter().map(|item| {
+        let state = state.clone();
+        let auth = auth.clone();
+        async move {
+            if let Err(e) = auth.ensure(&item.collection, Role::Read) {
+                return batch_search_auth_error(e);
+            }
+            match state.search_backend.search(&item.collection, item.request) {
+                Ok(response) => BatchSearchResult::Ok { response },
+                Err(e) => batch_search_storage_error(e),
+            }
+        }
+    }))
+    .await;
+    Ok(Json(BatchSearchResponse { results }))
+}
+
+/// Classify one batch item's search failure into a
+/// [`BatchSearchResult::Error`] instead of failing the whole batch. Mirrors
+/// `From<anyhow::Error> for ApiErr`'s `StorageError` classification, but the
+/// `code` values line up with the batch wire contract
+/// (`"collection_not_found"`, ...) rather than `ApiErr`'s internal `kind`
+/// strings.
+fn batch_search_storage_error(e: anyhow::Error) -> BatchSearchResult {
+    let code = match e.downcast_ref::<StorageError>() {
+        Some(StorageError::CollectionNotFound(_)) => "collection_not_found",
+        Some(StorageError::InvalidCollectionName(_)) => "invalid_collection_name",
+        Some(StorageError::UnknownField { .. }) => "unknown_field",
+        Some(StorageError::TypeMismatch { .. }) => "type_mismatch",
+        Some(StorageError::DuplicatesOnText(_)) => "bad_request",
+        Some(StorageError::InvalidNumber(_)) => "invalid_number",
+        Some(StorageError::BulkLimit { .. }) => "bulk_limit",
+        Some(StorageError::QueryTooComplex(_)) => "query_too_complex",
+        Some(StorageError::Gone(_)) => "gone",
+        Some(StorageError::UnsupportedSort(_)) => "unsupported_sort",
+        None => "bad_request",
+    };
+    BatchSearchResult::Error {
+        code: code.to_string(),
+        message: e.to_string(),
+    }
+}
+
+/// Classify one batch item's auth rejection into a
+/// [`BatchSearchResult::Error`].
+fn batch_search_auth_error(e: crate::auth::AuthErr) -> BatchSearchResult {
+    match e {
+        crate::auth::AuthErr::Forbidden {
+            subject,
+            needed,
+            collection_id,
+        } => BatchSearchResult::Error {
+            code: "forbidden".to_string(),
+            message: format!("subject `{subject}` lacks {needed:?} on `{collection_id}`"),
+        },
+    }
 }
 
 #[utoipa::path(
@@ -1122,6 +1226,11 @@ impl From<anyhow::Error> for ApiErr {
                 StorageError::CollectionNotFound(_) => {
                     Self::new(StatusCode::NOT_FOUND, "not_found", e.to_string())
                 }
+                StorageError::InvalidCollectionName(_) => Self::new(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_collection_name",
+                    e.to_string(),
+                ),
                 StorageError::UnknownField { .. } => Self::new(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "unknown_field",

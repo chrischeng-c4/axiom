@@ -42,6 +42,42 @@ fn openapi_is_valid_json_with_search_path() {
     );
 }
 
+/// #1271: `lumen spec` publishes the batch search endpoint and its request/
+/// response schemas — the OpenAPI doc is generated straight from the live
+/// router's `ApiDoc`, so this exercises the same source of truth the real
+/// `lumen spec` CLI command serves.
+#[test]
+fn openapi_json_exposes_batch_search_endpoint_and_schemas() {
+    let v: Value = serde_json::from_str(&openapi_json()).expect("openapi is valid JSON");
+    let batch = &v["paths"]["/collections:search"]["post"];
+    assert!(
+        !batch.is_null(),
+        "OpenAPI is missing POST /collections:search: {:?}",
+        v["paths"].as_object().map(|p| p.keys().collect::<Vec<_>>())
+    );
+    assert_eq!(
+        batch["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/BatchSearchRequest",
+        "batch search request body schema"
+    );
+    assert_eq!(
+        batch["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/BatchSearchResponse",
+        "batch search response schema"
+    );
+    for schema in [
+        "BatchSearchRequest",
+        "BatchSearchItem",
+        "BatchSearchResponse",
+        "BatchSearchResult",
+    ] {
+        assert!(
+            !v["components"]["schemas"][schema].is_null(),
+            "OpenAPI components missing schema `{schema}`"
+        );
+    }
+}
+
 #[test]
 fn openapi_yaml_is_valid_with_search_path() {
     let v: YamlValue = serde_yaml::from_str(&openapi_yaml()).expect("openapi is valid YAML");
@@ -532,6 +568,44 @@ fn llm_workflow_covers_the_integration_model() {
     ] {
         assert!(g.contains(needle), "workflow missing `{needle}`");
     }
+}
+
+/// #1271: the workflow topic must teach the batch search verb — endpoint,
+/// request/response shape, partial-failure semantics, and the batch limit —
+/// so an agent reading `lumen llm --topic workflow` learns it without a docs
+/// site.
+#[test]
+fn llm_workflow_documents_batch_search_endpoint() {
+    let g = llm_workflow_md();
+    for needle in [
+        "POST /collections:search",
+        "concurrent fan-out",
+        "\"searches\"",
+        "\"results\"",
+        "\"status\": \"ok\"",
+        "\"status\": \"error\"",
+        "collection_not_found",
+        "Partial failure never fails the batch",
+        "Max batch size is 32",
+        "no merged cursor",
+    ] {
+        assert!(
+            g.contains(needle),
+            "workflow missing batch search `{needle}`"
+        );
+    }
+}
+
+/// #1271: the outline must point an agent at the batch search verb from the
+/// workflow topic entry (not invent a dedicated `--topic batch`, which would
+/// duplicate the single search-flavor topic map).
+#[test]
+fn llm_outline_mentions_batch_search() {
+    let outline = llm_outline_md();
+    assert!(
+        outline.contains("collections:search"),
+        "outline should point at batch search: {outline}"
+    );
 }
 
 #[test]
