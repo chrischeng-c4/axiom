@@ -2,10 +2,10 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = "projects/jet/tech-design"
-generated_at = "2026-07-09T09:11:29.516741+00:00"
-digest = "sha256:004079b9032a150342975b2f9377f9aaa14144476fa35db5d80f57029c4676e0"
-source_digest = "sha256:004079b9032a150342975b2f9377f9aaa14144476fa35db5d80f57029c4676e0"
-ir_digest = "sha256:e6af330f8aa37b5e1606405b75dd04bae7935e431f84e90850a2bab5932b858e"
+generated_at = "2026-07-09T12:38:03.849074+00:00"
+digest = "sha256:f277c3612fb781c4552d2779297837b14d7d2d983636b73da903c4424ab0e710"
+source_digest = "sha256:f277c3612fb781c4552d2779297837b14d7d2d983636b73da903c4424ab0e710"
+ir_digest = "sha256:30f497f2fb90593665f573c67a19bcf43a78471ff949933b3e2aea05038cc6e6"
 
 [[files]]
 path = "config/jet-transform-resolver-nx-tsconfig-path-aliases-never-wired-into.md"
@@ -66,6 +66,12 @@ path = "logic/jet-transform-resolver-node-builtin-polyfill-wiring.md"
 digest = "sha256:99c6483b37bbae903bf511a284b6ff0dce4d4caa6ca5427417f57c5abbbea543"
 ir_digest = "sha256:9186d05add543a356bcb295cbda7676c42f227e9cb387b5fb93add7001af90a6"
 section_count = 3
+
+[[files]]
+path = "logic/move-root-layout-meta-doc-into-scoped-architecture-documentation.md"
+digest = "sha256:b22a2ef1e7b8b550e3f7bbba55633a219aee629212a10c1f98e12fa779408d7b"
+ir_digest = "sha256:befa7d1b504ce0758bde5b1b046a461c59926be8c1d1eb3be2459a8f87283428"
+section_count = 4
 
 [[files]]
 path = "semantic/jet-browser-cli.md"
