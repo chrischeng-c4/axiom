@@ -8107,6 +8107,11 @@ fn mb_getattr_impl(
                                 }
                                 return MbValue::from_ptr(super::rc::MbObject::new_tuple(vec![]));
                             }
+                            "__class_getitem__" if class_has_pep695_type_params(s) => {
+                                return MbValue::from_ptr(super::rc::MbObject::new_str(
+                                    String::new(),
+                                ));
+                            }
                             "__members__" if super::stdlib::enum_class::is_enum_class(s) => {
                                 // Class-body enum: name→member mapping incl. aliases.
                                 if let Some(d) = super::stdlib::enum_class::members_map_dict(s) {
@@ -10858,6 +10863,9 @@ pub fn mb_hasattr(obj: MbValue, attr: MbValue) -> MbValue {
                 if attr_name == "__slots__" && class_slots_value(&type_name).is_some() {
                     return MbValue::from_bool(true);
                 }
+                if attr_name == "__class_getitem__" && class_has_pep695_type_params(&type_name) {
+                    return MbValue::from_bool(true);
+                }
                 // A stdlib exception modeled as a type-object Instance (e.g.
                 // ET.ParseError) may seed chaining dunders (__cause__ /
                 // __context__ / __suppress_context__) directly in its OWN
@@ -11396,6 +11404,15 @@ fn mro_lookup_class_attr(class_name: &str, attr: &str) -> Option<MbValue> {
             }
         }
         None
+    })
+}
+
+fn class_has_pep695_type_params(class_name: &str) -> bool {
+    let Some(params) = mro_lookup_class_attr(class_name, "__type_params__") else {
+        return false;
+    };
+    params.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(&(*ptr).data, ObjData::Tuple(items) if !items.is_empty())
     })
 }
 
@@ -15328,6 +15345,22 @@ fn mb_call0_impl(func: MbValue) -> MbValue {
                 if class_name == "ReferenceType" {
                     return super::stdlib::weakref_mod::reference_target(func);
                 }
+                if matches!(class_name.as_str(), "typing.Alias" | "Alias") {
+                    let (kind, origin) = {
+                        let guard = fields.read().unwrap();
+                        (
+                            guard.get("_kind").copied().and_then(|value| extract_str(value)),
+                            guard.get("__origin__").copied(),
+                        )
+                    };
+                    if kind.as_deref() == Some("generic") {
+                        if let Some(origin) = origin.filter(|origin| origin.to_bits() != func.to_bits())
+                        {
+                            let args_list = MbValue::from_ptr(MbObject::new_list(vec![]));
+                            return super::builtins::mb_call_spread(origin, args_list);
+                        }
+                    }
+                }
                 // Generic user-class instance callable — dispatch __call__.
                 // Needed for `iter(c, sentinel)` where c defines __call__, and
                 // any other 0-arg invocation of a callable instance.
@@ -15463,6 +15496,22 @@ fn mb_call1_val_impl(func: MbValue, arg: MbValue) -> MbValue {
                         )),
                     );
                     return MbValue::none();
+                }
+                if matches!(class_name.as_str(), "typing.Alias" | "Alias") {
+                    let (kind, origin) = {
+                        let guard = fields.read().unwrap();
+                        (
+                            guard.get("_kind").copied().and_then(|value| extract_str(value)),
+                            guard.get("__origin__").copied(),
+                        )
+                    };
+                    if kind.as_deref() == Some("generic") {
+                        if let Some(origin) = origin.filter(|origin| origin.to_bits() != func.to_bits())
+                        {
+                            let args_list = MbValue::from_ptr(MbObject::new_list(vec![arg]));
+                            return super::builtins::mb_call_spread(origin, args_list);
+                        }
+                    }
                 }
                 // Type instances (class objects assigned to variables, e.g.
                 // `tt = bytearray; tt(b"abc")`) — route to mb_call_spread which
@@ -20541,6 +20590,80 @@ mod tests {
         assert_eq!(
             extract_str(super::super::builtins::mb_repr(subscripted)).as_deref(),
             Some("Alias[int]")
+        );
+    }
+
+    extern "C" fn pep695_box_init_test(self_v: MbValue, value: MbValue) -> MbValue {
+        mb_setattr(self_v, s("v"), value);
+        MbValue::none()
+    }
+
+    #[test]
+    fn test_user_generic_alias_call_forwards_to_origin_constructor() {
+        let init_addr = pep695_box_init_test as *const () as usize;
+        super::super::module::register_boxed_return_func(init_addr as u64);
+        let init_func = MbValue::from_func(init_addr);
+        register_test_params(init_func, vec![("self", false), ("value", false)]);
+
+        let mut methods = HashMap::new();
+        methods.insert("__init__".to_string(), init_func);
+        mb_class_register(
+            "Pep695BoxCall001",
+            vec!["typing.Generic".to_string()],
+            methods,
+        );
+
+        let alias = super::super::stdlib::typing_mod::user_generic_subscript(
+            s("Pep695BoxCall001"),
+            make_type_object("int"),
+            "Pep695BoxCall001",
+        );
+
+        assert_eq!(
+            super::super::builtins::mb_callable(alias).as_bool(),
+            Some(true),
+            "parameterized user generic alias should stay callable"
+        );
+
+        let inst = super::super::builtins::mb_call_spread(
+            alias,
+            MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(42)])),
+        );
+        assert_eq!(mb_getattr(inst, s("v")).as_int(), Some(42));
+    }
+
+    #[test]
+    fn test_pep695_generic_class_exposes_class_getitem_surface() {
+        mb_class_register("Pep695HasClassGetitem001", vec![], HashMap::new());
+        mb_class_register("Pep695PlainNoClassGetitem001", vec![], HashMap::new());
+        let type_param = super::super::pep695::mb_pep695_typevar(
+            s("T"),
+            s("plain"),
+            MbValue::none(),
+            MbValue::none(),
+            MbValue::none(),
+        );
+        mb_setattr(
+            make_type_object("Pep695HasClassGetitem001"),
+            s("__type_params__"),
+            MbValue::from_ptr(MbObject::new_tuple(vec![type_param])),
+        );
+
+        assert_eq!(
+            mb_hasattr(
+                make_type_object("Pep695HasClassGetitem001"),
+                s("__class_getitem__"),
+            )
+            .as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            mb_hasattr(
+                make_type_object("Pep695PlainNoClassGetitem001"),
+                s("__class_getitem__"),
+            )
+            .as_bool(),
+            Some(false)
         );
     }
 
