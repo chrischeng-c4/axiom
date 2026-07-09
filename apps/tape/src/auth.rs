@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:f036c9bf" tracker="pending-tracker" reason="tape's service-auth adapter: AuthConfig (TAPE_AUTH off|disabled|required mode parse + token-registry load via service_auth::load_registry with startup fail-fast naming TAPE_TOKEN_REGISTRY_FILE and the TAPE_TOKENS legacy/dev inline fallback), StaticRoleMapVerifier construction (registry when required, open() when off), and the per-handler authorize(principal, topic, needed) helper mapping RoleMapDenied to the shared 403 forbidden shape."
+// TODO: hand-write content for `apps/tape/src/auth.rs`.
+// HANDWRITE-END
