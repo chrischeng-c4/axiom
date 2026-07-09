@@ -43,4 +43,55 @@ edges:
   - { from: err_process, to: fail }
   - { from: err_fallback, to: fail }
   - { from: seatbelt_run, to: effect }
+---
+```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: vat-sandbox-egress-fail-closed-unit-tests
+---
+requirementDiagram
+    requirement process_backend_rejects_non_open_egress {
+      id: UT1
+      text: "ProcessBackend (isolation=none) with EgressPolicy::LocalhostOnly or EgressPolicy::Deny returns Err (not a printed warning) and does not execute the command; the error names the egress policy and states isolation=none cannot enforce it."
+      risk: high
+      verifymethod: test
+    }
+    requirement process_backend_open_unaffected {
+      id: UT2
+      text: "ProcessBackend (isolation=none) with EgressPolicy::Open still returns Ok and runs the command exactly as before (no regression on the common-case path)."
+      risk: high
+      verifymethod: test
+    }
+    requirement seatbelt_unavailable_rejects_non_open_egress {
+      id: UT3
+      text: "Resolving Isolation::Seatbelt with a non-Open egress policy on a host where sandbox-exec is unavailable returns Err instead of silently falling back to ProcessBackend; the error names the missing seatbelt backend and the requested egress policy."
+      risk: high
+      verifymethod: test
+    }
+    requirement seatbelt_unavailable_open_falls_back {
+      id: UT4
+      text: "Resolving Isolation::Seatbelt with EgressPolicy::Open on a host where sandbox-exec is unavailable still falls back to ProcessBackend and returns Ok (fallback is only rejected when it would silently drop enforcement)."
+      risk: medium
+      verifymethod: test
+    }
+    test sandbox_egress_fail_closed_tests {
+      type: functional
+      verifies: process_backend_rejects_non_open_egress
+    }
+    test sandbox_egress_open_unaffected_tests {
+      type: functional
+      verifies: process_backend_open_unaffected
+    }
+    test sandbox_seatbelt_fallback_fail_closed_tests {
+      type: functional
+      verifies: seatbelt_unavailable_rejects_non_open_egress
+    }
+    test sandbox_seatbelt_fallback_open_tests {
+      type: functional
+      verifies: seatbelt_unavailable_open_falls_back
+    }
 ```
