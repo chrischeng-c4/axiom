@@ -1520,6 +1520,7 @@ pub fn mb_class_define(
     method_values: MbValue,
 ) {
     let class_name = extract_str(name).unwrap_or_else(|| "object".to_string());
+    let class_qualname = super::closure::current_definition_qualname(&class_name);
     let base_name = extract_str(base);
     let bases = base_name.map(|b| vec![b]).unwrap_or_default();
 
@@ -1534,7 +1535,12 @@ pub fn mb_class_define(
                 let vals = vals_lock.read().unwrap();
                 for (n, v) in names.iter().zip(vals.iter()) {
                     if let Some(method_name) = extract_str(*n) {
-                        stamp_class_method_module(*v, &module_name);
+                        stamp_class_method_metadata(
+                            *v,
+                            &module_name,
+                            &class_qualname,
+                            &method_name,
+                        );
                         // Fix C-prime: registry takes its own +1 so the JIT
                         // release of the source list VReg cannot UAF the raw
                         // MbValue stored in MbClass.methods.
@@ -1554,6 +1560,11 @@ pub fn mb_class_define(
             MbValue::from_ptr(MbObject::new_str(module_name)),
         );
     }
+    super::builtins::set_type_object_attr(
+        &class_name,
+        "__qualname__",
+        MbValue::from_ptr(MbObject::new_str(class_qualname)),
+    );
 }
 
 /// Register a class from MbValues with multiple bases (P1 OOP conformance).
@@ -1566,6 +1577,7 @@ pub fn mb_class_define_multi(
     method_values: MbValue,
 ) {
     let class_name = extract_str(name).unwrap_or_else(|| "object".to_string());
+    let class_qualname = super::closure::current_definition_qualname(&class_name);
     let mut bases = Vec::new();
     if let Some(ptr) = bases_list.as_ptr() {
         unsafe {
@@ -1591,7 +1603,12 @@ pub fn mb_class_define_multi(
                 let vals = vals_lock.read().unwrap();
                 for (n, v) in names.iter().zip(vals.iter()) {
                     if let Some(method_name) = extract_str(*n) {
-                        stamp_class_method_module(*v, &module_name);
+                        stamp_class_method_metadata(
+                            *v,
+                            &module_name,
+                            &class_qualname,
+                            &method_name,
+                        );
                         // Fix C-prime: registry takes its own +1.
                         super::rc::retain_if_ptr(*v);
                         methods.insert(method_name, *v);
@@ -1612,19 +1629,32 @@ pub fn mb_class_define_multi(
             MbValue::from_ptr(MbObject::new_str(module_name)),
         );
     }
+    super::builtins::set_type_object_attr(
+        &class_name,
+        "__qualname__",
+        MbValue::from_ptr(MbObject::new_str(class_qualname)),
+    );
 }
 
-fn stamp_class_method_module(method: MbValue, module_name: &str) {
-    if module_name.is_empty() {
-        return;
-    }
+fn stamp_class_method_metadata(
+    method: MbValue,
+    module_name: &str,
+    class_qualname: &str,
+    method_name: &str,
+) {
     let (func, _) = unwrap_descriptor_method(method);
     if func.as_func().is_none() && func.as_int().is_none() {
         return;
     }
-    super::closure::mb_func_set_module(
+    if !module_name.is_empty() {
+        super::closure::mb_func_set_module(
+            func,
+            MbValue::from_ptr(MbObject::new_str(module_name.to_string())),
+        );
+    }
+    super::closure::mb_func_set_qualname(
         func,
-        MbValue::from_ptr(MbObject::new_str(module_name.to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!("{class_qualname}.{method_name}"))),
     );
 }
 
@@ -6382,8 +6412,8 @@ fn mb_getattr_impl(
     }
 
     // __name__ / __qualname__ on functions / closures: look up in the
-    // FUNC_NAMES registry. Top-level functions always have
-    // qualname == name (CPython only nests for class methods / closures).
+    // dedicated metadata registries. Top-level defs fall back to __name__;
+    // nested defs and methods carry a distinct qualname.
     if attr_name == "__name__" || attr_name == "__qualname__" {
         // Builtin method wrappers: __name__ is the bare method name,
         // __qualname__ is "type.method" (e.g. dict.fromkeys → "dict.fromkeys",
@@ -6420,16 +6450,34 @@ fn mb_getattr_impl(
         }
         // TAG_FUNC direct pointer
         if obj.as_func().is_some() {
-            let name = super::closure::mb_func_get_name(obj);
-            if !name.is_none() {
-                return name;
+            let meta = if attr_name == "__qualname__" {
+                let qualname = super::closure::mb_func_get_qualname(obj);
+                if qualname.is_none() {
+                    super::closure::mb_func_get_name(obj)
+                } else {
+                    qualname
+                }
+            } else {
+                super::closure::mb_func_get_name(obj)
+            };
+            if !meta.is_none() {
+                return meta;
             }
         }
         // Closure handle (integer ID)
         if obj.as_int().is_some() && !super::generator::is_known_generator(obj) {
-            let name = super::closure::mb_func_get_name(obj);
-            if !name.is_none() {
-                return name;
+            let meta = if attr_name == "__qualname__" {
+                let qualname = super::closure::mb_func_get_qualname(obj);
+                if qualname.is_none() {
+                    super::closure::mb_func_get_name(obj)
+                } else {
+                    qualname
+                }
+            } else {
+                super::closure::mb_func_get_name(obj)
+            };
+            if !meta.is_none() {
+                return meta;
             }
         }
     }
@@ -8750,6 +8798,10 @@ fn make_code_object(func: MbValue) -> MbValue {
         let n = super::closure::mb_func_get_name(func);
         extract_str(n).unwrap_or_default()
     };
+    let qualname_str = {
+        let q = super::closure::mb_func_get_qualname(func);
+        extract_str(q).unwrap_or_else(|| name_str.clone())
+    };
     let varnames = {
         let v = super::closure::mb_func_get_varnames(func);
         if v.is_none() {
@@ -8810,7 +8862,7 @@ fn make_code_object(func: MbValue) -> MbValue {
     );
     fields.insert(
         "co_qualname".to_string(),
-        MbValue::from_ptr(super::rc::MbObject::new_str(name_str)),
+        MbValue::from_ptr(super::rc::MbObject::new_str(qualname_str)),
     );
     fields.insert("co_argcount".to_string(), MbValue::from_int(argcount));
     fields.insert("co_posonlyargcount".to_string(), MbValue::from_int(posonly));
@@ -10637,6 +10689,10 @@ fn mb_setattr_default(obj: MbValue, attr: MbValue, value: MbValue) {
     if super::pep695::is_attrable_function(obj) {
         if extract_str(attr).as_deref() == Some("__name__") {
             super::closure::mb_func_set_name(obj, value);
+            return;
+        }
+        if extract_str(attr).as_deref() == Some("__qualname__") {
+            super::closure::mb_func_set_qualname(obj, value);
             return;
         }
         if extract_str(attr).as_deref() == Some("__defaults__")
