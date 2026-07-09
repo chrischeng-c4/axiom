@@ -179,7 +179,6 @@ jet_issue_comment_cli:
     - "cargo test -p jet --lib standard_cli"
     - "cargo test -p cli-std"
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
