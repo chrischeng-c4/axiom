@@ -118,3 +118,97 @@ flowchart TD
     verify_no_cclab --> verify_all_linked[Re-diff nav/sidebar against full file set]
     verify_all_linked --> done([Site carries jet identity; every design-note file is nav-discoverable])
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+docs_site_rebrand:
+  project: jet
+  site_root: projects/jet/docs
+  branding_fixes:
+    - path: projects/jet/docs/index.md
+      field: "frontmatter hero.name"
+      from: "cclab"
+      to: "Jet"
+    - path: projects/jet/docs/.vitepress/config.mjs
+      field: "defineConfig({ title })"
+      from: "cclab"
+      to: "Jet"
+    - path: projects/jet/docs/package.json
+      field: "name"
+      from: "cclab-docs"
+      to: "jet-docs"
+  placeholder_features_removed:
+    - path: projects/jet/docs/index.md
+      field: "frontmatter features[]"
+      removed:
+        - title: "Mamba"
+          details: "Force-typed Python compiler with Cranelift backend. (Docs coming soon)"
+        - title: "SDD"
+          details: "Spec-Driven Development workflow engine. (Docs coming soon)"
+      retained:
+        - title: "Jet"
+  nav_sidebar_additions:
+    config_path: projects/jet/docs/.vitepress/config.mjs
+    sidebar_root: "themeConfig.sidebar['/']"
+    existing_group: "Jet"
+    new_groups:
+      - group: "Architecture"
+        items:
+          - text: "Project Layout"
+            link: "/architecture/layout"
+            source_file: projects/jet/docs/architecture/layout.md
+          - text: "Source-Tree Reorg Plan"
+            link: "/architecture/reorg-plan"
+            source_file: projects/jet/docs/architecture/reorg-plan.md
+      - group: "Design Notes"
+        items:
+          - text: "Build Fails Loudly on Unresolved Bare Specifiers"
+            link: "/build-fails-loudly-on-unresolved-bare-specifiers"
+            source_file: projects/jet/docs/build-fails-loudly-on-unresolved-bare-specifiers.md
+          - text: "Check Exits Non-Zero While Unimplemented"
+            link: "/check-exits-non-zero-while-unimplemented"
+            source_file: projects/jet/docs/check-exits-non-zero-while-unimplemented.md
+          - text: "Dev Server Source Analysis UTF-8 Safety"
+            link: "/dev-server-source-analysis-utf8-safety"
+            source_file: projects/jet/docs/dev-server-source-analysis-utf8-safety.md
+          - text: "Layout Box Model -- Slice 7a"
+            link: "/layout-box-slice-7a"
+            source_file: projects/jet/docs/layout-box-slice-7a.md
+          - text: "Wasm Config Accepts Shared Jet Sections"
+            link: "/wasm-config-accept-shared-jet-sections"
+            source_file: projects/jet/docs/wasm-config-accept-shared-jet-sections.md
+          - text: "Wasm Transpiler Boolean useState Literals"
+            link: "/wasm-transpiler-boolean-usestate-literals"
+            source_file: projects/jet/docs/wasm-transpiler-boolean-usestate-literals.md
+    existing_group_additions:
+      - text: "OpenAPI Codegen"
+        link: "/openapi-codegen"
+        source_file: projects/jet/docs/openapi-codegen.md
+      - text: "Library Publishing"
+        link: "/library-publishing"
+        source_file: projects/jet/docs/library-publishing.md
+      - text: "Migration from Playwright"
+        link: "/migration-from-playwright"
+        source_file: projects/jet/docs/migration-from-playwright.md
+  out_of_scope:
+    - "projects/jet/docs/.vitepress/config.mjs themeConfig.socialLinks github URL still points at the retired 'cclab' repo slug; WI #1083 scopes only hero.name, vitepress title, and package.json name, so this stale link is left for a follow-up WI rather than re-litigated here."
+  verification:
+    tooling_availability:
+      node: "present via nvm (node v22.18.0, npm bundled)"
+      vitepress_install: "absent -- no node_modules under projects/jet/docs or repo root; installing vitepress requires network access out of scope for this hand-written content/config change"
+      acceptance_scope: "content and config correctness verified via grep/read, not a live `npm run build`; optional manual verification once deps are installed: npm --prefix projects/jet/docs install && npm --prefix projects/jet/docs run build"
+    local_checks:
+      - "aw td check projects/jet/tech-design/logic/jet-docs-site-carries-cclab-era-branding-after-move-to-projects.md"
+      - "aw capability report --project jet"
+    branding_scan:
+      command: "grep -rn 'cclab' projects/jet/docs/index.md projects/jet/docs/.vitepress/config.mjs projects/jet/docs/package.json"
+      expected: "no matches for hero.name, title, or package.json name fields"
+    placeholder_scan:
+      command: "grep -n 'Mamba\\|SDD' projects/jet/docs/index.md"
+      expected: "no matches"
+    orphan_scan:
+      command: "for f in $(find projects/jet/docs -name '*.md' -not -path '*/node_modules/*'); do link=\"/${f#projects/jet/docs/}\"; link=\"${link%.md}\"; grep -q -- \"$link\" projects/jet/docs/.vitepress/config.mjs || echo \"orphan: $f\"; done"
+      expected: "no output (every markdown file's link path appears in the nav/sidebar config)"
+```
