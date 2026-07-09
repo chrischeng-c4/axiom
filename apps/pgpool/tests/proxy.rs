@@ -12,6 +12,7 @@ use server_core::ConnectionBudget;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
+use pgpool::pool::{BackendPool, PoolConfig};
 use pgpool::proxy::{
     run_session, BackendEndpointConfig, SessionHandler, SessionOutcome, SessionProxyConfig,
 };
@@ -28,15 +29,28 @@ fn test_wire_config() -> WireCodecConfig {
 }
 
 fn test_config(backend_port: u16, max_frontend: usize) -> SessionProxyConfig {
+    let backend = BackendEndpointConfig {
+        host: "127.0.0.1".to_string(),
+        port: backend_port,
+    };
+    // A generous fixed backend-pool capacity: these session-mode tests
+    // exercise the session pipeline/frontend admission, not backend-pool
+    // saturation (that lives in `tests/pool.rs`), so the pool must never be
+    // the bottleneck here.
+    let backend_pool = BackendPool::new(PoolConfig {
+        endpoint: backend.clone(),
+        max_backend_connections: 64,
+        acquire_timeout: Duration::from_millis(500),
+        backend_connect_timeout: Duration::from_millis(500),
+        wire: test_wire_config(),
+    });
     SessionProxyConfig {
-        backend: BackendEndpointConfig {
-            host: "127.0.0.1".to_string(),
-            port: backend_port,
-        },
+        backend,
         frontend_budget: ConnectionBudget::new(max_frontend),
         backend_connect_timeout: Duration::from_millis(500),
         drain_timeout: Duration::from_millis(500),
         wire: test_wire_config(),
+        backend_pool,
     }
 }
 
@@ -1189,7 +1203,3 @@ async fn drain_timeout_elapses_and_abandons_still_running_session() {
         .expect("server task");
 }
 // </HANDWRITE>
-// SPEC-MANAGED: apps/pgpool/tech-design/logic/session-mode-proxy-with-auth-passthrough-and-serve-entrypoint.md#unit-test
-// CODEGEN-BEGIN
-
-// CODEGEN-END

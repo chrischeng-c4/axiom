@@ -98,6 +98,11 @@ struct ServeArgs {
     /// milliseconds.
     #[arg(long, env = "PGPOOL_DRAIN_TIMEOUT_MS", default_value_t = 30000)]
     drain_timeout_ms: u64,
+    /// Bound on `BackendPool::acquire()`/`acquire_fresh()` waiting for an
+    /// idle/freed backend slot before `PoolError::Saturated`, in
+    /// milliseconds.
+    #[arg(long, env = "PGPOOL_POOL_ACQUIRE_TIMEOUT_MS", default_value_t = 5000)]
+    pool_acquire_timeout_ms: u64,
 }
 
 #[derive(clap::Args)]
@@ -319,29 +324,61 @@ async fn serve(args: ServeArgs) -> Result<()> {
         None => plan.frontend_bind.clone(),
     };
 
+    let backend_connect_timeout = std::time::Duration::from_millis(args.backend_connect_timeout_ms);
+    let drain_timeout = std::time::Duration::from_millis(args.drain_timeout_ms);
+    let wire = pgpool::wire::WireCodecConfig::default();
+
+    // Shared backend pool (WI #1289): both pool modes dial/return connections
+    // through the same capacity-bounded `BackendPool` (R1).
+    let backend_pool = pgpool::pool::BackendPool::new(pgpool::pool::PoolConfig {
+        endpoint: pgpool::proxy::BackendEndpointConfig {
+            host: args.backend_host.clone(),
+            port: args.backend_port,
+        },
+        max_backend_connections: plan.max_backend_connections,
+        acquire_timeout: std::time::Duration::from_millis(args.pool_acquire_timeout_ms),
+        backend_connect_timeout,
+        wire,
+    });
+
     let proxy_config = pgpool::proxy::SessionProxyConfig {
         backend: pgpool::proxy::BackendEndpointConfig {
-            host: args.backend_host,
+            host: args.backend_host.clone(),
             port: args.backend_port,
         },
         frontend_budget: plan.frontend_budget(),
-        backend_connect_timeout: std::time::Duration::from_millis(args.backend_connect_timeout_ms),
-        drain_timeout: std::time::Duration::from_millis(args.drain_timeout_ms),
-        wire: pgpool::wire::WireCodecConfig::default(),
+        backend_connect_timeout,
+        drain_timeout,
+        wire,
+        backend_pool: backend_pool.clone(),
     };
 
     let server_config = tcp_server::TcpServerConfig::new(frontend_bind)
         .with_socket_options(plan.frontend_socket)
-        .with_drain_timeout(proxy_config.drain_timeout);
+        .with_drain_timeout(drain_timeout);
 
-    let handler = pgpool::proxy::SessionHandler::new(proxy_config);
+    // `PoolHandler` dispatch (TD Schema section): selected once at process
+    // start from `RuntimePlan::pool_mode`, never re-evaluated per
+    // connection.
+    let handler = match plan.pool_mode {
+        pgpool::PoolMode::Session => {
+            pgpool::pool::PoolHandler::Session(pgpool::proxy::SessionHandler::new(proxy_config))
+        }
+        pgpool::PoolMode::Transaction => pgpool::pool::PoolHandler::Transaction(
+            pgpool::pool::TransactionHandler::new(pgpool::pool::TransactionProxyConfig {
+                frontend_budget: plan.frontend_budget(),
+                backend_pool,
+                wire,
+                drain_timeout,
+            }),
+        ),
+    };
 
     let listener = tcp_server::bind(&server_config).await?;
     println!("pgpool serve: listening on {}", listener.local_addr()?);
     println!(
         "pgpool serve: backend {}:{}",
-        handler.config().backend.host,
-        handler.config().backend.port
+        args.backend_host, args.backend_port
     );
 
     tcp_server::serve(
