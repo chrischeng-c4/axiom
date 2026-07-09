@@ -159,19 +159,19 @@ nodes:
     kind: initial
     label: "Admitting: SessionHandler::handle just received the accepted socket and is calling ConnectionBudget::try_acquire() (R1)"
   rejected_saturated:
-    kind: normal
+    kind: terminal
     label: "RejectedSaturated: budget exhausted — a BackendMessage::ErrorResponse (53300 too_many_connections) is written to the client, then the socket is closed; no other session is affected (AC3)"
   connecting_backend:
     kind: normal
     label: "ConnectingBackend: permit held; dialing the configured backend endpoint within the connect timeout (R3)"
   rejected_backend_unreachable:
-    kind: normal
+    kind: terminal
     label: "RejectedBackendUnreachable: backend TCP connect failed or timed out — an ErrorResponse (08006 connection_failure) is written to the client, the permit is released, the socket is closed"
   auth_relay:
     kind: normal
     label: "AuthRelay: StartupMessage forwarded; alternately relaying Authentication*/PasswordMessage/SaslInitialResponse/SaslResponse frames verbatim between client and backend (R2, AC2)"
   rejected_auth_failed:
-    kind: normal
+    kind: terminal
     label: "RejectedAuthFailed: backend sent ErrorResponse during startup/auth (bad credentials, failed SCRAM exchange) — forwarded to the client verbatim, permit released, both sockets closed"
   established:
     kind: normal
@@ -180,7 +180,7 @@ nodes:
     kind: normal
     label: "Draining: the process received SIGTERM/SIGINT (DrainSignal flipped to Draining); tcp-server's accept loop has stopped admitting new connections, but this session's bidirectional relay keeps running unaffected, bounded by TcpServerConfig.drain_timeout (R4, AC4)"
   closed:
-    kind: final
+    kind: terminal
     label: "Closed: permit released, both sockets closed — either a clean end (client Terminate, or backend/client EOF), a FrameError on either leg, or the drain_timeout elapsing while still Established/Draining (task abandoned)"
 edges:
   - from: admitting
@@ -226,4 +226,107 @@ stateDiagram-v2
     rejected_backend_unreachable --> [*]
     rejected_auth_failed --> [*]
     closed --> [*]
+```
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: apps-pgpool-session-proxy#schema
+title: pgpool Session Proxy Types
+description: >
+  Configuration and outcome types for the `apps/pgpool/src/proxy/` session-mode
+  (1:1) proxy: the backend endpoint seam, the per-session config bundle
+  (budget/timeouts/wire codec), the rejection-reason -> wire ErrorResponse
+  mapping, and the session outcome taxonomy tests assert on. Reuses
+  `crate::wire::{WireCodecConfig, FrameReader, FrontendMessage,
+  BackendMessage, FrameError}` from the wire codec TD rather than redefining
+  frame types.
+
+definitions:
+  BackendEndpointConfig:
+    type: object
+    $id: BackendEndpointConfig
+    x-rust-derive: ["Debug", "Clone", "PartialEq", "Eq"]
+    required: [host, port]
+    description: "TCP host/port of the single configured Postgres backend this session-mode proxy dials per client (R3); sourced from PGPOOL_BACKEND_ADDR/--backend-addr. Credentials are never part of this config — auth is relayed frame-for-frame from the client, never generated or stored by pgpool (AC2). This seam is later formalized by the backend-adapter-seam epic #1283."
+    properties:
+      host:
+        type: string
+      port:
+        type: integer
+
+  SessionProxyConfig:
+    type: object
+    $id: SessionProxyConfig
+    x-rust-derive: ["Debug", "Clone"]
+    required: [backend, frontend_budget, backend_connect_timeout, drain_timeout, wire]
+    description: "Everything a SessionHandler needs to admit and relay one client session; constructed once from RuntimePlan + CLI/env backend config and shared (cheaply cloneable) across every accepted connection."
+    properties:
+      backend:
+        $ref: "#/definitions/BackendEndpointConfig"
+      frontend_budget:
+        x-rust-type: "server_core::ConnectionBudget"
+        description: "Same budget RuntimePlan::frontend_budget() constructs; admission is checked here (inside SessionHandler::handle), not via tcp_server::TcpServerConfig.connection_budget, so a rejection can still write a wire-level ErrorResponse before the socket closes (R1, AC3)."
+      backend_connect_timeout:
+        x-rust-type: "std::time::Duration"
+        description: "Bounds the backend TCP connect attempt (R3); exceeding it produces RejectionReason::BackendUnreachable."
+      drain_timeout:
+        x-rust-type: "std::time::Duration"
+        description: "Mirrors tcp_server::TcpServerConfig.drain_timeout (itself from RuntimePlan.admin_drain_timeout-equivalent for the frontend listener) so the bounded-drain proof in AC4 has one source of truth."
+      wire:
+        x-rust-type: "crate::wire::WireCodecConfig"
+        description: "Frame bounds/limits for the frontend-role and backend-role FrameReader instances this session constructs."
+
+  RejectionReason:
+    type: string
+    $id: RejectionReason
+    x-rust-derive: ["Debug", "Clone", "Copy", "PartialEq", "Eq"]
+    x-rust-enum: true
+    enum: ["frontend_budget_exhausted", "backend_unreachable", "backend_auth_failed"]
+    description: "Drives the wire-level BackendMessage::ErrorResponse the client sees before the socket closes: frontend_budget_exhausted -> SQLSTATE 53300 too_many_connections (AC3); backend_unreachable -> SQLSTATE 08006 connection_failure; backend_auth_failed -> the backend's own ErrorResponse is forwarded verbatim instead of a synthesized one."
+
+  SessionOutcome:
+    type: string
+    $id: SessionOutcome
+    x-rust-derive: ["Debug", "Clone", "Copy", "PartialEq", "Eq"]
+    x-rust-enum: true
+    enum:
+      - "rejected_saturated"
+      - "rejected_backend_unreachable"
+      - "rejected_auth_failed"
+      - "established_closed_clean"
+      - "established_closed_error"
+      - "drain_abandoned"
+    description: "Terminal classification of one session, mirroring the Session State Machine's terminal states; SessionHandler::handle returns/records this so unit tests assert on a typed outcome instead of parsing logs (maps 1:1 onto rejected_saturated/rejected_backend_unreachable/rejected_auth_failed/closed(*) in the Session State Machine section)."
+
+  ProxyError:
+    type: object
+    $id: ProxyError
+    x-rust-derive: ["Debug", "thiserror::Error"]
+    x-rust-enum: true
+    description: "Internal error taxonomy surfaced from a session task; every variant is handled by writing the appropriate wire frame (or none, if the client already disconnected) and releasing the ConnectionBudget permit — a session task never panics."
+    oneOf:
+      - type: object
+        required: [Rejection]
+        properties:
+          Rejection:
+            type: object
+            required: [reason]
+            properties:
+              reason: { $ref: "#/definitions/RejectionReason" }
+        description: "Admission or backend-connect rejection (see RejectionReason)."
+      - type: object
+        required: [Wire]
+        properties:
+          Wire:
+            x-rust-type: "crate::wire::FrameError"
+        description: "A frontend or backend leg produced a FrameError (oversized/malformed/unknown-tag frame); that leg's relay ends without forwarding the offending bytes."
+      - type: object
+        required: [Io]
+        properties:
+          Io:
+            type: string
+        description: "Underlying client or backend socket I/O error (reset, broken pipe, ...)."
 ```
