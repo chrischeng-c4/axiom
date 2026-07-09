@@ -146,7 +146,6 @@ flowchart TD
     relay_end -->|backend EOF/FrameError| backend_closed_or_error([Close client socket, release permit])
     connect_backend -.-> drain_interaction[DrainSignal: accept loop stops on drain, in-flight relay keeps running until drain_timeout]
 ```
-
 ## Session State Machine
 <!-- type: state-machine lang: mermaid -->
 
