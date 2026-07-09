@@ -513,7 +513,6 @@ flowchart TD
     r7[R7 r7 share drain wires tcp config not a fresh controller] --> admin_serve_wires_shared_drain_controller_into_tcp_server_config[admin::serve_wires_shared_drain_controller_into_tcp_server_config]
     r7[R7 r7 signal task calls start drain on shared controller] --> admin_signal_task_calls_start_drain_on_the_shared_controller[admin::signal_task_calls_start_drain_on_the_shared_controller]
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
