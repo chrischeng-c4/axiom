@@ -150,3 +150,40 @@ flowchart TD
     r6[R6 serve flags] --> src_bin_tape_rs_tests_cli_parse_surface[src/bin/tape.rs::tests::cli_parse_surface]
     r7[R7 verifier fail fast] --> tests_service_auth_rs_resolve_fails_fast_on_missing_or_bad_registry[tests/service_auth.rs::resolve_fails_fast_on_missing_or_bad_registry]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/tape/Cargo.toml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Add the service-auth path dependency (shared bearer middleware, role_map StaticRoleMapVerifier, registry loader, shared 401/403 error shape)."
+  - path: apps/tape/src/auth.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: "tape's service-auth adapter: AuthConfig (TAPE_AUTH off|disabled|required mode parse + token-registry load via service_auth::load_registry with startup fail-fast naming TAPE_TOKEN_REGISTRY_FILE and the TAPE_TOKENS legacy/dev inline fallback), StaticRoleMapVerifier construction (registry when required, open() when off), and the per-handler authorize(principal, topic, needed) helper mapping RoleMapDenied to the shared 403 forbidden shape."
+  - path: apps/tape/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Register pub mod auth in the crate root module wiring."
+  - path: apps/tape/src/server.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "AppState carries Arc<StaticRoleMapVerifier> (AppState::new stays open for tokenless dev/tests; AppState::with_auth(journal, store, auth) takes the resolved AuthConfig); router() route_layers service_auth::auth_middleware on the /topics data-plane router ONLY, added before metrics::track so auth rejections are still counted, with probes staying exempt via the separately-merged standard_probe_routes; every data-plane handler (append, replay, checkpoint_get, checkpoint_put) gains the Extension<RoleMapPrincipal> and enforces write (append) or read (replay, checkpoint_get, checkpoint_put) on the {topic} path param via auth::authorize."
+  - path: apps/tape/src/bin/tape.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "ServeArgs gains --auth (env TAPE_AUTH, off|required, default off) and --token-registry-file (env TAPE_TOKEN_REGISTRY_FILE) with env fallback like --bind/--store; serve_main resolves AuthConfig (fail fast: nonzero exit on a bad/missing registry under required) and builds AppState through the auth-carrying constructor; cli_parse_surface extends to cover the new flags' defaults."
+  - path: apps/tape/tests/service_auth.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: "Integration tests over a real ephemeral server (tape::server::router/AppState) with a temp registry JSON file: append 200/401/403 (write grant), replay/checkpoint-get/checkpoint-put 200/403 with role hierarchy + wildcard grants, shared error bodies, tokenless probes under required auth, off-mode tokenless regression, and AuthConfig::resolve fail-fast (missing/unparseable/empty registry, unknown mode)."
+```
