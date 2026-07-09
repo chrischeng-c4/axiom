@@ -277,6 +277,25 @@ unsafe extern "C" fn dispatch_append_history_file(
 unsafe extern "C" fn dispatch_noop(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::none()
 }
+unsafe extern "C" fn dispatch_set_pre_input_hook(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    let args = args_slice(args_ptr, nargs);
+    let Some(func) = args.first().copied() else {
+        return MbValue::none();
+    };
+    if !func.is_none() && super::super::builtins::mb_callable(func).as_bool() != Some(true) {
+        let type_name = super::super::builtins::value_type_name(func);
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "'{type_name}' object is not callable"
+            ))),
+        );
+    }
+    MbValue::none()
+}
 unsafe extern "C" fn dispatch_empty_str(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_str(String::new()))
 }
@@ -336,7 +355,10 @@ pub fn register() {
         ("read_init_file", dispatch_noop as *const () as usize),
         ("redisplay", dispatch_noop as *const () as usize),
         ("set_startup_hook", dispatch_noop as *const () as usize),
-        ("set_pre_input_hook", dispatch_noop as *const () as usize),
+        (
+            "set_pre_input_hook",
+            dispatch_set_pre_input_hook as *const () as usize,
+        ),
         ("set_completer", dispatch_noop as *const () as usize),
         ("get_completer", dispatch_noop as *const () as usize),
         (
@@ -367,6 +389,7 @@ pub fn register() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::exception;
     use std::sync::{Mutex, MutexGuard};
 
     // Serialize tests that share the process-global history list.
@@ -395,6 +418,7 @@ mod tests {
             e.into_inner()
         });
         *l = -1;
+        exception::mb_clear_exception();
     }
 
     #[test]
@@ -573,5 +597,38 @@ mod tests {
                 0
             );
         }
+    }
+
+    #[test]
+    fn set_pre_input_hook_accepts_none_and_callable() {
+        let _g = test_guard();
+        reset_history();
+        register();
+        unsafe {
+            let none = MbValue::none();
+            dispatch_set_pre_input_hook(&none as *const _, 1);
+            assert_eq!(exception::mb_has_exception().as_bool(), Some(false));
+
+            let callable = MbValue::from_func(dispatch_noop as *const () as usize);
+            dispatch_set_pre_input_hook(&callable as *const _, 1);
+            assert_eq!(exception::mb_has_exception().as_bool(), Some(false));
+        }
+    }
+
+    #[test]
+    fn set_pre_input_hook_rejects_non_callable_instance() {
+        let _g = test_guard();
+        reset_history();
+        unsafe {
+            let wrong = MbValue::from_ptr(MbObject::new_instance("_W".to_string()));
+            dispatch_set_pre_input_hook(&wrong as *const _, 1);
+        }
+        assert_eq!(exception::mb_has_exception().as_bool(), Some(true));
+        let exc = exception::mb_catch_exception();
+        assert_eq!(
+            exception::get_exception_type_pub(exc).as_deref(),
+            Some("TypeError")
+        );
+        exception::mb_clear_exception();
     }
 }
