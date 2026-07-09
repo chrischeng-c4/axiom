@@ -10,18 +10,35 @@
 
 use serde_json::{json, Value};
 
-/// The full OpenAPI 3 document as pretty JSON (every route + schema).
+/// The full OpenAPI 3.2 document as pretty JSON (every route + schema,
+/// including the #1297 `QUERY` twins injected by `crate::api::openapi`).
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn openapi_json() -> String {
-    crate::api::openapi()
-        .to_pretty_json()
-        .expect("OpenApi serializes to JSON")
+    serde_json::to_string_pretty(&openapi_value()).expect("OpenApi value serializes to JSON")
 }
 
-/// The full OpenAPI 3 document as YAML for LLM/agent reading.
+/// The full OpenAPI 3.2 document as YAML for LLM/agent reading.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn openapi_yaml() -> String {
-    serde_yaml::to_string(&crate::api::openapi()).expect("OpenApi serializes to YAML")
+    serde_yaml::to_string(&openapi_value()).expect("OpenApi value serializes to YAML")
+}
+
+/// `crate::api::openapi()` as a JSON [`Value`] stamped as OpenAPI 3.2 (#1298,
+/// epic #1296): utoipa 4.2.3's `OpenApiVersion` enum predates OpenAPI 3.2 and
+/// only knows how to serialize the literal `"3.0.3"`, so the typed
+/// `utoipa::openapi::OpenApi` — and the live `GET /openapi.json` route that
+/// serves it verbatim via `service_http::standard_probe_routes` — keeps
+/// declaring 3.0.3. This offline `lumen spec` surface (and the
+/// `clients/openapi.json` contract file regenerated from it) is not bound by
+/// that typed field, so it stamps the real document version here; the
+/// `query`/`x-post-twin` operations are unaffected either way since they are
+/// injected upstream in `crate::api::openapi`.
+fn openapi_value() -> Value {
+    let mut v = serde_json::to_value(crate::api::openapi()).expect("OpenApi serializes to JSON");
+    if let Value::Object(map) = &mut v {
+        map.insert("openapi".to_string(), Value::String("3.2.0".to_string()));
+    }
+    v
 }
 
 /// Just the component schemas (the request/response data types) as pretty JSON

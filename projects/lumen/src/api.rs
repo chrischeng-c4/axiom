@@ -1484,7 +1484,61 @@ async fn restore(
 pub fn openapi() -> utoipa::openapi::OpenApi {
     let mut doc = ApiDoc::openapi();
     doc.info.version = env!("CARGO_PKG_VERSION").to_string();
+    inject_query_twins(&mut doc);
     doc
+}
+
+/// Describe the #1297 `QUERY` twins (OpenAPI 3.2 / RFC 10008, epic #1296 R1)
+/// in the generated document: `QUERY /collections` (twin of `POST
+/// /collections:search`) and `QUERY /collections/{collection_id}` (twin of
+/// `POST /collections/{collection_id}/search`).
+///
+/// utoipa 4.2.3 predates OpenAPI 3.2 and has no `PathItemType::Query`
+/// variant, so the operation is injected as raw JSON via
+/// `PathItem::extensions` — utoipa `#[serde(flatten)]`s that map into the
+/// serialized path-item object next to `get`/`post`/etc, giving a `"query"`
+/// key byte-identical in shape to a native one. `libs/openapi-codegen`'s IR
+/// (`ir/operations.rs`, #1298) only needs that serialized `"query"` key plus
+/// an `x-post-twin` extension pointing at the POST twin path; it does not
+/// require a typed enum variant to parse the operation. (The `"openapi"`
+/// version field itself stays at utoipa's fixed `3.0.3` here — that enum has
+/// no 3.2 variant — `lumen spec`'s offline output stamps 3.2 on top; see
+/// `spec::openapi_value`.)
+fn inject_query_twins(doc: &mut utoipa::openapi::OpenApi) {
+    let twin = |doc: &utoipa::openapi::OpenApi, twin_path: &str, operation_id: &str| {
+        let mut op = doc
+            .paths
+            .paths
+            .get(twin_path)?
+            .operations
+            .get(&openapi::PathItemType::Post)?
+            .clone();
+        op.operation_id = Some(operation_id.to_string());
+        op.extensions
+            .get_or_insert_with(Default::default)
+            .insert("x-post-twin".to_string(), serde_json::json!(twin_path));
+        Some(serde_json::to_value(&op).expect("Operation serializes to JSON"))
+    };
+
+    if let Some(query_op) = twin(
+        doc,
+        "/collections/{collection_id}/search",
+        "query_collection",
+    ) {
+        if let Some(item) = doc.paths.paths.get_mut("/collections/{collection_id}") {
+            item.extensions
+                .get_or_insert_with(Default::default)
+                .insert("query".to_string(), query_op);
+        }
+    }
+
+    if let Some(query_op) = twin(doc, "/collections:search", "query_collections") {
+        if let Some(item) = doc.paths.paths.get_mut("/collections") {
+            item.extensions
+                .get_or_insert_with(Default::default)
+                .insert("query".to_string(), query_op);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

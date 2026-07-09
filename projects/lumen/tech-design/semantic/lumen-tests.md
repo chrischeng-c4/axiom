@@ -390,6 +390,9 @@ semantic_domain:
           - name: "llm_outline_mentions_docs_replace"
             kind: "function"
             public: false
+          - name: "openapi_json_declares_3_2_and_describes_query_twins"
+            kind: "function"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
