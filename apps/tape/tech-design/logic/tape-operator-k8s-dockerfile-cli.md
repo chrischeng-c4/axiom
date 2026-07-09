@@ -99,3 +99,84 @@ flowchart TD
     render_children --> done
     dockerfile --> done
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: tape-operator-k8s-dockerfile-cli-verification
+requirements:
+  auth_secret_wiring_opt_in:
+    id: R6
+    text: "The token-registry Secret volume/env (TAPE_AUTH=required, TAPE_TOKEN_REGISTRY_FILE) is rendered only when spec.auth is required and spec.tokensSecret is set; otherwise the StatefulSet carries neither."
+    kind: functional
+    risk: medium
+    verify: tests/operator.rs::token_registry_secret_wiring_is_opt_in
+  crd_flattens_cluster_spec:
+    id: R4
+    text: "TapeSpec flattens operator::ClusterSpec directly into the CRD schema (no nested cluster wrapper) and pins shardCount to 1 in the render, matching tape's single-raft-group Primary Replicas topology."
+    kind: functional
+    risk: high
+    verify: tests/operator.rs::crd_flattens_cluster_spec
+  crd_structural_schema_safe:
+    id: R3
+    text: "The rendered TapeSpec CRD is Kubernetes structural-schema safe: no format: uint32/uint64, a minimum floor on normalized counts, group tape.dev, kind Tape."
+    kind: functional
+    risk: high
+    verify: tests/deploy_cli.rs::crd_render_is_structural_schema_safe
+  dockerfile_render_reproduces_fixtures:
+    id: R1
+    text: "tape dockerfile render --variant source reproduces the committed apps/tape/Dockerfile byte-for-byte, and --variant release reproduces apps/tape/Dockerfile.release byte-for-byte; --version substitutes the ARG/tag lines."
+    kind: functional
+    risk: medium
+    verify: tests/deploy_cli.rs::dockerfile_render_reproduces_committed_fixtures
+  k8s_render_verbs_offline:
+    id: R2
+    text: "tape k8s crd render, tape k8s operator render --namespace, and tape k8s instance render --profile dev|staging|prod|template all succeed offline in the default (kube-free) build and emit parseable YAML; tape k8s operator run without --features operator exits nonzero with a rebuild hint."
+    kind: functional
+    risk: medium
+    verify: tests/deploy_cli.rs::render_verbs_emit_parseable_yaml_offline
+  llm_topic_names_deploy_verbs:
+    id: R10
+    text: "The tape llm outline/operations topic documents the new k8s and dockerfile verbs so agent-facing docs stay honest about the CLI surface."
+    kind: functional
+    risk: low
+    verify: tests/deploy_cli.rs::llm_topic_names_deploy_verbs
+  operator_feature_build_green:
+    id: R9
+    text: "cargo build -p tape --features operator and cargo test -p tape --features operator succeed, exercising the real operator render/status-patch logic."
+    kind: regression
+    risk: medium
+    verify: cargo test -p tape --features operator
+  operator_feature_default_off:
+    id: R8
+    text: "The default cargo build of tape (no --features operator) does not link kube/k8s-openapi; cargo build -p tape and cargo test -p tape stay green without the feature, and the operator-gated tests only compile with --features operator."
+    kind: regression
+    risk: medium
+    verify: cargo build -p tape && cargo test -p tape
+  render_emits_downward_api_statefulset:
+    id: R5
+    text: "operator::render(Tape) always emits a StatefulSet (never a Deployment) carrying the downward-API env quartet, TAPE_PEER_SERVICE, TAPE_BIND/TAPE_DATA_DIR/TAPE_GRACE_SECS, a /data PVC sized from spec.storage, /healthz and /readyz probes, and a nonroot security context, plus ServiceAccount/headless+client Services/PodDisruptionBudget."
+    kind: functional
+    risk: high
+    verify: tests/operator.rs::render_emits_expected_child_objects
+  status_patch_phases:
+    id: R7
+    text: "ManagedService::status_patch for Tape reports Pending when no replicas are ready, Reconciling when some but not all of replicasPerShard are ready, and Ready when readyReplicas >= replicasPerShard."
+    kind: functional
+    risk: medium
+    verify: tests/operator.rs::status_patch_reports_pending_reconciling_ready
+---
+flowchart TD
+    r1[R1 dockerfile render reproduces fixtures] --> tests_deploy_cli_rs_dockerfile_render_reproduces_committed_fixtures[tests/deploy_cli.rs::dockerfile_render_reproduces_committed_fixtures]
+    r2[R2 k8s render verbs offline] --> tests_deploy_cli_rs_render_verbs_emit_parseable_yaml_offline[tests/deploy_cli.rs::render_verbs_emit_parseable_yaml_offline]
+    r3[R3 crd structural schema safe] --> tests_deploy_cli_rs_crd_render_is_structural_schema_safe[tests/deploy_cli.rs::crd_render_is_structural_schema_safe]
+    r4[R4 crd flattens cluster spec] --> tests_operator_rs_crd_flattens_cluster_spec[tests/operator.rs::crd_flattens_cluster_spec]
+    r5[R5 render emits downward api statefulset] --> tests_operator_rs_render_emits_expected_child_objects[tests/operator.rs::render_emits_expected_child_objects]
+    r6[R6 auth secret wiring opt in] --> tests_operator_rs_token_registry_secret_wiring_is_opt_in[tests/operator.rs::token_registry_secret_wiring_is_opt_in]
+    r7[R7 status patch phases] --> tests_operator_rs_status_patch_reports_pending_reconciling_ready[tests/operator.rs::status_patch_reports_pending_reconciling_ready]
+    r8[R8 operator feature default off] --> cargo_build_p_tape_cargo_test_p_tape[cargo build -p tape && cargo test -p tape]
+    r9[R9 operator feature build green] --> cargo_test_p_tape_features_operator[cargo test -p tape --features operator]
+    r10[R10 llm topic names deploy verbs] --> tests_deploy_cli_rs_llm_topic_names_deploy_verbs[tests/deploy_cli.rs::llm_topic_names_deploy_verbs]
+```
