@@ -202,7 +202,6 @@ flowchart TD
     r5[R5 parity fixture preserves source semantics] --> cargo_test_p_jet_test_stories_parity_fixture_nocapture[cargo test -p jet --test stories_parity_fixture -- --nocapture]
     r6[R6 no stale pre epic only gate inventory remains] --> aw_capability_report_project_jet[aw capability report --project jet]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
