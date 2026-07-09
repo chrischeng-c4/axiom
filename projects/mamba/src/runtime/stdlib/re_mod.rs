@@ -2070,7 +2070,13 @@ fn sub_engine(
         );
         return None;
     }
-    let pat = extract_str(pattern)?;
+    let pat = match extract_pattern_str(pattern) {
+        Some(pat) => pat,
+        None => {
+            raise_type_error("first argument must be string or compiled pattern");
+            return None;
+        }
+    };
     let text = extract_str(string)?;
     if !validate_sub_replacement(repl) {
         return None;
@@ -2657,6 +2663,18 @@ mod tests {
     fn test_sub() {
         let result = mb_re_sub(s("\\d+"), s("X"), s("abc123def456"));
         assert_eq!(extract_str(result).unwrap(), "abcXdefX");
+    }
+
+    #[test]
+    fn test_sub_wrong_pattern_type_raises_type_error() {
+        crate::runtime::exception::mb_clear_exception();
+        let result = mb_re_sub(MbValue::from_int(7), s("X"), s("abc123def456"));
+        assert_eq!(extract_str(result).as_deref(), Some("abc123def456"));
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        crate::runtime::exception::mb_clear_exception();
     }
 
     #[test]
