@@ -722,3 +722,7 @@ fn transaction_status_tracks_simple_and_extended_session() {
     );
 }
 // </HANDWRITE>
+// SPEC-MANAGED: apps/pgpool/tech-design/logic/pg-wire-message-codec-frontend-backend-frames.md#unit-test
+// CODEGEN-BEGIN
+
+// CODEGEN-END
