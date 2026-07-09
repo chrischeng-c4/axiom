@@ -447,6 +447,15 @@ extern "C" fn m_formatter_format(this: MbValue, args_list: MbValue, kwargs: MbVa
             "descriptor 'format' of 'string.Formatter' object needs an argument",
         );
     }
+    if !is_str_value(format_string) {
+        return raise(
+            "TypeError",
+            format!(
+                "format() argument 2 must be str, not {}",
+                super::super::builtins::value_type_name(format_string)
+            ),
+        );
+    }
     let mut args: Vec<MbValue> = items.iter().skip(1).copied().collect();
     let mut kwargs = kwargs;
     // The generic kwargs-method bridge strips a trailing dict into `kwargs`.
@@ -1551,7 +1560,9 @@ fn capitalize(w: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::exception::{current_exception_type, mb_clear_exception};
+    use crate::runtime::exception::{
+        current_exception_type, get_exception_message_pub, mb_clear_exception, mb_get_exception,
+    };
 
     #[test]
     fn test_capwords_default() {
@@ -1614,6 +1625,27 @@ mod tests {
 
         assert!(result.is_none());
         assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        mb_clear_exception();
+    }
+
+    #[test]
+    fn test_formatter_format_rejects_non_string_format_string() {
+        mb_clear_exception();
+
+        let formatter = make_instance("Formatter", vec![]);
+        let result = m_formatter_format(
+            formatter,
+            new_list(vec![MbValue::from_int(12345)]),
+            MbValue::none(),
+        );
+
+        assert!(result.is_none());
+        assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        let exc = mb_get_exception();
+        assert_eq!(
+            get_exception_message_pub(exc).as_deref(),
+            Some("format() argument 2 must be str, not int")
+        );
         mb_clear_exception();
     }
 }
