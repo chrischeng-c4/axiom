@@ -517,3 +517,47 @@ flowchart TD
     r7[R7 r7 share drain wires tcp config not a fresh controller] --> admin_serve_wires_shared_drain_controller_into_tcp_server_config[admin::serve_wires_shared_drain_controller_into_tcp_server_config]
     r7[R7 r7 signal task calls start drain on shared controller] --> admin_signal_task_calls_start_drain_on_the_shared_controller[admin::signal_task_calls_start_drain_on_the_shared_controller]
 ```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: admin-plane-all-routes-respond-h2c-and-http11
+    capability_id: standard-operational-endpoints
+    claim_id: served-probes-and-drain-flip
+    name: admin plane serves all R1 routes on h2c and HTTP/1.1
+    command: cargo test -p pgpool --test admin_plane all_routes_respond_on_h2c_and_http1 -- --nocapture
+    assertions:
+      - a live pgpool serve process accepts an h2c client connection on RuntimePlan.admin_bind
+      - a live pgpool serve process also accepts a plain HTTP/1.1 client connection on the same admin_bind
+      - GET /healthz, GET /readyz, GET /metrics, GET /openapi.json, GET /docs, GET /pools, GET /pools/{pool}/stats, and POST /drain all return a response (not a connection error) on both protocols (AC1)
+  - id: admin-plane-drain-flips-readyz-and-lets-transaction-finish
+    capability_id: standard-operational-endpoints
+    claim_id: served-probes-and-drain-flip
+    name: POST /drain flips /readyz to 503 while an in-flight transaction completes, then the process exits cleanly
+    command: cargo test -p pgpool --test admin_plane drain_flips_readyz_and_process_exits_cleanly -- --nocapture
+    assertions:
+      - GET /readyz returns 200 ok before POST /drain
+      - a client transaction is opened against a live pgpool serve session before POST /drain is issued
+      - immediately after POST /drain, GET /readyz returns 503 draining
+      - the already-open transaction is allowed to run its remaining queries and commit/close normally rather than being severed
+      - the pgpool serve process exits with a clean (zero) status once the transaction ends, within the configured admin_drain_timeout_ms bound (AC2)
+  - id: admin-plane-openapi-and-routes-match-offline-spec
+    capability_id: http2-api-list
+    claim_id: served-contract-matches-offline-spec
+    name: served /openapi.json and route set are byte-identical to the offline pgpool spec inventory
+    command: cargo test -p pgpool --test admin_plane served_contract_matches_offline_spec -- --nocapture
+    assertions:
+      - GET /openapi.json response body deep-equals the JSON value produced by `pgpool spec --format openapi`
+      - the admin Router's registered method+path set equals the route list produced by `pgpool spec --format routes` (AC3)
+  - id: admin-plane-metrics-exposes-pool-gauges
+    capability_id: standard-operational-endpoints
+    claim_id: served-probes-and-drain-flip
+    name: GET /metrics exposes pool gauges in Prometheus text format
+    command: cargo test -p pgpool --test admin_plane metrics_exposes_prometheus_pool_gauges -- --nocapture
+    assertions:
+      - GET /metrics returns content-type text/plain;version=0.0.4
+      - the response body contains pgpool_frontend_active, pgpool_backend_active, and pgpool_backend_idle gauge lines labeled pool="<name>"
+      - the rendered gauge values change between two scrapes when a client opens/closes a session against the live pgpool serve process in between (AC4)
+```
