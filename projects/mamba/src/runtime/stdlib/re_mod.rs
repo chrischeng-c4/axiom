@@ -927,6 +927,10 @@ unsafe extern "C" fn dispatch_compile(args_ptr: *const MbValue, nargs: usize) ->
     )
 }
 
+unsafe extern "C" fn dispatch_template(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    dispatch_compile(args_ptr, nargs)
+}
+
 /// `re.error(msg, pattern=None, pos=None)` constructor. CPython's `re.error`
 /// is a real exception *class* (callable, a subclass of `Exception`), so the
 /// module-level `re.error` name is exposed as this callable func value rather
@@ -963,8 +967,8 @@ unsafe extern "C" fn dispatch_re_error(args_ptr: *const MbValue, nargs: usize) -
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
-/// Generic surface stub. Backs the module-level `re.template` / `re.Scanner`
-/// names that only need to be callable surface placeholders.
+/// Generic surface stub. Backs module-level names that only need to be
+/// callable surface placeholders.
 unsafe extern "C" fn dispatch_re_surface_stub(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::none()
 }
@@ -1313,11 +1317,10 @@ pub fn register() {
     error_slots.insert("__suppress_context__".to_string(), slot);
     super::super::class::mb_class_register("re.error", vec!["Exception".to_string()], error_slots);
 
-    // `re.template` (deprecated alias of re.compile) and `re.Scanner` — surface
-    // names probed by `hasattr(re, "template")` / `callable(re.Scanner)`. Both
-    // are callable func stubs; the Scanner runtime path is not modeled here.
-    let stub_addr = dispatch_re_surface_stub as *const () as usize;
-    attrs.insert("template".to_string(), surface_func(stub_addr));
+    // `re.template` is a deprecated alias of `re.compile`, so it must route
+    // through the same pattern/flag validation wall.
+    let template_addr = dispatch_template as *const () as usize;
+    attrs.insert("template".to_string(), surface_func(template_addr));
     // re.Scanner is a real tokenizer: register its class (scan method) and a
     // constructor dispatcher.
     {
@@ -2707,6 +2710,23 @@ mod tests {
     fn test_split_wrong_pattern_type_raises_type_error() {
         crate::runtime::exception::mb_clear_exception();
         let result = mb_re_split(MbValue::from_int(7), s("abc123"));
+        assert!(result.is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_template_wrong_pattern_type_raises_type_error() {
+        register();
+        crate::runtime::exception::mb_clear_exception();
+        let template = crate::runtime::module::mb_module_getattr(s("re"), s("template"));
+        let result = crate::runtime::builtins::mb_call_spread(
+            template,
+            MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(7)])),
+        );
         assert!(result.is_none());
         assert_eq!(
             crate::runtime::exception::current_exception_type().as_deref(),
