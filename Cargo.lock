@@ -12827,6 +12827,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "service-auth",
  "service-http",
  "service-metrics",
  "tempfile",

@@ -117,6 +117,16 @@ struct ServeArgs {
     /// listener closes, while `/readyz` reports 503 so k8s stops routing.
     #[arg(long, env = "TAPE_GRACE_SECS", default_value_t = 10)]
     grace_secs: u64,
+    /// Request-auth mode for the /topics data plane: `off` (tokenless dev,
+    /// the default) or `required` (bearer tokens from the registry file).
+    /// Probes stay tokenless either way.
+    #[arg(long, env = "TAPE_AUTH", default_value = "off")]
+    auth: String,
+    /// Bearer-token registry file (JSON `{token: {subject, roles}}`),
+    /// mounted from a Secret in production. Required (and validated at
+    /// startup) when `--auth required`.
+    #[arg(long, env = "TAPE_TOKEN_REGISTRY_FILE")]
+    token_registry_file: Option<PathBuf>,
 }
 
 #[derive(clap::Args)]
@@ -339,11 +349,27 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
+    // Resolve the bearer-auth contract (#1326) BEFORE anything serves: with
+    // --auth required a missing/unparseable/empty registry file is a startup
+    // error (nonzero exit), never a per-request 401.
+    let auth = tape::auth::AuthConfig::resolve(
+        &args.auth,
+        args.token_registry_file
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .as_deref(),
+        std::env::var(tape::auth::LEGACY_TOKENS_ENV).ok().as_deref(),
+    )?;
+    tracing::info!(
+        required = auth.required,
+        "request auth resolved (TAPE_AUTH; probes stay tokenless)"
+    );
+
     let journal = match &args.store {
         Some(path) => load_journal(path)?,
         None => TapeJournal::default(),
     };
-    let state = tape::server::AppState::new(journal, args.store.clone());
+    let state = tape::server::AppState::with_auth(journal, args.store.clone(), auth);
     let app = tape::server::router(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&args.bind).await?;
@@ -476,6 +502,8 @@ mod tests {
 
         // #1325: `serve` gains --bind/--store/--grace-secs, with env fallback
         // and a 10s default grace window; existing commands keep parsing.
+        // #1326: `serve` also gains --auth/--token-registry-file, defaulting
+        // to tokenless (`off`).
         let cli = Cli::try_parse_from(["tape", "serve"]).unwrap();
         let Command::Serve(args) = cli.command else {
             panic!("expected Serve");
@@ -483,6 +511,8 @@ mod tests {
         assert_eq!(args.bind, "127.0.0.1:7137");
         assert!(args.store.is_none());
         assert_eq!(args.grace_secs, 10);
+        assert_eq!(args.auth, "off");
+        assert!(args.token_registry_file.is_none());
 
         let cli = Cli::try_parse_from([
             "tape",
@@ -493,6 +523,10 @@ mod tests {
             "/tmp/journal.json",
             "--grace-secs",
             "3",
+            "--auth",
+            "required",
+            "--token-registry-file",
+            "/tmp/tape-token-registry.json",
         ])
         .unwrap();
         let Command::Serve(args) = cli.command else {
@@ -501,6 +535,11 @@ mod tests {
         assert_eq!(args.bind, "0.0.0.0:9000");
         assert_eq!(args.store, Some(PathBuf::from("/tmp/journal.json")));
         assert_eq!(args.grace_secs, 3);
+        assert_eq!(args.auth, "required");
+        assert_eq!(
+            args.token_registry_file,
+            Some(PathBuf::from("/tmp/tape-token-registry.json"))
+        );
 
         let cli =
             Cli::try_parse_from(["tape", "append", "orders", "--payload", "{\"n\":1}"]).unwrap();

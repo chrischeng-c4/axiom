@@ -8,6 +8,7 @@ use serde_json::Value;
 use thiserror::Error;
 use utoipa::ToSchema;
 
+pub mod auth;
 pub mod bench;
 pub mod metrics;
 pub mod openapi;
