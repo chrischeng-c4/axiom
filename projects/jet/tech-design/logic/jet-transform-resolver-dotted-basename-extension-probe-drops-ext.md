@@ -111,3 +111,20 @@ flowchart TD
     r3[R3 plain extensionless relative import regression control] --> cargo_test_p_jet_lib_transform_modules_tests_bundle_resolves_plain_extensionless_relative_import_unchanged[cargo test -p jet --lib transform::modules::tests::bundle_resolves_plain_extensionless_relative_import_unchanged]
     r4[R4 append extension preserves dotted basename unit] --> cargo_test_p_jet_lib_transform_modules_tests_append_extension_appends_without_replacing_dotted_basename[cargo test -p jet --lib transform::modules::tests::append_extension_appends_without_replacing_dotted_basename]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/jet/src/transform/modules.rs
+    action: update
+    section: logic
+    impl_mode: hand-written
+    reason: "Fix WI #1304 R1: add a private append_extension(base: &Path, ext: &str) -> PathBuf helper (string-concat base_os_string + '.' + ext, modeled on the already-correct resolver/mod.rs::append_extension) and replace every PathBuf::set_extension(...) extension-probe call site with it -- inside lookup_file_module_id_with_extensions (bare-specifier/node_modules/directory-index path) and both inline relative-import probe loops inside resolve_module_path (the legacy no-current_dir loop and the current_dir-relative loop). Candidate extension lists per call site are unchanged; only how each candidate path is built changes, so a dotted basename such as router.config or DraftEditor.react keeps its full name and only gets the probed extension appended (router.config.ts, DraftEditor.react.ts) instead of having the text after its last '.' replaced (router.ts, DraftEditor.ts). Does not touch resolver/mod.rs, alias.rs, TS path-alias resolution, or Node builtin polyfill wiring (Out of Scope on WI #1304)."
+  - path: projects/jet/src/transform/modules.rs
+    action: update
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Add the R1-R4 regression tests specified in the unit-test section to the existing mod tests block. R1 and R2 are full Bundler::bundle() pipeline tests (tempdir fixture written via std::fs, Bundler::new(BundleOptions{..}).bundle(entry).await, then assert BundleOutput.code contains no literal unresolved require('<spec>') substring and does contain a unique marker from the target file's body) proving WI #1304 AC1 (dotted-basename extensionless relative import) and AC2 (legacy-CJS nested relative import with a dotted basename in a library-style subdirectory) end-to-end, per WI R2/R3 ('not an isolated resolve_module_path unit test'). R3 is a same-shape full-pipeline negative/no-regression control for a plain non-dotted extensionless relative import, proving the fix does not change already-correct behavior. R4 is an isolated unit-level pin on the new append_extension helper's exact append-not-replace string semantics."
+```
