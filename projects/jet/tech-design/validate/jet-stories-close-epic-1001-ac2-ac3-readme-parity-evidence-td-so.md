@@ -97,3 +97,57 @@ flowchart TD
     add_fixture_test --> verify[cargo test; grep source_units; aw td check; aw capability report]
     verify --> done([README enumerates full surface; source_units complete; fixture passes])
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+readme_parity_evidence:
+  target: "projects/jet/README.md"
+  capability: "component-workbench"
+  action: "rewrite summary row + detailed Gate Inventory / EC Dimensions block"
+  feature_area_citations:
+    decorators_parameters_globals_loaders_autodocs:
+      test: "projects/jet/src/stories/csf.rs::tests::parses_render_path_core_fields"
+    controls_toolbar_actions_interactions_a11y_source_docs_search_theme_index_json:
+      test: "projects/jet/tests/stories/stories_build.rs::static_manager_keeps_dev_feature_parity_checklist"
+    toolbar_measure_outline_highlight_zoom_shortcuts:
+      test: "projects/jet/src/stories/manager.rs::tests::manager_toolbar_renders_viewport_background_zoom_and_custom_parameters"
+    mdx_docs_page_compile:
+      test: "projects/jet/src/stories/mdx.rs::tests::compiles_core_doc_blocks"
+    mdx_docs_page_static_export:
+      test: "projects/jet/tests/stories/stories_build.rs::mdx_docs_pages_render_core_blocks_in_static_export"
+    headless_interactions_play_runner:
+      test: "projects/jet/src/cli.rs::run_stories_smoke_tests (invoked by `jet test --stories`)"
+  gate_inventory_replacement: "stale 5-test Gate Inventory is replaced by the six citations above, one row per feature area, superseding the pre-epic-1001 CSF/manager/HMR/Controls/static-export-only listing"
+schema_source_units_update:
+  target: "projects/jet/tech-design/semantic/jet-stories.md"
+  section_path: "schema.semantic_domain.evidence.source_units"
+  add:
+    - path: "projects/jet/src/stories/mdx.rs"
+      language: "rust"
+      ownership_state: "handwrite"
+      reason: "MDX docs-page compiler added by epic #1001 (#996); missing from source_units despite being covered by tests/compiles_core_doc_blocks and stories_build.rs::mdx_docs_pages_render_core_blocks_in_static_export."
+    - path: "projects/jet/src/stories/optimizer.rs"
+      language: "rust"
+      ownership_state: "handwrite"
+      reason: "Stories-mode dependency optimizer added by epic #1001; already carries an explicit HANDWRITE gap marker (missing-generator:logic:stories-dep-optimizer) in-source but was never registered in the semantic schema's source_units list."
+parity_fixture_suite:
+  root: "projects/jet/tests/stories/fixtures/parity/"
+  files:
+    - path: "projects/jet/tests/stories/fixtures/parity/Widget.tsx"
+      role: "minimal React component under test (props surface for argTypes override)"
+    - path: "projects/jet/tests/stories/fixtures/parity/Widget.stories.tsx"
+      role: "CSF story file: default export decorators + one Interactive story with an argTypes override and a play() interaction"
+    - path: "projects/jet/tests/stories/fixtures/parity/Widget.mdx"
+      role: "MDX docs page wired to the Interactive story via <Story of={...} />"
+  verifying_test: "projects/jet/tests/stories_parity_fixture.rs"
+  verifying_test_assertions:
+    - "build_stories_static compiles the fixture with zero diagnostics"
+    - "the emitted static module preserves the decorators/argTypes/play() source text verbatim"
+    - "the MDX docs page's compiled output wires to the Interactive story (docs_pages() resolves the story ref)"
+  verification_commands:
+    - "cargo test -p jet --test stories_parity_fixture"
+    - "rg -n 'mdx.rs|optimizer.rs' projects/jet/tech-design/semantic/jet-stories.md"
+    - "aw td check projects/jet/tech-design/validate/jet-stories-close-epic-1001-ac2-ac3-readme-parity-evidence-td-so.md"
+```
