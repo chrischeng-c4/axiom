@@ -215,6 +215,12 @@ fn is_bytes_like(v: MbValue) -> bool {
         .unwrap_or(false)
 }
 
+fn is_tuple_value(v: MbValue) -> bool {
+    v.as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::Tuple(_)) })
+        .unwrap_or(false)
+}
+
 fn raise_type_error(msg: &str) -> MbValue {
     super::super::exception::mb_raise(new_str("TypeError"), new_str(msg));
     MbValue::none()
@@ -357,6 +363,101 @@ unsafe extern "C" fn raw_turtle_write(_self_v: MbValue, args: MbValue) -> MbValu
         }
     }
     MbValue::none()
+}
+
+unsafe extern "C" fn tk_configure_cnf_str(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = extract_args(args);
+    if let Some(cnf) = items.first() {
+        if extract_str(*cnf).is_none() {
+            return raise_type_error("configure() argument 'cnf' must be str");
+        }
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn tk_bind_class_class_name_str(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = extract_args(args);
+    if let Some(class_name) = items.first() {
+        if extract_str(*class_name).is_none() {
+            return raise_type_error("bind_class() argument 'className' must be str");
+        }
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn tk_photo_image_data_format_str(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = extract_args(args);
+    if let Some(format) = items.first() {
+        if extract_str(*format).is_none() {
+            return raise_type_error("PhotoImage.data() argument 'format' must be str");
+        }
+    }
+    MbValue::from_ptr(MbObject::new_str(String::new()))
+}
+
+unsafe extern "C" fn tk_xview_scroll_number_int(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = extract_args(args);
+    if let Some(number) = items.first() {
+        if number.as_int_pyint().is_none() {
+            return raise_type_error("xview_scroll() argument 'number' must be int");
+        }
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn tk_yview_scroll_number_int(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = extract_args(args);
+    if let Some(number) = items.first() {
+        if number.as_int_pyint().is_none() {
+            return raise_type_error("yview_scroll() argument 'number' must be int");
+        }
+    }
+    MbValue::none()
+}
+
+fn validate_turtle_xy_float_or_tuple(args: &[MbValue]) -> Option<MbValue> {
+    match args {
+        [x] if is_tuple_value(*x) => None,
+        [x] => {
+            if x.as_float().is_none() {
+                return Some(raise_type_error("turtle coordinate argument must be tuple"));
+            }
+            None
+        }
+        [x, y, ..] => {
+            if x.as_float().is_none() || y.as_float().is_none() {
+                return Some(raise_type_error(
+                    "turtle coordinate arguments must be float",
+                ));
+            }
+            None
+        }
+        [] => None,
+    }
+}
+
+unsafe extern "C" fn turtle_xy_float_or_tuple(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if let Some(err) = validate_turtle_xy_float_or_tuple(args) {
+        return err;
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn turtle_distance(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if let Some(err) = validate_turtle_xy_float_or_tuple(args) {
+        return err;
+    }
+    MbValue::from_float(0.0)
+}
+
+unsafe extern "C" fn turtle_towards(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if let Some(err) = validate_turtle_xy_float_or_tuple(args) {
+        return err;
+    }
+    MbValue::from_float(0.0)
 }
 
 unsafe extern "C" fn transport_socket_noop(_self_v: MbValue, _args: MbValue) -> MbValue {
@@ -685,7 +786,10 @@ fn register_asyncore() {
     let getsockopt_addr = transport_socket_getsockopt as *const () as usize;
     register_variadic_method_class("file_wrapper", "getsockopt", getsockopt_addr);
     let mut attrs = build_attrs(&[], &[], &[], &[]);
-    attrs.insert("file_wrapper".into(), make_type_obj("file_wrapper", "asyncore"));
+    attrs.insert(
+        "file_wrapper".into(),
+        make_type_obj("file_wrapper", "asyncore"),
+    );
     super::register_module("asyncore", attrs);
 }
 
@@ -709,7 +813,9 @@ fn register_turtle() {
             ("right", dispatch_noop as *const () as usize),
             ("setheading", dispatch_noop as *const () as usize),
             ("position", dispatch_empty_list as *const () as usize),
-            ("goto", dispatch_noop as *const () as usize),
+            ("goto", turtle_xy_float_or_tuple as *const () as usize),
+            ("distance", turtle_distance as *const () as usize),
+            ("towards", turtle_towards as *const () as usize),
             ("done", dispatch_noop as *const () as usize),
             ("bye", dispatch_noop as *const () as usize),
             ("mainloop", dispatch_noop as *const () as usize),
@@ -720,6 +826,127 @@ fn register_turtle() {
     attrs.insert("RawTurtle".into(), make_type_obj("RawTurtle", "turtle"));
     register_variadic_method_class("RawTurtle", "write", raw_turtle_write as *const () as usize);
     super::register_module("turtle", attrs);
+}
+
+fn register_tkinter_type_walls() {
+    let configure = tk_configure_cnf_str as *const () as usize;
+    for class_name in [
+        "Checkbutton",
+        "LabelFrame",
+        "Menubutton",
+        "Message",
+        "PanedWindow",
+        "Radiobutton",
+        "Spinbox",
+        "Labelframe",
+    ] {
+        register_variadic_method_class(class_name, "configure", configure);
+    }
+    register_variadic_method_class(
+        "Misc",
+        "bind_class",
+        tk_bind_class_class_name_str as *const () as usize,
+    );
+    register_variadic_method_class(
+        "PhotoImage",
+        "data",
+        tk_photo_image_data_format_str as *const () as usize,
+    );
+    register_variadic_method_class(
+        "XView",
+        "xview_scroll",
+        tk_xview_scroll_number_int as *const () as usize,
+    );
+    register_variadic_method_class(
+        "YView",
+        "yview_scroll",
+        tk_yview_scroll_number_int as *const () as usize,
+    );
+}
+
+fn insert_type_objects(attrs: &mut HashMap<String, MbValue>, module: &str, class_names: &[&str]) {
+    for class_name in class_names {
+        attrs.insert((*class_name).into(), make_type_obj(class_name, module));
+    }
+}
+
+fn register_tkinter_modules() {
+    let tkinter_classes = [
+        "Tk",
+        "Frame",
+        "Label",
+        "Button",
+        "Entry",
+        "Text",
+        "Canvas",
+        "Menu",
+        "Listbox",
+        "Scale",
+        "Scrollbar",
+        "Toplevel",
+        "Widget",
+        "Checkbutton",
+        "LabelFrame",
+        "Menubutton",
+        "Message",
+        "Misc",
+        "PanedWindow",
+        "PhotoImage",
+        "Radiobutton",
+        "Spinbox",
+        "XView",
+        "YView",
+        "Variable",
+        "StringVar",
+        "IntVar",
+        "DoubleVar",
+        "BooleanVar",
+        "TclError",
+    ];
+    let mut tkinter_attrs = build_attrs(
+        &[],
+        &[("mainloop", dispatch_noop as *const () as usize)],
+        &[
+            ("NORMAL", 0),
+            ("DISABLED", 1),
+            ("HIDDEN", 2),
+            ("ACTIVE", 3),
+            ("HORIZONTAL", 0),
+            ("VERTICAL", 1),
+        ],
+        &[],
+    );
+    insert_type_objects(&mut tkinter_attrs, "tkinter", &tkinter_classes);
+    super::register_module("tkinter", tkinter_attrs);
+
+    let ttk_classes = [
+        "Style",
+        "Widget",
+        "Button",
+        "Checkbutton",
+        "Combobox",
+        "Entry",
+        "Frame",
+        "Label",
+        "Labelframe",
+        "LabelFrame",
+        "Menubutton",
+        "Notebook",
+        "Panedwindow",
+        "Progressbar",
+        "Radiobutton",
+        "Scale",
+        "Scrollbar",
+        "Separator",
+        "Sizegrip",
+        "Spinbox",
+        "Treeview",
+    ];
+    let mut ttk_attrs = build_attrs(&[], &[], &[], &[]);
+    insert_type_objects(&mut ttk_attrs, "tkinter.ttk", &ttk_classes);
+    super::register_module("tkinter.ttk", ttk_attrs);
+
+    register_tkinter_type_walls();
 }
 
 pub fn register() {
@@ -1331,65 +1558,7 @@ pub fn register() {
     register_with("concurrent", &[], &[], &[], &[]);
 
     // Stand-alone leftovers
-    register_with(
-        "tkinter",
-        &[
-            "Tk",
-            "Frame",
-            "Label",
-            "Button",
-            "Entry",
-            "Text",
-            "Canvas",
-            "Menu",
-            "Listbox",
-            "Scale",
-            "Scrollbar",
-            "Toplevel",
-            "Widget",
-            "Variable",
-            "StringVar",
-            "IntVar",
-            "DoubleVar",
-            "BooleanVar",
-            "TclError",
-        ],
-        &[("mainloop", dispatch_noop as *const () as usize)],
-        &[
-            ("NORMAL", 0),
-            ("DISABLED", 1),
-            ("HIDDEN", 2),
-            ("ACTIVE", 3),
-            ("HORIZONTAL", 0),
-            ("VERTICAL", 1),
-        ],
-        &[],
-    );
-    register_with(
-        "tkinter.ttk",
-        &[
-            "Style",
-            "Widget",
-            "Button",
-            "Combobox",
-            "Entry",
-            "Frame",
-            "Label",
-            "LabelFrame",
-            "Notebook",
-            "Panedwindow",
-            "Progressbar",
-            "Radiobutton",
-            "Scale",
-            "Scrollbar",
-            "Separator",
-            "Sizegrip",
-            "Treeview",
-        ],
-        &[],
-        &[],
-        &[],
-    );
+    register_tkinter_modules();
     register_with(
         "tkinter.messagebox",
         &[],
