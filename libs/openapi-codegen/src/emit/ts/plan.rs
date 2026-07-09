@@ -50,6 +50,9 @@ pub struct OperationPlan {
     pub data_type_name: Option<String>,
     /// Name of the response type alias, e.g. `GetPetByIdResponse`.
     pub response_type_name: String,
+    /// POST-twin fallback path for `QUERY` operations; see
+    /// [`crate::ir::operations::OperationIR::post_twin_path`].
+    pub post_twin_path: Option<String>,
 }
 
 /// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-plan-rs.md#source
@@ -127,6 +130,7 @@ fn build_one(
         response_type,
         data_type_name,
         response_type_name,
+        post_twin_path: ir.post_twin_path.clone(),
     }
 }
 

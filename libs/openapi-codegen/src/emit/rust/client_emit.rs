@@ -91,6 +91,14 @@ pub fn emit(ops: &[OperationIR], tm: &TypeMap) -> String {
     out.push_str("    http: reqwest::blocking::Client,\n");
     out.push_str("    policy: TransportPolicy,\n");
     out.push_str("    admission: Arc<(Mutex<AdmissionState>, Condvar)>,\n");
+    out.push_str(
+        "    /// Epic #1296 POST-twin fallback: when true, every generated `QUERY`\n",
+    );
+    out.push_str(
+        "    /// operation is sent as `POST` against its documented twin path instead of\n",
+    );
+    out.push_str("    /// the HTTP `QUERY` method (RFC 10008). Off by default.\n");
+    out.push_str("    use_post_fallback: bool,\n");
     out.push_str("}\n\n");
     out.push_str("impl Client {\n");
     out.push_str("    pub fn new(base_url: impl Into<String>) -> Self {\n");
@@ -109,7 +117,16 @@ pub fn emit(ops: &[OperationIR], tm: &TypeMap) -> String {
     out.push_str("            http,\n");
     out.push_str("            policy,\n");
     out.push_str("            admission: Arc::new((Mutex::new(AdmissionState::default()), Condvar::new())),\n");
+    out.push_str("            use_post_fallback: false,\n");
     out.push_str("        }\n");
+    out.push_str("    }\n\n");
+    out.push_str(
+        "    /// Epic #1296 POST-twin fallback: route every `QUERY` operation through\n",
+    );
+    out.push_str("    /// its documented POST twin instead of HTTP `QUERY`.\n");
+    out.push_str("    pub fn with_post_fallback(mut self, use_post_fallback: bool) -> Self {\n");
+    out.push_str("        self.use_post_fallback = use_post_fallback;\n");
+    out.push_str("        self\n");
     out.push_str("    }\n");
     out.push_str("\n    fn acquire_slot(&self) -> ClientResult<SlotGuard> {\n");
     out.push_str("        let max = self.policy.max_in_flight_per_origin.max(1);\n");
@@ -211,8 +228,30 @@ fn emit_method(ir: &OperationIR, tm: &TypeMap, reg: &mut NameRegistry) -> String
         "        let url = format!(\"{{}}{fmt}\", self.base_url{arg_tail});\n"
     ));
 
-    let method = ir.method.as_str();
-    m.push_str(&format!("        let mut req = self.http.{method}(url);\n"));
+    if ir.method == "query" {
+        // OpenAPI 3.2 HTTP QUERY (RFC 10008): `reqwest::blocking::Client` has no
+        // dedicated `.query()` verb method (that name is the querystring
+        // builder), so build the method via `Method::from_bytes`. Epic #1296
+        // POST-twin fallback: when `self.use_post_fallback` is set, send POST
+        // against the documented twin path instead.
+        match &ir.post_twin_path {
+            Some(twin_path) => {
+                let mut twin_fmt = twin_path.clone();
+                for p in &ir.path_params {
+                    twin_fmt = twin_fmt.replace(&format!("{{{}}}", p.name), "{}");
+                }
+                m.push_str(&format!(
+                    "        let mut req = if self.use_post_fallback {{\n            let twin_url = format!(\"{{}}{twin_fmt}\", self.base_url{arg_tail});\n            self.http.post(twin_url)\n        }} else {{\n            self.http.request(reqwest::Method::from_bytes(b\"QUERY\").expect(\"valid HTTP method\"), url)\n        }};\n"
+                ));
+            }
+            None => {
+                m.push_str("        let mut req = self.http.request(reqwest::Method::from_bytes(b\"QUERY\").expect(\"valid HTTP method\"), url);\n");
+            }
+        }
+    } else {
+        let method = ir.method.as_str();
+        m.push_str(&format!("        let mut req = self.http.{method}(url);\n"));
+    }
 
     if !ir.query_params.is_empty() {
         m.push_str("        let mut q: Vec<(&str, String)> = Vec::new();\n");
