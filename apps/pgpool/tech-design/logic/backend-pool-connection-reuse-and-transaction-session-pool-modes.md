@@ -41,7 +41,7 @@ nodes:
     label: "ConnectionBudget::try_acquire() (RuntimePlan::frontend_budget, same primitive WI #1288 already uses) succeeds for this connection?"
   reject_frontend_saturated:
     kind: terminal
-    label: "Frontend saturated: write BackendMessage::ErrorResponse (SQLSTATE 53300 too_many_connections) to the client and close the socket — unchanged from WI #1288, shared by both pool modes"
+    label: "Frontend saturated: write BackendMessage::ErrorResponse (SQLSTATE 53300 too_many_connections) to the client and close the socket \u2014 unchanged from WI #1288, shared by both pool modes"
   mode_branch:
     kind: decision
     label: "RuntimePlan::PoolMode (fixed for the process)"
@@ -56,13 +56,13 @@ nodes:
     label: "Backend connect succeeded and AuthenticationOk + ReadyForQuery(Idle) were forwarded to the client before any ErrorResponse?"
   reject_backend_unreachable:
     kind: terminal
-    label: "acquire_fresh() connect failed/timed out: write ErrorResponse (SQLSTATE 08006 connection_failure), release the frontend permit, close the client socket — same RejectionReason::BackendUnreachable mapping as session mode"
+    label: "acquire_fresh() connect failed/timed out: write ErrorResponse (SQLSTATE 08006 connection_failure), release the frontend permit, close the client socket \u2014 same RejectionReason::BackendUnreachable mapping as session mode"
   reject_auth_failed:
     kind: terminal
-    label: "Backend emitted ErrorResponse during the admission handshake: forward it to the client verbatim, release the frontend permit, close both sides — same RejectionReason::BackendAuthFailed mapping as session mode"
+    label: "Backend emitted ErrorResponse during the admission handshake: forward it to the client verbatim, release the frontend permit, close both sides \u2014 same RejectionReason::BackendAuthFailed mapping as session mode"
   release_after_handshake:
     kind: process
-    label: "Handshake succeeded: this client is now admitted and vouched-for; the handshake backend is immediately reset (DISCARD ALL) and returned to the shared idle pool via BackendPool::release(id, stream, LeaseDisposition::ReturnToIdle) — the client now holds NO backend lease (R1, R2)"
+    label: "Handshake succeeded: this client is now admitted and vouched-for; the handshake backend is immediately reset (DISCARD ALL) and returned to the shared idle pool via BackendPool::release(id, stream, LeaseDisposition::ReturnToIdle) \u2014 the client now holds NO backend lease (R1, R2)"
   await_client_activity:
     kind: process
     label: "Client holds no backend lease; a frontend-role FrameReader fed from the client stream waits for the client's next frame"
@@ -92,7 +92,7 @@ nodes:
     label: "Backend reported ReadyForQuery(Idle): reset (DISCARD ALL) and BackendPool::release(id, stream, LeaseDisposition::ReturnToIdle); the client returns to holding no lease and loops back to await_client_activity (R1, R2, AC1, AC2)"
   relay_error_or_eof:
     kind: terminal
-    label: "Backend/client EOF or FrameError mid-transaction: the lease is released as BackendPool::release(id, stream, LeaseDisposition::Close) — never returned to idle, since its session state is unknown/unsafe to reuse — and the client socket is closed"
+    label: "Backend/client EOF or FrameError mid-transaction: the lease is released as BackendPool::release(id, stream, LeaseDisposition::Close) \u2014 never returned to idle, since its session state is unknown/unsafe to reuse \u2014 and the client socket is closed"
   drain_interaction:
     kind: process
     label: "Concurrently, DrainSignal flips to Draining on SIGTERM/SIGINT (unchanged tcp-server mechanism): the accept loop stops admitting new connections immediately, while an in-flight handshake or transaction lease keeps running unaffected until it ends or TcpServerConfig.drain_timeout elapses, at which point the task is abandoned"
@@ -184,7 +184,6 @@ flowchart TD
     release_after_transaction --> await_client_activity
     txn_admit_handshake -.-> drain_interaction[DrainSignal: accept loop stops on drain, in-flight handshake/transaction keeps running until drain_timeout]
 ```
-
 ## Pool Lease State Machine
 <!-- type: state-machine lang: mermaid -->
 
