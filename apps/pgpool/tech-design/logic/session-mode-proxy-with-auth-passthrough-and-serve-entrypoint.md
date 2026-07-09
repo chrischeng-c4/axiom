@@ -146,3 +146,84 @@ flowchart TD
     relay_end -->|backend EOF/FrameError| backend_closed_or_error([Close client socket, release permit])
     connect_backend -.-> drain_interaction[DrainSignal: accept loop stops on drain, in-flight relay keeps running until drain_timeout]
 ```
+
+## Session State Machine
+<!-- type: state-machine lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-session-proxy-session-fsm
+initial: admitting
+nodes:
+  admitting:
+    kind: initial
+    label: "Admitting: SessionHandler::handle just received the accepted socket and is calling ConnectionBudget::try_acquire() (R1)"
+  rejected_saturated:
+    kind: normal
+    label: "RejectedSaturated: budget exhausted — a BackendMessage::ErrorResponse (53300 too_many_connections) is written to the client, then the socket is closed; no other session is affected (AC3)"
+  connecting_backend:
+    kind: normal
+    label: "ConnectingBackend: permit held; dialing the configured backend endpoint within the connect timeout (R3)"
+  rejected_backend_unreachable:
+    kind: normal
+    label: "RejectedBackendUnreachable: backend TCP connect failed or timed out — an ErrorResponse (08006 connection_failure) is written to the client, the permit is released, the socket is closed"
+  auth_relay:
+    kind: normal
+    label: "AuthRelay: StartupMessage forwarded; alternately relaying Authentication*/PasswordMessage/SaslInitialResponse/SaslResponse frames verbatim between client and backend (R2, AC2)"
+  rejected_auth_failed:
+    kind: normal
+    label: "RejectedAuthFailed: backend sent ErrorResponse during startup/auth (bad credentials, failed SCRAM exchange) — forwarded to the client verbatim, permit released, both sockets closed"
+  established:
+    kind: normal
+    label: "Established: AuthenticationOk + ReadyForQuery forwarded; bidirectional frame relay is live in both directions until Terminate/EOF/FrameError (R2). The backend-role FrameReader's TransactionStatus (idle/in_transaction/failed, see the wire codec TD's Transaction Status Tracking FSM) is observable here for the next slice's pooling decisions but does not gate session-mode behavior"
+  draining:
+    kind: normal
+    label: "Draining: the process received SIGTERM/SIGINT (DrainSignal flipped to Draining); tcp-server's accept loop has stopped admitting new connections, but this session's bidirectional relay keeps running unaffected, bounded by TcpServerConfig.drain_timeout (R4, AC4)"
+  closed:
+    kind: final
+    label: "Closed: permit released, both sockets closed — either a clean end (client Terminate, or backend/client EOF), a FrameError on either leg, or the drain_timeout elapsing while still Established/Draining (task abandoned)"
+edges:
+  - from: admitting
+    to: rejected_saturated
+    event: "ConnectionBudget::try_acquire() returns Err(ConnectionLimitExceeded)"
+  - from: admitting
+    to: connecting_backend
+    event: "permit acquired"
+  - from: connecting_backend
+    to: rejected_backend_unreachable
+    event: "TCP connect fails or exceeds the configured backend connect timeout"
+  - from: connecting_backend
+    to: auth_relay
+    event: "backend TCP socket established"
+  - from: auth_relay
+    to: rejected_auth_failed
+    event: "backend BackendMessage::ErrorResponse observed before AuthenticationOk"
+  - from: auth_relay
+    to: established
+    event: "backend AuthenticationOk followed by ReadyForQuery forwarded to the client"
+  - from: established
+    to: draining
+    event: "DrainSignal::changed() resolves to DrainState::Draining (SIGTERM/SIGINT)"
+  - from: established
+    to: closed
+    event: "client Terminate, clean EOF on either leg, or FrameError on either leg"
+  - from: draining
+    to: closed
+    event: "session ends normally before drain_timeout elapses (same terminal events as Established), or drain_timeout elapses and the relay task is abandoned"
+---
+stateDiagram-v2
+    [*] --> admitting
+    admitting --> rejected_saturated : budget exhausted
+    admitting --> connecting_backend : permit acquired
+    connecting_backend --> rejected_backend_unreachable : connect failed/timed out
+    connecting_backend --> auth_relay : backend socket established
+    auth_relay --> rejected_auth_failed : backend ErrorResponse
+    auth_relay --> established : AuthenticationOk + ReadyForQuery
+    established --> draining : SIGTERM/SIGINT (DrainSignal)
+    established --> closed : Terminate / EOF / FrameError
+    draining --> closed : session ends or drain_timeout elapses
+    rejected_saturated --> [*]
+    rejected_backend_unreachable --> [*]
+    rejected_auth_failed --> [*]
+    closed --> [*]
+```
