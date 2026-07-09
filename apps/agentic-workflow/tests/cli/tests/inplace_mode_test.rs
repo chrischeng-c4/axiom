@@ -516,8 +516,11 @@ fn td_create_does_not_duplicate_existing_implements_entry() {
 
 /// In InPlace mode, repeated `enter_workspace_for_verb(provision_if_missing=false)`
 /// calls (which is what the verb-side activate helper does) must bail loudly
-/// if the branch was never provisioned. We exercise that via `aw td validate`,
-/// which expects the workspace to already exist.
+/// if the branch was never provisioned. We exercise that via `aw td check`
+/// (slug mode), which expects the workspace to already exist. Formerly
+/// exercised via `aw td validate`, retired by #1277 and folded into `aw td
+/// check` — both routed through the same `td_activate_inplace_if_present`
+/// bail path.
 #[test]
 fn inplace_verb_bails_without_init() {
     let Some((git, bin)) = skip_unless_ready() else {
@@ -547,18 +550,18 @@ fn inplace_verb_bails_without_init() {
         .status()
         .unwrap();
 
-    // No `td init` ran; from `main`, `td validate` should bail because branch
-    // td-missing does not exist locally.
+    // No `td init` ran; from `main`, `td check` (slug mode) should bail
+    // because branch td-missing does not exist locally.
     let out = Command::new(&bin)
         .arg("td")
-        .arg("validate")
+        .arg("check")
         .arg("missing")
         .current_dir(root)
         .output()
-        .expect("run aw td validate");
+        .expect("run aw td check");
     assert!(
         !out.status.success(),
-        "td validate without init should fail:\nstdout={}",
+        "td check without init should fail:\nstdout={}",
         String::from_utf8_lossy(&out.stdout),
     );
     let combined = format!(

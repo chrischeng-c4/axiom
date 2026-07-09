@@ -641,11 +641,11 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         class: VerbLifecycleClass::Core,
         sunset_criterion: "",
     },
-    VerbLifecycle {
-        path: "td.validate",
-        class: VerbLifecycleClass::Core,
-        sunset_criterion: "",
-    },
+    // `td.validate` retired by #1277 (epic #1270 R3): its slug-mode
+    // lifecycle-mutation half was inlined into `td.create`'s whole-file
+    // apply path; its read-only rule check was already shared with
+    // `td.check`, which remains the sole authoritative read-only TD
+    // checker (read-only/debug support, like `td.ast`/`td.lock`).
     VerbLifecycle {
         path: "td.check",
         class: VerbLifecycleClass::Utility,
