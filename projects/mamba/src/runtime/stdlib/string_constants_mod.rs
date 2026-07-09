@@ -960,6 +960,15 @@ pub fn formatter_format_from_kwargs(this: MbValue, pos_args: MbValue, kwargs: Mb
         );
     }
     let format_string = items.first().copied().unwrap_or_else(MbValue::none);
+    if !is_str_value(format_string) {
+        return raise(
+            "TypeError",
+            format!(
+                "format() argument 2 must be str, not {}",
+                super::super::builtins::value_type_name(format_string)
+            ),
+        );
+    }
     let rest: Vec<MbValue> = items.iter().skip(1).copied().collect();
     formatter_vformat_entry(this, format_string, rest, kwargs)
 }
@@ -1634,6 +1643,27 @@ mod tests {
 
         let formatter = make_instance("Formatter", vec![]);
         let result = m_formatter_format(
+            formatter,
+            new_list(vec![MbValue::from_int(12345)]),
+            MbValue::none(),
+        );
+
+        assert!(result.is_none());
+        assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        let exc = mb_get_exception();
+        assert_eq!(
+            get_exception_message_pub(exc).as_deref(),
+            Some("format() argument 2 must be str, not int")
+        );
+        mb_clear_exception();
+    }
+
+    #[test]
+    fn test_formatter_format_from_kwargs_rejects_non_string_format_string() {
+        mb_clear_exception();
+
+        let formatter = make_instance("Formatter", vec![]);
+        let result = formatter_format_from_kwargs(
             formatter,
             new_list(vec![MbValue::from_int(12345)]),
             MbValue::none(),
