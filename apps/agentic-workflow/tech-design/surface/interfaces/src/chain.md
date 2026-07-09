@@ -652,9 +652,10 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     VerbLifecycle {
         path: "td.migrate-mermaid",
         class: VerbLifecycleClass::Migration,
-        sunset_criterion: "retires once every legacy mermaid block in tech-design/ has been \
-                            converted to Mermaid Plus (no remaining legacy-block matches for \
-                            the migrator's detector)",
+        sunset_criterion: "retires once `aw td migrate-mermaid <project-td-root> --check` \
+                            reports `legacy_block_count: 0` for every configured project's \
+                            tech-design root (no remaining frontmatter-less legacy mermaid \
+                            blocks for the migrator's detector)",
     },
     VerbLifecycle {
         path: "td.lock",
@@ -787,9 +788,11 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     VerbLifecycle {
         path: "capability.migrate",
         class: VerbLifecycleClass::Migration,
-        sunset_criterion: "retires once every configured project's capability map is authored \
-                            in canonical README Markdown (no remaining YAML `## Capability:` \
-                            sections or legacy capability tables left to convert)",
+        sunset_criterion: "retires once `aw capability sweep --skip-issue-inventory` reports \
+                            zero projects grouped under `next_action_kind: \
+                            \"format_migration_required\"` across all configured `cap_path`s \
+                            (no remaining YAML `## Capability:` sections or legacy capability \
+                            tables left to convert)",
     },
     VerbLifecycle {
         path: "capability.check",
