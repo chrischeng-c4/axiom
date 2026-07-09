@@ -92,7 +92,6 @@ flowchart TD
     r2[R2 bare specifier scss import compiles via css pipeline] --> cargo_test_p_jet_test_stories_build_build_compiles_bare_specifier_scss_import_via_css_pipeline[cargo test -p jet --test stories_build build_compiles_bare_specifier_scss_import_via_css_pipeline]
     r3[R3 bare specifier raw asset import still resolves as dep] --> cargo_test_p_jet_test_stories_build_build_emits_svg_and_png_assets_as_url_strings[cargo test -p jet --test stories_build build_emits_svg_and_png_assets_as_url_strings]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
