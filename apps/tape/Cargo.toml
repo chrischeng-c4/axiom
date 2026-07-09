@@ -64,6 +64,19 @@ utoipa = { workspace = true }
 # Serve-path tracing init (RUST_LOG wins, else info EnvFilter).
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+# Shared polyglot OpenAPI client codegen (#1329, relay #1209 pattern): `tape
+# spec gen` generates ts/py/rust clients from tape's own openapi_json()
+# document — offline, no external tool.
+cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
+# Shared backup contract (#1329, relay #1209 / lumen #808): destination/policy
+# schema, BackupSink, local + s3 sinks, run_backup_once. Unconditional — the
+# schema types and the local sink are cheap; only the HTTP fetch path of
+# `tape backup` needs the `backup` feature (reqwest + the lib's s3 sink).
+service-backup = { path = "../../libs/service-backup" }
+# HTTP client for `tape backup`'s snapshot fetch (feature `backup` only; the
+# serving image stays reqwest-free by default). Also a dev-dependency for the
+# transport tests either way.
+reqwest = { workspace = true, optional = true }
 
 [dev-dependencies]
 async-nats = { workspace = true }
@@ -87,4 +100,10 @@ issue = ["cli-std/online"]
 # and the CRD generator; pulls kube-rs, so the serving image stays kube-free
 # unless built with this feature (#1328).
 operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "dep:operator"]
+# backup — `tape backup` (#1329): fetches a snapshot from a running node's
+# `GET /admin/backup` over HTTP and ships it to a libs/service-backup
+# destination sink (relay #1209 layout). Enables the lib's s3 sink; file://
+# always works. The endpoint itself is always served — this gates only the
+# CLI verb's HTTP fetch path.
+backup = ["dep:reqwest", "service-backup/s3"]
 # </HANDWRITE>

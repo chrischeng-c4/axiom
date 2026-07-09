@@ -34,7 +34,7 @@ real-service external peer calibration remain separate work roots.
 | Topic Replay Journal | #768 | implemented | verified | smoke | ready | local file-backed append and offset/time replay; raft/h2c deferred |
 | Consumer Checkpoints | #768 | implemented | verified | smoke | ready | local durable consumer cursor and stale-write rejection |
 | Retention And Backfill | #768 | planned | planned | none | not_ready | retention windows, compaction policy, and batch backfill |
-| HTTP/2 API List | #768 | implemented | verified | smoke | ready | offline `tape spec` route/OpenAPI inventory plus a real h2c + HTTP/1.1 server (#1325) serving `/topics` append/replay/checkpoint |
+| HTTP/2 API List | #768 | implemented | verified | smoke | ready | offline `tape spec` route/OpenAPI inventory plus a real h2c + HTTP/1.1 server (#1325) serving `/topics` append/replay/checkpoint; `GET /admin/backup` + `tape backup`/`tape spec gen` client codegen (#1329) |
 | Standard Operational Endpoints | #768 | implemented | verified | smoke | ready | `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` served for real via `libs/service-http` (#1325), with drain-aware readiness and `tape serve` |
 | Kubernetes-Native Deployment | #768 | implemented | verified | smoke | ready | CRD/operator/instance render + dockerfile CLI (#1328); StatefulSet topology, offline render tests; no live kind cluster proof yet |
 | Primary Replicas | #1327 | implemented | planned | dogfood | not_ready | raft-host auto-mode leader/follower primary-replica topology over the whole journal; live 3-node kill-9 failover proven, peer-TLS is config-surface + fail-fast validation only (raft-host h2c has no TLS seam yet) |
@@ -263,24 +263,32 @@ ID: http2-api-list
 Type: RuntimeTool
 Root WI: #768
 Status: verified
-Surfaces: CLI: `tape spec --format routes|openapi|openapi-yaml|json-schema`, `tape serve`; HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`, topic append/replay/checkpoint routes served for real over h2c + HTTP/1.1 on one port.
-EC Dimensions: behavior: `cargo test -p tape --test cli_contract spec_routes_list_topic_contract -- --exact` - offline route inventory; `cargo test -p tape --test http_transport` - real h2c+HTTP/1.1 transport, drain-aware readiness, and per-op metrics
+Surfaces: CLI: `tape spec --format routes|openapi|openapi-yaml|json-schema`, `tape spec gen --lang ts|py|rust --out <dir>`, `tape serve`, `tape backup --url --dest --token --retention-secs` (feature `backup`); HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`, topic append/replay/checkpoint routes served for real over h2c + HTTP/1.1 on one port, plus admin-gated `GET /admin/backup` streaming a whole-journal snapshot.
+EC Dimensions: behavior: `cargo test -p tape --test cli_contract spec_routes_list_topic_contract -- --exact` - offline route inventory; `cargo test -p tape --test http_transport` - real h2c+HTTP/1.1 transport, drain-aware readiness, and per-op metrics; `cargo test -p tape --features backup --test backup` - live admin-gated snapshot endpoint + `tape backup` fetch/ship/retention round trip
 Required Verification: smoke, conformance
 Promise:
 Tape exposes a compact h2c/OpenAPI API list for producer, replay, checkpoint,
 and operator workflows, and serves it for real on one h2c + HTTP/1.1 port via
-`tape serve` (shared `libs/service-http` shell).
+`tape serve` (shared `libs/service-http` shell). `tape spec gen` generates
+typed ts/py/rust clients from tape's own OpenAPI document via the shared
+`libs/openapi-codegen` crate (`apps/tape/clients/` scaffold), and `GET
+/admin/backup` + `tape backup` (feature `backup`) ship a consistent
+whole-journal snapshot to a `libs/service-backup` destination sink.
 Gate Inventory:
 - apps/tape/src/spec.rs
 - apps/tape/tests/cli_contract.rs
 - apps/tape/src/server.rs
 - apps/tape/src/openapi.rs
 - apps/tape/tests/http_transport.rs
+- apps/tape/src/backup.rs
+- apps/tape/tests/backup.rs
+- apps/tape/clients/
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | h2c-openapi-route-list | epic | #768 | implemented | passing | smoke | apps/tape/src/spec.rs<br>apps/tape/tests/cli_contract.rs |
 | service-http-shell-h2c-serve-standard-endpoints | change | #1325 | implemented | passing | smoke | apps/tape/src/server.rs<br>apps/tape/src/openapi.rs<br>apps/tape/tests/http_transport.rs |
+| backup-service-tls-spec-gen-clients | change | #1329 | implemented | passing | smoke | apps/tape/src/backup.rs<br>apps/tape/src/server.rs<br>apps/tape/src/bin/tape.rs<br>apps/tape/clients/<br>apps/tape/tests/backup.rs |
 
 ### Standard Operational Endpoints
 

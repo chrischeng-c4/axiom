@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::extract::{Extension, Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{header, StatusCode};
 use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -161,6 +161,10 @@ pub fn router(state: AppState) -> Router {
             "/topics/{topic}/consumers/{consumer}/checkpoint",
             get(checkpoint_get).put(checkpoint_put),
         )
+        // Cluster-wide admin op (#1329): a consistent snapshot of the journal
+        // for backup runners. Inside the auth layer (unlike probes) — needs
+        // `admin` on `*`.
+        .route("/admin/backup", get(admin_backup))
         // Shared bearer auth (#1326) on the data plane ONLY — probes stay
         // tokenless. The blanket middleware authenticates (401 on a
         // missing/unknown token when required) and injects the
@@ -445,6 +449,41 @@ pub async fn checkpoint_put(
     }
 }
 
+/// `GET /admin/backup` — a consistent snapshot of the whole journal for
+/// backup runners (#1329): the EXACT bytes [`crate::raft::TapeStateMachine`]'s
+/// raft snapshot produces ([`crate::raft::snapshot_bytes`] — the whole
+/// journal + the applied index; 0 on a raft-less single node). A
+/// cluster-wide admin op: requires `admin` on `*` when auth is required.
+/// Restore = feed the bytes to `TapeStateMachine::restore` on a fresh node
+/// (the existing raft-side merge path); no restore CLI verb is added here.
+#[utoipa::path(
+    get,
+    path = "/admin/backup",
+    responses((status = 200, description = "JournalSnapshot JSON { up_to, journal } — the whole journal at the applied raft index"))
+)]
+pub async fn admin_backup(
+    State(st): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
+) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, "*", Role::Admin) {
+        return deny.into_response();
+    }
+    let applied = match st.raft() {
+        Some(raft) => raft.applied_index(),
+        None => 0,
+    };
+    match crate::raft::snapshot_bytes(&st.journal, applied) {
+        Ok(bytes) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/json")],
+            bytes,
+        )
+            .into_response(),
+        Err(e) => ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())
+            .into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,6 +519,57 @@ mod tests {
         assert_eq!(resp.0, StatusCode::OK);
         let body: serde_json::Value = serde_json::from_str(&resp.1).unwrap();
         assert_eq!(body["checkpoint"]["offset"], 1);
+    }
+
+    /// R1: `GET /admin/backup` denies a non-admin principal (403) and
+    /// streams exactly the `raft::snapshot_bytes` bytes to an admin-on-`*`
+    /// principal (200), over an in-process `oneshot` request (no real
+    /// socket — `tests/backup.rs` covers the live-HTTP + 401 case).
+    #[tokio::test]
+    async fn admin_backup_requires_admin_and_streams_snapshot() {
+        use tower::ServiceExt;
+        let tokens = serde_json::json!({
+            "admin-token": { "subject": "ops", "roles": { "*": "admin" } },
+            "reader-token": { "subject": "worker", "roles": { "*": "read" } },
+        })
+        .to_string();
+        let auth = crate::auth::AuthConfig::resolve("required", None, Some(&tokens)).unwrap();
+        let mut journal = TapeJournal::default();
+        journal.append("orders", None, serde_json::json!({"n": 1}), Some(100));
+        let state = AppState::with_auth(journal, None, auth);
+        let handle = state.journal_handle();
+        let app = router(state);
+
+        let deny = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/admin/backup")
+                    .header("authorization", "Bearer reader-token")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(deny.status(), StatusCode::FORBIDDEN);
+
+        let ok = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/admin/backup")
+                    .header("authorization", "Bearer admin-token")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ok.status(), StatusCode::OK);
+        let bytes = http_body_util::BodyExt::collect(ok.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let expected = crate::raft::snapshot_bytes(&handle, 0).unwrap();
+        assert_eq!(&bytes[..], &expected[..]);
     }
 
     // Small oneshot helpers so both this module's tests and
