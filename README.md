@@ -28,6 +28,7 @@ details.
 | [keep](apps/keep/README.md) | Cloud-native, multi-core key-value / claim-check store — the loom/relay data plane and a Redis / Dragonfly replacement. |
 | [cgdb](apps/cgdb/README.md) | Cgdb is a local graph database for agentic codebase understanding. |
 | [meter](apps/meter/README.md) | Local resource measurement for agent-driven Rust development. |
+| [courier](apps/courier/README.md) | `courier` is a stateless, GCP-hosted proxy that centralizes GitHub-issue access for every axiom CLI behind a shared bearer token. |
 <!-- aw:projects-table:end -->
 
 ## Shared Libraries
@@ -73,6 +74,7 @@ an installer yet are marked _coming soon_.
 | [agentic-workflow](apps/agentic-workflow/README.md) | `aw` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/agentic-workflow/install.sh \| sh` |
 | [arena](apps/arena/README.md) | `arena` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/arena/install.sh \| sh` |
 | [cap](apps/cap/README.md) | `cap` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/cap/install.sh \| sh` |
+| [courier](apps/courier/README.md) | `courier` | _coming soon_ |
 | [guard](apps/guard/README.md) | `guard` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/guard/install.sh \| sh` |
 | [jet](apps/jet/README.md) | `jet` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/jet/install.sh \| sh` |
 | [beam](apps/beam/README.md) | `beam` | _coming soon_ |

@@ -16,15 +16,15 @@ of its own.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| GitHub Issues Proxy | - | implementing | pending | none | not ready | forwards search/view/create/comment to GitHub with a server-held credential |
+| GitHub Issues Proxy | #1332 | partial | pending | none | not ready | forwards search/view/create/comment to GitHub with a server-held credential |
 
 ### GitHub Issues Proxy
 
 ID: github-issues-proxy
 Type: DeveloperTool
-Root WI: -
-Status: implementing
-Surfaces: HTTP: `GET /v1/issues`, `GET /v1/issues/{repo...}/{number}`, `POST /v1/issues/{repo...}`, `POST /v1/issues/{repo...}/{number}/comments`; CLI: `courier llm|upgrade|issue`.
+Root WI: #1332
+Status: partial
+Surfaces: HTTP: `GET /v1/issues/{owner}/{name}`, `GET /v1/issues/{owner}/{name}/{number}`, `POST /v1/issues/{owner}/{name}`, `POST /v1/issues/{owner}/{name}/{number}/comments`; CLI: `courier llm|upgrade|issue`.
 EC Dimensions: behavior: `cargo test -p courier` - proxy forwarding, auth, and repo allow-list coverage
 Required Verification: smoke
 Promise:
@@ -35,4 +35,4 @@ Gate Inventory: `cargo test -p courier`; apps/courier/src/http
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| github-issues-proxy-service | epic | - | implementing | pending | none | apps/courier/src/http |
+| github-issues-proxy-service | epic | #1332 | partial | pending | none | apps/courier/src/http |

@@ -142,6 +142,21 @@ verify_cold = true
 codegen.profile = "rust/score-crate"
 
 [[projects]]
+name = "courier"
+path = "apps/courier"
+td_path = "apps/courier/tech-design"
+cap_path = "apps/courier/README.md"
+label = "app:courier"
+
+[[projects.workspaces]]
+name = "courier"
+paths = ["apps/courier/**"]
+target = "rust"
+test_cmd = "cargo test -p courier"
+verify_cold = true
+codegen.profile = "rust/score-crate"
+
+[[projects]]
 name = "loom"
 path = "apps/loom"
 td_path = "apps/loom/tech-design"
