@@ -482,6 +482,8 @@ struct ExecContext {
     frames: Vec<ExecFrame>,
     frame_scopes: Vec<ExecFrameScope>,
     generic_class_body_depth: usize,
+    annotation_class_locals: Option<HashSet<String>>,
+    annotation_class_globals: Option<HashSet<String>>,
     globals: Option<MbValue>,
     locals: Option<MbValue>,
 }
@@ -511,6 +513,8 @@ struct ExecFunctionBinding {
     locals: Option<MbValue>,
     captures: Vec<ExecFrame>,
     capture_scopes: Vec<ExecFrameScope>,
+    annotation_class_locals: Option<HashSet<String>>,
+    annotation_class_globals: Option<HashSet<String>>,
     function: ExecFunction,
 }
 
@@ -528,6 +532,8 @@ fn exec_pep695_class_annotation_context(ctx: &ExecContext) -> ExecContext {
             frames: ctx.frames.clone(),
             frame_scopes: ctx.frame_scopes.clone(),
             generic_class_body_depth: ctx.generic_class_body_depth,
+            annotation_class_locals: None,
+            annotation_class_globals: None,
             globals: ctx.globals,
             locals: ctx.locals,
         };
@@ -538,9 +544,17 @@ fn exec_pep695_class_annotation_context(ctx: &ExecContext) -> ExecContext {
         type_vars: ctx.type_vars.clone(),
         type_param_reuse_once: ctx.type_param_reuse_once.clone(),
         functions: ctx.functions.clone(),
-        frames: ctx.frames.last().cloned().into_iter().collect(),
-        frame_scopes: ctx.frame_scopes.last().cloned().into_iter().collect(),
+        frames: ctx.frames.clone(),
+        frame_scopes: ctx.frame_scopes.clone(),
         generic_class_body_depth: ctx.generic_class_body_depth,
+        annotation_class_locals: ctx
+            .frame_scopes
+            .last()
+            .map(|scope| scope.local_bindings.clone()),
+        annotation_class_globals: ctx
+            .frame_scopes
+            .last()
+            .map(|scope| scope.declared_globals.clone()),
         globals: ctx.globals,
         locals: ctx.locals,
     }
@@ -1203,6 +1217,75 @@ fn exec_function_scope(
     }
 }
 
+fn exec_class_scope(
+    body: &[crate::source::span::Spanned<crate::parser::ast::Stmt>],
+) -> ExecFrameScope {
+    use crate::parser::ast::Stmt;
+
+    let mut assigned = Vec::new();
+    let mut _declared = Vec::new();
+    crate::resolve::pass::collect_assignment_targets(body, &mut assigned, &mut _declared);
+    crate::resolve::pass::collect_walrus_targets_in_stmts(body, &mut assigned);
+
+    let mut declared_globals = HashSet::new();
+    let mut declared_nonlocals = HashSet::new();
+    exec_collect_scope_declarations(body, &mut declared_globals, &mut declared_nonlocals);
+
+    let mut local_bindings = HashSet::new();
+    for name in assigned {
+        if !declared_globals.contains(&name) && !declared_nonlocals.contains(&name) {
+            local_bindings.insert(name);
+        }
+    }
+
+    for stmt in body {
+        match &stmt.node {
+            Stmt::VarDecl { name, .. }
+            | Stmt::BareAnnotation { name, .. }
+            | Stmt::FnDef { name, .. }
+            | Stmt::AsyncFnDef { name, .. }
+            | Stmt::ClassDef { name, .. }
+            | Stmt::EnumDef { name, .. }
+            | Stmt::TypeAlias { name, .. } => {
+                if !declared_globals.contains(name) && !declared_nonlocals.contains(name) {
+                    local_bindings.insert(name.clone());
+                }
+            }
+            Stmt::Import {
+                names: Some(imports),
+                ..
+            } => {
+                for (name, alias) in imports {
+                    let bound = alias.as_ref().unwrap_or(name);
+                    if !declared_globals.contains(bound) && !declared_nonlocals.contains(bound) {
+                        local_bindings.insert(bound.clone());
+                    }
+                }
+            }
+            Stmt::Import {
+                module,
+                names: None,
+                module_alias,
+            } => {
+                let Some(bound) = module_alias.as_ref().or_else(|| module.first()) else {
+                    continue;
+                };
+                if !declared_globals.contains(bound) && !declared_nonlocals.contains(bound) {
+                    local_bindings.insert(bound.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    ExecFrameScope {
+        is_function: false,
+        local_bindings,
+        declared_globals,
+        declared_nonlocals,
+    }
+}
+
 fn exec_current_scope_declares_global(ctx: &ExecContext, name: &str) -> bool {
     ctx.frame_scopes
         .last()
@@ -1255,35 +1338,54 @@ fn exec_lookup_name(ctx: &ExecContext, name: &str) -> Option<MbValue> {
         return exec_nonlocal_target_frame(ctx, name)
             .and_then(|frame| frame.read().unwrap().get(name).copied());
     }
-    let in_generic_class_body = ctx.generic_class_body_depth > 0
-        && ctx
-            .frame_scopes
-            .last()
-            .is_some_and(|scope| !scope.is_function);
-    if in_generic_class_body {
+    if ctx
+        .annotation_class_globals
+        .as_ref()
+        .is_some_and(|globals| globals.contains(name))
+    {
+        return exec_lookup_global_name(ctx, name);
+    }
+    if let Some(class_locals) = ctx.annotation_class_locals.as_ref() {
         if let Some(frame) = ctx.frames.last() {
             if let Some(&value) = frame.read().unwrap().get(name) {
                 return Some(value);
             }
         }
-        for (frame, scope) in ctx
-            .frames
-            .iter()
-            .zip(ctx.frame_scopes.iter())
-            .rev()
-            .skip(1)
-        {
-            if !scope.is_function {
-                continue;
-            }
-            if let Some(&value) = frame.read().unwrap().get(name) {
-                return Some(value);
+        if !class_locals.contains(name) {
+            for (frame, scope) in ctx.frames.iter().zip(ctx.frame_scopes.iter()).rev().skip(1) {
+                if !scope.is_function {
+                    continue;
+                }
+                if let Some(&value) = frame.read().unwrap().get(name) {
+                    return Some(value);
+                }
             }
         }
     } else {
-        for frame in ctx.frames.iter().rev() {
-            if let Some(&value) = frame.read().unwrap().get(name) {
-                return Some(value);
+        let in_generic_class_body = ctx.generic_class_body_depth > 0
+            && ctx
+                .frame_scopes
+                .last()
+                .is_some_and(|scope| !scope.is_function);
+        if in_generic_class_body {
+            if let Some(frame) = ctx.frames.last() {
+                if let Some(&value) = frame.read().unwrap().get(name) {
+                    return Some(value);
+                }
+            }
+            for (frame, scope) in ctx.frames.iter().zip(ctx.frame_scopes.iter()).rev().skip(1) {
+                if !scope.is_function {
+                    continue;
+                }
+                if let Some(&value) = frame.read().unwrap().get(name) {
+                    return Some(value);
+                }
+            }
+        } else {
+            for frame in ctx.frames.iter().rev() {
+                if let Some(&value) = frame.read().unwrap().get(name) {
+                    return Some(value);
+                }
             }
         }
     }
@@ -1710,6 +1812,8 @@ fn make_exec_function_body_value(
             locals,
             captures,
             capture_scopes,
+            annotation_class_locals: ctx.annotation_class_locals.clone(),
+            annotation_class_globals: ctx.annotation_class_globals.clone(),
             function,
         },
     );
@@ -1826,7 +1930,8 @@ fn exec_function_annotations_value(
     let annotations = crate::runtime::dict_ops::mb_dict_new();
 
     for param in params {
-        let Some(value) = exec_eval_annotation_type_expr(&mut annotation_ctx, &param.ty.node) else {
+        let Some(value) = exec_eval_annotation_type_expr(&mut annotation_ctx, &param.ty.node)
+        else {
             if exec_has_pending_exception() {
                 return None;
             }
@@ -1890,6 +1995,8 @@ pub fn mb_exec_function_call(func: MbValue, args: Vec<MbValue>) -> MbValue {
                 locals: binding.locals,
                 frames: binding.captures,
                 frame_scopes: binding.capture_scopes,
+                annotation_class_locals: binding.annotation_class_locals,
+                annotation_class_globals: binding.annotation_class_globals,
                 ..ExecContext::default()
             };
             let return_value = exec_call_function(&mut ctx, &binding.function, &args);
@@ -2228,7 +2335,7 @@ fn exec_class_body_namespace(
         ctx.generic_class_body_depth += 1;
     }
     ctx.frames.push(exec_new_frame(FxHashMap::default()));
-    ctx.frame_scopes.push(ExecFrameScope::default());
+    ctx.frame_scopes.push(exec_class_scope(body));
     let flow = exec_block_flow(ctx, body);
     let frame = ctx.frames.pop();
     ctx.frame_scopes.pop();
