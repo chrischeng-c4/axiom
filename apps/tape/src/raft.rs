@@ -80,9 +80,19 @@ pub enum TapeOutcome {
 /// snapshot (not a live/un-acked subset like relay's) is correct here because
 /// tape's journal never trims history.
 #[derive(Debug, Serialize, Deserialize)]
-struct JournalSnapshot {
+pub(crate) struct JournalSnapshot {
     up_to: Index,
     journal: TapeJournal,
+}
+
+/// Serialize the SAME whole-journal [`JournalSnapshot`] shape
+/// [`TapeStateMachine::snapshot`]/[`TapeStateMachine::restore`] round-trip,
+/// callable without a live [`TapeStateMachine`] instance (single-node serving
+/// has none). Backs `GET /admin/backup` (#1329): the exact bytes a backup
+/// runner ships are the exact bytes a raft group would snapshot.
+pub fn snapshot_bytes(journal: &Arc<Mutex<TapeJournal>>, up_to: Index) -> Result<Vec<u8>> {
+    let journal = journal.lock().expect("journal mutex poisoned").clone();
+    Ok(serde_json::to_vec(&JournalSnapshot { up_to, journal })?)
 }
 
 /// tape's [`TapeJournal`] driven as a [`RaftStateMachine`].

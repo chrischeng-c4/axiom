@@ -9,6 +9,8 @@ use thiserror::Error;
 use utoipa::ToSchema;
 
 pub mod auth;
+#[cfg(feature = "backup")]
+pub mod backup;
 pub mod bench;
 pub mod metrics;
 pub mod openapi;

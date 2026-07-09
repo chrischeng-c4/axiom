@@ -43,6 +43,11 @@ enum Command {
     /// construction is owned here (not by `k8s`) because the same artifact
     /// feeds compose, kind, and real registries (#1328).
     Dockerfile(DockerfileArgs),
+    /// Write a consistent snapshot of a RUNNING node's journal to a backup
+    /// destination through the shared libs/service-backup runner (#1329):
+    /// fetches `GET /admin/backup` and ships the bytes to `--dest` (`file://`
+    /// always; `s3://` via the lib). Needs a build with `--features backup`.
+    Backup(BackupArgs),
 }
 
 #[derive(clap::Args)]
@@ -147,11 +152,53 @@ struct ServeArgs {
     peer_service: String,
 }
 
+/// `tape spec [--format ...]` or `tape spec gen ...`. Positional slots are
+/// reserved for the `gen` subcommand; everything else is a flag (the CLI
+/// convention).
 #[derive(clap::Args)]
 struct SpecArgs {
+    /// Generate a typed client from the spec instead of printing it.
+    #[command(subcommand)]
+    gen: Option<SpecSub>,
     /// Contract format to print.
     #[arg(long, value_enum, default_value_t = SpecFormat::Openapi)]
     format: SpecFormat,
+}
+
+#[derive(Subcommand)]
+enum SpecSub {
+    /// Generate a typed API client (TypeScript / Python / Rust) from tape's
+    /// OpenAPI document, written into `--out` (#1329).
+    Gen(GenArgs),
+}
+
+#[derive(clap::Args)]
+struct GenArgs {
+    /// Target language for the generated client.
+    #[arg(long, value_enum)]
+    lang: GenLang,
+    /// Output directory for the generated files.
+    #[arg(long)]
+    out: PathBuf,
+    /// HTTP backend for the TypeScript client (ignored for py/rust).
+    #[arg(long, value_enum, default_value_t = GenHttp::Fetch)]
+    http: GenHttp,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum GenLang {
+    /// TypeScript: types + fetch/axios client.
+    Ts,
+    /// Python: pydantic models + a generated HTTP client.
+    Py,
+    /// Rust: serde models + a reqwest client.
+    Rust,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum GenHttp {
+    Fetch,
+    Axios,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -160,6 +207,32 @@ enum SpecFormat {
     OpenapiYaml,
     JsonSchema,
     Routes,
+}
+
+/// `tape backup` flags (#1329): pulls a snapshot over HTTP from a running
+/// node and ships it to a destination via `libs/service-backup` (relay #1209
+/// pattern).
+#[derive(clap::Args)]
+struct BackupArgs {
+    /// Base URL of a running tape node, e.g.
+    /// `http://<name>.<namespace>.svc.cluster.local:7137` (what the
+    /// operator's backup CronJob passes) or `http://localhost:7137` for ad
+    /// hoc use.
+    #[arg(long)]
+    url: String,
+    /// Destination URI: `file:///path`, `s3://bucket/prefix`, or schema-only
+    /// `gs://bucket/prefix` (parses, but the runner supports `file://` and
+    /// `s3://` sinks today).
+    #[arg(long)]
+    dest: String,
+    /// Bearer token for `/admin/backup` (needs `admin` on `*`). Falls back to
+    /// `TAPE_BACKUP_TOKEN`; omit entirely when the node runs `--auth off`.
+    #[arg(long, env = "TAPE_BACKUP_TOKEN")]
+    token: Option<String>,
+    /// Drop backup objects older than this many seconds after a successful
+    /// put. Omit to keep everything.
+    #[arg(long)]
+    retention_secs: Option<u64>,
 }
 
 #[derive(clap::Args)]
@@ -469,6 +542,7 @@ async fn main() -> Result<()> {
         Command::Issue(args) => issue(args).await,
         Command::K8s(args) => k8s(args).await,
         Command::Dockerfile(args) => dockerfile(args),
+        Command::Backup(args) => dispatch_backup(args).await,
     }
 }
 
@@ -650,6 +724,10 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
 }
 
 fn spec(args: SpecArgs) -> Result<()> {
+    // `spec gen` writes a typed client; everything else prints to stdout.
+    if let Some(SpecSub::Gen(gen)) = args.gen {
+        return spec_gen(gen);
+    }
     let out = match args.format {
         SpecFormat::Openapi => spec::openapi_json(),
         SpecFormat::OpenapiYaml => spec::openapi_yaml(),
@@ -658,6 +736,66 @@ fn spec(args: SpecArgs) -> Result<()> {
     };
     println!("{out}");
     Ok(())
+}
+
+/// `tape spec gen` — generate a typed client from tape's own OpenAPI
+/// document (offline; no server) via the shared `libs/openapi-codegen`,
+/// written into `--out`. One codegen path, no external tool (relay #1209
+/// pattern).
+fn spec_gen(args: GenArgs) -> Result<()> {
+    use cclab_openapi_codegen::{generate, GenOptions, HttpClient, Lang};
+    let lang = match args.lang {
+        GenLang::Ts => Lang::Ts,
+        GenLang::Py => Lang::Py,
+        GenLang::Rust => Lang::Rust,
+    };
+    let opts = GenOptions {
+        lang,
+        spec_path: PathBuf::new(),
+        out_dir: args.out.clone(),
+        client_name: "createClient".to_string(),
+        http_client: match args.http {
+            GenHttp::Fetch => HttpClient::Fetch,
+            GenHttp::Axios => HttpClient::Axios,
+        },
+        emit_types: true,
+        emit_client: true,
+        // TanStack Query hooks are a TypeScript-only concern.
+        emit_hooks: matches!(lang, Lang::Ts),
+    };
+    let output = generate(&spec::openapi_json(), &opts)?;
+    std::fs::create_dir_all(&args.out)?;
+    for file in &output.files {
+        let path = args.out.join(&file.rel_path);
+        std::fs::write(&path, &file.contents)?;
+        println!("generated {}", path.display());
+    }
+    Ok(())
+}
+
+/// `tape backup` (#1329): fetch `{url}/admin/backup` and ship the bytes to
+/// `--dest` via `libs/service-backup`, printing the resulting
+/// `BackupRunResult` as JSON. This is what the operator's optional backup
+/// CronJob invokes on a schedule; it works equally ad hoc.
+#[cfg(feature = "backup")]
+async fn dispatch_backup(args: BackupArgs) -> Result<()> {
+    let dest = service_backup::BackupDestination::from_uri(&args.dest)?;
+    let retention = match args.retention_secs {
+        Some(secs) => service_backup::RetentionPolicy::max_age_seconds(secs),
+        None => service_backup::RetentionPolicy::default(),
+    };
+    let result =
+        tape::backup::run_backup(&args.url, args.token.as_deref(), &dest, &retention).await?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
+#[cfg(not(feature = "backup"))]
+async fn dispatch_backup(_args: BackupArgs) -> Result<()> {
+    anyhow::bail!(
+        "this tape build was compiled without backup support; rebuild with \
+         `--features backup` (the published image includes it)"
+    )
 }
 
 fn llm(args: LlmArgs) -> Result<()> {
@@ -1098,6 +1236,74 @@ mod tests {
                 cmd: K8sCmd::Operator(K8sOperatorArgs { cmd }),
             }) => assert!(cmd.is_none()),
             _ => panic!("expected k8s operator"),
+        }
+    }
+
+    /// #1329: `tape backup` parses its flags (url/dest/token/retention-secs).
+    #[test]
+    fn backup_verb_parses() {
+        let cli = Cli::try_parse_from([
+            "tape",
+            "backup",
+            "--url",
+            "http://localhost:7137",
+            "--dest",
+            "file:///tmp/backups",
+            "--token",
+            "s3cr3t",
+            "--retention-secs",
+            "3600",
+        ])
+        .expect("backup should parse");
+        match cli.command {
+            Command::Backup(a) => {
+                assert_eq!(a.url, "http://localhost:7137");
+                assert_eq!(a.dest, "file:///tmp/backups");
+                assert_eq!(a.token.as_deref(), Some("s3cr3t"));
+                assert_eq!(a.retention_secs, Some(3600));
+            }
+            _ => panic!("expected backup"),
+        }
+    }
+
+    /// #1329: `tape spec gen` parses its flags and generates non-empty client
+    /// output for each supported language from tape's own OpenAPI document.
+    #[test]
+    fn spec_gen_verbs_parse_and_generate() {
+        let cli = Cli::try_parse_from(["tape", "spec", "gen", "--lang", "ts", "--out", "/tmp/x"])
+            .expect("spec gen should parse");
+        match cli.command {
+            Command::Spec(SpecArgs {
+                gen: Some(SpecSub::Gen(a)),
+                ..
+            }) => {
+                assert!(matches!(a.lang, GenLang::Ts));
+                assert_eq!(a.out, PathBuf::from("/tmp/x"));
+            }
+            _ => panic!("expected spec gen"),
+        }
+
+        for lang in [GenLang::Ts, GenLang::Py, GenLang::Rust] {
+            let opts = cclab_openapi_codegen::GenOptions {
+                lang: match lang {
+                    GenLang::Ts => cclab_openapi_codegen::Lang::Ts,
+                    GenLang::Py => cclab_openapi_codegen::Lang::Py,
+                    GenLang::Rust => cclab_openapi_codegen::Lang::Rust,
+                },
+                spec_path: PathBuf::new(),
+                out_dir: PathBuf::new(),
+                client_name: "createClient".to_string(),
+                http_client: cclab_openapi_codegen::HttpClient::Fetch,
+                emit_types: true,
+                emit_client: true,
+                emit_hooks: matches!(lang, GenLang::Ts),
+            };
+            let out = cclab_openapi_codegen::generate(&spec::openapi_json(), &opts)
+                .expect("spec gen should succeed for tape's own OpenAPI document");
+            assert!(
+                !out.files.is_empty(),
+                "{lang:?} should emit at least one file"
+            );
         }
     }
 
