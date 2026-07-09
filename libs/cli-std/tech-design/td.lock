@@ -2,15 +2,15 @@ version = 2
 project = "cli-std"
 ir_kind = "td"
 td_path = "libs/cli-std/tech-design"
-generated_at = "2026-07-09T09:22:29.846079+00:00"
-digest = "sha256:174b24945ae0dc4928af728ad3e350bc3de2b9bf3e390db4f0da41e9af8ad267"
-source_digest = "sha256:174b24945ae0dc4928af728ad3e350bc3de2b9bf3e390db4f0da41e9af8ad267"
-ir_digest = "sha256:e57486971c3bafd3049154fe8fb945caf7de080417478bcbcba84e00480a1e9c"
+generated_at = "2026-07-09T09:46:13.341660+00:00"
+digest = "sha256:963b68f701e5110da55cb79cb47046e60db7c0f3f6fc2084ca08e985a1daee35"
+source_digest = "sha256:963b68f701e5110da55cb79cb47046e60db7c0f3f6fc2084ca08e985a1daee35"
+ir_digest = "sha256:974a62132558fa8f6eb9a8ef609ae49d8ad14e902627b1ef9f53549e490cb922"
 
 [[files]]
 path = "interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md"
-digest = "sha256:0dad4f9e4420669d3c439a9130bb2ae2d8da5e98ea814363007ab7f8a3f64f2b"
-ir_digest = "sha256:1dc0272d70c45a1fdcd83a473d48ca3463985dafda3b26394c934331067e60fb"
+digest = "sha256:ca5a35368cb5e60a43d0c1888405626b1993269e160876cf0432ba8b9db52f10"
+ir_digest = "sha256:948fc8d11f5d919cda47de7261c68f8139b8919602e67e48cc86cb8c7562e52a"
 section_count = 3
 
 [[files]]
@@ -26,14 +26,14 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/libs-cli-std-src-issue-rs.md"
-digest = "sha256:0b05af387784141be7d57aad555ca954ae8bd3d0e4c60fc53f5f4442a5233bf5"
-ir_digest = "sha256:1a098e48a3158cb278975cb4bd1569a94bc494bc51aab84b2e3170926a65688a"
+digest = "sha256:0ff6050f77db37fb95c9e109cb1a0cb90c9d44861d2e61783a1f3d01aa52e527"
+ir_digest = "sha256:309e4551778ce41fe9426ae6a401b3e61c2a74919cc12cedc05020e3e31e154d"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-cli-std-src-lib-rs.md"
-digest = "sha256:92ecbac0be971143396da923dd5416d065cfeedbe56606ce6efa2fb1edb93c0b"
-ir_digest = "sha256:9eed2736874e3a8779d50a80e03898267162747ee91e81c58596e56e400ad60d"
+digest = "sha256:372d0bd3d689cc2205ba0e382458e50fe981f370de01cfed53d27c0506129b47"
+ir_digest = "sha256:6cc4da2a82a3e4ca405e287aa3ad2956704d11fb6e032720c338914eb1c6584c"
 section_count = 3
 
 [[files]]
