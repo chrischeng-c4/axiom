@@ -343,7 +343,6 @@ definitions:
         type: integer
         minimum: 0
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
