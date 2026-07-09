@@ -168,6 +168,66 @@ unsafe extern "C" fn pydoc_error_during_import_init(_self_v: MbValue, args: MbVa
     MbValue::none()
 }
 
+fn is_str_value(v: MbValue) -> bool {
+    v.as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
+        == Some(true)
+}
+
+fn shelve_kw_filename(v: MbValue) -> Option<Option<MbValue>> {
+    let ptr = v.as_ptr()?;
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Dict(lock) => {
+                let map = lock.read().unwrap();
+                if map.keys().all(|key| {
+                    matches!(
+                        key.as_str(),
+                        Some("filename")
+                            | Some("flag")
+                            | Some("protocol")
+                            | Some("writeback")
+                    )
+                }) {
+                    Some(
+                        map.iter()
+                            .find_map(|(key, value)| (key.as_str() == Some("filename")).then_some(*value)),
+                    )
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
+unsafe extern "C" fn dispatch_shelve_dbfilename_shelf(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    let args = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+
+    let mut positional = args;
+    let mut kw_filename = None;
+    if let Some(filename) = args.last().copied().and_then(shelve_kw_filename) {
+        positional = &args[..args.len().saturating_sub(1)];
+        kw_filename = filename;
+    }
+
+    if let Some(filename) = positional.first().copied().or(kw_filename) {
+        if !is_str_value(filename) {
+            return raise_type_error("DbfilenameShelf.__init__() filename argument must be str");
+        }
+    }
+
+    dispatch_empty_dict(args_ptr, nargs)
+}
+
 fn register_variadic_method_class(class_name: &str, method_name: &str, addr: usize) {
     super::super::module::register_variadic_func(addr as u64);
     let mut methods = HashMap::new();
@@ -462,13 +522,19 @@ fn register_cgitb() {
 }
 
 fn register_shelve() {
-    let attrs = build_attrs(
-        &["Shelf", "BsdDbShelf", "DbfilenameShelf"],
+    let mut attrs = build_attrs(
+        &["Shelf", "BsdDbShelf"],
         44,
         &[("open", dispatch_empty_dict as *const () as usize)],
         &[],
         &[],
     );
+    let dbfilename_shelf_addr = dispatch_shelve_dbfilename_shelf as *const () as usize;
+    attrs.insert(
+        "DbfilenameShelf".into(),
+        MbValue::from_func(dbfilename_shelf_addr),
+    );
+    register_addrs(&[dbfilename_shelf_addr]);
     super::register_module("shelve", attrs);
 }
 
@@ -623,4 +689,44 @@ fn register_thread() {
         &[],
     );
     super::register_module("_thread", attrs);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn clear_exc() {
+        super::super::super::exception::clear_current_exception();
+    }
+
+    fn raised_type() -> Option<String> {
+        super::super::super::exception::current_exception_type()
+    }
+
+    #[test]
+    fn test_dbfilename_shelf_accepts_str_filename() {
+        clear_exc();
+        let args = [MbValue::from_ptr(MbObject::new_str("cache.db".to_string()))];
+        let result = unsafe { dispatch_shelve_dbfilename_shelf(args.as_ptr(), args.len()) };
+        assert!(result.as_ptr().is_some());
+        assert!(raised_type().is_none());
+    }
+
+    #[test]
+    fn test_dbfilename_shelf_rejects_non_str_filename() {
+        clear_exc();
+        let args = [MbValue::from_int(12345)];
+        let result = unsafe { dispatch_shelve_dbfilename_shelf(args.as_ptr(), args.len()) };
+        assert!(result.is_none());
+        assert_eq!(raised_type().as_deref(), Some("TypeError"));
+        clear_exc();
+    }
+
+    #[test]
+    fn test_dbfilename_shelf_accepts_missing_filename() {
+        clear_exc();
+        let result = unsafe { dispatch_shelve_dbfilename_shelf(std::ptr::null(), 0) };
+        assert!(result.as_ptr().is_some());
+        assert!(raised_type().is_none());
+    }
 }
