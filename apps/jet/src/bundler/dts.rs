@@ -535,6 +535,10 @@ fn infer_object_literal_type(node: Node, source: &str) -> Option<String> {
         return None;
     }
     let text = node_text(node, source).trim();
+    infer_object_literal_type_from_text(text)
+}
+
+fn infer_object_literal_type_from_text(text: &str) -> Option<String> {
     let inner = text.strip_prefix('{')?.strip_suffix('}')?.trim();
     if inner.is_empty() {
         return Some("{}".to_string());
@@ -559,8 +563,16 @@ fn infer_object_literal_type(node: Node, source: &str) -> Option<String> {
         if !is_supported_object_literal_key(key) {
             return None;
         }
-        let ty = infer_arrow_function_type_from_text(value.trim())
-            .or_else(|| infer_expression_type(value.trim(), &empty_param_types))?;
+        let value = value.trim();
+        let ty = infer_arrow_function_type_from_text(value)
+            .or_else(|| {
+                if value.starts_with('{') && value.ends_with('}') {
+                    infer_object_literal_type_from_text(value)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| infer_expression_type(value, &empty_param_types))?;
         members.push(format!("    {key}: {ty};"));
     }
 
@@ -1712,6 +1724,99 @@ export const uploadApi = {
         assert!(
             !dts.contains("image/jpeg"),
             "object literal values must not leak into .d.ts, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_const_nested_plain_object_literal_signature() {
+        // R1 (#1263): minimal repro -- an object literal member whose value
+        // is itself a plain, all-string-literal nested object literal
+        // (nesting depth 2) must infer instead of raising a false-positive
+        // isolatedDeclarations error.
+        let src = r#"export const flatLiteral = {
+    ltr: "ltr",
+    rtl: "rtl",
+};
+
+export const nestedLiteral = {
+    ltr: "ltr",
+    heading: {
+        h1: "editor-heading--h1",
+    },
+};
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare const flatLiteral: {"),
+            "flat object literal const should still synthesize a declaration type, got:\n{dts}"
+        );
+        assert!(
+            dts.contains("export declare const nestedLiteral: {"),
+            "nested object literal const should synthesize a declaration type, got:\n{dts}"
+        );
+        assert!(
+            dts.contains("ltr: string;"),
+            "flat string member should be emitted, got:\n{dts}"
+        );
+        assert!(
+            dts.contains("heading: {") && dts.contains("h1: string;"),
+            "nested member should recurse into a nested object literal type, got:\n{dts}"
+        );
+        assert!(
+            !dts.contains("editor-heading--h1"),
+            "nested object literal values must not leak into .d.ts, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_const_deeply_nested_plain_object_literal_signature() {
+        // R2 (#1263): real-world shape control mirroring the issue's
+        // fe-shared `lexicalTheme` hit -- nesting depth 3+, all leaves plain
+        // string literals. Proves the new recursive branch has no
+        // hard-coded depth cap.
+        let src = r#"export const theme = {
+    list: {
+        nested: {
+            listitem: "editor-list-item",
+        },
+    },
+};
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare const theme: {"),
+            "deeply nested object literal const should synthesize a declaration type, got:\n{dts}"
+        );
+        assert!(
+            dts.contains("list: {")
+                && dts.contains("nested: {")
+                && dts.contains("listitem: string;"),
+            "every nesting level should recurse into a nested object literal type, got:\n{dts}"
+        );
+        assert!(
+            !dts.contains("editor-list-item"),
+            "deeply nested object literal values must not leak into .d.ts, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn uninferrable_exported_const_nested_object_literal_with_untyped_member_errors() {
+        // R3 (#1263): negative control -- same shape as R1, but the nested
+        // object's own member value is itself uninferrable (a bare
+        // identifier with no locally resolvable type). Must stay fail-loud,
+        // proving the new recursive branch does not silently widen to
+        // accept a nested object literal with a genuinely untyped leaf.
+        let src = r#"export const nestedLiteral = {
+    ltr: "ltr",
+    heading: {
+        h1: someUntypedImport,
+    },
+};
+"#;
+        let err = emit_declarations(src).unwrap_err();
+        assert!(
+            err.to_string().contains("isolatedDeclarations"),
+            "nested object literal with a genuinely untyped leaf must stay fail-loud, got: {err}"
         );
     }
 
