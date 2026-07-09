@@ -76,7 +76,6 @@ properties:
     description: "Regression proof this WI adds: (1) a runner-mode command with EgressPolicy::Deny is denied outbound network the same way direct-mode already is; (2) a service spawned in the same run still reaches the network under EgressPolicy::Deny, confirming the exemption is intentional."
 additionalProperties: true
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
