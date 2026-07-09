@@ -12,6 +12,8 @@ pub mod auth;
 pub mod bench;
 pub mod metrics;
 pub mod openapi;
+#[cfg(feature = "operator")]
+pub mod operator;
 pub mod peer_tls;
 pub mod raft;
 pub mod server;

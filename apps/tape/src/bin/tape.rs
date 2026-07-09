@@ -34,6 +34,15 @@ enum Command {
     Upgrade(UpgradeArgs),
     /// Search, view, file, and comment on Tape issues.
     Issue(IssueArgs),
+    /// Kubernetes artifacts split by layer: the cluster-scoped CRD, the
+    /// operator control plane, and app-namespace Tape instances. Render paths
+    /// are offline (they work from the binary); only `operator run` needs the
+    /// `operator` build feature (#1328).
+    K8s(K8sArgs),
+    /// Render tape's runtime image Dockerfiles — offline, no server. Image
+    /// construction is owned here (not by `k8s`) because the same artifact
+    /// feeds compose, kind, and real registries (#1328).
+    Dockerfile(DockerfileArgs),
 }
 
 #[derive(clap::Args)]
@@ -243,6 +252,150 @@ struct IssueCommentArgs {
     yes: bool,
 }
 
+/// `tape k8s <crd|operator|instance>` — cluster artifacts split by lifecycle
+/// layer (#1328).
+#[derive(clap::Args, Debug)]
+struct K8sArgs {
+    #[command(subcommand)]
+    cmd: K8sCmd,
+}
+
+#[derive(Subcommand, Debug)]
+enum K8sCmd {
+    /// Cluster-scoped API layer: render the Tape CRD.
+    Crd(K8sCrdArgs),
+    /// Operator control-plane layer: render assets or run the controller.
+    Operator(K8sOperatorArgs),
+    /// App-namespace declaration: render a Tape custom resource.
+    Instance(K8sInstanceArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct K8sCrdArgs {
+    #[command(subcommand)]
+    cmd: K8sCrdCmd,
+}
+
+#[derive(Subcommand, Debug)]
+enum K8sCrdCmd {
+    /// Render the Tape CustomResourceDefinition YAML.
+    Render(K8sFileOutputArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct K8sOperatorArgs {
+    #[command(subcommand)]
+    cmd: Option<K8sOperatorCmd>,
+}
+
+#[derive(Subcommand, Debug)]
+enum K8sOperatorCmd {
+    /// Container entrypoint: run the reconcile controller (needs `--features
+    /// operator`). The default when no subcommand is given.
+    Run,
+    /// Render operator namespace/RBAC/deployment YAML.
+    Render(K8sOperatorRenderArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct K8sOperatorRenderArgs {
+    /// Namespace that owns the operator control plane.
+    #[arg(long, default_value = "tape-system")]
+    namespace: String,
+    /// Write to this path instead of stdout. A directory receives
+    /// `operator.yaml`.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(clap::Args, Debug)]
+struct K8sInstanceArgs {
+    #[command(subcommand)]
+    cmd: K8sInstanceCmd,
+}
+
+#[derive(Subcommand, Debug)]
+enum K8sInstanceCmd {
+    /// Render a namespaced `kind: Tape` custom resource.
+    Render(K8sInstanceRenderArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct K8sInstanceRenderArgs {
+    /// Built-in instance profile.
+    #[arg(long, value_enum, default_value_t = K8sInstanceProfile::Dev)]
+    profile: K8sInstanceProfile,
+    /// Tape CR name. HA (replicasPerShard > 1) instances must keep the
+    /// default `tape` — serve derives raft peer DNS as
+    /// `tape-<ordinal>.<peer-service>`.
+    #[arg(long)]
+    name: Option<String>,
+    /// Namespace where the app-facing Tape instance lives.
+    #[arg(long)]
+    namespace: Option<String>,
+    /// Journal image. Defaults are profile-specific.
+    #[arg(long)]
+    image: Option<String>,
+    /// Write to this path instead of stdout. A directory receives `tape.yaml`.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum K8sInstanceProfile {
+    /// Small local/kind CR: one journal pod, small disk, verbose logs.
+    Dev,
+    /// Pre-prod CR: prod-shaped single node, info logs, mid disk.
+    Staging,
+    /// Production-shape CR: 3-replica raft-HA group, large disk, auth on.
+    Prod,
+    /// Fill-in-the-blanks CR skeleton for app teams.
+    Template,
+}
+
+#[derive(clap::Args, Debug)]
+struct K8sFileOutputArgs {
+    /// Write to this path instead of stdout.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+/// `tape dockerfile <render>` — render tape's runtime image Dockerfiles.
+#[derive(clap::Args, Debug)]
+struct DockerfileArgs {
+    #[command(subcommand)]
+    cmd: DockerfileCmd,
+}
+
+#[derive(Subcommand, Debug)]
+enum DockerfileCmd {
+    /// Render a Dockerfile to stdout or `--out`.
+    Render(DockerfileRenderArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct DockerfileRenderArgs {
+    /// Which runtime image contract to render.
+    #[arg(long, value_enum, default_value_t = DockerfileVariant::Source)]
+    variant: DockerfileVariant,
+    /// Release tag used by `--variant release`; accepts `0.1.0` or
+    /// `tape@0.1.0`.
+    #[arg(long)]
+    version: Option<String>,
+    /// Write to this path instead of stdout. A directory receives `Dockerfile`
+    /// or `Dockerfile.release`.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum DockerfileVariant {
+    /// Build from the workspace source tree.
+    Source,
+    /// Fetch and verify a published `tape@<version>` release binary.
+    Release,
+}
+
 const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
     project: "tape",
     repo: "chrischeng-c4/axiom",
@@ -267,6 +420,27 @@ const LLM_TOPICS: &[cli_std::llm::Topic] = &[
         id: "boundaries",
         summary: "Tape boundary against Relay, Loom, and Keep",
         body: spec::llm_boundaries_md(),
+    },
+    cli_std::llm::Topic {
+        id: "operations",
+        summary: "deploy artifacts — k8s crd/operator/instance render, dockerfile render",
+        body: "# tape — deploying to Kubernetes\n\n\
+            Deploy artifacts are offline renders; the checked-in files under `apps/tape/` \
+            are the fixtures, and these commands are their in-binary form (#1328):\n\n\
+            - `tape k8s crd render` — the Tape CustomResourceDefinition (tape.dev/v1alpha1).\n\
+            - `tape k8s operator render [--namespace tape-system]` — operator RBAC + \
+              Deployment; `tape k8s operator run` runs the reconcile controller (needs a \
+              build with `--features operator`).\n\
+            - `tape k8s instance render --profile dev|staging|prod|template` — a `kind: \
+              Tape` CR; prod is the 3-replica raft-HA shape (the operator renders the \
+              StatefulSet topology — `k8s/` base stays a single-node direct install for \
+              kind/smoke).\n\
+            - `tape dockerfile render --variant source|release [--version]` — the \
+              from-source and published-release images.\n\n\
+            HA is auto-mode raft: scale the StatefulSet and set `REPLICAS_PER_SHARD` > 1 \
+            (plus `POD_NAME`, `SHARD_COUNT=1`, `VOTER_COUNT` from the downward API) and the \
+            same `tape` bin runs a raft group; `--peer-service` (`TAPE_PEER_SERVICE`) names \
+            the headless Service for peer DNS. No cluster env = plain single-node.\n",
     },
 ];
 
@@ -293,6 +467,8 @@ async fn main() -> Result<()> {
             .await
         }
         Command::Issue(args) => issue(args).await,
+        Command::K8s(args) => k8s(args).await,
+        Command::Dockerfile(args) => dockerfile(args),
     }
 }
 
@@ -576,6 +752,252 @@ fn parse_payload(input: &str) -> Value {
     serde_json::from_str(input).unwrap_or_else(|_| Value::String(input.to_string()))
 }
 
+/// `tape k8s` — cluster artifacts split by lifecycle layer. Only `operator
+/// run` needs kube-rs at runtime; the render paths are offline and work from
+/// the binary (the generated CRD is embedded, the operator manifests are
+/// string-templated, the instance CRs are profile-templated) (#1328).
+async fn k8s(args: K8sArgs) -> Result<()> {
+    match args.cmd {
+        K8sCmd::Crd(a) => match a.cmd {
+            K8sCrdCmd::Render(a) => write_or_print(a.out.as_deref(), "crd.yaml", &crd_yaml()),
+        },
+        K8sCmd::Operator(a) => match a.cmd.unwrap_or(K8sOperatorCmd::Run) {
+            K8sOperatorCmd::Run => run_operator().await,
+            K8sOperatorCmd::Render(a) => {
+                let yaml = render_operator_yaml(&a.namespace);
+                write_or_print(a.out.as_deref(), "operator.yaml", &yaml)
+            }
+        },
+        K8sCmd::Instance(a) => match a.cmd {
+            K8sInstanceCmd::Render(a) => {
+                let yaml = render_instance_yaml(&a);
+                write_or_print(a.out.as_deref(), "tape.yaml", &yaml)
+            }
+        },
+    }
+}
+
+#[cfg(feature = "operator")]
+async fn run_operator() -> Result<()> {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
+    tape::operator::run().await
+}
+
+#[cfg(not(feature = "operator"))]
+async fn run_operator() -> Result<()> {
+    anyhow::bail!(
+        "this tape build was compiled without operator support; rebuild with \
+         `--features operator` (the published image includes it)"
+    )
+}
+
+#[cfg(feature = "operator")]
+fn crd_yaml() -> String {
+    tape::operator::crd_yaml()
+}
+
+#[cfg(not(feature = "operator"))]
+fn crd_yaml() -> String {
+    ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
+}
+
+/// Render the operator control-plane manifests (RBAC + Deployment) with the
+/// namespace substituted, from the checked-in fixtures.
+fn render_operator_yaml(namespace: &str) -> String {
+    let mut out = String::new();
+    out.push_str(&replace_operator_namespace(
+        include_str!("../../k8s/operator/rbac.yaml"),
+        namespace,
+    ));
+    out.push_str("\n---\n");
+    out.push_str(&replace_operator_namespace(
+        include_str!("../../k8s/operator/deployment.yaml"),
+        namespace,
+    ));
+    ensure_trailing_newline(&out)
+}
+
+fn replace_operator_namespace(input: &str, namespace: &str) -> String {
+    input
+        .replace("name: tape-system", &format!("name: {namespace}"))
+        .replace("namespace: tape-system", &format!("namespace: {namespace}"))
+}
+
+/// Render a `kind: Tape` custom resource for the selected profile.
+fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
+    let default_version = env!("CARGO_PKG_VERSION");
+    let (default_name, default_namespace, default_image, body) = match args.profile {
+        K8sInstanceProfile::Dev => (
+            "tape",
+            "default",
+            "tape:latest".to_string(),
+            InstanceBody::Dev,
+        ),
+        K8sInstanceProfile::Staging => (
+            "tape",
+            "staging",
+            format!("tape:{default_version}"),
+            InstanceBody::Staging,
+        ),
+        K8sInstanceProfile::Prod => (
+            "tape",
+            "production",
+            format!("registry.example.com/tape:{default_version}"),
+            InstanceBody::Prod,
+        ),
+        K8sInstanceProfile::Template => (
+            "tape",
+            "REPLACE_ME__APP_NAMESPACE",
+            "REPLACE_ME__REGISTRY/tape:REPLACE_ME__IMAGE_TAG".to_string(),
+            InstanceBody::Template,
+        ),
+    };
+    let name = args.name.as_deref().unwrap_or(default_name);
+    let namespace = args.namespace.as_deref().unwrap_or(default_namespace);
+    let image = args.image.as_deref().unwrap_or(&default_image);
+
+    let mut yaml = format!(
+        "apiVersion: tape.dev/v1alpha1\nkind: Tape\nmetadata:\n  name: {name}\n  namespace: {namespace}\nspec:\n  image: {image}\n"
+    );
+    match body {
+        InstanceBody::Dev => {
+            yaml.push_str(
+                "  replicasPerShard: 1\n  voterCount: 1\n  logLevel: debug\n  storage: 1Gi\n  resources:\n    cpu: \"250m\"\n    memory: 256Mi\n",
+            );
+        }
+        InstanceBody::Staging => {
+            yaml.push_str(
+                "  replicasPerShard: 1\n  voterCount: 1\n  logLevel: info\n  storage: 20Gi\n  resources:\n    cpu: \"1\"\n    memory: 2Gi\n",
+            );
+        }
+        InstanceBody::Prod => {
+            yaml.push_str(
+                "  imagePullPolicy: Always\n  replicasPerShard: 3\n  voterCount: 3\n  logLevel: info\n  storage: 100Gi\n  graceSecs: 30\n  auth: required\n  tokensSecret: tape-token-registry\n  resources:\n    cpu: \"4\"\n    memory: 8Gi\n",
+            );
+        }
+        InstanceBody::Template => {
+            yaml.push_str(
+                "  imagePullPolicy: IfNotPresent\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  storage: 10Gi\n  resources:\n    cpu: \"1\"\n    memory: 1Gi\n",
+            );
+        }
+    }
+    ensure_trailing_newline(&yaml)
+}
+
+enum InstanceBody {
+    Dev,
+    Staging,
+    Prod,
+    Template,
+}
+
+/// `tape dockerfile render` — render tape's runtime image Dockerfiles. The
+/// checked-in Dockerfiles are the fixtures; the CLI is their in-binary form
+/// (marker stripping + `tape@version` substitution), so `render` stays the
+/// source of truth (relay #1208 pattern).
+fn dockerfile(args: DockerfileArgs) -> Result<()> {
+    match args.cmd {
+        DockerfileCmd::Render(a) => {
+            let (file_name, body) = match a.variant {
+                DockerfileVariant::Source => ("Dockerfile", render_source_dockerfile()),
+                DockerfileVariant::Release => (
+                    "Dockerfile.release",
+                    render_release_dockerfile(a.version.as_deref()),
+                ),
+            };
+            write_or_print(a.out.as_deref(), file_name, &body)
+        }
+    }
+}
+
+fn render_source_dockerfile() -> String {
+    strip_ownership_markers(include_str!("../../Dockerfile"))
+}
+
+fn render_release_dockerfile(version: Option<&str>) -> String {
+    let tag = normalize_tape_tag(version);
+    let version = tag.trim_start_matches("tape@");
+    let template = strip_ownership_markers(include_str!("../../Dockerfile.release"));
+    let mut out = String::new();
+    for line in template.lines() {
+        if line.starts_with("#   docker build -f apps/tape/Dockerfile.release -t tape:") {
+            out.push_str(&format!(
+                "#   docker build -f apps/tape/Dockerfile.release -t tape:{version} \\"
+            ));
+        } else if line.starts_with("#     --build-arg TAPE_VERSION=") {
+            out.push_str(&format!("#     --build-arg TAPE_VERSION={tag} ."));
+        } else if line.starts_with("ARG TAPE_VERSION=") {
+            out.push_str(&format!("ARG TAPE_VERSION={tag}"));
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// Normalize a version input into a `tape@<version>` release tag, defaulting
+/// to the compiled crate version.
+fn normalize_tape_tag(version: Option<&str>) -> String {
+    let raw = version
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .trim();
+    if raw.starts_with("tape@") {
+        raw.to_string()
+    } else {
+        format!("tape@{raw}")
+    }
+}
+
+/// Strip AW source-ownership markers so the rendered Dockerfile is the one
+/// users build (a no-op for tape's marker-free fixtures; kept for parity).
+fn strip_ownership_markers(input: &str) -> String {
+    let mut out = String::new();
+    for line in input.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("# SPEC-MANAGED:")
+            || trimmed == "# CODEGEN-BEGIN"
+            || trimmed == "# CODEGEN-END"
+        {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// Write `body` to `out` (a file, or `default_file` inside a directory) or
+/// print it to stdout.
+fn write_or_print(out: Option<&Path>, default_file: &str, body: &str) -> Result<()> {
+    if let Some(path) = out {
+        let target = if path.extension().is_some() {
+            path.to_path_buf()
+        } else {
+            path.join(default_file)
+        };
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&target, body)?;
+        println!("wrote {}", target.display());
+    } else {
+        print!("{body}");
+    }
+    Ok(())
+}
+
+fn ensure_trailing_newline(input: &str) -> String {
+    if input.ends_with('\n') {
+        input.to_string()
+    } else {
+        format!("{input}\n")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -629,6 +1051,85 @@ mod tests {
         let cli =
             Cli::try_parse_from(["tape", "append", "orders", "--payload", "{\"n\":1}"]).unwrap();
         assert!(matches!(cli.command, Command::Append(_)));
+    }
+
+    /// #1328: `tape k8s <crd|operator|instance>` parses with the expected
+    /// subcommands and flags.
+    #[test]
+    fn k8s_verbs_parse() {
+        let cli = Cli::try_parse_from(["tape", "k8s", "crd", "render"]).expect("crd render");
+        assert!(matches!(
+            cli.command,
+            Command::K8s(K8sArgs {
+                cmd: K8sCmd::Crd(K8sCrdArgs {
+                    cmd: K8sCrdCmd::Render(_),
+                }),
+            })
+        ));
+
+        let cli = Cli::try_parse_from([
+            "tape",
+            "k8s",
+            "instance",
+            "render",
+            "--profile",
+            "prod",
+            "--namespace",
+            "production",
+        ])
+        .expect("instance render");
+        match cli.command {
+            Command::K8s(K8sArgs {
+                cmd:
+                    K8sCmd::Instance(K8sInstanceArgs {
+                        cmd: K8sInstanceCmd::Render(a),
+                    }),
+            }) => {
+                assert!(matches!(a.profile, K8sInstanceProfile::Prod));
+                assert_eq!(a.namespace.as_deref(), Some("production"));
+            }
+            _ => panic!("expected k8s instance render"),
+        }
+
+        // `operator` with no subcommand defaults to `run`.
+        let cli = Cli::try_parse_from(["tape", "k8s", "operator"]).expect("operator default");
+        match cli.command {
+            Command::K8s(K8sArgs {
+                cmd: K8sCmd::Operator(K8sOperatorArgs { cmd }),
+            }) => assert!(cmd.is_none()),
+            _ => panic!("expected k8s operator"),
+        }
+    }
+
+    /// #1328: `tape dockerfile render` parses with variant/version/out flags,
+    /// and `normalize_tape_tag` converges bare/prefixed tags.
+    #[test]
+    fn dockerfile_verbs_parse() {
+        let cli = Cli::try_parse_from([
+            "tape",
+            "dockerfile",
+            "render",
+            "--variant",
+            "release",
+            "--version",
+            "1.2.3",
+        ])
+        .expect("dockerfile render should parse");
+        match cli.command {
+            Command::Dockerfile(DockerfileArgs {
+                cmd: DockerfileCmd::Render(a),
+            }) => {
+                assert!(matches!(a.variant, DockerfileVariant::Release));
+                assert_eq!(a.version.as_deref(), Some("1.2.3"));
+            }
+            _ => panic!("expected dockerfile render"),
+        }
+        assert_eq!(normalize_tape_tag(Some("1.2.3")), "tape@1.2.3");
+        assert_eq!(normalize_tape_tag(Some("tape@1.2.3")), "tape@1.2.3");
+        assert_eq!(
+            normalize_tape_tag(None),
+            format!("tape@{}", env!("CARGO_PKG_VERSION"))
+        );
     }
 }
 // </HANDWRITE>

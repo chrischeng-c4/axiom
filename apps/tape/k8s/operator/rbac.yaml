@@ -1,3 +1,63 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:5c856338" tracker="pending-tracker" reason="Checked-in operator control-plane Namespace/ServiceAccount/ClusterRole/ClusterRoleBinding fixture (namespace tape-system, namespace-substituted at render time), mirroring relay's k8s/operator/rbac.yaml."
-// TODO: hand-write content for `apps/tape/k8s/operator/rbac.yaml`.
-// HANDWRITE-END
+# The tape operator runs in its own namespace and needs cluster-wide
+# permission to manage the child kinds it renders for every Tape custom
+# resource.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tape-system
+  labels:
+    app.kubernetes.io/name: tape-operator
+    app.kubernetes.io/part-of: tape
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tape-operator
+  namespace: tape-system
+  labels:
+    app.kubernetes.io/name: tape-operator
+    app.kubernetes.io/part-of: tape
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tape-operator
+  labels:
+    app.kubernetes.io/name: tape-operator
+    app.kubernetes.io/part-of: tape
+rules:
+  # The custom resource it owns + its status subresource.
+  - apiGroups: ["tape.dev"]
+    resources: ["tapes", "tapes/status", "tapes/finalizers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The durable journal workload.
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Serving Service/ServiceAccount.
+  - apiGroups: [""]
+    resources: ["services", "serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Leader-election Lease (HA: only the holder reconciles).
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tape-operator
+  labels:
+    app.kubernetes.io/name: tape-operator
+    app.kubernetes.io/part-of: tape
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tape-operator
+subjects:
+  - kind: ServiceAccount
+    name: tape-operator
+    namespace: tape-system
