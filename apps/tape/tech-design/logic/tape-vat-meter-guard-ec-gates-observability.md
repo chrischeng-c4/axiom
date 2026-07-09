@@ -57,5 +57,109 @@ fill_sections: [logic, unit-test, changes]
 <!-- type: logic lang: mermaid -->
 
 ```mermaid
-(fill)
+---
+id: tape-vat-meter-guard-ec-gates-observability-flow
+entry: route
+nodes:
+  route:
+    kind: start
+    label: "apps/tape gains vat.toml, guard-tape-security.toml, meter-tape-performance.toml, external-contracts/security-hardening + competitor-performance/efficiency/meter-gate.md, observability/, compose.yaml"
+  vat_setup:
+    kind: process
+    label: "vat workspace clones the repo (base=../.., workdir=apps/tape); setup builds meter-cli + guard-cli plus tape's perf_gate/tape_vs_nats_jetstream/cli_contract test binaries"
+  meter_runner:
+    kind: process
+    label: "runner meter-perf: ../../target/debug/meter test -- -p tape --test tape_perf_gate --test tape_vs_nats_jetstream -- --nocapture"
+  guard_runner:
+    kind: process
+    label: "runner guard-security: ../../target/debug/guard scan apps/tape --profile security-lint --compact --no-persist --meter-command <cargo test -p tape --test cli_contract auth-relevant cases>"
+  ec_efficiency:
+    kind: process
+    label: "apps/tape/aw.toml tool_contracts.tape-meter-performance -> meter-tape-performance.toml (SPEC-MANAGED, source_contract=tape-meter-performance-gate) delegates to vat run meter-perf"
+  ec_security:
+    kind: process
+    label: "apps/tape/aw.toml tool_contracts.tape-guard-security -> guard-tape-security.toml (SPEC-MANAGED, source_contract=tape-security-hardening-guard-scan) delegates to vat run guard-security"
+  root_aw_toml:
+    kind: process
+    label: "root aw.toml [[projects]] tape block gains ec.efficiency/ec.security bindings mirroring apps/relay + apps/keep"
+  observability:
+    kind: process
+    label: "apps/tape/observability/{prometheus.yml,otel-collector-config.yaml,grafana-datasources.yaml} scrape tape's existing /metrics h2c endpoint (WI #1325 src/metrics.rs); compose.yaml runs tape+otel-collector+prometheus+jaeger+grafana locally"
+  readme:
+    kind: terminal
+    label: "apps/tape/README.md EC Gates Configured row drops pending: language for vat.toml/meter-tape-performance.toml/guard-tape-security.toml"
+edges:
+  - { from: route, to: vat_setup }
+  - { from: vat_setup, to: meter_runner }
+  - { from: vat_setup, to: guard_runner }
+  - { from: meter_runner, to: ec_efficiency }
+  - { from: guard_runner, to: ec_security }
+  - { from: ec_efficiency, to: root_aw_toml }
+  - { from: ec_security, to: root_aw_toml }
+  - { from: root_aw_toml, to: observability }
+  - { from: observability, to: readme }
+---
+flowchart TD
+    route[apps/tape gains vat.toml, guard-tape-security.toml, meter-tape-performance.toml, external-contracts, observability/, compose.yaml] --> vat_setup[vat workspace clones repo; setup builds meter-cli + guard-cli + tape test binaries]
+    vat_setup --> meter_runner[runner meter-perf: meter test -- -p tape --test tape_perf_gate --test tape_vs_nats_jetstream]
+    vat_setup --> guard_runner[runner guard-security: guard scan apps/tape --profile security-lint --meter-command cli_contract auth cases]
+    meter_runner --> ec_efficiency[meter-tape-performance.toml SPEC-MANAGED source_contract=tape-meter-performance-gate delegates to vat run meter-perf]
+    guard_runner --> ec_security[guard-tape-security.toml SPEC-MANAGED source_contract=tape-security-hardening-guard-scan delegates to vat run guard-security]
+    ec_efficiency --> root_aw_toml[root aw.toml projects tape block gains ec.efficiency/ec.security bindings]
+    ec_security --> root_aw_toml
+    root_aw_toml --> observability[observability/ prometheus+otel-collector+grafana config; compose.yaml local dev stack]
+    observability --> readme[README.md EC Gates Configured row drops pending language]
+```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: tape-vat-meter-guard-ec-gates-observability-verification
+requirements:
+  guard_manifest:
+    id: R2
+    text: "apps/tape/guard-tape-security.toml is a valid SPEC-MANAGED guard-cli native manifest bound to a source_contract in external-contracts/security-hardening."
+    kind: functional
+    risk: low
+    verify: aw ec gen --verify apps/tape resolves tape-guard-security tool_contract
+  meter_manifest:
+    id: R3
+    text: "apps/tape/meter-tape-performance.toml is a valid SPEC-MANAGED meter-cli native manifest bound to a source_contract in external-contracts/competitor-performance/efficiency."
+    kind: functional
+    risk: low
+    verify: aw ec gen --verify apps/tape resolves tape-meter-performance tool_contract
+  no_regression:
+    id: R5
+    text: "This config-only slice does not change tape's Rust source, so existing tape tests stay green."
+    kind: regression
+    risk: low
+    verify: cargo test -p tape
+  observability_config:
+    id: R6
+    text: "apps/tape/observability/{prometheus.yml,otel-collector-config.yaml,grafana-datasources.yaml} and apps/tape/compose.yaml are valid YAML and scrape/reference tape's real /metrics endpoint and OTLP port."
+    kind: functional
+    risk: low
+    verify: manual review: prometheus.yml scrape_configs target matches tape's exposed port; compose.yaml service depends_on graph is acyclic
+  root_aw_toml_bindings:
+    id: R4
+    text: "root aw.toml's [[projects]] tape block carries ec.efficiency and ec.security bindings that point at the vat runners."
+    kind: functional
+    risk: low
+    verify: aw health --project tape --verify-ec reports both gates configured
+  vat_config:
+    id: R1
+    text: "apps/tape/vat.toml declares a workspace + setup steps + meter-perf and guard-security runners that parse and resolve."
+    kind: functional
+    risk: low
+    verify: aw ec gen --verify (or aw health --project tape --verify-ec) parses apps/tape/vat.toml without error
+---
+flowchart TD
+    r1[R1 vat config] --> aw_ec_gen_verify_or_aw_health_project_tape_verify_ec_parses_apps_tape_vat_toml_without_error[aw ec gen --verify (or aw health --project tape --verify-ec) parses apps/tape/vat.toml without error]
+    r2[R2 guard manifest] --> aw_ec_gen_verify_apps_tape_resolves_tape_guard_security_tool_contract[aw ec gen --verify apps/tape resolves tape-guard-security tool_contract]
+    r3[R3 meter manifest] --> aw_ec_gen_verify_apps_tape_resolves_tape_meter_performance_tool_contract[aw ec gen --verify apps/tape resolves tape-meter-performance tool_contract]
+    r4[R4 root aw toml bindings] --> aw_health_project_tape_verify_ec_reports_both_gates_configured[aw health --project tape --verify-ec reports both gates configured]
+    r5[R5 no regression] --> cargo_test_p_tape[cargo test -p tape]
+    r6[R6 observability config] --> manual_review_prometheus_yml_scrape_configs_target_matches_tape_s_exposed_port_compose_yaml_service_depends_on_graph_is_acyclic[manual review: prometheus.yml scrape_configs target matches tape's exposed port; compose.yaml service depends_on graph is acyclic]
 ```
