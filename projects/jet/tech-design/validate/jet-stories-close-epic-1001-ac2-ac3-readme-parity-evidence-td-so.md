@@ -97,3 +97,10 @@ flowchart TD
     add_fixture_test --> verify[cargo test; grep source_units; aw td check; aw capability report]
     verify --> done([README enumerates full surface; source_units complete; fixture passes])
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+(fill)
+```
