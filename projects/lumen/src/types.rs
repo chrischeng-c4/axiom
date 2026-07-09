@@ -472,18 +472,38 @@ pub struct KnnQuery {
     pub k: u32,
 }
 
+/// A `RangeQuery` bound value. Wire form is untagged: a JSON number decodes
+/// as `Number`, a JSON string as `Keyword` — one `RangeQuery` node handles
+/// both numeric and keyword ranges, matching the ergonomics clients already
+/// generate against (no sibling `KeywordRangeQuery` type). Validated at
+/// query time against the target field's declared `FieldType`: `Number` is
+/// valid only against `FieldType::Number` fields, `Keyword` only against
+/// `FieldType::Keyword` fields (compared byte/lexicographically — the same
+/// ordering `keyword` already uses for exact `term`/`terms` match, and the
+/// ordering ISO-8601 date/datetime strings rely on for chronological sort).
+/// A mismatched bound/field-type pair is rejected with 400 at query time,
+/// not silently misparsed. `text`/analyzed fields are out of scope for range
+/// queries — comparison is semantically fuzzy after tokenization.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(untagged)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub enum RangeBound {
+    Number(f64),
+    Keyword(String),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
 pub struct RangeQuery {
     pub field: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gt: Option<f64>,
+    pub gt: Option<RangeBound>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gte: Option<f64>,
+    pub gte: Option<RangeBound>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lt: Option<f64>,
+    pub lt: Option<RangeBound>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lte: Option<f64>,
+    pub lte: Option<RangeBound>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

@@ -14,8 +14,8 @@ use proptest::prelude::*;
 use lumen::storage::Engine;
 use lumen::types::{
     Analyzer, CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest,
-    MatchOp, MatchQuery, QueryNode, RangeQuery, SearchRequest, SortMissing, SortOrder, SortSpec,
-    TermQuery,
+    MatchOp, MatchQuery, QueryNode, RangeBound, RangeQuery, SearchRequest, SortMissing, SortOrder,
+    SortSpec, TermQuery,
 };
 
 fn fieldspec(t: FieldType, analyzer: Option<Analyzer>) -> FieldSpec {
@@ -122,7 +122,7 @@ proptest! {
 
         // 2. range n in [5,15)
         let range = || QueryNode::Range(RangeQuery {
-            field: "n".into(), gt: None, gte: Some(5.0), lt: Some(15.0), lte: None });
+            field: "n".into(), gt: None, gte: Some(RangeBound::Number(5.0)), lt: Some(RangeBound::Number(15.0)), lte: None });
         let got = search_ids(&e, req(range(), None));
         prop_assert_eq!(set_of(&got), bf(&|d| d.n >= 5 && d.n < 15), "range");
 

@@ -21,26 +21,26 @@ Public API manifest for `projects/lumen/src/storage.rs` generated from AST durin
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `ApplyOutcome` | projects/lumen/src/storage.rs | enum | pub | 4566 |  |
-| `CollectionSnapshot` | projects/lumen/src/storage.rs | struct | pub | 8590 |  |
+| `CollectionSnapshot` | projects/lumen/src/storage.rs | struct | pub | 8721 |  |
 | `DropOutcome` | projects/lumen/src/storage.rs | enum | pub | 65 |  |
 | `Engine` | projects/lumen/src/storage.rs | struct | pub | 2937 |  |
-| `FieldIndexSnapshot` | projects/lumen/src/storage.rs | enum | pub | 8600 |  |
+| `FieldIndexSnapshot` | projects/lumen/src/storage.rs | enum | pub | 8731 |  |
 | `MAX_INDEX_ITEMS` | projects/lumen/src/storage.rs | constant | pub | 56 |  |
 | `MAX_SORT_KEYS` | projects/lumen/src/storage.rs | constant | pub | 61 |  |
 | `Postings` | projects/lumen/src/storage.rs | struct | pub | 322 |  |
-| `SnapshotV1` | projects/lumen/src/storage.rs | struct | pub | 8581 |  |
+| `SnapshotV1` | projects/lumen/src/storage.rs | struct | pub | 8712 |  |
 | `SortableF64` | projects/lumen/src/storage.rs | struct | pub | 113 |  |
 | `StorageError` | projects/lumen/src/storage.rs | enum | pub | 78 |  |
-| `__collection_schema` | projects/lumen/src/storage.rs | function | pub | 10112 | __collection_schema(         &self,         collection_id: &str,     ) -> Result<BTreeMap<String, FieldSpec>> |
-| `__field_forward_probe` | projects/lumen/src/storage.rs | function | pub | 10149 | __field_forward_probe(         &self,         collection_id: &str,         field: &str,     ) -> Result<(usize, usize, bool)> |
-| `__open_collection_from_segments` | projects/lumen/src/storage.rs | function | pub | 10128 | __open_collection_from_segments(         collection_id: &str,         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<std::sync::Arc<Engine>> |
-| `__seal_collection_to_segments` | projects/lumen/src/storage.rs | function | pub | 10096 | __seal_collection_to_segments(         &self,         collection_id: &str,         dir: &std::path::Path,         applied_seq: u64,     ) -> Result<()> |
-| `__seal_hash_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10032 | __seal_hash_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
-| `__seal_keyword_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9842 | __seal_keyword_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
-| `__seal_number_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9779 | __seal_number_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
-| `__seal_set_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9908 | __seal_set_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
-| `__seal_text_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9976 | __seal_text_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
-| `__seal_vector_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10069 | __seal_vector_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `__collection_schema` | projects/lumen/src/storage.rs | function | pub | 10243 | __collection_schema(         &self,         collection_id: &str,     ) -> Result<BTreeMap<String, FieldSpec>>  |
+| `__field_forward_probe` | projects/lumen/src/storage.rs | function | pub | 10280 | __field_forward_probe(         &self,         collection_id: &str,         field: &str,     ) -> Result<(usize, usize, bool)>  |
+| `__open_collection_from_segments` | projects/lumen/src/storage.rs | function | pub | 10259 | __open_collection_from_segments(         collection_id: &str,         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<std::sync::Arc<Engine>>  |
+| `__seal_collection_to_segments` | projects/lumen/src/storage.rs | function | pub | 10227 | __seal_collection_to_segments(         &self,         collection_id: &str,         dir: &std::path::Path,         applied_seq: u64,     ) -> Result<()>  |
+| `__seal_hash_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10163 | __seal_hash_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_keyword_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9973 | __seal_keyword_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_number_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9910 | __seal_number_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_set_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10039 | __seal_set_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_text_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10107 | __seal_text_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_vector_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10200 | __seal_vector_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
 | `add_field` | projects/lumen/src/storage.rs | function | pub | 3140 | add_field(&self, collection_id: &str, field_name: &str, spec: FieldSpec) -> Result<u32> |
 | `apply_raft_entry` | projects/lumen/src/storage.rs | function | pub | 4524 | apply_raft_entry(&self, entry: crate::log_entry::RaftLogEntry) -> Result<ApplyOutcome> |
 | `bits` | projects/lumen/src/storage.rs | function | pub | 150 | bits(self) -> u64 |
@@ -50,7 +50,7 @@ Public API manifest for `projects/lumen/src/storage.rs` generated from AST durin
 | `drop_collection` | projects/lumen/src/storage.rs | function | pub | 3065 | drop_collection(&self, collection_id: &str, force: bool) -> Result<DropOutcome> |
 | `drop_field` | projects/lumen/src/storage.rs | function | pub | 3085 | drop_field(&self, collection_id: &str, field_name: &str) -> Result<u32> |
 | `duplicates` | projects/lumen/src/storage.rs | function | pub | 4279 | duplicates(         &self,         collection_id: &str,         req: DuplicatesRequest,     ) -> Result<DuplicatesResponse> |
-| `flush_to_segments` | projects/lumen/src/storage.rs | function | pub | 9629 | flush_to_segments(&self, dir: &std::path::Path, up_to_seq: u64) -> Result<()> |
+| `flush_to_segments` | projects/lumen/src/storage.rs | function | pub | 9760 | flush_to_segments(&self, dir: &std::path::Path, up_to_seq: u64) -> Result<()>  |
 | `from_bits` | projects/lumen/src/storage.rs | function | pub | 158 | from_bits(bits: u64) -> Self |
 | `from_sorted` | projects/lumen/src/storage.rs | function | pub | 333 | from_sorted(docids: Vec<u32>, tfs: Vec<u32>) -> Self |
 | `index` | projects/lumen/src/storage.rs | function | pub | 3179 | index(&self, collection_id: &str, req: IndexRequest) -> Result<IndexResponse> |
@@ -58,16 +58,16 @@ Public API manifest for `projects/lumen/src/storage.rs` generated from AST durin
 | `list_collections` | projects/lumen/src/storage.rs | function | pub | 3167 | list_collections(&self) -> Result<Vec<String>> |
 | `metrics` | projects/lumen/src/storage.rs | function | pub | 2963 | metrics(&self) -> &Metrics |
 | `new` | projects/lumen/src/storage.rs | function | pub | 119 | new(x: f64) -> Result<Self> |
-| `new` | projects/lumen/src/storage.rs | function | pub | 2959 | new() -> Self |
+| `new` | projects/lumen/src/storage.rs | function | pub | 119 | new() -> Self  |
 | `number_value_for_external_id` | projects/lumen/src/storage.rs | function | pub | 3723 | number_value_for_external_id(         &self,         collection_id: &str,         external_id: &str,         field: &str,     ) -> Result<Option<f64>> |
-| `open_from_segments` | projects/lumen/src/storage.rs | function | pub | 9439 | open_from_segments(         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<Self> |
-| `reopen_from_segment_dir` | projects/lumen/src/storage.rs | function | pub | 9673 | reopen_from_segment_dir(&self, dir: &std::path::Path) -> Result<u64> |
+| `open_from_segments` | projects/lumen/src/storage.rs | function | pub | 9570 | open_from_segments(         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<Self>  |
+| `reopen_from_segment_dir` | projects/lumen/src/storage.rs | function | pub | 9804 | reopen_from_segment_dir(&self, dir: &std::path::Path) -> Result<u64>  |
 | `replace_docs` | projects/lumen/src/storage.rs | function | pub | 3429 | replace_docs(         &self,         collection_id: &str,         req: ReplaceDocsRequest,     ) -> Result<ReplaceDocsResponse> |
 | `restore` | projects/lumen/src/storage.rs | function | pub | 4450 | restore(&self, snap: SnapshotV1) -> Result<()> |
-| `seal_to_segments` | projects/lumen/src/storage.rs | function | pub | 9404 | seal_to_segments(&mut self, dir: &std::path::Path, applied_seq: u64) -> Result<()> |
+| `seal_to_segments` | projects/lumen/src/storage.rs | function | pub | 9535 | seal_to_segments(&mut self, dir: &std::path::Path, applied_seq: u64) -> Result<()>  |
 | `search` | projects/lumen/src/storage.rs | function | pub | 3751 | search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> |
 | `search_fast_string_term` | projects/lumen/src/storage.rs | function | pub | 4220 | search_fast_string_term(         &self,         collection_id: &str,         field: &str,         value: &str,         limit: u32,     ) -> Result<SearchResponse> |
-| `segment_field_probe` | projects/lumen/src/storage.rs | function | pub | 9715 | segment_field_probe(&self, collection_id: &str, field: &str) -> Result<(usize, bool)> |
+| `segment_field_probe` | projects/lumen/src/storage.rs | function | pub | 9846 | segment_field_probe(&self, collection_id: &str, field: &str) -> Result<(usize, bool)>  |
 | `snapshot` | projects/lumen/src/storage.rs | function | pub | 4435 | snapshot(&self) -> Result<SnapshotV1> |
 | `start_drain` | projects/lumen/src/storage.rs | function | pub | 2971 | start_drain(&self) |
 | `stats` | projects/lumen/src/storage.rs | function | pub | 4468 | stats(&self, collection_id: &str) -> Result<StatsResponse> |
@@ -121,10 +121,10 @@ use crate::types::{
     Analyzer, CacheStats, CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup,
     DuplicatesRequest, DuplicatesResponse, FieldSpec, FieldStats, FieldType, FieldValue,
     HammingQuery, HasChildQuery, IdsQuery, IndexRequest, IndexResponse, KnnQuery, MatchOp,
-    MatchQuery, QueryNode, RangeQuery, ReplaceDocItem, ReplaceDocResult, ReplaceDocsRequest,
-    ReplaceDocsResponse, RrfQuery, SearchHit, SearchRequest, SearchResponse, SortMissing,
-    SortOrder, SortSpec, StatsResponse, StorageStats, TermQuery, TermsQuery, VectorSpec,
-    MAX_BATCH_REPLACE_SIZE,
+    MatchQuery, QueryNode, RangeBound, RangeQuery, ReplaceDocItem, ReplaceDocResult,
+    ReplaceDocsRequest, ReplaceDocsResponse, RrfQuery, SearchHit, SearchRequest, SearchResponse,
+    SortMissing, SortOrder, SortSpec, StatsResponse, StorageStats, TermQuery, TermsQuery,
+    VectorSpec, MAX_BATCH_REPLACE_SIZE,
 };
 use crate::vector_index::{open_backend, FlatCpuIndex, HnswCpuIndex, ScalarCodebook, VectorIndex};
 use roaring::RoaringBitmap;
@@ -6490,20 +6490,32 @@ fn eval_range(coll: &Collection, r: &RangeQuery) -> Result<RoaringBitmap> {
             collection: "<>".into(),
             field: r.field.clone(),
         })?;
-    let FieldIndex::Number(n) = fi else {
-        bail!(
-            "range query is only valid on number fields (field `{}`)",
+    match fi {
+        FieldIndex::Number(n) => {
+            // Phase 2h-3: range walk through the unified accessor. Segment OFF: walks
+            // the in-RAM `values.range((low, high))` exactly as before. Segment ON:
+            // binary-searches the on-disk sorted-value index to the lo/hi bounds
+            // (SELECTIVE — no forward scan), subtracts tombstones, and unions the live
+            // tail — byte-identical result set to the in-RAM range walk over the same
+            // data.
+            let (low, high) = range_bounds(r)?;
+            Ok(n.range_postings(low, high))
+        }
+        // #1307: `keyword` range — byte/lexicographic comparison over the same
+        // `BTreeMap<String, RoaringBitmap>` ordering exact `term`/`terms` match
+        // already uses. Not yet segment-accelerated (walks `live_terms()`, the
+        // segment+live-tail composed enumeration `duplicates`/`unique_terms`
+        // already drive from); correct on every corpus, just not the on-disk
+        // binary-search fast path `NumberIndex::range_postings` has.
+        FieldIndex::Keyword(k) => {
+            let (low, high) = keyword_range_bounds(r)?;
+            Ok(keyword_range_postings(k, low, high))
+        }
+        _ => bail!(
+            "range query is only valid on number or keyword fields (field `{}`)",
             r.field
-        );
-    };
-
-    // Phase 2h-3: range walk through the unified accessor. Segment OFF: walks the
-    // in-RAM `values.range((low, high))` exactly as before. Segment ON: binary-
-    // searches the on-disk sorted-value index to the lo/hi bounds (SELECTIVE — no
-    // forward scan), subtracts tombstones, and unions the live tail —
-    // byte-identical result set to the in-RAM range walk over the same data.
-    let (low, high) = range_bounds(r)?;
-    Ok(n.range_postings(low, high))
+        ),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -6534,21 +6546,33 @@ fn is_predicable(node: &QueryNode) -> bool {
     )
 }
 
+/// Extract this bound's numeric value, or a clear error if the caller sent a
+/// string bound against what turned out to be a `number` field (#1307 AC2 —
+/// 400, not a silent misparse or panic).
+fn numeric_bound(field: &str, b: &RangeBound) -> Result<f64> {
+    match b {
+        RangeBound::Number(v) => Ok(*v),
+        RangeBound::Keyword(_) => bail!(
+            "range query on field `{field}` expects a numeric bound (the field is `number`-typed), got a string"
+        ),
+    }
+}
+
 fn range_bounds(
     r: &RangeQuery,
 ) -> Result<(std::ops::Bound<SortableF64>, std::ops::Bound<SortableF64>)> {
     use std::ops::Bound;
-    let low = if let Some(v) = r.gte {
-        Bound::Included(SortableF64::new(v)?)
-    } else if let Some(v) = r.gt {
-        Bound::Excluded(SortableF64::new(v)?)
+    let low = if let Some(v) = &r.gte {
+        Bound::Included(SortableF64::new(numeric_bound(&r.field, v)?)?)
+    } else if let Some(v) = &r.gt {
+        Bound::Excluded(SortableF64::new(numeric_bound(&r.field, v)?)?)
     } else {
         Bound::Unbounded
     };
-    let high = if let Some(v) = r.lte {
-        Bound::Included(SortableF64::new(v)?)
-    } else if let Some(v) = r.lt {
-        Bound::Excluded(SortableF64::new(v)?)
+    let high = if let Some(v) = &r.lte {
+        Bound::Included(SortableF64::new(numeric_bound(&r.field, v)?)?)
+    } else if let Some(v) = &r.lt {
+        Bound::Excluded(SortableF64::new(numeric_bound(&r.field, v)?)?)
     } else {
         Bound::Unbounded
     };
@@ -6558,6 +6582,107 @@ fn range_bounds(
 fn in_range(v: SortableF64, r: &RangeQuery) -> Result<bool> {
     let (lo, hi) = range_bounds(r)?;
     Ok(in_sortable_range(v, &lo, &hi))
+}
+
+/// Extract this bound's string value, or a clear error if the caller sent a
+/// numeric bound against what turned out to be a `keyword` field (#1307 AC2 —
+/// 400, not a silent misparse or panic).
+fn keyword_bound(field: &str, b: &RangeBound) -> Result<String> {
+    match b {
+        RangeBound::Keyword(v) => Ok(v.clone()),
+        RangeBound::Number(_) => bail!(
+            "range query on field `{field}` expects a string bound (the field is `keyword`-typed), got a number"
+        ),
+    }
+}
+
+/// #1307: the `keyword`-field analogue of [`range_bounds`] — same
+/// gt/gte/lt/lte → `Bound` lowering, but over `String` bounds compared
+/// byte/lexicographically (`String`'s `Ord` is a byte-wise UTF-8 comparison),
+/// the ordering exact `term`/`terms` match already relies on via
+/// `KeywordIndex::terms: BTreeMap<String, RoaringBitmap>`.
+fn keyword_range_bounds(
+    r: &RangeQuery,
+) -> Result<(std::ops::Bound<String>, std::ops::Bound<String>)> {
+    use std::ops::Bound;
+    let low = if let Some(v) = &r.gte {
+        Bound::Included(keyword_bound(&r.field, v)?)
+    } else if let Some(v) = &r.gt {
+        Bound::Excluded(keyword_bound(&r.field, v)?)
+    } else {
+        Bound::Unbounded
+    };
+    let high = if let Some(v) = &r.lte {
+        Bound::Included(keyword_bound(&r.field, v)?)
+    } else if let Some(v) = &r.lt {
+        Bound::Excluded(keyword_bound(&r.field, v)?)
+    } else {
+        Bound::Unbounded
+    };
+    Ok((low, high))
+}
+
+/// `true` when a `(low, high)` `String` range is EMPTY by construction — the
+/// `keyword`-bound analogue of [`range_is_empty`]: same inverted /
+/// degenerate-exclusive guard (`BTreeMap::range` panics on the same shapes
+/// for a `String` key as it does for `SortableF64`), just over `String`.
+fn range_is_empty_str(low: &std::ops::Bound<String>, high: &std::ops::Bound<String>) -> bool {
+    use std::ops::Bound::*;
+    let (lo, lo_excl) = match low {
+        Included(b) => (b, false),
+        Excluded(b) => (b, true),
+        Unbounded => return false,
+    };
+    let (hi, hi_excl) = match high {
+        Included(b) => (b, false),
+        Excluded(b) => (b, true),
+        Unbounded => return false,
+    };
+    lo > hi || (lo == hi && (lo_excl || hi_excl))
+}
+
+/// #1307: byte/lexicographic range walk over a `keyword` field's LIVE terms —
+/// segment + live-tail composed via [`KeywordIndex::live_terms`] (the same
+/// unified enumeration `duplicates`/`unique_terms` drive from after a seal
+/// drops the in-RAM `terms` driver), so a sealed collection answers a keyword
+/// range identically to an unsealed one. `BTreeMap<String, _>::range` walks
+/// the SAME byte-order `terms` already keeps for exact `term`/`terms` match —
+/// no new sort machinery.
+fn keyword_range_postings(
+    k: &KeywordIndex,
+    lo: std::ops::Bound<String>,
+    hi: std::ops::Bound<String>,
+) -> RoaringBitmap {
+    if range_is_empty_str(&lo, &hi) {
+        return RoaringBitmap::new();
+    }
+    let terms = k.live_terms();
+    let mut out = RoaringBitmap::new();
+    for (_, posting) in terms.range((lo, hi)) {
+        out |= posting;
+    }
+    out
+}
+
+fn in_keyword_range(v: &str, r: &RangeQuery) -> Result<bool> {
+    let (lo, hi) = keyword_range_bounds(r)?;
+    Ok(in_str_range(v, &lo, &hi))
+}
+
+#[inline]
+fn in_str_range(v: &str, lo: &std::ops::Bound<String>, hi: &std::ops::Bound<String>) -> bool {
+    use std::ops::Bound::*;
+    let lo_ok = match lo {
+        Included(b) => v >= b.as_str(),
+        Excluded(b) => v > b.as_str(),
+        Unbounded => true,
+    };
+    let hi_ok = match hi {
+        Included(b) => v <= b.as_str(),
+        Excluded(b) => v < b.as_str(),
+        Unbounded => true,
+    };
+    lo_ok && hi_ok
 }
 
 #[inline]
@@ -6965,15 +7090,21 @@ fn clause_matches(coll: &Collection, node: &QueryNode, id: u32) -> Result<Option
         }
         QueryNode::Range(r) => {
             let fi = coll.fields.get(&r.field).ok_or_else(|| unknown(&r.field))?;
-            let FieldIndex::Number(n) = fi else {
-                bail!(
-                    "range query is only valid on number fields (field `{}`)",
+            match fi {
+                FieldIndex::Number(n) => match n.number_at(id) {
+                    Some(v) if in_range(v, r)? => Some(1.0),
+                    _ => None,
+                },
+                // #1307: keyword range as a per-doc predicate — same byte/
+                // lexicographic comparison `eval_range`'s materialized path uses.
+                FieldIndex::Keyword(k) => match k.keyword_at(id) {
+                    Some(v) if in_keyword_range(&v, r)? => Some(1.0),
+                    _ => None,
+                },
+                _ => bail!(
+                    "range query is only valid on number or keyword fields (field `{}`)",
                     r.field
-                );
-            };
-            match n.number_at(id) {
-                Some(v) if in_range(v, r)? => Some(1.0),
-                _ => None,
+                ),
             }
         }
         QueryNode::Match(m) => {
@@ -10372,8 +10503,8 @@ mod segment_predicate_diff_tests {
             QueryNode::Range(RangeQuery {
                 field: "age".into(),
                 gt: None,
-                gte: Some(gte),
-                lt: Some(lt),
+                gte: Some(RangeBound::Number(gte)),
+                lt: Some(RangeBound::Number(lt)),
                 lte: None,
             }),
         ])
@@ -10396,8 +10527,8 @@ mod segment_predicate_diff_tests {
             QueryNode::Range(RangeQuery {
                 field: "age".into(),
                 gt: None,
-                gte: Some(gte),
-                lt: Some(lt),
+                gte: Some(RangeBound::Number(gte)),
+                lt: Some(RangeBound::Number(lt)),
                 lte: None,
             }),
         ])
@@ -11434,10 +11565,10 @@ mod segment_number_range_diff_tests {
     fn rangeq(gte: Option<f64>, gt: Option<f64>, lte: Option<f64>, lt: Option<f64>) -> QueryNode {
         QueryNode::Range(RangeQuery {
             field: "price".into(),
-            gte,
-            gt,
-            lte,
-            lt,
+            gte: gte.map(RangeBound::Number),
+            gt: gt.map(RangeBound::Number),
+            lte: lte.map(RangeBound::Number),
+            lt: lt.map(RangeBound::Number),
         })
     }
 
@@ -13125,8 +13256,8 @@ mod segment_text_diff_tests {
             }),
             QueryNode::Range(RangeQuery {
                 field: "price".into(),
-                gte: Some(lo),
-                lte: Some(hi),
+                gte: Some(RangeBound::Number(lo)),
+                lte: Some(RangeBound::Number(hi)),
                 gt: None,
                 lt: None,
             }),
@@ -14459,7 +14590,7 @@ mod tests {
             query: QueryNode::Range(crate::types::RangeQuery {
                 field: "age".into(),
                 gt: None,
-                gte: Some(0.0),
+                gte: Some(RangeBound::Number(0.0)),
                 lt: None,
                 lte: None,
             }),
@@ -14998,8 +15129,8 @@ mod tests {
                 SearchRequest {
                     query: QueryNode::Range(RangeQuery {
                         field: "age".into(),
-                        gte: Some(20.0),
-                        lt: Some(50.0),
+                        gte: Some(RangeBound::Number(20.0)),
+                        lt: Some(RangeBound::Number(50.0)),
                         gt: None,
                         lte: None,
                     }),
@@ -15013,6 +15144,149 @@ mod tests {
             )
             .unwrap();
         assert_eq!(resp.total, 3);
+    }
+
+    /// #1307 AC1: string `gt`/`gte`/`lt`/`lte` bounds on a `keyword` field
+    /// (`email`) filter by byte/lexicographic comparison, matching a
+    /// reference sort of the same values — the ordering ISO-8601
+    /// date/datetime strings rely on for chronological sort.
+    #[test]
+    fn range_query_on_keyword_byte_lexicographic() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        let emails = [
+            "alice@example.com",
+            "bob@example.com",
+            "carol@example.com",
+            "dave@example.com",
+            "erin@example.com",
+        ];
+        let items = emails
+            .iter()
+            .enumerate()
+            .map(|(i, addr)| {
+                item(
+                    &format!("u{i}"),
+                    "email",
+                    FieldValue::String((*addr).into()),
+                )
+            })
+            .collect();
+        e.index(
+            "users",
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        let run = |gte: Option<&str>, lt: Option<&str>| {
+            e.search(
+                "users",
+                SearchRequest {
+                    query: QueryNode::Range(RangeQuery {
+                        field: "email".into(),
+                        gt: None,
+                        gte: gte.map(|s| RangeBound::Keyword(s.into())),
+                        lt: lt.map(|s| RangeBound::Keyword(s.into())),
+                        lte: None,
+                    }),
+                    limit: 10,
+                    cursor: None,
+                    routing_key: None,
+                    sort: None,
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap()
+        };
+
+        // bob..dave (exclusive) → {bob, carol} = 2, matching a reference sort
+        // of the same strings.
+        let resp = run(Some("bob@example.com"), Some("dave@example.com"));
+        assert_eq!(resp.total, 2);
+        let mut hit_ids: Vec<&str> = resp.hits.iter().map(|h| h.external_id.as_str()).collect();
+        hit_ids.sort();
+        assert_eq!(hit_ids, vec!["u1", "u2"]);
+
+        // Unbounded above "carol@example.com" (inclusive) → {carol, dave, erin} = 3.
+        let resp = run(Some("carol@example.com"), None);
+        assert_eq!(resp.total, 3);
+    }
+
+    /// #1307 AC2: a numeric bound against a non-`number` (`keyword`) field, or
+    /// a string bound against a non-`keyword` (`number`) field, returns an
+    /// error (mapped to 400 at the API layer, not a silent misparse or
+    /// panic) rather than a result set.
+    #[test]
+    fn range_query_bound_type_mismatch_rejected() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![
+                    item("u1", "age", FieldValue::Number(30.0)),
+                    item("u1", "email", FieldValue::String("a@example.com".into())),
+                ],
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        // String bound against the `number` field `age`.
+        let err = e
+            .search(
+                "users",
+                SearchRequest {
+                    query: QueryNode::Range(RangeQuery {
+                        field: "age".into(),
+                        gt: None,
+                        gte: Some(RangeBound::Keyword("20".into())),
+                        lt: None,
+                        lte: None,
+                    }),
+                    limit: 10,
+                    cursor: None,
+                    routing_key: None,
+                    sort: None,
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("numeric bound"),
+            "unexpected error: {err}"
+        );
+
+        // Numeric bound against the `keyword` field `email`.
+        let err = e
+            .search(
+                "users",
+                SearchRequest {
+                    query: QueryNode::Range(RangeQuery {
+                        field: "email".into(),
+                        gt: None,
+                        gte: Some(RangeBound::Number(1.0)),
+                        lt: None,
+                        lte: None,
+                    }),
+                    limit: 10,
+                    cursor: None,
+                    routing_key: None,
+                    sort: None,
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("string bound"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -15050,8 +15324,8 @@ mod tests {
             }),
             QueryNode::Range(RangeQuery {
                 field: "age".into(),
-                gte: Some(25.0),
-                lt: Some(40.0),
+                gte: Some(RangeBound::Number(25.0)),
+                lt: Some(RangeBound::Number(40.0)),
                 gt: None,
                 lte: None,
             }),
@@ -15234,8 +15508,8 @@ mod tests {
             }),
             QueryNode::Range(RangeQuery {
                 field: "age".into(),
-                gte: Some(25.0),
-                lt: Some(40.0),
+                gte: Some(RangeBound::Number(25.0)),
+                lt: Some(RangeBound::Number(40.0)),
                 gt: None,
                 lte: None,
             }),
@@ -15328,7 +15602,7 @@ mod tests {
             QueryNode::Range(RangeQuery {
                 field: "age".into(),
                 gte: None,
-                lt: Some(40.0),
+                lt: Some(RangeBound::Number(40.0)),
                 gt: None,
                 lte: None,
             }),
@@ -16296,9 +16570,9 @@ mod tests {
             run(RangeQuery {
                 field: "age".into(),
                 gt: None,
-                gte: Some(2.0),
+                gte: Some(RangeBound::Number(2.0)),
                 lt: None,
-                lte: Some(5.0)
+                lte: Some(RangeBound::Number(5.0))
             }),
             4
         );
@@ -16306,9 +16580,9 @@ mod tests {
         assert_eq!(
             run(RangeQuery {
                 field: "age".into(),
-                gt: Some(2.0),
+                gt: Some(RangeBound::Number(2.0)),
                 gte: None,
-                lt: Some(5.0),
+                lt: Some(RangeBound::Number(5.0)),
                 lte: None
             }),
             2
@@ -16318,8 +16592,8 @@ mod tests {
             run(RangeQuery {
                 field: "age".into(),
                 gt: None,
-                gte: Some(2.0),
-                lt: Some(5.0),
+                gte: Some(RangeBound::Number(2.0)),
+                lt: Some(RangeBound::Number(5.0)),
                 lte: None
             }),
             3
@@ -16617,7 +16891,7 @@ mod triple_path_diff_tests {
 
             // The query battery (built once, reused across paths).
             let q_range = || driven(QueryNode::Range(RangeQuery {
-                field: "num".into(), gt: None, gte: Some(lo as f64), lt: Some(hi as f64), lte: None,
+                field: "num".into(), gt: None, gte: Some(RangeBound::Number(lo as f64)), lt: Some(RangeBound::Number(hi as f64)), lte: None,
             }));
             let q_term = || driven(QueryNode::Term(TermQuery {
                 field: "kw".into(), value: FieldValue::String(kw_pick.to_string()),
@@ -16881,8 +17155,8 @@ mod checkpoint_engine_tests {
             driven(QueryNode::Range(RangeQuery {
                 field: "num".into(),
                 gt: None,
-                gte: Some(2.0),
-                lt: Some(8.0),
+                gte: Some(RangeBound::Number(2.0)),
+                lt: Some(RangeBound::Number(8.0)),
                 lte: None,
             })),
             driven(QueryNode::Term(TermQuery {

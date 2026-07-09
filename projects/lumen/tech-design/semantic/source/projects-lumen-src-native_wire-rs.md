@@ -20,15 +20,15 @@ Public API manifest for `projects/lumen/src/native_wire.rs` generated from AST d
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `NativeSearchRequest` | projects/lumen/src/native_wire.rs | struct | pub | 39 |  |
-| `NativeSearchResponse` | projects/lumen/src/native_wire.rs | enum | pub | 47 |  |
-| `encode_range_frame` | projects/lumen/src/native_wire.rs | function | pub | 107 | encode_range_frame(     collection_id: &str,     field: &str,     gte: Option<f64>,     lt: Option<f64>,     limit: u32, ) -> Result<Vec<u8>> |
-| `encode_search_frame` | projects/lumen/src/native_wire.rs | function | pub | 84 | encode_search_frame(collection_id: &str, request: &SearchRequest) -> Result<Vec<u8>> |
-| `encode_term_frame` | projects/lumen/src/native_wire.rs | function | pub | 92 | encode_term_frame(     collection_id: &str,     field: &str,     value: &str,     limit: u32, ) -> Result<Vec<u8>> |
-| `encode_term_range_frame` | projects/lumen/src/native_wire.rs | function | pub | 124 | encode_term_range_frame(     collection_id: &str,     term_field: &str,     term_value: &str,     range_field: &str,     gte: Option<f64>,     lt: Option<f64>,     limit: u32, ) -> Result<Vec<u8>> |
-| `search_prepared` | projects/lumen/src/native_wire.rs | function | pub | 146 | search_prepared(stream: &mut S, frame: &[u8]) -> Result<SearchResponse> |
-| `serve_search` | projects/lumen/src/native_wire.rs | function | pub | 54 | serve_search(listener: TcpListener, engine: Arc<Engine>) -> Result<()> |
-| `serve_unix_search` | projects/lumen/src/native_wire.rs | function | pub | 68 | serve_unix_search(listener: UnixListener, engine: Arc<Engine>) -> Result<()> |
+| `NativeSearchRequest` | projects/lumen/src/native_wire.rs | struct | pub | 40 |  |
+| `NativeSearchResponse` | projects/lumen/src/native_wire.rs | enum | pub | 48 |  |
+| `encode_range_frame` | projects/lumen/src/native_wire.rs | function | pub | 108 | encode_range_frame(     collection_id: &str,     field: &str,     gte: Option<f64>,     lt: Option<f64>,     limit: u32, ) -> Result<Vec<u8>> |
+| `encode_search_frame` | projects/lumen/src/native_wire.rs | function | pub | 85 | encode_search_frame(collection_id: &str, request: &SearchRequest) -> Result<Vec<u8>> |
+| `encode_term_frame` | projects/lumen/src/native_wire.rs | function | pub | 93 | encode_term_frame(     collection_id: &str,     field: &str,     value: &str,     limit: u32, ) -> Result<Vec<u8>> |
+| `encode_term_range_frame` | projects/lumen/src/native_wire.rs | function | pub | 125 | encode_term_range_frame(     collection_id: &str,     term_field: &str,     term_value: &str,     range_field: &str,     gte: Option<f64>,     lt: Option<f64>,     limit: u32, ) -> Result<Vec<u8>> |
+| `search_prepared` | projects/lumen/src/native_wire.rs | function | pub | 147 | search_prepared(stream: &mut S, frame: &[u8]) -> Result<SearchResponse> |
+| `serve_search` | projects/lumen/src/native_wire.rs | function | pub | 55 | serve_search(listener: TcpListener, engine: Arc<Engine>) -> Result<()> |
+| `serve_unix_search` | projects/lumen/src/native_wire.rs | function | pub | 69 | serve_unix_search(listener: UnixListener, engine: Arc<Engine>) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -56,7 +56,8 @@ use tokio::{
 use crate::{
     storage::Engine,
     types::{
-        FieldValue, QueryNode, RangeQuery, SearchHit, SearchRequest, SearchResponse, TermQuery,
+        FieldValue, QueryNode, RangeBound, RangeQuery, SearchHit, SearchRequest, SearchResponse,
+        TermQuery,
     },
 };
 
@@ -311,8 +312,10 @@ fn handle_fast_frame(engine: &Engine, frame: &[u8]) -> Result<Vec<u8>> {
         FAST_RANGE => {
             let collection_id = take_str(frame, &mut pos)?;
             let field = take_str(frame, &mut pos)?;
-            let gte = take_bound(frame, &mut pos)?;
-            let lt = take_bound(frame, &mut pos)?;
+            // FAST_RANGE is a numeric-only binary fast path (#1307 keyword-range
+            // widening is JSON-API-only); wrap the raw f64 bound into `RangeBound`.
+            let gte = take_bound(frame, &mut pos)?.map(RangeBound::Number);
+            let lt = take_bound(frame, &mut pos)?.map(RangeBound::Number);
             let limit = take_u32(frame, &mut pos)?;
             (
                 collection_id,
@@ -338,8 +341,8 @@ fn handle_fast_frame(engine: &Engine, frame: &[u8]) -> Result<Vec<u8>> {
             let term_field = take_str(frame, &mut pos)?;
             let term_value = take_str(frame, &mut pos)?;
             let range_field = take_str(frame, &mut pos)?;
-            let gte = take_bound(frame, &mut pos)?;
-            let lt = take_bound(frame, &mut pos)?;
+            let gte = take_bound(frame, &mut pos)?.map(RangeBound::Number);
+            let lt = take_bound(frame, &mut pos)?.map(RangeBound::Number);
             let limit = take_u32(frame, &mut pos)?;
             (
                 collection_id,

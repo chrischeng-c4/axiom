@@ -17,7 +17,7 @@ use proptest::prelude::*;
 use lumen::storage::Engine;
 use lumen::types::{
     Analyzer, CreateCollectionRequest, FieldSpec, FieldType, FieldValue, HasChildQuery, IndexItem,
-    IndexRequest, MatchOp, MatchQuery, QueryNode, RangeQuery, SearchRequest, TermQuery,
+    IndexRequest, MatchOp, MatchQuery, QueryNode, RangeBound, RangeQuery, SearchRequest, TermQuery,
 };
 
 fn spec(t: FieldType, analyzer: Option<Analyzer>) -> FieldSpec {
@@ -144,7 +144,7 @@ proptest! {
         // child filter: sku='S0' AND qty>=5, collapse to distinct parent.
         let mut req = base(QueryNode::And(vec![
             QueryNode::Term(TermQuery { field: "sku".into(), value: FieldValue::String("S0".into()) }),
-            QueryNode::Range(RangeQuery { field: "qty".into(), gt: None, gte: Some(5.0), lt: None, lte: None }),
+            QueryNode::Range(RangeQuery { field: "qty".into(), gt: None, gte: Some(RangeBound::Number(5.0)), lt: None, lte: None }),
         ]));
         req.collapse = Some("parent".into());
         let got: BTreeSet<String> = search(&e, req).into_iter().map(|(p, _)| p).collect();
@@ -205,7 +205,7 @@ fn collapse_early_term_correct() {
             QueryNode::Range(RangeQuery {
                 field: "qty".into(),
                 gt: None,
-                gte: Some(5.0),
+                gte: Some(RangeBound::Number(5.0)),
                 lt: None,
                 lte: None,
             }),
@@ -288,7 +288,7 @@ fn no_cross_element_false_match() {
         QueryNode::Range(RangeQuery {
             field: "qty".into(),
             gt: None,
-            gte: Some(5.0),
+            gte: Some(RangeBound::Number(5.0)),
             lt: None,
             lte: None,
         }),
@@ -313,7 +313,7 @@ fn no_cross_element_false_match() {
         QueryNode::Range(RangeQuery {
             field: "qty".into(),
             gt: None,
-            gte: Some(5.0),
+            gte: Some(RangeBound::Number(5.0)),
             lt: None,
             lte: None,
         }),
@@ -410,7 +410,7 @@ fn has_child_composes_in_boolean_tree() {
                 QueryNode::Range(RangeQuery {
                     field: "qty".into(),
                     gt: None,
-                    gte: Some(5.0),
+                    gte: Some(RangeBound::Number(5.0)),
                     lt: None,
                     lte: None,
                 }),
