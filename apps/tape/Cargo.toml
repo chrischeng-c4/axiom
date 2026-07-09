@@ -37,6 +37,9 @@ service-http = { path = "../../libs/service-http" }
 # Prometheus metric primitives (Counter/Latency + text-format render) for
 # TapeMetrics.
 service-metrics = { path = "../../libs/service-metrics" }
+# Shared bearer-token auth contract (#1326): StaticRoleMapVerifier, the
+# blanket auth_middleware, and the registry loader.
+service-auth = { path = "../../libs/service-auth" }
 axum = { workspace = true }
 utoipa = { workspace = true }
 # Serve-path tracing init (RUST_LOG wins, else info EnvFilter).
