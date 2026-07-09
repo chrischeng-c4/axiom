@@ -54,6 +54,7 @@ members = [
     "libs/build-stamp",
     "apps/cap",
     "apps/vat",
+    "apps/courier",
     "projects/mamba/mambalibs/httpkit",
     "projects/mamba/mambalibs/httpkit/binding",
     "crates/cclab-server",
