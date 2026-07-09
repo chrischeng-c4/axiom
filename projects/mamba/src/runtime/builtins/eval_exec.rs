@@ -1255,9 +1255,36 @@ fn exec_lookup_name(ctx: &ExecContext, name: &str) -> Option<MbValue> {
         return exec_nonlocal_target_frame(ctx, name)
             .and_then(|frame| frame.read().unwrap().get(name).copied());
     }
-    for frame in ctx.frames.iter().rev() {
-        if let Some(&value) = frame.read().unwrap().get(name) {
-            return Some(value);
+    let in_generic_class_body = ctx.generic_class_body_depth > 0
+        && ctx
+            .frame_scopes
+            .last()
+            .is_some_and(|scope| !scope.is_function);
+    if in_generic_class_body {
+        if let Some(frame) = ctx.frames.last() {
+            if let Some(&value) = frame.read().unwrap().get(name) {
+                return Some(value);
+            }
+        }
+        for (frame, scope) in ctx
+            .frames
+            .iter()
+            .zip(ctx.frame_scopes.iter())
+            .rev()
+            .skip(1)
+        {
+            if !scope.is_function {
+                continue;
+            }
+            if let Some(&value) = frame.read().unwrap().get(name) {
+                return Some(value);
+            }
+        }
+    } else {
+        for frame in ctx.frames.iter().rev() {
+            if let Some(&value) = frame.read().unwrap().get(name) {
+                return Some(value);
+            }
         }
     }
     if let Some(locals) = ctx.locals {
@@ -5101,6 +5128,56 @@ mod tests {
         assert_eq!(
             crate::runtime::exception::mb_has_exception().as_bool(),
             Some(false)
+        );
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_exec_nested_generic_class_body_skips_enclosing_class_scope_reads() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(
+            MbValue::from_ptr(MbObject::new_str(
+                "def f():\n    T = str\n    class C:\n        T = int\n        class D[U](T):\n            x = T\n    return C\ncls = f()\n"
+                    .to_string(),
+            )),
+            globals,
+        );
+        assert_eq!(
+            crate::runtime::exception::mb_has_exception().as_bool(),
+            Some(false)
+        );
+
+        let cls = crate::runtime::dict_ops::mb_dict_get(
+            globals,
+            MbValue::from_ptr(MbObject::new_str("cls".to_string())),
+            MbValue::none(),
+        );
+        let nested = crate::runtime::class::mb_getattr(
+            cls,
+            MbValue::from_ptr(MbObject::new_str("D".to_string())),
+        );
+        let bases = crate::runtime::class::mb_getattr(
+            nested,
+            MbValue::from_ptr(MbObject::new_str("__bases__".to_string())),
+        );
+        let bases = extract_items(bases);
+        assert_eq!(
+            bases
+                .first()
+                .and_then(|value| crate::runtime::class::resolve_class_name(*value))
+                .as_deref(),
+            Some("int")
+        );
+
+        let attr = crate::runtime::class::mb_getattr(
+            nested,
+            MbValue::from_ptr(MbObject::new_str("x".to_string())),
+        );
+        assert_eq!(
+            crate::runtime::class::resolve_class_name(attr).as_deref(),
+            Some("str")
         );
         crate::runtime::exception::mb_clear_exception();
     }
