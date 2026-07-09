@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-09T06:36:06.726621+00:00"
-digest = "sha256:c748218a73169c9e0756d98e0726f64952e109d13227898e31d6dfe2f221cd99"
-source_digest = "sha256:c748218a73169c9e0756d98e0726f64952e109d13227898e31d6dfe2f221cd99"
-ir_digest = "sha256:c771a73de5bb46fd44716816230fb5593179ac79d5a7b0ccac3e69833f9ddac8"
+generated_at = "2026-07-09T06:38:02.638954+00:00"
+digest = "sha256:47c7f0d9145eb8d4070ad7b4259365a1c4383468dc517c70f45b38a40f0f2603"
+source_digest = "sha256:47c7f0d9145eb8d4070ad7b4259365a1c4383468dc517c70f45b38a40f0f2603"
+ir_digest = "sha256:bfdcdee97f828cd0a5827231beadb2ab39226be7e81fbeb931444cf6d0c75d1f"
 
 [[files]]
 path = "logic/pg-wire-message-codec-frontend-backend-frames.md"
@@ -15,6 +15,6 @@ section_count = 5
 
 [[files]]
 path = "logic/session-mode-proxy-with-auth-passthrough-and-serve-entrypoint.md"
-digest = "sha256:b28c37e4cfa11ef5e0f026965bf3f5838838b183a3513d5ee6dfde3546c7bd49"
-ir_digest = "sha256:92a3c946a4227eca6204eca24ddeaf072d54c7cbc3b7826a7448c475589f9f78"
+digest = "sha256:5815a9253c5ef0577529d12703f63f9767f82c35305cd842e67803158919399d"
+ir_digest = "sha256:a7cf1214ff219926275cc17650e46b74ea4c0cec5bed326d30ba87ac414a804c"
 section_count = 5
