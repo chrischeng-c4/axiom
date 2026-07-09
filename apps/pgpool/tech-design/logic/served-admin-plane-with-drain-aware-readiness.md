@@ -178,7 +178,6 @@ flowchart TD
     drain_effect --> both_drained[Both join! futures resolve within their drain_timeout]
     both_drained --> process_exit([serve returns Ok, process exits cleanly])
 ```
-
 ## State Machine
 <!-- type: state-machine lang: mermaid -->
 
