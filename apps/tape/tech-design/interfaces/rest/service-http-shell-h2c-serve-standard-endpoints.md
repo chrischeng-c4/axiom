@@ -98,7 +98,7 @@ requirements:
     verify: tests/http_transport.rs::readyz_flips_to_503_on_drain
   error_envelope:
     id: R6
-    text: "Handler error paths return the shared {error, message} ErrorEnvelope JSON (service_http::ApiErr) — bad JSON bodies 400 bad_request, stale/beyond-end checkpoint writes 409 conflict — while success JSON encodings are untouched."
+    text: "Handler error paths return the shared {error, message} ErrorEnvelope JSON (service_http::ApiErr) -- bad JSON bodies 400 bad_request, stale/beyond-end checkpoint writes 409 conflict -- while success JSON encodings are untouched."
     kind: functional
     risk: medium
     verify: tests/http_transport.rs::errors_render_the_shared_envelope
