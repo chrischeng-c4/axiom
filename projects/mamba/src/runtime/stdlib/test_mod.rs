@@ -120,6 +120,71 @@ unsafe extern "C" fn dispatch_type_params_make_base(
     MbValue::from_ptr(MbObject::new_str(class_name))
 }
 
+extern "C" fn type_params_invalid_test_disallowed_expressions(_self_v: MbValue) -> MbValue {
+    const CASES: &[&str] = &[
+        "type X = (yield)",
+        "type X = (yield from x)",
+        "type X = (await 42)",
+        "async def f(): type X = (yield)",
+        "type X = (y := 3)",
+        "class X[T: (yield)]: pass",
+        "class X[T: (yield from x)]: pass",
+        "class X[T: (await 42)]: pass",
+        "class X[T: (y := 3)]: pass",
+        "class X[T](y := Sequence[T]): pass",
+        "def f[T](y: (x := Sequence[T])): pass",
+        "class X[T]([(x := 3) for _ in range(2)] and B): pass",
+        "def f[T: [(x := 3) for _ in range(2)]](): pass",
+        "type T = [(x := 3) for _ in range(2)]",
+    ];
+
+    for source in CASES {
+        super::super::exception::mb_clear_exception();
+        let _ = super::super::builtins::mb_compile(
+            MbValue::from_ptr(MbObject::new_str((*source).to_string())),
+            MbValue::from_ptr(MbObject::new_str("<test_type_params>".to_string())),
+            MbValue::from_ptr(MbObject::new_str("exec".to_string())),
+        );
+        match super::super::exception::current_exception_type().as_deref() {
+            Some("SyntaxError") => super::super::exception::mb_clear_exception(),
+            Some(other) => {
+                let msg = format!("expected SyntaxError for {source:?}, got {other}");
+                super::super::exception::mb_clear_exception();
+                return raise_assertion_error(&msg);
+            }
+            None => return raise_assertion_error(&format!("expected SyntaxError for {source:?}")),
+        }
+    }
+    MbValue::none()
+}
+
+fn register_type_params_wrapper_submodule(type_params_make_base: usize) {
+    let mut invalid_methods: HashMap<String, MbValue> = HashMap::new();
+    invalid_methods.insert(
+        "test_disallowed_expressions".to_string(),
+        MbValue::from_func(type_params_invalid_test_disallowed_expressions as *const () as usize),
+    );
+    super::super::class::mb_class_register(
+        "TypeParamsInvalidTest",
+        vec!["TestCase".to_string()],
+        invalid_methods,
+    );
+
+    let mut attrs = HashMap::new();
+    attrs.insert(
+        "make_base".to_string(),
+        MbValue::from_func(type_params_make_base),
+    );
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(type_params_make_base as u64);
+    });
+    attrs.insert(
+        "TypeParamsInvalidTest".to_string(),
+        MbValue::from_ptr(MbObject::new_str("TypeParamsInvalidTest".to_string())),
+    );
+    super::register_module("test.test_type_params", attrs);
+}
+
 unsafe extern "C" fn support_always_eq(_self_v: MbValue, _other: MbValue) -> MbValue {
     MbValue::from_bool(true)
 }
@@ -1112,10 +1177,7 @@ fn register_support_submodules() {
     super::register_module("test.seq_tests", make_attrs(&[]));
     super::register_module("test.string_tests", make_attrs(&[]));
     super::register_module("test.list_tests", make_attrs(&[]));
-    super::register_module(
-        "test.test_type_params",
-        make_attrs(&[("make_base", type_params_make_base)]),
-    );
+    register_type_params_wrapper_submodule(type_params_make_base);
     super::register_module(
         "test.test_grammar",
         make_attrs(&[

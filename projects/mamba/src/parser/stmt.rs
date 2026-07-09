@@ -4,6 +4,42 @@ use crate::error::MambaError;
 use crate::lexer::token::TokenKind;
 use crate::source::span::{Span, Spanned};
 
+#[derive(Clone, Copy)]
+pub(crate) enum Pep695ExprContext {
+    TypeAlias,
+    TypeParam,
+    GenericDefinition,
+}
+
+impl Pep695ExprContext {
+    fn syntax_message(self, expr: &Expr) -> &'static str {
+        match expr {
+            Expr::Yield(_) | Expr::YieldFrom(_) => match self {
+                Self::TypeAlias => "yield expression cannot be used within a type alias",
+                Self::TypeParam => "yield expression cannot be used within a TypeVar bound",
+                Self::GenericDefinition => {
+                    "yield expression cannot be used within the definition of a generic"
+                }
+            },
+            Expr::Await(_) => match self {
+                Self::TypeAlias => "await expression cannot be used within a type alias",
+                Self::TypeParam => "await expression cannot be used within a TypeVar bound",
+                Self::GenericDefinition => {
+                    "await expression cannot be used within the definition of a generic"
+                }
+            },
+            Expr::Walrus { .. } => match self {
+                Self::TypeAlias => "named expression cannot be used within a type alias",
+                Self::TypeParam => "named expression cannot be used within a TypeVar bound",
+                Self::GenericDefinition => {
+                    "named expression cannot be used within the definition of a generic"
+                }
+            },
+            _ => unreachable!("unexpected PEP 695 validation error source"),
+        }
+    }
+}
+
 impl<'a> Parser<'a> {
     /// Parse a single statement.
     pub fn parse_stmt(&mut self) -> crate::error::Result<Spanned<Stmt>> {
@@ -810,15 +846,22 @@ impl<'a> Parser<'a> {
                             }
                         }
                         self.expect(TokenKind::RParen)?;
+                        for item in &items {
+                            self.validate_pep695_expr(item, Pep695ExprContext::TypeParam)?;
+                        }
                         constraints = Some(items);
                     } else {
                         // Bounded: T: int  (any non-tuple expression)
-                        bound = Some(self.parse_expr()?);
+                        let expr = self.parse_expr()?;
+                        self.validate_pep695_expr(&expr, Pep695ExprContext::TypeParam)?;
+                        bound = Some(expr);
                     }
                 }
                 if self.peek_kind() == Some(TokenKind::Eq) {
                     self.advance(); // consume =
-                    default = Some(self.parse_expr()?);
+                    let expr = self.parse_expr()?;
+                    self.validate_pep695_expr(&expr, Pep695ExprContext::TypeParam)?;
+                    default = Some(expr);
                 }
                 param = TypeParam {
                     name,
@@ -842,6 +885,164 @@ impl<'a> Parser<'a> {
         }
         self.expect(TokenKind::RBracket)?;
         Ok(params)
+    }
+
+    pub(crate) fn validate_pep695_expr(
+        &self,
+        expr: &Spanned<Expr>,
+        context: Pep695ExprContext,
+    ) -> crate::error::Result<()> {
+        match &expr.node {
+            Expr::Yield(_) | Expr::YieldFrom(_) | Expr::Await(_) | Expr::Walrus { .. } => {
+                return Err(MambaError::syntax(
+                    expr.span,
+                    context.syntax_message(&expr.node).to_string(),
+                ));
+            }
+            Expr::BinOp { lhs, rhs, .. } => {
+                self.validate_pep695_expr(lhs, context)?;
+                self.validate_pep695_expr(rhs, context)?;
+            }
+            Expr::UnaryOp { operand, .. } | Expr::Starred(operand) => {
+                self.validate_pep695_expr(operand, context)?;
+            }
+            Expr::Call { func, args } => {
+                self.validate_pep695_expr(func, context)?;
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(value)
+                        | CallArg::StarArg(value)
+                        | CallArg::DoubleStarArg(value)
+                        | CallArg::Keyword { value, .. } => {
+                            self.validate_pep695_expr(value, context)?;
+                        }
+                    }
+                }
+            }
+            Expr::Attr { object, .. } => {
+                self.validate_pep695_expr(object, context)?;
+            }
+            Expr::Index { object, index } => {
+                self.validate_pep695_expr(object, context)?;
+                self.validate_pep695_expr(index, context)?;
+            }
+            Expr::Slice { start, stop, step } => {
+                for part in [start, stop, step].into_iter().flatten() {
+                    self.validate_pep695_expr(part, context)?;
+                }
+            }
+            Expr::ListLit(items) | Expr::SetLit(items) | Expr::TupleLit(items) => {
+                for item in items {
+                    self.validate_pep695_expr(item, context)?;
+                }
+            }
+            Expr::DictLit(entries) => {
+                for (key, value) in entries {
+                    if let Some(key) = key {
+                        self.validate_pep695_expr(key, context)?;
+                    }
+                    self.validate_pep695_expr(value, context)?;
+                }
+            }
+            Expr::IfExpr {
+                body,
+                condition,
+                else_body,
+            } => {
+                self.validate_pep695_expr(body, context)?;
+                self.validate_pep695_expr(condition, context)?;
+                self.validate_pep695_expr(else_body, context)?;
+            }
+            Expr::Lambda { params, body } => {
+                for param in params {
+                    if let Some(default) = &param.default {
+                        self.validate_pep695_expr(default, context)?;
+                    }
+                }
+                self.validate_pep695_expr(body, context)?;
+            }
+            Expr::ListComp {
+                element,
+                generators,
+            }
+            | Expr::SetComp {
+                element,
+                generators,
+            }
+            | Expr::GeneratorExpr {
+                element,
+                generators,
+            } => {
+                for generator in generators {
+                    self.validate_pep695_expr(&generator.iter, context)?;
+                    for condition in &generator.conditions {
+                        self.validate_pep695_expr(condition, context)?;
+                    }
+                }
+                self.validate_pep695_expr(element, context)?;
+            }
+            Expr::DictComp {
+                key,
+                value,
+                generators,
+            } => {
+                for generator in generators {
+                    self.validate_pep695_expr(&generator.iter, context)?;
+                    for condition in &generator.conditions {
+                        self.validate_pep695_expr(condition, context)?;
+                    }
+                }
+                self.validate_pep695_expr(key, context)?;
+                self.validate_pep695_expr(value, context)?;
+            }
+            Expr::FString(parts) => {
+                for part in parts {
+                    self.validate_pep695_fstring_part(part, context)?;
+                }
+            }
+            Expr::ChainedCompare { operands, .. } | Expr::UnpackTarget(operands) => {
+                for operand in operands {
+                    self.validate_pep695_expr(operand, context)?;
+                }
+            }
+            Expr::IntLit(_)
+            | Expr::BigIntLit(_)
+            | Expr::FloatLit(_)
+            | Expr::ComplexLit(_)
+            | Expr::StrLit(_)
+            | Expr::BytesLit(_)
+            | Expr::BoolLit(_)
+            | Expr::NoneLit
+            | Expr::Ellipsis
+            | Expr::Ident(_) => {}
+        }
+        Ok(())
+    }
+
+    fn validate_pep695_fstring_part(
+        &self,
+        part: &FStringPart,
+        context: Pep695ExprContext,
+    ) -> crate::error::Result<()> {
+        if let FStringPart::Expr(value, format) = part {
+            self.validate_pep695_expr(value, context)?;
+            if let Some(format) = format {
+                for part in format {
+                    self.validate_pep695_fstring_part(part, context)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_pep695_generic_exprs(
+        &self,
+        exprs: &[Spanned<Expr>],
+    ) -> crate::error::Result<()> {
+        for expr in exprs {
+            self.validate_pep695_expr(expr, Pep695ExprContext::GenericDefinition)?;
+        }
+        Ok(())
     }
 
     /// Parse an indented block or single-line suite.
