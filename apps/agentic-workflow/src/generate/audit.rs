@@ -1458,7 +1458,7 @@ mod tests {
     fn audit_accepts_aw_ec_generated_wrapper_with_canonical_ref() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        let td_dir = root.join(".aw/tech-design/projects/demo");
+        let td_dir = root.join("tech-design/projects/demo");
         std::fs::create_dir_all(&td_dir).unwrap();
         std::fs::write(
             td_dir.join("external-contracts.md"),
@@ -1489,7 +1489,7 @@ fn demo_contract() {}
 
         assert_eq!(
             audit_block(
-                ".aw/tech-design/projects/demo/external-contracts.md#demo-contract",
+                "tech-design/projects/demo/external-contracts.md#demo-contract",
                 wrapper,
                 "projects/demo/tests/behavior_demo_contract.rs",
                 root,
@@ -1498,7 +1498,7 @@ fn demo_contract() {}
         );
         assert!(matches!(
             audit_block(
-                ".aw/tech-design/projects/demo/external-contracts.md:L8",
+                "tech-design/projects/demo/external-contracts.md:L8",
                 wrapper,
                 "projects/demo/tests/behavior_demo_contract.rs",
                 root,
@@ -1576,7 +1576,7 @@ changes:
         )
         .unwrap();
 
-        let td_dir = root.join(".aw/tech-design/projects/httpkit");
+        let td_dir = root.join("tech-design/projects/httpkit");
         std::fs::create_dir_all(&td_dir).unwrap();
         let spec_path = td_dir.join("http-exception.md");
         std::fs::write(
@@ -1684,7 +1684,7 @@ changes:
         let crate_dir = root.join("projects/mamba/mambalibs/httpkit");
         std::fs::create_dir_all(crate_dir.join("src")).unwrap();
 
-        let td_dir = root.join(".aw/tech-design/projects/httpkit");
+        let td_dir = root.join("tech-design/projects/httpkit");
         std::fs::create_dir_all(&td_dir).unwrap();
         let spec_path = td_dir.join("schema-order.md");
         std::fs::write(
@@ -1777,17 +1777,17 @@ pub mod foo;
         let file = tmp.path().join("foo.rs");
         std::fs::write(
             &file,
-            r#"// SPEC-MANAGED: .aw/tech-design/foo.md#schema
+            r#"// SPEC-MANAGED: tech-design/foo.md#schema
 // CODEGEN-BEGIN
 use serde::{Deserialize, Serialize};
 
-/// @spec .aw/tech-design/foo.md#schema
+/// @spec tech-design/foo.md#schema
 #[derive(Debug, Clone)]
 pub struct Foo {
     pub bar: String,
 }
 
-/// @spec .aw/tech-design/foo.md#x-constructor
+/// @spec tech-design/foo.md#x-constructor
 impl Foo {
     pub fn new(bar: String) -> Self { Self { bar } }
 }
@@ -1812,9 +1812,9 @@ impl Foo {
         let file = tmp.path().join("cli.rs");
         std::fs::write(
             &file,
-            r#"// SPEC-MANAGED: .aw/tech-design/foo.md#schema
+            r#"// SPEC-MANAGED: tech-design/foo.md#schema
 // CODEGEN-BEGIN
-/// @spec .aw/tech-design/foo.md#schema
+/// @spec tech-design/foo.md#schema
 #[derive(Debug, Parser)]
 #[command(
     name = "jet-parity-corpus",
@@ -1844,9 +1844,9 @@ pub struct FixturesCli {
         let file = tmp.path().join("foo.rs");
         std::fs::write(
             &file,
-            r#"// SPEC-MANAGED: .aw/tech-design/foo.md#schema
+            r#"// SPEC-MANAGED: tech-design/foo.md#schema
 // CODEGEN-BEGIN
-/// @spec .aw/tech-design/foo.md#schema
+/// @spec tech-design/foo.md#schema
 pub struct Foo;
 
 pub fn hand_added_helper() { }
@@ -1862,7 +1862,7 @@ pub fn hand_added_helper() { }
             "gap should name the offending fn: {:?}",
             gaps[0]
         );
-        assert_eq!(gaps[0].enclosing_spec_ref, ".aw/tech-design/foo.md#schema");
+        assert_eq!(gaps[0].enclosing_spec_ref, "tech-design/foo.md#schema");
     }
 
     /// Marker audit — items outside any CODEGEN block are hand-written by
@@ -1879,9 +1879,9 @@ impl HandWritten {
     pub fn new() -> Self { Self }
 }
 
-// SPEC-MANAGED: .aw/tech-design/foo.md#schema
+// SPEC-MANAGED: tech-design/foo.md#schema
 // CODEGEN-BEGIN
-/// @spec .aw/tech-design/foo.md#schema
+/// @spec tech-design/foo.md#schema
 pub struct Gen;
 // CODEGEN-END
 "#,
@@ -1903,12 +1903,12 @@ pub struct Gen;
         let file = tmp.path().join("foo.rs");
         std::fs::write(
             &file,
-            r#"// SPEC-MANAGED: .aw/tech-design/foo.md#schema
+            r#"// SPEC-MANAGED: tech-design/foo.md#schema
 // CODEGEN-BEGIN
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// @spec .aw/tech-design/foo.md#schema
+/// @spec tech-design/foo.md#schema
 pub struct Foo;
 // CODEGEN-END
 "#,
@@ -1930,7 +1930,7 @@ pub struct Foo;
         let file = tmp.path().join("src.rs");
         std::fs::write(
             &file,
-            r#"// SPEC-MANAGED: .aw/tech-design/does-not-exist.md#schema
+            r#"// SPEC-MANAGED: tech-design/does-not-exist.md#schema
 // CODEGEN-BEGIN
 pub struct Nope;
 // CODEGEN-END
@@ -1965,7 +1965,7 @@ pub struct Nope;
 //! Some module.
 
 fn embed_for_tests() {
-    let _ = r"// SPEC-MANAGED: .aw/tech-design/nope.md#schema
+    let _ = r"// SPEC-MANAGED: tech-design/nope.md#schema
 // CODEGEN-BEGIN
 pub struct LooksReal;
 // CODEGEN-END
@@ -2007,8 +2007,8 @@ pub struct LooksReal;
     fn spec_index_maps_files_to_specs() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        write_td_spec(root, ".aw/tech-design/a.md", &["src/foo.rs", "src/bar.rs"]);
-        write_td_spec(root, ".aw/tech-design/b.md", &["src/bar.rs"]);
+        write_td_spec(root, "tech-design/a.md", &["src/foo.rs", "src/bar.rs"]);
+        write_td_spec(root, "tech-design/b.md", &["src/bar.rs"]);
 
         let idx = build_spec_file_index(root).unwrap();
         assert_eq!(idx.len(), 2);
@@ -2027,14 +2027,14 @@ pub struct LooksReal;
     fn uncovered_flags_pub_item_in_claimed_file() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        write_td_spec(root, ".aw/tech-design/a.md", &["src/foo.rs"]);
+        write_td_spec(root, "tech-design/a.md", &["src/foo.rs"]);
 
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(
             root.join("src/foo.rs"),
-            r#"// SPEC-MANAGED: .aw/tech-design/a.md#schema
+            r#"// SPEC-MANAGED: tech-design/a.md#schema
 // CODEGEN-BEGIN
-/// @spec .aw/tech-design/a.md#schema
+/// @spec tech-design/a.md#schema
 pub struct Foo;
 // CODEGEN-END
 
@@ -2055,7 +2055,7 @@ pub fn hand_written_helper() { }
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         // Spec claims a different file.
-        write_td_spec(root, ".aw/tech-design/a.md", &["src/other.rs"]);
+        write_td_spec(root, "tech-design/a.md", &["src/other.rs"]);
 
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(root.join("src/unclaimed.rs"), "pub fn whatever() { }\n").unwrap();
@@ -2069,14 +2069,14 @@ pub fn hand_written_helper() { }
     fn uncovered_ignores_items_inside_codegen_block() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        write_td_spec(root, ".aw/tech-design/a.md", &["src/foo.rs"]);
+        write_td_spec(root, "tech-design/a.md", &["src/foo.rs"]);
 
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(
             root.join("src/foo.rs"),
-            r#"// SPEC-MANAGED: .aw/tech-design/a.md#schema
+            r#"// SPEC-MANAGED: tech-design/a.md#schema
 // CODEGEN-BEGIN
-/// @spec .aw/tech-design/a.md#schema
+/// @spec tech-design/a.md#schema
 pub struct Foo;
 
 pub fn inside_block_fn() { }
@@ -2097,7 +2097,7 @@ pub fn inside_block_fn() { }
     fn uncovered_ignores_items_inside_handwrite_block() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        write_td_spec(root, ".aw/tech-design/a.md", &["src/foo.rs"]);
+        write_td_spec(root, "tech-design/a.md", &["src/foo.rs"]);
 
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(
@@ -2121,7 +2121,7 @@ pub fn hand_written_helper() { }
     fn uncovered_ignores_handwrite_when_fixture_marker_confuses_strict_parser() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        write_td_spec(root, ".aw/tech-design/a.md", &["src/foo.rs"]);
+        write_td_spec(root, "tech-design/a.md", &["src/foo.rs"]);
 
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(
@@ -2158,7 +2158,7 @@ pub fn fixture_only() {}\n\
     fn uncovered_ignores_pub_items_inside_raw_string_fixtures() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        write_td_spec(root, ".aw/tech-design/a.md", &["src/foo.rs"]);
+        write_td_spec(root, "tech-design/a.md", &["src/foo.rs"]);
 
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(
@@ -2182,7 +2182,7 @@ pub fn real_shadow() {}
     fn uncovered_respects_skip_file_directive() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        write_td_spec(root, ".aw/tech-design/a.md", &["src/foo.rs"]);
+        write_td_spec(root, "tech-design/a.md", &["src/foo.rs"]);
 
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(
@@ -2200,14 +2200,14 @@ pub fn real_shadow() {}
     fn unified_walks_emit_all_four_categories() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        write_td_spec(root, ".aw/tech-design/a.md", &["src/foo.rs"]);
+        write_td_spec(root, "tech-design/a.md", &["src/foo.rs"]);
 
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(
             root.join("src/foo.rs"),
-            r#"// SPEC-MANAGED: .aw/tech-design/a.md#schema
+            r#"// SPEC-MANAGED: tech-design/a.md#schema
 // CODEGEN-BEGIN
-/// @spec .aw/tech-design/a.md#schema
+/// @spec tech-design/a.md#schema
 pub struct Foo;
 
 pub fn smuggled_into_block() { }

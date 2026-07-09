@@ -91,6 +91,7 @@ impl Vat {
             lineage: self.meta.lineage.clone(),
             last_run: self.meta.last_run.clone(),
             test_run: self.meta.test_run.clone(),
+            plan: self.meta.plan.clone(),
             workspace: WorkspaceInfo {
                 rootfs: self.rootfs().to_string_lossy().into_owned(),
                 file_count: now.len(),
@@ -149,6 +150,7 @@ pub fn create(
             lineage,
             last_run: None,
             test_run: None,
+            plan: None,
         },
     };
     vat.save()?;

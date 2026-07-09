@@ -1009,7 +1009,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory first
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         let input = CreateSpecInput {
@@ -1065,7 +1065,8 @@ mod tests {
         assert!(result.contains("Created spec"));
 
         // Verify file was created
-        let spec_path = project_root.join(".aw/changes/test-change/specs/mcp-protocol.md");
+        let spec_path = crate::shared::workspace::change_path(project_root, "test-change")
+            .join("specs/mcp-protocol.md");
         assert!(spec_path.exists());
 
         let content = std::fs::read_to_string(&spec_path).unwrap();
@@ -1137,7 +1138,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory first
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         let input = CreateSpecInput {
@@ -1218,7 +1219,8 @@ mod tests {
         assert!(result.contains("Created spec"));
 
         // Verify file was created
-        let spec_path = project_root.join(".aw/changes/test-change/specs/api-flow.md");
+        let spec_path = crate::shared::workspace::change_path(project_root, "test-change")
+            .join("specs/api-flow.md");
         assert!(spec_path.exists());
 
         let content = std::fs::read_to_string(&spec_path).unwrap();
@@ -1249,7 +1251,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory first
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         let input = CreateSpecInput {
@@ -1331,7 +1333,8 @@ mod tests {
         assert!(result.contains("Created spec"));
 
         // Verify file was created
-        let spec_path = project_root.join(".aw/changes/test-change/specs/user-api.md");
+        let spec_path = crate::shared::workspace::change_path(project_root, "test-change")
+            .join("specs/user-api.md");
         assert!(spec_path.exists());
 
         let content = std::fs::read_to_string(&spec_path).unwrap();
@@ -1354,7 +1357,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory first
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         let input = CreateSpecInput {
@@ -1415,7 +1418,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path();
 
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         let input = CreateSpecInput {
@@ -1470,7 +1473,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path();
 
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         let input = CreateSpecInput {
@@ -1527,7 +1530,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory first
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         let input = CreateSpecInput {
@@ -1577,7 +1580,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path();
 
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         let input = CreateSpecInput {
@@ -1629,7 +1632,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path();
 
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         let input = CreateSpecInput {
@@ -1683,7 +1686,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path();
 
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         let input = CreateSpecInput {
@@ -1735,7 +1738,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path();
 
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         let input = CreateSpecInput {
@@ -1791,7 +1794,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory first
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         let input = CreateSpecInput {
@@ -1833,7 +1836,8 @@ mod tests {
         assert!(result.contains("Created spec"));
 
         // Verify file was created in spec_group subdirectory
-        let spec_path = project_root.join(".aw/changes/test-change/specs/sdd/workflow-spec.md");
+        let spec_path = crate::shared::workspace::change_path(project_root, "test-change")
+            .join("specs/sdd/workflow-spec.md");
         assert!(
             spec_path.exists(),
             "Spec should be created in sdd subdirectory"
@@ -1850,7 +1854,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         // Test invalid spec_group format (starts with number)
@@ -1905,7 +1909,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         let input = CreateSpecInput {
@@ -1946,7 +1950,8 @@ mod tests {
         assert!(result.contains("Created spec"));
 
         // Verify file was created in root specs directory (no subdirectory)
-        let spec_path = project_root.join(".aw/changes/test-change/specs/cross-cutting-spec.md");
+        let spec_path = crate::shared::workspace::change_path(project_root, "test-change")
+            .join("specs/cross-cutting-spec.md");
         assert!(
             spec_path.exists(),
             "Spec should be created in root specs directory"
@@ -1964,7 +1969,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         let input = CreateSpecInput {
@@ -2004,7 +2009,8 @@ mod tests {
         assert!(result.contains("Created spec"));
 
         // Verify file was created
-        let spec_path = project_root.join(".aw/changes/test-change/specs/sdd/extended-auth.md");
+        let spec_path = crate::shared::workspace::change_path(project_root, "test-change")
+            .join("specs/sdd/extended-auth.md");
         assert!(spec_path.exists());
 
         let content = std::fs::read_to_string(&spec_path).unwrap();
@@ -2020,7 +2026,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         let input = CreateSpecInput {
@@ -2414,7 +2420,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path();
 
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         let input = CreateSpecInput {
@@ -2454,16 +2460,16 @@ mod tests {
         assert!(result.contains("Created spec"));
 
         // Verify file is under groups/group-directory-fix/specs/ NOT root specs/
-        let group_spec_path = project_root
-            .join(".aw/changes/test-change/groups/group-directory-fix/specs/change-spec-logic.md");
+        let group_spec_path = crate::shared::workspace::change_path(project_root, "test-change")
+            .join("groups/group-directory-fix/specs/change-spec-logic.md");
         assert!(
             group_spec_path.exists(),
             "Spec must be under groups/group-directory-fix/specs/"
         );
 
         // Verify root specs/ does NOT contain the file
-        let root_spec_path =
-            project_root.join(".aw/changes/test-change/specs/change-spec-logic.md");
+        let root_spec_path = crate::shared::workspace::change_path(project_root, "test-change")
+            .join("specs/change-spec-logic.md");
         assert!(!root_spec_path.exists(), "Spec must NOT be in root specs/");
 
         let content = std::fs::read_to_string(&group_spec_path).unwrap();

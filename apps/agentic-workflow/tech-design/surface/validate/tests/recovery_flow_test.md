@@ -61,7 +61,17 @@ fn test_recovery_verbs_present() {
         cmd.find_subcommand("cb").is_none(),
         "cb namespace is retired into td"
     );
-    td.find_subcommand("code-claim").expect("td code-claim");
+    assert!(
+        td.find_subcommand("code-claim").is_none(),
+        "td code-claim was folded into td create --from-source (#1273)"
+    );
+    let create = td.find_subcommand("create").expect("td create");
+    assert!(
+        create
+            .get_arguments()
+            .any(|a| a.get_long() == Some("from-source")),
+        "td create must expose --from-source (#1273)"
+    );
     assert!(
         cmd.find_subcommand("idle").is_none(),
         "cb idle was removed with the old .aw/worktrees recovery model"
@@ -89,18 +99,17 @@ fn flow_b2_e2e_td_claim_from_path() {
     // and dispatch envelope.
 }
 
-/// B3 e2e: `aw td code-claim <code-path>` followed by
+/// B3 e2e: `aw td create --from-source <code-path>` followed by
 /// `aw td claim <slug>` reaches td_created. Requires fillback
 /// infrastructure (tree-sitter, codebase fixture).
 #[test]
 #[ignore = "requires fillback pipeline + tree-sitter fixtures; run manually with --ignored"]
 fn flow_b3_e2e_cb_then_td_claim() {
-    // Reserved for e2e: td code-claim creates a spec from code, then td
-    // claim --from-path on that spec lands at td_created.
+    // Reserved for e2e: td create --from-source creates a spec from code,
+    // then td claim --from-path on that spec lands at td_created.
 }
 
 // CODEGEN-END
-
 ```
 
 ## Changes

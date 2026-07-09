@@ -24,7 +24,7 @@ fn standardize_subcommands_registered() {
     // #920 (epic #914 slice F): `managed`/`semantic`/`traceability` layer
     // `report`/`next`/`run` drivers are retired -- `aw health` absorbs the
     // read (same inventory/coverage library code) and slice-E worker verbs
-    // (`aw td promote`, `aw td code-claim`, `aw wi create`, ...) absorb the
+    // (`aw td promote`, `aw td create --from-source`, `aw wi create`, ...) absorb the
     // mutating remediation. Only `audit` remains under `aw standardize`.
     assert!(standardize.find_subcommand("managed").is_none());
     assert!(standardize.find_subcommand("semantic").is_none());

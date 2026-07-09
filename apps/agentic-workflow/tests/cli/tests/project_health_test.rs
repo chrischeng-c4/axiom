@@ -837,7 +837,7 @@ fn project_health_summary_routes_managed_blockers_to_standardize() {
     assert_eq!(summary["next"]["kind"].as_str(), Some("run_command"));
     assert_eq!(
         summary["next"]["command"].as_str(),
-        Some("aw td code-claim projects/demo/src/lib.rs")
+        Some("aw td create --from-source projects/demo/src/lib.rs --project demo")
     );
 }
 
@@ -880,7 +880,7 @@ fn project_health_next_reason_matches_managed_route_when_ec_has_no_expected_unit
 
     assert_eq!(
         summary["next"]["command"].as_str(),
-        Some("aw td code-claim projects/demo/src/lib.rs")
+        Some("aw td create --from-source projects/demo/src/lib.rs --project demo")
     );
     assert_eq!(
         summary["next"]["reason"].as_str(),
@@ -1073,7 +1073,7 @@ fn no_cold_rebuild_workspace_keeps_specific_repair_route() {
 
     assert_eq!(
         summary["next"]["command"].as_str(),
-        Some("aw td code-claim projects/demo/src/lib.rs")
+        Some("aw td create --from-source projects/demo/src/lib.rs --project demo")
     );
     let missing = summary["completion"]["missing"].as_array().unwrap();
     assert!(missing

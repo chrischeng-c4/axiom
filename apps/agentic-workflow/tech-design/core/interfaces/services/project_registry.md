@@ -731,6 +731,7 @@ mod tests {
                 paths: vec![format!("crates/{}/**", name)],
                 target,
                 test_cmd: test_cmd.map(|s| s.to_string()),
+                verify_cold: false,
                 codegen: None,
             }],
         }

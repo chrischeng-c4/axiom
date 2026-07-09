@@ -538,7 +538,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_change(temp_dir: &Path, change_id: &str) {
-        let change_dir = temp_dir.join(".aw/changes").join(change_id);
+        let change_dir = crate::shared::workspace::change_path(temp_dir, change_id);
         fs::create_dir_all(&change_dir).unwrap();
 
         let proposal = r#"---
@@ -577,7 +577,7 @@ This is a test proposal.
     #[test]
     fn test_build_payload_with_existing_issue() {
         let temp_dir = TempDir::new().unwrap();
-        let change_dir = temp_dir.path().join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(temp_dir.path(), "test-change");
         fs::create_dir_all(&change_dir).unwrap();
 
         let proposal = r#"---

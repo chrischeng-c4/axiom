@@ -3725,6 +3725,34 @@ fn verify_ec_context(ctx: &EcProjectContext) -> Result<EcVerifySummary> {
     })
 }
 
+/// Terminal `aw td code-check` EC gate (issue #858, epic #1270 R1b): resolve
+/// `project`'s EC context under `project_root` and, only when it actually
+/// has a configured `[aw.ec.generated]` inventory, run the same verify
+/// machinery `aw ec verify` uses (`verify_ec_context`) instead of
+/// reimplementing a runner. Returns `None` for every case the terminal
+/// caller must treat as advisory (no inventory configured) rather than a
+/// hard error: an unresolvable/unregistered project row, a project with no
+/// `aw.toml` EC inventory section at all, or a malformed inventory file —
+/// mirroring the fail-open policy the other terminal gates in `cb.rs`
+/// already follow for their own git/lookup failures, so a project that
+/// simply hasn't configured EC yet (or aw itself, before #1280) can never be
+/// bricked by this gate. `Some(summary)` — red or green — means an
+/// inventory genuinely exists and was evaluated; the caller decides what to
+/// do with `summary.clean`.
+pub(crate) fn terminal_ec_gate_summary(
+    project_root: &Path,
+    project: &str,
+) -> Option<EcVerifySummary> {
+    let ctx = resolve_ec_project_context(project_root, project).ok()?;
+    // Cheap existence probe before paying for `verify_ec_context`'s command
+    // run: `load_ec_manifest` returns `Ok(None)` when the project's aw.toml
+    // has no `[aw.ec.generated]` table at all, which is exactly the
+    // "no inventory configured" advisory case (never a silent pass, but
+    // never a spurious command run either).
+    load_ec_manifest(&ctx).ok()??;
+    verify_ec_context(&ctx).ok()
+}
+
 fn run_ec_tool_manifest_command(
     tool: &EcToolManifest,
     project_root: &Path,

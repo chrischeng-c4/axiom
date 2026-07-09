@@ -75,6 +75,8 @@ definitions:
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/workflow/scope.rs -->
 ```rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/interfaces/workflow/scope.md#source
+// CODEGEN-BEGIN
 //! Scope extraction and cascade for explore phases.
 //!
 //! Reads issue labels and clarifications to determine affected crates/modules,
@@ -249,6 +251,13 @@ pub fn resolve_spec_dir_for_root(
     specs_base: &Path,
     scopes: &HashMap<String, String>,
 ) -> Option<PathBuf> {
+    if group == "agentic-workflow" {
+        let candidate = project_root.join("apps/agentic-workflow/tech-design");
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+
     if let Ok(resolved) =
         crate::services::project_registry::resolve_td_root_from_config(project_root, group)
     {
@@ -281,11 +290,7 @@ pub fn pre_filter_specs(
     }
 
     let specs_dir = workspace::tech_design_path(project_root);
-    if !specs_dir.exists()
-        && workspace::project_tech_design_paths(project_root)
-            .iter()
-            .all(|(_, path)| !path.exists())
-    {
+    if !any_tech_design_root_exists(project_root, &specs_dir) {
         return String::new();
     }
 
@@ -344,11 +349,7 @@ pub fn build_spec_dir_tree(
     }
 
     let specs_dir = workspace::tech_design_path(project_root);
-    if !specs_dir.exists()
-        && workspace::project_tech_design_paths(project_root)
-            .iter()
-            .all(|(_, path)| !path.exists())
-    {
+    if !any_tech_design_root_exists(project_root, &specs_dir) {
         return String::new();
     }
 
@@ -368,11 +369,7 @@ pub fn build_spec_dir_tree(
         }
 
         found_any = true;
-        let dir_name = group_dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(group.as_str());
-        output.push_str(&format!("{}\n", dir_name));
+        output.push_str(&format!("{}\n", group));
         render_tree_recursive(&group_dir, &mut output, "");
         output.push('\n');
     }
@@ -382,6 +379,16 @@ pub fn build_spec_dir_tree(
     }
 
     output
+}
+
+fn any_tech_design_root_exists(project_root: &Path, specs_dir: &Path) -> bool {
+    specs_dir.exists()
+        || project_root
+            .join("apps/agentic-workflow/tech-design")
+            .exists()
+        || workspace::project_tech_design_paths(project_root)
+            .iter()
+            .any(|(_, path)| path.exists())
 }
 
 /// Recursively render directory entries as an ASCII tree (tree CLI format).
@@ -487,12 +494,12 @@ pub fn suggest_topics(description: &str) -> Vec<&'static str> {
 /// Extract crate/module references from requirements text.
 ///
 /// Matches patterns like `crates/{name}/`, `cclab-{name}`, `crate:{name}`, and
-/// the no-prefix arsenal crates (`sdd`). Returns deduplicated crate names.
+/// the no-prefix arsenal crates (`agentic-workflow`). Returns deduplicated crate names.
 fn extract_scope_from_requirements(requirements: &str) -> Vec<String> {
     let mut names = Vec::new();
 
     // Arsenal crates that don't carry the `cclab-` prefix.
-    const BARE_CRATES: &[&str] = &["sdd"];
+    const BARE_CRATES: &[&str] = &["agentic-workflow"];
 
     for word in requirements.split_whitespace() {
         let w =
@@ -510,15 +517,14 @@ fn extract_scope_from_requirements(requirements: &str) -> Vec<String> {
                 }
             }
         }
-        // Match `crates/{bare-crate}/...` or `projects/{bare-crate}/...`.
-        else if let Some(rest) = w.strip_prefix("crates/") {
-            if let Some(name) = rest.split('/').next() {
-                let name = name.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
-                if BARE_CRATES.contains(&name) && !names.contains(&name.to_string()) {
-                    names.push(name.to_string());
-                }
-            }
-        } else if let Some(rest) = w.strip_prefix("projects/") {
+        // Match `crates/{bare-crate}/...`, `projects/{bare-crate}/...`, or
+        // `apps/{bare-crate}/...` (the projects/ -> apps/ source-root move,
+        // #1211/#1312).
+        else if let Some(rest) = w
+            .strip_prefix("crates/")
+            .or_else(|| w.strip_prefix("projects/"))
+            .or_else(|| w.strip_prefix("apps/"))
+        {
             if let Some(name) = rest.split('/').next() {
                 let name = name.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
                 if BARE_CRATES.contains(&name) && !names.contains(&name.to_string()) {
@@ -531,7 +537,7 @@ fn extract_scope_from_requirements(requirements: &str) -> Vec<String> {
             let name = name.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
             if !name.is_empty() {
                 let crate_name = match name {
-                    "genesis" | "aurora" => "sdd".to_string(),
+                    "genesis" | "aurora" => "agentic-workflow".to_string(),
                     n if BARE_CRATES.contains(&n) => n.to_string(),
                     _ => format!("cclab-{}", name),
                 };
@@ -550,7 +556,7 @@ fn extract_scope_from_requirements(requirements: &str) -> Vec<String> {
                 names.push(crate_name);
             }
         }
-        // Match standalone bare arsenal crate names (e.g. `sdd`)
+        // Match standalone bare arsenal crate names (e.g. `agentic-workflow`)
         else if BARE_CRATES.contains(&w) && !names.contains(&w.to_string()) {
             names.push(w.to_string());
         }
@@ -562,7 +568,7 @@ fn extract_scope_from_requirements(requirements: &str) -> Vec<String> {
 /// Extract `crate:*` labels from issue file content → crate names.
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/workflow/scope.md#source
 pub(crate) fn extract_crate_labels_from_content(content: &str) -> Option<Vec<String>> {
-    const BARE_CRATES: &[&str] = &["sdd"];
+    const BARE_CRATES: &[&str] = &["agentic-workflow"];
     let fm = frontmatter::parse_frontmatter_value(content).ok()?;
     let labels = fm.get("labels")?.as_sequence()?;
     let crates: Vec<String> = labels
@@ -570,7 +576,7 @@ pub(crate) fn extract_crate_labels_from_content(content: &str) -> Option<Vec<Str
         .filter_map(|v| v.as_str())
         .filter_map(|s| s.strip_prefix("crate:"))
         .map(|name| match name {
-            "genesis" | "aurora" => "sdd".to_string(),
+            "genesis" | "aurora" => "agentic-workflow".to_string(),
             n if BARE_CRATES.contains(&n) => n.to_string(),
             other => format!("cclab-{}", other),
         })
@@ -588,7 +594,7 @@ pub(crate) fn extract_crate_labels_from_content(content: &str) -> Option<Vec<Str
 fn extract_scope_from_clarifications(
     content: &str,
 ) -> (Vec<String>, Vec<String>, Vec<String>, bool) {
-    const BARE_CRATES: &[&str] = &["sdd"];
+    const BARE_CRATES: &[&str] = &["agentic-workflow"];
     let mut crates = Vec::new();
     let mut paths = Vec::new();
     let mut keywords = Vec::new();
@@ -677,7 +683,7 @@ mod tests {
         .unwrap();
 
         let scope = extract_scope(change_dir);
-        assert_eq!(scope.affected_crates, vec!["sdd"]);
+        assert_eq!(scope.affected_crates, vec!["agentic-workflow"]);
         assert_eq!(scope.source, "issues");
         assert!(!scope.is_unknown);
     }
@@ -688,12 +694,14 @@ mod tests {
         let change_dir = temp.path();
         std::fs::write(
             change_dir.join("pre_clarifications.md"),
-            "## Scope\n\nQ: Which modules are affected?\nA: The sdd crate, specifically the MCP tools.\n",
+            "## Scope\n\nQ: Which modules are affected?\nA: The agentic-workflow crate, specifically the MCP tools.\n",
         )
         .unwrap();
 
         let scope = extract_scope(change_dir);
-        assert!(scope.affected_crates.contains(&"sdd".to_string()));
+        assert!(scope
+            .affected_crates
+            .contains(&"agentic-workflow".to_string()));
         assert_eq!(scope.source, "clarifications");
     }
 
@@ -728,7 +736,9 @@ mod tests {
         .unwrap();
 
         let scope = extract_scope(change_dir);
-        assert!(scope.affected_crates.contains(&"sdd".to_string()));
+        assert!(scope
+            .affected_crates
+            .contains(&"agentic-workflow".to_string()));
         assert!(scope.affected_crates.contains(&"cclab-lens".to_string()));
         assert_eq!(scope.source, "both");
     }
@@ -760,32 +770,33 @@ mod tests {
     #[test]
     fn test_pre_filter_specs_with_matching_group() {
         let temp = TempDir::new().unwrap();
-        let specs_dir = temp.path().join(".aw/tech-design/sdd");
+        let specs_dir = temp.path().join("tech-design/agentic-workflow");
         std::fs::create_dir_all(&specs_dir).unwrap();
         std::fs::write(specs_dir.join("workflow.md"), "# Workflow\n").unwrap();
         std::fs::write(specs_dir.join("state.md"), "# State\n").unwrap();
 
-        let result = pre_filter_specs(&["sdd".to_string()], temp.path(), None);
-        assert!(result.contains("### sdd"));
-        assert!(result.contains("read_path:specs/sdd/state.md"));
-        assert!(result.contains("read_path:specs/sdd/workflow.md"));
+        let result = pre_filter_specs(&["agentic-workflow".to_string()], temp.path(), None);
+        assert!(result.contains("### agentic-workflow"));
+        assert!(result.contains("read_path:specs/agentic-workflow/state.md"));
+        assert!(result.contains("read_path:specs/agentic-workflow/workflow.md"));
     }
 
     #[test]
     fn test_extract_scope_from_requirements_patterns() {
         // crates/cclab-{name}/ pattern
-        let result = extract_scope_from_requirements("Modify apps/agentic-workflow/src/tools/agent.rs");
-        assert_eq!(result, vec!["sdd"]);
+        let result =
+            extract_scope_from_requirements("Modify apps/agentic-workflow/src/tools/agent.rs");
+        assert_eq!(result, vec!["agentic-workflow"]);
 
         // crate:{name} pattern
         let result = extract_scope_from_requirements("Affects crate:lens and crate:genesis");
         assert!(result.contains(&"cclab-lens".to_string()));
-        assert!(result.contains(&"sdd".to_string())); // genesis → sdd
+        assert!(result.contains(&"agentic-workflow".to_string())); // genesis → agentic-workflow
 
         // standalone cclab-{name}
-        let result = extract_scope_from_requirements("Changes in cclab-pg and sdd");
+        let result = extract_scope_from_requirements("Changes in cclab-pg and agentic-workflow");
         assert!(result.contains(&"cclab-pg".to_string()));
-        assert!(result.contains(&"sdd".to_string()));
+        assert!(result.contains(&"agentic-workflow".to_string()));
 
         // no matches
         let result = extract_scope_from_requirements("No crate references here");
@@ -819,7 +830,7 @@ mod tests {
     #[test]
     fn test_pre_filter_specs_no_specs_dir() {
         let temp = TempDir::new().unwrap();
-        let result = pre_filter_specs(&["sdd".to_string()], temp.path(), None);
+        let result = pre_filter_specs(&["agentic-workflow".to_string()], temp.path(), None);
         assert!(result.is_empty());
     }
 
@@ -835,9 +846,9 @@ mod tests {
         std::fs::create_dir_all(specs_base.join("apps/agentic-workflow")).unwrap();
 
         let mut scopes = HashMap::new();
-        scopes.insert("sdd".to_string(), "projects".to_string());
+        scopes.insert("agentic-workflow".to_string(), "apps".to_string());
 
-        let result = resolve_spec_dir("sdd", specs_base, &scopes);
+        let result = resolve_spec_dir("agentic-workflow", specs_base, &scopes);
         assert_eq!(result, Some(specs_base.join("apps/agentic-workflow")));
     }
 
@@ -894,15 +905,15 @@ mod tests {
     #[test]
     fn test_resolve_spec_dir_for_root_prefers_project_td_path() {
         let temp = TempDir::new().unwrap();
-        let specs_base = temp.path().join(".aw/tech-design");
+        let specs_base = temp.path().join("tech-design");
         let project_td = temp.path().join("apps/agentic-workflow/tech-design");
         std::fs::create_dir_all(&project_td).unwrap();
         std::fs::create_dir_all(temp.path().join(".aw")).unwrap();
         std::fs::write(
-            temp.path().join(".aw/config.toml"),
+            temp.path().join("aw.toml"),
             r#"
 [agentic_workflow.tech_design_platform]
-path = ".aw/tech-design"
+path = "tech-design"
 
 [[projects]]
 name = "agentic-workflow"
@@ -913,7 +924,8 @@ td_path = "apps/agentic-workflow/tech-design"
         .unwrap();
 
         let scopes = HashMap::new();
-        let result = resolve_spec_dir_for_root("sdd", temp.path(), &specs_base, &scopes);
+        let result =
+            resolve_spec_dir_for_root("agentic-workflow", temp.path(), &specs_base, &scopes);
 
         assert_eq!(result, Some(project_td));
     }
@@ -933,8 +945,8 @@ td_path = "apps/agentic-workflow/tech-design"
     #[test]
     fn test_pre_filter_specs_with_config_scoped_subdir() {
         let temp = TempDir::new().unwrap();
-        // Create .aw/tech-design/crates/cclab-lens/ with spec files
-        let specs_dir = temp.path().join(".aw/tech-design/crates/cclab-lens");
+        // Create tech-design/crates/cclab-lens/ with spec files
+        let specs_dir = temp.path().join("tech-design/crates/cclab-lens");
         std::fs::create_dir_all(&specs_dir).unwrap();
         std::fs::write(specs_dir.join("parser.md"), "# Parser\n").unwrap();
         std::fs::write(specs_dir.join("semantic.md"), "# Semantic\n").unwrap();
@@ -959,10 +971,10 @@ td_path = "apps/agentic-workflow/tech-design"
         std::fs::write(specs_dir.join("state.md"), "# State\n").unwrap();
         std::fs::create_dir_all(temp.path().join(".aw")).unwrap();
         std::fs::write(
-            temp.path().join(".aw/config.toml"),
+            temp.path().join("aw.toml"),
             r#"
 [agentic_workflow.tech_design_platform]
-path = ".aw/tech-design"
+path = "tech-design"
 
 [[projects]]
 name = "agentic-workflow"
@@ -972,9 +984,9 @@ td_path = "apps/agentic-workflow/tech-design"
         )
         .unwrap();
 
-        let result = pre_filter_specs(&["sdd".to_string()], temp.path(), None);
+        let result = pre_filter_specs(&["agentic-workflow".to_string()], temp.path(), None);
 
-        assert!(result.contains("### sdd"));
+        assert!(result.contains("### agentic-workflow"));
         assert!(result.contains("logic/state.md"));
     }
 
@@ -982,7 +994,7 @@ td_path = "apps/agentic-workflow/tech-design"
     #[test]
     fn test_backward_compat_empty_scopes_fallback() {
         let temp = TempDir::new().unwrap();
-        let specs_dir = temp.path().join(".aw/tech-design/crates/cclab-pg");
+        let specs_dir = temp.path().join("tech-design/crates/cclab-pg");
         std::fs::create_dir_all(&specs_dir).unwrap();
         std::fs::write(specs_dir.join("query.md"), "# Query\n").unwrap();
 
@@ -1001,10 +1013,14 @@ td_path = "apps/agentic-workflow/tech-design"
         std::fs::create_dir_all(&specs_dir).unwrap();
         std::fs::write(specs_dir.join("logic.md"), "# Logic\n").unwrap();
 
-        // Config exists but does NOT have sdd in scopes — fallback still works
+        // Config exists but does NOT have agentic-workflow in scopes — fallback still works
         let config = SddConfig::default();
-        let result = pre_filter_specs(&["sdd".to_string()], temp.path(), Some(&config));
-        assert!(result.contains("### sdd"));
+        let result = pre_filter_specs(
+            &["agentic-workflow".to_string()],
+            temp.path(),
+            Some(&config),
+        );
+        assert!(result.contains("### agentic-workflow"));
         assert!(result.contains("logic"));
     }
 
@@ -1023,11 +1039,8 @@ td_path = "apps/agentic-workflow/tech-design"
     fn test_build_spec_dir_tree_no_specs_dir() {
         let temp = TempDir::new().unwrap();
         // No .aw/tech-design/ directory created
-        let result = build_spec_dir_tree(&["sdd".to_string()], temp.path(), None);
-        assert!(
-            result.is_empty(),
-            "missing .aw/tech-design/ → empty string"
-        );
+        let result = build_spec_dir_tree(&["agentic-workflow".to_string()], temp.path(), None);
+        assert!(result.is_empty(), "missing .aw/tech-design/ → empty string");
     }
 
     #[test]
@@ -1047,10 +1060,13 @@ td_path = "apps/agentic-workflow/tech-design"
         std::fs::write(specs_dir.join("logic.md"), "# Logic\n").unwrap();
         std::fs::write(specs_dir.join("state.md"), "# State\n").unwrap();
 
-        let result = build_spec_dir_tree(&["sdd".to_string()], temp.path(), None);
+        let result = build_spec_dir_tree(&["agentic-workflow".to_string()], temp.path(), None);
         assert!(!result.is_empty(), "should return tree output");
         // Directory name should appear as tree root line
-        assert!(result.contains("sdd"), "tree should contain group dir name");
+        assert!(
+            result.contains("agentic-workflow"),
+            "tree should contain group dir name"
+        );
         // Both files should appear in tree
         assert!(
             result.contains("logic.md"),
@@ -1070,7 +1086,7 @@ td_path = "apps/agentic-workflow/tech-design"
     #[test]
     fn test_build_spec_dir_tree_last_entry_uses_corner_connector() {
         let temp = TempDir::new().unwrap();
-        let specs_dir = temp.path().join(".aw/tech-design/crates/my-crate");
+        let specs_dir = temp.path().join("tech-design/crates/my-crate");
         std::fs::create_dir_all(&specs_dir).unwrap();
         std::fs::write(specs_dir.join("api.md"), "# API\n").unwrap();
 
@@ -1083,7 +1099,7 @@ td_path = "apps/agentic-workflow/tech-design"
     #[test]
     fn test_build_spec_dir_tree_multiple_files_uses_correct_connectors() {
         let temp = TempDir::new().unwrap();
-        let specs_dir = temp.path().join(".aw/tech-design/crates/cclab-pg");
+        let specs_dir = temp.path().join("tech-design/crates/cclab-pg");
         std::fs::create_dir_all(&specs_dir).unwrap();
         std::fs::write(specs_dir.join("a.md"), "# A\n").unwrap();
         std::fs::write(specs_dir.join("b.md"), "# B\n").unwrap();
@@ -1106,7 +1122,7 @@ td_path = "apps/agentic-workflow/tech-design"
         std::fs::write(specs_dir.join("logic").join("state-machine.md"), "# SM\n").unwrap();
         std::fs::write(specs_dir.join("logic").join("rules.md"), "# Rules\n").unwrap();
 
-        let result = build_spec_dir_tree(&["sdd".to_string()], temp.path(), None);
+        let result = build_spec_dir_tree(&["agentic-workflow".to_string()], temp.path(), None);
         assert!(result.contains("logic"), "subdir name should appear");
         // At least one nested file should appear
         assert!(
@@ -1124,7 +1140,7 @@ td_path = "apps/agentic-workflow/tech-design"
         std::fs::write(specs_dir.join("logic").join("spec.md"), "# Spec\n").unwrap();
         std::fs::write(specs_dir.join("top.md"), "# Top\n").unwrap();
 
-        let result = build_spec_dir_tree(&["sdd".to_string()], temp.path(), None);
+        let result = build_spec_dir_tree(&["agentic-workflow".to_string()], temp.path(), None);
         // Non-last top-level entries cause a │ pipe prefix for children
         assert!(
             result.contains("│"),
@@ -1135,8 +1151,8 @@ td_path = "apps/agentic-workflow/tech-design"
     #[test]
     fn test_build_spec_dir_tree_multiple_groups() {
         let temp = TempDir::new().unwrap();
-        let specs_a = temp.path().join(".aw/tech-design/crates/group-a");
-        let specs_b = temp.path().join(".aw/tech-design/crates/group-b");
+        let specs_a = temp.path().join("tech-design/crates/group-a");
+        let specs_b = temp.path().join("tech-design/crates/group-b");
         std::fs::create_dir_all(&specs_a).unwrap();
         std::fs::create_dir_all(&specs_b).unwrap();
         std::fs::write(specs_a.join("spec-a.md"), "# A\n").unwrap();
@@ -1153,8 +1169,8 @@ td_path = "apps/agentic-workflow/tech-design"
     #[test]
     fn test_build_spec_dir_tree_with_config_scope() {
         let temp = TempDir::new().unwrap();
-        // Create spec dir at the config-driven path: .aw/tech-design/crates/cclab-lens
-        let specs_dir = temp.path().join(".aw/tech-design/crates/cclab-lens");
+        // Create spec dir at the config-driven path: tech-design/crates/cclab-lens
+        let specs_dir = temp.path().join("tech-design/crates/cclab-lens");
         std::fs::create_dir_all(&specs_dir).unwrap();
         std::fs::write(specs_dir.join("parser.md"), "# Parser\n").unwrap();
 
@@ -1195,6 +1211,8 @@ td_path = "apps/agentic-workflow/tech-design"
         );
     }
 }
+
+// CODEGEN-END
 ```
 
 ## Changes

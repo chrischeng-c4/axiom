@@ -403,7 +403,7 @@ mod tests {
     #[test]
     fn discover_returns_crate_directories() {
         let tmp = TempDir::new().unwrap();
-        let specs_dir = tmp.path().join(".aw/tech-design/crates");
+        let specs_dir = tmp.path().join("tech-design/crates");
         std::fs::create_dir_all(specs_dir.join("sdd")).unwrap();
         std::fs::create_dir_all(specs_dir.join("jet")).unwrap();
 
@@ -442,7 +442,7 @@ td_path = "apps/cgdb/tech_design"
     #[test]
     fn discover_ignores_files_in_crates_dir() {
         let tmp = TempDir::new().unwrap();
-        let specs_dir = tmp.path().join(".aw/tech-design/crates");
+        let specs_dir = tmp.path().join("tech-design/crates");
         std::fs::create_dir_all(&specs_dir).unwrap();
         // A plain file alongside crate dirs must not be returned
         std::fs::write(specs_dir.join("README.md"), "# index\n").unwrap();

@@ -59,12 +59,43 @@ enum Cmd {
         /// Agent runner mode already emits compact JSONL. Direct mode uses this for full VatState JSON.
         #[arg(long)]
         json: bool,
+        /// Opaque upstream execution plan to copy into the vat and expose as VAT_PLAN_PATH.
+        #[arg(long)]
+        plan: Option<PathBuf>,
         /// Override vat.toml [workspace].keep for this configured run.
         #[arg(long, value_enum)]
         keep: Option<RetentionPolicy>,
         /// Direct command mode, e.g. `vat run -- python train.py`.
         #[arg(last = true, allow_hyphen_values = true, value_name = "COMMAND")]
         cmd: Vec<String>,
+    },
+    /// Print the configured run topology without creating a vat or starting services.
+    Plan {
+        /// Plan a named production-like integration scenario from vat.toml.
+        #[arg(long)]
+        scenario: Option<String>,
+        /// Named runner(s) from vat.toml; omit to use the default selection rule.
+        runners: Vec<String>,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Cheap host preflight for the configured run topology.
+    Doctor {
+        /// Check a named production-like integration scenario from vat.toml.
+        #[arg(long)]
+        scenario: Option<String>,
+        /// Named runner(s) from vat.toml; omit to use the default selection rule.
+        runners: Vec<String>,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Report this host's effective vat backend capabilities.
+    Capabilities {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// List all vats.
     Ls {
@@ -98,6 +129,33 @@ enum Cmd {
     },
     /// Delete a vat and its workspace.
     Rm { id: String },
+    /// Garbage-collect retained vats. Dry-run by default; use --execute to delete.
+    Gc {
+        /// Actually delete selected vats. Omit for a dry-run report.
+        #[arg(long)]
+        execute: bool,
+        /// Keep this many newest vats regardless of status.
+        #[arg(long, default_value_t = 10)]
+        keep_last: usize,
+        /// Include failed runs in deletion candidates.
+        #[arg(long)]
+        include_failed: bool,
+        /// Include snapshots in deletion candidates.
+        #[arg(long)]
+        include_snapshots: bool,
+        /// Only select vats last updated at least this many days ago.
+        #[arg(long)]
+        older_than_days: Option<i64>,
+        /// Measure disk size with du. Slower on large stores.
+        #[arg(long)]
+        measure: bool,
+        /// Also compute apparent file size by walking every retained rootfs. Implies --measure.
+        #[arg(long)]
+        apparent: bool,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Print captured logs from a vat.toml runner invocation.
     Logs { id: String, source: Option<String> },
     /// Print agent-facing docs for driving vat — offline, no network.
@@ -287,6 +345,7 @@ pub fn run() -> Result<ExitCode> {
             isolation,
             gpu,
             json,
+            plan,
             keep,
             mut cmd,
         } => {
@@ -306,6 +365,7 @@ pub fn run() -> Result<ExitCode> {
                     isolation,
                     gpu,
                     json,
+                    plan,
                     keep,
                 });
             }
@@ -328,15 +388,46 @@ pub fn run() -> Result<ExitCode> {
                 isolation,
                 gpu,
                 json,
+                plan,
                 keep,
             })
         }
+        Cmd::Plan {
+            scenario,
+            runners,
+            json,
+        } => commands::plan::exec(configured_target(scenario, runners)?, json),
+        Cmd::Doctor {
+            scenario,
+            runners,
+            json,
+        } => commands::doctor::exec(configured_target(scenario, runners)?, json),
+        Cmd::Capabilities { json } => commands::capabilities::exec(json),
         Cmd::Ls { json } => commands::ls::exec(json),
         Cmd::State { id, compact } => commands::state::exec(id, compact),
         Cmd::Diff { id, json } => commands::diff::exec(id, json),
         Cmd::Fork { id, name } => commands::snapshot::fork(id, name),
         Cmd::Snapshot { id, name } => commands::snapshot::snapshot(id, name),
         Cmd::Rm { id } => commands::rm::exec(id),
+        Cmd::Gc {
+            execute,
+            keep_last,
+            include_failed,
+            include_snapshots,
+            older_than_days,
+            measure,
+            apparent,
+            json,
+        } => commands::gc::exec(commands::gc::Args {
+            execute,
+            keep_last,
+            include_failed,
+            include_snapshots,
+            older_than_days,
+            measure,
+            apparent,
+            json,
+        }),
         Cmd::Logs { id, source } => commands::logs::exec(id, source),
         Cmd::Llm { topic, format } => commands::llm::exec(&topic, format.into()),
         Cmd::Upgrade {
@@ -376,6 +467,22 @@ pub fn run() -> Result<ExitCode> {
             route,
             no_forward,
         ),
+    }
+}
+
+fn configured_target(
+    scenario: Option<String>,
+    runners: Vec<String>,
+) -> Result<commands::plan::PlanTarget> {
+    if let Some(scenario_id) = scenario {
+        if !runners.is_empty() {
+            anyhow::bail!("--scenario cannot be combined with runner ids");
+        }
+        Ok(commands::plan::PlanTarget::Scenario { scenario_id })
+    } else {
+        Ok(commands::plan::PlanTarget::Runner {
+            runner_ids: runners,
+        })
     }
 }
 
