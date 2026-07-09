@@ -92,4 +92,20 @@ edges:
   - { from: apply, to: snap, label: "applied - snapshot_index >= threshold" }
   - { from: write, to: local, label: "non-write verbs" }
   - { from: snap, to: serve }
+---
+flowchart TD
+    boot([serve_main: data-dir and peer-service resolved]) --> mode{replica_mode: REPLICAS_PER_SHARD gt 1?}
+    mode -->|no| single[direct-journal path unchanged, zero flags, zero behavior change]
+    mode -->|yes| peertls[peer_tls::PeerTlsConfig::from_env, config-surface + fail-fast validation only]
+    peertls --> topo[ClusterTopology::from_env tape / TAPE_PEER_SERVICE / TAPE_PEERS, no local ordinal math]
+    topo --> spawn[TapeRaft::spawn: raft_host RaftStore + TapeStateMachine + RaftHost]
+    spawn --> mount[merge raft.router onto serve port outside bearer auth]
+    mount --> write{append or checkpoint-put?}
+    write -->|yes| propose[resolve timestamp_ms / updated_at_ms then TapeCommand -> raft.propose]
+    propose --> apply[apply on every node: journal.append / put_checkpoint_at + OutcomeWindow + fsynced applied marker]
+    write -->|no| local[replay / checkpoint-get stay node-local reads]
+    apply --> floor[restart: cold-replay skips entries at or below the recovered marker]
+    apply --> snap[snapshot = whole TapeJournal + applied index; restore replaces it wholesale; compaction bounds the raft log]
+    snap --> serve([auto-mode CLI contract: TAPE_DATA_DIR / TAPE_PEER_SERVICE / TAPE_PEERS / TAPE_PEER_TLS_*])
+    floor --> serve
 ```
