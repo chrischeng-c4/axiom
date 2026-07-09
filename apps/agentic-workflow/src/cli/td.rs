@@ -4755,7 +4755,7 @@ mod tests {
 
         assert_eq!(
             default_spec_path_for_issue(&issue, "3940", "apps/jet/specs/"),
-            ".aw/tech-design/projects/jet/specs/emit-parity-ready-jet-browser-observation-bundles.md"
+            ".aw/tech-design/apps/jet/specs/emit-parity-ready-jet-browser-observation-bundles.md"
         );
     }
 
@@ -4765,7 +4765,7 @@ mod tests {
 
         assert_eq!(
             default_spec_path_for_issue(&issue, "3940", "apps/jet/specs/"),
-            ".aw/tech-design/projects/jet/specs/issue-3940.md"
+            ".aw/tech-design/apps/jet/specs/issue-3940.md"
         );
     }
 

@@ -527,7 +527,7 @@ requirementDiagram
             scope: vec![
                 TestScope {
                     name: "all-rs".to_string(),
-                    changes: vec!["projects/**".to_string()],
+                    changes: vec!["apps/**".to_string()],
                     test_cmd: None,
                     setup: None,
                     teardown: None,

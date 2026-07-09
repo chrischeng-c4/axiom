@@ -100,7 +100,7 @@ mod tests {
         let result = execute_write_main_spec(&args, project_root).unwrap();
         assert!(result.contains("✓ Spec created"));
 
-        let file_path = project_root.join(".aw/tech-design/test-group/test-spec.md");
+        let file_path = project_root.join("tech-design/test-group/test-spec.md");
         assert!(file_path.exists());
     }
 

@@ -4633,7 +4633,7 @@ changes:
         .unwrap();
         std::fs::write(crate_dir.join("README.md"), "# httpkit\n\nFramework.\n").unwrap();
 
-        let td_dir = root.join(".aw/tech-design/httpkit");
+        let td_dir = root.join("tech-design/httpkit");
         std::fs::create_dir_all(&td_dir).unwrap();
         let spec_path = td_dir.join("http-exception.md");
         std::fs::write(
@@ -4686,7 +4686,7 @@ changes:
         assert!(readme.contains("<!-- CODEGEN-END -->"));
         assert!(readme.contains("| Symbol | Spec |"));
         assert!(readme.contains("| `HTTPException` |"));
-        assert!(readme.contains(".aw/tech-design/httpkit/http-exception.md"));
+        assert!(readme.contains("tech-design/httpkit/http-exception.md"));
 
         // Add a second spec, re-run, expect both symbols aggregated.
         let response_spec = td_dir.join("response.md");

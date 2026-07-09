@@ -443,7 +443,7 @@ mod tests {
         // Spec under crates/ (fallback tree)
         make_spec(
             &root,
-            ".aw/tech-design/crates/cclab-pg/query.md",
+            "tech-design/crates/cclab-pg/query.md",
             "# Query Builder\n\nPostgres query builder spec for database.\n",
         );
 
@@ -597,7 +597,7 @@ td_path = "apps/agentic-workflow/tech-design"
     fn test_resolve_group_dir_fallback_crates() {
         let temp = tempfile::TempDir::new().unwrap();
         let root = temp.path().to_path_buf();
-        let dir = root.join(".aw/tech-design/crates/my-group");
+        let dir = root.join("tech-design/crates/my-group");
         std::fs::create_dir_all(&dir).unwrap();
 
         let store = FileSystemSpecStore::new(root.clone(), HashMap::new());
@@ -609,7 +609,7 @@ td_path = "apps/agentic-workflow/tech-design"
     fn test_resolve_group_dir_fallback_projects() {
         let temp = tempfile::TempDir::new().unwrap();
         let root = temp.path().to_path_buf();
-        let dir = root.join(".aw/tech-design/projects/my-project");
+        let dir = root.join("tech-design/projects/my-project");
         std::fs::create_dir_all(&dir).unwrap();
 
         let store = FileSystemSpecStore::new(root.clone(), HashMap::new());

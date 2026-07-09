@@ -695,7 +695,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory with proposal
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
         std::fs::write(
             change_dir.join("proposal.md"),
@@ -714,7 +714,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory with spec
-        let specs_dir = project_root.join(".aw/changes/test-change/specs");
+        let specs_dir = workspace::change_path(project_root, "test-change").join("specs");
         std::fs::create_dir_all(&specs_dir).unwrap();
         std::fs::write(
             specs_dir.join("my-feature.md"),
@@ -732,7 +732,7 @@ mod tests {
         let project_root = temp_dir.path();
 
         // Create change directory with specs
-        let specs_dir = project_root.join(".aw/changes/test-change/specs");
+        let specs_dir = workspace::change_path(project_root, "test-change").join("specs");
         std::fs::create_dir_all(&specs_dir).unwrap();
         std::fs::write(specs_dir.join("spec-a.md"), "# Spec A").unwrap();
         std::fs::write(specs_dir.join("spec-b.md"), "# Spec B").unwrap();
@@ -750,7 +750,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path();
 
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
         // Inline review: impl_1.1.md with # Reviews section
         std::fs::write(
@@ -769,7 +769,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path();
 
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = workspace::change_path(project_root, "test-change");
         std::fs::create_dir_all(&change_dir).unwrap();
         // Inline review: impl.md with # Reviews section
         std::fs::write(
@@ -952,7 +952,7 @@ td_path = "apps/agentic-workflow/tech-design"
         let project_root = temp_dir.path();
 
         // Create change directory with specs and proposal
-        let change_dir = project_root.join(".aw/changes/test-change");
+        let change_dir = workspace::change_path(project_root, "test-change");
         let specs_dir = change_dir.join("specs");
         std::fs::create_dir_all(&specs_dir).unwrap();
         std::fs::write(specs_dir.join("spec-a.md"), "# Spec A").unwrap();

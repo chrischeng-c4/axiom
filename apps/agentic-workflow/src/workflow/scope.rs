@@ -694,7 +694,7 @@ mod tests {
     #[test]
     fn test_pre_filter_specs_with_matching_group() {
         let temp = TempDir::new().unwrap();
-        let specs_dir = temp.path().join(".aw/tech-design/agentic-workflow");
+        let specs_dir = temp.path().join("tech-design/agentic-workflow");
         std::fs::create_dir_all(&specs_dir).unwrap();
         std::fs::write(specs_dir.join("workflow.md"), "# Workflow\n").unwrap();
         std::fs::write(specs_dir.join("state.md"), "# State\n").unwrap();
@@ -918,7 +918,7 @@ td_path = "apps/agentic-workflow/tech-design"
     #[test]
     fn test_backward_compat_empty_scopes_fallback() {
         let temp = TempDir::new().unwrap();
-        let specs_dir = temp.path().join(".aw/tech-design/crates/cclab-pg");
+        let specs_dir = temp.path().join("tech-design/crates/cclab-pg");
         std::fs::create_dir_all(&specs_dir).unwrap();
         std::fs::write(specs_dir.join("query.md"), "# Query\n").unwrap();
 
@@ -1010,7 +1010,7 @@ td_path = "apps/agentic-workflow/tech-design"
     #[test]
     fn test_build_spec_dir_tree_last_entry_uses_corner_connector() {
         let temp = TempDir::new().unwrap();
-        let specs_dir = temp.path().join(".aw/tech-design/crates/my-crate");
+        let specs_dir = temp.path().join("tech-design/crates/my-crate");
         std::fs::create_dir_all(&specs_dir).unwrap();
         std::fs::write(specs_dir.join("api.md"), "# API\n").unwrap();
 
@@ -1023,7 +1023,7 @@ td_path = "apps/agentic-workflow/tech-design"
     #[test]
     fn test_build_spec_dir_tree_multiple_files_uses_correct_connectors() {
         let temp = TempDir::new().unwrap();
-        let specs_dir = temp.path().join(".aw/tech-design/crates/cclab-pg");
+        let specs_dir = temp.path().join("tech-design/crates/cclab-pg");
         std::fs::create_dir_all(&specs_dir).unwrap();
         std::fs::write(specs_dir.join("a.md"), "# A\n").unwrap();
         std::fs::write(specs_dir.join("b.md"), "# B\n").unwrap();
@@ -1075,8 +1075,8 @@ td_path = "apps/agentic-workflow/tech-design"
     #[test]
     fn test_build_spec_dir_tree_multiple_groups() {
         let temp = TempDir::new().unwrap();
-        let specs_a = temp.path().join(".aw/tech-design/crates/group-a");
-        let specs_b = temp.path().join(".aw/tech-design/crates/group-b");
+        let specs_a = temp.path().join("tech-design/crates/group-a");
+        let specs_b = temp.path().join("tech-design/crates/group-b");
         std::fs::create_dir_all(&specs_a).unwrap();
         std::fs::create_dir_all(&specs_b).unwrap();
         std::fs::write(specs_a.join("spec-a.md"), "# A\n").unwrap();

@@ -1280,7 +1280,7 @@ enum InternalEnum {
 
         let strategy = CodeStrategy::new();
         let (context, _) = strategy
-            .analyze_codebase(&project_root.join("projects"))
+            .analyze_codebase(&project_root.join("apps"))
             .unwrap();
         let graph = DependencyGraph::from_analysis(&context);
         let clarifications = HashMap::new();

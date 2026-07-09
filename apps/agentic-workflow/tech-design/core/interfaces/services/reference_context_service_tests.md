@@ -92,14 +92,14 @@ fn make_valid_codebase_input(change_id: &str) -> CreateCodebaseContextInput {
 #[test]
 fn test_create_spec_context_valid() {
     let temp = TempDir::new().unwrap();
-    std::fs::create_dir_all(temp.path().join(".aw/changes")).unwrap();
     let input = make_valid_spec_input("test-spec");
     let result = create_spec_context(input, temp.path()).unwrap();
     assert!(result.contains("spec_context.md"));
 
-    let content =
-        std::fs::read_to_string(temp.path().join(".aw/changes/test-spec/spec_context.md"))
-            .unwrap();
+    let content = std::fs::read_to_string(
+        crate::shared::workspace::change_path(temp.path(), "test-spec").join("spec_context.md"),
+    )
+    .unwrap();
     assert!(content.contains("type: spec_context"));
     assert!(content.contains("stage: spec"));
     assert!(content.contains("scanned_groups:"));
@@ -151,14 +151,13 @@ fn test_spec_context_invalid_relevance() {
 #[test]
 fn test_create_knowledge_context_valid() {
     let temp = TempDir::new().unwrap();
-    std::fs::create_dir_all(temp.path().join(".aw/changes")).unwrap();
     let input = make_valid_knowledge_input("test-knowledge");
     let result = create_knowledge_context(input, temp.path()).unwrap();
     assert!(result.contains("knowledge_context.md"));
 
     let content = std::fs::read_to_string(
-        temp.path()
-            .join(".aw/changes/test-knowledge/knowledge_context.md"),
+        crate::shared::workspace::change_path(temp.path(), "test-knowledge")
+            .join("knowledge_context.md"),
     )
     .unwrap();
     assert!(content.contains("type: knowledge_context"));
@@ -201,14 +200,13 @@ fn test_knowledge_context_empty_docs() {
 #[test]
 fn test_create_codebase_context_valid() {
     let temp = TempDir::new().unwrap();
-    std::fs::create_dir_all(temp.path().join(".aw/changes")).unwrap();
     let input = make_valid_codebase_input("test-codebase");
     let result = create_codebase_context(input, temp.path()).unwrap();
     assert!(result.contains("codebase_context.md"));
 
     let content = std::fs::read_to_string(
-        temp.path()
-            .join(".aw/changes/test-codebase/codebase_context.md"),
+        crate::shared::workspace::change_path(temp.path(), "test-codebase")
+            .join("codebase_context.md"),
     )
     .unwrap();
     assert!(content.contains("type: codebase_context"));
@@ -452,15 +450,14 @@ fn test_pattern_source_windows_drive() {
 #[test]
 fn test_yaml_safe_newline_escaped() {
     let temp = TempDir::new().unwrap();
-    std::fs::create_dir_all(temp.path().join(".aw/changes")).unwrap();
     let mut input = make_valid_spec_input("test-newline");
     input.scanned_groups = vec!["genesis\ninjected_field: true".to_string()];
     let result = create_spec_context(input, temp.path()).unwrap();
     assert!(result.contains("spec_context.md"));
 
     let content = std::fs::read_to_string(
-        temp.path()
-            .join(".aw/changes/test-newline/spec_context.md"),
+        crate::shared::workspace::change_path(temp.path(), "test-newline")
+            .join("spec_context.md"),
     )
     .unwrap();
     assert!(content.contains("\\n"));
