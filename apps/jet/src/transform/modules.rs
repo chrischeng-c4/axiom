@@ -637,6 +637,18 @@ fn lookup_file_or_directory_module_id(
         .or_else(|| lookup_directory_index_module_id(module_map, resolution_index, candidate))
 }
 
+/// Appends `ext` to `base` via string concatenation rather than
+/// `PathBuf::set_extension`, which replaces everything after the LAST `.`
+/// in the file name. A dotted basename such as `router.config` must keep
+/// its full name when probed for a candidate extension (`router.config.ts`,
+/// not `router.ts`). Mirrors `resolver/mod.rs::append_extension`.
+fn append_extension(base: &Path, ext: &str) -> PathBuf {
+    let mut path = base.as_os_str().to_os_string();
+    path.push(".");
+    path.push(ext.trim_start_matches('.'));
+    PathBuf::from(path)
+}
+
 fn lookup_file_module_id_with_extensions(
     module_map: &HashMap<PathBuf, usize>,
     resolution_index: Option<&ModuleResolutionIndex>,
@@ -646,9 +658,7 @@ fn lookup_file_module_id_with_extensions(
         let test = if ext.is_empty() {
             candidate.to_path_buf()
         } else {
-            let mut p = candidate.to_path_buf();
-            p.set_extension(&ext[1..]);
-            p
+            append_extension(candidate, ext)
         };
         if let Some(id) = lookup_module_id_for_resolution(module_map, resolution_index, &test) {
             return Some(id);
@@ -970,10 +980,11 @@ fn resolve_module_path(
     if path.starts_with('.') {
         // First try without current_dir (legacy behavior)
         for ext in &["", ".js", ".jsx", ".ts", ".tsx"] {
-            let mut test_path = path_buf.clone();
-            if !ext.is_empty() {
-                test_path.set_extension(&ext[1..]);
-            }
+            let test_path = if ext.is_empty() {
+                path_buf.clone()
+            } else {
+                append_extension(&path_buf, ext)
+            };
             if let Some(id) =
                 lookup_module_id_for_resolution(module_map, resolution_index, &test_path)
             {
@@ -985,10 +996,11 @@ fn resolve_module_path(
         if let Some(dir) = current_dir {
             let resolved = dir.join(path);
             for ext in &["", ".js", ".jsx", ".ts", ".tsx"] {
-                let mut test_path = resolved.clone();
-                if !ext.is_empty() {
-                    test_path.set_extension(&ext[1..]);
-                }
+                let test_path = if ext.is_empty() {
+                    resolved.clone()
+                } else {
+                    append_extension(&resolved, ext)
+                };
                 // Try exact match
                 if let Some(id) =
                     lookup_module_id_for_resolution(module_map, resolution_index, &test_path)
@@ -1994,6 +2006,186 @@ genCalc
             out, "require('lockedpkg')",
             "unreadable package.json must fall through to literal require, got: {out}"
         );
+    }
+
+    // WI #1304 R4: append_extension must append the extension via string
+    // concatenation, never replace text after the last '.' in the base
+    // path (the bug in the old PathBuf::set_extension probe).
+    #[test]
+    fn append_extension_appends_without_replacing_dotted_basename() {
+        let base = PathBuf::from("router.config");
+        let out = append_extension(&base, "ts");
+        assert_eq!(
+            out,
+            PathBuf::from("router.config.ts"),
+            "append_extension must preserve the full dotted basename, got: {out:?}"
+        );
+        assert_ne!(
+            out,
+            PathBuf::from("router.ts"),
+            "append_extension must not replace text after the last '.' in the base name"
+        );
+    }
+
+    // WI #1304 R1/R2/R3: full Bundler::bundle() pipeline regressions for the
+    // dotted-basename extension probe fix in resolve_module_path.
+    mod bundle_dotted_basename_regressions {
+        use crate::bundler::{BundleOptions, Bundler};
+        use std::io::Write;
+
+        fn write_fixture(dir: &std::path::Path, files: &[(&str, &str)]) -> std::path::PathBuf {
+            for (name, contents) in files {
+                let path = dir.join(name);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).unwrap();
+                }
+                let mut f = std::fs::File::create(&path).unwrap();
+                f.write_all(contents.as_bytes()).unwrap();
+            }
+            dir.join(files[0].0)
+        }
+
+        // WI #1304 AC1: a dotted-basename extensionless relative import
+        // (./router.config resolving to router.config.ts) must resolve
+        // through the complete bundle pipeline instead of being left as a
+        // literal unresolved require('./router.config') string.
+        #[tokio::test]
+        async fn bundle_resolves_dotted_basename_extensionless_relative_import() {
+            let tmp = tempfile::tempdir().unwrap();
+            let entry = write_fixture(
+                tmp.path(),
+                &[
+                    (
+                        "entry.ts",
+                        "import { routerConfig } from './router.config';\nexport const x = routerConfig;\n",
+                    ),
+                    (
+                        "router.config.ts",
+                        "export const routerConfig = 'ROUTER_CONFIG_MARKER_1304';\n",
+                    ),
+                ],
+            );
+
+            let opts = BundleOptions {
+                entry: entry.clone(),
+                output_dir: tmp.path().join("dist"),
+                ..Default::default()
+            };
+            let bundler = Bundler::new(opts).unwrap();
+            let output = bundler
+                .bundle(entry)
+                .await
+                .expect("dotted-basename relative import must resolve");
+
+            assert!(
+                !output.code.contains("require('./router.config')")
+                    && !output.code.contains("require(\"./router.config\")"),
+                "dotted-basename import must not be left as a literal unresolved require string:\n{}",
+                output.code
+            );
+            assert!(
+                output.code.contains("ROUTER_CONFIG_MARKER_1304"),
+                "target module body must be present in the bundle:\n{}",
+                output.code
+            );
+        }
+
+        // WI #1304 AC2: a legacy-CJS-style nested relative import with a
+        // dotted basename in a library-style subdirectory
+        // (../../modules/es6.object.assign resolving to
+        // modules/es6.object.assign.js) must resolve end to end.
+        #[tokio::test]
+        async fn bundle_resolves_legacy_cjs_nested_dotted_basename_relative_import() {
+            let tmp = tempfile::tempdir().unwrap();
+            let entry = write_fixture(
+                tmp.path(),
+                &[
+                    (
+                        "entry.js",
+                        "var assign = require('./library/es-abstract/2020/entry').assign;\nexports.assign = assign;\n",
+                    ),
+                    (
+                        "library/es-abstract/2020/entry.js",
+                        "var assign = require('../../../modules/es6.object.assign');\nmodule.exports = { assign: assign };\n",
+                    ),
+                    (
+                        "modules/es6.object.assign.js",
+                        "module.exports = 'ES6_OBJECT_ASSIGN_MARKER_1304';\n",
+                    ),
+                ],
+            );
+
+            let opts = BundleOptions {
+                entry: entry.clone(),
+                output_dir: tmp.path().join("dist"),
+                ..Default::default()
+            };
+            let bundler = Bundler::new(opts).unwrap();
+            let output = bundler
+                .bundle(entry)
+                .await
+                .expect("legacy-CJS nested dotted-basename import must resolve");
+
+            assert!(
+                !output
+                    .code
+                    .contains("require('../../../modules/es6.object.assign')")
+                    && !output
+                        .code
+                        .contains("require(\"../../../modules/es6.object.assign\")"),
+                "legacy-CJS nested dotted-basename import must not be left as a literal unresolved require string:\n{}",
+                output.code
+            );
+            assert!(
+                output.code.contains("ES6_OBJECT_ASSIGN_MARKER_1304"),
+                "target module body must be present in the bundle:\n{}",
+                output.code
+            );
+        }
+
+        // WI #1304 R3: no-regression control — a plain (non-dotted)
+        // extensionless relative import must continue to resolve exactly
+        // as before the fix.
+        #[tokio::test]
+        async fn bundle_resolves_plain_extensionless_relative_import_unchanged() {
+            let tmp = tempfile::tempdir().unwrap();
+            let entry = write_fixture(
+                tmp.path(),
+                &[
+                    (
+                        "entry.ts",
+                        "import { util } from './utils';\nexport const x = util;\n",
+                    ),
+                    (
+                        "utils.ts",
+                        "export const util = 'PLAIN_UTILS_MARKER_1304';\n",
+                    ),
+                ],
+            );
+
+            let opts = BundleOptions {
+                entry: entry.clone(),
+                output_dir: tmp.path().join("dist"),
+                ..Default::default()
+            };
+            let bundler = Bundler::new(opts).unwrap();
+            let output = bundler
+                .bundle(entry)
+                .await
+                .expect("plain extensionless relative import must resolve");
+
+            assert!(
+                !output.code.contains("require('./utils')")
+                    && !output.code.contains("require(\"./utils\")"),
+                "plain extensionless import must not be left as a literal unresolved require string:\n{}",
+                output.code
+            );
+            assert!(
+                output.code.contains("PLAIN_UTILS_MARKER_1304"),
+                "target module body must be present in the bundle:\n{}",
+                output.code
+            );
+        }
     }
 }
 // CODEGEN-END
