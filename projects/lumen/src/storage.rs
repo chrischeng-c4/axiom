@@ -39,9 +39,10 @@ use crate::types::{
     Analyzer, CacheStats, CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup,
     DuplicatesRequest, DuplicatesResponse, FieldSpec, FieldStats, FieldType, FieldValue,
     HammingQuery, HasChildQuery, IdsQuery, IndexRequest, IndexResponse, KnnQuery, MatchOp,
-    MatchQuery, QueryNode, RangeQuery, RrfQuery, SearchHit, SearchRequest, SearchResponse,
-    SortMissing, SortOrder, SortSpec, StatsResponse, StorageStats, TermQuery, TermsQuery,
-    VectorSpec,
+    MatchQuery, QueryNode, RangeQuery, ReplaceDocItem, ReplaceDocResult, ReplaceDocsRequest,
+    ReplaceDocsResponse, RrfQuery, SearchHit, SearchRequest, SearchResponse, SortMissing,
+    SortOrder, SortSpec, StatsResponse, StorageStats, TermQuery, TermsQuery, VectorSpec,
+    MAX_BATCH_REPLACE_SIZE,
 };
 use crate::vector_index::{open_backend, FlatCpuIndex, HnswCpuIndex, ScalarCodebook, VectorIndex};
 use roaring::RoaringBitmap;
@@ -2808,6 +2809,13 @@ struct Collection {
     /// snapshot/seal is a follow-up.
     /// @spec projects/lumen/tech-design/logic/external-version-lww-optional-version-on-indexitem-drop-stale-pe.md
     cell_versions: FastHashMap<u32, FastHashMap<String, u64>>,
+    /// #1292: doc-level last-write-wins for `PUT .../docs:replace`. Sparse
+    /// `doc-id → highest applied doc version`, populated only for docs
+    /// replaced with an explicit `ReplaceDocItem.version`. Unlike
+    /// `cell_versions` (per `(doc, field)`), this is one version per doc:
+    /// a strictly-older versioned replace drops the entire item. In-memory
+    /// only (reconstructed by WAL replay), same as `cell_versions`.
+    doc_versions: FastHashMap<u32, u64>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
@@ -2828,6 +2836,7 @@ impl Collection {
             last_indexed_at: None,
             search_cache: RwLock::new(FastHashMap::default()),
             cell_versions: FastHashMap::default(),
+            doc_versions: FastHashMap::default(),
         })
     }
 
@@ -3392,6 +3401,176 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    // -- Replace docs (full-replacement write) -------------------------------
+
+    /// `PUT /collections/{id}/docs:replace`: each item's `fields` becomes
+    /// the doc's entire indexed state, implicitly deleting any declared
+    /// schema field the doc has today but that is absent from `fields`.
+    ///
+    /// Batch-level result stays `Ok` (HTTP 200) unless the batch itself is
+    /// malformed or over [`MAX_BATCH_REPLACE_SIZE`] — a single bad item
+    /// (unknown field, type mismatch, stale version) is reported per-item
+    /// in [`ReplaceDocResult`] and never fails its siblings.
+    /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+    pub fn replace_docs(
+        &self,
+        collection_id: &str,
+        req: ReplaceDocsRequest,
+    ) -> Result<ReplaceDocsResponse> {
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        let coll = state
+            .collections
+            .get_mut(collection_id)
+            .ok_or_else(|| StorageError::CollectionNotFound(collection_id.to_string()))?;
+        Self::replace_docs_collection(&self.metrics, collection_id, coll, req)
+    }
+
+    fn replace_docs_collection(
+        metrics: &Metrics,
+        collection_id: &str,
+        coll: &mut Collection,
+        req: ReplaceDocsRequest,
+    ) -> Result<ReplaceDocsResponse> {
+        if req.docs.len() > MAX_BATCH_REPLACE_SIZE {
+            return Err(StorageError::BulkLimit {
+                got: req.docs.len(),
+                max: MAX_BATCH_REPLACE_SIZE,
+            }
+            .into());
+        }
+        coll.check_live(collection_id)?;
+        if !req.docs.is_empty() {
+            coll.clear_search_cache();
+            coll.clear_text_rank_caches();
+            coll.clear_number_filter_caches();
+        }
+
+        let mut results = Vec::with_capacity(req.docs.len());
+        let mut total_fields_written = 0u64;
+        let mut any_written = false;
+        for item in req.docs {
+            let result = Self::replace_one_doc(collection_id, coll, item);
+            if let ReplaceDocResult::Ok { fields_written, .. } = &result {
+                any_written = true;
+                total_fields_written += *fields_written as u64;
+            }
+            results.push(result);
+        }
+        if any_written {
+            coll.last_indexed_at = Some(std::time::SystemTime::now());
+        }
+        metrics.incr_index(total_fields_written, 0);
+        Ok(ReplaceDocsResponse { results })
+    }
+
+    /// Apply one [`ReplaceDocItem`], full-replacement at doc granularity.
+    /// Fields absent from `item.fields` but present on the doc today are
+    /// dropped; fields present in both are re-applied (drop-then-reapply,
+    /// the same field-granularity replacement `index_collection` already
+    /// uses); fields new to the doc are added.
+    ///
+    /// Every field is type-checked against the schema *before* any
+    /// mutation happens, so a per-item error (unknown field, type
+    /// mismatch) leaves the doc's prior state completely untouched —
+    /// unlike `index_collection`'s partial-apply-on-error, docs:replace is
+    /// framed as an atomic full replacement and a partially-applied doc
+    /// would break that guarantee.
+    fn replace_one_doc(
+        collection_id: &str,
+        coll: &mut Collection,
+        item: ReplaceDocItem,
+    ) -> ReplaceDocResult {
+        let (id, new_doc_in_request) = coll
+            .interner
+            .intern_owned_with_status(item.external_id.clone());
+
+        // Doc-level LWW: a strictly-older version arriving later drops the
+        // *entire* item, reported as its own `Dropped` variant (not `Ok`
+        // and not `Error`) so callers can tell "a newer write already won"
+        // apart from both success and failure.
+        if let Some(v) = item.version {
+            if let Some(stored) = coll.doc_versions.get(&id).copied() {
+                if stored >= v {
+                    return ReplaceDocResult::Dropped {
+                        current_version: stored,
+                    };
+                }
+            }
+        }
+
+        for (field_name, value) in &item.fields {
+            let Some(fi) = coll.fields.get(field_name.as_str()) else {
+                return ReplaceDocResult::Error {
+                    code: "unknown_field".to_string(),
+                    message: StorageError::UnknownField {
+                        collection: collection_id.to_string(),
+                        field: field_name.clone(),
+                    }
+                    .to_string(),
+                };
+            };
+            if let Err(e) = validate_value(fi, value, field_name) {
+                return ReplaceDocResult::Error {
+                    code: "type_mismatch".to_string(),
+                    message: e.to_string(),
+                };
+            }
+        }
+
+        let old_fields: BTreeSet<String> = if new_doc_in_request {
+            BTreeSet::new()
+        } else {
+            coll.eid_fields
+                .get(&id)
+                .map(FieldCoverage::to_btree_set)
+                .unwrap_or_default()
+        };
+        let eid = coll.interner.resolve(id).to_string();
+
+        for f in &old_fields {
+            if !item.fields.contains_key(f) {
+                if let Some(fi) = coll.fields.get_mut(f.as_str()) {
+                    fi.drop_eid(id, &eid);
+                }
+            }
+        }
+
+        let mut fields_written = 0u32;
+        for (field_name, value) in &item.fields {
+            let fi = coll
+                .fields
+                .get_mut(field_name.as_str())
+                .expect("field presence validated above");
+            if old_fields.contains(field_name) {
+                fi.drop_eid(id, &eid);
+            }
+            if let Err(e) = apply_value(fi, id, &eid, value, field_name) {
+                return ReplaceDocResult::Error {
+                    code: "apply_failed".to_string(),
+                    message: e.to_string(),
+                };
+            }
+            fields_written += 1;
+        }
+
+        if item.fields.is_empty() {
+            coll.eid_fields.remove(&id);
+        } else {
+            coll.eid_fields.insert(
+                id,
+                FieldCoverage::from_btree_set(item.fields.keys().cloned().collect()),
+            );
+        }
+        if let Some(v) = item.version {
+            coll.doc_versions.insert(id, v);
+        }
+
+        ReplaceDocResult::Ok {
+            fields_written,
+            fields_skipped: 0,
+        }
     }
 
     // -- Search -------------------------------------------------------------
@@ -4206,6 +4385,9 @@ impl Engine {
             RaftLogEntry::Index { collection_id, req } => {
                 ApplyOutcome::Indexed(self.index(&collection_id, req)?)
             }
+            RaftLogEntry::ReplaceDocs { collection_id, req } => {
+                ApplyOutcome::Replaced(self.replace_docs(&collection_id, req)?)
+            }
             RaftLogEntry::Delete {
                 collection_id,
                 external_id,
@@ -4239,6 +4421,7 @@ impl Engine {
 pub enum ApplyOutcome {
     Created(CreateCollectionResponse),
     Indexed(IndexResponse),
+    Replaced(ReplaceDocsResponse),
     Deleted,
     Dropped(DropOutcome),
     /// New collection version after add-field / drop-field.
@@ -4427,6 +4610,51 @@ fn value_kind(v: &FieldValue) -> &'static str {
         FieldValue::Number(_) => "number",
         FieldValue::Vector(_) => "f32[]",
         FieldValue::StringList(_) => "string[]",
+    }
+}
+
+/// Non-mutating type-check mirroring [`apply_value`]'s match arms, used by
+/// `replace_one_doc` to validate every field of a `docs:replace` item
+/// *before* any mutation happens (see `replace_one_doc` for why that
+/// ordering matters). Kept in sync with `apply_value`'s arms by hand: any
+/// new `(FieldIndex, FieldValue)` pairing accepted there must be mirrored
+/// here.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+fn validate_value(fi: &FieldIndex, value: &FieldValue, field_name: &str) -> Result<()> {
+    match (fi, value) {
+        (FieldIndex::Text { .. }, FieldValue::String(_)) => Ok(()),
+        (FieldIndex::Keyword(_), FieldValue::String(_)) => Ok(()),
+        (FieldIndex::Number(_), FieldValue::Number(x)) => {
+            SortableF64::new(*x).map_err(|e| StorageError::InvalidNumber(e.to_string()))?;
+            Ok(())
+        }
+        (FieldIndex::Set(_), FieldValue::StringList(_)) => Ok(()),
+        (FieldIndex::Set(_), FieldValue::String(_)) => Err(StorageError::TypeMismatch {
+            field: field_name.to_string(),
+            expected: FieldType::Set,
+            got: "string (expected array of strings)",
+        }
+        .into()),
+        (FieldIndex::Vector { spec, .. }, FieldValue::Vector(v)) => {
+            if v.len() as u32 != spec.dim {
+                bail!(
+                    "vector field `{field_name}` declared dim={} but got vector of length {}",
+                    spec.dim,
+                    v.len()
+                );
+            }
+            Ok(())
+        }
+        (FieldIndex::Hash(_), FieldValue::String(s)) => {
+            parse_hash(s)?;
+            Ok(())
+        }
+        (fi, v) => Err(StorageError::TypeMismatch {
+            field: field_name.to_string(),
+            expected: fi.field_type(),
+            got: value_kind(v),
+        }
+        .into()),
     }
 }
 
@@ -8418,6 +8646,7 @@ impl Collection {
             last_indexed_at: None,
             search_cache: RwLock::new(FastHashMap::default()),
             cell_versions: FastHashMap::default(),
+            doc_versions: FastHashMap::default(),
         })
     }
 }
@@ -9090,6 +9319,7 @@ impl Collection {
             last_indexed_at: None,
             search_cache: RwLock::new(FastHashMap::default()),
             cell_versions: FastHashMap::default(),
+            doc_versions: FastHashMap::default(),
         })
     }
 }

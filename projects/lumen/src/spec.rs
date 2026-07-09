@@ -216,8 +216,8 @@ pub fn llm_outline_md() -> String {
 Use the smallest topic that answers the task:
 
 - `lumen llm --topic workflow` — product model, declare→ingest→search→hydrate, query
-  flavor choices, batch search (`POST /collections:search`), connection, and
-  non-goals.
+  flavor choices, batch search (`POST /collections:search`), full-replacement
+  writes (`PUT /collections/{id}/docs:replace`), connection, and non-goals.
 - `lumen llm --topic integration` — recommended Postgres/AlloyDB adapter boundary:
   outbox or CDC, external Pub/Sub retry/DLQ ownership, HTTP writes into lumen,
   and no direct external writes to lumen's internal WAL.
@@ -475,6 +475,47 @@ POST /collections:search
 - Pagination stays per-item: each result's `cursor` continues independently
   by resubmitting that one item. There is no merged cursor and no
   cross-collection score merging/ranking — that is explicitly out of scope.
+
+## Full-replacement writes (docs:replace)
+`PUT /collections/{id}/docs:replace` is a batch **full-replacement** upsert:
+each item's `fields` becomes the doc's *entire* indexed state — a declared
+schema field the doc has today but that is absent from `fields` is
+**implicitly deleted**. `docs:replace` is one literal path segment appended
+after `{collection_id}`, so it registers directly in axum next to
+`/collections/{collection_id}/docs/{external_id}` without any capture
+ambiguity.
+
+```json
+PUT /collections/{id}/docs:replace
+{ "docs": [
+    { "external_id": "row-42", "version": 7, "fields": { "title": "New title", "state": "open" } }
+] }
+→ 200 { "results": [
+    { "status": "ok", "fields_written": 2, "fields_skipped": 0 }
+] }
+```
+
+- **Own the complete row for a doc?** Use `docs:replace` — replaying the same
+  request converges to the same state (PUT semantics). **Own only some
+  fields and want to add/update those without touching the rest?** Use
+  `POST /collections/{id}/index` instead; `/index` is a merge, `docs:replace`
+  is a full replacement.
+- `version` is optional **doc-level** last-write-wins over the caller's own
+  source-row version — distinct from `IndexItem.version`'s per-`(external_id,
+  field)` cell versioning. A strictly-older version arriving later drops the
+  *entire* item and is reported as `{"status":"dropped","current_version":...}`,
+  not folded into `ok` or `error`.
+- Each `ok` result carries `fields_written` and `fields_skipped` counters;
+  `fields_skipped` (unchanged-value no-op suppression) is always `0` today.
+- **Partial failure never fails the batch.** One bad item (unknown field,
+  type mismatch) reports `{"status":"error","code":"...","message":"..."}`
+  for that item while its siblings still return `ok`/`dropped`. The
+  batch-level HTTP status stays 200 unless the body is malformed or the
+  batch is over the size limit (400, max 32 items — the same
+  `MAX_BATCH_REPLACE_SIZE` knob family as `collections:search`).
+- `PUT /collections/{id}/docs/{external_id}` is single-resource sugar: body
+  `{"version": ..., "fields": {...}}`, semantically identical to a one-item
+  `docs:replace` batch, unwrapped back into a bare per-item result.
 
 ## Which "find" to use
 - exact value / membership → `keyword` (`term`, `terms`) or `set`
