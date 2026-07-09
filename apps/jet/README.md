@@ -410,6 +410,7 @@ EC Dimensions:
 | Stories Bare-Import Resolution | change | #197 | implemented | verified | conformance | `cargo test -p jet --test manager` — node_modules bare-import resolution for stories dev and static export |
 | Generic / Cross-File Prop Controls | change | #198 | implemented | verified | conformance | `cargo test -p jet --test controls` — controls inferred from generic, cross-file, and intersection prop types |
 | CSF2 Template.bind + Re-Exports | change | #199 | implemented | verified | conformance | `cargo test -p jet --test csf_discovery` — CSF2 Template.bind, re-exported stories, and spread-args discovery |
+| Close Stories Parity Evidence Gaps From Epic 1001 | change | #1343 | planned | none | smoke | README Component Workbench row/detailed block enumerate the full shipped parity surface with concrete test-path citations, `jet-stories.md` `source_units` include `mdx.rs`/`optimizer.rs`, and an in-repo fixture combining decorators + play + argTypes + MDX passes — see `projects/jet/tech-design/logic/jet-stories-close-epic-1001-ac2-ac3-readme-parity-evidence-td-so.md` |
 
 ### Jet Project Architecture And Authoring Clarity
 
