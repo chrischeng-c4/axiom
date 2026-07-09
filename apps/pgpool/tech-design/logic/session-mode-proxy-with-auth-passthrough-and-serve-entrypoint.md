@@ -385,3 +385,126 @@ max_frontend_connections:
   source: "RuntimePlan::max_frontend_connections"
   default: 10000        # ConnectionBudget::new(10_000); checked inside SessionHandler::handle, not via tcp_server::TcpServerConfig.connection_budget (see Schema: SessionProxyConfig.frontend_budget)
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: apps-pgpool-session-proxy-verification
+requirements:
+  ac1_real_postgres_session_round_trip:
+    id: AC1
+    text: "cargo test -p pgpool --test session_proxy connects tokio-postgres through a running `pgpool serve` to a real Postgres backend, runs queries, and disconnects cleanly; the test skips gracefully when no local Postgres is reachable (Docker/Homebrew, graceful-skip pattern)."
+    kind: integration
+    risk: high
+    verify: session_proxy::real_postgres_session_connects_queries_and_disconnects_cleanly
+  ac2_real_scram_auth_passthrough:
+    id: AC2
+    text: "Against a real Postgres backend configured for scram-sha-256 auth, a client connects through pgpool successfully, and pgpool's process memory/logs never contain the plaintext password or the raw SCRAM proof; the test skips gracefully when no SCRAM-configured Postgres is reachable."
+    kind: integration
+    risk: high
+    verify: session_proxy::real_postgres_scram_auth_succeeds_without_credential_persistence
+  ac3_budget_rejection_leaves_existing_sessions_unaffected:
+    id: AC3
+    text: "With the frontend budget saturated by existing sessions, a new connection attempt receives a wire-level ErrorResponse and closes, while the existing sessions continue serving queries uninterrupted."
+    kind: integration
+    risk: high
+    verify: session_proxy::budget_rejection_does_not_disrupt_existing_sessions
+  ac4_sigterm_lets_in_flight_transaction_finish:
+    id: AC4
+    text: "Sending SIGTERM to a running `pgpool serve` process with one open session lets that session's in-flight transaction finish and the client disconnect cleanly before the process exits, bounded by drain_timeout; the test skips gracefully when no local Postgres is reachable."
+    kind: integration
+    risk: high
+    verify: session_proxy::sigterm_drains_in_flight_session_before_exit
+  ac5_cli_and_llm_surface_serve:
+    id: AC5
+    text: "`pgpool --help` lists the `serve` subcommand, and `pgpool llm --topic workflow` output mentions the serve entrypoint."
+    kind: functional
+    risk: low
+    verify: cli_contract::help_and_llm_workflow_topic_mention_serve
+  r1_admission_permit_released_on_close:
+    id: R1
+    text: "The ConnectionBudget permit acquired on admission is released exactly once when a session ends (clean close, backend-unreachable rejection, auth failure, or relay error), so a churn of many sessions never leaks capacity."
+    kind: regression
+    risk: high
+    verify: proxy::permit_released_on_every_session_exit_path
+  r1_admission_rejects_when_saturated:
+    id: R1
+    text: "SessionHandler::handle checks its own ConnectionBudget::try_acquire() before touching the backend; when exhausted it writes a BackendMessage::ErrorResponse (SQLSTATE 53300 too_many_connections) directly to the client stream and closes the socket, without affecting any other in-flight session (AC3)."
+    kind: functional
+    risk: high
+    verify: proxy::rejects_new_session_with_error_response_when_budget_exhausted
+  r2_auth_passthrough_frames_relayed_verbatim:
+    id: R2
+    text: "Cleartext PasswordMessage, MD5 PasswordMessage, and SCRAM SaslInitialResponse/SaslResponse frontend frames, plus the backend's Authentication* challenge frames, are relayed verbatim in both directions against a fake backend that scripts a SCRAM-style challenge/response exchange."
+    kind: functional
+    risk: high
+    verify: proxy::auth_frames_relayed_verbatim_for_cleartext_md5_and_scram
+  r2_bidirectional_relay_until_terminate:
+    id: R2
+    text: "After AuthenticationOk and ReadyForQuery are forwarded, the bidirectional relay forwards arbitrary frontend/backend frames in both directions against a fake backend until the client sends Terminate, at which point the relay forwards Terminate to the backend and ends the session cleanly."
+    kind: functional
+    risk: medium
+    verify: proxy::bidirectional_relay_forwards_frames_until_client_terminate
+  r2_credentials_never_persisted:
+    id: R2
+    text: "The session proxy never copies PasswordMessage/SaslInitialResponse/SaslResponse payload bytes into any struct field, log record, or cache that outlives the relay call; credential bytes are treated as opaque forwarded data only (AC2)."
+    kind: regression
+    risk: high
+    verify: proxy::password_and_sasl_payload_bytes_are_never_retained
+  r2_frame_error_ends_leg_without_forwarding:
+    id: R2
+    text: "A FrameError (oversized/malformed/unknown-tag) on either leg ends that leg's relay without forwarding the offending bytes to the other side, and the session is closed with the permit released."
+    kind: regression
+    risk: medium
+    verify: proxy::frame_error_on_either_leg_ends_session_without_forwarding_bad_bytes
+  r2_startup_relay_byte_identical:
+    id: R2
+    text: "The frame-aware startup relay decodes the client's StartupMessage with a frontend-role FrameReader and re-encodes it byte-identically to the backend stream, against a fake in-memory backend (no real Postgres required)."
+    kind: functional
+    risk: medium
+    verify: proxy::startup_message_relayed_byte_identical_to_fake_backend
+  r3_backend_error_forwarded_verbatim:
+    id: R3
+    text: "When the backend itself emits ErrorResponse during startup/auth (bad credentials, failed SCRAM exchange), that ErrorResponse is forwarded to the client verbatim rather than synthesized, and the session ends without retry or credential caching."
+    kind: functional
+    risk: medium
+    verify: proxy::backend_startup_error_response_forwarded_verbatim_to_client
+  r3_backend_unreachable_rejection:
+    id: R3
+    text: "When the configured backend endpoint refuses the TCP connection or the connect attempt exceeds backend_connect_timeout, the session writes a BackendMessage::ErrorResponse (SQLSTATE 08006 connection_failure) to the client, releases the permit, and closes the client socket without ever reaching the auth-relay state."
+    kind: functional
+    risk: high
+    verify: proxy::rejects_session_with_error_response_when_backend_unreachable
+  r4_drain_lets_in_flight_session_finish:
+    id: R4
+    text: "When DrainSignal flips to Draining, the accept loop stops admitting new sessions immediately, while an already-Established session's bidirectional relay keeps running unaffected until it ends normally, bounded by drain_timeout."
+    kind: functional
+    risk: high
+    verify: proxy::draining_stops_new_admissions_while_in_flight_session_completes
+  r4_drain_timeout_abandons_session:
+    id: R4
+    text: "If an Established session has not ended by the time drain_timeout elapses, the drain loop returns and the session task is abandoned (not force-killed mid-write), matching server-core's bounded-drain contract."
+    kind: regression
+    risk: medium
+    verify: proxy::drain_timeout_elapses_and_abandons_still_running_session
+---
+flowchart TD
+    ac1[AC1 ac1 real postgres session round trip] --> session_proxy_real_postgres_session_connects_queries_and_disconnects_cleanly[session_proxy::real_postgres_session_connects_queries_and_disconnects_cleanly]
+    r1[R1 r1 admission permit released on close] --> proxy_permit_released_on_every_session_exit_path[proxy::permit_released_on_every_session_exit_path]
+    r1[R1 r1 admission rejects when saturated] --> proxy_rejects_new_session_with_error_response_when_budget_exhausted[proxy::rejects_new_session_with_error_response_when_budget_exhausted]
+    ac2[AC2 ac2 real scram auth passthrough] --> session_proxy_real_postgres_scram_auth_succeeds_without_credential_persistence[session_proxy::real_postgres_scram_auth_succeeds_without_credential_persistence]
+    r2[R2 r2 auth passthrough frames relayed verbatim] --> proxy_auth_frames_relayed_verbatim_for_cleartext_md5_and_scram[proxy::auth_frames_relayed_verbatim_for_cleartext_md5_and_scram]
+    r2[R2 r2 bidirectional relay until terminate] --> proxy_bidirectional_relay_forwards_frames_until_client_terminate[proxy::bidirectional_relay_forwards_frames_until_client_terminate]
+    r2[R2 r2 credentials never persisted] --> proxy_password_and_sasl_payload_bytes_are_never_retained[proxy::password_and_sasl_payload_bytes_are_never_retained]
+    r2[R2 r2 frame error ends leg without forwarding] --> proxy_frame_error_on_either_leg_ends_session_without_forwarding_bad_bytes[proxy::frame_error_on_either_leg_ends_session_without_forwarding_bad_bytes]
+    r2[R2 r2 startup relay byte identical] --> proxy_startup_message_relayed_byte_identical_to_fake_backend[proxy::startup_message_relayed_byte_identical_to_fake_backend]
+    ac3[AC3 ac3 budget rejection leaves existing sessions unaffected] --> session_proxy_budget_rejection_does_not_disrupt_existing_sessions[session_proxy::budget_rejection_does_not_disrupt_existing_sessions]
+    r3[R3 r3 backend error forwarded verbatim] --> proxy_backend_startup_error_response_forwarded_verbatim_to_client[proxy::backend_startup_error_response_forwarded_verbatim_to_client]
+    r3[R3 r3 backend unreachable rejection] --> proxy_rejects_session_with_error_response_when_backend_unreachable[proxy::rejects_session_with_error_response_when_backend_unreachable]
+    ac4[AC4 ac4 sigterm lets in flight transaction finish] --> session_proxy_sigterm_drains_in_flight_session_before_exit[session_proxy::sigterm_drains_in_flight_session_before_exit]
+    r4[R4 r4 drain lets in flight session finish] --> proxy_draining_stops_new_admissions_while_in_flight_session_completes[proxy::draining_stops_new_admissions_while_in_flight_session_completes]
+    r4[R4 r4 drain timeout abandons session] --> proxy_drain_timeout_elapses_and_abandons_still_running_session[proxy::drain_timeout_elapses_and_abandons_still_running_session]
+    ac5[AC5 ac5 cli and llm surface serve] --> cli_contract_help_and_llm_workflow_topic_mention_serve[cli_contract::help_and_llm_workflow_topic_mention_serve]
+```
