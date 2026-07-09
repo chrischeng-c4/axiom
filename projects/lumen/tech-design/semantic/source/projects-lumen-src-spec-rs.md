@@ -179,8 +179,10 @@ pub fn query_shapes() -> Value {
               "request": { "query": { "terms": { "field": "status", "values": ["active", "trial"] } }, "limit": 20 } },
             { "name": "ids", "description": "filter by a set of external_ids (row_id_in); unknown ids skipped",
               "request": { "query": { "ids": { "values": ["row-42", "row-91"] } }, "limit": 20 } },
-            { "name": "range", "description": "numeric range (e.g. 1000 <= price < 5000)",
+            { "name": "range", "description": "numeric range on a `number` field (e.g. 1000 <= price < 5000)",
               "request": { "query": { "range": { "field": "price", "gte": 1000, "lt": 5000 } }, "limit": 20 } },
+            { "name": "range_keyword", "description": "byte/lexicographic range on a `keyword` field — string bounds are valid only against `keyword` fields (rejected with 400 against `number` or `text`), and compare the same way ISO-8601 date/datetime strings sort chronologically",
+              "request": { "query": { "range": { "field": "created_at", "gte": "2026-01-01", "lt": "2026-02-01" } }, "limit": 20 } },
             { "name": "match_bm25", "description": "lexical BM25 ranking over a text field",
               "request": { "query": { "match": { "field": "bio", "text": "rust search engineer" } }, "limit": 20 } },
             { "name": "autocomplete_ngram", "description": "autocomplete/suggest recipe: declare a text field with analyzer=ngram, index the searchable label, then run match on the prefix/substring; lumen returns external_ids, not suggestion payloads",
@@ -230,7 +232,12 @@ pub fn query_shapes() -> Value {
               "request": { "query": { "range": { "field": "price", "gte": 100 } },
                            "sort": [ { "field": "price", "order": "asc" } ], "track_total": false, "limit": 20 } },
             { "name": "duplicates", "description": "find external_ids sharing a value (POST /collections/{id}/duplicates)",
-              "request": { "field": "email", "min_group_size": 2, "limit": 100 } }
+              "request": { "field": "email", "min_group_size": 2, "limit": 100 } },
+            { "name": "index", "description": "index one or more field values (POST /collections/{id}/index); the wire shape is FLAT — {items:[{external_id,field,value}]} — not the nested {id, fields:{...}} shape a caller might assume",
+              "request": { "items": [
+                  { "external_id": "row-42", "field": "email", "value": "person@example.com" },
+                  { "external_id": "row-42", "field": "price", "value": 79 }
+              ] } }
         ]
     })
 }
@@ -244,8 +251,8 @@ pub fn field_catalog() -> Value {
         "schema_endpoint": "PUT /collections/{collection}",
         "field_types": [
             { "type": "text", "purpose": "BM25 lexical ranking; tokenized at index time", "analyzers": ["whitespace_lower", "ngram", "jieba"] },
-            { "type": "keyword", "purpose": "exact term / set membership / enum path; roaring postings" },
-            { "type": "number", "purpose": "numeric range + sort (dates as epoch)" },
+            { "type": "keyword", "purpose": "exact term / set membership / enum path; byte/lexicographic range (e.g. ISO-8601 date/datetime strings) via `range` with string bounds; roaring postings" },
+            { "type": "number", "purpose": "numeric range (via `range` with numeric bounds) + sort (dates as epoch)" },
             { "type": "set", "purpose": "multi-valued keyword membership" },
             { "type": "vector", "purpose": "semantic kNN over a caller-supplied embedding (HNSW)", "metrics": ["cosine", "dot", "l2"] },
             {
@@ -294,6 +301,13 @@ Use the smallest topic that answers the task:
 - `lumen spec --format openapi-yaml` — OpenAPI YAML for LLM/agent reading.
 - `lumen spec` — OpenAPI JSON, JSON-schema, query-shape, field, analyzer, and
   vector metric catalogs.
+- `lumen connect` — manage a `kubectl port-forward` for the duration of a
+  wrapped command against a k8s-deployed Lumen instance (`--cr`/`--service` +
+  `--namespace`); resolves a bearer token from the deployment's
+  token-registry Secret and tears the port-forward down when the command exits.
+- `lumen query index|search|duplicates|collections list` — one-shot query
+  wrappers against a reachable node (`--url`/`LUMEN_URL`,
+  `--token`/`LUMEN_TOKEN`); request bodies match `lumen spec --shapes`.
 "#
     .to_string()
 }
@@ -600,7 +614,12 @@ PUT /collections/{id}/docs:replace
 
 ## Which "find" to use
 - exact value / membership → `keyword` (`term`, `terms`) or `set`
-- numeric / date range → `number` (`range`)
+- numeric range → `number` (`range` with numeric `gt`/`gte`/`lt`/`lte` bounds)
+- string / date / datetime range → `keyword` (`range` with string bounds,
+  compared byte/lexicographically — the same order ISO-8601 date/datetime
+  strings sort chronologically in). String bounds are rejected with 400
+  against a non-`keyword` field (and numeric bounds against a non-`number`
+  field); `text` is explicitly out of scope for range queries
 - full-text relevance → `text` + `match` (BM25). Analyzers: `whitespace_lower`,
   `ngram` (substring/CJK), `jieba` (Chinese)
 - semantic similarity → `vector` + `knn` (you supply the embedding)
@@ -758,6 +777,21 @@ The response is `{ "hits": [ { "external_id", "score" } ], ... }`. Fetch the ful
 records from YOUR store by those `external_id`s — lumen never stored them.
 
 More shapes: `lumen llm --topic recipes`. Full schema: `lumen spec`.
+
+## Agent-friendly one-shot wrappers
+No need to hand-build curl bodies or track a port-forward yourself:
+
+```bash
+lumen connect --namespace prod --cr search -- \
+  lumen query index --collection products --item 'p1:title=wireless earbuds'
+lumen query search --collection products --match 'title=earbuds' --limit 10
+lumen query duplicates --collection products --field email
+lumen query collections list
+```
+
+`lumen connect` manages the `kubectl port-forward` and sets
+`LUMEN_URL`/`LUMEN_TOKEN` for the wrapped command; `lumen query *` assembles
+the exact wire body (same shapes as `lumen spec --shapes`).
 "#
     .to_string()
 }
@@ -1111,4 +1145,16 @@ changes:
       `GET /openapi.json` route keeps declaring 3.0.3 — utoipa 4.2.3 has no
       3.2 enum variant). The `query`/`x-post-twin` operations injected by
       `crate::api::inject_query_twins` pass through unchanged either way.
+  - path: projects/lumen/src/spec.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1321: `query_shapes()` gains an "index" write-path shape publishing
+      the exact FLAT `{items:[{external_id,field,value}]}` wire body for
+      `POST /collections/{id}/index` — closing the gap the issue reporter
+      hit (they assumed a nested `{id, fields:{...}}` shape). `llm_outline_md`
+      and `llm_quickstart_md` now document the new `lumen connect` /
+      `lumen query index|search|duplicates|collections list` CLI surface
+      (AC4) with a copy-paste example.
 ```
