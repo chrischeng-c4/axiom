@@ -65,3 +65,49 @@ Scope for WI #1263 (`projects/jet/src/bundler/dts.rs`): empirically re-verified 
 Root cause: `infer_object_literal_type` (the routine used for both a `const`'s own object-literal initializer and, since #1264, an arrow function's single-statement `return { ... }` body) resolves each member's value type via `infer_arrow_function_type_from_text(value).or_else(|| infer_expression_type(value, &empty_param_types))?` (dts.rs, member loop). `infer_expression_type` operates purely on trimmed text and only recognizes string/number/boolean/`null`/`undefined`/bare-identifier/binary-expression literals -- it never inspects whether `value` is itself a bare `{ ... }` object-literal substring, so it always returns `None` for a nested-object-valued member. Neither of the two member-typing calls ever recurses, so a member whose value is `{ h1: 'editor-heading--h1' }` fails to type, the `?` on that failed `Option` short-circuits the whole `for raw_property in split_top_level(...)` loop, and `infer_object_literal_type` returns `None` for the ENTIRE outer object literal -- not just the nested member. This exactly matches the empirical observation: `nestedLiteral` is rejected wholesale (a single isolatedDeclarations error naming the whole `const`), not silently missing one field. This is a distinct mechanism from #1262 (still open): #1262's silent truncation comes from `Object.assign({}, ...arr.map(cb))`-shaped values already text-matching a *different* branch and a bracket-depth/`split_top_level` interaction with call-expression argument lists, whereas #1263's bare `{ ... }`-valued members never text-match any existing branch at all and cause total rejection, not truncation. This TD stays scoped to plain nested object-literal member values only and does not touch the `Object.assign`/computed-key code paths #1238 and #1262 exercise.
 
 Fix: because `infer_object_literal_type`'s member-splitting and member-typing logic already operates purely on the `text` derived from `node_text(node, source)` (the `node.kind() != "object"` check and `node_text` call are the only two places the function actually needs a tree-sitter `Node` -- everything after that is plain `&str` manipulation via `split_top_level`/`split_once_top_level`), factor the body of `infer_object_literal_type` (from the `strip_prefix('{')`/`strip_suffix('}')` step through the final `members`-join) out into a new `infer_object_literal_type_from_text(text: &str) -> Option<String>` that takes only the already-stripped `{ ... }` text and needs no `Node` at all. `infer_object_literal_type(node, source)` becomes a thin Node-to-text adapter that calls it. In the member-value-typing chain, add a new branch tried after the existing arrow-type-from-text check and before the `infer_expression_type` fallback: if `value.trim()` starts with `'{'` and ends with `'}'`, call `infer_object_literal_type_from_text(value.trim())` recursively (recursion terminates because each nested `{ ... }` substring is strictly shorter than its parent); on `Some(nested_type)`, emit `{key}: {nested_type};` using the same member-formatting the top-level path already uses. Any value text that does not text-match a bare `{ ... }` object literal (e.g. `Object.assign(...)`, other call expressions, template literals) falls through unchanged to the existing `infer_expression_type` fallback, leaving #1238/#1262's still-open false positives untouched. Nesting depth is unbounded by construction (the recursion has no depth cap), matching the real-world `fe-shared` `lexicalTheme` repro's 3+ levels.
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: jet-dts-nested-object-literal-member-inference-verification
+requirements:
+  deeply_nested_plain_object_literal:
+    id: R2
+    text: "Real-world shape control: nesting depth 3+ (mirroring the issue's fe-shared `lexicalTheme` hit, e.g. `export const theme = { list: { nested: { listitem: 'x' } } };`), all leaves plain string literals, infers correctly end to end, proving the new recursive branch has no hard-coded depth cap."
+    kind: functional
+    risk: medium
+    verify: cargo test -p jet --lib bundler::dts::tests::infers_exported_const_deeply_nested_plain_object_literal_signature
+  flat_object_literal_unchanged:
+    id: R4
+    text: "No-regression control on the pre-existing #796 flat-object path: a depth-1 plain object literal (`export const flatLiteral = { a: 'x', b: 'y' };`) must keep inferring exactly as before — this pre-existing test must keep passing unchanged after `infer_object_literal_type` is refactored into a Node-adapter plus a new `infer_object_literal_type_from_text` text-only routine, proving the refactor is behavior-preserving for the depth-1 case."
+    kind: regression
+    risk: low
+    verify: cargo test -p jet --lib bundler::dts::tests::infers_plain_object_literal_const_signature
+  nested_object_literal_with_untyped_member_still_errors:
+    id: R3
+    text: "Negative control: the same nested-object-literal member shape as R1, but the nested object's own member value is itself uninferrable (e.g. `heading: { h1: someUntypedImport }` where `someUntypedImport` is a bare identifier with no locally resolvable type), must still raise an isolatedDeclarations error, proving the new recursive branch does not silently widen to accept a nested object literal with a genuinely untyped leaf."
+    kind: regression
+    risk: high
+    verify: cargo test -p jet --lib bundler::dts::tests::uninferrable_exported_const_nested_object_literal_with_untyped_member_errors
+  nested_plain_object_literal_minimal_repro:
+    id: R1
+    text: "WI #1263 minimal repro: an exported const object literal with a member whose value is itself a plain object literal, nesting depth 2, all leaves plain string literals (`export const nestedLiteral = { ltr: 'ltr', heading: { h1: 'editor-heading--h1' } };`), emits `export declare const nestedLiteral: { ltr: string; heading: { h1: string; }; };` instead of an isolatedDeclarations error."
+    kind: functional
+    risk: medium
+    verify: cargo test -p jet --lib bundler::dts::tests::infers_exported_const_nested_plain_object_literal_signature
+  object_assign_computed_key_member_unaffected:
+    id: R5
+    text: "No-regression control proving no entanglement with #1262's still-open Object.assign truncation bug: a pre-existing object-literal member whose value is an `Object.assign({}, ...arr.map(cb))` call expression (not a bare `{ ... }` literal) must keep resolving through the existing call-expression/method-typing path unchanged, proving the new `value.trim().starts_with('{') && ends_with('}')` bare-nested-object-literal branch never text-matches a call-expression-valued member."
+    kind: regression
+    risk: medium
+    verify: cargo test -p jet --lib bundler::dts::tests::infers_object_literal_method_with_object_assign_computed_key_body
+---
+flowchart TD
+    r1[R1 nested plain object literal minimal repro] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_exported_const_nested_plain_object_literal_signature[cargo test -p jet --lib bundler::dts::tests::infers_exported_const_nested_plain_object_literal_signature]
+    r2[R2 deeply nested plain object literal] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_exported_const_deeply_nested_plain_object_literal_signature[cargo test -p jet --lib bundler::dts::tests::infers_exported_const_deeply_nested_plain_object_literal_signature]
+    r3[R3 nested object literal with untyped member still errors] --> cargo_test_p_jet_lib_bundler_dts_tests_uninferrable_exported_const_nested_object_literal_with_untyped_member_errors[cargo test -p jet --lib bundler::dts::tests::uninferrable_exported_const_nested_object_literal_with_untyped_member_errors]
+    r4[R4 flat object literal unchanged] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_plain_object_literal_const_signature[cargo test -p jet --lib bundler::dts::tests::infers_plain_object_literal_const_signature]
+    r5[R5 object assign computed key member unaffected] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_object_literal_method_with_object_assign_computed_key_body[cargo test -p jet --lib bundler::dts::tests::infers_object_literal_method_with_object_assign_computed_key_body]
+```
