@@ -120,6 +120,52 @@ unsafe extern "C" fn dispatch_type_params_make_base(
     MbValue::from_ptr(MbObject::new_str(class_name))
 }
 
+fn expect_type_params_syntax_error(source: &str, expected_msg: &str) -> Result<(), String> {
+    super::super::exception::mb_clear_exception();
+    let _ = super::super::builtins::mb_compile(
+        MbValue::from_ptr(MbObject::new_str(source.to_string())),
+        MbValue::from_ptr(MbObject::new_str("<test_type_params>".to_string())),
+        MbValue::from_ptr(MbObject::new_str("exec".to_string())),
+    );
+    let exc_type = super::super::exception::current_exception_type();
+    let exc = super::super::exception::mb_catch_exception();
+    let exc_msg = super::super::exception::get_exception_message_pub(exc).unwrap_or_default();
+    unsafe {
+        super::super::rc::release_if_ptr(exc);
+    }
+    match exc_type.as_deref() {
+        Some("SyntaxError") if exc_msg.contains(expected_msg) => Ok(()),
+        Some("SyntaxError") => Err(format!(
+            "expected SyntaxError containing {expected_msg:?} for {source:?}, got {exc_msg:?}"
+        )),
+        Some(other) => Err(format!(
+            "expected SyntaxError containing {expected_msg:?} for {source:?}, got {other}: {exc_msg}"
+        )),
+        None => Err(format!(
+            "expected SyntaxError containing {expected_msg:?} for {source:?}"
+        )),
+    }
+}
+
+extern "C" fn type_params_invalid_test_name_collisions(_self_v: MbValue) -> MbValue {
+    const CASES: &[&str] = &[
+        "def func[**A, A](): ...",
+        "def func[A, *A](): ...",
+        "def func[*A, **A](): ...",
+        "class C[**A, A](): ...",
+        "class C[A, *A](): ...",
+        "class C[*A, **A](): ...",
+    ];
+
+    for source in CASES {
+        if let Err(message) = expect_type_params_syntax_error(source, "duplicate type parameter 'A'")
+        {
+            return raise_assertion_error(&message);
+        }
+    }
+    MbValue::none()
+}
+
 extern "C" fn type_params_invalid_test_disallowed_expressions(_self_v: MbValue) -> MbValue {
     const CASES: &[&str] = &[
         "type X = (yield)",
@@ -160,6 +206,10 @@ extern "C" fn type_params_invalid_test_disallowed_expressions(_self_v: MbValue) 
 
 fn register_type_params_wrapper_submodule(type_params_make_base: usize) {
     let mut invalid_methods: HashMap<String, MbValue> = HashMap::new();
+    invalid_methods.insert(
+        "test_name_collisions".to_string(),
+        MbValue::from_func(type_params_invalid_test_name_collisions as *const () as usize),
+    );
     invalid_methods.insert(
         "test_disallowed_expressions".to_string(),
         MbValue::from_func(type_params_invalid_test_disallowed_expressions as *const () as usize),
@@ -1536,6 +1586,30 @@ mod tests {
         });
 
         assert_eq!(builtins::mb_callable(make_base).as_bool(), Some(true));
+    }
+
+    #[test]
+    fn test_register_support_submodules_installs_type_params_invalid_test_methods() {
+        register_support_submodules();
+        let test_name_collisions = module::MODULES.with(|mods| {
+            mods.borrow()
+                .get("TypeParamsInvalidTest")
+                .and_then(|m| m.methods.get("test_name_collisions").copied())
+        });
+        let test_disallowed_expressions = module::MODULES.with(|mods| {
+            mods.borrow()
+                .get("TypeParamsInvalidTest")
+                .and_then(|m| m.methods.get("test_disallowed_expressions").copied())
+        });
+
+        assert_eq!(
+            test_name_collisions.and_then(|v| v.as_usize()),
+            Some(type_params_invalid_test_name_collisions as usize)
+        );
+        assert_eq!(
+            test_disallowed_expressions.and_then(|v| v.as_usize()),
+            Some(type_params_invalid_test_disallowed_expressions as usize)
+        );
     }
 
     #[test]

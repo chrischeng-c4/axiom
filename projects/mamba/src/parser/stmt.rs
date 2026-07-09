@@ -3,6 +3,7 @@ use super::Parser;
 use crate::error::MambaError;
 use crate::lexer::token::TokenKind;
 use crate::source::span::{Span, Spanned};
+use std::collections::HashSet;
 
 #[derive(Clone, Copy)]
 pub(crate) enum Pep695ExprContext {
@@ -783,6 +784,7 @@ impl<'a> Parser<'a> {
         }
         self.advance();
         let mut params = Vec::new();
+        let mut seen_names = HashSet::new();
         let mut saw_default = false;
         while self.peek_kind() != Some(TokenKind::RBracket)
             && self.peek_kind() != Some(TokenKind::Eof)
@@ -875,6 +877,12 @@ impl<'a> Parser<'a> {
                 return Err(crate::error::MambaError::syntax(
                     self.span_from(param_start),
                     "non-default type parameter follows default type parameter",
+                ));
+            }
+            if !seen_names.insert(param.name.clone()) {
+                return Err(crate::error::MambaError::syntax(
+                    self.span_from(param_start),
+                    format!("duplicate type parameter '{}'", param.name),
                 ));
             }
             saw_default |= param.default.is_some();
