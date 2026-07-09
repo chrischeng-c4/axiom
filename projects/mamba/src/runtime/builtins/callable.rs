@@ -48,11 +48,14 @@ pub fn mb_callable(obj: MbValue) -> MbValue {
                     {
                         return MbValue::from_bool(true);
                     }
-                    // A `functools.partial` (and partial-shaped bound methods,
-                    // e.g. the bound `Struct.pack` / `Struct.unpack` methods)
-                    // is callable: `mb_call_spread` knows how to prepend the
-                    // bound args and dispatch the wrapped func.
-                    if class_name == "functools.partial" {
+                    // functools callable shells that `mb_call_spread`
+                    // dispatches specially at runtime.
+                    if matches!(
+                        class_name.as_str(),
+                        "functools.partial"
+                            | "functools.lru_cache_factory"
+                            | "functools.lru_cache_wrapper"
+                    ) {
                         return MbValue::from_bool(true);
                     }
                     if class_name == "functools._singledispatchmethod_bound" {
@@ -131,4 +134,28 @@ pub fn mb_callable(obj: MbValue) -> MbValue {
     }
     // Primitives (int, float, bool, None, etc.) are not callable
     MbValue::from_bool(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_callable_lru_cache_factory() {
+        let factory = crate::runtime::stdlib::functools_mod::mb_functools_lru_cache_factory(
+            MbValue::from_int(128),
+            MbValue::from_bool(false),
+        );
+        assert_eq!(mb_callable(factory).as_bool(), Some(true));
+    }
+
+    #[test]
+    fn test_callable_lru_cache_wrapper() {
+        let wrapper = crate::runtime::stdlib::functools_mod::mb_functools_lru_cache_wrap(
+            MbValue::from_int(7),
+            MbValue::from_int(128),
+            MbValue::from_bool(false),
+        );
+        assert_eq!(mb_callable(wrapper).as_bool(), Some(true));
+    }
 }
