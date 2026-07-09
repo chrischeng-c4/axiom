@@ -379,6 +379,9 @@ fn infer_variable_declarator_type(node: Node, source: &str) -> Option<String> {
     if let Some(inferred) = infer_arrow_function_type(value, source) {
         return Some(inferred);
     }
+    if let Some(inferred) = infer_arrow_body_return_object_type(value, source) {
+        return Some(inferred);
+    }
     infer_object_literal_type(value, source)
         .or_else(|| infer_single_arrow_property_object_literal_type(value, source))
 }
@@ -406,6 +409,57 @@ fn infer_arrow_function_type(node: Node, source: &str) -> Option<String> {
         .map(|n| node_text(n, source).trim().to_string())
         .unwrap_or_default();
     Some(format!("{type_params}{params} => {ret}"))
+}
+
+// @spec .aw/tech-design/projects/jet/logic/jet-lib-dts-isolateddeclarations-false-positive-on-arrow-functio.md#logic
+//
+// Narrow fallback for #1264: an arrow function with no explicit `return_type`
+// field (handled above by `infer_arrow_function_type`) whose body is a
+// `statement_block` containing exactly one `return_statement` of an object
+// literal. Member typing is delegated to the existing
+// `infer_object_literal_type` routine so no new member-inference logic is
+// introduced; any other body shape (multiple statements, a non-object
+// return, or a partially-typed object literal) falls through unchanged to
+// the caller's fail-loud isolatedDeclarations diagnostic.
+fn infer_arrow_body_return_object_type(node: Node, source: &str) -> Option<String> {
+    if node.kind() != "arrow_function" {
+        return None;
+    }
+    // Arrows with their own explicit return type are handled by
+    // `infer_arrow_function_type` before this fallback is tried.
+    if node.child_by_field_name("return_type").is_some() {
+        return None;
+    }
+
+    let body = node.child_by_field_name("body")?;
+    if body.kind() != "statement_block" {
+        return None;
+    }
+
+    let mut cursor = body.walk();
+    let mut statements = body.named_children(&mut cursor);
+    let statement = statements.next()?;
+    if statements.next().is_some() {
+        // More than one statement in the body -- not the narrow
+        // single-return shape this fallback covers.
+        return None;
+    }
+    if statement.kind() != "return_statement" {
+        return None;
+    }
+    let returned = first_named_child(statement)?;
+    let object_type = infer_object_literal_type(returned, source)?;
+
+    let params_node = node
+        .child_by_field_name("parameters")
+        .or_else(|| find_child_by_kind(node, "formal_parameters"))?;
+    let params = normalize_arrow_parameters_for_type(node_text(params_node, source).trim())?;
+
+    let type_params = node
+        .child_by_field_name("type_parameters")
+        .map(|n| node_text(n, source).trim().to_string())
+        .unwrap_or_default();
+    Some(format!("{type_params}{params} => {object_type}"))
 }
 
 fn normalize_arrow_parameters_for_type(params: &str) -> Option<String> {
@@ -1219,23 +1273,34 @@ fn split_top_level(text: &str, delimiter: char) -> Vec<String> {
     let mut depth = 0i32;
     let mut quote = None;
     let mut escaped = false;
+    let mut prev = '\0';
     for (idx, ch) in text.char_indices() {
         if let Some(q) = quote {
             if escaped {
                 escaped = false;
+                prev = ch;
                 continue;
             }
             if ch == '\\' {
                 escaped = true;
+                prev = ch;
                 continue;
             }
             if ch == q {
                 quote = None;
             }
+            prev = ch;
             continue;
         }
         match ch {
             '"' | '\'' | '`' => quote = Some(ch),
+            // `=>` (arrow function token): the trailing `>` is not a
+            // closing generic bracket, so it must not decrement depth --
+            // otherwise multiple arrow-typed members/params in the same
+            // top-level list (e.g. two object properties whose arrow
+            // return types are themselves generic, `Promise<string>`)
+            // would be merged into one part (#1264).
+            '>' if prev == '=' => {}
             '(' | '[' | '{' | '<' => depth += 1,
             ')' | ']' | '}' | '>' => depth -= 1,
             _ if ch == delimiter && depth == 0 => {
@@ -1244,6 +1309,7 @@ fn split_top_level(text: &str, delimiter: char) -> Vec<String> {
             }
             _ => {}
         }
+        prev = ch;
     }
     parts.push(text[start..].to_string());
     parts
@@ -1253,23 +1319,30 @@ fn split_once_top_level<'a>(text: &'a str, delimiter: char) -> Option<(&'a str, 
     let mut depth = 0i32;
     let mut quote = None;
     let mut escaped = false;
+    let mut prev = '\0';
     for (idx, ch) in text.char_indices() {
         if let Some(q) = quote {
             if escaped {
                 escaped = false;
+                prev = ch;
                 continue;
             }
             if ch == '\\' {
                 escaped = true;
+                prev = ch;
                 continue;
             }
             if ch == q {
                 quote = None;
             }
+            prev = ch;
             continue;
         }
         match ch {
             '"' | '\'' | '`' => quote = Some(ch),
+            // See the matching comment in `split_top_level` (#1264): `=>`'s
+            // trailing `>` is not a closing generic bracket.
+            '>' if prev == '=' => {}
             '(' | '[' | '{' | '<' => depth += 1,
             ')' | ']' | '}' | '>' => depth -= 1,
             _ if ch == delimiter && depth == 0 => {
@@ -1277,6 +1350,7 @@ fn split_once_top_level<'a>(text: &'a str, delimiter: char) -> Option<(&'a str, 
             }
             _ => {}
         }
+        prev = ch;
     }
     None
 }
@@ -2025,6 +2099,68 @@ export const SpAlert = Alert as AlertInterface;
         assert!(
             err.to_string().contains("isolatedDeclarations"),
             "uncast local-variable return must stay fail-loud, got: {err}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_const_arrow_body_single_return_typed_object_literal_signature() {
+        // R1 (#1264): WI minimal repro -- arrow const with no explicit
+        // return type, single-statement block body that returns an object
+        // literal whose own members all carry explicit types. tsc accepts
+        // this and infers the return type from the returned literal.
+        let src = r#"export const funcReturningTypedObject = (a: string, b: number = 1) => {
+    return {
+        fromOutsource: (x: string): Promise<string> => Promise.resolve(x),
+        toOutsource: (y?: string): string => y ?? a,
+    };
+};
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare const funcReturningTypedObject: (a: string, b?: number) => {")
+                && dts.contains("fromOutsource: (x: string) => Promise<string>;")
+                && dts.contains("toOutsource: (y?: string) => string;"),
+            "arrow body single-return typed object literal should synthesize a return-object signature, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn uninferrable_exported_const_arrow_body_return_partially_typed_object_literal_errors() {
+        // R2 (#1264): negative control -- same shape as R1 but one member's
+        // arrow value has no explicit return type. Must stay fail-loud,
+        // proving the new path only fires when every returned-object member
+        // is itself locally inferable.
+        let src = r#"export const funcReturningTypedObject = (a: string, b: number = 1) => {
+    return {
+        fromOutsource: (x: string): Promise<string> => Promise.resolve(x),
+        toOutsource: (y?: string) => y ?? a,
+    };
+};
+"#;
+        let err = emit_declarations(src).unwrap_err();
+        assert!(
+            err.to_string().contains("isolatedDeclarations"),
+            "arrow body return object with a partially-typed member must stay fail-loud, got: {err}"
+        );
+    }
+
+    #[test]
+    fn uninferrable_exported_const_arrow_multi_statement_body_return_object_literal_errors() {
+        // R3 (#1264): negative control -- multi-statement block body before
+        // the `return { ... }`. Must stay fail-loud, proving the new
+        // inference is scoped to exactly one return statement.
+        let src = r#"export const funcReturningTypedObject = (a: string, b: number = 1) => {
+    const prefix = a;
+    return {
+        fromOutsource: (x: string): Promise<string> => Promise.resolve(x),
+        toOutsource: (y?: string): string => y ?? prefix,
+    };
+};
+"#;
+        let err = emit_declarations(src).unwrap_err();
+        assert!(
+            err.to_string().contains("isolatedDeclarations"),
+            "multi-statement arrow body returning a typed object literal must stay fail-loud, got: {err}"
         );
     }
 }
