@@ -212,3 +212,63 @@ docs_site_rebrand:
       command: "for f in $(find projects/jet/docs -name '*.md' -not -path '*/node_modules/*'); do link=\"/${f#projects/jet/docs/}\"; link=\"${link%.md}\"; grep -q -- \"$link\" projects/jet/docs/.vitepress/config.mjs || echo \"orphan: $f\"; done"
       expected: "no output (every markdown file's link path appears in the nav/sidebar config)"
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: jet-docs-site-rebrand-and-orphan-nav-linking-verification
+requirements:
+  every_design_note_nav_linked:
+    id: R6
+    text: "Every pre-existing hand-written design-note markdown file under projects/jet/docs/ (the 11 files the doc-relocation left unlinked: architecture/layout.md, architecture/reorg-plan.md, build-fails-loudly-on-unresolved-bare-specifiers.md, check-exits-non-zero-while-unimplemented.md, dev-server-source-analysis-utf8-safety.md, layout-box-slice-7a.md, library-publishing.md, migration-from-playwright.md, openapi-codegen.md, wasm-config-accept-shared-jet-sections.md, wasm-transpiler-boolean-usestate-literals.md) has a corresponding nav/sidebar entry in .vitepress/config.mjs."
+    kind: functional
+    risk: medium
+    verify: for f in architecture/layout architecture/reorg-plan build-fails-loudly-on-unresolved-bare-specifiers check-exits-non-zero-while-unimplemented dev-server-source-analysis-utf8-safety layout-box-slice-7a library-publishing migration-from-playwright openapi-codegen wasm-config-accept-shared-jet-sections wasm-transpiler-boolean-usestate-literals; do grep -q -- "/$f" projects/jet/docs/.vitepress/config.mjs || exit 1; done
+  hero_name_rebranded:
+    id: R1
+    text: "projects/jet/docs/index.md frontmatter hero.name is 'Jet', not 'cclab'."
+    kind: functional
+    risk: low
+    verify: grep -q "name: Jet" projects/jet/docs/index.md && ! grep -q "name: cclab" projects/jet/docs/index.md
+  no_orphaned_markdown_remains:
+    id: R7
+    text: "No markdown file under projects/jet/docs/ (excluding node_modules/.vitepress build output) is absent from the nav/sidebar link set."
+    kind: regression
+    risk: medium
+    verify: for f in $(find projects/jet/docs -name '*.md' -not -path '*/node_modules/*'); do link="/${f#projects/jet/docs/}"; link="${link%.md}"; grep -q -- "$link" projects/jet/docs/.vitepress/config.mjs || exit 1; done
+  no_residual_cclab_branding:
+    id: R5
+    text: "No residual 'cclab' string remains in index.md, .vitepress/config.mjs, or package.json."
+    kind: regression
+    risk: medium
+    verify: ! grep -rn 'cclab' projects/jet/docs/index.md projects/jet/docs/.vitepress/config.mjs projects/jet/docs/package.json
+  package_json_name_rebranded:
+    id: R4
+    text: "projects/jet/docs/package.json name is a jet-scoped docs package name, not 'cclab-docs'."
+    kind: functional
+    risk: low
+    verify: grep -q '"name": "jet-docs"' projects/jet/docs/package.json && ! grep -q 'cclab-docs' projects/jet/docs/package.json
+  placeholder_features_removed:
+    id: R2
+    text: "projects/jet/docs/index.md no longer lists the Mamba or SDD '(Docs coming soon)' placeholder features; only the Jet feature entry remains."
+    kind: functional
+    risk: low
+    verify: ! grep -Eq 'title: Mamba|title: SDD' projects/jet/docs/index.md
+  vitepress_title_rebranded:
+    id: R3
+    text: "projects/jet/docs/.vitepress/config.mjs defineConfig title is jet-branded, not 'cclab'."
+    kind: functional
+    risk: low
+    verify: grep -q "title: 'Jet'" projects/jet/docs/.vitepress/config.mjs && ! grep -q "title: 'cclab'" projects/jet/docs/.vitepress/config.mjs
+---
+flowchart TD
+    r1[R1 hero name rebranded] --> grep_q_name_jet_projects_jet_docs_index_md_grep_q_name_cclab_projects_jet_docs_index_md[grep -q "name: Jet" projects/jet/docs/index.md && ! grep -q "name: cclab" projects/jet/docs/index.md]
+    r2[R2 placeholder features removed] --> grep_eq_title_mamba_title_sdd_projects_jet_docs_index_md[! grep -Eq 'title: Mamba|title: SDD' projects/jet/docs/index.md]
+    r3[R3 vitepress title rebranded] --> grep_q_title_jet_projects_jet_docs_vitepress_config_mjs_grep_q_title_cclab_projects_jet_docs_vitepress_config_mjs[grep -q "title: 'Jet'" projects/jet/docs/.vitepress/config.mjs && ! grep -q "title: 'cclab'" projects/jet/docs/.vitepress/config.mjs]
+    r4[R4 package json name rebranded] --> grep_q_name_jet_docs_projects_jet_docs_package_json_grep_q_cclab_docs_projects_jet_docs_package_json[grep -q '"name": "jet-docs"' projects/jet/docs/package.json && ! grep -q 'cclab-docs' projects/jet/docs/package.json]
+    r5[R5 no residual cclab branding] --> grep_rn_cclab_projects_jet_docs_index_md_projects_jet_docs_vitepress_config_mjs_projects_jet_docs_package_json[! grep -rn 'cclab' projects/jet/docs/index.md projects/jet/docs/.vitepress/config.mjs projects/jet/docs/package.json]
+    r6[R6 every design note nav linked] --> for_f_in_architecture_layout_architecture_reorg_plan_build_fails_loudly_on_unresolved_bare_specifiers_check_exits_non_zero_while_unimplemented_dev_server_source_analysis_utf8_safety_layout_box_slice_7a_library_publishing_migration_from_playwright_openapi_codegen_wasm_config_accept_shared_jet_sections_wasm_transpiler_boolean_usestate_literals_do_grep_q_f_projects_jet_docs_vitepress_config_mjs_exit_1_done[for f in architecture/layout architecture/reorg-plan build-fails-loudly-on-unresolved-bare-specifiers check-exits-non-zero-while-unimplemented dev-server-source-analysis-utf8-safety layout-box-slice-7a library-publishing migration-from-playwright openapi-codegen wasm-config-accept-shared-jet-sections wasm-transpiler-boolean-usestate-literals; do grep -q -- "/$f" projects/jet/docs/.vitepress/config.mjs || exit 1; done]
+    r7[R7 no orphaned markdown remains] --> for_f_in_find_projects_jet_docs_name_md_not_path_node_modules_do_link_f_projects_jet_docs_link_link_md_grep_q_link_projects_jet_docs_vitepress_config_mjs_exit_1_done[for f in $(find projects/jet/docs -name '*.md' -not -path '*/node_modules/*'); do link="/${f#projects/jet/docs/}"; link="${link%.md}"; grep -q -- "$link" projects/jet/docs/.vitepress/config.mjs || exit 1; done]
+```
