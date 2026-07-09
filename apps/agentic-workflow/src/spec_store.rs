@@ -134,6 +134,16 @@ impl FileSystemSpecStore {
         matched as f32 / terms.len() as f32
     }
 
+    /// The `projects/<name>/...` → `apps/<name>/...` source-root move (#1211)
+    /// left only `mamba` and `lumen` under the legacy `projects/` root; every
+    /// other project routes to `apps/` (#1312/#1313 taxonomy).
+    fn project_source_root(project: &str) -> &'static str {
+        match project {
+            "mamba" | "lumen" => "projects",
+            _ => "apps",
+        }
+    }
+
     /// Return the path of a spec file relative to `{root}/.aw/tech-design/`.
     fn relative_spec_path(&self, abs_path: &Path) -> String {
         let specs_base = self.specs_base();
@@ -142,7 +152,7 @@ impl FileSystemSpecStore {
         }
         for (project, td_root) in workspace::project_tech_design_paths(&self.root) {
             if let Ok(rel) = abs_path.strip_prefix(&td_root) {
-                return PathBuf::from("projects")
+                return PathBuf::from(Self::project_source_root(&project))
                     .join(project)
                     .join(rel)
                     .to_string_lossy()
@@ -157,21 +167,26 @@ impl FileSystemSpecStore {
     }
 
     fn resolve_read_path(&self, path: &str) -> PathBuf {
-        if let Some(rest) = path.strip_prefix("projects/") {
-            let mut parts = rest.splitn(2, '/');
-            if let (Some(project), Some(project_rel)) = (parts.next(), parts.next()) {
-                if project == "agentic-workflow" {
-                    let candidate = self
-                        .root
-                        .join("apps/agentic-workflow/tech-design")
-                        .join(project_rel);
-                    if candidate.exists() {
-                        return candidate;
+        for root_prefix in ["apps/", "projects/"] {
+            if let Some(rest) = path.strip_prefix(root_prefix) {
+                let mut parts = rest.splitn(2, '/');
+                if let (Some(project), Some(project_rel)) = (parts.next(), parts.next()) {
+                    if project == "agentic-workflow" {
+                        let candidate = self
+                            .root
+                            .join("apps/agentic-workflow/tech-design")
+                            .join(project_rel);
+                        if candidate.exists() {
+                            return candidate;
+                        }
                     }
-                }
-                for (name, td_root) in workspace::project_tech_design_paths(&self.root) {
-                    if name == project {
-                        return td_root.join(project_rel);
+                    for (name, td_root) in workspace::project_tech_design_paths(&self.root) {
+                        if name == project {
+                            let candidate = td_root.join(project_rel);
+                            if candidate.exists() {
+                                return candidate;
+                            }
+                        }
                     }
                 }
             }
@@ -487,6 +502,26 @@ td_path = "apps/agentic-workflow/tech-design"
             .await
             .unwrap();
         assert!(content.contains("Runtime"));
+    }
+
+    // #1312/#1313: project_source_root routes every project except the
+    // legacy mamba/lumen holdouts to apps/, matching the projects/ -> apps/
+    // source-root move (#1211).
+    #[test]
+    fn test_project_source_root_routes_legacy_projects_root_apps_by_default() {
+        assert_eq!(
+            FileSystemSpecStore::project_source_root("mamba"),
+            "projects"
+        );
+        assert_eq!(
+            FileSystemSpecStore::project_source_root("lumen"),
+            "projects"
+        );
+        assert_eq!(
+            FileSystemSpecStore::project_source_root("agentic-workflow"),
+            "apps"
+        );
+        assert_eq!(FileSystemSpecStore::project_source_root("keep"), "apps");
     }
 
     // from_config is a semantic alias for new

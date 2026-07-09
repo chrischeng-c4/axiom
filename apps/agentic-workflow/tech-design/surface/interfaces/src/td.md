@@ -1951,6 +1951,16 @@ fn derive_spec_dir_for_issue(issue: &Issue) -> String {
     derive_spec_dir_from_parts(&issue.labels, Some(&issue.title))
 }
 
+/// The `projects/<name>/...` → `apps/<name>/...` source-root move (#1211)
+/// left only `mamba` and `lumen` under the legacy `projects/` root; every
+/// other `app:<name>` label routes to `apps/`.
+fn app_source_root(app: &str) -> &'static str {
+    match app {
+        "mamba" | "lumen" => "projects",
+        _ => "apps",
+    }
+}
+
 fn derive_project_td_spec_dir(labels: &[String]) -> String {
     let concern = derive_td_concern(labels, None);
     for label in labels {
@@ -1967,10 +1977,7 @@ fn derive_project_td_spec_dir(labels: &[String]) -> String {
         if let Some(app) = label.strip_prefix("app:") {
             let app = app.trim();
             if !app.is_empty() {
-                let root = match app {
-                    "agentic-workflow" | "relay" => "apps",
-                    _ => "projects",
-                };
+                let root = app_source_root(app);
                 return format!(
                     "{root}/{}/tech-design/{concern}/",
                     slugify_path_component(app)
@@ -2013,10 +2020,7 @@ fn derive_spec_dir_from_parts(labels: &[String], title: Option<&str>) -> String 
         if let Some(app) = label.strip_prefix("app:") {
             let app = app.trim();
             if !app.is_empty() {
-                let root = match app {
-                    "agentic-workflow" | "relay" => "apps",
-                    _ => "projects",
-                };
+                let root = app_source_root(app);
                 return format!("{root}/{}/{concern}/", slugify_path_component(app));
             }
         }
@@ -5241,6 +5245,21 @@ label = "app:agentic-workflow"
     fn derive_spec_dir_preserves_crate_routing() {
         let labels = vec!["type:bug".to_string(), "crate:sdd".to_string()];
         assert_eq!(derive_spec_dir(&labels), "apps/agentic-workflow/logic/");
+    }
+
+    #[test]
+    fn derive_spec_dir_routes_legacy_projects_root_apps_by_default() {
+        // #1312: only mamba/lumen stayed under the legacy `projects/` root
+        // after the projects/ -> apps/ move; every other app: label routes
+        // to apps/.
+        let labels = vec!["type:enhancement".to_string(), "app:mamba".to_string()];
+        assert_eq!(derive_spec_dir(&labels), "projects/mamba/logic/");
+
+        let labels = vec!["type:enhancement".to_string(), "app:lumen".to_string()];
+        assert_eq!(derive_spec_dir(&labels), "projects/lumen/logic/");
+
+        let labels = vec!["type:enhancement".to_string(), "app:keep".to_string()];
+        assert_eq!(derive_spec_dir(&labels), "apps/keep/logic/");
     }
 
     #[test]

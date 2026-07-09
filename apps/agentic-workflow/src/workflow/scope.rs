@@ -440,15 +440,14 @@ fn extract_scope_from_requirements(requirements: &str) -> Vec<String> {
                 }
             }
         }
-        // Match `crates/{bare-crate}/...` or `projects/{bare-crate}/...`.
-        else if let Some(rest) = w.strip_prefix("crates/") {
-            if let Some(name) = rest.split('/').next() {
-                let name = name.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
-                if BARE_CRATES.contains(&name) && !names.contains(&name.to_string()) {
-                    names.push(name.to_string());
-                }
-            }
-        } else if let Some(rest) = w.strip_prefix("projects/") {
+        // Match `crates/{bare-crate}/...`, `projects/{bare-crate}/...`, or
+        // `apps/{bare-crate}/...` (the projects/ -> apps/ source-root move,
+        // #1211/#1312).
+        else if let Some(rest) = w
+            .strip_prefix("crates/")
+            .or_else(|| w.strip_prefix("projects/"))
+            .or_else(|| w.strip_prefix("apps/"))
+        {
             if let Some(name) = rest.split('/').next() {
                 let name = name.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
                 if BARE_CRATES.contains(&name) && !names.contains(&name.to_string()) {

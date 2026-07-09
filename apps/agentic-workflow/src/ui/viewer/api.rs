@@ -228,9 +228,7 @@ fn title_from_filename(filename: &str) -> String {
 /// Example: "crates/cclab-agent/architecture.md" -> "cclab-agent"
 fn crate_from_relative_path(rel: &str) -> String {
     let parts: Vec<&str> = rel.split('/').collect();
-    if parts.len() >= 2 && parts[0] == "crates" {
-        parts[1].to_string()
-    } else if parts.len() >= 2 && parts[0] == "projects" {
+    if parts.len() >= 2 && matches!(parts[0], "crates" | "projects" | "apps") {
         parts[1].to_string()
     } else {
         // Top-level specs have no crate

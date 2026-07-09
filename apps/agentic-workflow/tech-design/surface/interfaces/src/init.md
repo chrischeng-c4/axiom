@@ -219,21 +219,24 @@ fn is_directory_empty(path: &Path) -> Result<bool> {
 fn run_at_project_root(force: bool, project_root: &Path) -> Result<()> {
     let legacy_score_dir = project_root.join(concat!(".", "score"));
     let legacy_cclab_dir = project_root.join("cclab");
-    let sdd_dir = project_root.join(crate::shared::workspace::WORKSPACE_DIR);
+    let sdd_dir = crate::shared::workspace::workspace_runtime_path(project_root);
     let claude_dir = project_root.join(".claude");
 
     if legacy_score_dir.exists() {
         anyhow::bail!(
-            "legacy Agentic Workflow state found at {}; active state now lives under .aw. Move or remove the old directory explicitly, then rerun the relevant producer command.",
+            "legacy Agentic Workflow state found at {}; active runtime state now lives under /tmp/aw and root config lives in aw.toml. Move or remove the old directory explicitly, then rerun the relevant producer command.",
             legacy_score_dir.display()
         );
     }
 
-    // Auto-migrate: rename cclab/ → .aw/ if the legacy dir exists
+    // Auto-migrate: rename cclab/ → runtime workspace dir if the legacy dir exists
     if legacy_cclab_dir.exists() && !sdd_dir.exists() {
-        println!("{}", "🔄 Migrating cclab/ → .aw/...".cyan());
+        println!(
+            "{}",
+            "🔄 Migrating cclab/ → /tmp/aw runtime workspace...".cyan()
+        );
         std::fs::rename(&legacy_cclab_dir, &sdd_dir)?;
-        println!("   ✓ Renamed cclab/ to .aw/");
+        println!("   ✓ Renamed cclab/ to {}", sdd_dir.display());
         println!();
     }
 
@@ -755,10 +758,14 @@ fn run_fresh_install(
     interface: SddInterface,
     platform_toml: Option<String>,
 ) -> Result<()> {
-    // Create directory structure
+    // Create directory structure. `tech-design/` is a durable project
+    // artifact and lives at the project root (`workspace::tech_design_path`),
+    // not inside the ephemeral `/tmp/aw` runtime workspace (`sdd_dir`) — see
+    // CLAUDE.md "durable project artifacts live under their project
+    // directories" (#1302 residue).
     println!("{}", "📁 Creating directory structure...".cyan());
     std::fs::create_dir_all(sdd_dir)?;
-    std::fs::create_dir_all(sdd_dir.join("tech-design"))?;
+    std::fs::create_dir_all(crate::shared::workspace::tech_design_path(project_root))?;
 
     // Create Claude Code skills directory
     let skills_dir = claude_dir.join("skills");
@@ -776,7 +783,7 @@ fn run_fresh_install(
     config.save(project_root)?;
 
     // Append platform + workspace-specific scopes hint to config.toml
-    let config_path = project_root.join(".aw/config.toml");
+    let config_path = project_root.join("aw.toml");
     let mut content = std::fs::read_to_string(&config_path)?;
     if let Some(platform) = &platform_toml {
         content.push_str(platform);
@@ -789,7 +796,7 @@ fn run_fresh_install(
     }
     std::fs::write(&config_path, content)?;
 
-    println!("   ✓ .aw/config.toml (interface: {})", interface.name());
+    println!("   ✓ aw.toml (interface: {})", interface.name());
 
     // Install system files
     install_system_files(project_root, sdd_dir, claude_dir)?;
@@ -811,11 +818,14 @@ fn run_fresh_install(
 // Update mode: overwrite config.toml, update system files
 fn run_update(project_root: &Path, sdd_dir: &Path, claude_dir: &Path, force: bool) -> Result<()> {
     println!("{}", "📦 User data:".cyan());
-    println!("   ✓ .aw/tech-design/     (untouched)");
+    println!("   ✓ project tech-design roots (untouched)");
 
-    let config_path = sdd_dir.join("config.toml");
+    let config_path = project_root.join(crate::shared::workspace::CONFIG_FILE);
+    let legacy_config_path = sdd_dir.join("config.toml");
     let existing_config = if config_path.exists() {
         Some(std::fs::read_to_string(&config_path)?)
+    } else if legacy_config_path.exists() {
+        Some(std::fs::read_to_string(&legacy_config_path)?)
     } else {
         None
     };
@@ -829,11 +839,11 @@ fn run_update(project_root: &Path, sdd_dir: &Path, claude_dir: &Path, force: boo
 
         std::fs::write(&config_path, &migrated)?;
         if !applied.is_empty() {
-            println!("   ✓ .aw/config.toml (migrated: {})", applied.join(", "));
+            println!("   ✓ aw.toml (migrated: {})", applied.join(", "));
         } else if force {
-            println!("   ✓ .aw/config.toml (force refreshed)");
+            println!("   ✓ aw.toml (force refreshed)");
         } else {
-            println!("   ✓ .aw/config.toml (updated)");
+            println!("   ✓ aw.toml (updated)");
         }
     } else {
         let mut config = SddConfig::with_interface(SddInterface::Cli);
@@ -843,7 +853,7 @@ fn run_update(project_root: &Path, sdd_dir: &Path, claude_dir: &Path, force: boo
         let mut content = std::fs::read_to_string(&config_path)?;
         content = apply_platform_update(&content, &platform_update);
         std::fs::write(&config_path, content)?;
-        println!("   ✓ .aw/config.toml (created)");
+        println!("   ✓ aw.toml (created)");
     }
     println!();
 
@@ -1141,7 +1151,7 @@ fn generate_agents_md(project_root: &Path) -> Result<()> {
 }
 
 // Regenerate the repo-root README.md's generated Projects table between
-// `<!-- aw:projects-table:start/end -->` markers from `.aw/config.toml`
+// `<!-- aw:projects-table:start/end -->` markers from `aw.toml`
 // (issue #985, init-projector slice 2/3). Only touches README.md when it
 // exists AND already carries the markers: the table is opt-in per document
 // (project scaffolds created via `aw new` have no README yet, and existing
@@ -2023,7 +2033,7 @@ mod tests {
 
         assert_eq!(outcome.target, target);
         assert!(outcome.assets_installed);
-        assert!(target.join(".aw/config.toml").exists());
+        assert!(target.join("aw.toml").exists());
         assert!(target.join("tech-design").is_dir());
         assert!(target.join("CLAUDE.md").exists());
         assert!(
@@ -2343,7 +2353,6 @@ fn install_shell_completions() -> Result<()> {
 }
 
 // CODEGEN-END
-
 ```
 
 ## Changes

@@ -725,10 +725,14 @@ fn run_fresh_install(
     interface: SddInterface,
     platform_toml: Option<String>,
 ) -> Result<()> {
-    // Create directory structure
+    // Create directory structure. `tech-design/` is a durable project
+    // artifact and lives at the project root (`workspace::tech_design_path`),
+    // not inside the ephemeral `/tmp/aw` runtime workspace (`sdd_dir`) — see
+    // CLAUDE.md "durable project artifacts live under their project
+    // directories" (#1302 residue).
     println!("{}", "📁 Creating directory structure...".cyan());
     std::fs::create_dir_all(sdd_dir)?;
-    std::fs::create_dir_all(sdd_dir.join("tech-design"))?;
+    std::fs::create_dir_all(crate::shared::workspace::tech_design_path(project_root))?;
 
     // Create Claude Code skills directory
     let skills_dir = claude_dir.join("skills");
