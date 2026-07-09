@@ -795,6 +795,17 @@ impl<'a> Parser<'a> {
             if self.peek_kind() == Some(TokenKind::DoubleStar) {
                 self.advance(); // consume **
                 let (s, e) = self.expect_name()?;
+                if self.peek_kind() == Some(TokenKind::Colon) {
+                    let message = if self.peek_at(1) == Some(&TokenKind::LParen) {
+                        "cannot use constraints with ParamSpec"
+                    } else {
+                        "cannot use bound with ParamSpec"
+                    };
+                    return Err(crate::error::MambaError::syntax(
+                        self.span_from(param_start),
+                        message,
+                    ));
+                }
                 param = TypeParam {
                     name: self.text_at(s, e).to_string(),
                     kind: TypeParamKind::ParamSpec,
@@ -812,6 +823,17 @@ impl<'a> Parser<'a> {
             else if self.peek_kind() == Some(TokenKind::Star) {
                 self.advance(); // consume *
                 let (s, e) = self.expect_name()?;
+                if self.peek_kind() == Some(TokenKind::Colon) {
+                    let message = if self.peek_at(1) == Some(&TokenKind::LParen) {
+                        "cannot use constraints with TypeVarTuple"
+                    } else {
+                        "cannot use bound with TypeVarTuple"
+                    };
+                    return Err(crate::error::MambaError::syntax(
+                        self.span_from(param_start),
+                        message,
+                    ));
+                }
                 param = TypeParam {
                     name: self.text_at(s, e).to_string(),
                     kind: TypeParamKind::TypeVarTuple,
