@@ -231,7 +231,6 @@ flowchart TD
     r5[R5 no duplicated github api logic in jet] --> rg_n_reqwest_http_client_github_com_repos_projects_jet_src_standard_cli_rs[! rg -n "reqwest::|http_client\(|github\.com/repos" projects/jet/src/standard_cli.rs]
     r6[R6 release build type checks comment path] --> cargo_build_p_jet_release[cargo build -p jet --release]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
