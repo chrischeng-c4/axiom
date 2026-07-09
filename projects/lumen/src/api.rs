@@ -348,6 +348,9 @@ impl AppState {
         TermQuery,
         TermsQuery,
         RangeQuery,
+        // #1307: $ref'd by RangeQuery's gt/gte/lt/lte bounds (untagged f64 | String) —
+        // same dangling-ref reason as the #200 note below, registered explicitly.
+        crate::types::RangeBound,
         KnnQuery,
         crate::types::RrfQuery,
         crate::types::ExistsQuery,

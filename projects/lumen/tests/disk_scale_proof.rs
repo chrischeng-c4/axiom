@@ -52,8 +52,8 @@ use std::sync::Arc;
 use lumen::storage::Engine;
 use lumen::types::{
     Analyzer, CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest,
-    KnnQuery, MatchOp, MatchQuery, QueryNode, RangeQuery, SearchRequest, TermQuery, TermsQuery,
-    VectorBackend, VectorMetric,
+    KnnQuery, MatchOp, MatchQuery, QueryNode, RangeBound, RangeQuery, SearchRequest, TermQuery,
+    TermsQuery, VectorBackend, VectorMetric,
 };
 
 // ---------------------------------------------------------------------------
@@ -316,8 +316,8 @@ fn battery(e: &Engine, coll: &str, n: u64, dim: usize, with_vector: bool) -> Bat
         QueryNode::Range(RangeQuery {
             field: "num".into(),
             gt: None,
-            gte: Some(10_000.0),
-            lt: Some(10_500.0),
+            gte: Some(RangeBound::Number(10_000.0)),
+            lt: Some(RangeBound::Number(10_500.0)),
             lte: None,
         }),
         100_000,
