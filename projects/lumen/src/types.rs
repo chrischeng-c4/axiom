@@ -509,6 +509,68 @@ pub struct SearchResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Batch search
+// ---------------------------------------------------------------------------
+
+/// Maximum number of items accepted in one [`BatchSearchRequest`]. Doubles
+/// as the concurrent fan-out bound for `POST /collections:search`; a
+/// request with more items than this is rejected with 400 before any
+/// per-item work starts.
+pub const MAX_BATCH_SEARCH_SIZE: usize = 32;
+
+/// `POST /collections:search` body — an msearch-style batch of independent
+/// `(collection, SearchRequest)` items executed with server-side
+/// concurrent fan-out. `collections:search` is one literal path segment
+/// (AIP-136 custom-method syntax), so it never collides with
+/// `/collections/{collection_id}`.
+///
+/// Each item carries its own full [`SearchRequest`] — `limit`, `sort`,
+/// `cursor`, `collapse`, `routing_key`, and `track_total` may all differ
+/// per item. There is no cross-collection ranking or merged pagination:
+/// results, and cursors, stay independent per item.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub struct BatchSearchRequest {
+    /// At most [`MAX_BATCH_SEARCH_SIZE`] items; a longer batch is rejected
+    /// with 400 before any item runs.
+    pub searches: Vec<BatchSearchItem>,
+}
+
+/// One item of a [`BatchSearchRequest`]. Flattened on the wire, so an item
+/// looks like `{"collection": "...", "query": {...}, "limit": 20, ...}` —
+/// the same fields `POST /collections/{id}/search` accepts, plus the
+/// target `collection`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub struct BatchSearchItem {
+    pub collection: String,
+    #[serde(flatten)]
+    pub request: SearchRequest,
+}
+
+/// `POST /collections:search` response: one [`BatchSearchResult`] per
+/// request item, in the same order and with the same length as
+/// `searches`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub struct BatchSearchResponse {
+    pub results: Vec<BatchSearchResult>,
+}
+
+/// One batch-item outcome, tagged by `status`. A per-item failure (for
+/// example an unknown collection) never fails the whole batch: the
+/// batch-level HTTP status stays 200 and the failure is reported here as
+/// `{"status":"error","code":"collection_not_found","message":"..."}`
+/// alongside `{"status":"ok","response":{...}}` siblings.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "status", rename_all = "lowercase")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub enum BatchSearchResult {
+    Ok { response: SearchResponse },
+    Error { code: String, message: String },
+}
+
+// ---------------------------------------------------------------------------
 // Duplicates
 // ---------------------------------------------------------------------------
 

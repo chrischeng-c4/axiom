@@ -10,15 +10,15 @@
     "license": {
       "name": "MIT"
     },
-    "version": "0.3.60"
+    "version": "0.4.17"
   },
   "servers": [
     {
-      "url": "http://lumen-svc:8080",
+      "url": "http://lumen-svc:7373",
       "description": "in-cluster ClusterIP"
     },
     {
-      "url": "http://localhost:8080",
+      "url": "http://localhost:7373",
       "description": "local dev"
     }
   ],
@@ -400,6 +400,48 @@
         }
       }
     },
+    "/collections:search": {
+      "post": {
+        "tags": [
+          "Query"
+        ],
+        "summary": "msearch-style batch search: N independent `(collection, SearchRequest)`",
+        "description": "items in one HTTP request, fanned out concurrently. `collections:search`\nis one literal path segment (AIP-136 custom-method syntax), so it\nregisters directly in axum next to `/collections` and\n`/collections/{collection_id}` without any capture ambiguity.\n\nOne item failing (e.g. an unknown collection) never fails the batch —\nthe batch-level status stays 200 and that item's [`BatchSearchResult`]\ncarries the error. Only a malformed body or an over-limit batch returns\n400. Cursors, sort, and collapse all stay per-item: there is no merged\ncursor and no cross-collection score merging.",
+        "operationId": "batch_search",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchSearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Per-item results, same order and length as `searches`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchSearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or batch size over the limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/debug/cluster": {
       "get": {
         "tags": [
@@ -417,7 +459,10 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/healthz": {
@@ -425,6 +470,7 @@
         "tags": [
           "Admin"
         ],
+        "summary": "OpenAPI metadata for the shared `/healthz` implementation in service-http.",
         "operationId": "healthz",
         "responses": {
           "200": {
@@ -437,7 +483,10 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/metrics": {
@@ -445,6 +494,7 @@
         "tags": [
           "Admin"
         ],
+        "summary": "OpenAPI metadata for the shared `/metrics` implementation in service-http.",
         "operationId": "metrics",
         "responses": {
           "200": {
@@ -457,7 +507,10 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/readyz": {
@@ -465,6 +518,7 @@
         "tags": [
           "Admin"
         ],
+        "summary": "OpenAPI metadata for the shared `/readyz` implementation in service-http.",
         "operationId": "readyz",
         "responses": {
           "200": {
@@ -473,7 +527,33 @@
           "503": {
             "description": "Not ready"
           }
-        }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/version": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Build provenance. `version` is the crate version; `git_sha` and `built_at`",
+        "description": "are stamped by `build.rs` and degrade to \"unknown\" outside a git checkout.",
+        "operationId": "version",
+        "responses": {
+          "200": {
+            "description": "Build provenance: version, git sha, build time",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
       }
     }
   },
@@ -481,6 +561,7 @@
     "schemas": {
       "Analyzer": {
         "type": "string",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "enum": [
           "whitespace_lower",
           "jieba",
@@ -489,6 +570,7 @@
       },
       "ApiError": {
         "type": "object",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "error",
           "message"
@@ -502,8 +584,107 @@
           }
         }
       },
+      "BatchSearchItem": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SearchRequest"
+          },
+          {
+            "type": "object",
+            "required": [
+              "collection"
+            ],
+            "properties": {
+              "collection": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "One item of a [`BatchSearchRequest`]. Flattened on the wire, so an item\nlooks like `{\"collection\": \"...\", \"query\": {...}, \"limit\": 20, ...}` —\nthe same fields `POST /collections/{id}/search` accepts, plus the\ntarget `collection`.\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source"
+      },
+      "BatchSearchRequest": {
+        "type": "object",
+        "description": "`POST /collections:search` body — an msearch-style batch of independent\n`(collection, SearchRequest)` items executed with server-side\nconcurrent fan-out. `collections:search` is one literal path segment\n(AIP-136 custom-method syntax), so it never collides with\n`/collections/{collection_id}`.\n\nEach item carries its own full [`SearchRequest`] — `limit`, `sort`,\n`cursor`, `collapse`, `routing_key`, and `track_total` may all differ\nper item. There is no cross-collection ranking or merged pagination:\nresults, and cursors, stay independent per item.\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
+        "required": [
+          "searches"
+        ],
+        "properties": {
+          "searches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatchSearchItem"
+            },
+            "description": "At most [`MAX_BATCH_SEARCH_SIZE`] items; a longer batch is rejected\nwith 400 before any item runs."
+          }
+        }
+      },
+      "BatchSearchResponse": {
+        "type": "object",
+        "description": "`POST /collections:search` response: one [`BatchSearchResult`] per\nrequest item, in the same order and with the same length as\n`searches`.\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatchSearchResult"
+            }
+          }
+        }
+      },
+      "BatchSearchResult": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "response",
+              "status"
+            ],
+            "properties": {
+              "response": {
+                "$ref": "#/components/schemas/SearchResponse"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "ok"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "message",
+              "status"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "error"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "One batch-item outcome, tagged by `status`. A per-item failure (for\nexample an unknown collection) never fails the whole batch: the\nbatch-level HTTP status stays 200 and the failure is reported here as\n`{\"status\":\"error\",\"code\":\"collection_not_found\",\"message\":\"...\"}`\nalongside `{\"status\":\"ok\",\"response\":{...}}` siblings.\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
+        "discriminator": {
+          "propertyName": "status"
+        }
+      },
       "CacheStats": {
         "type": "object",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "posting_hit_ratio"
         ],
@@ -517,6 +698,7 @@
       },
       "ClusterStateView": {
         "type": "object",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source",
         "required": [
           "pod_name",
           "shard_index",
@@ -569,7 +751,7 @@
       },
       "CreateCollectionRequest": {
         "type": "object",
-        "description": "`PUT /collections/{id}` body.",
+        "description": "`PUT /collections/{id}` body.\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "fields"
         ],
@@ -584,7 +766,7 @@
       },
       "CreateCollectionResponse": {
         "type": "object",
-        "description": "`PUT /collections/{id}` response.",
+        "description": "`PUT /collections/{id}` response.\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "collection_id",
           "version",
@@ -608,6 +790,7 @@
       },
       "DuplicateGroup": {
         "type": "object",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "value",
           "external_ids"
@@ -622,8 +805,27 @@
           "value": {}
         }
       },
+      "DuplicatedQuery": {
+        "type": "object",
+        "description": "`duplicated` predicate (see [`QueryNode::Duplicated`]).\nReuses `default_min_group_size` (defined with `DuplicatesRequest`).\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
+        "required": [
+          "field"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "min_group_size": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Minimum group size to count as duplicated (default 2).",
+            "minimum": 0
+          }
+        }
+      },
       "DuplicatesRequest": {
         "type": "object",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "field"
         ],
@@ -650,6 +852,7 @@
       },
       "DuplicatesResponse": {
         "type": "object",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "groups",
           "truncated",
@@ -672,9 +875,21 @@
           }
         }
       },
+      "ExistsQuery": {
+        "type": "object",
+        "description": "`exists` predicate (see [`QueryNode::Exists`]).\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
+        "required": [
+          "field"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          }
+        }
+      },
       "FieldSpec": {
         "type": "object",
-        "description": "One field declaration inside a collection schema.\n\nThe `dim` / `metric` / `backend` / `quantize` fields are only\nmeaningful when `field_type == FieldType::Vector`; they are\nrejected by schema validation on any other field type.",
+        "description": "One field declaration inside a collection schema.\n\nThe `dim` / `metric` / `backend` / `quantize` fields are only\nmeaningful when `field_type == FieldType::Vector`; they are\nrejected by schema validation on any other field type.\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "type"
         ],
@@ -730,6 +945,7 @@
       },
       "FieldStats": {
         "type": "object",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "type",
           "unique_terms",
@@ -761,12 +977,14 @@
       },
       "FieldType": {
         "type": "string",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "enum": [
           "text",
           "keyword",
           "number",
           "set",
-          "vector"
+          "vector",
+          "hash"
         ]
       },
       "FieldValue": {
@@ -792,10 +1010,72 @@
             }
           }
         ],
-        "description": "Polymorphic field value. Validated against the declared `FieldType`\nat index time; mismatches return 422.\n\nOn the wire, `Vector` is a plain JSON `[f32]` array — `serde(untagged)`\nresolves the variant by JSON shape (string vs number vs list-of-string\nvs list-of-number)."
+        "description": "Polymorphic field value. Validated against the declared `FieldType`\nat index time; mismatches return 422.\n\nOn the wire, `Vector` is a plain JSON `[f32]` array — `serde(untagged)`\nresolves the variant by JSON shape (string vs number vs list-of-string\nvs list-of-number).\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source"
+      },
+      "HammingQuery": {
+        "type": "object",
+        "description": "Hamming near-duplicate query over a `hash` field (see [`QueryNode::Hamming`]).\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
+        "required": [
+          "field",
+          "hash",
+          "max_distance"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "hash": {
+            "type": "string",
+            "description": "The query hash as a 64-bit hex string (optionally `0x`-prefixed)."
+          },
+          "max_distance": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Inclusive maximum Hamming distance (0..=64) for a match.",
+            "minimum": 0
+          }
+        }
+      },
+      "HasChildQuery": {
+        "type": "object",
+        "description": "`has_child` sub-query (see [`QueryNode::HasChild`]).\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
+        "required": [
+          "collection",
+          "field",
+          "query"
+        ],
+        "properties": {
+          "collection": {
+            "type": "string",
+            "description": "The child collection to evaluate `query` against."
+          },
+          "field": {
+            "type": "string",
+            "description": "The child's keyword field holding the parent's external_id."
+          },
+          "query": {
+            "$ref": "#/components/schemas/QueryNode"
+          }
+        }
+      },
+      "IdsQuery": {
+        "type": "object",
+        "description": "`ids` query node (#182): filter to a set of external_ids. Each id is resolved\nthrough the collection interner to a docid (unknown ids are skipped). It is\nconstant-scored and composes under and/or/not like term/terms. Removes the\nneed to index a redundant row-id keyword field for `row_id_in`.\n@spec projects/lumen/tech-design/logic/native-ids-query-node-filter-by-external-id-set.md",
+        "required": [
+          "values"
+        ],
+        "properties": {
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
       },
       "IndexItem": {
         "type": "object",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "external_id",
           "field",
@@ -810,12 +1090,19 @@
           },
           "value": {
             "$ref": "#/components/schemas/FieldValue"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Optional external version for last-write-wins. When set, lumen keeps the\nhighest version per `(external_id, field)` and drops strictly-older\nwrites (cf. Elasticsearch `version_type=external`), so out-of-order\ndelivery cannot clobber a newer value. When absent, the write applies in\narrival order.\n@spec projects/lumen/tech-design/logic/external-version-lww-optional-version-on-indexitem-drop-stale-pe.md",
+            "nullable": true,
+            "minimum": 0
           }
         }
       },
       "IndexRequest": {
         "type": "object",
-        "description": "`POST /collections/{id}/index` body.",
+        "description": "`POST /collections/{id}/index` body.\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "items"
         ],
@@ -835,6 +1122,7 @@
       },
       "IndexResponse": {
         "type": "object",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "indexed",
           "bytes_written",
@@ -863,7 +1151,7 @@
       },
       "KnnQuery": {
         "type": "object",
-        "description": "kNN vector search node. Returns the `k` external_ids closest to\n`vector` under the field's declared metric. Scores are the negated\ndistance — higher = better, consistent with BM25 / term scoring.",
+        "description": "kNN vector search node. Returns the `k` external_ids closest to\n`vector` under the field's declared metric. Scores are the negated\ndistance — higher = better, consistent with BM25 / term scoring.\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "field",
           "vector",
@@ -889,6 +1177,7 @@
       },
       "MatchOp": {
         "type": "string",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "enum": [
           "and",
           "or"
@@ -896,6 +1185,7 @@
       },
       "MatchQuery": {
         "type": "object",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "field",
           "text"
@@ -914,6 +1204,7 @@
       },
       "PeerAddr": {
         "type": "object",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source",
         "required": [
           "pod_name",
           "host",
@@ -981,6 +1272,17 @@
           {
             "type": "object",
             "required": [
+              "ids"
+            ],
+            "properties": {
+              "ids": {
+                "$ref": "#/components/schemas/IdsQuery"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
               "range"
             ],
             "properties": {
@@ -1038,12 +1340,68 @@
                 "$ref": "#/components/schemas/QueryNode"
               }
             }
+          },
+          {
+            "type": "object",
+            "required": [
+              "has_child"
+            ],
+            "properties": {
+              "has_child": {
+                "$ref": "#/components/schemas/HasChildQuery"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "hamming"
+            ],
+            "properties": {
+              "hamming": {
+                "$ref": "#/components/schemas/HammingQuery"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "rrf"
+            ],
+            "properties": {
+              "rrf": {
+                "$ref": "#/components/schemas/RrfQuery"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "exists"
+            ],
+            "properties": {
+              "exists": {
+                "$ref": "#/components/schemas/ExistsQuery"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "duplicated"
+            ],
+            "properties": {
+              "duplicated": {
+                "$ref": "#/components/schemas/DuplicatedQuery"
+              }
+            }
           }
         ],
-        "description": "A search query node. Externally tagged on the wire:\n\n```json\n{ \"match\": { \"field\": \"bio\", \"text\": \"engineer\" } }\n{ \"term\":  { \"field\": \"tags\", \"value\": \"rust\" } }\n{ \"knn\":   { \"field\": \"embedding\", \"vector\": [0.1, ...], \"k\": 10 } }\n{ \"and\":   [ {...}, {...} ] }\n```"
+        "description": "A search query node. Externally tagged on the wire:\n\n```json\n{ \"match\": { \"field\": \"bio\", \"text\": \"engineer\" } }\n{ \"term\":  { \"field\": \"tags\", \"value\": \"rust\" } }\n{ \"knn\":   { \"field\": \"embedding\", \"vector\": [0.1, ...], \"k\": 10 } }\n{ \"and\":   [ {...}, {...} ] }\n```\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source"
       },
       "RaftRole": {
         "type": "string",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source",
         "enum": [
           "leader",
           "follower",
@@ -1053,6 +1411,7 @@
       },
       "RangeQuery": {
         "type": "object",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "field"
         ],
@@ -1082,8 +1441,31 @@
           }
         }
       },
+      "RrfQuery": {
+        "type": "object",
+        "description": "Reciprocal Rank Fusion query (see [`QueryNode::Rrf`]).\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
+        "required": [
+          "queries"
+        ],
+        "properties": {
+          "k": {
+            "type": "integer",
+            "format": "int32",
+            "description": "RRF rank constant — larger flattens the weighting. Default 60.",
+            "minimum": 0
+          },
+          "queries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueryNode"
+            },
+            "description": "Sub-queries whose rankings are fused (≥1; typically a `knn` + a `match`)."
+          }
+        }
+      },
       "SearchHit": {
         "type": "object",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "external_id",
           "score"
@@ -1100,11 +1482,16 @@
       },
       "SearchRequest": {
         "type": "object",
-        "description": "`POST /collections/{id}/search` body.",
+        "description": "`POST /collections/{id}/search` body.\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "query"
         ],
         "properties": {
+          "collapse": {
+            "type": "string",
+            "description": "Collapse (field-collapse / group-by) on a keyword field: return ONE hit\nper distinct value of this field, scored by the MAX member score, ranked\nover groups. `hit.external_id` becomes the collapse value, `total` the\ndistinct-group count. Used for nested `group` search: filter the child\ncollection, collapse by `parent_row_id` → distinct matching parents.",
+            "nullable": true
+          },
           "cursor": {
             "type": "string",
             "nullable": true
@@ -1116,11 +1503,29 @@
           },
           "query": {
             "$ref": "#/components/schemas/QueryNode"
+          },
+          "routing_key": {
+            "type": "string",
+            "description": "Optional caller-owned routing key for sharded deployments. When present,\na sharded router can target the one shard that owns\n`(collection_id, routing_key)` instead of scatter/gathering every shard.\nWrites default to `external_id` as the routing key, so one large\ncollection can still spread across shards without caller help.",
+            "nullable": true
+          },
+          "sort": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SortSpec"
+            },
+            "description": "Sort results by one or more fields instead of by relevance score.\nWhen absent, results are ranked by score (BM25 / constant) then\nexternal_id. Number and keyword fields are sortable (up to 4 keys);\nsingle number-field sorts use the keyset planner, keyword and composite\nsorts use the materialized fallback. Rows missing a sort-key value\nfollow the per-key `missing` mode: `exclude` (the default) drops them\nfrom the page and from `total`; `first`/`last` keep them — placed\nbefore/after all present values and counted in `total`, like SQL\n`NULLS FIRST`/`NULLS LAST`. A query containing `has_child` can be\nsorted by parent fields; it routes through the materialized sort path\nwith exact `total`. `sort` remains incompatible with `knn`, `rrf`, and\n`hamming`, and cannot be combined with an offset cursor — those return\n400. Page a sorted result with the keyset cursor returned in the\nresponse, or over-fetch and slice.\n@spec projects/lumen/tech-design/logic/0-4-4-docs-stale-sort-missing-last-and-has-child-sort-both-work.md",
+            "nullable": true
+          },
+          "track_total": {
+            "type": "boolean",
+            "description": "Whether to compute the exact total match count. Defaults to `true`\n(back-compat). When `false`, the planner may early-terminate and\n`total` becomes a lower bound (≥ the returned page size)."
           }
         }
       },
       "SearchResponse": {
         "type": "object",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "hits",
           "total",
@@ -1142,6 +1547,12 @@
             "format": "int64",
             "minimum": 0
           },
+          "took_us": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Server-side engine time in microseconds — the same measurement as\n`took_ms` at sub-millisecond resolution, so callers can see how fast the\nengine answered when `took_ms` rounds to 0.",
+            "minimum": 0
+          },
           "total": {
             "type": "integer",
             "format": "int64",
@@ -1149,9 +1560,44 @@
           }
         }
       },
+      "SortMissing": {
+        "type": "string",
+        "description": "Placement of rows missing a value for a sort key (SQL NULLS FIRST/LAST).\n@spec projects/lumen/tech-design/logic/sort-missing-value-handling-opt-in-missing-first-last-exclude-an.md",
+        "enum": [
+          "exclude",
+          "first",
+          "last"
+        ]
+      },
+      "SortOrder": {
+        "type": "string",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
+        "enum": [
+          "asc",
+          "desc"
+        ]
+      },
+      "SortSpec": {
+        "type": "object",
+        "description": "One sort key. `order` defaults to ascending.\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
+        "required": [
+          "field"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "missing": {
+            "$ref": "#/components/schemas/SortMissing"
+          },
+          "order": {
+            "$ref": "#/components/schemas/SortOrder"
+          }
+        }
+      },
       "StatsResponse": {
         "type": "object",
-        "description": "Engine-level metadata about one collection.\n\nEverything here describes **the index**, not the caller's data —\nlumen is a search specialist, not an analytics engine. For data\naggregations (group-by / histogram / percentile / pipeline), pair\nlumen with an OLAP store (ClickHouse / Druid / BigQuery / DuckDB)\nand dual-write.",
+        "description": "Engine-level metadata about one collection.\n\nEverything here describes **the index**, not the caller's data —\nlumen is a search specialist, not an analytics engine. For data\naggregations (group-by / histogram / percentile / pipeline), pair\nlumen with an OLAP store (ClickHouse / Druid / BigQuery / DuckDB)\nand dual-write.\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "documents_indexed",
           "fields",
@@ -1187,6 +1633,7 @@
       },
       "StorageStats": {
         "type": "object",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "total_bytes"
         ],
@@ -1200,6 +1647,7 @@
       },
       "TermQuery": {
         "type": "object",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "field",
           "value"
@@ -1215,6 +1663,7 @@
       },
       "TermsQuery": {
         "type": "object",
+        "description": "@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "field",
           "values"
@@ -1233,15 +1682,15 @@
       },
       "VectorBackend": {
         "type": "string",
-        "description": "Index backend for `FieldType::Vector`. Wire forms are\n`hnsw-cpu` / `wgpu-brute-force` (kebab-case).",
+        "description": "Index backend for `FieldType::Vector`. Wire forms are\n`hnsw-cpu` / `flat-cpu` (kebab-case).\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "enum": [
           "hnsw-cpu",
-          "wgpu-brute-force"
+          "flat-cpu"
         ]
       },
       "VectorMetric": {
         "type": "string",
-        "description": "Distance metric for `FieldType::Vector`. Wire form is snake_case.",
+        "description": "Distance metric for `FieldType::Vector`. Wire form is snake_case.\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "enum": [
           "cosine",
           "dot",
@@ -1250,7 +1699,7 @@
       },
       "VectorQuantize": {
         "type": "string",
-        "description": "Quantization scheme for `FieldType::Vector`.\n\n`sq` enables transparent scalar quantization (f32 stored as u8).\n`pq` is reserved for a future product-quantization landing and\nis not yet implemented — declaring it will be rejected at schema\ntime until the backing codec ships.",
+        "description": "Quantization scheme for `FieldType::Vector`.\n\n`sq` enables transparent scalar quantization (f32 stored as u8).\n`pq` is reserved for a future product-quantization landing and\nis not yet implemented — declaring it will be rejected at schema\ntime until the backing codec ships.\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "enum": [
           "sq",
           "pq"
@@ -1258,7 +1707,7 @@
       },
       "VectorSpec": {
         "type": "object",
-        "description": "Resolved vector field configuration. Built from a `FieldSpec`\nonce schema validation has confirmed all required slots are present.",
+        "description": "Resolved vector field configuration. Built from a `FieldSpec`\nonce schema validation has confirmed all required slots are present.\n@spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
         "required": [
           "dim",
           "metric",
@@ -1286,8 +1735,21 @@
           }
         }
       }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque",
+        "description": "Send `Authorization: Bearer <LUMEN_TOKEN>` when `LUMEN_AUTH=required`."
+      }
     }
   },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
   "tags": [
     {
       "name": "Collections",

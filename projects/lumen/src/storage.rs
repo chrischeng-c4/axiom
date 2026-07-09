@@ -77,6 +77,8 @@ pub enum DropOutcome {
 pub enum StorageError {
     #[error("collection not found: {0}")]
     CollectionNotFound(String),
+    #[error("invalid collection id `{0}`: `:` is reserved for custom-method routes (e.g. `POST /collections:search`) and cannot appear in a collection id")]
+    InvalidCollectionName(String),
     #[error("unknown field `{field}` in collection `{collection}`")]
     UnknownField { collection: String, field: String },
     #[error("type mismatch on field `{field}`: expected {expected:?}, got {got}")]
@@ -2965,11 +2967,19 @@ impl Engine {
     ///   **different** type / analyzer / multi flag is rejected — type
     ///   changes are an offline op (collection version bump + reindex)
     ///   not covered by this surface in v1.
+    ///
+    /// `collection_id` must not contain `:` — that character is reserved for
+    /// custom-method routes such as `POST /collections:search`, so keeping
+    /// it out of collection ids means the `:search` verb syntax can never be
+    /// ambiguous with a collection id.
     pub fn create_collection(
         &self,
         collection_id: &str,
         req: CreateCollectionRequest,
     ) -> Result<CreateCollectionResponse> {
+        if collection_id.contains(':') {
+            return Err(StorageError::InvalidCollectionName(collection_id.to_string()).into());
+        }
         let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
         let schema: BTreeMap<String, FieldSpec> = req
             .fields
@@ -14265,6 +14275,23 @@ mod tests {
         assert_eq!(r.collection_id, "users");
         assert_eq!(r.version, 1);
         assert_eq!(r.fields_count, 4);
+    }
+
+    // #1271: `:` is reserved for custom-method routes (`POST
+    // /collections:search`) so it must never be a valid collection id.
+    #[test]
+    fn create_collection_rejects_colon_in_collection_id() {
+        let e = Engine::new();
+        let err = e
+            .create_collection("users:search", build_users_schema())
+            .unwrap_err();
+        let se = err
+            .downcast_ref::<StorageError>()
+            .expect("StorageError variant");
+        assert!(
+            matches!(se, StorageError::InvalidCollectionName(id) if id == "users:search"),
+            "expected InvalidCollectionName, got {se:?}"
+        );
     }
 
     #[test]

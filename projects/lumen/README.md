@@ -859,6 +859,32 @@ skip). Stop when `cursor` is null. Legacy `{"offset":N}` tokens keep working
 `track_total: true`, `total` counts the REMAINING matches from the cursor,
 not the full set — read the full total off the first page.
 
+### Batch search (msearch-style, multi-collection)
+
+```
+POST /collections:search
+{ "searches": [
+    { "collection": "users",    "query": { "term": { "field": "tags", "value": "rust" } }, "limit": 10 },
+    { "collection": "products", "query": { "match": { "field": "title", "text": "earbuds" } }, "limit": 5 }
+] }
+→ 200 { "results": [
+    { "status": "ok", "response": { "hits": [...], "total": 2, "cursor": null, "took_ms": 1 } },
+    { "status": "error", "code": "collection_not_found", "message": "..." }
+] }
+```
+
+`collections:search` is one literal path segment (AIP-136 custom-method
+syntax), so it registers alongside `/collections/{collection_id}` with no
+ambiguity — for the same reason, collection ids may not contain `:`. Each
+item is a full `{"collection", ...SearchRequest}` — `limit`, `sort`,
+`cursor`, `collapse`, `routing_key`, `track_total` may all differ per item.
+`results` has the same order and length as `searches`. **A per-item failure
+never fails the batch**: the batch-level HTTP status stays 200 unless the
+body is malformed or the batch is over the size limit (max 32 items, which
+also bounds the concurrent fan-out) — those return 400. Pagination stays
+per-item: resubmit one item with its returned `cursor` to continue it. There
+is no merged cursor and no cross-collection score merging/ranking.
+
 ### Duplicates
 
 ```
