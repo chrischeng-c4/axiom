@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-09T15:11:09.562591+00:00"
-digest = "sha256:93148e5841a158acef4e39956726de3ee3e82f9c21fe131985c922ca19978643"
-source_digest = "sha256:93148e5841a158acef4e39956726de3ee3e82f9c21fe131985c922ca19978643"
-ir_digest = "sha256:4fec8b3df95743fb0bd555e911dd72281267f85a3258d370a6d8710bd5788365"
+generated_at = "2026-07-09T15:41:17.193837+00:00"
+digest = "sha256:d8759dd654a8423255160888f6a58eb4f6335ba834606ccc479371d6763a1ead"
+source_digest = "sha256:d8759dd654a8423255160888f6a58eb4f6335ba834606ccc479371d6763a1ead"
+ir_digest = "sha256:759ca7369223801c3e0f7f17021d358af60f4fa55640f32b0de9a18e5ba36ae3"
 
 [[files]]
 path = "README.md"
@@ -29,6 +29,12 @@ section_count = 3
 path = "logic/tape-backup-service-tls-spec-gen-clients.md"
 digest = "sha256:e5e306fd402b26da5af549a2a4ab53e049241c25dfe002f55aa8e68ff41d4ad6"
 ir_digest = "sha256:cf15f79a5cd6a2e3533bbb1a727646dbc70358fdd303280f60265c44df60a6ef"
+section_count = 3
+
+[[files]]
+path = "logic/tape-docs-scripts-traits-polish.md"
+digest = "sha256:52b51cd8cfea8502716763575e7fdf4d31a58bdb56896fcd25647b6834ba6526"
+ir_digest = "sha256:c7a5b5f18bea036f68c24f3b8f9d5b6b76c259f22e994add7abea737c59a7b86"
 section_count = 3
 
 [[files]]
