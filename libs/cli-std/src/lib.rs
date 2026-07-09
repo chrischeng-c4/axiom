@@ -293,3 +293,63 @@ mod token_tests {
     }
 }
 // CODEGEN-END
+// SPEC-MANAGED: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#logic
+// CODEGEN-BEGIN
+pub fn resolvers() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // Decision: issue.rs cfg online: search(tool,SearchOptions) view(tool,repo,number) create(tool,CreateOptions) comment(tool,repo,number,CommentOptions) -- which op
+    if todo!("decision: issue.rs cfg online: search(tool,SearchOptions) view(tool,repo,number) create(tool,CreateOptions) comment(tool,repo,number,CommentOptions) -- which op") /* search */ {
+        // Decision: search: crate::resolve_courier_url() Some(url)?
+        if todo!("decision: search: crate::resolve_courier_url() Some(url)?") /* Some */ {
+            // SPEC-REF: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#cli-std-courier-proxy-mode-client-contract-search_courier
+            // TODO: Implement process step: http_client GET format(url v1 issues owner name) query state q limit header Authorization Bearer resolve_courier_token unwrap_or_default parse same JSON shape as api.github.com search response
+            todo!("process: http_client GET format(url v1 issues owner name) query state q limit header Authorization Bearer resolve_courier_token unwrap_or_default parse same JSON shape as api.github.com search response");
+            todo!("terminal: return parsed result to caller, identical Result and struct shapes on both branches");
+        } else { /* None */
+            // SPEC-REF: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#cli-std-courier-proxy-mode-client-contract-search_direct
+            // TODO: Implement process step: unchanged crate::github_get GET api.github.com search issues q resolve_github_token
+            todo!("process: unchanged crate::github_get GET api.github.com search issues q resolve_github_token");
+            todo!("terminal: return parsed result to caller, identical Result and struct shapes on both branches");
+        }
+    } else if todo!("decision branch: {}", "view") { /* view */
+        // Decision: view: crate::resolve_courier_url() Some(url)?
+        if todo!("decision: view: crate::resolve_courier_url() Some(url)?") /* Some */ {
+            // SPEC-REF: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#cli-std-courier-proxy-mode-client-contract-view_courier
+            // TODO: Implement process step: http_client GET format(url v1 issues owner name number) header Authorization Bearer resolve_courier_token unwrap_or_default parse same JSON shape as api.github.com issue response
+            todo!("process: http_client GET format(url v1 issues owner name number) header Authorization Bearer resolve_courier_token unwrap_or_default parse same JSON shape as api.github.com issue response");
+            todo!("terminal: return parsed result to caller, identical Result and struct shapes on both branches");
+        } else { /* None */
+            // SPEC-REF: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#cli-std-courier-proxy-mode-client-contract-view_direct
+            // TODO: Implement process step: unchanged crate::github_get GET api.github.com repos issues number resolve_github_token
+            todo!("process: unchanged crate::github_get GET api.github.com repos issues number resolve_github_token");
+            todo!("terminal: return parsed result to caller, identical Result and struct shapes on both branches");
+        }
+    } else if todo!("decision branch: {}", "create") { /* create */
+        // Decision: create: crate::resolve_courier_url() Some(url)?
+        if todo!("decision: create: crate::resolve_courier_url() Some(url)?") /* Some */ {
+            // SPEC-REF: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#cli-std-courier-proxy-mode-client-contract-create_courier
+            // TODO: Implement process step: http_client POST format(url v1 issues owner name) json issue_payload header Authorization Bearer resolve_courier_token unwrap_or_default parse same JSON shape as submit_issue
+            todo!("process: http_client POST format(url v1 issues owner name) json issue_payload header Authorization Bearer resolve_courier_token unwrap_or_default parse same JSON shape as submit_issue");
+            todo!("terminal: return parsed result to caller, identical Result and struct shapes on both branches");
+        } else { /* None */
+            // SPEC-REF: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#cli-std-courier-proxy-mode-client-contract-create_direct
+            // TODO: Implement process step: unchanged submit_issue POST api.github.com repos issues resolve_github_token
+            todo!("process: unchanged submit_issue POST api.github.com repos issues resolve_github_token");
+            todo!("terminal: return parsed result to caller, identical Result and struct shapes on both branches");
+        }
+    } else { /* comment */
+        // Decision: comment: crate::resolve_courier_url() Some(url)?
+        if todo!("decision: comment: crate::resolve_courier_url() Some(url)?") /* Some */ {
+            // SPEC-REF: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#cli-std-courier-proxy-mode-client-contract-comment_courier
+            // TODO: Implement process step: http_client POST format(url v1 issues owner name number comments) json comment_payload header Authorization Bearer resolve_courier_token unwrap_or_default -- courier reopens then comments server side one round trip
+            todo!("process: http_client POST format(url v1 issues owner name number comments) json comment_payload header Authorization Bearer resolve_courier_token unwrap_or_default -- courier reopens then comments server side one round trip");
+            todo!("terminal: return parsed result to caller, identical Result and struct shapes on both branches");
+        } else { /* None */
+            // SPEC-REF: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#cli-std-courier-proxy-mode-client-contract-comment_direct
+            // TODO: Implement process step: unchanged reopen_issue then post_issue_comment PATCH POST api.github.com resolve_github_token
+            todo!("process: unchanged reopen_issue then post_issue_comment PATCH POST api.github.com resolve_github_token");
+            todo!("terminal: return parsed result to caller, identical Result and struct shapes on both branches");
+        }
+    }
+    // Terminal: out -> return parsed result to caller, identical Result and struct shapes on both branches
+}
+// CODEGEN-END
