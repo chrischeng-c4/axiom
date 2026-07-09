@@ -44,6 +44,11 @@ fn is_none_value(v: MbValue) -> bool {
     v.is_none()
 }
 
+fn is_set_like_value(v: MbValue) -> bool {
+    v.as_ptr()
+        .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Set(_) | ObjData::FrozenSet(_)) })
+}
+
 fn raise(kind: &str, msg: impl Into<String>) -> MbValue {
     super::super::exception::mb_raise(new_str(kind), new_str(msg.into()));
     MbValue::none()
@@ -878,10 +883,13 @@ extern "C" fn m_formatter_get_value(
 // Formatter.check_unused_args(self, used_args, args, kwargs) — default no-op
 extern "C" fn m_formatter_check_unused_args(
     _this: MbValue,
-    _used: MbValue,
+    used: MbValue,
     _args: MbValue,
     _kwargs: MbValue,
 ) -> MbValue {
+    if !is_set_like_value(used) {
+        return raise("TypeError", "used_args must be a set or frozenset");
+    }
     MbValue::none()
 }
 
@@ -1543,6 +1551,7 @@ fn capitalize(w: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::exception::{current_exception_type, mb_clear_exception};
 
     #[test]
     fn test_capwords_default() {
@@ -1564,5 +1573,47 @@ mod tests {
         // [('foo','0','',None), ('','1','',None), ('-','1','',None)] — 3 tuples.
         let parsed = formatter_parse("foo{0}{1}-{1}").unwrap();
         assert_eq!(parsed.len(), 3);
+    }
+
+    #[test]
+    fn test_formatter_check_unused_args_accepts_set_and_frozenset() {
+        mb_clear_exception();
+
+        let set_value = MbValue::from_ptr(MbObject::new_set(vec![MbValue::from_int(1)]));
+        let result = m_formatter_check_unused_args(
+            MbValue::none(),
+            set_value,
+            MbValue::none(),
+            MbValue::none(),
+        );
+        assert!(result.is_none());
+        assert_eq!(current_exception_type(), None);
+
+        let frozenset_value =
+            MbValue::from_ptr(MbObject::new_frozenset(vec![MbValue::from_int(1)]));
+        let result = m_formatter_check_unused_args(
+            MbValue::none(),
+            frozenset_value,
+            MbValue::none(),
+            MbValue::none(),
+        );
+        assert!(result.is_none());
+        assert_eq!(current_exception_type(), None);
+    }
+
+    #[test]
+    fn test_formatter_check_unused_args_rejects_non_set_used_args() {
+        mb_clear_exception();
+
+        let result = m_formatter_check_unused_args(
+            MbValue::none(),
+            MbValue::from_int(12345),
+            MbValue::none(),
+            MbValue::none(),
+        );
+
+        assert!(result.is_none());
+        assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        mb_clear_exception();
     }
 }
