@@ -27,7 +27,7 @@ fn known_paths_is_setlike(value: MbValue) -> bool {
     })
 }
 
-unsafe extern "C" fn dispatch_addsitepackages(a: *const MbValue, n: usize) -> MbValue {
+unsafe fn dispatch_known_paths_passthrough(a: *const MbValue, n: usize) -> MbValue {
     let args: &[MbValue] = if n == 0 || a.is_null() {
         &[]
     } else {
@@ -41,6 +41,14 @@ unsafe extern "C" fn dispatch_addsitepackages(a: *const MbValue, n: usize) -> Mb
         ));
     }
     known_paths
+}
+
+unsafe extern "C" fn dispatch_addsitepackages(a: *const MbValue, n: usize) -> MbValue {
+    unsafe { dispatch_known_paths_passthrough(a, n) }
+}
+
+unsafe extern "C" fn dispatch_addusersitepackages(a: *const MbValue, n: usize) -> MbValue {
+    unsafe { dispatch_known_paths_passthrough(a, n) }
 }
 
 unsafe extern "C" fn dispatch_addsitedir(_a: *const MbValue, _n: usize) -> MbValue {
@@ -85,6 +93,10 @@ pub fn register() {
         (
             "addsitepackages",
             dispatch_addsitepackages as *const () as usize,
+        ),
+        (
+            "addusersitepackages",
+            dispatch_addusersitepackages as *const () as usize,
         ),
         ("addsitedir", dispatch_addsitedir as *const () as usize),
         ("main", dispatch_main as *const () as usize),
@@ -149,6 +161,26 @@ mod tests {
         mb_clear_exception();
         let args = [MbValue::from_int(7)];
         let result = unsafe { dispatch_addsitepackages(args.as_ptr(), args.len()) };
+        assert!(result.is_none());
+        assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        mb_clear_exception();
+    }
+
+    #[test]
+    fn addusersitepackages_accepts_frozenset() {
+        mb_clear_exception();
+        let set = MbValue::from_ptr(MbObject::new_frozenset(Vec::new()));
+        let args = [set];
+        let result = unsafe { dispatch_addusersitepackages(args.as_ptr(), args.len()) };
+        assert_eq!(result.to_bits(), set.to_bits());
+        assert_eq!(current_exception_type(), None);
+    }
+
+    #[test]
+    fn addusersitepackages_rejects_wrong_known_paths_type() {
+        mb_clear_exception();
+        let args = [MbValue::from_int(7)];
+        let result = unsafe { dispatch_addusersitepackages(args.as_ptr(), args.len()) };
         assert!(result.is_none());
         assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
         mb_clear_exception();
