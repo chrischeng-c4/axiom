@@ -1,0 +1,14 @@
+version = 2
+project = "pgpool"
+ir_kind = "td"
+td_path = "apps/pgpool/tech-design"
+generated_at = "2026-07-09T05:24:34.442540+00:00"
+digest = "sha256:86db0a454dcd52a79ad363ea9bbf776c4ee34abce5fcc0d86b000ef54f9e161b"
+source_digest = "sha256:86db0a454dcd52a79ad363ea9bbf776c4ee34abce5fcc0d86b000ef54f9e161b"
+ir_digest = "sha256:737191ec5fab61543c43841ca5d7d20957a9112dc68f104cb5024a36818c6e51"
+
+[[files]]
+path = "logic/pg-wire-message-codec-frontend-backend-frames.md"
+digest = "sha256:57eff20ef4dffb83799bb164163b27f3ed6d089b3fdb1d3f6f8edfeb2354a0c6"
+ir_digest = "sha256:960d2f9162deae0cd1bbb5faf2db04edf33593b2228e057304a85b4fa82876c5"
+section_count = 5
