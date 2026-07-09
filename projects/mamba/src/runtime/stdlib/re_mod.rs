@@ -754,6 +754,24 @@ fn match_field_value(text: &str, input_is_bytes: bool) -> MbValue {
     }
 }
 
+fn extract_pattern_str(pattern: MbValue) -> Option<String> {
+    if let Some(s) = extract_str(pattern) {
+        return Some(s);
+    }
+    let ptr = pattern.as_ptr()?;
+    unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, fields } if class_name == "re.Pattern" => {
+                let guard = fields.read().unwrap();
+                let raw = guard.get("pattern").copied().unwrap_or_else(MbValue::none);
+                let flags = guard.get("flags").copied().unwrap_or_else(MbValue::none);
+                extract_str(with_flags(raw, flags))
+            }
+            _ => None,
+        }
+    }
+}
+
 // ── Dispatch wrappers: native ABI ──
 
 macro_rules! dispatch_unary {
@@ -1770,9 +1788,12 @@ pub fn mb_re_match(pattern: MbValue, string: MbValue) -> MbValue {
 /// tokens (e.g. log-line schema check).
 pub fn mb_re_fullmatch(pattern: MbValue, string: MbValue) -> MbValue {
     let input_is_bytes = is_bytes_like(string);
-    let pat = match extract_str(pattern) {
+    let pat = match extract_pattern_str(pattern) {
         Some(s) => s,
-        None => return MbValue::none(),
+        None => {
+            raise_type_error("first argument must be string or compiled pattern");
+            return MbValue::none();
+        }
     };
     let text = match extract_str(string) {
         Some(s) => s,
@@ -2565,6 +2586,18 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_fullmatch_wrong_pattern_type_raises_type_error() {
+        crate::runtime::exception::mb_clear_exception();
+        let result = mb_re_fullmatch(MbValue::from_int(7), s("abc123"));
+        assert!(result.is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        crate::runtime::exception::mb_clear_exception();
     }
 
     #[test]
