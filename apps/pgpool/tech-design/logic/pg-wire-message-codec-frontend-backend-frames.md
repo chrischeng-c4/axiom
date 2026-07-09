@@ -612,9 +612,23 @@ definitions:
 <!-- type: config lang: yaml -->
 
 ```yaml
-(fill)
-```
+# WireCodecConfig — FrameReader bounds and codec limits for pgpool's
+# PostgreSQL wire protocol 3.0 codec. No live-Postgres or TLS/auth
+# verification concerns live here; this is decode/encode-boundary config
+# only, consumed by the tcp-server TcpHandler seam in the next slice (#1288).
 
+# Bounded incremental frame reader (R3 / AC2 / AC3).
+max_frame_bytes: 10485760        # 10 MiB hard cap on a tagged frame's declared length; oversized -> FrameError::Oversized, connection closed by caller, never a panic
+max_startup_bytes: 10000         # cap on the untagged StartupMessage packet length (PgBouncer/pgcat-class default); oversized -> FrameError::Oversized
+read_buffer_initial_capacity: 8192   # BytesMut initial reserve per connection; grows as needed up to max_frame_bytes while a frame is split across reads
+
+# Extended-query message batching (Parse/Bind/Describe/Execute/Sync, R1).
+max_bind_params: 65535           # matches the protocol's i16 parameter-count field width; guards against a corrupt/hostile param_formats count before allocating
+max_row_columns: 1600            # matches Postgres's own column-count ceiling; guards RowDescription/DataRow parsing against a corrupt field count
+
+# Transaction status tracking (R4 / AC4).
+initial_transaction_status: idle # TransactionStatus before the first ReadyForQuery is observed on a fresh connection
+```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
