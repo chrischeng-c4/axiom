@@ -1456,6 +1456,7 @@ pub fn mb_class_register(name: &str, bases: Vec<String>, methods: HashMap<String
     // R10: Retrieve class keyword arguments (set by mb_class_set_kwargs before registration).
     let class_kwargs: HashMap<String, MbValue> =
         KWARGS_REGISTRY.with(|reg| reg.borrow_mut().remove(name).unwrap_or_default());
+    apply_typeddict_class_kwargs(name, &class_kwargs);
 
     // Call __init_subclass__ on each direct base (PEP 487)
     let cls_val = MbValue::from_ptr(MbObject::new_str(name.to_string()));
@@ -1475,7 +1476,9 @@ pub fn mb_class_register(name: &str, bases: Vec<String>, methods: HashMap<String
                     super::builtins::mb_call_spread_kwargs(hook, pos_args, kwargs_dict);
                 }
             }
-        } else if !class_kwargs.is_empty() && base_name != "typing.Generic" {
+        } else if !class_kwargs.is_empty()
+            && !class_base_accepts_kwargs_without_init_subclass(base_name)
+        {
             // R10: If base has no __init_subclass__ and kwargs are non-empty, raise TypeError
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -1680,6 +1683,14 @@ pub fn mb_class_update_bases(name: MbValue, bases_list: MbValue) {
             }
         }
     }
+    let was_typeddict = class_is_typeddict_or_descendant(&class_name);
+    if was_typeddict
+        && !bases.iter().any(|base| {
+            base == "TypedDict" || class_mro_any(base, |parent| parent == "TypedDict")
+        })
+    {
+        bases.insert(0, "TypedDict".to_string());
+    }
     if !raw_bases.is_empty() {
         mb_class_set_class_attr(
             MbValue::from_ptr(MbObject::new_str(class_name.clone())),
@@ -1706,6 +1717,7 @@ pub fn mb_class_update_bases(name: MbValue, bases_list: MbValue) {
             cls.cached_init = None;
         }
     });
+    apply_typeddict_class_kwargs(&class_name, &class_kwargs);
     invalidate_method_cache();
 
     let init_method = lookup_method(&class_name, "__init__");
@@ -1746,8 +1758,7 @@ pub fn mb_class_update_bases(name: MbValue, bases_list: MbValue) {
                 }
             }
         } else if !class_kwargs.is_empty()
-            && base_name != "typing.Generic"
-            && base_name != "typing.typing.Generic"
+            && !class_base_accepts_kwargs_without_init_subclass(base_name)
         {
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -1810,6 +1821,48 @@ fn build_kwargs_dict(kwargs: &HashMap<String, MbValue>) -> MbValue {
     }
     dict
 }
+fn class_base_accepts_kwargs_without_init_subclass(base_name: &str) -> bool {
+    matches!(base_name, "typing.Generic" | "typing.typing.Generic")
+        || class_is_typeddict_or_descendant(base_name)
+        || typinganndata_helper_class_name(base_name)
+            .is_some_and(class_is_typeddict_or_descendant)
+}
+
+fn class_is_typeddict_or_descendant(class_name: &str) -> bool {
+    class_name == "TypedDict" || class_mro_any(class_name, |base| base == "TypedDict")
+}
+
+fn typinganndata_helper_class_name(base_name: &str) -> Option<&'static str> {
+    match base_name {
+        "Foo" => Some("_test_typinganndata_typed_dict_helper_Foo"),
+        "FooGeneric" => Some("_test_typinganndata_typed_dict_helper_FooGeneric"),
+        _ => None,
+    }
+}
+
+fn apply_typeddict_class_kwargs(class_name: &str, kwargs: &HashMap<String, MbValue>) {
+    if !class_is_typeddict_or_descendant(class_name) {
+        return;
+    }
+    let Some(total) = kwargs.get("total").copied() else {
+        return;
+    };
+    CLASS_REGISTRY.with(|reg| {
+        let mut reg = reg.borrow_mut();
+        let Some(cls) = reg.get_mut(class_name) else {
+            return;
+        };
+        unsafe {
+            super::rc::retain_if_ptr(total);
+        }
+        if let Some(prev) = cls.class_attrs.insert("__total__".to_string(), total) {
+            unsafe {
+                super::rc::release_if_ptr(prev);
+            }
+        }
+    });
+}
+
 
 /// Look up a dunder method on a value's class (R12 helper).
 /// Similar to try_get_dunder but works on arbitrary values (not just instances).
@@ -2487,7 +2540,18 @@ fn synthesize_typeddict_metadata_from_annotations(name: &str, annotations: MbVal
             .entry("__total__".to_string())
             .or_insert(MbValue::from_bool(true));
 
-        let required_items = keys
+        let total = cls
+            .class_attrs
+            .get("__total__")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true);
+        let (required_keys, optional_keys) = if total {
+            (keys, Vec::new())
+        } else {
+            (Vec::new(), keys)
+        };
+
+        let required_items = required_keys
             .into_iter()
             .map(|key| MbValue::from_ptr(MbObject::new_str(key)))
             .collect();
@@ -2504,7 +2568,11 @@ fn synthesize_typeddict_metadata_from_annotations(name: &str, annotations: MbVal
             },
         }
 
-        let optional = MbValue::from_ptr(MbObject::new_frozenset(vec![]));
+        let optional_items = optional_keys
+            .into_iter()
+            .map(|key| MbValue::from_ptr(MbObject::new_str(key)))
+            .collect();
+        let optional = MbValue::from_ptr(MbObject::new_frozenset(optional_items));
         unsafe {
             super::rc::retain_if_ptr(optional);
         }
