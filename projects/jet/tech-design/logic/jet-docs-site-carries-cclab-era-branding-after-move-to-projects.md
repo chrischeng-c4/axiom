@@ -272,3 +272,30 @@ flowchart TD
     r6[R6 every design note nav linked] --> for_f_in_architecture_layout_architecture_reorg_plan_build_fails_loudly_on_unresolved_bare_specifiers_check_exits_non_zero_while_unimplemented_dev_server_source_analysis_utf8_safety_layout_box_slice_7a_library_publishing_migration_from_playwright_openapi_codegen_wasm_config_accept_shared_jet_sections_wasm_transpiler_boolean_usestate_literals_do_grep_q_f_projects_jet_docs_vitepress_config_mjs_exit_1_done[for f in architecture/layout architecture/reorg-plan build-fails-loudly-on-unresolved-bare-specifiers check-exits-non-zero-while-unimplemented dev-server-source-analysis-utf8-safety layout-box-slice-7a library-publishing migration-from-playwright openapi-codegen wasm-config-accept-shared-jet-sections wasm-transpiler-boolean-usestate-literals; do grep -q -- "/$f" projects/jet/docs/.vitepress/config.mjs || exit 1; done]
     r7[R7 no orphaned markdown remains] --> for_f_in_find_projects_jet_docs_name_md_not_path_node_modules_do_link_f_projects_jet_docs_link_link_md_grep_q_link_projects_jet_docs_vitepress_config_mjs_exit_1_done[for f in $(find projects/jet/docs -name '*.md' -not -path '*/node_modules/*'); do link="/${f#projects/jet/docs/}"; link="${link%.md}"; grep -q -- "$link" projects/jet/docs/.vitepress/config.mjs || exit 1; done]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/jet/docs/index.md
+    action: update
+    section: config
+    impl_mode: hand-written
+    reason: "Rebrands frontmatter hero.name from 'cclab' to 'Jet' and removes the Mamba/SDD '(Docs coming soon)' placeholder features that are not jet content, keeping only the Jet feature entry, per docs_site_rebrand.branding_fixes and .placeholder_features_removed in the Config section."
+  - path: projects/jet/docs/.vitepress/config.mjs
+    action: update
+    section: config
+    impl_mode: hand-written
+    reason: "Rebrands defineConfig title from 'cclab' to 'Jet' and adds the Architecture and Design Notes sidebar groups plus three existing-group items so every orphaned design-note markdown file becomes nav-discoverable, per docs_site_rebrand.branding_fixes and .nav_sidebar_additions in the Config section."
+  - path: projects/jet/docs/package.json
+    action: update
+    section: config
+    impl_mode: hand-written
+    reason: "Renames the package from 'cclab-docs' to the jet-scoped 'jet-docs', per docs_site_rebrand.branding_fixes in the Config section."
+  - path: projects/jet/README.md
+    action: update
+    section: config
+    impl_mode: hand-written
+    reason: "Registers the rebrand-jet-docs-site-and-nav-link-orphaned-design-notes work root (WI #1083) under the existing Jet Project Architecture And Authoring Clarity capability so this migration is capability-tracked; already applied ahead of this TD per standard aw-td-writer capability-registration practice."
+```
