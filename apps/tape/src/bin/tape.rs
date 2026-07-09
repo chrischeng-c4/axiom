@@ -2,6 +2,7 @@
 // <HANDWRITE gap="missing-generator:logic:tape-bootstrap" tracker="#768" reason="Initial Tape CLI surface before generated command wiring exists.">
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -23,6 +24,8 @@ enum Command {
     Replay(ReplayArgs),
     /// Manage durable consumer replay checkpoints.
     Checkpoint(CheckpointArgs),
+    /// Serve the topic journal over HTTP (h2c + HTTP/1.1 on one port).
+    Serve(ServeArgs),
     /// Print Tape's machine-readable API contract, offline.
     Spec(SpecArgs),
     /// Print agent-facing LLM topics, offline.
@@ -99,6 +102,21 @@ struct CheckpointPutArgs {
     offset: u64,
     #[arg(long, default_value = ".tape/journal.json")]
     store: PathBuf,
+}
+
+#[derive(clap::Args, Debug)]
+struct ServeArgs {
+    /// h2c + HTTP/1.1 listen address.
+    #[arg(long, env = "TAPE_BIND", default_value = "127.0.0.1:7137")]
+    bind: String,
+    /// Journal file to load at boot and persist to on every mutation.
+    /// Defaults to an empty in-memory journal when unset.
+    #[arg(long, env = "TAPE_STORE")]
+    store: Option<PathBuf>,
+    /// Graceful-drain window (seconds) held after SIGTERM before the
+    /// listener closes, while `/readyz` reports 503 so k8s stops routing.
+    #[arg(long, env = "TAPE_GRACE_SECS", default_value_t = 10)]
+    grace_secs: u64,
 }
 
 #[derive(clap::Args)]
@@ -233,13 +251,14 @@ const LLM_TOPICS: &[cli_std::llm::Topic] = &[
     },
 ];
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Append(args) => append(args),
         Command::Replay(args) => replay(args),
         Command::Checkpoint(args) => checkpoint(args),
+        Command::Serve(args) => serve_main(args).await,
         Command::Spec(args) => spec(args),
         Command::Llm(args) => llm(args),
         Command::Upgrade(args) => {
@@ -308,6 +327,39 @@ fn checkpoint(args: CheckpointArgs) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Run the tape HTTP server: load the journal from `--store` (or start
+/// empty), serve the shared service shell (standard probes merged with the
+/// `/topics` data plane) over HTTP/1.1 + h2c on one port, with a
+/// SIGTERM-aware graceful drain (`--grace-secs`).
+async fn serve_main(args: ServeArgs) -> Result<()> {
+    // RUST_LOG wins; otherwise default to info.
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
+
+    let journal = match &args.store {
+        Some(path) => load_journal(path)?,
+        None => TapeJournal::default(),
+    };
+    let state = tape::server::AppState::new(journal, args.store.clone());
+    let app = tape::server::router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind(&args.bind).await?;
+    tracing::info!(
+        addr = %listener.local_addr()?,
+        "tape listening (HTTP/1.1 + HTTP/2 cleartext)"
+    );
+
+    let grace = Duration::from_secs(args.grace_secs);
+    service_http::serve(
+        listener,
+        app,
+        service_http::shutdown_with_drain(move || state.start_drain(), grace),
+    )
+    .await;
+    Ok(())
 }
 
 fn spec(args: SpecArgs) -> Result<()> {
@@ -411,5 +463,48 @@ fn save_journal(path: &Path, journal: &TapeJournal) -> Result<()> {
 
 fn parse_payload(input: &str) -> Value {
     serde_json::from_str(input).unwrap_or_else(|_| Value::String(input.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn cli_parse_surface() {
+        Cli::command().debug_assert();
+
+        // #1325: `serve` gains --bind/--store/--grace-secs, with env fallback
+        // and a 10s default grace window; existing commands keep parsing.
+        let cli = Cli::try_parse_from(["tape", "serve"]).unwrap();
+        let Command::Serve(args) = cli.command else {
+            panic!("expected Serve");
+        };
+        assert_eq!(args.bind, "127.0.0.1:7137");
+        assert!(args.store.is_none());
+        assert_eq!(args.grace_secs, 10);
+
+        let cli = Cli::try_parse_from([
+            "tape",
+            "serve",
+            "--bind",
+            "0.0.0.0:9000",
+            "--store",
+            "/tmp/journal.json",
+            "--grace-secs",
+            "3",
+        ])
+        .unwrap();
+        let Command::Serve(args) = cli.command else {
+            panic!("expected Serve");
+        };
+        assert_eq!(args.bind, "0.0.0.0:9000");
+        assert_eq!(args.store, Some(PathBuf::from("/tmp/journal.json")));
+        assert_eq!(args.grace_secs, 3);
+
+        let cli =
+            Cli::try_parse_from(["tape", "append", "orders", "--payload", "{\"n\":1}"]).unwrap();
+        assert!(matches!(cli.command, Command::Append(_)));
+    }
 }
 // </HANDWRITE>

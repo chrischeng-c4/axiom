@@ -6,8 +6,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
+use utoipa::ToSchema;
 
 pub mod bench;
+pub mod metrics;
+pub mod openapi;
+pub mod server;
 pub mod spec;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -21,7 +25,7 @@ pub enum TapeError {
     CheckpointBeyondEnd { offset: u64, end_offset: u64 },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct TapeEvent {
     pub topic: String,
     pub offset: u64,
@@ -31,7 +35,7 @@ pub struct TapeEvent {
     pub payload: Value,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ConsumerCheckpoint {
     pub topic: String,
     pub consumer: String,

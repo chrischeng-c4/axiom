@@ -34,8 +34,8 @@ real-service external peer calibration remain separate work roots.
 | Topic Replay Journal | #768 | implemented | verified | smoke | ready | local file-backed append and offset/time replay; raft/h2c deferred |
 | Consumer Checkpoints | #768 | implemented | verified | smoke | ready | local durable consumer cursor and stale-write rejection |
 | Retention And Backfill | #768 | planned | planned | none | not_ready | retention windows, compaction policy, and batch backfill |
-| HTTP/2 API List | #768 | implemented | verified | smoke | ready | offline `tape spec` route/OpenAPI inventory; serving h2c deferred |
-| Standard Operational Endpoints | #768 | implemented | verified | smoke | ready | offline route inventory for `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`; server deferred |
+| HTTP/2 API List | #768 | implemented | verified | smoke | ready | offline `tape spec` route/OpenAPI inventory plus a real h2c + HTTP/1.1 server (#1325) serving `/topics` append/replay/checkpoint |
+| Standard Operational Endpoints | #768 | implemented | verified | smoke | ready | `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` served for real via `libs/service-http` (#1325), with drain-aware readiness and `tape serve` |
 | Kubernetes-Native Deployment | #768 | planned | planned | none | not_ready | dedicated StatefulSet/operator shape |
 | Primary Replicas | #768 | planned | planned | none | not_ready | raft-backed replicated topic journal |
 | CLI Interface | #768 | implemented | verified | smoke | ready | `tape` CLI for local replay/admin, spec, and agent docs |
@@ -263,19 +263,24 @@ ID: http2-api-list
 Type: RuntimeTool
 Root WI: #768
 Status: verified
-Surfaces: CLI: `tape spec --format routes|openapi|openapi-yaml|json-schema`; HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`, topic append/replay/checkpoint routes.
-EC Dimensions: behavior: `cargo test -p tape --test cli_contract spec_routes_list_topic_contract -- --exact` - offline route inventory
+Surfaces: CLI: `tape spec --format routes|openapi|openapi-yaml|json-schema`, `tape serve`; HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`, topic append/replay/checkpoint routes served for real over h2c + HTTP/1.1 on one port.
+EC Dimensions: behavior: `cargo test -p tape --test cli_contract spec_routes_list_topic_contract -- --exact` - offline route inventory; `cargo test -p tape --test http_transport` - real h2c+HTTP/1.1 transport, drain-aware readiness, and per-op metrics
 Required Verification: smoke, conformance
 Promise:
 Tape exposes a compact h2c/OpenAPI API list for producer, replay, checkpoint,
-and operator workflows.
+and operator workflows, and serves it for real on one h2c + HTTP/1.1 port via
+`tape serve` (shared `libs/service-http` shell).
 Gate Inventory:
 - apps/tape/src/spec.rs
 - apps/tape/tests/cli_contract.rs
+- apps/tape/src/server.rs
+- apps/tape/src/openapi.rs
+- apps/tape/tests/http_transport.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | h2c-openapi-route-list | epic | #768 | implemented | passing | smoke | apps/tape/src/spec.rs<br>apps/tape/tests/cli_contract.rs |
+| service-http-shell-h2c-serve-standard-endpoints | change | #1325 | implemented | passing | smoke | apps/tape/src/server.rs<br>apps/tape/src/openapi.rs<br>apps/tape/tests/http_transport.rs |
 
 ### Standard Operational Endpoints
 
@@ -283,19 +288,24 @@ ID: standard-operational-endpoints
 Type: Service
 Root WI: #768
 Status: verified
-Surfaces: CLI: `tape spec --format routes`; HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` route inventory.
-EC Dimensions: behavior: `cargo test -p tape --test cli_contract spec_routes_list_topic_contract -- --exact` - offline standard endpoint inventory
+Surfaces: CLI: `tape spec --format routes`, `tape serve [--bind] [--store] [--grace-secs]`; HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` served for real via the shared `libs/service-http` shell, with SIGTERM-aware graceful drain.
+EC Dimensions: behavior: `cargo test -p tape --test cli_contract spec_routes_list_topic_contract -- --exact` - offline standard endpoint inventory; `cargo test -p tape --test http_transport` - real probe surface, drain-aware `/readyz`, and Prometheus `/metrics`
 Required Verification: smoke
 Promise:
-Expose the standard service endpoint contract in Tape's offline spec before the
-serving h2c implementation lands.
+Serve the standard service endpoint contract for real over one h2c + HTTP/1.1
+port, with drain-aware readiness and per-op request metrics.
 Gate Inventory:
 - apps/tape/src/spec.rs
 - apps/tape/tests/cli_contract.rs
+- apps/tape/src/server.rs
+- apps/tape/src/metrics.rs
+- apps/tape/src/bin/tape.rs
+- apps/tape/tests/http_transport.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | standard-service-route-inventory | epic | #768 | implemented | passing | smoke | apps/tape/src/spec.rs<br>apps/tape/tests/cli_contract.rs |
+| service-http-shell-h2c-serve-standard-endpoints | change | #1325 | implemented | passing | smoke | apps/tape/src/server.rs<br>apps/tape/src/metrics.rs<br>apps/tape/src/bin/tape.rs<br>apps/tape/tests/http_transport.rs |
 
 ### EC Gates Configured
 
