@@ -188,13 +188,13 @@ id: pgpool-admin-plane-readiness-fsm
 initial: ready
 nodes:
   ready:
-    kind: state
+    kind: initial
     label: "Admin plane reports ready: /readyz returns 200 'ok'. TCP frontend accept loop admits new frontend connections; admin router serves all routes normally."
   draining:
-    kind: state
+    kind: normal
     label: "Shared DrainController flipped to Draining by either SIGTERM/SIGINT or POST /drain (R2). /readyz now returns 503 'draining'. TCP frontend accept loop stops admitting new connections; already-established sessions/transactions keep relaying to completion. Admin plane keeps serving /healthz, /metrics, /openapi.json, /docs, /pools, /pools/{pool}/stats, and POST /drain (idempotent) throughout."
   exited:
-    kind: state
+    kind: terminal
     label: "Both the TCP frontend's tokio::join! future and the admin http_server::serve_h2c_with_options future have resolved (in-flight work ended, or drain_timeout/admin_h2c.drain_timeout elapsed) and serve() returns Ok(()) (AC2)."
 edges:
   - from: ready
@@ -213,4 +213,135 @@ stateDiagram-v2
     draining --> draining: redundant POST /drain (idempotent)
     draining --> exited: in-flight work drains or drain_timeout elapses
     exited --> [*]
+```
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: apps-pgpool-admin-plane#schema
+title: pgpool Admin Plane Types
+description: >
+  Types for the served admin HTTP plane in `apps/pgpool/src/admin/`: the
+  shared router state (one shared DrainController clone plus the named pool
+  registry), the named-pool wrapper the admin plane adds on top of WI #1289's
+  `pool::BackendPool`/`pool::BackendPoolStats` (which carry no name/mode
+  fields), and the wire-shape response bodies for `/pools`,
+  `/pools/{pool}/stats`, and `POST /drain`. `PoolList`/`PoolStats` reuse the
+  exact field shape `apps/pgpool/src/spec.rs`'s offline `schemas()` already
+  declares (R4/AC3 byte-for-byte parity with `pgpool spec --format openapi`);
+  this section does not redefine `apps::pgpool::pool::{PoolConfig,
+  BackendPoolStats}`, `server_core::{DrainController, DrainState as
+  CoreDrainState}`, or `server_core::ConnectionBudget` — it composes them.
+
+definitions:
+  NamedPool:
+    type: object
+    $id: NamedPool
+    x-rust-derive: ["Clone"]
+    required: [name, mode, budget, pool]
+    description: "Pairs one WI #1289 BackendPool (Arc-backed, cheap to clone) with the pool name and PoolMode the admin plane needs to answer /pools and /pools/{pool}/stats, since pool::types::PoolStats/BackendPoolStats carry no name/mode fields themselves (R3). Constructed once in `serve()` from RuntimePlan.pool_name (Config section) + RuntimePlan.pool_mode and stored in AdminState.pools."
+    properties:
+      name:
+        type: string
+        description: "Operator-facing pool identifier; matches the {pool} path segment in GET /pools/{pool}/stats. Defaults to \"default\" (see Config section) since pgpool currently runs exactly one pool per process."
+      mode:
+        x-rust-type: "crate::pool::PoolMode"
+        description: "Session or Transaction — the fixed-for-the-process mode already selected by RuntimePlan.pool_mode; surfaced read-only in PoolStats.mode."
+      budget:
+        x-rust-type: "server_core::ConnectionBudget"
+        description: "The SAME ConnectionBudget instance the frontend accept path checks (RuntimePlan::frontend_budget); AdminState reads budget.active() for PoolStats.frontend_active and the pgpool_frontend_active metric gauge, never constructing a second budget (single source of truth)."
+      pool:
+        x-rust-type: "crate::pool::BackendPool"
+        description: "Arc-backed clone of the live BackendPool this pool name serves; AdminState calls pool.stats() (WI #1289) for backend_active/backend_idle on every /pools, /pools/{pool}/stats, and /metrics request — never a cached snapshot."
+
+  AdminState:
+    type: object
+    $id: AdminState
+    x-rust-derive: ["Clone"]
+    required: [drain, pools]
+    description: "axum shared state for the admin Router (via axum::extract::State), constructed once in `serve()` alongside the TCP frontend's TcpServerConfig so both planes hold clones of the identical DrainController (R2). Cheap to clone per-request since DrainController, ConnectionBudget, and BackendPool are all Arc/watch-channel backed internally."
+    properties:
+      drain:
+        x-rust-type: "server_core::DrainController"
+        description: "The one shared drain controller; /readyz reads drain.is_draining(), POST /drain calls drain.start_drain(), and the same clone is handed to TcpServerConfig.drain for the frontend accept loop and to the signal-handling task (R2)."
+      pools:
+        type: array
+        items: { $ref: "#/definitions/NamedPool" }
+        description: "Every pool this pgpool process serves (currently always exactly one entry, named per Config's pool_name, since RuntimePlan is single-pool-per-process); GET /pools iterates this, GET /pools/{pool}/stats looks up by name (R3)."
+
+  PoolStats:
+    type: object
+    $id: PoolStats
+    x-rust-derive: ["Debug", "Clone", "serde::Serialize"]
+    required: [name, mode, frontend_active, backend_active, backend_idle]
+    description: "Response body for GET /pools/{pool}/stats and each entry of PoolList.pools; field names/shape are IDENTICAL to the `PoolStats` schema `apps/pgpool/src/spec.rs`'s offline `schemas()` already declares, so the served body and `pgpool spec --format openapi`'s component schema stay byte-for-byte in sync (R4, AC3). Derived per-request from one NamedPool: name/mode copied directly, frontend_active from budget.active(), backend_active/backend_idle from pool.stats() (WI #1289 pool::BackendPoolStats)."
+    properties:
+      name:
+        type: string
+      mode:
+        type: string
+        enum: ["session", "transaction"]
+      frontend_active:
+        type: integer
+        minimum: 0
+        description: "server_core::ConnectionBudget::active() for this pool's frontend budget (AC4 metric source)."
+      backend_active:
+        type: integer
+        minimum: 0
+        description: "pool::BackendPoolStats.backend_active from BackendPool::stats() (WI #1289) (AC4 metric source)."
+      backend_idle:
+        type: integer
+        minimum: 0
+        description: "pool::BackendPoolStats.backend_idle from BackendPool::stats() (WI #1289) (AC4 metric source)."
+
+  PoolList:
+    type: object
+    $id: PoolList
+    x-rust-derive: ["Debug", "Clone", "serde::Serialize"]
+    required: [pools]
+    description: "Response body for GET /pools; matches apps/pgpool/src/spec.rs's offline PoolList schema field-for-field (R4, AC3)."
+    properties:
+      pools:
+        type: array
+        items: { $ref: "#/definitions/PoolStats" }
+
+  DrainResponse:
+    type: object
+    $id: DrainResponse
+    x-rust-derive: ["Debug", "Clone", "serde::Serialize"]
+    required: [draining]
+    description: "Response body for POST /drain, matching apps/pgpool/src/spec.rs's offline DrainState schema (single required boolean field, R4/AC3); returned after calling AdminState.drain.start_drain() (idempotent — repeated POSTs return the same {draining: true} body, see State Machine section)."
+    properties:
+      draining:
+        type: boolean
+        description: "Always true in the response body (POST /drain only ever transitions toward draining; there is no un-drain verb) and reflects AdminState.drain.is_draining() immediately after the call."
+
+  ReadyzResponse:
+    type: object
+    $id: ReadyzResponse
+    x-rust-derive: ["Debug", "Clone", "serde::Serialize"]
+    required: [status]
+    description: "Plain-text-equivalent body for GET /readyz (status field mirrors the libs/service-http probe-route convention of a short status string); HTTP status code (200 vs 503) is the primary readiness signal consumers rely on, this body is a human-diagnostic supplement (R2)."
+    properties:
+      status:
+        type: string
+        enum: ["ok", "draining"]
+
+  AdminMetricsLine:
+    type: object
+    $id: AdminMetricsLine
+    x-rust-derive: ["Debug", "Clone"]
+    required: [metric, pool, value]
+    description: "Internal (non-serialized-as-JSON) shape the /metrics handler folds every AdminState.pools entry into before rendering Prometheus text-format output; not part of the served JSON contract, only documents the pgpool_frontend_active / pgpool_backend_active / pgpool_backend_idle gauge rows (AC4). Rendered as `<metric>{pool=\"<pool>\"} <value>` per Prometheus text exposition format 0.0.4."
+    properties:
+      metric:
+        type: string
+        enum: ["pgpool_frontend_active", "pgpool_backend_active", "pgpool_backend_idle"]
+      pool:
+        type: string
+      value:
+        type: integer
+        minimum: 0
 ```
