@@ -102,7 +102,6 @@ flowchart TD
     readme_refresh --> traits_review[aw.toml traits reviewed vs relay precedent for kubernetes_native]
     traits_review --> done[cargo build/test -p tape stay green]
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
