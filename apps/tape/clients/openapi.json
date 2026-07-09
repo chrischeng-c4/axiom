@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:f4ceb77e" tracker="pending-tracker" reason="Checked-in snapshot of tape spec --format openapi (the same document GET /openapi.json serves) for offline client generation without a running server."
+// TODO: hand-write content for `apps/tape/clients/openapi.json`.
+// HANDWRITE-END
