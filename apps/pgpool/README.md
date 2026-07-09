@@ -116,14 +116,13 @@ clear observability before platform-specific adapters are added.
 Gate Inventory:
 - apps/pgpool/tests/wire_codec.rs (`cargo test -p pgpool --test wire_codec`)
 - apps/pgpool/tests/proxy.rs; apps/pgpool/tests/session_proxy.rs (`cargo test -p pgpool --test proxy --test session_proxy`)
-- pending: backend pool saturation and drain tests
-- pending: transaction/session mode behavior gates
+- apps/pgpool/tests/pool.rs; apps/pgpool/tests/pool_modes.rs (`cargo test -p pgpool --test pool --test pool_modes`)
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | pg-wire-frontend-protocol | epic | 1287 | implemented | passing | conformance | apps/pgpool/tests/wire_codec.rs; apps/pgpool/tech-design/logic/pg-wire-message-codec-frontend-backend-frames.md |
-| backend-pool-and-reuse | epic | 1289 | planned | planned | none | pending: pool saturation, reuse, and release tests |
-| transaction-session-pool-modes | epic | 1289 | planned | planned | none | pending: mode behavior gates |
+| backend-pool-and-reuse | epic | 1289 | implemented | passing | conformance | apps/pgpool/tests/pool.rs; apps/pgpool/tests/pool_modes.rs; apps/pgpool/tech-design/logic/backend-pool-connection-reuse-and-transaction-session-pool-modes.md |
+| transaction-session-pool-modes | epic | 1289 | implemented | passing | conformance | apps/pgpool/tests/pool.rs; apps/pgpool/tests/pool_modes.rs; apps/pgpool/tech-design/logic/backend-pool-connection-reuse-and-transaction-session-pool-modes.md |
 | serve-entrypoint-and-drain | epic | 1288 | implemented | passing | conformance | apps/pgpool/tests/proxy.rs; apps/pgpool/tests/session_proxy.rs; apps/pgpool/tech-design/logic/session-mode-proxy-with-auth-passthrough-and-serve-entrypoint.md |
 
 ### Platform Adapter Boundary
@@ -331,12 +330,12 @@ Run as a long-lived pooler without leaking backend connections or file
 descriptors, dropping in-flight transactions on drain, or corrupting pool
 state across backend restarts and rolling deploys.
 Gate Inventory:
-- pending: pool leak and reuse long-run gates
+- apps/pgpool/tests/pool_modes.rs (`churn_100_cycles_holds_backend_count_stable_no_leak`); apps/pgpool/tests/pool.rs (`dropped_lease_without_explicit_release_does_not_leak_capacity_slot`) — bounded-cycle proof, not a true long-run soak
 - pending: drain and backend-restart conformance tests
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| pool-leak-and-reuse-longrun | epic | 1289 | planned | planned | none | pending: long-run gates |
+| pool-leak-and-reuse-longrun | epic | 1289 | implemented | passing | conformance | bounded-cycle proof, not a true long-run soak: apps/pgpool/tests/pool_modes.rs (`churn_100_cycles_holds_backend_count_stable_no_leak`); apps/pgpool/tests/pool.rs (`dropped_lease_without_explicit_release_does_not_leak_capacity_slot`) |
 | drain-and-backend-restart-safety | epic | 1289 | planned | planned | none | pending: drain conformance tests |
 
 ### Security Hardening
