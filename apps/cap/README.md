@@ -84,20 +84,21 @@ Gate Inventory:
 
 ID: command-lease-throttling
 Type: RuntimeTool
-Surfaces: CLI: `cap run '<command string>'` + `cap run -- <argv...>` + `cap <passthrough...>` + `cap wait` - Command wrapping, explicit argv mode, passthrough wrapping, and headroom wait entrypoints for agent-launched local commands.
-EC Dimensions: behavior: `cap` - command wrapping, shell-string fallback, lease admission, pause/resume/kill outcomes, and structured run envelopes; efficiency: `cap` - same-name command replacement decisions and resource gates over CPU time and peak RSS; stability: `cap` - memory and CPU pressure backpressure that prevents agent-launched local commands from exhausting the host
+Surfaces: CLI: `cap run '<command string>'` + `cap run -- <argv...>` + `cap <passthrough...>` + `cap run --timeout <secs>` + `cap run --idle-timeout <secs>` + `cap wait` - Command wrapping, explicit argv mode, passthrough wrapping, per-invocation wall-clock/idle timeout overrides, and headroom wait entrypoints for agent-launched local commands.
+EC Dimensions: behavior: `cap` - command wrapping, shell-string fallback, lease admission, pause/resume/kill outcomes, absolute and idle wall-clock timeouts, and structured run envelopes; efficiency: `cap` - same-name command replacement decisions and resource gates over CPU time and peak RSS; stability: `cap` - memory and CPU pressure backpressure, and independent wall-clock/idle-progress timeouts, that prevent agent-launched local commands from exhausting the host or hanging silently
 Root WI: -
 Status: verified
 Required Verification: smoke
 Promise:
-`cap run` wraps local commands in daemon leases, applies memory-pressure backpressure, and emits structured outcomes when a command must wait, pause, resume, or be killed.
+`cap run` wraps local commands in daemon leases, applies memory-pressure backpressure, and emits structured outcomes when a command must wait, pause, resume, or be killed. Independently of memory/CPU pressure, `--timeout <secs>` kills a lease once its wall-clock run time (excluding time spent `Paused`) exceeds the budget, and `--idle-timeout <secs>` kills a lease that makes no CPU progress for that many seconds (also excluding `Paused` time). Both flags default to the daemon's `default_timeout_secs`/`default_idle_timeout_secs` config (0 = disabled) when omitted, and an explicit `0` disables the trigger for that invocation regardless of the config default. Both triggers reuse the existing SIGTERM-grace/SIGKILL escalation and `KillEnvelope` reporting — no new kill mechanism — surfaced as the `AbsoluteTimeout`/`IdleTimeout` classifications with `RaiseTimeoutOrSplit`/`InvestigateHang` actions.
 Gate Inventory:
-- `cargo test -p cap throttle`; `cargo test -p cap sampler`
+- `cargo test -p cap throttle`; `cargo test -p cap sampler`; `cargo test -p cap protocol`; `cargo test -p cap cli`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Lease admission and process supervision | epic | - | implemented | verified | smoke | `cargo test -p cap throttle` |
 | Memory and CPU pressure sampling | epic | - | implemented | verified | smoke | `cargo test -p cap sampler` |
+| Absolute and idle wall-clock timeouts | epic | #1323 | implemented | verified | smoke | `cargo test -p cap throttle` |
 
 ### Daemon Lifecycle and Status
 
