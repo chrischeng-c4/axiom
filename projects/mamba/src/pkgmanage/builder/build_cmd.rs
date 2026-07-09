@@ -40,6 +40,9 @@ pub fn cmd_build(sub: &ArgMatches) -> Result<()> {
         _ => EmitMode::Ast,
     });
     let output = sub.get_one::<String>("output").map(|s| s.as_str());
+    let aot = sub.get_flag("aot");
+
+    validate_aot_request(aot, output)?;
 
     let config = CompilerConfig {
         backend,
@@ -82,4 +85,45 @@ pub fn cmd_build(sub: &ArgMatches) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn validate_aot_request(aot: bool, output: Option<&str>) -> Result<()> {
+    if !aot {
+        return Ok(());
+    }
+    if output.is_none() {
+        anyhow::bail!("mamba build --aot requires --output <PATH>");
+    }
+    anyhow::bail!(
+        "mamba build --aot is not implemented yet: AOT packer backend is pending (#1076)"
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_aot_request;
+
+    #[test]
+    fn non_aot_mode_keeps_existing_behavior() {
+        assert!(validate_aot_request(false, None).is_ok());
+        assert!(validate_aot_request(false, Some("dist/app")).is_ok());
+    }
+
+    #[test]
+    fn aot_requires_explicit_output_path() {
+        let err = validate_aot_request(true, None).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "mamba build --aot requires --output <PATH>"
+        );
+    }
+
+    #[test]
+    fn aot_output_path_is_guarded_until_backend_exists() {
+        let err = validate_aot_request(true, Some("dist/app")).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "mamba build --aot is not implemented yet: AOT packer backend is pending (#1076)"
+        );
+    }
 }

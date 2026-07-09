@@ -59,7 +59,13 @@ fn cli() -> Command {
                 .arg(Arg::new("config").short('c').long("config").value_name("PATH").help("Path to mamba.toml"))
                 .arg(Arg::new("backend").short('b').long("backend").default_value("cranelift").help("Codegen backend: cranelift, llvm, wasm"))
                 .arg(Arg::new("emit").long("emit").help("Dump intermediate: ast, hir, mir"))
-                .arg(Arg::new("output").short('o').long("output").help("Output file path")),
+                .arg(Arg::new("output").short('o').long("output").help("Output file path"))
+                .arg(
+                    Arg::new("aot")
+                        .long("aot")
+                        .action(ArgAction::SetTrue)
+                        .help("Request AOT executable packaging (requires --output; backend pending)"),
+                ),
         )
         .subcommand(
             Command::new("check")
