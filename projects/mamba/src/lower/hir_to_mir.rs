@@ -2961,7 +2961,7 @@ impl<'a> HirToMir<'a> {
             let name_vreg = self.emit_str_const(fname);
             self.current_stmts.push(MirInst::CallExtern {
                 dest: None,
-                name: "mb_func_set_name".to_string(),
+                name: "mb_func_prime_name".to_string(),
                 args: vec![fn_vreg, name_vreg],
                 ty: self.tcx.none(),
             });
@@ -5195,7 +5195,7 @@ impl<'a> HirToMir<'a> {
                         let name_vreg = self.emit_str_const(&fname);
                         self.current_stmts.push(MirInst::CallExtern {
                             dest: None,
-                            name: "mb_func_set_name".to_string(),
+                            name: "mb_func_prime_name".to_string(),
                             args: vec![fn_vreg, name_vreg],
                             ty: self.tcx.none(),
                         });
@@ -11323,7 +11323,7 @@ impl<'a> HirToMir<'a> {
                     let name_v = self.emit_str_const("<lambda>");
                     self.current_stmts.push(MirInst::CallExtern {
                         dest: None,
-                        name: "mb_func_set_name".to_string(),
+                        name: "mb_func_prime_name".to_string(),
                         args: vec![closure_vreg, name_v],
                         ty: self.tcx.none(),
                     });
@@ -12562,7 +12562,7 @@ impl<'a> HirToMir<'a> {
         });
         self.current_stmts.push(MirInst::CallExtern {
             dest: None,
-            name: "mb_func_set_name".to_string(),
+            name: "mb_func_prime_name".to_string(),
             args: vec![closure_vreg, name_vreg],
             ty: self.tcx.none(),
         });
