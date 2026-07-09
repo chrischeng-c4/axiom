@@ -244,11 +244,56 @@ fn issue_workspace_identity_root(project_root: &Path) -> PathBuf {
         .unwrap_or_else(|| project_root.to_path_buf())
 }
 
+/// Marker file recording the literal `project_root` that produced a given
+/// workspace runtime dir, so change-dir consumers (`StateManager::load`)
+/// can resolve `project_root` by walking up from a `change_dir` instead of
+/// re-deriving it from path-shape arithmetic that breaks once the runtime
+/// layout nests deeper than the legacy `.aw/changes/{id}` shape.
+const PROJECT_ROOT_MARKER: &str = ".project-root";
+
+/// Record `project_root` at the workspace runtime root so `StateManager::load`
+/// (and other `change_dir`-only consumers) can look it back up. Idempotent —
+/// only writes when the marker is missing or stale.
+/// @spec apps/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
+fn record_workspace_project_root(runtime_root: &Path, project_root: &Path) {
+    let marker = runtime_root.join(PROJECT_ROOT_MARKER);
+    let value = project_root.to_string_lossy().into_owned();
+    if let Ok(existing) = std::fs::read_to_string(&marker) {
+        if existing == value {
+            return;
+        }
+    }
+    if std::fs::create_dir_all(runtime_root).is_ok() {
+        let _ = std::fs::write(&marker, value);
+    }
+}
+
+/// Resolve the `project_root` recorded for a `change_dir` under the runtime
+/// workspace layout, by walking up from `change_dir` looking for the
+/// `.project-root` marker written by `changes_path`/`change_path`. Returns
+/// `None` for legacy change dirs that predate this mechanism (callers fall
+/// back to path-shape derivation).
+/// @spec apps/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
+pub fn project_root_for_change_dir(change_dir: &Path) -> Option<PathBuf> {
+    for ancestor in change_dir.ancestors() {
+        let marker = ancestor.join(PROJECT_ROOT_MARKER);
+        if let Ok(content) = std::fs::read_to_string(&marker) {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                return Some(PathBuf::from(trimmed));
+            }
+        }
+    }
+    None
+}
+
 /// Path to the changes directory:
 /// `/tmp/aw/workspaces/<workspace>/changes`.
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
 pub fn changes_path(project_root: &Path) -> PathBuf {
-    workspace_runtime_path(project_root).join(CHANGES_DIR)
+    let runtime_root = workspace_runtime_path(project_root);
+    record_workspace_project_root(&runtime_root, project_root);
+    runtime_root.join(CHANGES_DIR)
 }
 
 /// Path to a specific change directory:

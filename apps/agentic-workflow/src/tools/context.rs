@@ -554,7 +554,8 @@ mod tests {
         let result = execute(&args, project_root).unwrap();
         assert!(result.contains("spec_context.md"));
 
-        let file_path = project_root.join(".aw/changes/test-change/spec_context.md");
+        let file_path = crate::shared::workspace::change_path(project_root, "test-change")
+            .join("spec_context.md");
         let written = std::fs::read_to_string(&file_path).unwrap();
         assert!(written.contains("type: spec_context"));
         assert!(written.contains("stage: spec"));
@@ -591,7 +592,8 @@ mod tests {
         let result = execute(&args, project_root).unwrap();
         assert!(result.contains("knowledge_context.md"));
 
-        let file_path = project_root.join(".aw/changes/test-change/knowledge_context.md");
+        let file_path = crate::shared::workspace::change_path(project_root, "test-change")
+            .join("knowledge_context.md");
         let written = std::fs::read_to_string(&file_path).unwrap();
         assert!(written.contains("type: knowledge_context"));
         assert!(written.contains("scanned_categories:"));
@@ -626,7 +628,8 @@ mod tests {
         let result = execute(&args, project_root).unwrap();
         assert!(result.contains("codebase_context.md"));
 
-        let file_path = project_root.join(".aw/changes/test-change/codebase_context.md");
+        let file_path = crate::shared::workspace::change_path(project_root, "test-change")
+            .join("codebase_context.md");
         let written = std::fs::read_to_string(&file_path).unwrap();
         assert!(written.contains("type: codebase_context"));
         assert!(written.contains("lens_tools_used:"));

@@ -109,7 +109,7 @@ mod tests {
         assert_eq!(result.change_id, "test-change");
         assert!(!result.has_issues);
 
-        let change_dir = tmp.path().join(".aw/changes/test-change");
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), "test-change");
         // STATE.yaml is deprecated — state is now stored in issue frontmatter
         assert!(change_dir.join("user_input.md").exists());
         assert_eq!(
@@ -134,7 +134,7 @@ mod tests {
         let result = create_change(input, tmp.path()).unwrap();
         assert_eq!(result.change_id, "simple-change");
 
-        let change_dir = tmp.path().join(".aw/changes/simple-change");
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), "simple-change");
         let sm = StateManager::load(&change_dir).unwrap();
         assert!(sm.state().git_workflow.is_none());
     }
