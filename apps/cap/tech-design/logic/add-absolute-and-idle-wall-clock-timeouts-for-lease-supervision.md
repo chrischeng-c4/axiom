@@ -119,3 +119,98 @@ would be misleading. The existing grace-period escalator at the top of
 `tick()` (oldest expired `Killing` lease -> group `SIGKILL`) requires no
 change: it already escalates any `Killing` lease regardless of which path
 put it there.
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: cap-lease-wall-clock-and-idle-timeouts-verification
+requirements:
+  absolute_timeout_excludes_paused_duration:
+    id: R2
+    text: "Time spent Paused (SIGSTOPped) is excluded from the absolute-timeout elapsed clock, so a lease paused by memory pressure does not spuriously trip --timeout."
+    kind: functional
+    risk: high
+    verify: cargo test -p cap throttle::tests::absolute_timeout_excludes_paused_duration
+  absolute_timeout_kills_after_deadline:
+    id: R1
+    text: "A lease with timeout_secs configured is killed via the existing SIGTERM/kill_grace_secs escalation once now - spawned_at - paused_total exceeds the deadline."
+    kind: functional
+    risk: high
+    verify: cargo test -p cap throttle::tests::absolute_timeout_kills_after_deadline
+  absolute_timeout_zero_disabled:
+    id: R3
+    text: "timeout_secs == 0 (default, unset flag and unset default_timeout_secs) never fires the absolute-timeout trigger regardless of elapsed time."
+    kind: regression
+    risk: high
+    verify: cargo test -p cap throttle::tests::absolute_timeout_zero_never_fires
+  acquire_request_carries_timeout_fields:
+    id: R10
+    text: "AcquireRequest serializes/deserializes new Option<u64> timeout_secs and idle_timeout_secs fields; omitted fields default to None (0/disabled) so existing clients are unaffected."
+    kind: regression
+    risk: medium
+    verify: cargo test -p cap protocol::tests::acquire_request_carries_timeout_fields
+  config_default_timeout_fields_default_to_disabled:
+    id: R12
+    text: "Protect::default() sets default_timeout_secs and default_idle_timeout_secs to 0 (disabled), and existing config.toml files without these keys parse with both fields defaulting to 0."
+    kind: regression
+    risk: high
+    verify: cargo test -p cap config::tests::default_timeout_fields_default_to_disabled
+  cpu_sampler_reads_cumulative_cpu_time:
+    id: R9
+    text: "CpuSampler, same shape as RssSampler, returns cumulative CPU time keyed by pid, refreshed via ProcessRefreshKind::new().with_cpu(), scoped to a caller-provided PID list."
+    kind: functional
+    risk: medium
+    verify: cargo test -p cap sampler::tests::cpu_sampler_reads_cumulative_cpu_time
+  idle_timeout_debounces_no_progress:
+    id: R4
+    text: "A lease whose process-group cumulative CPU time (via CpuSampler) has not advanced across trigger_samples consecutive sampler ticks is killed via the existing escalation; a single stale sample alone does not fire."
+    kind: functional
+    risk: high
+    verify: cargo test -p cap throttle::tests::idle_timeout_debounces_no_progress
+  idle_timeout_excludes_paused_duration:
+    id: R6
+    text: "The idle-timeout no-progress clock is frozen while a lease is Paused (SIGSTOPped): paused ticks are neither counted as progress nor as no-progress, so cap's own pressure pausing cannot spuriously trip --idle-timeout."
+    kind: functional
+    risk: high
+    verify: cargo test -p cap throttle::tests::idle_timeout_excludes_paused_duration
+  idle_timeout_resets_on_cpu_progress:
+    id: R5
+    text: "Any observed advance in process-group cumulative CPU time resets the idle no-progress counter, so intermittent CPU activity never accumulates toward the idle-timeout debounce threshold."
+    kind: functional
+    risk: high
+    verify: cargo test -p cap throttle::tests::idle_timeout_resets_on_cpu_progress
+  idle_timeout_zero_disabled:
+    id: R7
+    text: "idle_timeout_secs == 0 (default, unset flag and unset default_idle_timeout_secs) never fires the idle-timeout trigger regardless of CPU-time stagnation."
+    kind: regression
+    risk: high
+    verify: cargo test -p cap throttle::tests::idle_timeout_zero_never_fires
+  kill_envelope_distinguishes_timeout_classifications:
+    id: R8
+    text: "KillEnvelope.classification is AbsoluteTimeout or IdleTimeout (not Competition/Oversize/External) when either trigger fires, and KillEnvelope.action is a distinct Action variant from the memory-pressure WaitAndRetry/ChangeStrategy/InspectAndWait framing."
+    kind: functional
+    risk: high
+    verify: cargo test -p cap throttle::tests::kill_envelope_distinguishes_timeout_classifications
+  run_args_expose_timeout_flags:
+    id: R11
+    text: "cap run --timeout <secs> and cap run --idle-timeout <secs> parse into RunArgs and are forwarded on AcquireRequest; omitting both flags leaves the fields None and falls back to config defaults."
+    kind: functional
+    risk: medium
+    verify: cargo test -p cap cli::tests::run_args_expose_timeout_flags
+---
+flowchart TD
+    r1[R1 absolute timeout kills after deadline] --> cargo_test_p_cap_throttle_tests_absolute_timeout_kills_after_deadline[cargo test -p cap throttle::tests::absolute_timeout_kills_after_deadline]
+    r2[R2 absolute timeout excludes paused duration] --> cargo_test_p_cap_throttle_tests_absolute_timeout_excludes_paused_duration[cargo test -p cap throttle::tests::absolute_timeout_excludes_paused_duration]
+    r3[R3 absolute timeout zero disabled] --> cargo_test_p_cap_throttle_tests_absolute_timeout_zero_never_fires[cargo test -p cap throttle::tests::absolute_timeout_zero_never_fires]
+    r4[R4 idle timeout debounces no progress] --> cargo_test_p_cap_throttle_tests_idle_timeout_debounces_no_progress[cargo test -p cap throttle::tests::idle_timeout_debounces_no_progress]
+    r5[R5 idle timeout resets on cpu progress] --> cargo_test_p_cap_throttle_tests_idle_timeout_resets_on_cpu_progress[cargo test -p cap throttle::tests::idle_timeout_resets_on_cpu_progress]
+    r6[R6 idle timeout excludes paused duration] --> cargo_test_p_cap_throttle_tests_idle_timeout_excludes_paused_duration[cargo test -p cap throttle::tests::idle_timeout_excludes_paused_duration]
+    r7[R7 idle timeout zero disabled] --> cargo_test_p_cap_throttle_tests_idle_timeout_zero_never_fires[cargo test -p cap throttle::tests::idle_timeout_zero_never_fires]
+    r8[R8 kill envelope distinguishes timeout classifications] --> cargo_test_p_cap_throttle_tests_kill_envelope_distinguishes_timeout_classifications[cargo test -p cap throttle::tests::kill_envelope_distinguishes_timeout_classifications]
+    r9[R9 cpu sampler reads cumulative cpu time] --> cargo_test_p_cap_sampler_tests_cpu_sampler_reads_cumulative_cpu_time[cargo test -p cap sampler::tests::cpu_sampler_reads_cumulative_cpu_time]
+    r10[R10 acquire request carries timeout fields] --> cargo_test_p_cap_protocol_tests_acquire_request_carries_timeout_fields[cargo test -p cap protocol::tests::acquire_request_carries_timeout_fields]
+    r11[R11 run args expose timeout flags] --> cargo_test_p_cap_cli_tests_run_args_expose_timeout_flags[cargo test -p cap cli::tests::run_args_expose_timeout_flags]
+    r12[R12 config default timeout fields default to disabled] --> cargo_test_p_cap_config_tests_default_timeout_fields_default_to_disabled[cargo test -p cap config::tests::default_timeout_fields_default_to_disabled]
+```
