@@ -135,7 +135,6 @@ flowchart TD
     r3[R3 nx alias exact prefix match with empty rest resolves to alias target entry file] --> cargo_test_p_jet_lib_transform_modules_tests_bundle_resolves_nx_alias_exact_prefix_match_with_empty_rest[cargo test -p jet --lib transform::modules::tests::bundle_resolves_nx_alias_exact_prefix_match_with_empty_rest]
     r4[R4 alias miss falls through to unresolved literal without panic isolated unit] --> cargo_test_p_jet_lib_transform_modules_tests_resolve_module_path_alias_miss_falls_through_to_unresolved_literal[cargo test -p jet --lib transform::modules::tests::resolve_module_path_alias_miss_falls_through_to_unresolved_literal]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
