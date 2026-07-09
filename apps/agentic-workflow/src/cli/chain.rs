@@ -271,8 +271,8 @@ const EMIT_REGISTRY: &[EmitSite] = &[
     },
     EmitSite {
         source: "standardize.rs:managed_health_worker_command (~:1298)",
-        sample: "aw td code-claim apps/agentic-workflow/src/cli/chain.rs",
-        note: "health managed-axis routing: unmarked file -> code-claim (#920)",
+        sample: "aw td create --from-source apps/agentic-workflow/src/cli/chain.rs --project agentic-workflow",
+        note: "health managed-axis routing: unmarked file -> td create --from-source (#920, folded per #1273)",
     },
     EmitSite {
         source: "standardize.rs:semantic_health_worker_command (~:1313)",
@@ -646,11 +646,6 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         path: "td.code-check",
         class: VerbLifecycleClass::Core,
         sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "td.code-claim",
-        class: VerbLifecycleClass::Migration,
-        sunset_criterion: "folded into td create --from-source per epic #1270 R5 / #1273",
     },
     VerbLifecycle {
         path: "td.fill",

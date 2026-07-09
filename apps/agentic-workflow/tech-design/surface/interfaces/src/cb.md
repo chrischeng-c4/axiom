@@ -122,15 +122,17 @@ pub struct CbFillArgs {
     pub force: bool,
 }
 
-// Args for `aw td code-claim <code-path>`.
+// Args backing `aw td create --from-source <code-path>` — folds the
+// retired standalone `aw td code-claim` verb (epic #1270 R5 / #1273).
+// Constructed by `td::run_create_from_source` from the shared `CreateArgs`
+// surface; no longer mounted directly as a clap subcommand (retained as
+// `#[derive(Args)]` only for the `TestCbCli`/`CbCommand` clap-parsing test
+// harness above).
 #[derive(Debug, Args)]
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/cb.md#source
 pub struct CbClaimArgs {
     // Path to a source file or directory to analyse.
     pub code_path: String,
-    // Create `.aw/` workspace directory if it does not already exist.
-    #[arg(long)]
-    pub init: bool,
     // Skip filing/linking a durable tracker work-item for the adopted code
     // path. Tracker linkage is on by default (issue #925): adopted code
     // needs a durable root — a real work-item the commit/marker can point
@@ -152,6 +154,12 @@ pub struct CbClaimArgs {
     // @spec apps/agentic-workflow/tech-design/surface/specs/score-recovery-verbs-non-interactive.md#cli
     #[arg(long)]
     pub non_interactive: bool,
+    // Project name whose configured tech-design root the generated spec
+    // must target (#1243 fix). Inferred from `code_path` against the
+    // configured project scopes (`configured_project_name_for_path`) when
+    // omitted.
+    #[arg(long)]
+    pub project: Option<String>,
 }
 
 // Args for `aw td gen <slug>` or
@@ -1092,9 +1100,9 @@ fn resolve_project_force_regen_scope(
     project_name: &str,
     workspace_name: Option<&str>,
 ) -> Result<ForceRegenScope> {
-    let config_path = cwd.join(".aw").join("config.toml");
+    let config_path = cwd.join("aw.toml");
     if !config_path.exists() {
-        anyhow::bail!("td gen --force-regen requires .aw/config.toml project routing");
+        anyhow::bail!("td gen --force-regen requires aw.toml project routing");
     }
 
     let content = std::fs::read_to_string(&config_path)
@@ -1227,9 +1235,9 @@ fn project_cold_verify_workspaces(
     cwd: &std::path::Path,
     project_name: &str,
 ) -> Result<Vec<String>> {
-    let config_path = cwd.join(".aw").join("config.toml");
+    let config_path = cwd.join("aw.toml");
     if !config_path.exists() {
-        anyhow::bail!("cb cold verify requires .aw/config.toml project routing");
+        anyhow::bail!("cb cold verify requires aw.toml project routing");
     }
 
     let content = std::fs::read_to_string(&config_path)
@@ -3287,7 +3295,7 @@ fn generated() {
         let root = tmp.path();
         std::fs::create_dir_all(root.join(".aw")).unwrap();
         std::fs::write(
-            root.join(".aw/config.toml"),
+            root.join("aw.toml"),
             r#"
 [[projects]]
 name = "fixture_platform"
@@ -3328,7 +3336,7 @@ paths = ["examples/fixture_platform/frontend/**"]
         let root = tmp.path();
         std::fs::create_dir_all(root.join(".aw")).unwrap();
         std::fs::write(
-            root.join(".aw/config.toml"),
+            root.join("aw.toml"),
             r#"
 [[projects]]
 name = "fixture_platform"
@@ -3599,8 +3607,7 @@ changes:
             extract_spec_managed_refs(content),
             vec![
                 "apps/agentic-workflow/tech-design/surface/interfaces/src/lib.md".to_string(),
-                "apps/agentic-workflow/tech-design/surface/interfaces/src/schema.md"
-                    .to_string()
+                "apps/agentic-workflow/tech-design/surface/interfaces/src/schema.md".to_string()
             ]
         );
     }
@@ -3691,7 +3698,7 @@ target = "rust"
 test_cmd = "cargo test -p tool"
 "#;
         std::fs::create_dir_all(tmp.path().join(".aw")).unwrap();
-        std::fs::write(tmp.path().join(".aw/config.toml"), config).unwrap();
+        std::fs::write(tmp.path().join("aw.toml"), config).unwrap();
         std::fs::create_dir_all(tmp.path().join("projects/tool")).unwrap();
         std::fs::write(
             tmp.path().join("projects/tool/Cargo.toml"),
@@ -4230,7 +4237,7 @@ pub fn signature_only() -> Result<()>
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join(".aw")).unwrap();
         std::fs::write(
-            dir.path().join(".aw/config.toml"),
+            dir.path().join("aw.toml"),
             "[[projects]]\n\
              name = \"tool\"\n\
              path = \"projects/tool\"\n\
@@ -4249,7 +4256,7 @@ pub fn signature_only() -> Result<()>
         )
         .unwrap();
 
-        let err = ensure_claim_issue(dir.path(), "projects/tool/src/lib.rs").unwrap_err();
+        let err = ensure_claim_issue(dir.path(), "projects/tool/src/lib.rs", None).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("repo_platform") || msg.contains("issue_platform"),
@@ -4263,7 +4270,7 @@ pub fn signature_only() -> Result<()>
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
         std::fs::write(dir.path().join("src/lib.rs"), "pub fn x() {}\n").unwrap();
 
-        let err = ensure_claim_issue(dir.path(), "src/lib.rs").unwrap_err();
+        let err = ensure_claim_issue(dir.path(), "src/lib.rs", None).unwrap_err();
         assert!(
             err.to_string().contains("no configured project owns"),
             "got: {}",
@@ -4752,7 +4759,7 @@ fn resolve_slug_spec_paths(
     rels.into_iter().map(|r| project_root.join(r)).collect()
 }
 
-/// Resolve the owning project name from an issue's `app:<name>` label,
+/// Resolve the owning project name from an issue's `app:<name>` or `lib:<name>` label,
 /// the same convention `aw wi create --project` and the standardize/health
 /// surfaces use. Deliberately a small local duplicate of `td.rs`'s
 /// equivalent helper rather than widening that module's visibility — this
@@ -4791,7 +4798,7 @@ fn project_label_for_wi(issue: &crate::issues::Issue) -> Option<&str> {
 /// --project` falls here); the touched-file set is empty (docs-only WI, or
 /// unresolvable branch diff — same rationale as the marker gate's vacuous
 /// pass); or the owning project's standardize inventory can't be resolved
-/// (e.g. no `.aw/config.toml` workspace scope configured for it) — an
+/// (e.g. no `aw.toml` workspace scope configured for it) — an
 /// unconfigured project must never brick code-check.
 fn touched_scope_standardization_gate_message(
     project_root: &std::path::Path,
@@ -5158,7 +5165,9 @@ fn commit_cb_code_check_terminal(
 
 // ── cb claim ────────────────────────────────────────────────────────
 
-// Implementation of `aw td code-claim <code-path>` — recovery verb.
+// Implementation backing `aw td create --from-source <code-path>` —
+// relocated entry point for the retired standalone `aw td code-claim`
+// (epic #1270 R5 / #1273).
 ///
 // Wraps the fillback pipeline to adopt existing code into the score lifecycle
 // in the current checkout.
@@ -5177,32 +5186,21 @@ pub async fn run_claim(args: CbClaimArgs) -> Result<()> {
         std::process::exit(1);
     }
 
-    // 2. .aw/ presence + --init handling.
     let cwd = std::env::current_dir().context("failed to read cwd")?;
     let project_root = match crate::find_project_root() {
         Ok(p) => p,
         Err(_) => cwd.clone(),
     };
-    let score_dir = project_root.join(".aw");
-    if !score_dir.exists() {
-        if args.init {
-            std::fs::create_dir_all(score_dir.join("tech-design"))
-                .context("failed to create .aw/tech-design")?;
-        } else {
-            let env = serde_json::json!({
-                "action": "error",
-                "message": ".aw/ workspace not found; pass --init to create it",
-            });
-            println!("{}", serde_json::to_string_pretty(&env)?);
-            std::process::exit(1);
-        }
-    }
 
-    // 3. Run the fillback pipeline. We call the existing `fillback::run`
+    // 2. Run the fillback pipeline. We call the existing `fillback::run`
     //    directly (rather than extracting a `run_core`) because the existing
     //    function already takes `Option<&str>` parameters that match the
     //    flags we expose. This is the simpler-alternative documented in
-    //    the spec changes for fillback.rs.
+    //    the spec changes for fillback.rs. `args.project` (or, when unset,
+    //    inference from `code_path`) drives `fillback::run`'s
+    //    project-local tech-design root targeting (#1243) — the legacy
+    //    `.aw/` workspace presence + `--init` bootstrap gate that used to
+    //    live here is retired along with it.
     //
     // When `--non-interactive` is set we export `SCORE_NON_INTERACTIVE=1`
     // so the AST-strategy clarification + overwrite prompts skip with safe
@@ -5213,7 +5211,9 @@ pub async fn run_claim(args: CbClaimArgs) -> Result<()> {
         std::env::set_var("SCORE_NON_INTERACTIVE", "1");
     }
     let path_str = args.code_path.clone();
-    if let Err(e) = crate::cli::fillback::run(Some(&path_str), None, false).await {
+    if let Err(e) =
+        crate::cli::fillback::run(Some(&path_str), None, false, args.project.as_deref()).await
+    {
         let env = serde_json::json!({
             "action": "error",
             "message": format!("fillback pipeline failed: {}", e),
@@ -5222,14 +5222,14 @@ pub async fn run_claim(args: CbClaimArgs) -> Result<()> {
         std::process::exit(1);
     }
 
-    // 4. Tracker linkage (default-on; issue #925). Adopted code needs a
+    // 3. Tracker linkage (default-on; issue #925). Adopted code needs a
     //    durable tracker root for traceability closure — file (or reuse) a
     //    real work-item through the same `aw wi create` routing issue #919
     //    established for `standardize::ensure_gap_issue`, instead of a
     //    `LocalBackend`-only stub. `--no-issue` is the documented opt-out.
     //    Best-effort either way: a skipped or failed tracker link must
-    //    never fail the claim itself (`aw td code-claim` has to keep
-    //    working offline / with no issue backend configured).
+    //    never fail the claim itself (`aw td create --from-source` has to
+    //    keep working offline / with no issue backend configured).
     let derived_slug = derive_slug_from_path(&code_path);
     let code_path_rel = repo_relative_code_path(&project_root, &args.code_path);
     let claim_issue = if args.no_issue {
@@ -5239,7 +5239,7 @@ pub async fn run_claim(args: CbClaimArgs) -> Result<()> {
         );
         None
     } else {
-        match ensure_claim_issue(&project_root, &code_path_rel) {
+        match ensure_claim_issue(&project_root, &code_path_rel, args.project.as_deref()) {
             Ok(issue_ref) => Some(issue_ref),
             Err(e) => {
                 eprintln!(
@@ -5252,7 +5252,7 @@ pub async fn run_claim(args: CbClaimArgs) -> Result<()> {
         }
     };
 
-    // 5. Commit a Cb-Claim trailer in the current checkout when possible.
+    // 4. Commit a Cb-Claim trailer in the current checkout when possible.
     let mut committed = false;
     if let Err(e) = commit_cb_claim_trailer(
         &project_root,
@@ -5265,15 +5265,15 @@ pub async fn run_claim(args: CbClaimArgs) -> Result<()> {
         committed = true;
     }
 
-    // 6. Emit result envelope.
+    // 5. Emit result envelope.
     let env = serde_json::json!({
         "action": "done",
         "slug": derived_slug,
         "claim_issue": claim_issue.as_ref().map(|r| r.trailer_value()),
         "message": if committed {
-            "td code-claim: spec written; Cb-Claim trailer committed"
+            "td create --from-source: spec written; Cb-Claim trailer committed"
         } else {
-            "td code-claim: spec written (no trailer committed)"
+            "td create --from-source: spec written (no trailer committed)"
         },
     });
     println!("{}", serde_json::to_string_pretty(&env)?);
@@ -5290,15 +5290,16 @@ fn derive_slug_from_path(p: &std::path::Path) -> String {
         .unwrap_or_else(|| "claim".to_string())
 }
 
-// Best-effort project-root-relative form of a `code-claim` path argument,
+// Best-effort project-root-relative form of a `--from-source` path argument,
 // for `configured_project_name_for_path` matching (that helper expects a
 // forward-slash path rooted at `project_root`, matching its other call
-// sites — see `write_project_root_llms_targets` above). `aw td code-claim`
-// is invoked with a path relative to the current checkout root in normal
-// use (the same convention `derive_slug_from_path` already assumes); this
-// only adjusts for a leading `./` or an absolute path that happens to live
-// under `project_root`.
-fn repo_relative_code_path(project_root: &std::path::Path, code_path: &str) -> String {
+// sites — see `write_project_root_llms_targets` above). `aw td create
+// --from-source` is invoked with a path relative to the current checkout
+// root in normal use (the same convention `derive_slug_from_path` already
+// assumes); this only adjusts for a leading `./` or an absolute path that
+// happens to live under `project_root`. `pub(crate)` so `fillback.rs`'s
+// project-local tech-design root resolution (#1243) can reuse it.
+pub(crate) fn repo_relative_code_path(project_root: &std::path::Path, code_path: &str) -> String {
     let candidate = std::path::Path::new(code_path);
     let rel = if candidate.is_absolute() {
         candidate
@@ -5403,7 +5404,7 @@ impl ClaimIssueRef {
 // `ensure_gap_issue`'s `enhancement` (a genuine HANDWRITE-coverage gap).
 //
 // Backend/durability note: this lands in whatever backend
-// `.aw/config.toml` resolves for the project that owns `code_path_rel`
+// `aw.toml` resolves for the project that owns `code_path_rel`
 // (local → ephemeral `/tmp/aw/...`, exactly like plain `aw wi create`;
 // github/gitlab → a durable tracker issue). This function only fixes
 // code-claim's routing to the real create path — a marker/attr surface to
@@ -5415,14 +5416,20 @@ impl ClaimIssueRef {
 fn ensure_claim_issue(
     project_root: &std::path::Path,
     code_path_rel: &str,
+    project_override: Option<&str>,
 ) -> Result<ClaimIssueRef> {
-    let project_name =
-        crate::cli::standardize::configured_project_name_for_path(project_root, code_path_rel)?
-            .with_context(|| {
-                format!(
-            "no configured project owns `{code_path_rel}` — cannot file a code-claim tracker issue"
-        )
-            })?;
+    let project_name = match project_override {
+        Some(p) => p.to_string(),
+        None => crate::cli::standardize::configured_project_name_for_path(
+            project_root,
+            code_path_rel,
+        )?
+        .with_context(|| {
+            format!(
+                "no configured project owns `{code_path_rel}` — cannot file a code-claim tracker issue"
+            )
+        })?,
+    };
     // Pre-resolve the exact `--project` label lookup `aw wi create` performs
     // so a misconfigured project surfaces as a normal `Result::Err` here
     // instead of `run_create`'s own validation-failure path, which hard
