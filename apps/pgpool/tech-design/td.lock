@@ -2,10 +2,16 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-09T06:38:02.638954+00:00"
-digest = "sha256:47c7f0d9145eb8d4070ad7b4259365a1c4383468dc517c70f45b38a40f0f2603"
-source_digest = "sha256:47c7f0d9145eb8d4070ad7b4259365a1c4383468dc517c70f45b38a40f0f2603"
-ir_digest = "sha256:bfdcdee97f828cd0a5827231beadb2ab39226be7e81fbeb931444cf6d0c75d1f"
+generated_at = "2026-07-09T08:08:38.879645+00:00"
+digest = "sha256:19d47a6e997452687a1c07e506c461048ca3c6110f49380cb2c2ef245677887d"
+source_digest = "sha256:19d47a6e997452687a1c07e506c461048ca3c6110f49380cb2c2ef245677887d"
+ir_digest = "sha256:90b398658c259a9336e0fbe673aba6f34cce24ec60b1e6cc664162af6d56b271"
+
+[[files]]
+path = "logic/backend-pool-connection-reuse-and-transaction-session-pool-modes.md"
+digest = "sha256:d2f5f44f314423c45921a5dc9bd61a8d7ad9d1e93146aff664a8c0ed67fc65b5"
+ir_digest = "sha256:64e071dc34569e6c3ac1b3eb1e382497f6d1a5a17b3a1ea4216b6b0d68ff8ab8"
+section_count = 5
 
 [[files]]
 path = "logic/pg-wire-message-codec-frontend-backend-frames.md"
