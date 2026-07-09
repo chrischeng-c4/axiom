@@ -135,6 +135,7 @@ Gate Inventory:
 | CRRR removal (linear lifecycle) | change | #191 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib td_created_dispatches_to_gen`; apps/agentic-workflow/tech-design/logic/remove-td-cb-crrr-collapse-to-linear-lifecycle.md |
 | Remove TD merge command | change | #914 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests test_td_merge_subcommand_is_removed`; apps/agentic-workflow/tech-design/surface/validate/tests/td_no_merge_test.md; refs #851 |
 | Chain liveness proof | change | #914 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests chain_liveness`; apps/agentic-workflow/tech-design/surface/validate/tests/chain_liveness_test.md; refs #921 |
+| td surface convergence (EC-gated terminal, check unification, verb lifecycle policy, fixture-loop self-EC) | epic | #1270 | planned | pending | - | children #1272-#1281 + #858 (rescoped); gates: chain conformance per removal, fixture-loop e2e (#1279), self-EC inventory (#1280) |
 
 ### Project-Local TD and EC Gates
 
