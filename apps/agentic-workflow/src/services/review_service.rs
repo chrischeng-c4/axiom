@@ -407,7 +407,7 @@ mod tests {
     #[test]
     fn test_write_review_approved() {
         let (_tmp, root) = setup_change("test-review");
-        let change_dir = root.join(".aw/changes/test-review");
+        let change_dir = crate::shared::workspace::change_path(&root, "test-review");
         std::fs::write(
             change_dir.join("pre_clarifications.md"),
             "---\nid: test\ntype: clarifications\n---\n\n# Pre-Clarifications\n\nContent.\n",

@@ -36,26 +36,26 @@ pub(crate) fn write_minimal_issue(project_root: &std::path::Path, slug: &str) {
     std::fs::write(issues_dir.join(format!("{}.md", slug)), body).unwrap();
 }
 
-/// Create a temp project root with `.aw/changes/<slug>/` change dir AND a
-/// backing temp issue file. Returns `(TempDir,
-/// change_dir)`; hold the TempDir for lifetime.
+/// Create a temp project root with a runtime `changes/<slug>/` change dir
+/// (under `/tmp/aw/workspaces/<workspace>/changes`) AND a backing temp issue
+/// file. Returns `(TempDir, change_dir)`; hold the TempDir for lifetime.
 #[allow(dead_code)]
 /// @spec apps/agentic-workflow/tech-design/core/validate/test_util.md#source
 pub(crate) fn setup_change_with_issue(slug: &str) -> (TempDir, PathBuf) {
     let tmp = TempDir::new().unwrap();
-    let change_dir = tmp.path().join(".aw/changes").join(slug);
+    let change_dir = crate::shared::workspace::change_path(tmp.path(), slug);
     std::fs::create_dir_all(&change_dir).unwrap();
     write_minimal_issue(tmp.path(), slug);
     (tmp, change_dir)
 }
 
-/// Create a temp project root with `.aw/changes/` dir AND a backing issue
-/// file for `slug`. Returns the TempDir only — tests that manage their own
-/// change_dir layout should use this.
+/// Create a temp project root with a runtime `changes/` dir AND a backing
+/// issue file for `slug`. Returns the TempDir only — tests that manage their
+/// own change_dir layout should use this.
 /// @spec apps/agentic-workflow/tech-design/core/validate/test_util.md#source
 pub(crate) fn setup_project_with_issue(slug: &str) -> TempDir {
     let tmp = TempDir::new().unwrap();
-    std::fs::create_dir_all(tmp.path().join(".aw/changes")).unwrap();
+    std::fs::create_dir_all(crate::shared::workspace::changes_path(tmp.path())).unwrap();
     write_minimal_issue(tmp.path(), slug);
     tmp
 }

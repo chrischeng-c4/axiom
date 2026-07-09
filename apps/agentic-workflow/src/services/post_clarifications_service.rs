@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn test_create_post_clarifications() {
         let tmp = TempDir::new().unwrap();
-        let change_dir = tmp.path().join(".aw/changes/test-post");
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), "test-post");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         let input = CreatePostClarificationsInput {
@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn test_create_post_clarifications_empty() {
         let tmp = TempDir::new().unwrap();
-        let change_dir = tmp.path().join(".aw/changes/test-empty");
+        let change_dir = crate::shared::workspace::change_path(tmp.path(), "test-empty");
         std::fs::create_dir_all(&change_dir).unwrap();
 
         let input = CreatePostClarificationsInput {

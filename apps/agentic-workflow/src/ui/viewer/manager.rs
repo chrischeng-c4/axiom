@@ -387,7 +387,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn setup_test_change(dir: &TempDir, change_id: &str) -> PathBuf {
-        let change_dir = dir.path().join(".aw/changes").join(change_id);
+        let change_dir = crate::shared::workspace::change_path(dir.path(), change_id);
         fs::create_dir_all(&change_dir).unwrap();
         change_dir
     }
@@ -398,7 +398,10 @@ mod tests {
         let manager = ViewerManager::new("my-change", temp_dir.path());
 
         assert_eq!(manager.change_id, "my-change");
-        assert!(manager.change_dir.ends_with(".aw/changes/my-change"));
+        assert_eq!(
+            manager.change_dir,
+            crate::shared::workspace::change_path(temp_dir.path(), "my-change")
+        );
     }
 
     #[test]
