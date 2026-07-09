@@ -810,7 +810,55 @@ POST /collections/{id}/index
 ```
 
 Re-writing `(external_id, field)` fully re-indexes that field. There
-is no partial update.
+is no partial update. `/index` is a **merge**: only the fields you send are
+touched. Own only some fields of a doc? Use `/index`. Own the doc's
+**complete** row? Use `docs:replace` below.
+
+### Full-replacement writes (docs:replace)
+
+```
+PUT /collections/{id}/docs:replace
+{ "docs": [
+    { "external_id": "row-42", "version": 7, "fields": { "title": "New title", "state": "open" } }
+] }
+→ 200 { "results": [
+    { "status": "ok", "fields_written": 2, "fields_skipped": 0 }
+] }
+
+PUT /collections/{id}/docs/{external_id}          # single-resource sugar
+{ "version": 7, "fields": { "title": "New title", "state": "open" } }
+→ 200 { "status": "ok", "fields_written": 2, "fields_skipped": 0 }
+```
+
+`docs:replace` is a batch **full-replacement** upsert: each item's `fields`
+becomes the doc's *entire* indexed state — a declared schema field the doc
+has today but that is absent from `fields` is **implicitly deleted**.
+`docs:replace` is one literal path segment appended after
+`{collection_id}` (AIP-136 custom-method syntax), so it registers directly
+in axum next to `/collections/{collection_id}/docs/{external_id}` with no
+capture ambiguity — collection ids may not contain `:` for the same reason.
+
+**PUT is deliberate**: this is idempotent full replacement, so replaying
+the same request converges to the same state. **Own the complete row for a
+doc? Use `docs:replace`. Own only some fields? Use `/index`** — `/index` is
+a merge, `docs:replace` is a full replacement.
+
+`version` is optional **doc-level** last-write-wins over the caller's own
+source-row version — distinct from `/index`'s `IndexItem.version`, which is
+per-`(external_id, field)` cell versioning. A strictly-older version
+arriving later drops the *entire* item and is reported as its own
+`{"status":"dropped","current_version":...}` result, kept separate from
+both `ok` and `error` so callers can tell "a newer write already won" apart
+from both success and failure. Each `ok` result carries `fields_written`
+and `fields_skipped` counters; `fields_skipped` (unchanged-value no-op
+suppression) is always `0` today.
+
+**A per-item failure never fails the batch**: the batch-level HTTP status
+stays 200 unless the body is malformed or the batch is over the size limit
+(max 32 items — `MAX_BATCH_REPLACE_SIZE`, the same knob family as
+`collections:search`'s `MAX_BATCH_SEARCH_SIZE`) — those return 400.
+`PUT /collections/{id}/docs/{external_id}` is single-resource sugar for a
+one-item batch, unwrapped back into a bare per-item result.
 
 ### Delete
 

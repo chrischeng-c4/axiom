@@ -78,6 +78,63 @@ fn openapi_json_exposes_batch_search_endpoint_and_schemas() {
     }
 }
 
+/// #1292: `lumen spec` publishes the `docs:replace` batch endpoint, the
+/// single-resource `docs/{external_id}` sugar endpoint, and their request/
+/// response schemas — generated from the same live-router `ApiDoc` source
+/// of truth `openapi_json_exposes_batch_search_endpoint_and_schemas` (#1271)
+/// exercises.
+#[test]
+fn openapi_json_exposes_docs_replace_endpoints_and_schemas() {
+    let v: Value = serde_json::from_str(&openapi_json()).expect("openapi is valid JSON");
+
+    let batch = &v["paths"]["/collections/{collection_id}/docs:replace"]["put"];
+    assert!(
+        !batch.is_null(),
+        "OpenAPI is missing PUT /collections/{{collection_id}}/docs:replace: {:?}",
+        v["paths"].as_object().map(|p| p.keys().collect::<Vec<_>>())
+    );
+    assert_eq!(
+        batch["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ReplaceDocsRequest",
+        "docs:replace request body schema"
+    );
+    assert_eq!(
+        batch["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ReplaceDocsResponse",
+        "docs:replace response schema"
+    );
+
+    let single = &v["paths"]["/collections/{collection_id}/docs/{external_id}"]["put"];
+    assert!(
+        !single.is_null(),
+        "OpenAPI is missing PUT /collections/{{collection_id}}/docs/{{external_id}}: {:?}",
+        v["paths"].as_object().map(|p| p.keys().collect::<Vec<_>>())
+    );
+    assert_eq!(
+        single["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ReplaceDocBody",
+        "single-resource docs/{{external_id}} request body schema"
+    );
+    assert_eq!(
+        single["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ReplaceDocResult",
+        "single-resource docs/{{external_id}} response schema"
+    );
+
+    for schema in [
+        "ReplaceDocsRequest",
+        "ReplaceDocItem",
+        "ReplaceDocsResponse",
+        "ReplaceDocResult",
+        "ReplaceDocBody",
+    ] {
+        assert!(
+            !v["components"]["schemas"][schema].is_null(),
+            "OpenAPI components missing schema `{schema}`"
+        );
+    }
+}
+
 #[test]
 fn openapi_yaml_is_valid_with_search_path() {
     let v: YamlValue = serde_yaml::from_str(&openapi_yaml()).expect("openapi is valid YAML");
@@ -605,6 +662,41 @@ fn llm_outline_mentions_batch_search() {
     assert!(
         outline.contains("collections:search"),
         "outline should point at batch search: {outline}"
+    );
+}
+
+/// #1292: the workflow topic must document the docs:replace full-replacement
+/// write surface — implicit field deletion, doc-level LWW `version`, the
+/// `/index`-vs-`docs:replace` division rule, and the single-resource sugar
+/// endpoint — mirroring the batch search topic's coverage pattern (#1271).
+#[test]
+fn llm_workflow_documents_docs_replace_endpoint() {
+    let g = llm_workflow_md();
+    for needle in [
+        "PUT /collections/{id}/docs:replace",
+        "implicitly deleted",
+        "Own the complete row for a doc?",
+        "doc-level",
+        "current_version",
+        "Partial failure never fails the batch",
+        "MAX_BATCH_REPLACE_SIZE",
+        "PUT /collections/{id}/docs/{external_id}",
+    ] {
+        assert!(
+            g.contains(needle),
+            "workflow missing docs:replace `{needle}`"
+        );
+    }
+}
+
+/// #1292: the outline must point an agent at the docs:replace full-replacement
+/// write verb from the workflow topic entry.
+#[test]
+fn llm_outline_mentions_docs_replace() {
+    let outline = llm_outline_md();
+    assert!(
+        outline.contains("docs:replace"),
+        "outline should point at docs:replace: {outline}"
     );
 }
 

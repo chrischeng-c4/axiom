@@ -381,6 +381,15 @@ semantic_domain:
           - name: "llm_storage_documents_admin_backup_and_scheduled_cronjob"
             kind: "function"
             public: false
+          - name: "openapi_json_exposes_docs_replace_endpoints_and_schemas"
+            kind: "function"
+            public: false
+          - name: "llm_workflow_documents_docs_replace_endpoint"
+            kind: "function"
+            public: false
+          - name: "llm_outline_mentions_docs_replace"
+            kind: "function"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -651,6 +660,21 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "openapi_spec_served"
+            kind: "function"
+            public: false
+          - name: "replace_docs_implicit_delete_field_absent_from_replacement"
+            kind: "function"
+            public: false
+          - name: "replace_docs_stale_version_dropped_and_replay_is_idempotent"
+            kind: "function"
+            public: false
+          - name: "replace_doc_single_resource_identical_to_one_item_batch"
+            kind: "function"
+            public: false
+          - name: "replace_docs_partial_failure_reports_per_item_error_with_ok_siblings"
+            kind: "function"
+            public: false
+          - name: "replace_docs_over_limit_returns_400"
             kind: "function"
             public: false
         source_evidence_node:
