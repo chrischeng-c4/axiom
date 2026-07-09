@@ -129,5 +129,5 @@ separate escape hatch for an in-scope marker.
   locks the next marker or dispatches `aw td code-check <slug>`.
 
 Generator-learning is not part of `td fill`. If a filled HANDWRITE block
-reveals a deterministic pattern, open/continue a `aw standardize
-regenerable` gap so a future `aw td gen` can replace it.
+reveals a deterministic pattern, open/continue a generator gap via
+`aw generator request` so a future `aw td gen` can replace it.

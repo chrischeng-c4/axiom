@@ -53,7 +53,8 @@ Do not use removed top-level helpers such as `aw check`, `aw hover`,
 `aw daemon`, `aw serve`, or `aw context`.
 
 For Agentic Workflow itself (`agentic-workflow` / `aw`), do not run the full
-AW loop against its own repo, and do not turn `aw health` or `aw standardize`
+AW loop against its own repo, and do not turn `aw health` (including its
+`takeover-audit` axis, the retired `aw standardize` namespace's successor)
 into a self-takeover gate: a broken lifecycle cannot be required to fix
 itself (self-deadlock). Self-AW hard-gates only the capability contract —
 CAPABILITIES.md work-roots with resolvable gap/claim ids and closing WI/TD
@@ -79,7 +80,6 @@ explicitly asks for Claude-specific behavior.
 | `aw ec` | External-contract lifecycle: generate tests/tool configs and verify EC gates |
 | `aw health` | Aggregate project readiness, production gates, and blocker status |
 | `aw conf` | Manage `aw.toml` and Agentic Workflow configuration producers |
-| `aw standardize` | Existing-project workflow guidance and bounded remediation |
 <!-- aw:cli-table:workflow:end -->
 
 `aw wi run <id>` drives one work item to terminal, and `aw capability run
@@ -97,29 +97,32 @@ driver above. Planning commands write local artifacts under
 run-to-end driver instead of cron-style sprint batches.
 
 `aw td` is the tech-design + generated-code lifecycle (LINEAR — no
-review/revise; the gate is EC via `code-check`): `create`, `validate`,
-`gen`, `fill`, plus read-only/utility verbs `check`, `ast`,
-`migrate-mermaid`, `lock`, `claim`, `gen-source`, `code-check`,
-`code-claim`. (Code-artifact verbs are folded in here; the former
-standalone code-artifact namespace and the merge verb were removed —
-`code-check` is the terminal step.) `aw td check` specifically checks
-TD/spec files for structure, section-format rules, and logical consistency.
-TD defines candidate implementation structure; capability and EC gates
-remain the source of product truth.
+review/revise; the gate is EC via `code-check`): `create`, `gen`, `fill`,
+plus read-only/utility verbs `check`, `ast`, `migrate-mermaid`, `lock`,
+`claim`, `gen-source`, `code-check`, `promote`, `audit-record`.
+(Code-artifact verbs are folded in here; the former standalone
+code-artifact namespace and the merge verb were removed — `code-check` is
+the terminal step. `aw td`'s retired `validate` subcommand folded into
+`check` (#1277) and its retired `code-claim` subcommand folded into
+`create --from-source` (#1273).) `aw td check`
+specifically checks TD/spec files for structure, section-format rules, and
+logical consistency. TD defines candidate implementation structure;
+capability and EC gates remain the source of product truth.
 
 `aw ec` is the external-contract lifecycle: generate the tests/tool configs
 an EC-gated capability needs and verify its EC gates. `aw health`'s
 `next.command` names `aw ec gen --verify` when an EC gate is the top
 remaining production blocker.
 
-`aw standardize` is the existing-project takeover audit-first preservation
-protocol: `audit check` / `audit record` is the ONLY surviving surface.
-Readiness layer metrics (`capability`, `managed`, `semantic`,
-`traceability`, `regenerable`) live entirely in `aw health`, whose
-`next.command` names the worker verb for the top gap (`aw td promote`,
-`aw td code-claim`, `aw td gen`, `aw wi create`, ...). Capability
-remediation is `aw capability`; HANDWRITE→CODEGEN promotion is
-`aw td promote`.
+The former `aw standardize` namespace (including `audit check`/`audit
+record`) is retired (#1278, epic #1270). Existing-project takeover uses
+`aw td audit-record` to record a bounded preservation audit fixture and
+`aw health`'s `takeover-audit` axis to check it. Readiness layer metrics
+(`capability`, `managed`, `semantic`, `traceability`, `regenerable`) live
+entirely in `aw health`, whose `next.command` names the worker verb for the
+top gap (`aw td promote`, `aw td create --from-source`, `aw td gen`, `aw wi
+create`, ...). Capability remediation is `aw capability`; HANDWRITE→CODEGEN
+promotion is `aw td promote`.
 
 `aw capability` is the product capability completion loop: `report`,
 `next`, `draft`, `apply-draft`, `init`, `migrate`, `run`, `check`, and
@@ -244,7 +247,8 @@ CLI surface.
 ## SDD and Codegen Rules
 
 Specs are the source of truth. Consult `apps/agentic-workflow/tech-design/` first;
-fall back to source code only when needed, then consider `aw td code-claim`.
+fall back to source code only when needed, then consider `aw td create
+--from-source`.
 
 New TD test taxonomy is artifact-oriented: use `unit-test` for generated unit
 test design and `e2e-test` for product journey / side-effect verification.
@@ -267,11 +271,13 @@ CLI owns the concrete phase queue, prompt text, validation gates, commits, git
 trailers, and next command. Run `aw llm` for the binary-owned orientation (the
 loop model: aw=loop, wi=state, caps=goal, ec=verifier, td=artifact).
 
-Existing-project takeover uses `aw standardize audit` (`check`/`record`) for
-the bounded preservation protocol and `aw health` for the project-readiness
-metric surface and remediation routing; health's `next.command` names the
-worker verb for the top gap, and batch remediation runs as the outer loop
-(one worker-verb tick at a time, under a bootstrap WI).
+Existing-project takeover uses `aw td audit-record` (the retired `aw
+standardize audit record`) for the bounded preservation protocol, `aw
+health`'s `takeover-audit` axis (the retired `aw standardize audit check`)
+to read it back, and `aw health` for the project-readiness metric surface
+and remediation routing; health's `next.command` names the worker verb for
+the top gap, and batch remediation runs as the outer loop (one worker-verb
+tick at a time, under a bootstrap WI).
 
 Readiness layers (health axes — the standardize layer verbs are retired):
 
