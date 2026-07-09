@@ -99,6 +99,7 @@ Canonical field-style capability contracts below are machine-readable input for 
 | Library Build And Package Publishing | #168 | implemented | verified | conformance | partial | `jet build --lib` (ESM+CJS, externalized deps/peerDeps, multi-entry), preserve-modules ESM/CJS output, `.d.ts` emission, and `jet publish --build` with metadata validation + private-registry (`.npmrc` scoped) e2e all shipped and tested (A1-A3 merged). `partial`: IIFE lib output, class-member `.d.ts` reduction, and some CJS re-export edge cases are TODO follow-ups. |
 | Component Workbench (Stories) | #169 | implemented | verified | conformance | ready_for_basic | CSF `*.stories.tsx` discovery, the Stories dev manager + isolated preview, preview HMR, and a prop-type-derived Controls panel (B1-B3 + B2b). The earlier `partial` follow-ups have since shipped: hook-state-preserving React Refresh (#196), `node_modules` bare-import resolution for dev + static (#197), generic/cross-file/intersection prop-type controls (#198), CSF2 `Template.bind`/re-exported stories/spread args (#199), and `jet stories build` static export (#190). CSF-compatible, no Storybook runtime. |
 | Jet Project Architecture And Authoring Clarity | #1169 | implemented | verified | smoke | ready | Scoped layout/navigation guidance lives at `projects/jet/docs/architecture/layout.md` (path-role map + crate/package naming conventions), linked from this README's Source map; no project-root uppercase meta doc remains for Jet layout guidance. |
+| Jet Agent-Facing CLI Standard Commands | #928 | implemented | verified | smoke | ready | `jet llm` / `jet upgrade` / `jet issue {search,view,create,comment}` are wired to the shared `cli-std` crate; `jet issue comment <n> [message...]` reopens a closed issue before posting a diagnostics-rich follow-up comment, with `--dry-run` proving the request without a network mutation. |
 
 ### Rust-Native Frontend Toolchain Replacement
 
@@ -430,3 +431,31 @@ EC Dimensions:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Move root layout meta doc into scoped architecture documentation | change | #1169 | implemented | verified | smoke | `projects/jet/docs/architecture/layout.md` exists with the preserved path-role map and naming conventions; `projects/jet/LAYOUT.md` removed; README Source map row repointed — see `projects/jet/tech-design/logic/move-root-layout-meta-doc-into-scoped-architecture-documentation.md` |
+
+### Jet Agent-Facing CLI Standard Commands
+
+ID: jet-cli-standard-commands
+Root WI: #928
+Status: confirmed
+Type: DeveloperTool
+Required Verification: smoke
+Promise:
+jet ships the shared `llm` / `upgrade` / `issue` agent-facing CLI convention
+via `libs/cli-std`. `jet issue` covers `search`, `view`, `create` (auto-tagged
+`app:jet`), and `comment`: `jet issue comment <number> [message...]` wires to
+`cli_std::issue::comment(CommentOptions)`, which ensures the target issue is
+open (auto-reopening if closed) before posting a diagnostics-rich follow-up
+comment, without duplicating GitHub API logic in jet's own CLI.
+`jet issue comment <n> --dry-run` prints the target issue, resolved state
+(open), and the assembled diagnostics comment with no network mutation.
+Gate Inventory:
+- `cargo test -p jet --lib standard_cli`
+- `cargo test -p cli-std`
+Surfaces:
+- CLI: `jet llm` + `jet upgrade` + `jet issue search|view|create|comment` - Agent-facing standard command surface shared across every ecosystem CLI.
+EC Dimensions:
+- behavior: `cargo test -p jet --lib standard_cli` - `jet issue` subcommand parsing/dispatch, including comment auto-reopen and dry-run preview.
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Jet CLI Add Issue Comment Auto-Reopen Follow-Up | change | #928 | implemented | verified | smoke | `jet issue --help` lists `comment`; `jet issue comment 123 --dry-run` prints target issue + state open + diagnostics comment with no network mutation — see `projects/jet/tech-design/interfaces/cli/jet-cli-add-issue-comment-auto-reopen-follow-up.md` |
