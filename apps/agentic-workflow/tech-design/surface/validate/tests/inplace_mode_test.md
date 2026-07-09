@@ -26,6 +26,8 @@ No public AST symbols.
 
 <!-- source-snapshot: path=apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs -->
 ````rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/validate/tests/inplace_mode_test.md#source
+// CODEGEN-BEGIN
 //! End-to-end smoke tests for `[agentic_workflow.workspace] mode = "in_place"`.
 //!
 //! In-place branch lifecycle tests:
@@ -151,7 +153,7 @@ fn inplace_td_init_switches_branch_no_worktree_dir() {
     // Bootstrap .aw/ with InPlace mode enabled.
     std::fs::create_dir_all(root.join(".aw/tech-design")).unwrap();
     std::fs::write(
-        root.join(".aw/config.toml"),
+        root.join("aw.toml"),
         r#"
 [agentic_workflow.workspace]
 mode = "in_place"
@@ -254,7 +256,7 @@ fn td_create_on_project_branch_stays_on_current_branch() {
 
     std::fs::create_dir_all(root.join(".aw/tech-design")).unwrap();
     std::fs::write(
-        root.join(".aw/config.toml"),
+        root.join("aw.toml"),
         r#"
 [agentic_workflow.workspace]
 mode = "in_place"
@@ -342,7 +344,7 @@ fn td_create_numeric_id_uses_tracker_id_branch_with_legacy_cache_file() {
     bootstrap_repo(&git, root);
 
     std::fs::create_dir_all(root.join(".aw/tech-design")).unwrap();
-    std::fs::write(root.join(".aw/config.toml"), "").unwrap();
+    std::fs::write(root.join("aw.toml"), "").unwrap();
 
     let legacy_slug = "bug-slug-round-trip-broken-local-cache-slug-d";
     let issue_body = format!(
@@ -412,7 +414,7 @@ fn td_create_records_spec_path_in_issue_implements() {
     bootstrap_repo(&git, root);
 
     std::fs::create_dir_all(root.join(".aw/tech-design")).unwrap();
-    std::fs::write(root.join(".aw/config.toml"), "").unwrap();
+    std::fs::write(root.join("aw.toml"), "").unwrap();
 
     let slug = "demo-939-implements-test";
     let issue_body = format!(
@@ -481,7 +483,7 @@ fn td_create_does_not_duplicate_existing_implements_entry() {
     bootstrap_repo(&git, root);
 
     std::fs::create_dir_all(root.join(".aw/tech-design")).unwrap();
-    std::fs::write(root.join(".aw/config.toml"), "").unwrap();
+    std::fs::write(root.join("aw.toml"), "").unwrap();
 
     let slug = "demo-939-implements-idempotent-test";
     let spec_path = "custom/td-939-implements-idempotent-test.md";
@@ -542,8 +544,11 @@ fn td_create_does_not_duplicate_existing_implements_entry() {
 
 /// In InPlace mode, repeated `enter_workspace_for_verb(provision_if_missing=false)`
 /// calls (which is what the verb-side activate helper does) must bail loudly
-/// if the branch was never provisioned. We exercise that via `aw td validate`,
-/// which expects the workspace to already exist.
+/// if the branch was never provisioned. We exercise that via `aw td check`
+/// (slug mode), which expects the workspace to already exist. Formerly
+/// exercised via `aw td validate`, retired by #1277 and folded into `aw td
+/// check` — both routed through the same `td_activate_inplace_if_present`
+/// bail path.
 #[test]
 fn inplace_verb_bails_without_init() {
     let Some((git, bin)) = skip_unless_ready() else {
@@ -556,7 +561,7 @@ fn inplace_verb_bails_without_init() {
 
     std::fs::create_dir_all(root.join(".aw/tech-design")).unwrap();
     std::fs::write(
-        root.join(".aw/config.toml"),
+        root.join("aw.toml"),
         "[agentic_workflow.workspace]\nmode = \"in_place\"\n",
     )
     .unwrap();
@@ -573,18 +578,18 @@ fn inplace_verb_bails_without_init() {
         .status()
         .unwrap();
 
-    // No `td init` ran; from `main`, `td validate` should bail because branch
-    // td-missing does not exist locally.
+    // No `td init` ran; from `main`, `td check` (slug mode) should bail
+    // because branch td-missing does not exist locally.
     let out = Command::new(&bin)
         .arg("td")
-        .arg("validate")
+        .arg("check")
         .arg("missing")
         .current_dir(root)
         .output()
-        .expect("run aw td validate");
+        .expect("run aw td check");
     assert!(
         !out.status.success(),
-        "td validate without init should fail:\nstdout={}",
+        "td check without init should fail:\nstdout={}",
         String::from_utf8_lossy(&out.stdout),
     );
     let combined = format!(
@@ -610,7 +615,7 @@ fn wi_validate_accepts_apply_dirty_issue_file_on_issue_branch() {
     bootstrap_repo(&git, root);
 
     std::fs::create_dir_all(root.join(".aw")).unwrap();
-    std::fs::write(root.join(".aw/config.toml"), "").unwrap();
+    std::fs::write(root.join("aw.toml"), "").unwrap();
 
     let slug = "demo";
     write_issue_fixture(
@@ -714,6 +719,8 @@ fn wi_validate_accepts_apply_dirty_issue_file_on_issue_branch() {
         "WI validate must keep checkout state clean when issue state lives in the temp backend",
     );
 }
+
+// CODEGEN-END
 
 ````
 

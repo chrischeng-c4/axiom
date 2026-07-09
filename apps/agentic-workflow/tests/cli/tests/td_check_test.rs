@@ -30,21 +30,121 @@ fn test_td_check_registered() {
     );
 }
 
-/// R5: `aw td validate` no longer surfaces `--check` in help (it's
-/// hidden / deprecated) but the flag still parses for backward
-/// compatibility.
+/// Issue #1277 (epic #1270 R3): `aw td validate` is retired; its subcommand
+/// (and the `--check` flag it exposed) must no longer parse.
 #[test]
-fn test_td_validate_check_flag_hidden() {
+fn test_td_validate_subcommand_removed_from_check_test_surface() {
     let cmd = Cli::command();
     let td = cmd.find_subcommand("td").expect("td registered");
-    let validate = td
-        .find_subcommand("validate")
-        .expect("td validate registered");
-    let check_flag = validate
-        .get_arguments()
-        .find(|a: &&clap::Arg| a.get_id().as_str() == "check");
-    let flag = check_flag.expect("--check still parses for compat");
-    assert!(flag.is_hide_set(), "--check must be hidden in Phase 1");
+    assert!(
+        td.find_subcommand("validate").is_none(),
+        "td validate must not be registered (folded into td check, #1277)"
+    );
+}
+
+/// Issue #1277 union coverage: `aw td check` must cover BOTH entry shapes
+/// the two prior verbs offered — path-mode (`aw td check <path>`, inherited
+/// unchanged from `td check`) AND slug-mode (`aw td check <slug>`, formerly
+/// only reachable via `aw td validate <slug> --check`). Both shapes are
+/// exercised as separate subprocess invocations against the exact same spec
+/// content and must report the same finding count, proving they run through
+/// the identical rule registry (`crate::validate::run_rules`) rather than
+/// two divergent rule sets.
+#[test]
+fn test_td_check_slug_mode_and_path_mode_share_rule_registry() {
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git not found");
+        return;
+    };
+    let bin = std::env::var("CARGO_BIN_EXE_aw").ok().or_else(|| {
+        let exe = std::env::current_exe().ok()?;
+        let debug_dir = exe.parent()?.parent()?;
+        let bin = debug_dir.join(format!("aw{}", std::env::consts::EXE_SUFFIX));
+        bin.exists().then(|| bin.display().to_string())
+    });
+    let Some(bin) = bin else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let run_git = |args: &[&str]| {
+        std::process::Command::new(&git)
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .status()
+            .expect("git command");
+    };
+    run_git(&["init", "-b", "main"]);
+    run_git(&["config", "user.email", "t@t"]);
+    run_git(&["config", "user.name", "t"]);
+    run_git(&["config", "commit.gpgsign", "false"]);
+    std::fs::write(root.join("README.md"), "seed\n").unwrap();
+    std::fs::write(root.join("aw.toml"), "").unwrap();
+    let td_dir = root.join("tech-design");
+    std::fs::create_dir_all(&td_dir).unwrap();
+    let spec_path = td_dir.join("union-1277.md");
+    std::fs::write(
+        &spec_path,
+        concat!(
+            "---\n",
+            "id: union-1277\n",
+            "fill_sections: [changes]\n",
+            "---\n\n",
+            "# Hello\n\n",
+            "#",
+            "# Changes\n",
+            "<",
+            "!-- type: changes lang: yaml -->\n\n",
+            "```yaml\n",
+            "changes: []\n",
+            "```\n",
+        ),
+    )
+    .unwrap();
+    run_git(&["add", "."]);
+    run_git(&["commit", "-m", "seed"]);
+    // Slug-mode resolution only activates a td-<slug> branch switch from
+    // `main`; use a project branch instead so `td check <slug>` runs
+    // in-place against `tech-design/` without needing `aw td create` first.
+    run_git(&["switch", "-c", "project-union1277"]);
+
+    let path_mode = std::process::Command::new(&bin)
+        .arg("td")
+        .arg("check")
+        .arg(spec_path.to_str().unwrap())
+        .arg("--json")
+        .current_dir(root)
+        .output()
+        .expect("run aw td check <path>");
+    let slug_mode = std::process::Command::new(&bin)
+        .arg("td")
+        .arg("check")
+        .arg("union-1277")
+        .arg("--json")
+        .current_dir(root)
+        .output()
+        .expect("run aw td check <slug>");
+
+    let count_findings = |out: &std::process::Output| -> usize {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        serde_json::from_str::<Vec<serde_json::Value>>(stdout.trim())
+            .map(|v| v.len())
+            .unwrap_or(0)
+    };
+    assert_eq!(
+        count_findings(&path_mode),
+        count_findings(&slug_mode),
+        "path-mode and slug-mode `td check` must share the same rule registry \
+         (former td validate slug/--check path folded in by #1277):\n\
+         path stdout={}\npath stderr={}\nslug stdout={}\nslug stderr={}",
+        String::from_utf8_lossy(&path_mode.stdout),
+        String::from_utf8_lossy(&path_mode.stderr),
+        String::from_utf8_lossy(&slug_mode.stdout),
+        String::from_utf8_lossy(&slug_mode.stderr),
+    );
 }
 
 /// R4 path-mode: when target contains `/` or ends `.md` we exit 0 on

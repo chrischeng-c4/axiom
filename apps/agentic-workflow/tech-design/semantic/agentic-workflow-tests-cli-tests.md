@@ -34,7 +34,10 @@ semantic_domain:
           - name: "test_td_check_registered"
             kind: "function"
             public: false
-          - name: "test_td_validate_check_flag_hidden"
+          - name: "test_td_validate_subcommand_removed_from_check_test_surface"
+            kind: "function"
+            public: false
+          - name: "test_td_check_slug_mode_and_path_mode_share_rule_registry"
             kind: "function"
             public: false
           - name: "test_td_check_path_mode_smoke"
@@ -715,6 +718,12 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "canonical_cb_commands_remain_registered"
+            kind: "function"
+            public: false
+          - name: "test_td_validate_subcommand_is_removed"
+            kind: "function"
+            public: false
+          - name: "test_td_validate_parse_fails"
             kind: "function"
             public: false
           - name: "public_aggregation_points_remain_registered"

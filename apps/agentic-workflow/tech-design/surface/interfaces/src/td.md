@@ -24,7 +24,6 @@ command_refs:
   - command: aw td promote
   - command: aw td review
   - command: aw td revise
-  - command: aw td validate
 ---
 
 # Standardized apps/agentic-workflow/src/cli/td.rs
@@ -50,7 +49,6 @@ Public API manifest for `apps/agentic-workflow/src/cli/td.rs` generated from AST
 | `TdArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 23 |  |
 | `TdClaimArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 62 |  |
 | `TdCommand` | apps/agentic-workflow/src/cli/td.rs | enum | pub | 30 |  |
-| `ValidateArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 125 |  |
 | `discover_worktree_spec` | apps/agentic-workflow/src/cli/td.rs | function | pub | 740 | discover_worktree_spec(worktree_abs: &std::path::Path) -> Option<String> |
 | `run` | apps/agentic-workflow/src/cli/td.rs | function | pub | 2031 | run(args: TdArgs) -> Result<()> |
 | `run_audit` | apps/agentic-workflow/src/cli/td.rs | function | pub | 4757 | run_audit(args: AuditArgs) -> Result<()> |
@@ -101,13 +99,13 @@ pub struct TdArgs {
 pub enum TdCommand {
     /// Author a tech-design spec (brief or apply mode).
     Create(CreateArgs),
-    /// Validate legacy slug lifecycle state or run the read-only TD checker.
-    Validate(ValidateArgs),
-    /// Read-only rule-registry check against `.aw/tech-design/` files.
-    /// Accepts a slug (resolved in the current checkout), a single file path, or
-    /// a directory. Runs the unified rule registry; no commit, no phase
-    /// advance, no envelope. Exits non-zero on any violation.
-    /// @spec .aw/tech-design/projects/score/specs/score-namespaces.md#changes
+    /// Read-only rule-registry check against a project's `tech-design/`
+    /// files. Accepts a slug (resolved in the current checkout), a single
+    /// file path, or a directory. Runs the unified rule registry; no
+    /// commit, no phase advance, no envelope. Exits non-zero on any
+    /// violation. The sole authoritative read-only TD checker — folds in
+    /// the retired `aw td validate`'s read-only rule check (issue #1277).
+    /// @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
     Check(CheckArgs),
     /// Parse a TD spec file into the unified TDAst and dump it as JSON.
     /// Debug/inspection verb — accepts a file path (no slug context).
@@ -253,27 +251,6 @@ pub struct CreateArgs {
 
 #[derive(Debug, Args)]
 /// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
-pub struct ValidateArgs {
-    /// Target: issue slug (slug mode lifecycle gate) OR a spec path
-    /// (read-only rule check). A value containing `/` or ending in `.md`
-    /// is treated as a path; everything else is a slug.
-    pub slug: String,
-    /// Path to the spec file (relative to the current checkout root). Slug-mode only.
-    #[arg(long)]
-    pub spec_path: Option<String>,
-    /// Emit JSON instead of human-readable output. Path-mode only for now.
-    #[arg(long)]
-    pub json: bool,
-    /// DEPRECATED — replaced by `aw td check <slug>`. When present,
-    /// prints a deprecation line on stderr and routes to `td check`. The
-    /// flag remains a hidden compat shim for one release.
-    /// @spec .aw/tech-design/projects/score/specs/score-namespaces.md#changes
-    #[arg(long, hide = true)]
-    pub check: bool,
-}
-
-#[derive(Debug, Args)]
-/// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
 pub struct GenCodeArgs {
     /// Issue slug.
     pub slug: String,
@@ -282,15 +259,20 @@ pub struct GenCodeArgs {
     pub spec_path: Option<String>,
 }
 
-/// Args for `aw td check <target>` — Phase 1 read-only rule check.
+/// Args for `aw td check <target>` — the unified read-only TD checker.
+///
+/// This is the sole authoritative read-only checker (issue #1277): it folds
+/// in the retired `aw td validate`'s spec-content rule check (path, prefix,
+/// and slug shapes all shared the same rule registry already) plus the
+/// section-type registry conformance pass below.
 ///
 /// `--section-type-conformance` switches to the registry-conformance pass
-/// (R2 of #1212): walks `.aw/tech-design/**/*.md` under the resolved
-/// scope and reports per-spec headings whose `<!-- type: ... -->`
+/// (R2 of #1212): walks a project's `tech-design/**/*.md` under the
+/// resolved scope and reports per-spec headings whose `<!-- type: ... -->`
 /// annotation is unknown / deprecated / missing.
 ///
-/// @spec .aw/tech-design/projects/score/specs/score-namespaces.md#changes
-/// @spec .aw/tech-design/projects/score/specs/aw-td-check-section-type-conformance.md#schema
+/// @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
+/// @spec apps/agentic-workflow/tech-design/surface/specs/score-td-check-section-type-conformance.md#schema
 #[derive(Debug, Args)]
 pub struct CheckArgs {
     /// Issue slug, spec file path, or directory to check. Optional when
@@ -301,8 +283,8 @@ pub struct CheckArgs {
     #[arg(long)]
     pub json: bool,
     /// Run the section-type registry conformance pass instead of the
-    /// rule-registry check. Reads
-    /// `.aw/tech-design/projects/score/specs/score-section-type-registry.md`.
+    /// rule-registry check. Reads a project's
+    /// `tech-design/surface/specs/score-section-type-registry.md`.
     #[arg(long)]
     pub section_type_conformance: bool,
 }
@@ -2710,10 +2692,6 @@ pub async fn run(args: TdArgs) -> Result<()> {
                 }
             }
         }
-        TdCommand::Validate(a) => {
-            super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
-                .await?;
-        }
         TdCommand::Gen(a) => {
             if let Some(slug) = a.slug.as_deref() {
                 super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", slug)))
@@ -2749,7 +2727,6 @@ pub async fn run(args: TdArgs) -> Result<()> {
     let project = args.project.clone();
     match args.command {
         TdCommand::Create(a) => run_create(a, project.as_deref()).await,
-        TdCommand::Validate(a) => run_validate(a).await,
         TdCommand::Check(a) => run_check(a),
         TdCommand::Ast(a) => run_ast(a),
         TdCommand::MigrateMermaid(a) => super::td_migrate::run(a).await,
@@ -2763,14 +2740,14 @@ pub async fn run(args: TdArgs) -> Result<()> {
     }
 }
 
-/// `aw td check <target>` — Phase 1 read-only rule-registry check.
+/// `aw td check <target>` — the unified read-only TD checker (issue #1277).
 ///
 /// Resolves `target` as either a slug (current checkout spec dir), a single
 /// file path (contains `/` or ends `.md` and points at a file), or a
 /// directory. Runs the unified rule registry; exits 0 with no findings,
 /// 1 with violations, 2 on invocation error.
 ///
-/// @spec .aw/tech-design/projects/score/specs/score-namespaces.md#changes
+/// @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
 pub fn run_check(args: CheckArgs) -> Result<()> {
     // R2 of #1212: section-type-conformance dispatch runs before any
     // target resolution — the verb defaults to scanning the project root
@@ -2795,8 +2772,8 @@ pub fn run_check(args: CheckArgs) -> Result<()> {
         );
     }
 
-    // Disambiguate slug vs path. The same heuristic as `td validate`:
-    // contains `/` or ends `.md` → path; otherwise slug.
+    // Disambiguate slug vs path: contains `/` or ends `.md` → path;
+    // otherwise slug.
     let looks_like_path = target.contains('/') || target.ends_with(".md");
     if looks_like_path {
         let shape = crate::validate::classify(target, &project_root);
@@ -3289,24 +3266,45 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
         return td_error(slug, msg);
     }
 
-    super::workflow_guard::create_issue_lock(
-        &worktree_abs,
-        &super::workflow_guard::TransitionLock::new(
-            slug,
-            "td",
-            format!("aw td validate {} --spec-path {}", slug, spec_path),
-        )
-        .with_phase_from("td_inited")
-        .with_dirty_paths([spec_path.to_string()]),
-    )
-    .await?;
+    // td_inited -> td_created: whole-file apply (no --section) advances the
+    // phase directly rather than dispatching to the (now-retired) `aw td
+    // validate` verb — issue #1277 folded that verb's slug-mode lifecycle
+    // advance inline here.
+    let backend = LocalBackend::from_project_root(&worktree_abs);
+    let issue = backend
+        .get(slug)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("issue '{}' not found in current checkout", slug))?;
+    let phase = issue.phase.as_deref().unwrap_or("");
+    if phase != "td_inited" {
+        let msg = format!("unexpected phase '{}' for td create --apply", phase);
+        return td_error(slug, msg);
+    }
 
-    // Emit dispatch → aw td validate
+    let patch = IssuePatch {
+        phase: Some("td_created".to_string()),
+        validation_errors: Some(vec![]),
+        ..Default::default()
+    };
+    backend.update(slug, &patch).await?;
+
+    let issue_path_s = issue_path_arg(&backend, &issue);
+    let issue_path = std::path::PathBuf::from(&issue_path_s);
+    maybe_push_remote(&worktree_abs, &issue_path, slug).await?;
+    commit_lifecycle(
+        &worktree_abs,
+        slug,
+        "spec authored",
+        "Td-Create",
+        &[spec_path, issue_path_s.as_str()],
+    )?;
+
+    // Linear lifecycle: after create, go straight to gen (no review).
     print_envelope(&TdEnvelope::Dispatch {
         agent: None,
         slug,
         invoke: Invoke {
-            command: "aw td validate",
+            command: "aw td gen",
             args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
         },
     })?;
@@ -3486,194 +3484,10 @@ async fn complete_section_apply(
     Ok(())
 }
 
-// ── td validate ──────────────────────────────────────────────────────
-
-async fn run_validate(args: ValidateArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-
-    // Phase 1 compat shim: path-mode validate routes to `td check` and
-    // emits a deprecation line on stderr. Slug-mode is unchanged.
-    // @spec .aw/tech-design/projects/score/specs/score-namespaces.md#changes
-    match crate::validate::classify(&args.slug, &project_root) {
-        crate::validate::PathShape::Slug(_) => {}
-        shape @ (crate::validate::PathShape::Prefix(_) | crate::validate::PathShape::File(_)) => {
-            eprintln!("deprecated: use 'aw td check' instead");
-            return run_validate_readonly(shape, args.json);
-        }
-    }
-
-    let slug = &args.slug;
-
-    // Phase 1 compat shim: `--check` flag routes to `td check` and
-    // emits a deprecation line on stderr.
-    // @spec .aw/tech-design/projects/score/specs/score-namespaces.md#changes
-    if args.check {
-        eprintln!("deprecated: use 'aw td check' instead");
-        return run_slug_check(slug, args.spec_path.as_deref(), args.json);
-    }
-
-    if let Some(spec_path) = args.spec_path.as_deref() {
-        td_activate_inplace_allowing_dirty_spec_path(&project_root, slug, spec_path)?;
-    } else {
-        td_activate_inplace_if_present(&project_root, slug)?;
-    }
-    let worktree_abs = td_workspace_path(&project_root, slug);
-    if !worktree_abs.exists() {
-        anyhow::bail!("workspace not found: {}", worktree_abs.display());
-    }
-
-    let backend = LocalBackend::from_project_root(&worktree_abs);
-    let issue = backend
-        .get(slug)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("issue '{}' not found in current checkout", slug))?;
-
-    let phase = issue.phase.as_deref().unwrap_or("");
-
-    let result = match phase {
-        "td_inited" => handle_create_milestone(&args, &backend, &worktree_abs, &issue).await,
-        "td_merged" => handle_terminal_lifecycle(&backend, &worktree_abs, &issue, slug).await,
-        other => {
-            let msg = format!("unexpected phase '{}' for td validate", other);
-            print_envelope(&TdEnvelope::Error {
-                slug,
-                message: &msg,
-            })?;
-            Ok(())
-        }
-    };
-    if result.is_ok() {
-        super::workflow_guard::complete_issue_lock(&worktree_abs, slug, "td").await?;
-    }
-    result
-}
-
-/// Terminal lifecycle handler — invoked when `aw td validate` sees an issue
-/// already at phase `td_merged`. Implements R8 (backfill ship_commit from git
-/// log) and R4 placeholder (loop-close verification — deferred to follow-up
-/// issue F1 which extracts gen_code_capture).
-/// @spec aw-td-validate-lifecycle-extension.md#logic
-async fn handle_terminal_lifecycle(
-    backend: &LocalBackend,
-    worktree_abs: &std::path::Path,
-    issue: &crate::issues::Issue,
-    slug: &str,
-) -> Result<()> {
-    use crate::issues::ShipStatus;
-
-    // R8: backfill ship_commit from git log if missing.
-    // @spec aw-td-validate-lifecycle-extension.md#logic
-    if issue.ship_commit.is_none() {
-        if let Some(commit) = find_ship_commit_from_log(worktree_abs, slug)? {
-            let patch = IssuePatch {
-                ship_commit: Some(commit.clone()),
-                // Also normalize ship_status if missing — old issues at td_merged
-                // are by definition step1_shipped.
-                ship_status: if issue.ship_status.is_none() {
-                    Some(ShipStatus::Step1Shipped)
-                } else {
-                    None
-                },
-                ..Default::default()
-            };
-            backend.update(slug, &patch).await?;
-            print_envelope(&TdEnvelope::Done {
-                slug,
-                message: &format!(
-                    "backfilled ship_commit={} (from terminal lifecycle git log)",
-                    &commit[..8.min(commit.len())]
-                ),
-            })?;
-            return Ok(());
-        }
-    }
-
-    // R4 (placeholder — loop-close verification): re-running gen-code in-memory
-    // and diffing requires extracting gen_code_capture (deferred to follow-up
-    // issue F1). For now, surface the current ship_status so users can see
-    // where the lifecycle is.
-    let status = issue
-        .ship_status
-        .map(|s| match s {
-            ShipStatus::NotStarted => "not_started",
-            ShipStatus::Step1Shipped => "step1_shipped",
-            ShipStatus::LoopClosed => "loop_closed",
-            ShipStatus::Rejected => "rejected",
-        })
-        .unwrap_or("unset");
-    let commit_short = issue
-        .ship_commit
-        .as_deref()
-        .map(|c| &c[..8.min(c.len())])
-        .unwrap_or("none");
-    print_envelope(&TdEnvelope::Done {
-        slug,
-        message: &format!(
-            "terminal code-check complete; ship_status={}, ship_commit={}; \
-             loop-close verification (R4) deferred to follow-up F1",
-            status, commit_short
-        ),
-    })?;
-    Ok(())
-}
-
-/// Walk `git log` in the worktree for the most recent terminal lifecycle commit
-/// for this slug, and return its hash. Used by R8 backfill. New commits use
-/// `Cb-CodeCheck`; commits from the removed `aw td merge` verb carry the
-/// legacy `Td-Merged` trailer, which [`lifecycle_trailer::normalize`]
-/// accepts as an alias — see [`lifecycle_trailer::body_has_stage_trailer`]
-/// (issue #853).
-///
-/// The `--grep` argument below is only a coarse, best-effort pre-filter to
-/// keep `git log` from scanning unrelated commits; git's grep is a
-/// substring/regex match, so it can over-include commits for a
-/// prefix-colliding slug (e.g. slug `41`'s pre-filter also matches slug
-/// `412`'s commits). Correctness comes from the per-commit exact-line check
-/// via [`lifecycle_trailer::body_has_slug_trailer`], not from `--grep`.
-/// @spec aw-td-validate-lifecycle-extension.md#logic
-fn find_ship_commit_from_log(worktree_abs: &std::path::Path, slug: &str) -> Result<Option<String>> {
-    use crate::issues::types::lifecycle_trailer;
-
-    let git_bin = crate::git::find_git_bin().ok_or_else(|| anyhow::anyhow!("git not found"))?;
-    let slug_needle = format!("Lifecycle-Slug: {}", slug);
-    let output = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(worktree_abs)
-        .args([
-            "log",
-            "--format=%H%x00%B%x1e",
-            "--all",
-            "--fixed-strings",
-            "--grep",
-            &slug_needle,
-        ])
-        .output()
-        .context("git log failed")?;
-    if !output.status.success() {
-        return Ok(None);
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for entry in stdout.split('\x1e') {
-        let entry = entry.trim_start_matches('\n');
-        if entry.is_empty() {
-            continue;
-        }
-        let mut parts = entry.splitn(2, '\x00');
-        let hash = parts.next().unwrap_or("").trim();
-        let body = parts.next().unwrap_or("");
-        if lifecycle_trailer::body_has_slug_trailer(body, slug)
-            && lifecycle_trailer::body_has_stage_trailer(body, lifecycle_trailer::CB_CODE_CHECK)
-        {
-            return Ok(Some(hash.to_string()));
-        }
-    }
-    Ok(None)
-}
-
-/// `aw td validate <slug> --check`: resolve the slug's worktree, then
-/// behave like path-mode read-only validate. No commit, no phase advance,
-/// no envelope — purely a rule check. When `spec_path` is given, validate
-/// just that file; otherwise walk the worktree's tech-design tree.
+/// `aw td check <slug> --json`: resolve the slug's worktree, then behave
+/// like path-mode read-only check. No commit, no phase advance, no
+/// envelope — purely a rule check. When `spec_path` is given, validate just
+/// that file; otherwise walk the worktree's tech-design tree.
 fn run_slug_check(slug: &str, spec_path: Option<&str>, json: bool) -> Result<()> {
     let project_root = crate::find_project_root()?;
     td_activate_inplace_if_present(&project_root, slug)?;
@@ -3697,9 +3511,9 @@ fn run_slug_check(slug: &str, spec_path: Option<&str>, json: bool) -> Result<()>
     run_validate_readonly(shape, json)
 }
 
-/// Path-mode `aw td validate <prefix|file>` and `aw td check`: resolve
-/// spec files, run the shared TD content gate, print findings, exit non-zero
-/// on any error-severity finding. Read-only — no commit, no phase advance, no
+/// Path-mode `aw td check <prefix|file>`: resolve spec files, run the
+/// shared TD content gate, print findings, exit non-zero on any
+/// error-severity finding. Read-only — no commit, no phase advance, no
 /// envelope.
 fn run_validate_readonly(shape: crate::validate::PathShape, json: bool) -> Result<()> {
     let files = crate::validate::resolve_spec_files(&shape)?;
@@ -3730,126 +3544,6 @@ fn run_validate_readonly(shape: crate::validate::PathShape, json: bool) -> Resul
     }
     Ok(())
 }
-
-/// td_inited → td_created: verify spec, commit, dispatch reviewer.
-///
-/// Retry-cap semantics (shared with `aw wi validate`): on failure,
-/// bump `fill_retry_count` on the issue frontmatter and encode the count
-/// in the emitted error envelope:
-/// - `retry=1` — mainthread re-dispatches td-author with error feedback.
-/// - `retry=2 takeover` — mainthread runs `aw td create --apply` itself.
-/// - `retry=N stop` (N >= 3) — terminal; surfaces to user.
-/// On success, reset `fill_retry_count` to 0.
-async fn handle_create_milestone(
-    args: &ValidateArgs,
-    backend: &LocalBackend,
-    worktree_path: &std::path::Path,
-    issue: &crate::issues::Issue,
-) -> Result<()> {
-    let slug = &args.slug;
-    let spec_path = args
-        .spec_path
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("--spec-path is required for td validate"))?;
-
-    let spec_abs = worktree_path.join(spec_path);
-    if !spec_abs.exists() {
-        let msg = format!("spec file not found: {}", spec_abs.display());
-        print_envelope(&TdEnvelope::Error {
-            slug,
-            message: &msg,
-        })?;
-        return Ok(());
-    }
-
-    let report = validate_new_td_authoring_file(&spec_abs, TdContentValidationScope::Complete)?;
-    if report.has_errors() {
-        let errors = td_content_error_messages(&report);
-        let prev = issue.fill_retry_count.unwrap_or(0);
-        let new_count = prev + 1;
-        backend
-            .update(
-                slug,
-                &IssuePatch {
-                    fill_retry_count: Some(new_count),
-                    ..Default::default()
-                },
-            )
-            .await?;
-        rollback_worktree_file(worktree_path, spec_path)?;
-
-        let qualifier = if new_count < 2 {
-            format!("retry={}", new_count)
-        } else if new_count == 2 {
-            "retry=2 takeover".to_string()
-        } else {
-            format!("retry={} stop", new_count)
-        };
-        let msg = format!(
-            "spec validation failed [{}]: {}",
-            qualifier,
-            errors.join("; ")
-        );
-        print_td_content_errors("TD content validation errors", &report);
-        print_envelope(&TdEnvelope::Error {
-            slug,
-            message: &msg,
-        })?;
-        return Ok(());
-    }
-
-    // Advance phase + reset retry counter
-    let patch = IssuePatch {
-        phase: Some("td_created".to_string()),
-        validation_errors: Some(vec![]),
-        fill_retry_count: Some(0),
-        ..Default::default()
-    };
-    backend.update(slug, &patch).await?;
-
-    // Commit
-    let issue_path_s = issue_path_arg(backend, issue);
-    let issue_path = std::path::PathBuf::from(&issue_path_s);
-    maybe_push_remote(worktree_path, &issue_path, slug).await?;
-    commit_lifecycle(
-        worktree_path,
-        slug,
-        "spec authored",
-        "Td-Create",
-        &[spec_path, issue_path_s.as_str()],
-    )?;
-
-    // Linear lifecycle: after create, go straight to gen (no review).
-    print_envelope(&TdEnvelope::Dispatch {
-        agent: None,
-        slug,
-        invoke: Invoke {
-            command: "aw td gen",
-            args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
-        },
-    })?;
-
-    Ok(())
-}
-
-// ── Review verdict parsing ───────────────────────────────────────────
-
-// ── Git helpers ──────────────────────────────────────────────────────
-
-fn rollback_worktree_file(worktree_path: &std::path::Path, rel_path: &str) -> Result<()> {
-    let git_bin = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
-    let _ = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(worktree_path)
-        .args(["checkout", "--", rel_path])
-        .output();
-    Ok(())
-}
-
-// ── td review ───────────────────────────────────────────────────────
-
-// ── td revise ───────────────────────────────────────────────────────
 
 // ── td gen ─────────────────────────────────────────────────────────
 
@@ -4082,12 +3776,13 @@ struct AuditReport {
 pub(crate) fn run_audit(args: AuditArgs) -> Result<()> {
     use walkdir::WalkDir;
 
-    // Legacy flag removal (R9 of split-validate-audit issue).
+    // Legacy flag removal (R9 of split-validate-audit issue; `aw td
+    // validate` itself retired by issue #1277, folded into `aw td check`).
     if args.ready_only {
         anyhow::bail!(
             "`--ready-only` has been removed. The codegen-ready check has moved to \
-             `aw td validate <path>`; audit is now code-side only. Run \
-             `aw td validate .aw/tech-design/` to scan specs for codegen-readiness."
+             `aw td check <path>`; audit is now code-side only. Run \
+             `aw td check tech-design/` to scan specs for codegen-readiness."
         );
     }
     if args.drift {
@@ -4895,58 +4590,6 @@ label = "app:agentic-workflow"
         assert!(log.contains("Lifecycle-Slug: 123"));
         assert!(log.contains("Lifecycle-Stage: Td-Lock-Complete"));
         assert!(log.contains("Lifecycle-Phase: td_created"));
-    }
-
-    // issue #853 AC1: legacy `Td-Merged` terminal commits (written by the
-    // removed `aw td merge` verb) must still resolve a ship_commit backfill.
-    #[test]
-    fn find_ship_commit_from_log_accepts_legacy_td_merged_trailer() {
-        if !git_available() {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        init_git_repo(root);
-        commit_lifecycle_with_extra(root, "722", "merged + closed", "Td-Merged", &[], &[]).unwrap();
-
-        let found = find_ship_commit_from_log(root, "722").unwrap();
-        assert!(
-            found.is_some(),
-            "legacy Td-Merged trailer should backfill ship_commit"
-        );
-    }
-
-    // issue #853 AC2: slug `41` must never adopt slug `412`'s commit.
-    #[test]
-    fn find_ship_commit_from_log_does_not_adopt_prefix_colliding_slug() {
-        use crate::issues::types::lifecycle_trailer;
-
-        if !git_available() {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        init_git_repo(root);
-        // Only slug 412 has a terminal commit; slug 41 has none.
-        commit_lifecycle_with_extra(
-            root,
-            "412",
-            "terminal",
-            lifecycle_trailer::CB_CODE_CHECK,
-            &[],
-            &[],
-        )
-        .unwrap();
-
-        let found = find_ship_commit_from_log(root, "41").unwrap();
-        assert!(
-            found.is_none(),
-            "slug 41 must not adopt slug 412's ship_commit"
-        );
-
-        // Sanity: the exact-matching slug still resolves.
-        let found_exact = find_ship_commit_from_log(root, "412").unwrap();
-        assert!(found_exact.is_some());
     }
 
     // issue #935 AC1: same defect class as #853 — a naive substring check on

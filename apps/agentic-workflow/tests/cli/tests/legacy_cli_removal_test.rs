@@ -219,6 +219,8 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         // aw-cb-claim/aw-standardize skill docs, which are pre-existing
         // in-flight edits outside this change's scope (see #918's identical
         // note above re: `templates/cli/mainthread/skills/aw-wi/SKILL.md`).
+        // #1277 (epic #1270 R3): `aw td validate` folded into `aw td check`.
+        "aw td validate",
     ];
     for doc in docs {
         let Ok(content) = std::fs::read_to_string(&doc) else {
@@ -309,6 +311,31 @@ fn test_code_claim_parse_fails() {
     assert!(
         err.to_string()
             .contains("unrecognized subcommand 'code-claim'"),
+        "unexpected parse error: {err}"
+    );
+}
+
+// #1277 (epic #1270 R3): `aw td validate` folded into `aw td check`,
+// mirroring the `test_td_merge_*`/`test_code_claim_*` removed-verb pattern.
+#[test]
+fn test_td_validate_subcommand_is_removed() {
+    let cmd = Cli::command();
+    let td = cmd.find_subcommand("td").expect("td namespace");
+    assert!(
+        td.find_subcommand("validate").is_none(),
+        "removed TD validate command must not be registered"
+    );
+}
+
+#[test]
+fn test_td_validate_parse_fails() {
+    let err = match Cli::try_parse_from(["aw", "td", "validate", "1234"]) {
+        Ok(_) => panic!("removed TD validate command unexpectedly parsed"),
+        Err(err) => err,
+    };
+    assert!(
+        err.to_string()
+            .contains("unrecognized subcommand 'validate'"),
         "unexpected parse error: {err}"
     );
 }

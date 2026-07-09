@@ -169,6 +169,9 @@ const DELETED_COMMAND_PATHS: &[&str] = &[
     // #1273 (epic #1270 R5): `aw td code-claim` folded into
     // `aw td create --from-source`.
     "aw td code-claim",
+    // #1277 (epic #1270 R3): `aw td validate` folded into `aw td check`,
+    // the sole authoritative read-only TD checker.
+    "aw td validate",
 ];
 const AW_EC_BEGIN_MARKER: &str = "AW-EC-BEGIN";
 
