@@ -52,3 +52,10 @@ summary: >
   the new gate bindings parse and bind correctly.
 fill_sections: [logic, unit-test, changes]
 ---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+(fill)
+```
