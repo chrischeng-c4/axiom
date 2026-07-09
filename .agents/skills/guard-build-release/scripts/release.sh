@@ -4,4 +4,4 @@ set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
-exec projects/guard/build.sh release
+exec apps/guard/build.sh release

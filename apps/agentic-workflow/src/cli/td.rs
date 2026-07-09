@@ -4691,7 +4691,7 @@ mod tests {
             issue_with_title("enhancement(jet): emit parity-ready jet browser observation bundles");
 
         assert_eq!(
-            default_spec_path_for_issue(&issue, "3940", "projects/jet/specs/"),
+            default_spec_path_for_issue(&issue, "3940", "apps/jet/specs/"),
             ".aw/tech-design/projects/jet/specs/emit-parity-ready-jet-browser-observation-bundles.md"
         );
     }
@@ -4701,7 +4701,7 @@ mod tests {
         let issue = issue_with_title("#3940");
 
         assert_eq!(
-            default_spec_path_for_issue(&issue, "3940", "projects/jet/specs/"),
+            default_spec_path_for_issue(&issue, "3940", "apps/jet/specs/"),
             ".aw/tech-design/projects/jet/specs/issue-3940.md"
         );
     }
@@ -5103,7 +5103,7 @@ label = "app:agentic-workflow"
     #[test]
     fn derive_spec_dir_uses_project_label_name() {
         let labels = vec!["type:enhancement".to_string(), "app:jet".to_string()];
-        assert_eq!(derive_spec_dir(&labels), "projects/jet/logic/");
+        assert_eq!(derive_spec_dir(&labels), "apps/jet/logic/");
     }
 
     #[test]
@@ -5117,11 +5117,11 @@ label = "app:agentic-workflow"
         let issue = issue_with_title("enhancement(jet): browser cli protocol schema");
         assert_eq!(
             derive_spec_dir_for_issue(&issue),
-            "projects/jet/interfaces/cli/"
+            "apps/jet/interfaces/cli/"
         );
 
         let issue = issue_with_title("test(jet): parity fixture conformance gate");
-        assert_eq!(derive_spec_dir_for_issue(&issue), "projects/jet/validate/");
+        assert_eq!(derive_spec_dir_for_issue(&issue), "apps/jet/validate/");
     }
 
     #[test]
@@ -5137,7 +5137,7 @@ label = "app:agentic-workflow"
             let dir = derive_spec_dir_for_issue(&issue_with_title(title));
             assert_eq!(
                 dir,
-                format!("projects/jet/{want_subdir}/"),
+                format!("apps/jet/{want_subdir}/"),
                 "interface concern for `{title}` must land under a protocol subdir"
             );
             assert_ne!(

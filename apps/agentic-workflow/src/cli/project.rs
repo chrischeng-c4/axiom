@@ -4895,24 +4895,24 @@ mod tests {
             tool: "guard".into(),
             command: None,
             spec: None,
-            dir: Some("projects/guard".into()),
+            dir: Some("apps/guard".into()),
             meter: None,
         };
         assert_eq!(
             guard_project.command().unwrap(),
-            "guard scan projects/guard --compact --no-persist"
+            "guard scan apps/guard --compact --no-persist"
         );
 
         let guard_override = EcBinding {
             tool: "guard".into(),
-            command: Some("target/debug/guard scan projects/guard --compact --no-persist".into()),
+            command: Some("target/debug/guard scan apps/guard --compact --no-persist".into()),
             spec: None,
-            dir: Some("projects/guard".into()),
+            dir: Some("apps/guard".into()),
             meter: None,
         };
         assert_eq!(
             guard_override.command().unwrap(),
-            "target/debug/guard scan projects/guard --compact --no-persist"
+            "target/debug/guard scan apps/guard --compact --no-persist"
         );
     }
 
@@ -4983,7 +4983,7 @@ mod tests {
             EcBinding {
                 tool: "arena".into(),
                 command: None,
-                spec: Some("projects/arena/examples/lumen-vs-pg.toml".into()),
+                spec: Some("apps/arena/examples/lumen-vs-pg.toml".into()),
                 dir: None,
                 meter: None,
             },
@@ -4995,7 +4995,7 @@ mod tests {
         let command = resolve_project_ec_command(&case, Some(&project)).unwrap();
         assert_eq!(
             command,
-            "arena run --spec projects/arena/examples/lumen-vs-pg.toml"
+            "arena run --spec apps/arena/examples/lumen-vs-pg.toml"
         );
     }
 

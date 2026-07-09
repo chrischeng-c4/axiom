@@ -4,4 +4,4 @@ set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
-exec projects/rig/build.sh debug
+exec apps/rig/build.sh debug

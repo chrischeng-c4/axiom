@@ -1,6 +1,6 @@
 ---
 name: aw:health
-description: Run AW project health/readiness gates. If no project is supplied, infer it from the current project-<name> branch and run aw health --project with the resolved project token.
+description: Run AW project health/readiness gates. If no project is supplied, infer it from the current app/<name> branch or retained project-<name> branch and run aw health --project with the resolved project token.
 user-invocable: true
 aliases: [aw:project-health]
 ---
@@ -21,13 +21,14 @@ user asks whether a project is healthy, production-ready, blocked, or why
    ```bash
    git branch --show-current
    ```
-   - `project-<token>` -> run `aw health --project <token>`.
-   - Example: branch `project-aw` -> `aw health --project aw`.
+   - `app/<token>` -> run `aw health --project <token>`.
+   - Retained `project-<token>` -> run `aw health --project <token>` for mamba/lumen.
+   - Example: branch `app/aw` -> `aw health --project aw`.
 3. If the inferred token is rejected as an unknown project, read
    `aw.toml` and resolve the token against `[[projects]].name` and
    `[[projects]].aliases`, then rerun with the matching project name.
-4. If the branch is not `project-<token>` and the user did not provide a
-   project, stop and ask for the project name.
+4. If the branch is not `app/<token>` or a retained `project-<token>` and the
+   user did not provide a project, stop and ask for the project name.
 
 ## Command
 

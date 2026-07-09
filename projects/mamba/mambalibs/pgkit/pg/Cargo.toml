@@ -55,7 +55,7 @@ unicode-normalization = "0.1"
 
 [dev-dependencies]
 tokio-test = "0.4"
-qc = { package = "meter", path = "../../../../meter" }
+qc = { package = "meter", path = "../../../../../apps/meter" }
 criterion = "0.5"
 tempfile = "3.8"
 serial_test = "3"

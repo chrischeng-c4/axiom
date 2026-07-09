@@ -156,7 +156,7 @@ Gate Inventory:
 
 ID: competitor-performance
 Type: RuntimeTool
-Surfaces: Meter/Vat: `apps/relay/vat.toml#meter-perf` - isolated meter execution for the throughput ratchet.; Harness: `cargo run -p relay --release --example bench_compare -- --backend <target>` - durable-only closed-loop external broker comparison across relay, RabbitMQ, NATS JetStream, Redis Streams, and Dragonfly.; Arena: `projects/arena/examples/relay-vs-rabbitmq-nats-redis.toml` - advisory normalized ratio wrapper.; Rust bench: `relay_bench` - local broker throughput baseline.
+Surfaces: Meter/Vat: `apps/relay/vat.toml#meter-perf` - isolated meter execution for the throughput ratchet.; Harness: `cargo run -p relay --release --example bench_compare -- --backend <target>` - durable-only closed-loop external broker comparison across relay, RabbitMQ, NATS JetStream, Redis Streams, and Dragonfly.; Arena: `apps/arena/examples/relay-vs-rabbitmq-nats-redis.toml` - advisory normalized ratio wrapper.; Rust bench: `relay_bench` - local broker throughput baseline.
 EC Dimensions: efficiency: `cd apps/relay && ../../target/debug/vat run meter-perf` - meter-owned throughput model and ratchet conformance; behavior: `cargo test -p relay --test work_queue_throughput --test perf_gate` - deterministic local gate shape
 Root WI: 125
 Status: auditing
@@ -167,14 +167,14 @@ vat-isolated meter gate and keep the external competitor comparison against
 RabbitMQ, NATS JetStream, Redis Streams, and Dragonfly as advisory dogfood until
 the native broker harness is promoted into a required gate.
 Gate Inventory:
-- apps/relay/vat.toml; apps/relay/tests/work_queue_throughput.rs; apps/relay/tests/perf_gate.rs; apps/relay/src/perf_gate.rs; apps/relay/examples/bench_compare.rs; projects/arena/examples/relay-vs-rabbitmq-nats-redis.toml
+- apps/relay/vat.toml; apps/relay/tests/work_queue_throughput.rs; apps/relay/tests/perf_gate.rs; apps/relay/src/perf_gate.rs; apps/relay/examples/bench_compare.rs; apps/arena/examples/relay-vs-rabbitmq-nats-redis.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | o-1-lease-cursor-throughput | epic | - | implemented | passing | conformance | apps/relay/tests/work_queue_throughput.rs |
 | normalized-win-ratchet-decision-model | epic | 125 | implemented | passing | conformance | apps/relay/tests/perf_gate.rs |
 | vat-meter-throughput-gate | epic | 125 | implemented | planned | dogfood | apps/relay/vat.toml#meter-perf |
-| external-broker-comparison | epic | 125 | implemented | planned | dogfood | apps/relay/examples/bench_compare.rs; projects/arena/examples/relay-vs-rabbitmq-nats-redis.toml |
+| external-broker-comparison | epic | 125 | implemented | planned | dogfood | apps/relay/examples/bench_compare.rs; apps/arena/examples/relay-vs-rabbitmq-nats-redis.toml |
 
 ### Long-Running Stability
 

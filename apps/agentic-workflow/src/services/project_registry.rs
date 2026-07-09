@@ -855,13 +855,13 @@ mod tests {
             r#"
 [[projects]]
 name = "jet"
-path = "projects/jet"
-td_path = "projects/jet/tech-design"
+path = "apps/jet"
+td_path = "apps/jet/tech-design"
 label = "app:jet"
 
 [[projects.workspaces]]
 name = "jet-full"
-paths = ["projects/jet/**"]
+paths = ["apps/jet/**"]
 target = "rust"
 test_cmd = "cargo test -p jet -p jet-wasm"
 
@@ -871,7 +871,7 @@ path = "projects/stale-jet-sync"
 
 [[projects.workspaces]]
 name = "jet"
-paths = ["projects/jet/**"]
+paths = ["apps/jet/**"]
 target = "rust"
 test_cmd = "cargo test -p jet"
 "#,
@@ -879,8 +879,8 @@ test_cmd = "cargo test -p jet"
 
         let rows = load_project_config_rows(tmp.path()).unwrap();
         let jet = rows.iter().find(|row| row.name == "jet").unwrap();
-        assert_eq!(jet.path, "projects/jet");
-        assert_eq!(jet.td_path.as_deref(), Some("projects/jet/tech-design"));
+        assert_eq!(jet.path, "apps/jet");
+        assert_eq!(jet.td_path.as_deref(), Some("apps/jet/tech-design"));
         assert_eq!(jet.label.as_deref(), Some("app:jet"));
 
         let projects = load_projects(tmp.path()).unwrap();
@@ -888,10 +888,10 @@ test_cmd = "cargo test -p jet"
             .iter()
             .find(|project| project.name == "jet")
             .unwrap();
-        assert_eq!(jet.path, PathBuf::from("projects/jet"));
+        assert_eq!(jet.path, PathBuf::from("apps/jet"));
         assert_eq!(
             jet.tech_design_dir.as_deref(),
-            Some("projects/jet/tech-design")
+            Some("apps/jet/tech-design")
         );
         assert_eq!(
             jet.workspaces[0].test_cmd.as_deref(),
@@ -1197,14 +1197,14 @@ mod resolver_tests {
         let tmp = repo();
         let input = TdRootInput {
             name: "sdd".into(),
-            td_path: Some("projects/cgdb/tech_design".into()),
-            source_path: "projects/cgdb".into(),
+            td_path: Some("apps/cgdb/tech_design".into()),
+            source_path: "apps/cgdb".into(),
         };
         let out = resolve_td_root(&input, Some("tech-design"), tmp.path()).unwrap();
         assert_eq!(out.precedence, "td_path");
         assert_eq!(
             PathBuf::from(&out.root),
-            tmp.path().join("projects/cgdb/tech_design")
+            tmp.path().join("apps/cgdb/tech_design")
         );
     }
 

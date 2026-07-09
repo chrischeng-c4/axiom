@@ -13,7 +13,7 @@ direct agent edit/create tools inside the selected AW project scope.
 
 ## Commands
 
-Prefer the repo-built binary when working inside `project-aw` after a fresh
+Prefer the repo-built binary when working inside `app_aw` after a fresh
 build; otherwise use installed `aw`.
 
 ```bash

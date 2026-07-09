@@ -9,7 +9,7 @@ user-invocable: true
 Cuts **and lands** a jet release, in four phases. `git:land` is the middle
 sub-action — invoke it as-is; do **not** modify it.
 
-1. **release-prep** — `projects/jet/build.sh release`: check tag collisions,
+1. **release-prep** — `apps/jet/build.sh release`: check tag collisions,
    bump when needed, `cargo build --release`, install `~/.cargo/bin/jet`, and
    commit `release(jet): jet@X`. **No tag, no push.**
 2. **land** — run the **/git:land** flow to land the release commit on `main`
@@ -32,7 +32,7 @@ built from `main`.
 
 ### Step 1 — release-prep
 
-Run the prep wrapper (delegates to `projects/jet/build.sh release`):
+Run the prep wrapper (delegates to `apps/jet/build.sh release`):
 
 ```bash
 .claude/skills/jet-build-release/scripts/release.sh

@@ -1,6 +1,6 @@
 ---
 name: issue-goal
-description: Drive a project's GitHub issue backlog to zero — one issue per iteration, mainthread-driven, runs continuously until the backlog is empty or the user interrupts. Reads projects/<name>/issue-loop.md for per-project rules (label, branch, build policy, test/perf gates, PR strategy).
+description: Drive a project's GitHub issue backlog to zero — one issue per iteration, mainthread-driven, runs continuously until the backlog is empty or the user interrupts. Reads apps/<name>/issue-loop.md for app rules, with retained projects/<name>/issue-loop.md roots for mamba/lumen.
 user-invocable: true
 ---
 
@@ -20,13 +20,13 @@ Synchronous, mainthread-driven backlog driver. One iteration = one issue picked 
 |-----|----------|---------|
 | `project` | yes | `jet`, `mamba`, `agentic-workflow` |
 
-If `project` is omitted, detect it from the current branch (`project-<name>` → `<name>`); if still ambiguous, `AskUserQuestion`.
+If `project` is omitted, detect it from the current branch (`app/<name>` → `<name>`, or retained `project-<name>` → `<name>` for mamba/lumen); if still ambiguous, `AskUserQuestion`.
 
 ## Pre-flight (do once before entering the loop)
 
 1. `git status --porcelain` — must be clean. If dirty, stop and report.
 2. Load config from `projects/<project>/issue-loop.md` (frontmatter). Required keys: `branch`, `label`, `repo`, `verify`, `done_gates`, `pr`.
-3. Ensure on the configured `branch` (default `project-<project>`). If on a different branch:
+3. Ensure on the configured `branch` (default `app/<project>` for apps, `project-<project>` for mamba/lumen). If on a different branch:
    - If current branch is a feature branch with unpushed work → merge it into the working branch first (don't escape to a side branch — the project working branch IS the working branch).
    - If current branch is `main` or another project's branch → `git checkout <working-branch>`.
 4. `git fetch origin && git pull --ff-only origin <working-branch>` (or rebase if FF fails — investigate before forcing).
@@ -97,7 +97,7 @@ Loop back to step 1.
 
 ## Hard rules
 
-- **Never** `git push --force` to `main` or any `project-*` branch without explicit user confirmation.
+- **Never** `git push --force` to `main`, `app/*`, `lib/*`, `project-mamba`, or `project-lumen` without explicit user confirmation.
 - **Never** skip pre-commit / pre-push hooks (`--no-verify`).
 - **Never** commit with the `Co-Authored-By: Claude` trailer (global rule).
 - **Never** silently skip a done gate — either run it, or explicitly document N/A in the PR body with a reason.

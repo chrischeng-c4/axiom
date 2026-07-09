@@ -1,0 +1,41 @@
+version = 1
+project = "preview"
+td_path = "apps/preview/tech-design"
+generated_at = "2026-07-05T05:45:12.160153+00:00"
+digest = "sha256:c18ebe17f94d777a341db9ddb0c271fa62e8019492ca921a6f2f949ad15f2f6c"
+
+[[files]]
+path = "README.md"
+digest = "sha256:dfc819133707a9badcc30383b6465862f93e5b102d95ee2c53d3930efb557331"
+
+[[files]]
+path = "interfaces/cli/preview-discovers-and-normalizes-base-workload-clone-contracts-l.md"
+digest = "sha256:bb1b6feef701cadaba574eb72d84ef0f2b9792d5680d792ddac526babe9230eb"
+
+[[files]]
+path = "interfaces/cli/preview-exposes-local-apply-and-gitops-bundle-execution-paths.md"
+digest = "sha256:e4609fb93584a759d296a2a09de014ad690a6fdd3d87683199618f12f12f57a8"
+
+[[files]]
+path = "interfaces/cli/preview-janitor-plans-and-applies-guarded-local-cleanup.md"
+digest = "sha256:0e6be4487a78f5805f2de454e79a2981611ab4297c9f135660c44ce591b06a66"
+
+[[files]]
+path = "interfaces/cli/preview-router-adapter-proves-base-fallback-and-target-routing-locally.md"
+digest = "sha256:27d2a09fccd973ebaaceea62b8394b6f7543863641ed003592fe8efbddc8e529"
+
+[[files]]
+path = "interfaces/cli/preview-ships-copyable-local-first-cicd-lifecycle-templates.md"
+digest = "sha256:23322dad263eb86e6bf62f51ddd3ad9108a67dfc940bb2e21d07fd7785a9e6c6"
+
+[[files]]
+path = "semantic/preview-projects-preview.md"
+digest = "sha256:f98b35ea3123eedcceb858c663f41a0104eacca37410ce6160db528999021cce"
+
+[[files]]
+path = "semantic/preview-src.md"
+digest = "sha256:869e2a22b551b80b9a55e664e24e14aad5797568155aa1eb65819e4e6049c4bf"
+
+[[files]]
+path = "semantic/preview-tests.md"
+digest = "sha256:8f00193d39fb8a44acfd402229e8e25f66d0e46a8d9f9fe556e41d9e578bf502"

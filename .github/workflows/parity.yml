@@ -5,14 +5,14 @@
 # wired into CI it will emit `*.channel-result.json` files into
 # `/tmp/parity-results` (or similar) and this workflow will start
 # enforcing the soft-gate (exit 2) — or the hard-gate (exit 1) once
-# `blocking = true` is flipped in `projects/jet/parity/parity-gating.toml`.
+# `blocking = true` is flipped in `apps/jet/parity/parity-gating.toml`.
 name: parity
 on:
   pull_request:
     paths:
-      - "projects/jet/**"
-      - "projects/jet-parity-**/**"
-      - "projects/jet/parity-gate/**"
+      - "apps/jet/**"
+      - "apps/jet-parity-**/**"
+      - "apps/jet/parity-gate/**"
       - ".github/workflows/parity.yml"
 jobs:
   gate:

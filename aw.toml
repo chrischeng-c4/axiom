@@ -113,13 +113,13 @@ codegen.profile = "rust/score-crate"
 
 [[projects]]
 name = "cap"
-path = "projects/cap"
-td_path = "projects/cap/tech-design"
+path = "apps/cap"
+td_path = "apps/cap/tech-design"
 label = "app:cap"
 
 [[projects.workspaces]]
 name = "cap"
-paths = ["projects/cap/**", ".github/workflows/cap-*.yml", "install.sh"]
+paths = ["apps/cap/**", ".github/workflows/cap-*.yml", "install.sh"]
 target = "rust"
 test_cmd = "cargo test -p cap"
 verify_cold = true
@@ -128,14 +128,14 @@ codegen.profile = "rust/score-crate"
 
 [[projects]]
 name = "vat"
-path = "projects/vat"
-td_path = "projects/vat/tech-design"
-cap_path = "projects/vat/README.md"
+path = "apps/vat"
+td_path = "apps/vat/tech-design"
+cap_path = "apps/vat/README.md"
 label = "app:vat"
 
 [[projects.workspaces]]
 name = "vat"
-paths = ["projects/vat/**"]
+paths = ["apps/vat/**"]
 target = "rust"
 test_cmd = "cargo test -p vat"
 verify_cold = true
@@ -143,14 +143,14 @@ codegen.profile = "rust/score-crate"
 
 [[projects]]
 name = "loom"
-path = "projects/loom"
-td_path = "projects/loom/tech-design"
-cap_path = "projects/loom/README.md"
+path = "apps/loom"
+td_path = "apps/loom/tech-design"
+cap_path = "apps/loom/README.md"
 label = "app:loom"
 
 [[projects.workspaces]]
 name = "loom"
-paths = ["projects/loom/**"]
+paths = ["apps/loom/**"]
 target = "rust"
 test_cmd = "cargo test -p loom"
 verify_cold = true
@@ -158,14 +158,14 @@ codegen.profile = "rust/score-crate"
 
 [[projects]]
 name = "preview"
-path = "projects/preview"
-td_path = "projects/preview/tech-design"
-cap_path = "projects/preview/README.md"
+path = "apps/preview"
+td_path = "apps/preview/tech-design"
+cap_path = "apps/preview/README.md"
 label = "app:preview"
 
 [[projects.workspaces]]
 name = "preview"
-paths = ["projects/preview/**"]
+paths = ["apps/preview/**"]
 target = "rust"
 test_cmd = "cargo test -p preview"
 verify_cold = true
@@ -189,7 +189,7 @@ codegen.profile = "rust/score-crate"
 [[projects]]
 name = "defer"
 path = "apps/defer"
-td_path = "projects/defer/tech-design"
+td_path = "apps/defer/tech-design"
 cap_path = "apps/defer/README.md"
 label = "app:defer"
 
@@ -201,41 +201,41 @@ test_cmd = "true"
 
 [[projects]]
 name = "cube"
-path = "projects/cube"
-td_path = "projects/cube/tech-design"
-cap_path = "projects/cube/README.md"
+path = "apps/cube"
+td_path = "apps/cube/tech-design"
+cap_path = "apps/cube/README.md"
 label = "app:cube"
 
 [[projects.workspaces]]
 name = "cube"
-paths = ["projects/cube/**"]
+paths = ["apps/cube/**"]
 target = "schemas"
 test_cmd = "true"
 
 [[projects]]
 name = "beam"
-path = "projects/beam"
-td_path = "projects/beam/tech-design"
-cap_path = "projects/beam/README.md"
+path = "apps/beam"
+td_path = "apps/beam/tech-design"
+cap_path = "apps/beam/README.md"
 label = "app:beam"
 
 [[projects.workspaces]]
 name = "beam"
-paths = ["projects/beam/**"]
+paths = ["apps/beam/**"]
 target = "schemas"
 test_cmd = "true"
 
 
 [[projects]]
 name = "arena"
-path = "projects/arena"
-td_path = "projects/arena/tech-design"
-cap_path = "projects/arena/README.md"
+path = "apps/arena"
+td_path = "apps/arena/tech-design"
+cap_path = "apps/arena/README.md"
 label = "app:arena"
 
 [[projects.workspaces]]
 name = "arena"
-paths = ["projects/arena/**", ".github/workflows/arena-release.yml"]
+paths = ["apps/arena/**", ".github/workflows/arena-release.yml"]
 target = "rust"
 test_cmd = "cargo test -p arena"
 verify_cold = true
@@ -244,14 +244,14 @@ codegen.profile = "rust/score-crate"
 
 [[projects]]
 name = "guard"
-path = "projects/guard"
-td_path = "projects/guard/tech-design"
-cap_path = "projects/guard/README.md"
+path = "apps/guard"
+td_path = "apps/guard/tech-design"
+cap_path = "apps/guard/README.md"
 label = "app:guard"
 
 [[projects.workspaces]]
 name = "guard"
-paths = ["projects/guard/**"]
+paths = ["apps/guard/**"]
 target = "rust"
 test_cmd = 'CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard -p guard-cli'
 verify_cold = true
@@ -260,14 +260,14 @@ codegen.profile = "rust/score-crate"
 
 [[projects]]
 name = "rig"
-path = "projects/rig"
-td_path = "projects/rig/tech-design"
-cap_path = "projects/rig/README.md"
+path = "apps/rig"
+td_path = "apps/rig/tech-design"
+cap_path = "apps/rig/README.md"
 label = "app:rig"
 
 [[projects.workspaces]]
 name = "rig"
-paths = ["projects/rig/**"]
+paths = ["apps/rig/**"]
 target = "rust"
 test_cmd = "cargo test -p rig"
 verify_cold = true
@@ -389,16 +389,16 @@ test_cmd = "cargo test -p agentkit-backend"
 
 [[projects]]
 name = "jet"
-path = "projects/jet"
-td_path = "projects/jet/tech-design"
-cap_path = "projects/jet/README.md"
+path = "apps/jet"
+td_path = "apps/jet/tech-design"
+cap_path = "apps/jet/README.md"
 label = "app:jet"
 
 [[projects.workspaces]]
 name = "jet"
-paths = ["projects/jet/**"]
+paths = ["apps/jet/**"]
 target = "rust"
-test_cmd = "projects/jet/scripts/verify-basic-dom-gates.sh --all"
+test_cmd = "apps/jet/scripts/verify-basic-dom-gates.sh --all"
 verify_cold = true
 
 
@@ -700,48 +700,39 @@ test_cmd = "cargo test -p agentic-workflow"
 
 [[projects]]
 name = "arena"
-path = "projects/arena"
+path = "apps/arena"
 
 [[projects.workspaces]]
-paths = ["projects/arena/**"]
+paths = ["apps/arena/**"]
 target = "rust"
 test_cmd = "cargo test -p arena"
 
 [[projects]]
 name = "cap"
-path = "projects/cap"
+path = "apps/cap"
 
 [[projects.workspaces]]
-paths = ["projects/cap/**"]
+paths = ["apps/cap/**"]
 target = "rust"
 test_cmd = "cargo test -p cap"
 
 [[projects]]
 name = "cgdb"
-path = "projects/cgdb"
+path = "apps/cgdb"
 
 [[projects.workspaces]]
-paths = ["projects/cgdb/**"]
+paths = ["apps/cgdb/**"]
 target = "rust"
 test_cmd = "cargo test -p cgdb-smoke"
 
 [[projects]]
 name = "guard"
-path = "projects/guard"
+path = "apps/guard"
 
 [[projects.workspaces]]
-paths = ["projects/guard/**"]
+paths = ["apps/guard/**"]
 target = "rust"
 test_cmd = "cargo test -p guard"
-
-[[projects]]
-name = "httpkit-demo"
-path = "projects/httpkit-demo"
-
-[[projects.workspaces]]
-paths = ["projects/httpkit-demo/**"]
-target = "rust"
-test_cmd = "cargo test -p httpkit-demo"
 
 [[projects]]
 name = "lumen"
@@ -763,48 +754,28 @@ test_cmd = "cargo test -p mamba"
 
 [[projects]]
 name = "meter"
-path = "projects/meter"
+path = "apps/meter"
 
 [[projects.workspaces]]
-paths = ["projects/meter/**"]
+paths = ["apps/meter/**"]
 target = "rust"
 test_cmd = "cargo test -p meter"
 
 [[projects]]
-name = "qc"
-path = "projects/qc"
-
-[[projects.workspaces]]
-name = "qc"
-paths = ["projects/qc/**"]
-target = "schemas"
-test_cmd = "true"
-
-[[projects]]
-name = "queue"
-path = "projects/queue"
-
-[[projects.workspaces]]
-name = "queue"
-paths = ["projects/queue/**"]
-target = "schemas"
-test_cmd = "true"
-
-[[projects]]
 name = "rig"
-path = "projects/rig"
+path = "apps/rig"
 
 [[projects.workspaces]]
-paths = ["projects/rig/**"]
+paths = ["apps/rig/**"]
 target = "rust"
 test_cmd = "cargo test -p rig"
 
 [[projects]]
 name = "vat"
-path = "projects/vat"
+path = "apps/vat"
 
 [[projects.workspaces]]
-paths = ["projects/vat/**"]
+paths = ["apps/vat/**"]
 target = "rust"
 test_cmd = "cargo test -p vat"
 

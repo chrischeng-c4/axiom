@@ -12285,7 +12285,7 @@ mod tests {
         CapabilityReport {
             action: "capability",
             project: "jet".to_string(),
-            cap_path: PathBuf::from("projects/jet/README.md"),
+            cap_path: PathBuf::from("apps/jet/README.md"),
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
@@ -13014,7 +13014,7 @@ traits = ["cli_facing", "forever_service"]
     fn empty_capability_map_draft_artifact_is_definition_worksheet() {
         let artifact = render_capability_map_draft(
             "meter",
-            Path::new("projects/meter/README.md"),
+            Path::new("apps/meter/README.md"),
             &[],
             &CapabilityProfileReport::default(),
             0,
@@ -13052,7 +13052,7 @@ traits = ["cli_facing", "forever_service"]
     fn apply_draft_rejects_unreviewed_placeholders() {
         let artifact = render_capability_map_draft(
             "meter",
-            Path::new("projects/meter/README.md"),
+            Path::new("apps/meter/README.md"),
             &[],
             &CapabilityProfileReport::default(),
             0,
@@ -13094,11 +13094,11 @@ Required Verification: smoke
 Promise:
 Meter provides a team workflow control plane over AW Core concepts.
 Gate Inventory:
-- projects/meter/tests/workflow-control-plane.md
+- apps/meter/tests/workflow-control-plane.md
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/meter/tests/workflow-control-plane.md |
+| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | apps/meter/tests/workflow-control-plane.md |
 ```
 "#;
 
@@ -13115,7 +13115,7 @@ Gate Inventory:
 
 | Candidate | Decision | Type | Surfaces | EC Dimensions | Root WI | Gate Inventory |
 |---|---|---|---|---|---:|---|
-| Workflow Control Plane | confirm | DeveloperTool | CLI: `meter measure` - resource measurement command | behavior: `jet e2e` - browser/API workflow | #3893 | projects/meter/tests/workflow-control-plane.md |
+| Workflow Control Plane | confirm | DeveloperTool | CLI: `meter measure` - resource measurement command | behavior: `jet e2e` - browser/API workflow | #3893 | apps/meter/tests/workflow-control-plane.md |
 
 ## Draft Canonical README Section
 
@@ -13158,8 +13158,8 @@ Gate Inventory:
         assert!(registry.contains("Type: DeveloperTool"));
         assert!(registry.contains("Surfaces: CLI: `meter measure` - resource measurement command"));
         assert!(registry.contains("EC Dimensions: behavior: `jet e2e` - browser/API workflow"));
-        assert!(registry.contains("Gate Inventory: projects/meter/tests/workflow-control-plane.md"));
-        assert!(registry.contains("| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/meter/tests/workflow-control-plane.md |"));
+        assert!(registry.contains("Gate Inventory: apps/meter/tests/workflow-control-plane.md"));
+        assert!(registry.contains("| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | apps/meter/tests/workflow-control-plane.md |"));
         assert_eq!(doc.capabilities.len(), 1);
         assert_eq!(doc.capabilities[0].id, "workflow-control-plane");
         assert_eq!(
@@ -13198,11 +13198,11 @@ Required Verification: smoke
 Promise:
 Meter provides a team workflow control plane over AW Core concepts.
 Gate Inventory:
-- projects/meter/tests/workflow-control-plane.md
+- apps/meter/tests/workflow-control-plane.md
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/meter/tests/workflow-control-plane.md |
+| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | apps/meter/tests/workflow-control-plane.md |
 ```
 "#;
         let registry = extract_reviewed_draft_registry(draft).unwrap();
@@ -13462,11 +13462,11 @@ Required Verification: smoke, conformance
 Promise:
 Replace package manager flows.
 Gate Inventory:
-- projects/jet/validation/pkg-manager.toml
+- apps/jet/validation/pkg-manager.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
+| Package manager readiness | epic | #3779 | partial | planned | conformance | apps/jet/validation/pkg-manager.toml |
 "#;
         let document = cap_doc(body);
 
@@ -13505,11 +13505,11 @@ Required Verification: smoke, conformance
 Promise:
 Replace package manager flows.
 Gate Inventory:
-- projects/jet/validation/pkg-manager.toml
+- apps/jet/validation/pkg-manager.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
+| Package manager readiness | epic | #3779 | partial | planned | conformance | apps/jet/validation/pkg-manager.toml |
 "#;
         let document = cap_doc(body);
 
@@ -13551,11 +13551,11 @@ Required Verification: smoke, conformance
 Promise:
 Replace package manager flows.
 Gate Inventory:
-- projects/jet/validation/pkg-manager.toml
+- apps/jet/validation/pkg-manager.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
+| Package manager readiness | epic | #3779 | partial | planned | conformance | apps/jet/validation/pkg-manager.toml |
 "#;
         let document = cap_doc(body);
 
@@ -13588,7 +13588,7 @@ Required Verification: smoke, conformance
 Promise:
 Replace package manager flows.
 Gate Inventory:
-- projects/jet/validation/pkg-manager.toml
+- apps/jet/validation/pkg-manager.toml
 "#;
         let missing_index = missing_parent.replace(
             "### Capability Index",
@@ -13860,7 +13860,7 @@ Gate Inventory:
                 required_for_production: Some(true),
                 efficiency_backfill: Some(CapabilityEfficiencyBackfillSlot {
                     operating_point: "local-vat-jet-e2e".to_string(),
-                    cube: "projects/jet/.aw/ec/efficiency/e2e.cube.json".to_string(),
+                    cube: "apps/jet/.aw/ec/efficiency/e2e.cube.json".to_string(),
                 }),
             },
         ];
@@ -14134,7 +14134,7 @@ Gate Inventory:
                 schema_version: "aw.cli.v1",
                 action: "capability_draft",
                 project: "meter".to_string(),
-                cap_path: PathBuf::from("projects/meter/README.md"),
+                cap_path: PathBuf::from("apps/meter/README.md"),
                 path: PathBuf::from(
                     "/tmp/aw/workspaces/axiom/capability-map-drafts/meter/draft.md",
                 ),
@@ -14246,7 +14246,7 @@ Gate Inventory:
             hitl_question: None,
         });
         skipped_inventory.project = "jet".to_string();
-        skipped_inventory.cap_path = PathBuf::from("projects/jet/README.md");
+        skipped_inventory.cap_path = PathBuf::from("apps/jet/README.md");
 
         let mut missing_work = sample_report(CapabilityAction {
             kind: CapabilityActionKind::CreateWi,
@@ -14272,7 +14272,7 @@ Gate Inventory:
             "aw capability check --project jet --skip-issue-inventory"
         );
         assert_eq!(index[0].next_action_kind, "none");
-        assert_eq!(index[0].target, "projects/jet/README.md");
+        assert_eq!(index[0].target, "apps/jet/README.md");
         assert_eq!(index[0].reason, "capability format and TD refs are valid");
         assert_eq!(index[1].project, "lumen");
         assert_eq!(index[1].status, "failed");
@@ -14292,9 +14292,9 @@ Gate Inventory:
                     project: "jet".to_string(),
                     status: "passed",
                     command: "aw capability check --project jet --skip-issue-inventory".to_string(),
-                    cap_path: PathBuf::from("projects/jet/README.md"),
+                    cap_path: PathBuf::from("apps/jet/README.md"),
                     next_action_kind: "none",
-                    target: "projects/jet/README.md".to_string(),
+                    target: "apps/jet/README.md".to_string(),
                     reason: "capability format and TD refs are valid".to_string(),
                 },
                 CapabilityCheckIndexEntry {
@@ -14319,7 +14319,7 @@ Gate Inventory:
         assert!(index.contains("passed_count: 1"));
         assert!(index.contains("verify: true"));
         assert!(index.contains("include_issue_inventory: true"));
-        assert!(index.contains("| jet | passed | `aw capability check --project jet --skip-issue-inventory` | none | projects/jet/README.md | projects/jet/README.md | capability format and TD refs are valid |"));
+        assert!(index.contains("| jet | passed | `aw capability check --project jet --skip-issue-inventory` | none | apps/jet/README.md | apps/jet/README.md | capability format and TD refs are valid |"));
         assert!(index.contains("| lumen | failed | `aw capability check --project lumen --verify --include-issue-inventory` | create_wi | Lexical (BM25) | projects/lumen/README.md | open capability gap has no active WI in README |"));
         assert!(index.contains(
             "Re-run the command in the table after each README, WI, TD, or verification change."
@@ -14348,9 +14348,9 @@ Gate Inventory:
             project: "jet".to_string(),
             status: "passed",
             command: "aw capability check --project jet --skip-issue-inventory".to_string(),
-            cap_path: PathBuf::from("projects/jet/README.md"),
+            cap_path: PathBuf::from("apps/jet/README.md"),
             next_action_kind: "none",
-            target: "projects/jet/README.md".to_string(),
+            target: "apps/jet/README.md".to_string(),
             reason: "capability format and TD refs are valid".to_string(),
         }];
         sweep.check_index_path = Some(PathBuf::from(
@@ -14362,7 +14362,7 @@ Gate Inventory:
                 schema_version: "aw.cli.v1",
                 action: "capability_draft",
                 project: "meter".to_string(),
-                cap_path: PathBuf::from("projects/meter/README.md"),
+                cap_path: PathBuf::from("apps/meter/README.md"),
                 path: PathBuf::from(
                     "/tmp/aw/workspaces/axiom/capability-map-drafts/meter/draft.md",
                 ),
@@ -14695,7 +14695,7 @@ verification_contract:
       maturity: conformance
       oracle: "npm/pnpm lockfile behavior"
       fixtures:
-        - "projects/jet/fixtures/pkg-manager/lockfile"
+        - "apps/jet/fixtures/pkg-manager/lockfile"
       negative_cases:
         - "Integrity mismatch must fail with an actionable diagnostic."
       gates:
@@ -14704,7 +14704,7 @@ verification_contract:
           proves: "lockfile behavior"
 evidence:
   source:
-    - "projects/jet/src/pkg_manager/**"
+    - "apps/jet/src/pkg_manager/**"
   verification:
     - id: lockfile
       command: "cargo test -p jet pkg_manager::lockfile"
@@ -14729,11 +14729,11 @@ out_of_scope:
 | Status | auditing |
 | Promise | Replace package manager flows. |
 | Required Verification | smoke, conformance |
-| Gate Inventory | projects/jet/validation/pkg-manager.toml |
+| Gate Inventory | apps/jet/validation/pkg-manager.toml |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
+| Package manager readiness | epic | #3779 | partial | planned | conformance | apps/jet/validation/pkg-manager.toml |
 	"#
     }
 
@@ -14749,11 +14749,11 @@ Required Verification: smoke, conformance
 Promise:
 Replace package manager flows.
 Gate Inventory:
-- projects/jet/validation/pkg-manager.toml
+- apps/jet/validation/pkg-manager.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
+| Package manager readiness | epic | #3779 | partial | planned | conformance | apps/jet/validation/pkg-manager.toml |
 	"#
     }
 
@@ -15098,7 +15098,7 @@ Required Verification: smoke, conformance
         .unwrap();
 
         assert!(updated.contains(
-            "| Package manager readiness | epic | #4200 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |"
+            "| Package manager readiness | epic | #4200 | partial | planned | conformance | apps/jet/validation/pkg-manager.toml |"
         ));
         let parsed = parse_capability_document(&updated, Path::new("README.md")).unwrap();
         assert_eq!(parsed.capabilities[0].work_roots[0].wi, "#4200");
@@ -15271,12 +15271,12 @@ Required Verification: smoke, conformance
 | Status | verified |
 | Promise | Replace package manager flows. |
 | Required Verification | smoke |
-| Gate Inventory | projects/jet/validation/pkg-manager.toml |
+| Gate Inventory | apps/jet/validation/pkg-manager.toml |
 | Dependencies | Shared Core |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Package manager readiness | epic | #1 | implemented | verified | smoke | projects/jet/validation/pkg-manager.toml |
+| Package manager readiness | epic | #1 | implemented | verified | smoke | apps/jet/validation/pkg-manager.toml |
 
 ## Shared Core
 
@@ -15287,11 +15287,11 @@ Required Verification: smoke, conformance
 | Status | verified |
 | Promise | Provide shared runtime. |
 | Required Verification | smoke |
-| Gate Inventory | projects/jet/validation/shared.toml |
+| Gate Inventory | apps/jet/validation/shared.toml |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Shared core readiness | epic | - | implemented | verified | smoke | projects/jet/validation/shared.toml |
+| Shared core readiness | epic | - | implemented | verified | smoke | apps/jet/validation/shared.toml |
 "#;
         let doc = cap_doc(body);
         let package = doc
@@ -15320,7 +15320,7 @@ Required Verification: smoke, conformance
       maturity: conformance
       oracle: "npm/pnpm lockfile behavior"
       fixtures:
-        - "projects/jet/fixtures/pkg-manager/lockfile"
+        - "apps/jet/fixtures/pkg-manager/lockfile"
       negative_cases:
         - "Integrity mismatch must fail with an actionable diagnostic."
       gates:
@@ -15354,7 +15354,7 @@ Required Verification: smoke, conformance
         assert_eq!(contract.required_maturity.len(), 2);
         assert_eq!(
             contract.claims[0].fixtures[0],
-            "projects/jet/validation/pkg-manager.toml"
+            "apps/jet/validation/pkg-manager.toml"
         );
     }
 
@@ -15369,7 +15369,7 @@ Required Verification: smoke, conformance
         assert_eq!(capability.promise, "Replace package manager flows.");
         assert_eq!(
             capability.current_state,
-            "Root WI: #3779; Gate inventory: projects/jet/validation/pkg-manager.toml"
+            "Root WI: #3779; Gate inventory: apps/jet/validation/pkg-manager.toml"
         );
     }
 
@@ -15913,11 +15913,11 @@ Required Verification: smoke, conformance
 Promise:
 Replace package manager flows.
 Gate Inventory:
-- projects/jet/validation/pkg-manager.toml
+- apps/jet/validation/pkg-manager.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
+| Package manager readiness | epic | #3779 | partial | planned | conformance | apps/jet/validation/pkg-manager.toml |
 "#;
         let doc = cap_doc(body);
         let migrated = render_capability_markdown_migration(body, &doc, "jet");
@@ -16382,7 +16382,7 @@ evidence:
         let body = one_capability()
             .replace(
                 r#"      fixtures:
-        - "projects/jet/fixtures/pkg-manager/lockfile"
+        - "apps/jet/fixtures/pkg-manager/lockfile"
 "#,
                 "",
             )
@@ -16756,7 +16756,7 @@ capability_refs:
         let report = CapabilityReport {
             action: "capability",
             project: "jet".to_string(),
-            cap_path: PathBuf::from("projects/jet/README.md"),
+            cap_path: PathBuf::from("apps/jet/README.md"),
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
@@ -16833,14 +16833,14 @@ capability_refs:
         let body = one_markdown_capability()
             .replace("| Status | auditing |", "| Status | verified |")
             .replace(
-                "| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |",
-                "| Package manager readiness | epic | #3779 | implemented | verified | conformance | projects/jet/validation/pkg-manager.toml |",
+                "| Package manager readiness | epic | #3779 | partial | planned | conformance | apps/jet/validation/pkg-manager.toml |",
+                "| Package manager readiness | epic | #3779 | implemented | verified | conformance | apps/jet/validation/pkg-manager.toml |",
             );
         let document = canonical_doc(&body);
         let report = CapabilityReport {
             action: "capability",
             project: "jet".to_string(),
-            cap_path: PathBuf::from("projects/jet/README.md"),
+            cap_path: PathBuf::from("apps/jet/README.md"),
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
@@ -16963,14 +16963,14 @@ capability_refs:
         let body = one_markdown_capability()
             .replace("| Status | auditing |", "| Status | verified |")
             .replace(
-                "| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |",
-                "| Package manager readiness | epic | #3779 | implemented | verified | conformance | projects/jet/validation/pkg-manager.toml |",
+                "| Package manager readiness | epic | #3779 | partial | planned | conformance | apps/jet/validation/pkg-manager.toml |",
+                "| Package manager readiness | epic | #3779 | implemented | verified | conformance | apps/jet/validation/pkg-manager.toml |",
             );
         let document = canonical_doc(&body);
         let report = CapabilityReport {
             action: "capability",
             project: "jet".to_string(),
-            cap_path: PathBuf::from("projects/jet/README.md"),
+            cap_path: PathBuf::from("apps/jet/README.md"),
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
@@ -17012,8 +17012,8 @@ capability_refs:
                     user_story: "reproducible lockfile".to_string(),
                     required_for_verified: true,
                     maturity: CapabilityMaturity::Conformance,
-                    oracle: "projects/jet/validation/pkg-manager.toml".to_string(),
-                    fixtures: vec!["projects/jet/validation/pkg-manager.toml".to_string()],
+                    oracle: "apps/jet/validation/pkg-manager.toml".to_string(),
+                    fixtures: vec!["apps/jet/validation/pkg-manager.toml".to_string()],
                     negative_cases: Vec::new(),
                     gates: Vec::new(),
                     verified: false,
@@ -17069,14 +17069,14 @@ capability_refs:
         let body = one_markdown_capability()
             .replace("| Status | auditing |", "| Status | verified |")
             .replace(
-                "| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |",
-                "| Package manager readiness | epic | #3779 | implemented | verified | conformance | projects/jet/validation/pkg-manager.toml |",
+                "| Package manager readiness | epic | #3779 | partial | planned | conformance | apps/jet/validation/pkg-manager.toml |",
+                "| Package manager readiness | epic | #3779 | implemented | verified | conformance | apps/jet/validation/pkg-manager.toml |",
             );
         let document = canonical_doc(&body);
         let report = CapabilityReport {
             action: "capability",
             project: "jet".to_string(),
-            cap_path: PathBuf::from("projects/jet/README.md"),
+            cap_path: PathBuf::from("apps/jet/README.md"),
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
@@ -17165,14 +17165,14 @@ capability_refs:
         let body = one_markdown_capability()
             .replace("| Status | auditing |", "| Status | verified |")
             .replace(
-                "| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |",
-                "| Package manager readiness | epic | #3779 | implemented | verified | conformance | projects/jet/validation/pkg-manager.toml |",
+                "| Package manager readiness | epic | #3779 | partial | planned | conformance | apps/jet/validation/pkg-manager.toml |",
+                "| Package manager readiness | epic | #3779 | implemented | verified | conformance | apps/jet/validation/pkg-manager.toml |",
             );
         let document = canonical_doc(&body);
         let report = CapabilityReport {
             action: "capability",
             project: "jet".to_string(),
-            cap_path: PathBuf::from("projects/jet/README.md"),
+            cap_path: PathBuf::from("apps/jet/README.md"),
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
@@ -17292,7 +17292,7 @@ capability_refs:
         let report = CapabilityReport {
             action: "capability",
             project: "meter".to_string(),
-            cap_path: PathBuf::from("projects/meter/README.md"),
+            cap_path: PathBuf::from("apps/meter/README.md"),
             format_version: 2,
             status: "healthy".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("meter"),
@@ -17389,7 +17389,7 @@ capability_refs:
         let report = CapabilityReport {
             action: "capability",
             project: "jet".to_string(),
-            cap_path: PathBuf::from("projects/jet/README.md"),
+            cap_path: PathBuf::from("apps/jet/README.md"),
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
@@ -17521,7 +17521,7 @@ capability_refs:
         let report = CapabilityReport {
             action: "capability",
             project: "jet".to_string(),
-            cap_path: PathBuf::from("projects/jet/README.md"),
+            cap_path: PathBuf::from("apps/jet/README.md"),
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),

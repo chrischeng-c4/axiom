@@ -4719,11 +4719,11 @@ e2e_tests:
     #[test]
     fn canonicalize_ec_cases_keeps_newest_duplicate_td_ref() {
         let mut earlier = case("library-dom-wasm-parity", "unmapped", "behavior");
-        earlier.td_ref = "projects/jet/tech-design/specs/4041.md#library-dom-wasm-parity".into();
+        earlier.td_ref = "apps/jet/tech-design/specs/4041.md#library-dom-wasm-parity".into();
         earlier.assertions = vec!["old assertion".into()];
 
         let mut later = case("library-dom-wasm-parity", "unmapped", "behavior");
-        later.td_ref = "projects/jet/tech-design/specs/4072.md#library-dom-wasm-parity".into();
+        later.td_ref = "apps/jet/tech-design/specs/4072.md#library-dom-wasm-parity".into();
         later.assertions = vec!["new assertion".into()];
 
         let cases = canonicalize_ec_cases(vec![later.clone(), earlier]);

@@ -32,7 +32,7 @@ jobs:
 
       - name: Run package management replacement gate
         run: |
-          node projects/jet/scripts/compare-pkg-management.mjs \
+          node apps/jet/scripts/compare-pkg-management.mjs \
             --jet-bin target/release/jet \
             --evidence /tmp/jet-basic-dom-gate/pkg-management-compare.json
 
@@ -69,7 +69,7 @@ jobs:
 
       - name: Run Browser Bridge replacement gate
         run: |
-          node projects/jet/scripts/verify-browser-bridge-replacement.mjs \
+          node apps/jet/scripts/verify-browser-bridge-replacement.mjs \
             --jet-bin target/release/jet \
             --evidence /tmp/jet-basic-dom-gate/browser-bridge-replacement.json \
             --baseline-tools playwright \
@@ -107,11 +107,11 @@ jobs:
         run: |
           JET_BIN="$PWD/target/release/jet"
           for fixture in \
-            projects/jet/tests/fixtures/dom-production-build/react-bench \
-            projects/jet/tests/fixtures/dom-production-build/mui-visual \
-            projects/jet/tests/fixtures/dom-production-build/antd-visual \
-            projects/jet/tests/fixtures/dom-production-build/tailwind-visual \
-            projects/jet/tests/fixtures/dom-production-build/styled-components-visual
+            apps/jet/tests/fixtures/dom-production-build/react-bench \
+            apps/jet/tests/fixtures/dom-production-build/mui-visual \
+            apps/jet/tests/fixtures/dom-production-build/antd-visual \
+            apps/jet/tests/fixtures/dom-production-build/tailwind-visual \
+            apps/jet/tests/fixtures/dom-production-build/styled-components-visual
           do
             (cd "$fixture" && "$JET_BIN" install --frozen-lockfile)
           done
@@ -124,7 +124,7 @@ jobs:
 
       - name: Run DOM production corpus gate
         run: |
-          node projects/jet/scripts/compare-dom-build-corpus.mjs \
+          node apps/jet/scripts/compare-dom-build-corpus.mjs \
             --jet-bin target/release/jet \
             --runtime-smoke required \
             --build-samples 3 \

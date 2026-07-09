@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "jet.toml",
-  "description": "Schema for the `jet.toml` file. Generated from the Rust source of truth in `projects/jet/src/task_runner/config.rs`. Run `jet config schema --write` to regenerate.",
+  "description": "Schema for the `jet.toml` file. Generated from the Rust source of truth in `apps/jet/src/task_runner/config.rs`. Run `jet config schema --write` to regenerate.",
   "type": "object",
   "properties": {
     "alias": {

@@ -53,7 +53,7 @@ definitions:
         x-config-source: projects[].td_path
         examples:
           - apps/agentic-workflow/tech-design/core
-          - projects/cgdb/tech_design
+          - apps/cgdb/tech_design
       source_path:
         type: string
         description: |

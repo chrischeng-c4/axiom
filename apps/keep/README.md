@@ -383,6 +383,6 @@ Images: `Dockerfile` (from-source, build context = repo root) and
 - ✅ perf-gate via meter: engine throughput ratchet + server resource gate — see [meter-performance-gates.md](external-contracts/competitor-performance/efficiency/meter-performance-gates.md) (#126). Competitor comparison (vs Redis/Dragonfly) is the separate one-off `examples/bench_compare.rs`.
 - ☐ worker-facing OpenAPI contract finalized with relay — #108
 - ◑ HA — phase A (sharded scale-out + `/cluster`) done; phase C raft via raft-host integrated (`--features raft`, engine-backed state machine, HTTP write propose path, proven by `tests/raft_node.rs` and the raft HTTP API test) — multi-node failover remains staged; see [.aw/tech-design/projects/keep/logic/ha-raft-sharding-roadmap.md](../../.aw/tech-design/projects/keep/logic/ha-raft-sharding-roadmap.md) (#121)
-- ✅ queuekit and queue `ion` feature consumers now use `keep::client` instead
-  of the retired raw-TCP `cclab-kv` client; remaining cleanup is deduping the
-  legacy `crates/cclab-kv` + `projects/queue/kv` copies.
+- ✅ queuekit and queue-era `ion` feature consumers now use `keep::client`
+  instead of the retired raw-TCP `cclab-kv` client; remaining cleanup is
+  deduping legacy `cclab-kv` copies.

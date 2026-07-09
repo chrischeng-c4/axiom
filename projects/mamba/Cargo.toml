@@ -182,7 +182,7 @@ tempfile = "3"
 cclab-schema-mamba = { path = "../../crates/cclab-schema-mamba" }
 # Unified profiling toolchain (Phase 1.5 / Task #13 / cclab #2093).
 # Used by `benches/3p/cross_runtime.rs` for wall-time + memory snapshotting.
-qc = { package = "meter", path = "../meter" }
+qc = { package = "meter", path = "../../apps/meter" }
 wiremock.workspace = true
 
 # ── Integration test binaries (DDD-grouped under tests/<domain>/) ──

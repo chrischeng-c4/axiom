@@ -164,10 +164,10 @@ mod tests {
     fn jet_project() -> ScopeProject {
         ScopeProject {
             name: "jet".to_string(),
-            path: PathBuf::from("projects/jet"),
-            td_path: Some(PathBuf::from("projects/jet/tech-design")),
+            path: PathBuf::from("apps/jet"),
+            td_path: Some(PathBuf::from("apps/jet/tech-design")),
             workspaces: vec![ScopeWorkspace {
-                paths: vec!["projects/jet/**".to_string()],
+                paths: vec!["apps/jet/**".to_string()],
             }],
         }
     }
@@ -175,15 +175,15 @@ mod tests {
     #[test]
     fn tp1_path_prefix_in_scope() {
         let scope = AllowedScope::for_project(&jet_project()).unwrap();
-        assert!(scope.contains("projects/jet/src/lib.rs"));
-        assert!(scope.contains("projects/jet"));
+        assert!(scope.contains("apps/jet/src/lib.rs"));
+        assert!(scope.contains("apps/jet"));
     }
 
     #[test]
     fn tp2_td_path_prefix_in_scope() {
         let scope = AllowedScope::for_project(&jet_project()).unwrap();
-        assert!(scope.contains("projects/jet/tech-design/spec.md"));
-        assert!(scope.contains("projects/jet/tech-design"));
+        assert!(scope.contains("apps/jet/tech-design/spec.md"));
+        assert!(scope.contains("apps/jet/tech-design"));
     }
 
     #[test]
@@ -192,7 +192,7 @@ mod tests {
         p.path = PathBuf::from("unrelated");
         p.td_path = None;
         let scope = AllowedScope::for_project(&p).unwrap();
-        assert!(scope.contains("projects/jet/sub/file.rs"));
+        assert!(scope.contains("apps/jet/sub/file.rs"));
     }
 
     #[test]
@@ -227,13 +227,13 @@ mod tests {
             r#"
 [[projects]]
 name = "jet"
-path = "projects/jet"
-td_path = "projects/jet/tech-design"
+path = "apps/jet"
+td_path = "apps/jet/tech-design"
 label = "app:jet"
 
 [[projects.workspaces]]
 name = "jet"
-paths = ["projects/jet/**"]
+paths = ["apps/jet/**"]
 target = "rust"
 test_cmd = "cargo test -p jet"
 
@@ -252,12 +252,12 @@ target = "rust"
         let cfg = load_scope(td.path()).unwrap().unwrap();
         assert_eq!(cfg.projects.len(), 2);
         let jet = project_by_name(&cfg, "jet").unwrap();
-        assert_eq!(jet.path, PathBuf::from("projects/jet"));
+        assert_eq!(jet.path, PathBuf::from("apps/jet"));
         assert_eq!(
             jet.td_path.as_deref(),
-            Some(Path::new("projects/jet/tech-design"))
+            Some(Path::new("apps/jet/tech-design"))
         );
-        assert_eq!(jet.workspaces[0].paths, vec!["projects/jet/**".to_string()]);
+        assert_eq!(jet.workspaces[0].paths, vec!["apps/jet/**".to_string()]);
     }
 
     #[test]
@@ -274,8 +274,8 @@ target = "rust"
     fn describe_lists_all_paths() {
         let scope = AllowedScope::for_project(&jet_project()).unwrap();
         let d = scope.describe();
-        assert!(d.contains("projects/jet/**"));
-        assert!(d.contains("projects/jet/tech-design/**"));
+        assert!(d.contains("apps/jet/**"));
+        assert!(d.contains("apps/jet/tech-design/**"));
     }
 }
 // CODEGEN-END
