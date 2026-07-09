@@ -634,15 +634,99 @@ initial_transaction_status: idle # TransactionStatus before the first ReadyForQu
 
 ```mermaid
 ---
-id: (fill: spec-id)-verification
+id: apps-pgpool-wire-codec-verification
 requirements:
-  example_requirement:
-    id: R1
-    text: "(fill: requirement text)"
+  r10_bounded_oversized:
+    id: R10
+    text: "FrameReader rejects a frame whose declared length exceeds max_frame_bytes (and the untagged startup packet exceeding max_startup_bytes) with FrameError::Oversized, without panicking, and without buffering the oversized payload."
+    kind: regression
+    risk: high
+    verify: wire_codec::reader_rejects_oversized_frame
+  r11_malformed_no_panic:
+    id: R11
+    text: "FrameReader/decode returns FrameError::Malformed or FrameError::UnknownTag (never panics) for truncated fields, bad UTF-8, unknown enum discriminants, and unrecognized tag bytes."
+    kind: regression
+    risk: high
+    verify: wire_codec::decode_rejects_malformed_input_without_panic
+  r12_split_partial_reads:
+    id: R12
+    text: "FrameReader correctly reassembles a frame delivered across multiple partial reads split at the header boundary and at arbitrary points within the body, returning Pending until the full frame is buffered."
+    kind: regression
+    risk: high
+    verify: wire_codec::reader_handles_split_and_partial_reads
+  r13_tx_status_session:
+    id: R13
+    text: "TransactionStatus tracks idle -> in_transaction -> idle and idle -> in_transaction -> failed -> idle transitions correctly across a simulated simple-query and extended-query session driven purely by observed ReadyForQuery status bytes."
     kind: functional
     risk: medium
-    verify: (fill: concrete verification target, e.g. a test name)
+    verify: wire_codec::transaction_status_tracks_simple_and_extended_session
+  r1_startup_and_ssl:
+    id: R1
+    text: "StartupMessage (protocol 3.0 + parameters map) and SSLRequest encode/decode round-trip byte-for-byte through the untagged length-prefixed frame layout."
+    kind: functional
+    risk: medium
+    verify: wire_codec::frontend_startup_and_ssl_round_trip
+  r2_auth_frames:
+    id: R2
+    text: "PasswordMessage (cleartext/MD5) and SASL initial-response/response frontend frames encode/decode round-trip, including opaque SASL payload bytes."
+    kind: functional
+    risk: medium
+    verify: wire_codec::frontend_password_and_sasl_round_trip
+  r3_simple_query:
+    id: R3
+    text: "Query (simple query protocol) round-trips a null-terminated SQL string."
+    kind: functional
+    risk: low
+    verify: wire_codec::frontend_query_round_trip
+  r4_extended_query:
+    id: R4
+    text: "Parse/Bind/Describe/Execute/Sync extended-query frontend frames each round-trip their typed fields (param type oids, param formats/values, result formats, target kind, max_rows)."
+    kind: functional
+    risk: medium
+    verify: wire_codec::frontend_extended_query_round_trip
+  r5_terminate:
+    id: R5
+    text: "Terminate frontend frame round-trips as a fixed-shape, fieldless tagged message."
+    kind: functional
+    risk: low
+    verify: wire_codec::frontend_terminate_round_trip
+  r6_auth_family:
+    id: R6
+    text: "Authentication backend messages (Ok, CleartextPassword, MD5Password with 4-byte salt, SASL mechanism list, SASL continue/final opaque frames) round-trip."
+    kind: functional
+    risk: medium
+    verify: wire_codec::backend_authentication_family_round_trip
+  r7_status_and_keydata:
+    id: R7
+    text: "ParameterStatus, BackendKeyData, and ReadyForQuery backend messages round-trip their typed fields including the ReadyForQuery status byte mapping to TransactionStatus."
+    kind: functional
+    risk: low
+    verify: wire_codec::backend_parameter_status_keydata_ready_round_trip
+  r8_result_set:
+    id: R8
+    text: "RowDescription (field metadata list), DataRow (nullable column bytes), and CommandComplete backend messages round-trip a representative result set."
+    kind: functional
+    risk: medium
+    verify: wire_codec::backend_result_set_round_trip
+  r9_error_notice:
+    id: R9
+    text: "ErrorResponse and NoticeResponse backend messages round-trip their null-terminated field-code/value map."
+    kind: functional
+    risk: low
+    verify: wire_codec::backend_error_notice_round_trip
 ---
 flowchart TD
-    r1[R1 example requirement] --> fill_concrete_verification_target_e_g_a_test_name[(fill: concrete verification target, e.g. a test name)]
+    r1[R1 r1 startup and ssl] --> wire_codec_frontend_startup_and_ssl_round_trip[wire_codec::frontend_startup_and_ssl_round_trip]
+    r2[R2 r2 auth frames] --> wire_codec_frontend_password_and_sasl_round_trip[wire_codec::frontend_password_and_sasl_round_trip]
+    r3[R3 r3 simple query] --> wire_codec_frontend_query_round_trip[wire_codec::frontend_query_round_trip]
+    r4[R4 r4 extended query] --> wire_codec_frontend_extended_query_round_trip[wire_codec::frontend_extended_query_round_trip]
+    r5[R5 r5 terminate] --> wire_codec_frontend_terminate_round_trip[wire_codec::frontend_terminate_round_trip]
+    r6[R6 r6 auth family] --> wire_codec_backend_authentication_family_round_trip[wire_codec::backend_authentication_family_round_trip]
+    r7[R7 r7 status and keydata] --> wire_codec_backend_parameter_status_keydata_ready_round_trip[wire_codec::backend_parameter_status_keydata_ready_round_trip]
+    r8[R8 r8 result set] --> wire_codec_backend_result_set_round_trip[wire_codec::backend_result_set_round_trip]
+    r9[R9 r9 error notice] --> wire_codec_backend_error_notice_round_trip[wire_codec::backend_error_notice_round_trip]
+    r10[R10 r10 bounded oversized] --> wire_codec_reader_rejects_oversized_frame[wire_codec::reader_rejects_oversized_frame]
+    r11[R11 r11 malformed no panic] --> wire_codec_decode_rejects_malformed_input_without_panic[wire_codec::decode_rejects_malformed_input_without_panic]
+    r12[R12 r12 split partial reads] --> wire_codec_reader_handles_split_and_partial_reads[wire_codec::reader_handles_split_and_partial_reads]
+    r13[R13 r13 tx status session] --> wire_codec_transaction_status_tracks_simple_and_extended_session[wire_codec::transaction_status_tracks_simple_and_extended_session]
 ```
