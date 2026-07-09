@@ -2,10 +2,10 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = "projects/jet/tech-design"
-generated_at = "2026-07-09T14:46:15.021834+00:00"
-digest = "sha256:40c03e793498e5a1010bde3b57ce15b0482c360c6318fa46f249b7c076ebb7fc"
-source_digest = "sha256:40c03e793498e5a1010bde3b57ce15b0482c360c6318fa46f249b7c076ebb7fc"
-ir_digest = "sha256:ca003cf1548d73a6ea2e210969a9a1ac400e5742cd3b9858c84369dc75692ae8"
+generated_at = "2026-07-09T15:02:01.282235+00:00"
+digest = "sha256:945b53586fddcb2f56cf5e78dc81fda2928856788f3bb052aa4b377b725befce"
+source_digest = "sha256:945b53586fddcb2f56cf5e78dc81fda2928856788f3bb052aa4b377b725befce"
+ir_digest = "sha256:587016c172e7c6e8db65b2a150f699de453e6dd9b037e331602b0484462a392b"
 
 [[files]]
 path = "config/jet-transform-resolver-nx-tsconfig-path-aliases-never-wired-into.md"
@@ -117,8 +117,8 @@ section_count = 2
 
 [[files]]
 path = "semantic/jet-stories.md"
-digest = "sha256:1d0bb22d83e02f6f2874e0fca9445acbe15a476227eb7c6129fa91817efa1dbf"
-ir_digest = "sha256:c0bd70b305a96822bf976c8f3d8fc96a89685b227d264a7462d78465942112c8"
+digest = "sha256:acffcce456fc23f616ae4c05a2d59d6b6f7fbdcbd940be2ba7f574b7e5c724fe"
+ir_digest = "sha256:508adb15404edcc46dbbe0b7230498d7a0096ebfd6a9ca24f9c8fb6b2dbcf1b3"
 section_count = 2
 
 [[files]]
