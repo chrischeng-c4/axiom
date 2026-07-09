@@ -180,7 +180,6 @@ flowchart TD
     r9[R9 operator feature build green] --> cargo_test_p_tape_features_operator[cargo test -p tape --features operator]
     r10[R10 llm topic names deploy verbs] --> tests_deploy_cli_rs_llm_topic_names_deploy_verbs[tests/deploy_cli.rs::llm_topic_names_deploy_verbs]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
