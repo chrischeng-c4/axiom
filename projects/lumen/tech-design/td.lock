@@ -2,10 +2,16 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "projects/lumen/tech-design"
-generated_at = "2026-07-09T18:56:46.863571+00:00"
-digest = "sha256:93d4812318bd567fc3e3c5ce4ae84c146d5bd939bd99cbeb9f06bc2fde83b37d"
-source_digest = "sha256:93d4812318bd567fc3e3c5ce4ae84c146d5bd939bd99cbeb9f06bc2fde83b37d"
-ir_digest = "sha256:8684db18e9072aa7e96c8eca8144cdad9ef8725787347268b3cb55ff280a18b2"
+generated_at = "2026-07-09T20:02:03.717080+00:00"
+digest = "sha256:395c000f519ccdf4a1feb058e374f60839a6b60e0e551a03543f23931b977a86"
+source_digest = "sha256:395c000f519ccdf4a1feb058e374f60839a6b60e0e551a03543f23931b977a86"
+ir_digest = "sha256:e967112839db7974f808d17ba87c141019fd7788cad77d55ffee0502c568d519"
+
+[[files]]
+path = "interfaces/cli/cli-connect-query-k8s-agent-workflow.md"
+digest = "sha256:9f3e0f8bf127413ce566c18f0b37d6367f425cdf79f04084e849951a75b1cde8"
+ir_digest = "sha256:230401b78600e221a16d70253ee8979b97eaf3a16967c68806b849ee5f7c53c2"
+section_count = 3
 
 [[files]]
 path = "interfaces/cli/lumen-cli-add-dump-load-export-import-snapshot-verbs.md"
@@ -321,8 +327,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-lumen-src-bin-lumen-rs.md"
-digest = "sha256:9c7f5e5706b8e6aebb51cffb737b4666d63cc69b3cd6b71839675dfa23e3e2f7"
-ir_digest = "sha256:7bfa8fcaf8b59cf845d7cc38fc0bd7492219abcefc38316e53ab3d8904df3077"
+digest = "sha256:92476478f222a6744de6d766f3884213c55b0211d73736852abdd4fe46daf0be"
+ir_digest = "sha256:2b6321f67c23086ea75d17e3abfe9e5c344fafb4ab5b09c2c065e217181b879c"
 section_count = 3
 
 [[files]]
@@ -447,8 +453,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-lumen-src-spec-rs.md"
-digest = "sha256:cde583d1e7caa0eafd4cac5f03d9bda64c15ff0c2d97f0faff1967e1b08c133f"
-ir_digest = "sha256:96c680d2925b3caec210aef2b73506b79acef4ed1daebafeb283612cb18c8987"
+digest = "sha256:bbc03a54ec2d5d532638a4daeb714cf9f6e641f01e9d393fce4181c28436b20a"
+ir_digest = "sha256:2d128cf4950d4361c6e953d1c70856a06c703b922fc17702b5e99d09aa7db257"
 section_count = 3
 
 [[files]]

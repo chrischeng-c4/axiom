@@ -133,6 +133,20 @@ enum Command {
     /// `lumen llm --topic storage`), but works standalone. Requires the `backup`
     /// feature (pulled in transitively by `operator`).
     Backup(BackupArgs),
+    /// Manage a `kubectl port-forward` for the duration of a wrapped command
+    /// against a k8s-deployed Lumen instance — no manually tracked
+    /// port-forward process (`lumen llm --topic recipes` has a worked
+    /// example). Resolves a bearer token from the deployment's
+    /// token-registry Secret when `--secret`/`--cr` is given (see `lumen llm
+    /// --topic auth`).
+    // @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
+    Connect(ConnectArgs),
+    /// One-shot query wrappers against a reachable lumen node: `index`,
+    /// `search`, `duplicates`, `collections list`. Assembles the exact wire
+    /// body `lumen spec --shapes` publishes — no interactive REPL. Requires
+    /// the `backup` feature (pulled in transitively by `operator`).
+    // @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
+    Query(QueryArgs),
 }
 
 #[derive(clap::Args)]
@@ -419,6 +433,200 @@ struct BackupArgs {
     retention_secs: Option<u64>,
 }
 
+/// `lumen connect` flags (#1321): manage a `kubectl port-forward` around a
+/// wrapped command so an agent never tracks the port-forward process itself.
+/// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
+#[derive(clap::Args)]
+struct ConnectArgs {
+    /// kubectl context to port-forward through. Omit to use the current context.
+    #[arg(long)]
+    context: Option<String>,
+    /// Namespace of the target Service (or `Lumen` CR when `--cr` is set).
+    #[arg(long)]
+    namespace: String,
+    /// Target Service name. Defaults to the `--cr` name when `--cr` is set
+    /// (the client Service shares the CR's own metadata name).
+    #[arg(long)]
+    service: Option<String>,
+    /// `Lumen` CR name. When set (and `--service` is omitted) the Service
+    /// name defaults to this CR's own name, and its `spec.tokensSecret` (if
+    /// any) auto-resolves `--secret`.
+    #[arg(long)]
+    cr: Option<String>,
+    /// Local port to forward to. Omit to pick a free ephemeral port.
+    #[arg(long)]
+    local_port: Option<u16>,
+    /// Remote (Service) port.
+    #[arg(long, default_value_t = 7373)]
+    remote_port: u16,
+    /// Secret name holding a `token-registry.json` key (see `lumen llm
+    /// --topic auth`). Auto-resolved from `--cr`'s `spec.tokensSecret` when
+    /// omitted and `--cr` is set.
+    #[arg(long)]
+    secret: Option<String>,
+    /// Minimum role the resolved token must cover.
+    #[arg(long, value_enum, default_value_t = TokenRole::Admin)]
+    role: TokenRole,
+    /// Collection id the resolved token must be authorized against. Omit for
+    /// the wildcard `*` grant.
+    #[arg(long)]
+    collection: Option<String>,
+    /// The command to run with `LUMEN_URL` (and `LUMEN_TOKEN`, when
+    /// resolved) set to the local end of the port-forward. Everything after
+    /// `--`, e.g. `lumen connect --namespace prod --cr search -- lumen query
+    /// collections list`.
+    #[arg(last = true, required = true)]
+    command: Vec<String>,
+}
+
+/// Bearer-token role required for `lumen connect`/`lumen query`'s Secret
+/// token resolution (R2). Mirrors `service_auth::Role`.
+#[derive(Clone, Copy, ValueEnum)]
+enum TokenRole {
+    Read,
+    Write,
+    Admin,
+}
+
+/// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
+impl From<TokenRole> for lumen::auth::Role {
+    fn from(role: TokenRole) -> Self {
+        match role {
+            TokenRole::Read => lumen::auth::Role::Read,
+            TokenRole::Write => lumen::auth::Role::Write,
+            TokenRole::Admin => lumen::auth::Role::Admin,
+        }
+    }
+}
+
+/// Shared k8s-aware token/target resolution for `lumen connect` and `lumen
+/// query *` (R2): an explicit `--token`/`LUMEN_TOKEN` wins; otherwise, when
+/// `--namespace`/`--secret` are set, resolve one bearer token from the
+/// deployment's token-registry Secret (see `lumen llm --topic auth`) whose
+/// role covers `--role` for the query's collection (or the wildcard `*`).
+/// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
+#[derive(clap::Args, Clone)]
+struct QueryTarget {
+    /// Base URL of a reachable lumen serving node, e.g. `http://localhost:7373`
+    /// — what `lumen connect` sets for the wrapped command.
+    #[arg(long, env = "LUMEN_URL")]
+    url: Option<String>,
+    /// Explicit bearer token. Falls back to `LUMEN_TOKEN`, then to the
+    /// token-registry Secret named by `--namespace`/`--secret`.
+    #[arg(long, env = "LUMEN_TOKEN")]
+    token: Option<String>,
+    /// kubectl context for Secret resolution.
+    #[arg(long)]
+    context: Option<String>,
+    /// Namespace holding the token-registry Secret.
+    #[arg(long)]
+    namespace: Option<String>,
+    /// Secret name holding a `token-registry.json` key.
+    #[arg(long)]
+    secret: Option<String>,
+    /// Minimum role the resolved token must cover.
+    #[arg(long, value_enum, default_value_t = TokenRole::Admin)]
+    role: TokenRole,
+}
+
+/// `lumen query <index|search|duplicates|collections>` flags (#1321): thin
+/// one-shot wrappers assembling the exact `lumen spec --shapes` wire body.
+/// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
+#[derive(clap::Args)]
+struct QueryArgs {
+    #[command(subcommand)]
+    command: QueryCommand,
+}
+
+#[derive(Subcommand)]
+enum QueryCommand {
+    /// `POST /collections/{id}/index` — index one or more field values. Wire
+    /// body is FLAT: `{"items":[{"external_id","field","value"}]}` — NOT a
+    /// nested `{id, fields:{...}}` shape (see `lumen spec --shapes` → "index").
+    Index(QueryIndexArgs),
+    /// `POST /collections/{id}/search` — term/match/raw-JSON one-shot search.
+    Search(QuerySearchArgs),
+    /// `POST /collections/{id}/duplicates` — find external_ids sharing a value.
+    Duplicates(QueryDuplicatesArgs),
+    /// Collection-level read helpers.
+    Collections(QueryCollectionsArgs),
+}
+
+#[derive(clap::Args)]
+struct QueryIndexArgs {
+    #[command(flatten)]
+    target: QueryTarget,
+    /// Target collection id.
+    #[arg(long)]
+    collection: String,
+    /// One item as `EXTERNAL_ID:FIELD=VALUE` (repeatable). `VALUE` is parsed
+    /// as JSON when possible (numbers, `[..]` vectors/string-lists), else
+    /// kept as a plain string — so `p1:price=79` and
+    /// `p1:embedding=[0.1,0.2,0.9]` both work unquoted.
+    #[arg(long = "item", value_name = "EXTERNAL_ID:FIELD=VALUE", required = true)]
+    items: Vec<String>,
+}
+
+#[derive(clap::Args)]
+struct QuerySearchArgs {
+    #[command(flatten)]
+    target: QueryTarget,
+    /// Target collection id.
+    #[arg(long)]
+    collection: String,
+    /// Exact term match: `FIELD=VALUE`. Exactly one of `--term`/`--match`/
+    /// `--query-json` is required.
+    #[arg(long, value_name = "FIELD=VALUE")]
+    term: Option<String>,
+    /// BM25 text match: `FIELD=TEXT`. Exactly one of `--term`/`--match`/
+    /// `--query-json` is required.
+    #[arg(long = "match", value_name = "FIELD=TEXT")]
+    match_: Option<String>,
+    /// Raw `QueryNode` JSON — escape hatch for shapes `--term`/`--match`
+    /// don't cover (`lumen spec --shapes` has the full cookbook). Exactly one
+    /// of `--term`/`--match`/`--query-json` is required.
+    #[arg(long)]
+    query_json: Option<String>,
+    #[arg(long, default_value_t = 20)]
+    limit: u32,
+}
+
+#[derive(clap::Args)]
+struct QueryDuplicatesArgs {
+    #[command(flatten)]
+    target: QueryTarget,
+    /// Target collection id.
+    #[arg(long)]
+    collection: String,
+    /// Field to find shared values on.
+    #[arg(long)]
+    field: String,
+    #[arg(long, default_value_t = 2)]
+    min_group_size: u32,
+    #[arg(long, default_value_t = 100)]
+    limit: u32,
+    #[arg(long, default_value_t = 0)]
+    offset: u32,
+}
+
+#[derive(clap::Args)]
+struct QueryCollectionsArgs {
+    #[command(subcommand)]
+    command: QueryCollectionsCommand,
+}
+
+#[derive(Subcommand)]
+enum QueryCollectionsCommand {
+    /// `GET /collections` — list collection ids visible to the resolved token.
+    List(QueryCollectionsListArgs),
+}
+
+#[derive(clap::Args)]
+struct QueryCollectionsListArgs {
+    #[command(flatten)]
+    target: QueryTarget,
+}
+
 /// `lumen dump|export` flags (#1095): pulls SnapshotV1 JSON from a running
 /// serving fleet and writes the exact bytes to stdout or a local file.
 #[derive(clap::Args)]
@@ -463,6 +671,8 @@ enum LlmTopic {
     Quickstart,
     /// Bearer-token auth, token registry schema, and Secret projection.
     Auth,
+    /// Kubernetes-native deployment topology, shard/replica knobs, and bootstrap.
+    Deployment,
     /// Operator storage/ops contract: StatefulSet + durable PVC-backed WAL,
     /// including at `replicasPerShard: 1`.
     Storage,
@@ -642,8 +852,8 @@ struct ServeArgs {
     #[cfg(feature = "raft-wal")]
     #[arg(long, env = "LUMEN_RAFT_PORT", default_value_t = 7374)]
     raft_port: u16,
-    /// Shard count for client-side routing (`crc32(collection) % N`).
-    /// Install-time topology constant.
+    /// Physical storage shard count. Data ownership uses the versioned
+    /// virtual-bucket map, not permanent `hash % shardCount` routing.
     #[arg(long, env = "SHARD_COUNT", default_value_t = 1)]
     shard_count: u32,
     /// Directory for RDB snapshots (cold-start baseline). When unset,
@@ -661,6 +871,15 @@ struct ServeArgs {
     /// writes still apply to the node's local engine/log.
     #[arg(long, env = "LUMEN_SEARCH_SHARD_SEGMENT_DIRS", value_delimiter = ',')]
     search_shard_segment_dirs: Vec<PathBuf>,
+    /// Optional SnapshotV1 JSON seed URI for empty-PVC bootstrap. Supports
+    /// exact `file://` paths and, in backup-enabled builds, exact
+    /// `s3://bucket/key` objects.
+    #[arg(long, env = "LUMEN_BOOTSTRAP_SEED_URI")]
+    bootstrap_seed_uri: Option<String>,
+    /// Optional seed fetch throttle advertised in CR/env. Exact object fetch is
+    /// a one-shot read; streaming throttle belongs in the source adapter.
+    #[arg(long, env = "LUMEN_BOOTSTRAP_MAX_BYTES_PER_SEC")]
+    bootstrap_max_bytes_per_sec: Option<u64>,
     /// Seconds between RDB snapshots when `--data-dir` is set.
     #[arg(long, env = "LUMEN_SNAPSHOT_SECS", default_value_t = 300)]
     snapshot_secs: u64,
@@ -709,6 +928,7 @@ async fn main() -> Result<()> {
                 LlmTopic::Integration => lumen::spec::llm_integration_md(),
                 LlmTopic::Quickstart => lumen::spec::llm_quickstart_md(),
                 LlmTopic::Auth => lumen::spec::llm_auth_md(),
+                LlmTopic::Deployment => lumen::spec::llm_deployment_md(),
                 LlmTopic::Storage => lumen::spec::llm_storage_md(),
                 LlmTopic::Recipes => lumen::spec::llm_recipes_md(),
             };
@@ -734,6 +954,9 @@ async fn main() -> Result<()> {
                     )?,
                     LlmTopic::Auth => serde_json::to_string_pretty(
                         &serde_json::json!({ "topic": "auth", "markdown": md }),
+                    )?,
+                    LlmTopic::Deployment => serde_json::to_string_pretty(
+                        &serde_json::json!({ "topic": "deployment", "markdown": md }),
                     )?,
                     LlmTopic::Storage => serde_json::to_string_pretty(
                         &serde_json::json!({ "topic": "storage", "markdown": md }),
@@ -761,6 +984,8 @@ async fn main() -> Result<()> {
         Command::Backup(args) => dispatch_backup(args).await,
         Command::Dump(args) | Command::Export(args) => dispatch_snapshot_export(args).await,
         Command::Load(args) | Command::Import(args) => dispatch_snapshot_import(args).await,
+        Command::Connect(args) => connect(args).await,
+        Command::Query(args) => dispatch_query(args).await,
     }
 }
 
@@ -1171,6 +1396,447 @@ fn restore_file_next_command(url: &str, path: &Path, has_token: bool) -> String 
     format!("lumen import --url {url}{auth} --file {}", path.display())
 }
 
+// ---------------------------------------------------------------------------
+// `lumen connect` / `lumen query` (#1321)
+// ---------------------------------------------------------------------------
+
+/// RAII child-process guard: kills + reaps on drop so a `kubectl
+/// port-forward` never survives the wrapped command (AC1). Prior art:
+/// `projects/preview/tests/kind_lifecycle.rs`'s `ChildGuard`, generalized
+/// here over any `std::process::Command` so it is unit-testable with a fake
+/// child instead of requiring a real cluster.
+/// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
+struct ChildGuard {
+    child: std::process::Child,
+}
+
+/// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
+impl ChildGuard {
+    fn spawn(command: &mut std::process::Command) -> Result<Self> {
+        let child = command.spawn().context("spawn child process")?;
+        Ok(Self { child })
+    }
+}
+
+/// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Bind an ephemeral local port and immediately release it, returning the
+/// number `kubectl port-forward` should target. There is an inherent
+/// TOCTOU race (someone else could bind it first), the same tradeoff
+/// `projects/preview/tests/kind_lifecycle.rs::free_local_port` makes.
+fn free_local_port() -> Result<u16> {
+    let listener =
+        std::net::TcpListener::bind(("127.0.0.1", 0)).context("bind ephemeral local port")?;
+    Ok(listener.local_addr().context("read local addr")?.port())
+}
+
+/// Poll `127.0.0.1:port` until a TCP connect succeeds or `timeout` elapses —
+/// the port-forward readiness gate for AC1 (no fixed sleep, no dependency on
+/// kubectl's own stdout).
+fn wait_for_local_port_ready(port: u16, timeout: Duration) -> Result<()> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!("port-forward to 127.0.0.1:{port} never became ready within {timeout:?}");
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// Pure: extract `spec.tokensSecret` from a `Lumen` CR's `kubectl get -o
+/// json` output (see `lumen::operator::crd::LumenSpec::tokens_secret`).
+fn cr_tokens_secret(cr_json: &serde_json::Value) -> Option<String> {
+    cr_json["spec"]["tokensSecret"].as_str().map(str::to_string)
+}
+
+/// Run `kubectl get <resource> <name> -n <namespace> -o json` (optionally
+/// through `--context`) and parse the result.
+fn kubectl_get_json(
+    context: Option<&str>,
+    resource: &str,
+    name: &str,
+    namespace: &str,
+) -> Result<serde_json::Value> {
+    let mut cmd = std::process::Command::new("kubectl");
+    if let Some(ctx) = context {
+        cmd.args(["--context", ctx]);
+    }
+    cmd.args(["get", resource, name, "-n", namespace, "-o", "json"]);
+    let output = cmd
+        .output()
+        .with_context(|| format!("run kubectl get {resource} {name} -n {namespace}"))?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "kubectl get {resource} {name} -n {namespace} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    serde_json::from_slice(&output.stdout)
+        .with_context(|| format!("parse kubectl get {resource} {name} JSON"))
+}
+
+/// Resolve a `Lumen` CR's `spec.tokensSecret` (empty when unset).
+fn resolve_cr_tokens_secret(
+    context: Option<&str>,
+    namespace: &str,
+    cr: &str,
+) -> Result<Option<String>> {
+    let cr_json = kubectl_get_json(context, "lumen", cr, namespace)?;
+    Ok(cr_tokens_secret(&cr_json))
+}
+
+/// Pure: decode a Kubernetes Secret's `data.<key>` (base64) field into raw
+/// bytes. `kubectl get secret -o json` always base64-encodes `.data`.
+fn secret_data_bytes(secret_json: &serde_json::Value, key: &str) -> Result<Vec<u8>> {
+    use base64::Engine;
+    let encoded = secret_json["data"][key]
+        .as_str()
+        .with_context(|| format!("secret has no data key `{key}`"))?;
+    base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .context("base64-decode secret data")
+}
+
+/// Pick the first registry token whose roles cover `role` for `collection`
+/// (falling back to the wildcard `*` grant). Pure — unit-testable without
+/// any I/O; deterministic tie-break is not needed since callers name a
+/// specific role/collection scope for their own token.
+fn select_token(
+    registry: &std::collections::HashMap<String, lumen::auth::TokenClaims>,
+    role: lumen::auth::Role,
+    collection: Option<&str>,
+) -> Option<String> {
+    registry.iter().find_map(|(token, claims)| {
+        let granted = collection
+            .and_then(|c| claims.roles.get(c))
+            .or_else(|| claims.roles.get("*"));
+        granted
+            .is_some_and(|granted| granted.covers(role))
+            .then(|| token.clone())
+    })
+}
+
+/// R2: resolve a usable bearer token without the caller decoding the
+/// Secret/JSON by hand. Precedence: `target.token` (explicit flag or
+/// `LUMEN_TOKEN`) wins; otherwise, when `--namespace`/`--secret` are both
+/// set, fetch the Secret via kubectl, decode its `token-registry.json` key
+/// (the same schema `lumen llm --topic auth` documents), and pick a token
+/// whose role covers `target.role` for `collection` (or `*`). Returns `None`
+/// when no token can be resolved (e.g. `spec.auth: off` deployments).
+/// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
+fn resolve_token(target: &QueryTarget, collection: Option<&str>) -> Result<Option<String>> {
+    if let Some(token) = &target.token {
+        return Ok(Some(token.clone()));
+    }
+    let (Some(namespace), Some(secret)) = (target.namespace.as_deref(), target.secret.as_deref())
+    else {
+        return Ok(None);
+    };
+    let secret_json = kubectl_get_json(target.context.as_deref(), "secret", secret, namespace)?;
+    let bytes = secret_data_bytes(&secret_json, "token-registry.json")?;
+    let registry: std::collections::HashMap<String, lumen::auth::TokenClaims> =
+        serde_json::from_slice(&bytes).context("parse token-registry.json")?;
+    Ok(select_token(&registry, target.role.into(), collection))
+}
+
+// The body-builder / URL-resolution helpers below are exercised directly by
+// `dispatch_query`'s `backup`-gated real implementation and by this file's
+// unit tests; `cfg(any(test, feature = "backup"))` keeps them from tripping
+// dead-code warnings in a plain default (non-`backup`) build while staying
+// available to `cargo test -p lumen` without requiring `--features backup`.
+#[cfg(any(test, feature = "backup"))]
+fn resolve_base_url(target: &QueryTarget) -> Result<String> {
+    target
+        .url
+        .clone()
+        .context("--url is required (or set LUMEN_URL, or run inside `lumen connect ... -- ...`)")
+}
+
+/// `lumen connect` (#1321, R1): spawn `kubectl port-forward`, wait until the
+/// local end is reachable, run the wrapped command with `LUMEN_URL` (and
+/// `LUMEN_TOKEN`, when resolved) set, then tear the port-forward down
+/// (`ChildGuard::drop`) once the wrapped command exits — regardless of its
+/// exit status — so no port-forward process is left for the caller to track.
+/// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
+async fn connect(args: ConnectArgs) -> Result<()> {
+    let service = args
+        .service
+        .clone()
+        .or_else(|| args.cr.clone())
+        .context("--service or --cr is required")?;
+
+    let secret = match args.secret.clone() {
+        Some(secret) => Some(secret),
+        None => match &args.cr {
+            Some(cr) => resolve_cr_tokens_secret(args.context.as_deref(), &args.namespace, cr)?,
+            None => None,
+        },
+    };
+
+    let local_port = match args.local_port {
+        Some(port) => port,
+        None => free_local_port()?,
+    };
+
+    let mut pf_cmd = std::process::Command::new("kubectl");
+    if let Some(ctx) = &args.context {
+        pf_cmd.args(["--context", ctx]);
+    }
+    pf_cmd.args([
+        "port-forward",
+        "-n",
+        &args.namespace,
+        &format!("svc/{service}"),
+        &format!("{local_port}:{}", args.remote_port),
+    ]);
+    pf_cmd.stdout(std::process::Stdio::null());
+    pf_cmd.stderr(std::process::Stdio::null());
+    let _forward = ChildGuard::spawn(&mut pf_cmd).context("start kubectl port-forward")?;
+
+    wait_for_local_port_ready(local_port, Duration::from_secs(30))?;
+
+    let target = QueryTarget {
+        url: None,
+        token: None,
+        context: args.context.clone(),
+        namespace: Some(args.namespace.clone()),
+        secret,
+        role: args.role,
+    };
+    let token = resolve_token(&target, args.collection.as_deref())?;
+
+    let base_url = format!("http://127.0.0.1:{local_port}");
+    let (program, rest) = args
+        .command
+        .split_first()
+        .context("wrapped command is empty")?;
+    let mut child_cmd = std::process::Command::new(program);
+    child_cmd.args(rest);
+    child_cmd.env("LUMEN_URL", &base_url);
+    if let Some(token) = &token {
+        child_cmd.env("LUMEN_TOKEN", token);
+    }
+    let status = child_cmd.status().context("run wrapped command")?;
+    // `_forward` drops here (end of scope), tearing the port-forward down
+    // whether the wrapped command succeeded or not (AC1).
+    if !status.success() {
+        anyhow::bail!("wrapped command exited with {status}");
+    }
+    Ok(())
+}
+
+/// Parse a CLI-supplied value into a `FieldValue`: JSON first (so
+/// `--item p1:price=79` and `--item p1:embedding=[0.1,0.2,0.9]` work
+/// unquoted), else the raw string.
+#[cfg(any(test, feature = "backup"))]
+fn parse_field_value(raw: &str) -> lumen::types::FieldValue {
+    serde_json::from_str::<lumen::types::FieldValue>(raw)
+        .unwrap_or_else(|_| lumen::types::FieldValue::String(raw.to_string()))
+}
+
+/// Parse one `--item EXTERNAL_ID:FIELD=VALUE` flag into an `IndexItem`.
+#[cfg(any(test, feature = "backup"))]
+fn parse_index_item(spec: &str) -> Result<lumen::types::IndexItem> {
+    let (external_id, rest) = spec
+        .split_once(':')
+        .with_context(|| format!("--item `{spec}` must be EXTERNAL_ID:FIELD=VALUE"))?;
+    let (field, value) = rest
+        .split_once('=')
+        .with_context(|| format!("--item `{spec}` must be EXTERNAL_ID:FIELD=VALUE"))?;
+    Ok(lumen::types::IndexItem {
+        external_id: external_id.to_string(),
+        field: field.to_string(),
+        value: parse_field_value(value),
+        version: None,
+    })
+}
+
+/// AC3: build the exact flat `POST /collections/{id}/index` body —
+/// `{"items":[{"external_id","field","value"}]}` — matching the shape
+/// `lumen::spec::query_shapes()`'s "index" entry publishes, NOT a nested
+/// `{id, fields:{...}}` shape.
+#[cfg(any(test, feature = "backup"))]
+fn build_index_body(collection: &str, items: &[String]) -> Result<(String, serde_json::Value)> {
+    let parsed: Result<Vec<_>> = items.iter().map(|s| parse_index_item(s)).collect();
+    let request = lumen::types::IndexRequest {
+        items: parsed?,
+        request_id: None,
+    };
+    let body = serde_json::to_value(&request).context("serialize IndexRequest")?;
+    Ok((format!("/collections/{collection}/index"), body))
+}
+
+/// Build the `QueryNode` for `lumen query search` from exactly one of
+/// `--term`/`--match`/`--query-json`.
+#[cfg(any(test, feature = "backup"))]
+fn build_search_query_node(args: &QuerySearchArgs) -> Result<lumen::types::QueryNode> {
+    let set_count = [
+        args.term.is_some(),
+        args.match_.is_some(),
+        args.query_json.is_some(),
+    ]
+    .into_iter()
+    .filter(|set| *set)
+    .count();
+    if set_count != 1 {
+        anyhow::bail!("exactly one of --term, --match, --query-json is required");
+    }
+    if let Some(term) = &args.term {
+        let (field, value) = term.split_once('=').context("--term must be FIELD=VALUE")?;
+        return Ok(lumen::types::QueryNode::Term(lumen::types::TermQuery {
+            field: field.to_string(),
+            value: parse_field_value(value),
+        }));
+    }
+    if let Some(m) = &args.match_ {
+        let (field, text) = m.split_once('=').context("--match must be FIELD=TEXT")?;
+        return Ok(lumen::types::QueryNode::Match(lumen::types::MatchQuery {
+            field: field.to_string(),
+            text: text.to_string(),
+            op: lumen::types::MatchOp::And,
+        }));
+    }
+    let raw = args
+        .query_json
+        .as_deref()
+        .expect("exactly one branch checked above");
+    serde_json::from_str(raw).context("--query-json is not a valid QueryNode")
+}
+
+/// Build the `POST /collections/{id}/search` body for `lumen query search`.
+#[cfg(any(test, feature = "backup"))]
+fn build_search_body(args: &QuerySearchArgs) -> Result<(String, serde_json::Value)> {
+    let query = build_search_query_node(args)?;
+    let request = lumen::types::SearchRequest {
+        query,
+        limit: args.limit,
+        cursor: None,
+        routing_key: None,
+        sort: None,
+        track_total: true,
+        collapse: None,
+    };
+    let body = serde_json::to_value(&request).context("serialize SearchRequest")?;
+    Ok((format!("/collections/{}/search", args.collection), body))
+}
+
+/// Build the `POST /collections/{id}/duplicates` body for `lumen query duplicates`.
+#[cfg(any(test, feature = "backup"))]
+fn build_duplicates_body(args: &QueryDuplicatesArgs) -> Result<(String, serde_json::Value)> {
+    let request = lumen::types::DuplicatesRequest {
+        field: args.field.clone(),
+        min_group_size: args.min_group_size,
+        limit: args.limit,
+        offset: args.offset,
+    };
+    let body = serde_json::to_value(&request).context("serialize DuplicatesRequest")?;
+    Ok((format!("/collections/{}/duplicates", args.collection), body))
+}
+
+#[cfg(feature = "backup")]
+async fn http_post_json(
+    base_url: &str,
+    token: Option<&str>,
+    path: &str,
+    body: serde_json::Value,
+) -> Result<serde_json::Value> {
+    let url = format!("{}{path}", base_url.trim_end_matches('/'));
+    let client = reqwest::Client::new();
+    let mut req = client.post(&url).json(&body);
+    if let Some(token) = token {
+        req = req.bearer_auth(token);
+    }
+    let resp = req.send().await.with_context(|| format!("POST {url}"))?;
+    let status = resp.status();
+    let payload: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+    if !status.is_success() {
+        anyhow::bail!("POST {url} returned {status}: {payload}");
+    }
+    Ok(payload)
+}
+
+#[cfg(feature = "backup")]
+async fn http_get_json(
+    base_url: &str,
+    token: Option<&str>,
+    path: &str,
+) -> Result<serde_json::Value> {
+    let url = format!("{}{path}", base_url.trim_end_matches('/'));
+    let client = reqwest::Client::new();
+    let mut req = client.get(&url);
+    if let Some(token) = token {
+        req = req.bearer_auth(token);
+    }
+    let resp = req.send().await.with_context(|| format!("GET {url}"))?;
+    let status = resp.status();
+    let payload: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+    if !status.is_success() {
+        anyhow::bail!("GET {url} returned {status}: {payload}");
+    }
+    Ok(payload)
+}
+
+/// `lumen query` dispatch (#1321, R3): resolves `--url`/token via
+/// `QueryTarget` (R2, shared with `lumen connect`), assembles the exact wire
+/// body, and POSTs/GETs it. No REPL, no new HTTP endpoint.
+/// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
+#[cfg(feature = "backup")]
+async fn dispatch_query(args: QueryArgs) -> Result<()> {
+    match args.command {
+        QueryCommand::Index(args) => {
+            let base = resolve_base_url(&args.target)?;
+            let token = resolve_token(&args.target, Some(&args.collection))?;
+            let (path, body) = build_index_body(&args.collection, &args.items)?;
+            let resp = http_post_json(&base, token.as_deref(), &path, body).await?;
+            println!("{}", serde_json::to_string_pretty(&resp)?);
+            Ok(())
+        }
+        QueryCommand::Search(args) => {
+            let base = resolve_base_url(&args.target)?;
+            let token = resolve_token(&args.target, Some(&args.collection))?;
+            let (path, body) = build_search_body(&args)?;
+            let resp = http_post_json(&base, token.as_deref(), &path, body).await?;
+            println!("{}", serde_json::to_string_pretty(&resp)?);
+            Ok(())
+        }
+        QueryCommand::Duplicates(args) => {
+            let base = resolve_base_url(&args.target)?;
+            let token = resolve_token(&args.target, Some(&args.collection))?;
+            let (path, body) = build_duplicates_body(&args)?;
+            let resp = http_post_json(&base, token.as_deref(), &path, body).await?;
+            println!("{}", serde_json::to_string_pretty(&resp)?);
+            Ok(())
+        }
+        QueryCommand::Collections(args) => match args.command {
+            QueryCollectionsCommand::List(args) => {
+                let base = resolve_base_url(&args.target)?;
+                let token = resolve_token(&args.target, None)?;
+                let resp = http_get_json(&base, token.as_deref(), "/collections").await?;
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+                Ok(())
+            }
+        },
+    }
+}
+
+#[cfg(not(feature = "backup"))]
+async fn dispatch_query(_args: QueryArgs) -> Result<()> {
+    anyhow::bail!(
+        "this lumen build was compiled without backup support; rebuild with \
+         `--features backup` (or `operator`, which pulls it in — the published \
+         image includes both)"
+    )
+}
+
 fn render_source_dockerfile() -> String {
     strip_ownership_markers(include_str!("../../Dockerfile"))
 }
@@ -1358,6 +2024,15 @@ async fn serve(args: ServeArgs) -> Result<()> {
     );
 
     let engine = Arc::new(Engine::new());
+
+    if apply_bootstrap_seed(&engine, args.bootstrap_seed_uri.as_deref())? {
+        if let Some(limit) = args.bootstrap_max_bytes_per_sec {
+            tracing::info!(
+                max_bytes_per_sec = limit,
+                "bootstrap seed applied; read throttle reserved for object-store fetchers"
+            );
+        }
+    }
 
     // OTLP metrics push (opt-in, same endpoint as traces): observable
     // instruments read the engine's atomic counters and push to the collector.
@@ -1698,6 +2373,23 @@ async fn serve(args: ServeArgs) -> Result<()> {
     Ok(())
 }
 
+fn apply_bootstrap_seed(engine: &Engine, seed_uri: Option<&str>) -> Result<bool> {
+    let Some(seed_uri) = seed_uri else {
+        return Ok(false);
+    };
+    let bytes = service_backup::fetch_backup_object(seed_uri)
+        .with_context(|| format!("read bootstrap seed {seed_uri}"))?;
+    let snap: lumen::storage::SnapshotV1 =
+        serde_json::from_slice(&bytes).context("decode bootstrap SnapshotV1 JSON")?;
+    engine.restore(snap).context("apply bootstrap seed")?;
+    tracing::info!(
+        seed_uri,
+        bytes = bytes.len(),
+        "bootstrap seed restored before WAL/raft catch-up"
+    );
+    Ok(true)
+}
+
 /// Whether segment persistence is selected. Driven purely by `--persistence`:
 /// `false` for the default `cbor` mode (the binary's cold-start + snapshotter are
 /// byte-identical to today), `true` only when `--persistence=segment` is passed.
@@ -1973,8 +2665,355 @@ fn init_otel_meter(
     opentelemetry::global::set_meter_provider(provider);
     Ok(())
 }
-// CODEGEN-END
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lumen::types::{
+        CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest,
+        QueryNode, SearchRequest, TermQuery,
+    };
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn bootstrap_seed_file_restores_snapshot_before_catchup() {
+        let source = Engine::new();
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "tag".to_string(),
+            FieldSpec {
+                field_type: FieldType::Keyword,
+                analyzer: None,
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        source
+            .create_collection("c", CreateCollectionRequest { fields })
+            .unwrap();
+        source
+            .index(
+                "c",
+                IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: "doc-1".into(),
+                        field: "tag".into(),
+                        value: FieldValue::String("seeded".into()),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+
+        let path = std::env::temp_dir().join(format!(
+            "lumen-bootstrap-seed-{}-{}.json",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&source.snapshot().unwrap()).unwrap(),
+        )
+        .unwrap();
+
+        let target = Engine::new();
+        let uri = format!("file://{}", path.display());
+        assert!(apply_bootstrap_seed(&target, Some(&uri)).unwrap());
+        let result = target
+            .search(
+                "c",
+                SearchRequest {
+                    query: QueryNode::Term(TermQuery {
+                        field: "tag".into(),
+                        value: FieldValue::String("seeded".into()),
+                    }),
+                    limit: 10,
+                    cursor: None,
+                    routing_key: None,
+                    sort: None,
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(result.total, 1);
+        assert_eq!(result.hits[0].external_id, "doc-1");
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    // -----------------------------------------------------------------
+    // `lumen connect` / `lumen query` (#1321)
+    // -----------------------------------------------------------------
+
+    fn test_query_target() -> QueryTarget {
+        QueryTarget {
+            url: None,
+            token: None,
+            context: None,
+            namespace: None,
+            secret: None,
+            role: TokenRole::Admin,
+        }
+    }
+
+    #[test]
+    fn resolve_base_url_requires_explicit_url() {
+        let mut target = test_query_target();
+        assert!(resolve_base_url(&target).is_err());
+        target.url = Some("http://127.0.0.1:7373".to_string());
+        assert_eq!(resolve_base_url(&target).unwrap(), "http://127.0.0.1:7373");
+    }
+
+    #[test]
+    fn parse_field_value_prefers_json_then_falls_back_to_string() {
+        assert!(matches!(parse_field_value("79"), FieldValue::Number(n) if n == 79.0));
+        assert!(matches!(parse_field_value("acme"), FieldValue::String(s) if s == "acme"));
+        assert!(
+            matches!(parse_field_value("[0.1,0.2,0.9]"), FieldValue::Vector(v) if v.len() == 3)
+        );
+        assert!(matches!(
+            parse_field_value(r#"["a","b"]"#),
+            FieldValue::StringList(v) if v == vec!["a".to_string(), "b".to_string()]
+        ));
+    }
+
+    #[test]
+    fn parse_index_item_splits_external_id_field_value() {
+        let item = parse_index_item("row-42:email=person@example.com").unwrap();
+        assert_eq!(item.external_id, "row-42");
+        assert_eq!(item.field, "email");
+        assert!(matches!(item.value, FieldValue::String(ref s) if s == "person@example.com"));
+
+        assert!(parse_index_item("missing-colon").is_err());
+        assert!(parse_index_item("row-42:missing-equals").is_err());
+    }
+
+    /// AC3: `lumen query index`'s assembled body must match the FLAT shape
+    /// `lumen spec --shapes` publishes for "index" — the reporter's bug was
+    /// assuming a nested `{id, fields:{...}}` shape.
+    #[test]
+    fn build_index_body_matches_published_index_shape() {
+        let (path, body) = build_index_body(
+            "products",
+            &[
+                "row-42:email=person@example.com".to_string(),
+                "row-42:price=79".to_string(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(path, "/collections/products/index");
+
+        let shapes = lumen::spec::query_shapes();
+        let index_shape = shapes["shapes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["name"] == "index")
+            .expect("query_shapes() publishes an `index` shape");
+        let published = &index_shape["request"];
+
+        assert!(body["items"].is_array());
+        assert!(published["items"].is_array());
+        assert_eq!(
+            body["items"][0]
+                .as_object()
+                .unwrap()
+                .keys()
+                .collect::<std::collections::BTreeSet<_>>(),
+            published["items"][0]
+                .as_object()
+                .unwrap()
+                .keys()
+                .collect::<std::collections::BTreeSet<_>>(),
+            "assembled item keys must match the published flat {{external_id,field,value}} shape"
+        );
+        assert_eq!(body["items"][0]["external_id"], "row-42");
+        assert_eq!(body["items"][0]["field"], "email");
+        assert_eq!(body["items"][0]["value"], "person@example.com");
+        assert_eq!(body["items"][1]["value"], 79.0);
+    }
+
+    #[test]
+    fn build_search_query_node_requires_exactly_one_of_term_match_query_json() {
+        let mut args = QuerySearchArgs {
+            target: test_query_target(),
+            collection: "products".into(),
+            term: None,
+            match_: None,
+            query_json: None,
+            limit: 20,
+        };
+        assert!(
+            build_search_query_node(&args).is_err(),
+            "none set should be rejected"
+        );
+
+        args.term = Some("status=active".to_string());
+        let node = build_search_query_node(&args).unwrap();
+        assert!(matches!(node, QueryNode::Term(TermQuery { ref field, .. }) if field == "status"));
+
+        args.term = None;
+        args.match_ = Some("title=earbuds".to_string());
+        let node = build_search_query_node(&args).unwrap();
+        assert!(matches!(node, QueryNode::Match(_)));
+
+        args.term = Some("status=active".to_string());
+        assert!(
+            build_search_query_node(&args).is_err(),
+            "both --term and --match set should be rejected"
+        );
+    }
+
+    #[test]
+    fn build_search_body_assembles_search_request_wire_shape() {
+        let args = QuerySearchArgs {
+            target: test_query_target(),
+            collection: "products".into(),
+            term: None,
+            match_: Some("title=earbuds".to_string()),
+            query_json: None,
+            limit: 10,
+        };
+        let (path, body) = build_search_body(&args).unwrap();
+        assert_eq!(path, "/collections/products/search");
+        assert_eq!(body["query"]["match"]["field"], "title");
+        assert_eq!(body["query"]["match"]["text"], "earbuds");
+        assert_eq!(body["limit"], 10);
+    }
+
+    #[test]
+    fn build_duplicates_body_matches_duplicates_request_shape() {
+        let args = QueryDuplicatesArgs {
+            target: test_query_target(),
+            collection: "products".into(),
+            field: "email".into(),
+            min_group_size: 2,
+            limit: 100,
+            offset: 0,
+        };
+        let (path, body) = build_duplicates_body(&args).unwrap();
+        assert_eq!(path, "/collections/products/duplicates");
+        assert_eq!(body["field"], "email");
+        assert_eq!(body["min_group_size"], 2);
+        assert_eq!(body["limit"], 100);
+        assert_eq!(body["offset"], 0);
+    }
+
+    #[test]
+    fn select_token_picks_token_covering_role_for_collection_or_wildcard() {
+        let mut registry = std::collections::HashMap::new();
+        registry.insert(
+            "reader-token".to_string(),
+            lumen::auth::TokenClaims {
+                subject: "reader".into(),
+                roles: [("products".to_string(), lumen::auth::Role::Read)]
+                    .into_iter()
+                    .collect(),
+            },
+        );
+        registry.insert(
+            "admin-token".to_string(),
+            lumen::auth::TokenClaims {
+                subject: "admin".into(),
+                roles: [("*".to_string(), lumen::auth::Role::Admin)]
+                    .into_iter()
+                    .collect(),
+            },
+        );
+
+        let picked = select_token(&registry, lumen::auth::Role::Read, Some("products"));
+        assert!(matches!(
+            picked.as_deref(),
+            Some("reader-token") | Some("admin-token")
+        ));
+        assert_eq!(
+            select_token(&registry, lumen::auth::Role::Admin, Some("products")).as_deref(),
+            Some("admin-token"),
+            "only the wildcard admin token covers admin on `products`"
+        );
+
+        let mut narrow = std::collections::HashMap::new();
+        narrow.insert(
+            "scoped-token".to_string(),
+            lumen::auth::TokenClaims {
+                subject: "scoped".into(),
+                roles: [("orders".to_string(), lumen::auth::Role::Write)]
+                    .into_iter()
+                    .collect(),
+            },
+        );
+        assert!(select_token(&narrow, lumen::auth::Role::Read, Some("products")).is_none());
+    }
+
+    #[test]
+    fn cr_tokens_secret_reads_spec_field() {
+        let cr = serde_json::json!({ "spec": { "tokensSecret": "lumen-tokens" } });
+        assert_eq!(cr_tokens_secret(&cr).as_deref(), Some("lumen-tokens"));
+
+        let cr_missing = serde_json::json!({ "spec": {} });
+        assert_eq!(cr_tokens_secret(&cr_missing), None);
+    }
+
+    #[test]
+    fn secret_data_bytes_decodes_base64_field() {
+        use base64::Engine;
+        let encoded =
+            base64::engine::general_purpose::STANDARD.encode(b"{\"tok\":{\"subject\":\"s\"}}");
+        let secret = serde_json::json!({ "data": { "token-registry.json": encoded } });
+        let bytes = secret_data_bytes(&secret, "token-registry.json").unwrap();
+        assert_eq!(bytes, b"{\"tok\":{\"subject\":\"s\"}}");
+
+        let missing = serde_json::json!({ "data": {} });
+        assert!(secret_data_bytes(&missing, "token-registry.json").is_err());
+    }
+
+    #[test]
+    fn wait_for_local_port_ready_succeeds_against_bound_listener() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(wait_for_local_port_ready(port, Duration::from_secs(2)).is_ok());
+        drop(listener);
+    }
+
+    #[test]
+    fn wait_for_local_port_ready_times_out_against_closed_port() {
+        let port = free_local_port().unwrap();
+        assert!(wait_for_local_port_ready(port, Duration::from_millis(300)).is_err());
+    }
+
+    /// AC1's process-management primitive, unit-tested with a real (but
+    /// harmless) child process instead of a live cluster's `kubectl
+    /// port-forward` — see the report for why this stays a unit test.
+    #[test]
+    fn child_guard_kills_process_on_drop() {
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", "sleep 5"]);
+        let guard = ChildGuard::spawn(&mut cmd).expect("spawn sleep");
+        let pid = guard.child.id();
+        drop(guard);
+        std::thread::sleep(Duration::from_millis(200));
+        let status = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .expect("run kill -0");
+        assert!(
+            !status.success(),
+            "process {pid} should be dead after ChildGuard drop"
+        );
+    }
+
+    #[test]
+    fn child_guard_spawn_nonexistent_binary_errs() {
+        let mut cmd = std::process::Command::new("lumen-connect-test-nonexistent-binary-xyz-1321");
+        assert!(ChildGuard::spawn(&mut cmd).is_err());
+    }
+}
+// CODEGEN-END
 ````
 
 ## Changes
@@ -2000,4 +3039,32 @@ changes:
       `run()` never surfaces the up-to-date/needs-update decision needed to
       decide whether to print a line at all, and widening that return type is
       an out-of-scope `libs/cli-std` change shared by every CLI on it.
+  - path: projects/lumen/src/bin/lumen.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1321: add `lumen connect` (spawn `kubectl port-forward` under a
+      `ChildGuard` for the duration of a wrapped command against a
+      k8s-deployed Lumen instance — `--context`/`--namespace`/`--service` or a
+      `Lumen` CR name via `--cr`; the guard kills+waits the port-forward on
+      drop regardless of the wrapped command's exit status) and `lumen query
+      index|search|duplicates|collections list` (one-shot wrappers that
+      assemble the exact `lumen::types` wire body for each route). Both share
+      `resolve_token`/`select_token`: an explicit `--token`/`LUMEN_TOKEN` wins,
+      else the `--namespace`/`--secret` (or CR-derived `spec.tokensSecret`)
+      token-registry Secret is fetched via `kubectl get secret ... -o json`,
+      base64-decoded, parsed as a `HashMap<String, lumen::auth::TokenClaims>`
+      (map key IS the bearer token — the documented registry convention), and
+      the first token whose role covers the request for the target
+      collection or the wildcard `*` resource is returned. `build_index_body`
+      assembles the FLAT `{items:[{external_id,field,value}]}` shape (the
+      exact gap the issue reporter hit, assuming a nested `{id,
+      fields:{...}}` shape instead). `dispatch_query`'s real HTTP dispatch and
+      its `http_post_json`/`http_get_json` helpers are `#[cfg(feature =
+      "backup")]` (the existing `reqwest`-gating convention shared with
+      `dispatch_backup`); the body-builder/URL-resolution helpers are
+      `#[cfg(any(test, feature = "backup"))]` so they stay unit-testable
+      without requiring `--features backup`. No server-side endpoint or
+      token-registry format change; no interactive REPL.
 ```
