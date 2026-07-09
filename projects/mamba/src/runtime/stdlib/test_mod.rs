@@ -221,6 +221,35 @@ def outer():
     MbValue::none()
 }
 
+extern "C" fn type_params_nonlocal_test_nonlocal_disallowed_02(_self_v: MbValue) -> MbValue {
+    let source = r#"
+def outer2[T]():
+    def inner1():
+        nonlocal T
+"#;
+    if let Err(message) = expect_type_params_syntax_error(
+        source,
+        "nonlocal binding not allowed for type parameter 'T'",
+    ) {
+        return raise_assertion_error(&message);
+    }
+    MbValue::none()
+}
+
+extern "C" fn type_params_nonlocal_test_nonlocal_disallowed_03(_self_v: MbValue) -> MbValue {
+    let source = r#"
+class Cls[T]:
+    nonlocal T
+"#;
+    if let Err(message) = expect_type_params_syntax_error(
+        source,
+        "nonlocal binding not allowed for type parameter 'T'",
+    ) {
+        return raise_assertion_error(&message);
+    }
+    MbValue::none()
+}
+
 extern "C" fn type_params_lazy_evaluation_test_qualname(_self_v: MbValue) -> MbValue {
     let ns = super::super::dict_ops::mb_dict_new();
     super::super::dict_ops::mb_dict_setitem(
@@ -292,6 +321,18 @@ fn register_type_params_wrapper_submodule(type_params_make_base: usize) {
         "test_nonlocal_disallowed_01".to_string(),
         MbValue::from_func(
             type_params_nonlocal_test_nonlocal_disallowed_01 as *const () as usize,
+        ),
+    );
+    nonlocal_methods.insert(
+        "test_nonlocal_disallowed_02".to_string(),
+        MbValue::from_func(
+            type_params_nonlocal_test_nonlocal_disallowed_02 as *const () as usize,
+        ),
+    );
+    nonlocal_methods.insert(
+        "test_nonlocal_disallowed_03".to_string(),
+        MbValue::from_func(
+            type_params_nonlocal_test_nonlocal_disallowed_03 as *const () as usize,
         ),
     );
     super::super::class::mb_class_register(
