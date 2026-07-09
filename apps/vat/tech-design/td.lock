@@ -2,10 +2,10 @@ version = 2
 project = "vat"
 ir_kind = "td"
 td_path = "apps/vat/tech-design"
-generated_at = "2026-06-30T05:45:11.850046+00:00"
-digest = "sha256:cb4507a6bdf8cbc1de6e20a8c41d012572ee12ef760555ad8f28fe6d6434d49b"
-source_digest = "sha256:cb4507a6bdf8cbc1de6e20a8c41d012572ee12ef760555ad8f28fe6d6434d49b"
-ir_digest = "sha256:5bb009d49acb6cce22d0d27c115d978a6005c175ed28c478e482fb40a7f68b57"
+generated_at = "2026-07-09T06:43:40.041279+00:00"
+digest = "sha256:f5fa10b4e70d08c3262930db8f28c69cb0e8f0419280b80c39e00bfad3152f3f"
+source_digest = "sha256:f5fa10b4e70d08c3262930db8f28c69cb0e8f0419280b80c39e00bfad3152f3f"
+ir_digest = "sha256:ee1e5eff41cba8c0f10b7870a3e990fba42bb1a9474580a6d383e501ff2c7db1"
 
 [[files]]
 path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
@@ -138,6 +138,12 @@ path = "logic/vat-network-sandbox-v3-seatbelt-egress-policy-deny-outbound-exce.m
 digest = "sha256:86d3cb7c3a795e7d1128057d950d0e37c12d7003a307ecef9d1e7303aadd4573"
 ir_digest = "sha256:021995d9b27964e47778b355d304e2c8437d19c4959f9ee35de0b035d83659a6"
 section_count = 7
+
+[[files]]
+path = "logic/vat-sandbox-egress-policy-silently-unenforced-when-isolation-non.md"
+digest = "sha256:a3f7fe966ab67e6bb1cd2c70df16fc5ea8b491585cd9ca3862547ca6febbe46d"
+ir_digest = "sha256:68c52df1816439967631518589ca3aff83d485ad5bac21ca7e3d8d5b3e18a588"
+section_count = 3
 
 [[files]]
 path = "logic/vat-td-ast-promote-remaining-grouped-source-units.md"
