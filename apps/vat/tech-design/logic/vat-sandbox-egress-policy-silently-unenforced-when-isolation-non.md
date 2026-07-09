@@ -95,3 +95,25 @@ requirementDiagram
       verifies: seatbelt_unavailable_open_falls_back
     }
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/vat/src/sandbox/process.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: the passthrough backend (isolation=none) must fail closed instead of warn-and-continue when the run's EgressPolicy is not Open — this is source-level control-flow surgery on an existing hand-written backend, not a generator-template concern."
+  - path: projects/vat/src/sandbox/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: the seatbelt-unavailable fallback (around the existing lines 57-75) must fail closed instead of silently downgrading to ProcessBackend when the run's EgressPolicy is not Open — hand-written backend-selection logic."
+  - path: projects/vat/tests/vat_sandbox_egress_fail_closed.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Unit-test section edge: regression coverage for UT1-UT4 — process.rs rejects non-Open egress under isolation=none, Open stays unaffected, the seatbelt-unavailable fallback rejects non-Open egress, and the seatbelt-unavailable + Open case still falls back successfully."
+```
