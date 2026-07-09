@@ -12,9 +12,10 @@ use agentic_workflow::cli::project::{
 };
 use agentic_workflow::cli::regenerability_policy::RegenerabilityAuthority;
 use agentic_workflow::cli::standardize::{
-    DependencyPolicyFinding, GeneratorPrimitiveGap, MarkerCounts, RegenerabilityCoverage,
-    SemanticCoverage, SemanticGap, StackMigrationCoverage, StandardizationCoverage,
-    TraceabilityBlocker, TraceabilityBlockerKind, TraceabilityCoverage, WorkspaceStackMigration,
+    DependencyPolicyFinding, DriftMarkerCoverage, DriftMarkerFinding, GeneratorPrimitiveGap,
+    MarkerCounts, RegenerabilityCoverage, SemanticCoverage, SemanticGap, StackMigrationCoverage,
+    StandardizationCoverage, StandardizeActionKind, TraceabilityBlocker, TraceabilityBlockerKind,
+    TraceabilityCoverage, WorkspaceStackMigration,
 };
 use agentic_workflow::cli::Commands;
 use agentic_workflow::models::{
@@ -784,6 +785,102 @@ fn project_health_section_regenerable_is_focused() {
     assert!(summary.get("report").is_none());
     assert_eq!(summary["data"]["codegen_percent"].as_f64(), Some(100.0));
     assert!(summary["data"].get("codegen_origin").is_some());
+}
+
+// #1276 AC1/AC3a: the `aw health` drift/marker axis reports correct counts
+// on a fixture with one drift finding + one marker-gap finding, both in the
+// dedicated `drift-marker` section and the compact `axes.drift_marker` view.
+#[test]
+fn project_health_drift_marker_axis_reports_correct_counts() {
+    let mut report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    report.drift_marker = DriftMarkerCoverage {
+        project: "demo".to_string(),
+        clean_files: 3,
+        drift_count: 1,
+        marker_gap_count: 1,
+        uncovered_count: 0,
+        findings: vec![
+            DriftMarkerFinding {
+                kind: StandardizeActionKind::RegenDrift,
+                target: "src/cli/drift_file.rs".to_string(),
+                reason: "CODEGEN block content drifted from spec source".to_string(),
+            },
+            DriftMarkerFinding {
+                kind: StandardizeActionKind::IssueMarkerGap,
+                target: "src/cli/marker_gap_file.rs".to_string(),
+                reason: "CODEGEN item missing @spec marker".to_string(),
+            },
+        ],
+    };
+
+    let section = project_health_section_summary(&report, ProjectHealthSection::DriftMarker);
+    assert_eq!(section["project"].as_str(), Some("demo"));
+    assert_eq!(section["data"]["project"].as_str(), Some("demo"));
+    assert_eq!(section["data"]["clean_files"].as_u64(), Some(3));
+    assert_eq!(section["data"]["drift_count"].as_u64(), Some(1));
+    assert_eq!(section["data"]["marker_gap_count"].as_u64(), Some(1));
+    assert_eq!(section["data"]["uncovered_count"].as_u64(), Some(0));
+    assert_eq!(
+        section["data"]["findings"].as_array().map(Vec::len),
+        Some(2)
+    );
+
+    let summary = project_health_summary(&report);
+    let axis = &summary["axes"]["drift_marker"];
+    assert_eq!(axis["status"].as_str(), Some("drift"));
+    assert_eq!(axis["clean_files"].as_u64(), Some(3));
+    assert_eq!(axis["drift_count"].as_u64(), Some(1));
+    assert_eq!(axis["marker_gap_count"].as_u64(), Some(1));
+}
+
+// #1276 AC1: drift/marker findings are advisory, so `next.command` only
+// routes to the drift-marker remediation once the harder managed/semantic/
+// traceability tiers are already clean (mirrors the ordering asserted by
+// `project_health_next_reason_matches_managed_route_when_ec_has_no_expected_units`
+// for the managed tier).
+#[test]
+fn project_health_next_command_routes_to_drift_marker_remediation_when_otherwise_ready() {
+    let mut report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    report.drift_marker = DriftMarkerCoverage {
+        project: "demo".to_string(),
+        clean_files: 3,
+        drift_count: 1,
+        marker_gap_count: 0,
+        uncovered_count: 0,
+        findings: vec![DriftMarkerFinding {
+            kind: StandardizeActionKind::RegenDrift,
+            target: "src/cli/drift_file.rs".to_string(),
+            reason: "CODEGEN block content drifted from spec source".to_string(),
+        }],
+    };
+    // Drift/marker findings never block production readiness on their own;
+    // force the not-yet-done state a real caller would be in so
+    // `project_health_next_command` reaches the drift-marker tier.
+    report.production_ready = false;
+
+    let summary = project_health_summary(&report);
+    assert_eq!(
+        summary["next"]["command"].as_str(),
+        Some("aw td gen --force-regen --project demo")
+    );
 }
 
 #[test]

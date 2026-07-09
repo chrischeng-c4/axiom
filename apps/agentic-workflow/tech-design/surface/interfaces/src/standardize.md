@@ -502,6 +502,65 @@ pub(crate) struct ProjectHealthStandardizeCoverage {
     pub traceability: TraceabilityCoverage,
     pub regenerable: RegenerabilityCoverage,
     pub stack_migration: StackMigrationCoverage,
+    pub drift_marker: DriftMarkerCoverage,
+}
+
+/// Issue #1276: one `crate::generate::audit::audit_file_unified` finding
+/// (CODEGEN drift, a CODEGEN item missing its `@spec` marker, or a
+/// spec-claimed item living outside CODEGEN markers), projected for the
+/// `aw health` drift/marker axis. Same shape as `RustAuditFinding` (which
+/// this is built from) but public/`Serialize` so it can round-trip through
+/// `ProjectHealthReport`'s JSON payload.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
+pub struct DriftMarkerFinding {
+    pub kind: StandardizeActionKind,
+    pub target: String,
+    pub reason: String,
+}
+
+/// Issue #1276: health-axis projection of the CODEGEN-drift / HANDWRITE
+/// marker-gap audit engine. This reuses
+/// `crate::generate::audit::audit_file_unified` via `collect_rust_audit_findings`
+/// (already run once per `aw health` call inside `build_inventory`, at zero
+/// additional scan cost) instead of the retired whole-tree walker a bare,
+/// slug-less `aw td code-check` used to run (#844). `clean_files` counts
+/// scanned `.rs` files with no drift/marker-gap/uncovered finding;
+/// `drift_count`/`marker_gap_count`/`uncovered_count` mirror
+/// `crate::generate::audit::UnifiedReport::status()`'s `"drift"`/
+/// `"marker_gap"`/`"uncovered"` values.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
+pub struct DriftMarkerCoverage {
+    pub project: String,
+    pub clean_files: usize,
+    pub drift_count: usize,
+    pub marker_gap_count: usize,
+    pub uncovered_count: usize,
+    pub findings: Vec<DriftMarkerFinding>,
+}
+
+// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
+impl DriftMarkerCoverage {
+    /// The single highest-priority finding to route `aw health`'s
+    /// `next.command` from: a `RegenDrift` (real regen verb available) beats
+    /// a `FoldShadow` (a promotable path) beats an `IssueMarkerGap` (no
+    /// deterministic worker verb, falls back to the `aw health` pointer).
+    pub fn top_finding(&self) -> Option<&DriftMarkerFinding> {
+        self.findings
+            .iter()
+            .find(|f| f.kind == StandardizeActionKind::RegenDrift)
+            .or_else(|| {
+                self.findings
+                    .iter()
+                    .find(|f| f.kind == StandardizeActionKind::FoldShadow)
+            })
+            .or_else(|| {
+                self.findings
+                    .iter()
+                    .find(|f| f.kind == StandardizeActionKind::IssueMarkerGap)
+            })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -696,11 +755,10 @@ pub enum StandardizeActionKind {
 struct Inventory {
     coverage: StandardizationCoverage,
     files: Vec<SourceFile>,
-    // Read only by the cfg(test) `choose_regenerable_action_with_project`
-    // (the "regenerable" maturity scan's own test coverage) -- the CLI
-    // driver that used to route through these fields in a plain build
-    // (`choose_action`) was retired by #920.
-    #[allow(dead_code)]
+    // Issue #1276: now read in production by `project_health_standardize_coverage`
+    // (via `drift_marker_coverage`) to build the `aw health` drift/marker
+    // axis, in addition to the cfg(test) `choose_regenerable_action_with_project`
+    // ("regenerable" maturity scan) coverage.
     rust_findings: Vec<RustAuditFinding>,
     #[allow(dead_code)]
     spec_violation: Option<SpecViolation>,
@@ -742,11 +800,9 @@ struct HandwriteGap {
     needs_promotion: bool,
 }
 
-// Read only by the cfg(test) `choose_regenerable_action_with_project`
-// (the "regenerable" maturity scan's own test coverage); no production
-// driver reads these fields in a plain build since #920 retired the old
-// `choose_action` CLI dispatcher.
-#[allow(dead_code)]
+// Issue #1276: now read in production by `drift_marker_coverage` (the `aw
+// health` drift/marker axis), in addition to the cfg(test)
+// `choose_regenerable_action_with_project` ("regenerable" maturity scan).
 #[derive(Debug, Clone)]
 struct RustAuditFinding {
     kind: StandardizeActionKind,
@@ -1009,6 +1065,12 @@ pub(crate) fn project_health_standardize_coverage(
     )?;
     let stack_migration =
         build_stack_migration_coverage_with_inventory(&project_root, &project, &inventory)?;
+    let total_rust_files = inventory
+        .files
+        .iter()
+        .filter(|f| f.language == "rust")
+        .count();
+    let drift_marker = drift_marker_coverage(&project, total_rust_files, &inventory.rust_findings);
 
     Ok(ProjectHealthStandardizeCoverage {
         managed: inventory.coverage,
@@ -1016,7 +1078,77 @@ pub(crate) fn project_health_standardize_coverage(
         traceability,
         regenerable,
         stack_migration,
+        drift_marker,
     })
+}
+
+/// Issue #1276: project `Inventory.rust_findings` (already computed once per
+/// `aw health` call by `build_inventory` -> `collect_rust_audit_findings`,
+/// which drives `crate::generate::audit::audit_file_unified` over every
+/// scanned `.rs` file) into the `aw health` drift/marker axis. `clean_files`
+/// is derived by set-difference (scanned rust files minus files carrying at
+/// least one finding) rather than re-deriving `UnifiedReport::Clean` counts,
+/// since `collect_rust_audit_findings` only projects the actionable
+/// (`Drift`/`MarkerGap`/`Uncovered`) variants.
+fn drift_marker_coverage(
+    project: &str,
+    total_rust_files: usize,
+    rust_findings: &[RustAuditFinding],
+) -> DriftMarkerCoverage {
+    let mut drift_count = 0usize;
+    let mut marker_gap_count = 0usize;
+    let mut uncovered_count = 0usize;
+    let mut flagged_targets: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    let findings = rust_findings
+        .iter()
+        .map(|finding| {
+            match finding.kind {
+                StandardizeActionKind::RegenDrift => drift_count += 1,
+                StandardizeActionKind::IssueMarkerGap => marker_gap_count += 1,
+                StandardizeActionKind::FoldShadow => uncovered_count += 1,
+                _ => {}
+            }
+            flagged_targets.insert(finding.target.as_str());
+            DriftMarkerFinding {
+                kind: finding.kind,
+                target: finding.target.clone(),
+                reason: finding.reason.clone(),
+            }
+        })
+        .collect();
+    let clean_files = total_rust_files.saturating_sub(flagged_targets.len());
+    DriftMarkerCoverage {
+        project: project.to_string(),
+        clean_files,
+        drift_count,
+        marker_gap_count,
+        uncovered_count,
+        findings,
+    }
+}
+
+/// #1276: mirrors `managed_health_worker_command`/`semantic_health_worker_command`/
+/// `traceability_health_worker_command`'s "concrete verb where derivable,
+/// else a read-only pointer" pattern. `RegenDrift` routes to the real
+/// project-wide regen verb (the finding only names a file, not a WI slug);
+/// `FoldShadow` (a spec-claimed item living outside CODEGEN markers) routes
+/// to `aw td promote <path>` since the finding's target *is* a usable path;
+/// `IssueMarkerGap` (a CODEGEN item missing its `@spec` marker) has no
+/// deterministic worker verb derivable from a bare file path, so it falls
+/// back to the `aw health` pointer, same as the semantic/traceability axes.
+pub(crate) fn drift_marker_health_worker_command(
+    project: &str,
+    top_finding: Option<&DriftMarkerFinding>,
+) -> String {
+    match top_finding {
+        Some(finding) if finding.kind == StandardizeActionKind::RegenDrift => {
+            format!("aw td gen --force-regen --project {project}")
+        }
+        Some(finding) if finding.kind == StandardizeActionKind::FoldShadow => {
+            format!("aw td promote {}", finding.target)
+        }
+        _ => format!("aw health --project {project} drift-marker --verbose"),
+    }
 }
 
 /// #920 (epic #914 slice F): `aw standardize managed run --project <p>
@@ -10142,6 +10274,136 @@ target = "python"
             "expected scalar signature in output:\n{out}"
         );
     }
+
+    // #1276 AC1/AC3a: the `aw health` drift/marker axis reports correct
+    // counts on a fixture with one drift finding + one marker-gap finding
+    // (plus a third, unrelated-kind finding that must NOT be double-counted
+    // into either bucket).
+    #[test]
+    fn drift_marker_coverage_counts_drift_and_marker_gap_findings() {
+        let findings = vec![
+            RustAuditFinding {
+                kind: StandardizeActionKind::RegenDrift,
+                target: "src/cli/drift_file.rs".to_string(),
+                reason: "CODEGEN block content drifted from spec source".to_string(),
+            },
+            RustAuditFinding {
+                kind: StandardizeActionKind::IssueMarkerGap,
+                target: "src/cli/marker_gap_file.rs".to_string(),
+                reason: "CODEGEN item missing @spec marker".to_string(),
+            },
+            RustAuditFinding {
+                kind: StandardizeActionKind::FoldShadow,
+                target: "src/cli/shadow_file.rs".to_string(),
+                reason: "spec-claimed item living outside CODEGEN markers".to_string(),
+            },
+        ];
+        let coverage = drift_marker_coverage("demo", 5, &findings);
+
+        assert_eq!(coverage.project, "demo");
+        assert_eq!(coverage.drift_count, 1);
+        assert_eq!(coverage.marker_gap_count, 1);
+        assert_eq!(coverage.uncovered_count, 1);
+        // 5 scanned rust files, 3 carry a finding (one each) -> 2 clean.
+        assert_eq!(coverage.clean_files, 2);
+        assert_eq!(coverage.findings.len(), 3);
+        assert!(coverage
+            .findings
+            .iter()
+            .any(|f| f.kind == StandardizeActionKind::RegenDrift
+                && f.target == "src/cli/drift_file.rs"));
+        assert!(coverage
+            .findings
+            .iter()
+            .any(|f| f.kind == StandardizeActionKind::IssueMarkerGap
+                && f.target == "src/cli/marker_gap_file.rs"));
+    }
+
+    #[test]
+    fn drift_marker_coverage_is_clean_with_no_findings() {
+        let coverage = drift_marker_coverage("demo", 3, &[]);
+        assert_eq!(coverage.clean_files, 3);
+        assert_eq!(coverage.drift_count, 0);
+        assert_eq!(coverage.marker_gap_count, 0);
+        assert_eq!(coverage.uncovered_count, 0);
+        assert!(coverage.findings.is_empty());
+        assert!(coverage.top_finding().is_none());
+    }
+
+    // #1276 AC1: `next.command` routing -- `RegenDrift` (a real regen verb
+    // is derivable) outranks `FoldShadow` (routes to `aw td promote
+    // <path>`), which outranks a bare `IssueMarkerGap` (no deterministic
+    // worker verb from a file path alone, falls back to the health pointer).
+    #[test]
+    fn drift_marker_health_worker_command_routes_by_finding_kind() {
+        let regen = DriftMarkerFinding {
+            kind: StandardizeActionKind::RegenDrift,
+            target: "src/cli/drift_file.rs".to_string(),
+            reason: "drift".to_string(),
+        };
+        assert_eq!(
+            drift_marker_health_worker_command("demo", Some(&regen)),
+            "aw td gen --force-regen --project demo"
+        );
+
+        let shadow = DriftMarkerFinding {
+            kind: StandardizeActionKind::FoldShadow,
+            target: "src/cli/shadow_file.rs".to_string(),
+            reason: "shadow".to_string(),
+        };
+        assert_eq!(
+            drift_marker_health_worker_command("demo", Some(&shadow)),
+            "aw td promote src/cli/shadow_file.rs"
+        );
+
+        let marker_gap = DriftMarkerFinding {
+            kind: StandardizeActionKind::IssueMarkerGap,
+            target: "src/cli/marker_gap_file.rs".to_string(),
+            reason: "gap".to_string(),
+        };
+        assert_eq!(
+            drift_marker_health_worker_command("demo", Some(&marker_gap)),
+            "aw health --project demo drift-marker --verbose"
+        );
+
+        assert_eq!(
+            drift_marker_health_worker_command("demo", None),
+            "aw health --project demo drift-marker --verbose"
+        );
+    }
+
+    // #1276 AC1: `top_finding` priority order directly, independent of the
+    // `next.command` string it feeds.
+    #[test]
+    fn drift_marker_coverage_top_finding_prefers_regen_drift_over_others() {
+        let coverage = DriftMarkerCoverage {
+            project: "demo".to_string(),
+            clean_files: 0,
+            drift_count: 1,
+            marker_gap_count: 1,
+            uncovered_count: 1,
+            findings: vec![
+                DriftMarkerFinding {
+                    kind: StandardizeActionKind::IssueMarkerGap,
+                    target: "b.rs".to_string(),
+                    reason: "gap".to_string(),
+                },
+                DriftMarkerFinding {
+                    kind: StandardizeActionKind::FoldShadow,
+                    target: "c.rs".to_string(),
+                    reason: "shadow".to_string(),
+                },
+                DriftMarkerFinding {
+                    kind: StandardizeActionKind::RegenDrift,
+                    target: "a.rs".to_string(),
+                    reason: "drift".to_string(),
+                },
+            ],
+        };
+        let top = coverage.top_finding().expect("top finding");
+        assert_eq!(top.kind, StandardizeActionKind::RegenDrift);
+        assert_eq!(top.target, "a.rs");
+    }
 }
 // CODEGEN-END
 `````
@@ -10217,3 +10479,4 @@ changes:
       that need per-file HANDWRITE marker detail or a HITL decision that
       `aw health` cannot fabricate from a bare file path.
 ```
+
