@@ -156,6 +156,48 @@ unsafe extern "C" fn dispatch_sys_stub_none(_args_ptr: *const MbValue, _nargs: u
     MbValue::none()
 }
 
+fn is_exact_str_value(v: MbValue) -> bool {
+    v.as_ptr()
+        .is_some_and(|ptr| unsafe { matches!(&(*ptr).data, ObjData::Str(_)) })
+}
+
+fn is_callable_value(v: MbValue) -> bool {
+    super::super::builtins::mb_callable(v).as_bool() == Some(true)
+}
+
+unsafe extern "C" fn dispatch_activate_stack_trampoline(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if let Some(backend) = args.first().copied() {
+        if !is_exact_str_value(backend) {
+            return raise_type_error_msg("activate_stack_trampoline() backend must be str");
+        }
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn dispatch_addaudithook(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if let Some(hook) = args.first().copied() {
+        if !is_callable_value(hook) {
+            return raise_type_error_msg("addaudithook() hook must be callable");
+        }
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn dispatch_call_tracing(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if let Some(func) = args.first().copied() {
+        if !is_callable_value(func) {
+            return raise_type_error_msg("call_tracing() func must be callable");
+        }
+    }
+    MbValue::none()
+}
+
 thread_local! {
     static RECURSION_LIMIT: std::cell::Cell<i64> = const { std::cell::Cell::new(1000) };
     static RECURSION_DEPTH: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
@@ -1348,12 +1390,18 @@ pub fn register() {
     // surface: missing CPython sys callables (auto-added, batch 2).
     // Present+callable stubs returning None. Registered in NATIVE_FUNC_ADDRS.
     let stub_fn_addr = dispatch_sys_stub_none as *const () as usize;
+    let activate_stack_trampoline_addr = dispatch_activate_stack_trampoline as *const () as usize;
+    let addaudithook_addr = dispatch_addaudithook as *const () as usize;
+    let call_tracing_addr = dispatch_call_tracing as *const () as usize;
+    attrs.insert(
+        "activate_stack_trampoline".into(),
+        MbValue::from_func(activate_stack_trampoline_addr),
+    );
+    attrs.insert("addaudithook".into(), MbValue::from_func(addaudithook_addr));
+    attrs.insert("call_tracing".into(), MbValue::from_func(call_tracing_addr));
     for name in [
-        "activate_stack_trampoline",
-        "addaudithook",
         "audit",
         "breakpointhook",
-        "call_tracing",
         "deactivate_stack_trampoline",
         "get_coroutine_origin_tracking_depth",
         "get_int_max_str_digits",
@@ -1368,7 +1416,11 @@ pub fn register() {
         attrs.insert(name.into(), MbValue::from_func(stub_fn_addr));
     }
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-        s.borrow_mut().insert(stub_fn_addr as u64);
+        let mut native = s.borrow_mut();
+        native.insert(stub_fn_addr as u64);
+        native.insert(activate_stack_trampoline_addr as u64);
+        native.insert(addaudithook_addr as u64);
+        native.insert(call_tracing_addr as u64);
     });
 
     super::register_module("sys", attrs);
@@ -1668,6 +1720,14 @@ pub fn populate_argv(args: &[String]) {
 mod tests {
     use super::*;
 
+    fn clear_raised() {
+        super::super::super::exception::clear_current_exception();
+    }
+
+    fn raised_type() -> Option<String> {
+        super::super::super::exception::current_exception_type()
+    }
+
     #[test]
     fn test_sys_register() {
         register();
@@ -1738,5 +1798,65 @@ mod tests {
     fn test_py312_populate_argv_accepts_empty() {
         register();
         populate_argv(&[]);
+    }
+
+    #[test]
+    fn test_activate_stack_trampoline_rejects_non_str_backend() {
+        clear_raised();
+        let arg = MbValue::from_int(1);
+        let result = unsafe { dispatch_activate_stack_trampoline(&arg as *const _, 1) };
+        assert!(result.is_none());
+        assert_eq!(raised_type().as_deref(), Some("TypeError"));
+        clear_raised();
+    }
+
+    #[test]
+    fn test_activate_stack_trampoline_accepts_str_backend() {
+        clear_raised();
+        let arg = MbValue::from_ptr(MbObject::new_str("llvm".to_string()));
+        let result = unsafe { dispatch_activate_stack_trampoline(&arg as *const _, 1) };
+        assert!(result.is_none());
+        assert!(raised_type().is_none());
+    }
+
+    #[test]
+    fn test_addaudithook_rejects_non_callable_hook() {
+        clear_raised();
+        let arg = MbValue::from_int(1);
+        let result = unsafe { dispatch_addaudithook(&arg as *const _, 1) };
+        assert!(result.is_none());
+        assert_eq!(raised_type().as_deref(), Some("TypeError"));
+        clear_raised();
+    }
+
+    #[test]
+    fn test_addaudithook_accepts_callable_hook() {
+        clear_raised();
+        let arg = MbValue::from_func(dispatch_sys_stub_none as *const () as usize);
+        let result = unsafe { dispatch_addaudithook(&arg as *const _, 1) };
+        assert!(result.is_none());
+        assert!(raised_type().is_none());
+    }
+
+    #[test]
+    fn test_call_tracing_rejects_non_callable_func() {
+        clear_raised();
+        let args = [MbValue::from_int(1), MbValue::none()];
+        let result = unsafe { dispatch_call_tracing(args.as_ptr(), args.len()) };
+        assert!(result.is_none());
+        assert_eq!(raised_type().as_deref(), Some("TypeError"));
+        clear_raised();
+    }
+
+    #[test]
+    fn test_call_tracing_accepts_callable_func_without_validating_args_tuple() {
+        clear_raised();
+        let args = [
+            MbValue::from_func(dispatch_sys_stub_none as *const () as usize),
+            MbValue::from_int(1),
+        ];
+        let result = unsafe { dispatch_call_tracing(args.as_ptr(), args.len()) };
+        assert!(result.is_none());
+        assert!(raised_type().is_none());
     }
 }
