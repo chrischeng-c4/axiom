@@ -1956,6 +1956,47 @@ fn normalize_runtime_generic_orig_bases(class_name: &str) {
     }
 }
 
+fn validate_runtime_pep695_generic_params(class_name: &str) {
+    let Some(orig_bases) = class_attr_lookup(class_name, "__orig_bases__") else {
+        return;
+    };
+    let orig_base_items = super::builtins::extract_items(orig_bases);
+    if !orig_base_items
+        .iter()
+        .copied()
+        .any(class_value_is_generic_alias)
+    {
+        return;
+    }
+    let Some(type_params) = class_attr_lookup(class_name, "__type_params__") else {
+        return;
+    };
+    let declared = super::builtins::extract_items(type_params);
+    if declared.is_empty() {
+        return;
+    }
+    let declared_bits: HashSet<u64> = declared.into_iter().map(|param| param.to_bits()).collect();
+    for param in class_generic_alias_parameters(&orig_base_items) {
+        if declared_bits.contains(&param.to_bits()) {
+            continue;
+        }
+        let is_traditional_typevar = class_instance_field(param, "__typing_ctor__")
+            .and_then(|value| value.as_bool())
+            == Some(true);
+        if !is_traditional_typevar {
+            continue;
+        }
+        let Some(name) = class_instance_field(param, "__name__").and_then(extract_str) else {
+            continue;
+        };
+        super::exception::set_current_exception(super::exception::MbException::new(
+            "TypeError",
+            &format!("Some type variables (~{name}) are not listed in Generic"),
+        ));
+        return;
+    }
+}
+
 fn build_class_namespace_dict(class_name: &str) -> MbValue {
     let entries: Vec<(String, MbValue)> = CLASS_REGISTRY.with(|reg| {
         let reg = reg.borrow();
@@ -2325,6 +2366,12 @@ pub fn mb_class_set_class_attr(class_name: MbValue, attr_name: MbValue, value: M
     } else {
         value
     };
+    if attr == "__parameters__" {
+        validate_runtime_pep695_generic_params(&name);
+        if super::exception::mb_has_exception().as_bool() == Some(true) {
+            return;
+        }
+    }
     // Class-body enums (`class Color(enum.Enum): RED = 1`): convert eligible
     // class-body assignments into singleton member Instances at registration
     // time (Lane-B of #1448). Non-enum classes fall through untouched.
