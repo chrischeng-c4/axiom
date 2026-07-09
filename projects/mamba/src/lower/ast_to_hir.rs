@@ -4401,6 +4401,8 @@ impl<'a> AstLowerer<'a> {
                         true,
                         false,
                     );
+                    self.module_deleted_names.remove(name);
+                    self.module_del_stmt_names.remove(name);
                     self.module_unbound_annotation_names.remove(name);
                 }
                 _ => {
@@ -6048,6 +6050,12 @@ impl<'a> AstLowerer<'a> {
                     false,
                     true,
                 );
+                if self.in_function_body {
+                    self.local_deleted_names.remove(name);
+                } else {
+                    self.module_deleted_names.remove(name);
+                    self.module_del_stmt_names.remove(name);
+                }
                 return Some(HirStmt::ClassDefPlaceholder {
                     name: sym,
                     span: stmt.span,
@@ -10977,6 +10985,67 @@ mod tests {
         }
     }
 
+    fn hir_expr_contains_deferred_name_read(expr: &HirExpr, name: &str) -> bool {
+        match expr {
+            HirExpr::Call { func, args, .. } => {
+                matches!(
+                    func.as_ref(),
+                    HirExpr::StrLit(func_name, _) if func_name == "mb_deferred_name_read"
+                ) && matches!(args.as_slice(), [HirExpr::StrLit(arg_name, _)] if arg_name == name)
+                    || hir_expr_contains_deferred_name_read(func, name)
+                    || args
+                        .iter()
+                        .any(|arg| hir_expr_contains_deferred_name_read(arg, name))
+            }
+            HirExpr::Attr { object, .. } => hir_expr_contains_deferred_name_read(object, name),
+            HirExpr::Index { object, index, .. } => {
+                hir_expr_contains_deferred_name_read(object, name)
+                    || hir_expr_contains_deferred_name_read(index, name)
+            }
+            HirExpr::List { elements, .. }
+            | HirExpr::Set { elements, .. }
+            | HirExpr::Tuple { elements, .. } => elements
+                .iter()
+                .any(|element| hir_expr_contains_deferred_name_read(element, name)),
+            HirExpr::Dict { entries, .. } => entries.iter().any(|(key, value)| {
+                hir_expr_contains_deferred_name_read(key, name)
+                    || hir_expr_contains_deferred_name_read(value, name)
+            }),
+            HirExpr::UnaryOp { operand, .. } => {
+                hir_expr_contains_deferred_name_read(operand, name)
+            }
+            HirExpr::BinOp { lhs, rhs, .. } => {
+                hir_expr_contains_deferred_name_read(lhs, name)
+                    || hir_expr_contains_deferred_name_read(rhs, name)
+            }
+            HirExpr::IfExpr {
+                cond,
+                then_val,
+                else_val,
+                ..
+            } => {
+                hir_expr_contains_deferred_name_read(cond, name)
+                    || hir_expr_contains_deferred_name_read(then_val, name)
+                    || hir_expr_contains_deferred_name_read(else_val, name)
+            }
+            HirExpr::Slice {
+                start, stop, step, ..
+            } => start
+                .iter()
+                .chain(stop.iter())
+                .chain(step.iter())
+                .any(|expr| hir_expr_contains_deferred_name_read(expr, name)),
+            HirExpr::Lambda { defaults, body, .. } => {
+                defaults
+                    .iter()
+                    .flatten()
+                    .any(|expr| hir_expr_contains_deferred_name_read(expr, name))
+                    || hir_expr_contains_deferred_name_read(body, name)
+            }
+            _ => false,
+        }
+    }
+
     // -------------------------------------------------------------------------
     // 1. Literal lowering extras
     // -------------------------------------------------------------------------
@@ -13231,6 +13300,55 @@ async def main():
                 hir.top_level.last()
             );
         };
+    }
+
+    #[test]
+    fn test_lower_class_def_rebinds_deleted_module_name() {
+        let module = crate::parser::parse("X = 1\ndel X\nclass X:\n    pass\nprint(X)\n", FileId(0))
+            .expect("parse failed");
+        let mut checker = TypeChecker::new();
+        let _ = checker.check_module(&module);
+        let hir = lower_module(&module, &checker).expect("lower failed");
+
+        let HirStmt::Expr {
+            expr: rebound_read, ..
+        } = hir.top_level.last().expect("expected print(X) statement")
+        else {
+            panic!("expected print(X) expression, got {:?}", hir.top_level.last());
+        };
+        assert!(
+            !hir_expr_contains_deferred_name_read(rebound_read, "X"),
+            "class X should clear the prior module del poison after its body is lowered"
+        );
+    }
+
+    #[test]
+    fn test_lower_class_body_keeps_deleted_name_error_until_class_rebinds() {
+        let module =
+            crate::parser::parse("X = 1\ndel X\nclass X:\n    y = X\n", FileId(0))
+                .expect("parse failed");
+        let mut checker = TypeChecker::new();
+        let _ = checker.check_module(&module);
+        let hir = lower_module(&module, &checker).expect("lower failed");
+
+        let class = hir
+            .classes
+            .iter()
+            .find(|class| {
+                hir.sym_names
+                    .get(&class.name)
+                    .is_some_and(|name| name == "X")
+            })
+            .expect("expected class X");
+        let (_, y_value) = class
+            .class_attr_assigns
+            .iter()
+            .find(|(name, _)| name == "y")
+            .expect("expected class attr y");
+        assert!(
+            hir_expr_contains_deferred_name_read(y_value, "X"),
+            "class body should still see X as deleted until the class statement finishes"
+        );
     }
 
     // -------------------------------------------------------------------------
