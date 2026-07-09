@@ -1,3 +1,4 @@
+use super::super::dict_ops::DictKey;
 use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
 /// sysconfig module for Mamba (#1261 long-tail).
@@ -7,6 +8,19 @@ use super::super::value::MbValue;
 /// extern "C" ABI (`args_ptr`, `nargs`) and register addresses in
 /// NATIVE_FUNC_ADDRS.
 use std::collections::HashMap;
+
+fn raise_type_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+fn is_exact_str(val: MbValue) -> bool {
+    val.as_ptr()
+        .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::Str(_)) })
+}
 
 unsafe extern "C" fn dispatch_get_python_version(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_str("3.12".to_string()))
@@ -20,7 +34,17 @@ unsafe extern "C" fn dispatch_get_default_scheme(_a: *const MbValue, _n: usize) 
     MbValue::from_ptr(MbObject::new_str("posix_prefix".to_string()))
 }
 
-unsafe extern "C" fn dispatch_is_python_build(_a: *const MbValue, _n: usize) -> MbValue {
+unsafe extern "C" fn dispatch_get_preferred_scheme(a: *const MbValue, n: usize) -> MbValue {
+    if n > 0 && !is_exact_str(unsafe { *a }) {
+        return raise_type_error("get_preferred_scheme() argument 1 must be str");
+    }
+    MbValue::from_ptr(MbObject::new_str("posix_prefix".to_string()))
+}
+
+unsafe extern "C" fn dispatch_is_python_build(a: *const MbValue, n: usize) -> MbValue {
+    if n > 0 && unsafe { (*a).as_bool().is_none() } {
+        return raise_type_error("is_python_build() argument 1 must be bool");
+    }
     MbValue::from_bool(false)
 }
 
@@ -63,7 +87,7 @@ unsafe extern "C" fn dispatch_get_path(a: *const MbValue, n: usize) -> MbValue {
         unsafe {
             if let (ObjData::Str(ref k), ObjData::Dict(ref lock)) = (&(*kp).data, &(*dp).data) {
                 let map = lock.read().unwrap();
-                if let Some(v) = map.get(k.as_str()) {
+                if let Some(v) = map.get(&DictKey::Str(k.clone())) {
                     return *v;
                 }
             }
@@ -77,12 +101,15 @@ unsafe extern "C" fn dispatch_get_config_var(a: *const MbValue, n: usize) -> MbV
         return MbValue::none();
     }
     let key = unsafe { *a };
+    if !is_exact_str(key) {
+        return raise_type_error("get_config_var() argument 1 must be str");
+    }
     let dict = build_config_vars();
     if let (Some(kp), Some(dp)) = (key.as_ptr(), dict.as_ptr()) {
         unsafe {
             if let (ObjData::Str(ref k), ObjData::Dict(ref lock)) = (&(*kp).data, &(*dp).data) {
                 let map = lock.read().unwrap();
-                if let Some(v) = map.get(k.as_str()) {
+                if let Some(v) = map.get(&DictKey::Str(k.clone())) {
                     return *v;
                 }
             }
@@ -91,8 +118,36 @@ unsafe extern "C" fn dispatch_get_config_var(a: *const MbValue, n: usize) -> MbV
     MbValue::none()
 }
 
-unsafe extern "C" fn dispatch_get_config_vars(_a: *const MbValue, _n: usize) -> MbValue {
-    build_config_vars()
+unsafe extern "C" fn dispatch_get_config_vars(a: *const MbValue, n: usize) -> MbValue {
+    if n == 0 {
+        return build_config_vars();
+    }
+    let args = unsafe { std::slice::from_raw_parts(a, n) };
+    if args.iter().any(|arg| !is_exact_str(*arg)) {
+        return raise_type_error("get_config_vars() arguments must be str");
+    }
+
+    let dict = build_config_vars();
+    let mut selected = Vec::with_capacity(args.len());
+    if let Some(dp) = dict.as_ptr() {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*dp).data {
+                let map = lock.read().unwrap();
+                for key in args {
+                    if let Some(kp) = key.as_ptr() {
+                        if let ObjData::Str(ref name) = (*kp).data {
+                            selected.push(
+                                map.get(&DictKey::Str(name.clone()))
+                                    .copied()
+                                    .unwrap_or_else(MbValue::none),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    MbValue::from_ptr(MbObject::new_list(selected))
 }
 
 unsafe extern "C" fn dispatch_get_makefile_filename(_a: *const MbValue, _n: usize) -> MbValue {
@@ -258,6 +313,10 @@ pub fn register() {
             dispatch_get_default_scheme as *const () as usize,
         ),
         (
+            "get_preferred_scheme",
+            dispatch_get_preferred_scheme as *const () as usize,
+        ),
+        (
             "is_python_build",
             dispatch_is_python_build as *const () as usize,
         ),
@@ -298,4 +357,128 @@ pub fn register() {
         }
     });
     super::register_module("sysconfig", attrs);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn current_exception_type() -> Option<String> {
+        crate::runtime::exception::current_exception_type()
+    }
+
+    fn clear_exception() {
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    fn str_val(s: &str) -> MbValue {
+        MbValue::from_ptr(MbObject::new_str(s.to_string()))
+    }
+
+    fn list_items(val: MbValue) -> Vec<MbValue> {
+        val.as_ptr()
+            .map(|ptr| unsafe {
+                if let ObjData::List(ref lock) = (*ptr).data {
+                    lock.read().unwrap().to_vec()
+                } else {
+                    vec![]
+                }
+            })
+            .unwrap_or_default()
+    }
+
+    fn dict_has_key(val: MbValue, key: &str) -> bool {
+        val.as_ptr().is_some_and(|ptr| unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                lock.read()
+                    .unwrap()
+                    .contains_key(&DictKey::Str(key.to_string()))
+            } else {
+                false
+            }
+        })
+    }
+
+    #[test]
+    fn test_get_config_var_wrong_type_raises_type_error() {
+        let arg = [MbValue::from_int(1)];
+        let _ = unsafe { dispatch_get_config_var(arg.as_ptr(), arg.len()) };
+        assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        clear_exception();
+    }
+
+    #[test]
+    fn test_get_config_vars_wrong_type_raises_type_error() {
+        let args = [str_val("VERSION"), MbValue::from_int(1)];
+        let _ = unsafe { dispatch_get_config_vars(args.as_ptr(), args.len()) };
+        assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        clear_exception();
+    }
+
+    #[test]
+    fn test_get_config_vars_without_args_returns_dict() {
+        let val = unsafe { dispatch_get_config_vars(std::ptr::null(), 0) };
+        assert!(dict_has_key(val, "VERSION"));
+        assert!(dict_has_key(val, "SOABI"));
+    }
+
+    #[test]
+    fn test_get_config_vars_with_keys_returns_selected_values() {
+        let args = [str_val("VERSION"), str_val("missing"), str_val("SOABI")];
+        let val = unsafe { dispatch_get_config_vars(args.as_ptr(), args.len()) };
+        let items = list_items(val);
+        assert_eq!(items.len(), 3);
+        assert_eq!(
+            items[0].as_ptr().map(|ptr| unsafe {
+                if let ObjData::Str(ref s) = (*ptr).data {
+                    s.clone()
+                } else {
+                    String::new()
+                }
+            }),
+            Some("3.12".to_string())
+        );
+        assert!(items[1].is_none());
+        assert_eq!(
+            items[2].as_ptr().map(|ptr| unsafe {
+                if let ObjData::Str(ref s) = (*ptr).data {
+                    s.clone()
+                } else {
+                    String::new()
+                }
+            }),
+            Some("mamba-312".to_string())
+        );
+    }
+
+    #[test]
+    fn test_is_python_build_wrong_type_raises_type_error() {
+        let arg = [MbValue::from_int(1)];
+        let _ = unsafe { dispatch_is_python_build(arg.as_ptr(), arg.len()) };
+        assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        clear_exception();
+    }
+
+    #[test]
+    fn test_get_preferred_scheme_wrong_type_raises_type_error() {
+        let arg = [MbValue::from_int(1)];
+        let _ = unsafe { dispatch_get_preferred_scheme(arg.as_ptr(), arg.len()) };
+        assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        clear_exception();
+    }
+
+    #[test]
+    fn test_get_preferred_scheme_defaults_to_posix_prefix() {
+        let val = unsafe { dispatch_get_preferred_scheme(std::ptr::null(), 0) };
+        assert_eq!(
+            val.as_ptr().map(|ptr| unsafe {
+                if let ObjData::Str(ref s) = (*ptr).data {
+                    s.clone()
+                } else {
+                    String::new()
+                }
+            }),
+            Some("posix_prefix".to_string())
+        );
+    }
 }
