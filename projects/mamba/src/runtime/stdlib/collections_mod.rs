@@ -1706,7 +1706,8 @@ pub(crate) fn namedtuple_factory_fields(factory: MbValue) -> Option<Vec<String>>
 }
 
 /// Class-level attributes of a namedtuple factory: `_fields`,
-/// `__match_args__`, `__name__`, `__slots__`, `_field_defaults`.
+/// `__match_args__`, `__name__`, `__slots__`, `_field_defaults`,
+/// `__annotations__`.
 /// Returns None for unsupported attribute names.
 pub fn namedtuple_factory_getattr(factory: MbValue, attr: &str) -> Option<MbValue> {
     let names = namedtuple_factory_fields(factory)?;
@@ -1729,6 +1730,17 @@ pub fn namedtuple_factory_getattr(factory: MbValue, attr: &str) -> Option<MbValu
                         .get("_tuple_name")
                         .and_then(|v| extract_str(*v))?;
                     return Some(MbValue::from_ptr(MbObject::new_str(tn)));
+                }
+            }
+            None
+        }
+        "__annotations__" => {
+            let ptr = factory.as_ptr()?;
+            unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    let annotations = fields.read().ok()?.get("__annotations__").copied()?;
+                    super::super::rc::retain_if_ptr(annotations);
+                    return Some(annotations);
                 }
             }
             None
