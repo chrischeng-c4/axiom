@@ -106,6 +106,12 @@ e2e_tests:
     command: cargo test -p agentic-workflow --lib td_created_dispatches_to_gen -- --nocapture
     assertions:
       - TD created phase dispatches directly to generation in the linear lifecycle
+  - id: td-cb-lifecycle-automation-self-ec-fixture-loop-gate
+    capability_id: td-cb-lifecycle-automation
+    claim_id: self-ec-fixture-loop-gate
+    command: cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture
+    assertions:
+      - fixture-loop e2e proof (#1279) gates aw's own terminal code-check as a hard, required-for-production EC case
   - id: project-local-td-and-ec-gates-project-local-td-root-resolver
     capability_id: project-local-td-and-ec-gates
     claim_id: project-local-td-root-resolver
