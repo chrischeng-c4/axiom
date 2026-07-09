@@ -5003,37 +5003,90 @@ fn validate_compile_nonlocal_declarations(
     use crate::parser::ast::Stmt;
     use std::collections::HashSet;
 
-    fn function_bindings(
+    struct FunctionScope {
+        bindings: HashSet<String>,
+        params: HashSet<String>,
+        type_params: HashSet<String>,
+    }
+
+    fn type_param_names(type_params: &[crate::parser::ast::TypeParam]) -> HashSet<String> {
+        type_params
+            .iter()
+            .map(|param| param.name.clone())
+            .collect()
+    }
+
+    fn function_scope(
         params: &[crate::parser::ast::Param],
+        type_params: &[crate::parser::ast::TypeParam],
         body: &[crate::source::Spanned<Stmt>],
-    ) -> HashSet<String> {
+    ) -> FunctionScope {
         let mut assigned = Vec::new();
         let mut declared = Vec::new();
         crate::resolve::pass::collect_assignment_targets(body, &mut assigned, &mut declared);
         crate::resolve::pass::collect_walrus_targets_in_stmts(body, &mut assigned);
 
-        let mut bindings: HashSet<String> = params.iter().map(|p| p.name.clone()).collect();
+        let params: HashSet<String> = params.iter().map(|p| p.name.clone()).collect();
+        let mut bindings = params.clone();
         for name in assigned {
             if !declared.iter().any(|decl| decl == &name) {
                 bindings.insert(name);
             }
         }
-        bindings
+
+        FunctionScope {
+            bindings,
+            params,
+            type_params: type_param_names(type_params),
+        }
     }
 
     fn visit(
         stmts: &[crate::source::Spanned<Stmt>],
-        function_scopes: &mut Vec<HashSet<String>>,
+        function_scopes: &mut Vec<FunctionScope>,
+        class_type_param_scopes: &mut Vec<HashSet<String>>,
     ) -> Option<crate::error::MambaError> {
         for stmt in stmts {
             match &stmt.node {
                 Stmt::Nonlocal(names) => {
                     for name in names {
-                        if !function_scopes
+                        if class_type_param_scopes
                             .iter()
                             .rev()
                             .any(|scope| scope.contains(name))
                         {
+                            return Some(crate::error::MambaError::syntax(
+                                stmt.span,
+                                format!(
+                                    "nonlocal binding not allowed for type parameter '{name}'"
+                                ),
+                            ));
+                        }
+                        if function_scopes
+                            .last()
+                            .is_some_and(|scope| scope.params.contains(name))
+                        {
+                            return Some(crate::error::MambaError::syntax(
+                                stmt.span,
+                                format!("name '{name}' is parameter and nonlocal"),
+                            ));
+                        }
+                        let mut found_binding = false;
+                        for scope in function_scopes.iter().rev() {
+                            if scope.type_params.contains(name) {
+                                return Some(crate::error::MambaError::syntax(
+                                    stmt.span,
+                                    format!(
+                                        "nonlocal binding not allowed for type parameter '{name}'"
+                                    ),
+                                ));
+                            }
+                            if scope.bindings.contains(name) {
+                                found_binding = true;
+                                break;
+                            }
+                        }
+                        if !found_binding {
                             return Some(crate::error::MambaError::syntax(
                                 stmt.span,
                                 format!("no binding for nonlocal '{name}' found"),
@@ -5041,17 +5094,32 @@ fn validate_compile_nonlocal_declarations(
                         }
                     }
                 }
-                Stmt::FnDef { params, body, .. } | Stmt::AsyncFnDef { params, body, .. } => {
-                    function_scopes.push(function_bindings(params, body));
-                    if let Some(err) = visit(body, function_scopes) {
+                Stmt::FnDef {
+                    params,
+                    type_params,
+                    body,
+                    ..
+                }
+                | Stmt::AsyncFnDef {
+                    params,
+                    type_params,
+                    body,
+                    ..
+                } => {
+                    function_scopes.push(function_scope(params, type_params, body));
+                    if let Some(err) = visit(body, function_scopes, class_type_param_scopes) {
                         return Some(err);
                     }
                     function_scopes.pop();
                 }
-                Stmt::ClassDef { body, .. } => {
-                    if let Some(err) = visit(body, function_scopes) {
+                Stmt::ClassDef {
+                    type_params, body, ..
+                } => {
+                    class_type_param_scopes.push(type_param_names(type_params));
+                    if let Some(err) = visit(body, function_scopes, class_type_param_scopes) {
                         return Some(err);
                     }
+                    class_type_param_scopes.pop();
                 }
                 Stmt::If {
                     body,
@@ -5059,16 +5127,20 @@ fn validate_compile_nonlocal_declarations(
                     else_body,
                     ..
                 } => {
-                    if let Some(err) = visit(body, function_scopes) {
+                    if let Some(err) = visit(body, function_scopes, class_type_param_scopes) {
                         return Some(err);
                     }
                     for (_, elif_body) in elif_clauses {
-                        if let Some(err) = visit(elif_body, function_scopes) {
+                        if let Some(err) =
+                            visit(elif_body, function_scopes, class_type_param_scopes)
+                        {
                             return Some(err);
                         }
                     }
                     if let Some(else_body) = else_body {
-                        if let Some(err) = visit(else_body, function_scopes) {
+                        if let Some(err) =
+                            visit(else_body, function_scopes, class_type_param_scopes)
+                        {
                             return Some(err);
                         }
                     }
@@ -5082,17 +5154,19 @@ fn validate_compile_nonlocal_declarations(
                 | Stmt::AsyncFor {
                     body, else_body, ..
                 } => {
-                    if let Some(err) = visit(body, function_scopes) {
+                    if let Some(err) = visit(body, function_scopes, class_type_param_scopes) {
                         return Some(err);
                     }
                     if let Some(else_body) = else_body {
-                        if let Some(err) = visit(else_body, function_scopes) {
+                        if let Some(err) =
+                            visit(else_body, function_scopes, class_type_param_scopes)
+                        {
                             return Some(err);
                         }
                     }
                 }
                 Stmt::With { body, .. } | Stmt::AsyncWith { body, .. } => {
-                    if let Some(err) = visit(body, function_scopes) {
+                    if let Some(err) = visit(body, function_scopes, class_type_param_scopes) {
                         return Some(err);
                     }
                 }
@@ -5102,28 +5176,36 @@ fn validate_compile_nonlocal_declarations(
                     else_body,
                     finally_body,
                 } => {
-                    if let Some(err) = visit(body, function_scopes) {
+                    if let Some(err) = visit(body, function_scopes, class_type_param_scopes) {
                         return Some(err);
                     }
                     for handler in handlers {
-                        if let Some(err) = visit(&handler.body, function_scopes) {
+                        if let Some(err) =
+                            visit(&handler.body, function_scopes, class_type_param_scopes)
+                        {
                             return Some(err);
                         }
                     }
                     if let Some(else_body) = else_body {
-                        if let Some(err) = visit(else_body, function_scopes) {
+                        if let Some(err) =
+                            visit(else_body, function_scopes, class_type_param_scopes)
+                        {
                             return Some(err);
                         }
                     }
                     if let Some(finally_body) = finally_body {
-                        if let Some(err) = visit(finally_body, function_scopes) {
+                        if let Some(err) =
+                            visit(finally_body, function_scopes, class_type_param_scopes)
+                        {
                             return Some(err);
                         }
                     }
                 }
                 Stmt::Match { arms, .. } => {
                     for arm in arms {
-                        if let Some(err) = visit(&arm.body, function_scopes) {
+                        if let Some(err) =
+                            visit(&arm.body, function_scopes, class_type_param_scopes)
+                        {
                             return Some(err);
                         }
                     }
@@ -5134,7 +5216,7 @@ fn validate_compile_nonlocal_declarations(
         None
     }
 
-    visit(&module.stmts, &mut Vec::new())
+    visit(&module.stmts, &mut Vec::new(), &mut Vec::new())
 }
 
 /// Format a MambaError as a SyntaxError message with file/line/col (R4).
