@@ -1,0 +1,127 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: tapes.tape.dev
+spec:
+  group: tape.dev
+  names:
+    categories: []
+    kind: Tape
+    plural: tapes
+    shortNames:
+    - tp
+    singular: tape
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.readyReplicas
+      name: Ready
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for TapeSpec via `CustomResource`
+        properties:
+          spec:
+            description: '`tape.dev/v1alpha1` `Tape`. Namespaced: every child object the operator renders lands in this object''s namespace, so independent tape deployments coexist by name.'
+            properties:
+              auth:
+                default: off
+                description: 'Request-auth mode for the data plane: `off` (default) or `required`. A flat string, not an enum with divergent variant schemas (Kubernetes structural schemas cannot represent those). `required` takes effect only together with [`Self::tokens_secret`].'
+                type: string
+              graceSecs:
+                default: 10
+                description: Graceful drain window on SIGTERM (seconds); tracks `terminationGracePeriodSeconds`. Defaults to 10 (`TAPE_GRACE_SECS`).
+                type: integer
+                minimum: 0.0
+              image:
+                type: string
+              imagePullPolicy:
+                nullable: true
+                type: string
+              logLevel:
+                description: Log level (`trace|debug|info|warn|error`), injected as `RUST_LOG`. Unset means the server default (`info`).
+                nullable: true
+                type: string
+              replicasPerShard:
+                default: 1
+                type: integer
+                minimum: 0.0
+              resources:
+                default:
+                  cpu: ''
+                  memory: ''
+                description: CPU/memory request==limit (Guaranteed QoS).
+                properties:
+                  cpu:
+                    default: ''
+                    type: string
+                  memory:
+                    default: ''
+                    type: string
+                type: object
+              shardCount:
+                default: 1
+                type: integer
+                minimum: 0.0
+              storage:
+                default: 10Gi
+                description: Per-pod journal (+ raft hard state + applied-index marker) PVC size. Defaults to `10Gi`.
+                type: string
+              storageClass:
+                description: PVC StorageClass for the journal disk. Unset means the cluster default.
+                nullable: true
+                type: string
+              tokensSecret:
+                description: 'Name of the Secret carrying the bearer-token registry (key `token-registry.json`). When set with `auth: required`, the render mounts it read-only at `/var/run/secrets/tape` and injects `TAPE_AUTH=required` + `TAPE_TOKEN_REGISTRY_FILE` (relay/lumen''s pattern; off unless the CR asks).'
+                nullable: true
+                type: string
+              voterCount:
+                default: 1
+                type: integer
+                minimum: 0.0
+            required:
+            - image
+            type: object
+          status:
+            description: Status subresource, written back by the reconcile loop.
+            nullable: true
+            properties:
+              desiredReplicas:
+                default: 0
+                description: Desired replicas (`replicasPerShard`; tape is single-group).
+                format: int32
+                type: integer
+              message:
+                default: ''
+                description: Last human-readable reconcile message.
+                type: string
+              observedGeneration:
+                default: 0
+                description: The `.metadata.generation` this status reflects (drift detection).
+                format: int64
+                type: integer
+              phase:
+                default: ''
+                description: '`Pending | Reconciling | Ready`.'
+                type: string
+              readyReplicas:
+                default: 0
+                description: Ready replicas (from the StatefulSet status).
+                format: int32
+                type: integer
+            type: object
+        required:
+        - spec
+        title: Tape
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,423 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Tape API",
+    "version": "0.4.3",
+    "description": "Topic replay journal API for append, replay, checkpoints, retention, and standard service endpoints."
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "Liveness probe",
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "summary": "Readiness probe",
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "Prometheus metrics",
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "summary": "OpenAPI document",
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/docs": {
+      "get": {
+        "summary": "Swagger UI",
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic}/append": {
+      "post": {
+        "summary": "Append an event envelope to a topic journal",
+        "parameters": [
+          {
+            "name": "topic",
+            "in": "path",
+            "required": true,
+            "description": "Topic name",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppendEventRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TapeEvent"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic}/replay": {
+      "get": {
+        "summary": "Replay topic history by offset or timestamp",
+        "parameters": [
+          {
+            "name": "topic",
+            "in": "path",
+            "required": true,
+            "description": "Topic name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from_offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "from_timestamp_ms",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic}/consumers/{consumer}/checkpoint": {
+      "get": {
+        "summary": "Read a consumer replay checkpoint",
+        "parameters": [
+          {
+            "name": "topic",
+            "in": "path",
+            "required": true,
+            "description": "Topic name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "consumer",
+            "in": "path",
+            "required": true,
+            "description": "Consumer checkpoint name",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsumerCheckpoint"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Advance a consumer replay checkpoint",
+        "parameters": [
+          {
+            "name": "topic",
+            "in": "path",
+            "required": true,
+            "description": "Topic name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "consumer",
+            "in": "path",
+            "required": true,
+            "description": "Consumer checkpoint name",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckpointRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsumerCheckpoint"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic}/retention": {
+      "put": {
+        "summary": "Configure a topic retention window",
+        "parameters": [
+          {
+            "name": "topic",
+            "in": "path",
+            "required": true,
+            "description": "Topic name",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetentionPolicy"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionPolicy"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AppendEventRequest": {
+        "type": "object",
+        "required": [
+          "payload"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "timestamp_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "payload": {
+            "description": "Caller-owned event envelope or claim-check reference"
+          }
+        }
+      },
+      "TapeEvent": {
+        "type": "object",
+        "required": [
+          "topic",
+          "offset",
+          "timestamp_ms",
+          "payload"
+        ],
+        "properties": {
+          "topic": {
+            "type": "string"
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "timestamp_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "key": {
+            "type": "string"
+          },
+          "payload": {}
+        }
+      },
+      "ReplayResponse": {
+        "type": "object",
+        "required": [
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TapeEvent"
+            }
+          }
+        }
+      },
+      "CheckpointRequest": {
+        "type": "object",
+        "required": [
+          "offset"
+        ],
+        "properties": {
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ConsumerCheckpoint": {
+        "type": "object",
+        "required": [
+          "topic",
+          "consumer",
+          "offset",
+          "updated_at_ms"
+        ],
+        "properties": {
+          "topic": {
+            "type": "string"
+          },
+          "consumer": {
+            "type": "string"
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updated_at_ms": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "RetentionPolicy": {
+        "type": "object",
+        "properties": {
+          "min_offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_age_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "protected_consumers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

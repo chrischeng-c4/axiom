@@ -34,14 +34,14 @@ real-service external peer calibration remain separate work roots.
 | Topic Replay Journal | #768 | implemented | verified | smoke | ready | local file-backed append and offset/time replay; raft/h2c deferred |
 | Consumer Checkpoints | #768 | implemented | verified | smoke | ready | local durable consumer cursor and stale-write rejection |
 | Retention And Backfill | #768 | planned | planned | none | not_ready | retention windows, compaction policy, and batch backfill |
-| HTTP/2 API List | #768 | implemented | verified | smoke | ready | offline `tape spec` route/OpenAPI inventory; serving h2c deferred |
-| Standard Operational Endpoints | #768 | implemented | verified | smoke | ready | offline route inventory for `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`; server deferred |
-| Kubernetes-Native Deployment | #768 | planned | planned | none | not_ready | dedicated StatefulSet/operator shape |
-| Primary Replicas | #768 | planned | planned | none | not_ready | raft-backed replicated topic journal |
+| HTTP/2 API List | #768 | implemented | verified | smoke | ready | offline `tape spec` route/OpenAPI inventory plus a real h2c + HTTP/1.1 server (#1325) serving `/topics` append/replay/checkpoint; `GET /admin/backup` + `tape backup`/`tape spec gen` client codegen (#1329) |
+| Standard Operational Endpoints | #768 | implemented | verified | smoke | ready | `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` served for real via `libs/service-http` (#1325), with drain-aware readiness and `tape serve` |
+| Kubernetes-Native Deployment | #768 | implemented | verified | smoke | ready | CRD/operator/instance render + dockerfile CLI (#1328); StatefulSet topology, offline render tests; no live kind cluster proof yet |
+| Primary Replicas | #1327 | implemented | planned | dogfood | not_ready | raft-host auto-mode leader/follower primary-replica topology over the whole journal; live 3-node kill-9 failover proven, peer-TLS is config-surface + fail-fast validation only (raft-host h2c has no TLS seam yet) |
 | CLI Interface | #768 | implemented | verified | smoke | ready | `tape` CLI for local replay/admin, spec, and agent docs |
 | CLI Standard Surface | #768 | implemented | verified | smoke | ready | shared `llm`, `upgrade`, and `issue` command groups |
 | Chainable Output Conformance | #768 | implemented | verified | smoke | ready | replay/admin commands emit terminal `next:` hints |
-| EC Gates Configured | #768 | partial | verified | smoke | not_ready | crate smoke tests exist; vat/meter/guard EC inventory deferred |
+| EC Gates Configured | #768, #1330 | implemented | verified | smoke | ready | crate smoke tests + vat/meter/guard EC inventory (vat.toml, meter-tape-performance.toml, guard-tape-security.toml) |
 | Long-Running Stability | #768 | planned | planned | none | not_ready | soak, retention, compaction, and replay recovery gates |
 | Security Hardening | #768 | planned | planned | none | not_ready | producer/consumer authz, tenant isolation, audit, and secret rotation |
 | Competitor Feature Parity | #768 | implemented | verified | smoke | ready | Kafka/Redpanda/Pulsar/JetStream/RabbitMQ Streams replay matrix; feature win only over RabbitMQ topic exchange replay gap |
@@ -263,19 +263,32 @@ ID: http2-api-list
 Type: RuntimeTool
 Root WI: #768
 Status: verified
-Surfaces: CLI: `tape spec --format routes|openapi|openapi-yaml|json-schema`; HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`, topic append/replay/checkpoint routes.
-EC Dimensions: behavior: `cargo test -p tape --test cli_contract spec_routes_list_topic_contract -- --exact` - offline route inventory
+Surfaces: CLI: `tape spec --format routes|openapi|openapi-yaml|json-schema`, `tape spec gen --lang ts|py|rust --out <dir>`, `tape serve`, `tape backup --url --dest --token --retention-secs` (feature `backup`); HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`, topic append/replay/checkpoint routes served for real over h2c + HTTP/1.1 on one port, plus admin-gated `GET /admin/backup` streaming a whole-journal snapshot.
+EC Dimensions: behavior: `cargo test -p tape --test cli_contract spec_routes_list_topic_contract -- --exact` - offline route inventory; `cargo test -p tape --test http_transport` - real h2c+HTTP/1.1 transport, drain-aware readiness, and per-op metrics; `cargo test -p tape --features backup --test backup` - live admin-gated snapshot endpoint + `tape backup` fetch/ship/retention round trip
 Required Verification: smoke, conformance
 Promise:
 Tape exposes a compact h2c/OpenAPI API list for producer, replay, checkpoint,
-and operator workflows.
+and operator workflows, and serves it for real on one h2c + HTTP/1.1 port via
+`tape serve` (shared `libs/service-http` shell). `tape spec gen` generates
+typed ts/py/rust clients from tape's own OpenAPI document via the shared
+`libs/openapi-codegen` crate (`apps/tape/clients/` scaffold), and `GET
+/admin/backup` + `tape backup` (feature `backup`) ship a consistent
+whole-journal snapshot to a `libs/service-backup` destination sink.
 Gate Inventory:
 - apps/tape/src/spec.rs
 - apps/tape/tests/cli_contract.rs
+- apps/tape/src/server.rs
+- apps/tape/src/openapi.rs
+- apps/tape/tests/http_transport.rs
+- apps/tape/src/backup.rs
+- apps/tape/tests/backup.rs
+- apps/tape/clients/
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | h2c-openapi-route-list | epic | #768 | implemented | passing | smoke | apps/tape/src/spec.rs<br>apps/tape/tests/cli_contract.rs |
+| service-http-shell-h2c-serve-standard-endpoints | change | #1325 | implemented | passing | smoke | apps/tape/src/server.rs<br>apps/tape/src/openapi.rs<br>apps/tape/tests/http_transport.rs |
+| backup-service-tls-spec-gen-clients | change | #1329 | implemented | passing | smoke | apps/tape/src/backup.rs<br>apps/tape/src/server.rs<br>apps/tape/src/bin/tape.rs<br>apps/tape/clients/<br>apps/tape/tests/backup.rs |
 
 ### Standard Operational Endpoints
 
@@ -283,19 +296,24 @@ ID: standard-operational-endpoints
 Type: Service
 Root WI: #768
 Status: verified
-Surfaces: CLI: `tape spec --format routes`; HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` route inventory.
-EC Dimensions: behavior: `cargo test -p tape --test cli_contract spec_routes_list_topic_contract -- --exact` - offline standard endpoint inventory
+Surfaces: CLI: `tape spec --format routes`, `tape serve [--bind] [--store] [--grace-secs]`; HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` served for real via the shared `libs/service-http` shell, with SIGTERM-aware graceful drain.
+EC Dimensions: behavior: `cargo test -p tape --test cli_contract spec_routes_list_topic_contract -- --exact` - offline standard endpoint inventory; `cargo test -p tape --test http_transport` - real probe surface, drain-aware `/readyz`, and Prometheus `/metrics`
 Required Verification: smoke
 Promise:
-Expose the standard service endpoint contract in Tape's offline spec before the
-serving h2c implementation lands.
+Serve the standard service endpoint contract for real over one h2c + HTTP/1.1
+port, with drain-aware readiness and per-op request metrics.
 Gate Inventory:
 - apps/tape/src/spec.rs
 - apps/tape/tests/cli_contract.rs
+- apps/tape/src/server.rs
+- apps/tape/src/metrics.rs
+- apps/tape/src/bin/tape.rs
+- apps/tape/tests/http_transport.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | standard-service-route-inventory | epic | #768 | implemented | passing | smoke | apps/tape/src/spec.rs<br>apps/tape/tests/cli_contract.rs |
+| service-http-shell-h2c-serve-standard-endpoints | change | #1325 | implemented | passing | smoke | apps/tape/src/server.rs<br>apps/tape/src/metrics.rs<br>apps/tape/src/bin/tape.rs<br>apps/tape/tests/http_transport.rs |
 
 ### EC Gates Configured
 
@@ -303,21 +321,26 @@ ID: ec-gates-configured
 Type: Devops
 Root WI: #768
 Status: confirmed
-Surfaces: Tests: `cargo test -p tape`; future Vat/Meter/Guard gates under `apps/tape/`.
-EC Dimensions: behavior: current smoke gate; efficiency/security/stability inventories pending
-Required Verification: smoke
+Surfaces: Tests: `cargo test -p tape`; Vat/Meter/Guard gates under `apps/tape/`.
+EC Dimensions: behavior: smoke gate; efficiency: meter-owned vat-isolated performance gate; security: guard-owned vat-isolated security gate; stability: inventory pending
+Required Verification: smoke, efficiency, security
 Promise:
-Keep the first Tape implementation behind executable gates now, then add
-vat/meter/guard EC inventories as the service grows beyond local replay smoke.
+Keep the first Tape implementation behind executable gates, with vat-isolated
+meter/guard EC inventories now wired up alongside the local replay smoke gate.
 Gate Inventory:
 - apps/tape/tests/cli_contract.rs
-- pending: apps/tape/vat.toml
-- pending: apps/tape/meter-tape-replay.toml
-- pending: apps/tape/guard-tape-security.toml
+- apps/tape/vat.toml
+- apps/tape/meter-tape-performance.toml
+- apps/tape/guard-tape-security.toml
+- apps/tape/external-contracts/competitor-performance/efficiency/meter-gate.md
+- apps/tape/external-contracts/security-hardening/security/security-evidence.md
+- apps/tape/observability/ (prometheus.yml, otel-collector-config.yaml, grafana-datasources.yaml)
+- apps/tape/compose.yaml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | crate-smoke-gate | epic | #768 | partial | passing | smoke | cargo test -p tape |
+| tape-vat-meter-guard-ec-gates-observability | change | #1330 | implemented | passing | smoke | apps/tape/vat.toml, apps/tape/meter-tape-performance.toml, apps/tape/guard-tape-security.toml |
 
 ### Kubernetes-Native Deployment
 
@@ -325,34 +348,40 @@ ID: kubernetes-native-deployment
 Type: Devops
 Root WI: #768
 Status: confirmed
-Surfaces: K8s: dedicated StatefulSet/operator topology for topic partitions, storage, probes, backups, and PDBs.
-EC Dimensions: behavior: pending kustomize/operator render gate - CRD, operator, and instance render; stability: pending kind replay dogfood
-Required Verification: smoke, dogfood
+Surfaces: K8s: dedicated StatefulSet/operator topology for topic partitions, storage, probes, and PDBs (#1328); `tape k8s crd|operator|instance render`, `tape k8s operator run` (behind the `operator` cargo feature), and `tape dockerfile render --variant source|release`.
+EC Dimensions: behavior: offline render/CLI gates (`tests/deploy_cli.rs`, `tests/operator.rs`) - CRD structural-schema safety, operator render shape, instance profiles, dockerfile fixture parity; stability: pending live kind replay dogfood (no cluster available in this slice)
+Required Verification: smoke
 Promise:
 Tape runs as a dedicated k8s-native replay service with stable identity,
-persistent storage, backup policy, and operator-managed lifecycle.
+persistent storage, and operator-managed lifecycle. Live-cluster
+dogfood (kind smoke) is a deferred follow-up.
 Gate Inventory:
-- pending: apps/tape/k8s
+- apps/tape/k8s/operator/{crd,rbac,deployment}.yaml
+- apps/tape/tests/deploy_cli.rs
+- apps/tape/tests/operator.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| dedicated-statefulset-operator-topology | epic | #768 | planned | planned | none | pending k8s render/dogfood gates |
+| dedicated-statefulset-operator-topology | epic | #768 | implemented | verified | smoke | apps/tape/tests/{deploy_cli,operator}.rs; #1328 |
 
 ### Primary Replicas
 
 ID: primary-replicas
 Type: Runtime
-Root WI: #768
+Root WI: #768, #1327
 Status: confirmed
-Surfaces: Raft: topic journal state machine over `libs/raft-core` and `libs/raft-host`.
-EC Dimensions: stability: pending raft replay failover gate - leader failover without committed event loss
+Surfaces: Raft: topic journal state machine over `libs/raft-core` and `libs/raft-host`'s `TapeRaft`/`TapeStateMachine` (#1327); auto-mode leader/follower topology activated by `REPLICAS_PER_SHARD>1` (plus the standard `POD_NAME`/`SHARD_COUNT`/`VOTER_COUNT` downward-API quartet) — no tape-specific `--raft` flag. Peer mTLS (`TAPE_PEER_TLS_CERT`/`_KEY`/`_CA`, `TAPE_PEER_MTLS`) validates at startup but is not yet terminated on the peer port (`libs/raft-host`'s h2c transport has no TLS seam yet).
+EC Dimensions: behavior: real 3-node in-process raft group - election, leader-applied writes replicate to followers, follower-received appends forward to the leader, direct follower peer-route POST answers 421, fresh-node catch-up via InstallSnapshot; stability: live 3-node `kill -9` leader failover with no committed event loss, restart-recovery of the durable applied-index floor across process restarts; pending: peer-mTLS termination (config-surface + fail-fast validation only today)
 Required Verification: conformance, dogfood
 Promise:
 Tape replicates committed topic journal state through raft so replay ranges and
-checkpoints survive leader failover.
+checkpoints survive leader failover. Peer-TLS is a documented config-surface
+gap, not a silent security regression.
 Gate Inventory:
-- pending: apps/tape/tests/raft_replay.rs
+- apps/tape/tests/raft_cluster.rs
+- apps/tape/tests/raft_failover.rs
+- apps/tape/tests/raft_persistence.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| raft-backed-replay-journal | epic | #768 | planned | planned | none | pending raft replay failover gate |
+| raft-backed-replay-journal | epic | #768 | implemented | planned | dogfood | apps/tape/tests/{raft_cluster,raft_failover,raft_persistence}.rs prove election/replication/failover/restart-recovery; #1327; peer-mTLS termination gate still pending |
