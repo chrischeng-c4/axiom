@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:70683ede" tracker="pending-tracker" reason="SPEC-MANAGED meter-cli native manifest (mirrors apps/relay/meter-relay-performance.toml): project=tape, source_contract=tape-meter-performance-gate, delegate_command='cd apps/tape && ../../target/debug/vat run meter-perf'."
+// TODO: hand-write content for `apps/tape/meter-tape-performance.toml`.
+// HANDWRITE-END

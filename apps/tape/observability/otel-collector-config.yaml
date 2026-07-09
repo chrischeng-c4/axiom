@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:6ff6dc3f" tracker="pending-tracker" reason="OTel collector config receiving OTLP gRPC from tape and re-exporting a Prometheus scrape target plus a trace exporter to Jaeger (mirrors projects/lumen/observability/otel-collector-config.yaml)."
+// TODO: hand-write content for `apps/tape/observability/otel-collector-config.yaml`.
+// HANDWRITE-END

@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:d28ba17c" tracker="pending-tracker" reason="vat workspace for tape's EC dispatch (mirrors apps/relay/vat.toml): base=../.., workdir=apps/tape, setup builds meter-cli+guard-cli plus tape_perf_gate/tape_vs_nats_jetstream/cli_contract test binaries; runners meter-perf (delegates to cargo test -p tape --test tape_perf_gate --test tape_vs_nats_jetstream) and guard-security (guard scan apps/tape --profile security-lint --meter-command attaching auth-boundary smoke evidence)."
+// TODO: hand-write content for `apps/tape/vat.toml`.
+// HANDWRITE-END

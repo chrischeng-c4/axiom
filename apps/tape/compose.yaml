@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:4a7e8922" tracker="pending-tracker" reason="Local dev compose stack: tape + otel-collector + prometheus + jaeger + grafana (mirrors projects/lumen/compose.yaml), building tape's Dockerfile and wiring the observability/ config volumes."
+// TODO: hand-write content for `apps/tape/compose.yaml`.
+// HANDWRITE-END

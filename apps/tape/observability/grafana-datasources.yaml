@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:23b5f04d" tracker="pending-tracker" reason="Grafana datasource provisioning wiring Prometheus + Jaeger (mirrors projects/lumen/observability/grafana-datasources.yaml)."
+// TODO: hand-write content for `apps/tape/observability/grafana-datasources.yaml`.
+// HANDWRITE-END
