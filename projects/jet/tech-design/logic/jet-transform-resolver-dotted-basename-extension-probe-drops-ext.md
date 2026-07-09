@@ -110,7 +110,6 @@ flowchart TD
     r3[R3 plain extensionless relative import regression control] --> cargo_test_p_jet_lib_transform_modules_tests_bundle_resolves_plain_extensionless_relative_import_unchanged[cargo test -p jet --lib transform::modules::tests::bundle_resolves_plain_extensionless_relative_import_unchanged]
     r4[R4 append extension preserves dotted basename unit] --> cargo_test_p_jet_lib_transform_modules_tests_append_extension_appends_without_replacing_dotted_basename[cargo test -p jet --lib transform::modules::tests::append_extension_appends_without_replacing_dotted_basename]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
