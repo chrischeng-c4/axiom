@@ -119,7 +119,6 @@ would be misleading. The existing grace-period escalator at the top of
 `tick()` (oldest expired `Killing` lease -> group `SIGKILL`) requires no
 change: it already escalates any `Killing` lease regardless of which path
 put it there.
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
