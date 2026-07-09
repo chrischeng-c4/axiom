@@ -12,9 +12,34 @@ pub fn mb_callable(obj: MbValue) -> MbValue {
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             match &(*ptr).data {
-                ObjData::Instance { class_name, .. } => {
+                ObjData::Instance {
+                    class_name,
+                    ref fields,
+                } => {
                     if super::super::stdlib::enum_mod::is_functional_enum_class(obj) {
                         return MbValue::from_bool(true);
+                    }
+                    if matches!(class_name.as_str(), "typing.Alias" | "Alias") {
+                        let (kind, origin) = {
+                            let guard = fields.read().unwrap();
+                            (
+                                guard.get("_kind").copied().and_then(|value| {
+                                    value.as_ptr().and_then(|ptr| unsafe {
+                                        match &(*ptr).data {
+                                            ObjData::Str(s) => Some(s.clone()),
+                                            _ => None,
+                                        }
+                                    })
+                                }),
+                                guard.get("__origin__").copied(),
+                            )
+                        };
+                        let is_callable = kind.as_deref() == Some("generic")
+                            && origin.is_some_and(|origin| {
+                                origin.to_bits() != obj.to_bits()
+                                    && super::mb_callable(origin).as_bool() == Some(true)
+                            });
+                        return MbValue::from_bool(is_callable);
                     }
                     if class_name == "__exec_function__" {
                         return MbValue::from_bool(true);

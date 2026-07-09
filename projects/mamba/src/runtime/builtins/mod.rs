@@ -5114,6 +5114,40 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
                     );
                     return MbValue::none();
                 }
+                if matches!(class_name.as_str(), "GenericAlias" | "types.GenericAlias") {
+                    if let Some((origin, _)) = generic_alias_origin_args(class_name, fields) {
+                        let args_list = MbValue::from_ptr(MbObject::new_list_borrowed(items));
+                        let result = mb_call_spread(origin, args_list);
+                        super::rc::release_if_ptr(args_list);
+                        return result;
+                    }
+                }
+                if matches!(class_name.as_str(), "typing.Alias" | "Alias") {
+                    let (kind, origin) = {
+                        let guard = fields.read().unwrap();
+                        (
+                            guard.get("_kind").copied().and_then(|value| {
+                                value.as_ptr().and_then(|ptr| unsafe {
+                                    match &(*ptr).data {
+                                        ObjData::Str(s) => Some(s.clone()),
+                                        _ => None,
+                                    }
+                                })
+                            }),
+                            guard.get("__origin__").copied(),
+                        )
+                    };
+                    if kind.as_deref() == Some("generic") {
+                        if let Some(origin) =
+                            origin.filter(|origin| origin.to_bits() != func.to_bits())
+                        {
+                            let args_list = MbValue::from_ptr(MbObject::new_list_borrowed(items));
+                            let result = mb_call_spread(origin, args_list);
+                            super::rc::release_if_ptr(args_list);
+                            return result;
+                        }
+                    }
+                }
             }
             if let ObjData::Instance {
                 ref class_name,
@@ -7122,6 +7156,27 @@ mod tests {
     }
 
     #[test]
+    fn test_generic_alias_call_forwards_to_origin() {
+        let alias = generic_alias_instance(
+            "GenericAlias",
+            "__origin__",
+            "__args__",
+            make_type_object("list"),
+            vec![make_type_object("int")],
+        );
+        let args = MbValue::from_ptr(MbObject::new_list(vec![]));
+
+        let result = mb_call_spread(alias, args);
+
+        unsafe {
+            match &(*result.as_ptr().expect("list result")).data {
+                ObjData::List(items) => assert!(items.read().unwrap().is_empty()),
+                _ => panic!("expected list result"),
+            }
+        }
+    }
+
+    #[test]
     fn test_conversions() {
         assert_eq!(mb_int(MbValue::from_float(3.7)).as_int(), Some(3));
         assert_eq!(mb_float(MbValue::from_int(42)).as_float(), Some(42.0));
@@ -9086,6 +9141,27 @@ def f():
             crate::runtime::exception::get_exception_message_pub(exc).as_deref(),
             Some("'int' object is not callable")
         );
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_exec_instantiates_pep695_user_generic_alias() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(
+            make_str(
+                "class Box[T]:\n    def __init__(self, value):\n        self.value = value\ninst = Box[int](42)\nresult = inst.value\n",
+            ),
+            globals,
+        );
+        assert_eq!(
+            crate::runtime::exception::mb_has_exception().as_bool(),
+            Some(false)
+        );
+        let result =
+            crate::runtime::dict_ops::mb_dict_get(globals, make_str("result"), MbValue::none());
+        assert_eq!(result.as_int(), Some(42));
         crate::runtime::exception::mb_clear_exception();
     }
 
