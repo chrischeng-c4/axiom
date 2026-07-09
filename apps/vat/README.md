@@ -72,6 +72,7 @@ Gate Inventory:
 | Network sandbox v3 — seatbelt egress policy | change | #518 | implemented | verified | smoke | `cargo test -p vat --test vat_sandbox_egress -- --nocapture` |
 | Sandbox applied to runner-mode commands | change | #527 | implemented | verified | smoke | `cargo test -p vat --test vat_runner_sandbox -- --nocapture` |
 | Full-hermetic http-mock no-forward mode | change | #530 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_httpmock_hermetic -- --nocapture` |
+| Sandbox egress policy fails closed when isolation cannot enforce it | change | #1300 | implemented | verified | smoke | `cargo test -p vat --test vat_sandbox_egress_fail_closed -- --nocapture` |
 | Copy-on-write fork and snapshot lifecycle | epic | - | implemented | verified | smoke | `rg -n -e copy-on-write -e fork -e snapshot -e clonefile -e APFS apps/vat/README.md` |
 | Resource isolation boundary | epic | - | implemented | verified | smoke | `rg -n -e sandbox -e isolation -e seatbelt apps/vat/README.md apps/vat/src/sandbox` |
 
