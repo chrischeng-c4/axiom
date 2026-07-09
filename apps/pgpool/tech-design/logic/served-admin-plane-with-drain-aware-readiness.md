@@ -391,7 +391,6 @@ existing_serve_args:
   source: "apps/pgpool/src/bin/pgpool.rs ServeArgs (WI #1288/#1289, unchanged)"
   fields: [bind, backend_host, backend_port, backend_connect_timeout_ms, drain_timeout_ms, pool_acquire_timeout_ms]
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
