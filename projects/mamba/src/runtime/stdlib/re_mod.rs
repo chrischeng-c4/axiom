@@ -1659,9 +1659,12 @@ fn captures_to_match(re: &regex::Regex, caps: regex::Captures) -> MbValue {
 /// re.search(pattern, string) -> Match instance or None
 pub fn mb_re_search(pattern: MbValue, string: MbValue) -> MbValue {
     let input_is_bytes = is_bytes_like(string);
-    let pat = match extract_str(pattern) {
+    let pat = match extract_pattern_str(pattern) {
         Some(s) => s,
-        None => return MbValue::none(),
+        None => {
+            raise_type_error("first argument must be string or compiled pattern");
+            return MbValue::none();
+        }
     };
     let text = match extract_str(string) {
         Some(s) => s,
@@ -2586,6 +2589,18 @@ mod tests {
     fn test_fullmatch_wrong_pattern_type_raises_type_error() {
         crate::runtime::exception::mb_clear_exception();
         let result = mb_re_fullmatch(MbValue::from_int(7), s("abc123"));
+        assert!(result.is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_search_wrong_pattern_type_raises_type_error() {
+        crate::runtime::exception::mb_clear_exception();
+        let result = mb_re_search(MbValue::from_int(7), s("abc123"));
         assert!(result.is_none());
         assert_eq!(
             crate::runtime::exception::current_exception_type().as_deref(),
