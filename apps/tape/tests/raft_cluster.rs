@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:0ca51618" tracker="pending-tracker" reason="An in-process 3-node TapeRaft group over real h2c listeners (relay's tests/raft_cluster.rs shape, adapted to tape's Append/CheckpointPut commands): exactly one leader; a leader append is applied and readable on every node's journal; a follower append is forwarded to the leader by the host; a direct follower POST to the host's peer route answers 421 not-leader; killing (aborting) the leader's task re-elects a survivor with no committed loss; a small SnapshotPolicy threshold compacts the leader's raft log so a late-started fresh node catches up via InstallSnapshot instead of full log replay."
+// TODO: hand-write content for `apps/tape/tests/raft_cluster.rs`.
+// HANDWRITE-END

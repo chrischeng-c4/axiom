@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:f0da944f" tracker="pending-tracker" reason="Thin adapter over libs/service-tls mirroring relay's src/peer_tls.rs: TAPE_PEER_TLS_CERT/KEY/CA + TAPE_PEER_MTLS=on|off env contract, PeerTlsConfig::from_env() (None when unset, error on partial config or a mis-pointed path), rustls_server_config/rustls_client_config passthroughs. Config-surface + fail-fast validation only -- raft-host's h2c peer transport has no TLS acceptor/connector seam yet (the shared gap also filed against relay/keep/lumen); termination is not applied."
+// TODO: hand-write content for `apps/tape/src/peer_tls.rs`.
+// HANDWRITE-END
