@@ -53,3 +53,42 @@ Scope for WI #937 (`projects/jet/src/bundler/dts.rs`): `annotated_expression_typ
 This closes the `expr as Type` false-positive family without intersecting the sibling variants tracked separately in #1238 (Object.assign+computed-key body), #1263 (nested object literals), and #1264 (arrow function without explicit return type returning a typed object literal) — none of those source shapes pass through an `as_expression`/`satisfies_expression` node, so this logic path leaves their still-open false positives unchanged.
 
 The `unit-test` section pins deterministic regression coverage for both positions plus a negative case: prior tests exercised an `as`-cast on an object-literal-with-async-method const shape and a local-object-then-cast function return, but none pinned the WI's exact plain-object-literal `{ a: 1 } as Foo` const-initializer shape, and no test pairs the two `as`-cast regressions with an explicit negative case proving a genuinely untyped/uninferrable expression (no `as`/`satisfies` wrapper, no explicit annotation) still fails loud once this inference path exists.
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: jet-dts-as-type-explicit-annotation-verification
+requirements:
+  const_identifier_as_expression_real_code_shape:
+    id: R3
+    text: "An exported const initialized to a bare identifier cast via `as Type` (WI #937's cited real-code `SpAlert` shape: `export const SpAlert = Alert as AlertInterface;`) emits the asserted interface type instead of an isolatedDeclarations error, confirming the fix is not limited to object-literal initializers."
+    kind: regression
+    risk: low
+    verify: cargo test -p jet --lib bundler::dts::tests::infers_exported_const_identifier_as_expression_signature
+  const_initializer_as_expression:
+    id: R1
+    text: "An exported const whose initializer is a plain object-literal `expr as Type` assertion (WI #937 minimal repro: `export const asCastConst = { a: 1 } as Foo;`) emits `export declare const asCastConst: Foo;` with the initializer dropped, instead of an isolatedDeclarations error."
+    kind: functional
+    risk: medium
+    verify: cargo test -p jet --lib bundler::dts::tests::infers_exported_const_plain_object_literal_as_expression_signature
+  function_return_local_variable_as_expression:
+    id: R2
+    text: "An exported function whose body assigns to a local variable and returns it cast via `x as Type` (WI #937 minimal repro: `export function asCastReturn() { const x: unknown = { a: 1 }; return x as Foo; }`) emits `export declare function asCastReturn(): Foo;` instead of an isolatedDeclarations error."
+    kind: functional
+    risk: medium
+    verify: cargo test -p jet --lib bundler::dts::tests::infers_exported_function_return_via_local_variable_as_expression
+  function_return_local_variable_without_as_expression_still_errors:
+    id: R4
+    text: "Negative control: the same local-variable-return shape as R2 but with the `as Foo` cast removed (`export function notCast() { const x: unknown = { a: 1 }; return x; }`) must still raise an isolatedDeclarations error, proving the `annotated_expression_type` fix is scoped to explicit `as`/`satisfies` casts and does not broaden return-expression inference to uncast local variables."
+    kind: regression
+    risk: high
+    verify: cargo test -p jet --lib bundler::dts::tests::uninferrable_exported_function_return_of_local_variable_without_as_expression_errors
+---
+flowchart TD
+    r1[R1 const initializer as expression] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_exported_const_plain_object_literal_as_expression_signature[cargo test -p jet --lib bundler::dts::tests::infers_exported_const_plain_object_literal_as_expression_signature]
+    r2[R2 function return local variable as expression] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_exported_function_return_via_local_variable_as_expression[cargo test -p jet --lib bundler::dts::tests::infers_exported_function_return_via_local_variable_as_expression]
+    r3[R3 const identifier as expression real code shape] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_exported_const_identifier_as_expression_signature[cargo test -p jet --lib bundler::dts::tests::infers_exported_const_identifier_as_expression_signature]
+    r4[R4 function return local variable without as expression still errors] --> cargo_test_p_jet_lib_bundler_dts_tests_uninferrable_exported_function_return_of_local_variable_without_as_expression_errors[cargo test -p jet --lib bundler::dts::tests::uninferrable_exported_function_return_of_local_variable_without_as_expression_errors]
+```
