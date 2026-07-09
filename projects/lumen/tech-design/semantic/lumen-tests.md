@@ -345,6 +345,9 @@ semantic_domain:
           - name: "openapi_yaml_is_valid_with_search_path"
             kind: "function"
             public: false
+          - name: "openapi_json_exposes_batch_search_endpoint_and_schemas"
+            kind: "function"
+            public: false
           - name: "json_schema_emits_component_schemas"
             kind: "function"
             public: false
@@ -357,7 +360,13 @@ semantic_domain:
           - name: "llm_outline_maps_agent_topics"
             kind: "function"
             public: false
+          - name: "llm_outline_mentions_batch_search"
+            kind: "function"
+            public: false
           - name: "llm_workflow_covers_the_integration_model"
+            kind: "function"
+            public: false
+          - name: "llm_workflow_documents_batch_search_endpoint"
             kind: "function"
             public: false
           - name: "llm_integration_recommends_postgres_alloydb_adapter_boundary"
@@ -600,6 +609,21 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "unknown_collection_404"
+            kind: "function"
+            public: false
+          - name: "zero_timing"
+            kind: "function"
+            public: false
+          - name: "batch_search_returns_per_item_results_in_order_matching_single_search"
+            kind: "function"
+            public: false
+          - name: "batch_search_partial_failure_reports_per_item_error_with_ok_siblings"
+            kind: "function"
+            public: false
+          - name: "batch_search_over_limit_returns_400"
+            kind: "function"
+            public: false
+          - name: "batch_search_honors_per_item_limit_sort_and_cursor_resume"
             kind: "function"
             public: false
           - name: "type_mismatch_422"

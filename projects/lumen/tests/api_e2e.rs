@@ -409,6 +409,239 @@ async fn unknown_collection_404() {
     resp.assert_status(axum::http::StatusCode::NOT_FOUND);
 }
 
+// ---------------------------------------------------------------------------
+// #1271: POST /collections:search (msearch-style batch search)
+// ---------------------------------------------------------------------------
+
+/// `took_ms`/`took_us` measure real elapsed time, so they legitimately differ
+/// between the standalone call and the batched call even for an identical
+/// query — zero them out before comparing the rest of the response
+/// byte-for-byte.
+fn zero_timing(mut v: Value) -> Value {
+    if let Some(obj) = v.as_object_mut() {
+        obj.insert("took_ms".to_string(), json!(0));
+        obj.insert("took_us".to_string(), json!(0));
+    }
+    v
+}
+
+#[tokio::test]
+async fn batch_search_returns_per_item_results_in_order_matching_single_search() {
+    let s = server();
+
+    s.put("/collections/users")
+        .json(&json!({ "fields": { "tags": { "type": "keyword", "multi": true } } }))
+        .await
+        .assert_status_ok();
+    s.post("/collections/users/index")
+        .json(&json!({ "items": [
+            { "external_id": "u1", "field": "tags", "value": ["rust", "db"] },
+            { "external_id": "u2", "field": "tags", "value": ["go"] }
+        ]}))
+        .await
+        .assert_status_ok();
+
+    s.put("/collections/posts")
+        .json(&json!({ "fields": { "body": { "type": "text" } } }))
+        .await
+        .assert_status_ok();
+    s.post("/collections/posts/index")
+        .json(&json!({ "items": [
+            { "external_id": "p1", "field": "body", "value": "rust engineer" },
+            { "external_id": "p2", "field": "body", "value": "go backend" }
+        ]}))
+        .await
+        .assert_status_ok();
+
+    let users_query =
+        json!({ "query": { "term": { "field": "tags", "value": "rust" } }, "limit": 10 });
+    let posts_query =
+        json!({ "query": { "match": { "field": "body", "text": "rust" } }, "limit": 10 });
+
+    // What the single-collection endpoint returns for each pair — the batch
+    // items must be byte-identical to these.
+    let single_users: Value = s
+        .post("/collections/users/search")
+        .json(&users_query)
+        .await
+        .json();
+    let single_posts: Value = s
+        .post("/collections/posts/search")
+        .json(&posts_query)
+        .await
+        .json();
+
+    let mut item0 = users_query.clone();
+    item0["collection"] = Value::String("users".into());
+    let mut item1 = posts_query.clone();
+    item1["collection"] = Value::String("posts".into());
+
+    let resp = s
+        .post("/collections:search")
+        .json(&json!({ "searches": [item0, item1] }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    let results = body["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 2, "same length as `searches`: {body}");
+
+    assert_eq!(results[0]["status"], "ok");
+    assert_eq!(
+        zero_timing(results[0]["response"].clone()),
+        zero_timing(single_users)
+    );
+    assert_eq!(results[1]["status"], "ok");
+    assert_eq!(
+        zero_timing(results[1]["response"].clone()),
+        zero_timing(single_posts)
+    );
+}
+
+#[tokio::test]
+async fn batch_search_partial_failure_reports_per_item_error_with_ok_siblings() {
+    let s = server();
+    s.put("/collections/users")
+        .json(&json!({ "fields": { "tags": { "type": "keyword" } } }))
+        .await
+        .assert_status_ok();
+    s.post("/collections/users/index")
+        .json(&json!({ "items": [
+            { "external_id": "u1", "field": "tags", "value": "rust" }
+        ]}))
+        .await
+        .assert_status_ok();
+
+    let ok_query = json!({ "collection": "users", "query": { "term": { "field": "tags", "value": "rust" } }, "limit": 10 });
+    let missing_query = json!({ "collection": "missing", "query": { "term": { "field": "tags", "value": "rust" } }, "limit": 10 });
+
+    let resp = s
+        .post("/collections:search")
+        .json(&json!({ "searches": [ok_query.clone(), missing_query, ok_query] }))
+        .await;
+    // Batch-level status stays 200 — one bad item never fails the batch.
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    let results = body["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 3);
+
+    assert_eq!(results[0]["status"], "ok");
+    assert_eq!(results[0]["response"]["hits"][0]["external_id"], "u1");
+
+    assert_eq!(results[1]["status"], "error");
+    assert_eq!(results[1]["code"], "collection_not_found");
+    assert!(results[1]["message"].is_string());
+
+    assert_eq!(results[2]["status"], "ok");
+    assert_eq!(results[2]["response"]["hits"][0]["external_id"], "u1");
+}
+
+#[tokio::test]
+async fn batch_search_over_limit_returns_400() {
+    let s = server();
+    s.put("/collections/users")
+        .json(&json!({ "fields": { "tags": { "type": "keyword" } } }))
+        .await
+        .assert_status_ok();
+
+    let item =
+        json!({ "collection": "users", "query": { "term": { "field": "tags", "value": "x" } } });
+    let searches: Vec<Value> = std::iter::repeat(item).take(33).collect();
+
+    let resp = s
+        .post("/collections:search")
+        .json(&json!({ "searches": searches }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn batch_search_honors_per_item_limit_sort_and_cursor_resume() {
+    let s = server();
+    s.put("/collections/products")
+        .json(&json!({ "fields": {
+            "category": { "type": "keyword" },
+            "price": { "type": "number" }
+        }}))
+        .await
+        .assert_status_ok();
+    let mut items = vec![];
+    for (eid, price) in [("p1", 10), ("p2", 20), ("p3", 30), ("p4", 40), ("p5", 50)] {
+        items.push(json!({ "external_id": eid, "field": "category", "value": "tech" }));
+        items.push(json!({ "external_id": eid, "field": "price", "value": price }));
+    }
+    s.post("/collections/products/index")
+        .json(&json!({ "items": items }))
+        .await
+        .assert_status_ok();
+
+    let asc = json!({
+        "collection": "products",
+        "query": { "term": { "field": "category", "value": "tech" } },
+        "limit": 2,
+        "sort": [{ "field": "price", "order": "asc" }]
+    });
+    let desc = json!({
+        "collection": "products",
+        "query": { "term": { "field": "category", "value": "tech" } },
+        "limit": 3,
+        "sort": [{ "field": "price", "order": "desc" }]
+    });
+
+    let resp = s
+        .post("/collections:search")
+        .json(&json!({ "searches": [asc, desc] }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    let results = body["results"].as_array().unwrap();
+
+    // Item A: per-item `limit: 2` + ascending sort honored independently.
+    let hits_a: Vec<&str> = results[0]["response"]["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["external_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(hits_a, vec!["p1", "p2"]);
+
+    // Item B: a different per-item `limit: 3` + descending sort in the same
+    // batch call — proves per-item options do not leak across items.
+    let hits_b: Vec<&str> = results[1]["response"]["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["external_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(hits_b, vec!["p5", "p4", "p3"]);
+
+    // A cursor returned from a batch item resumes correctly when passed back
+    // for the same collection/item.
+    let cursor = results[0]["response"]["cursor"]
+        .as_str()
+        .expect("item A cursor present (5 docs, page size 2)")
+        .to_string();
+    let mut asc_page2 = json!({
+        "collection": "products",
+        "query": { "term": { "field": "category", "value": "tech" } },
+        "limit": 2,
+        "sort": [{ "field": "price", "order": "asc" }]
+    });
+    asc_page2["cursor"] = Value::String(cursor);
+    let resp2 = s
+        .post("/collections:search")
+        .json(&json!({ "searches": [asc_page2] }))
+        .await;
+    resp2.assert_status_ok();
+    let body2: Value = resp2.json();
+    let hits_a2: Vec<&str> = body2["results"][0]["response"]["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["external_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(hits_a2, vec!["p3", "p4"]);
+}
+
 #[tokio::test]
 async fn type_mismatch_422() {
     let s = server();

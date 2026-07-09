@@ -21,47 +21,52 @@ Public API manifest for `projects/lumen/src/types.rs` generated from AST during 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `Analyzer` | projects/lumen/src/types.rs | enum | pub | 147 |  |
-| `ApiError` | projects/lumen/src/types.rs | struct | pub | 615 |  |
-| `CacheStats` | projects/lumen/src/types.rs | struct | pub | 594 |  |
+| `ApiError` | projects/lumen/src/types.rs | struct | pub | 684 |  |
+| `BatchSearchItem` | projects/lumen/src/types.rs | struct | pub | 545 |  |
+| `BatchSearchRequest` | projects/lumen/src/types.rs | struct | pub | 533 |  |
+| `BatchSearchResponse` | projects/lumen/src/types.rs | struct | pub | 556 |  |
+| `BatchSearchResult` | projects/lumen/src/types.rs | enum | pub | 568 |  |
+| `CacheStats` | projects/lumen/src/types.rs | struct | pub | 663 |  |
 | `CreateCollectionRequest` | projects/lumen/src/types.rs | struct | pub | 21 |  |
 | `CreateCollectionResponse` | projects/lumen/src/types.rs | struct | pub | 28 |  |
-| `DuplicateGroup` | projects/lumen/src/types.rs | struct | pub | 529 |  |
-| `DuplicatedQuery` | projects/lumen/src/types.rs | struct | pub | 368 |  |
-| `DuplicatesRequest` | projects/lumen/src/types.rs | struct | pub | 510 |  |
-| `DuplicatesResponse` | projects/lumen/src/types.rs | struct | pub | 536 |  |
-| `ExistsQuery` | projects/lumen/src/types.rs | struct | pub | 360 |  |
+| `DuplicateGroup` | projects/lumen/src/types.rs | struct | pub | 598 |  |
+| `DuplicatedQuery` | projects/lumen/src/types.rs | struct | pub | 375 |  |
+| `DuplicatesRequest` | projects/lumen/src/types.rs | struct | pub | 579 |  |
+| `DuplicatesResponse` | projects/lumen/src/types.rs | struct | pub | 605 |  |
+| `ExistsQuery` | projects/lumen/src/types.rs | struct | pub | 367 |  |
 | `FieldSpec` | projects/lumen/src/types.rs | struct | pub | 41 |  |
-| `FieldStats` | projects/lumen/src/types.rs | struct | pub | 572 |  |
+| `FieldStats` | projects/lumen/src/types.rs | struct | pub | 641 |  |
 | `FieldType` | projects/lumen/src/types.rs | enum | pub | 74 |  |
 | `FieldValue` | projects/lumen/src/types.rs | enum | pub | 193 |  |
-| `HammingQuery` | projects/lumen/src/types.rs | struct | pub | 393 |  |
-| `HasChildQuery` | projects/lumen/src/types.rs | struct | pub | 404 |  |
-| `IdsQuery` | projects/lumen/src/types.rs | struct | pub | 453 |  |
+| `HammingQuery` | projects/lumen/src/types.rs | struct | pub | 400 |  |
+| `HasChildQuery` | projects/lumen/src/types.rs | struct | pub | 411 |  |
+| `IdsQuery` | projects/lumen/src/types.rs | struct | pub | 460 |  |
 | `IndexItem` | projects/lumen/src/types.rs | struct | pub | 170 |  |
 | `IndexRequest` | projects/lumen/src/types.rs | struct | pub | 160 |  |
 | `IndexResponse` | projects/lumen/src/types.rs | struct | pub | 202 |  |
-| `KnnQuery` | projects/lumen/src/types.rs | struct | pub | 462 |  |
-| `MatchOp` | projects/lumen/src/types.rs | enum | pub | 424 |  |
-| `MatchQuery` | projects/lumen/src/types.rs | struct | pub | 414 |  |
-| `QueryNode` | projects/lumen/src/types.rs | enum | pub | 310 |  |
-| `RangeQuery` | projects/lumen/src/types.rs | struct | pub | 470 |  |
-| `RrfQuery` | projects/lumen/src/types.rs | struct | pub | 378 |  |
-| `SearchHit` | projects/lumen/src/types.rs | struct | pub | 484 |  |
+| `KnnQuery` | projects/lumen/src/types.rs | struct | pub | 469 |  |
+| `MAX_BATCH_SEARCH_SIZE` | projects/lumen/src/types.rs | constant | pub | 519 |  |
+| `MatchOp` | projects/lumen/src/types.rs | enum | pub | 431 |  |
+| `MatchQuery` | projects/lumen/src/types.rs | struct | pub | 421 |  |
+| `QueryNode` | projects/lumen/src/types.rs | enum | pub | 317 |  |
+| `RangeQuery` | projects/lumen/src/types.rs | struct | pub | 477 |  |
+| `RrfQuery` | projects/lumen/src/types.rs | struct | pub | 385 |  |
+| `SearchHit` | projects/lumen/src/types.rs | struct | pub | 491 |  |
 | `SearchRequest` | projects/lumen/src/types.rs | struct | pub | 215 |  |
-| `SearchResponse` | projects/lumen/src/types.rs | struct | pub | 491 |  |
-| `SortMissing` | projects/lumen/src/types.rs | enum | pub | 280 |  |
-| `SortOrder` | projects/lumen/src/types.rs | enum | pub | 293 |  |
-| `SortSpec` | projects/lumen/src/types.rs | struct | pub | 263 |  |
-| `StatsResponse` | projects/lumen/src/types.rs | struct | pub | 555 |  |
-| `StorageStats` | projects/lumen/src/types.rs | struct | pub | 588 |  |
-| `TermQuery` | projects/lumen/src/types.rs | struct | pub | 435 |  |
-| `TermsQuery` | projects/lumen/src/types.rs | struct | pub | 442 |  |
+| `SearchResponse` | projects/lumen/src/types.rs | struct | pub | 498 |  |
+| `SortMissing` | projects/lumen/src/types.rs | enum | pub | 287 |  |
+| `SortOrder` | projects/lumen/src/types.rs | enum | pub | 300 |  |
+| `SortSpec` | projects/lumen/src/types.rs | struct | pub | 270 |  |
+| `StatsResponse` | projects/lumen/src/types.rs | struct | pub | 624 |  |
+| `StorageStats` | projects/lumen/src/types.rs | struct | pub | 657 |  |
+| `TermQuery` | projects/lumen/src/types.rs | struct | pub | 442 |  |
+| `TermsQuery` | projects/lumen/src/types.rs | struct | pub | 449 |  |
 | `VectorBackend` | projects/lumen/src/types.rs | enum | pub | 101 |  |
 | `VectorMetric` | projects/lumen/src/types.rs | enum | pub | 90 |  |
 | `VectorQuantize` | projects/lumen/src/types.rs | enum | pub | 127 |  |
 | `VectorSpec` | projects/lumen/src/types.rs | struct | pub | 136 |  |
-| `normalize` | projects/lumen/src/types.rs | function | pub | 629 | normalize(mut self) -> Self |
-| `vector_spec` | projects/lumen/src/types.rs | function | pub | 647 | vector_spec(&self) -> anyhow::Result<Option<VectorSpec>> |
+| `normalize` | projects/lumen/src/types.rs | function | pub | 698 | normalize(mut self) -> Self |
+| `vector_spec` | projects/lumen/src/types.rs | function | pub | 716 | vector_spec(&self) -> anyhow::Result<Option<VectorSpec>> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -574,6 +579,68 @@ pub struct SearchResponse {
     /// engine answered when `took_ms` rounds to 0.
     #[serde(default)]
     pub took_us: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Batch search
+// ---------------------------------------------------------------------------
+
+/// Maximum number of items accepted in one [`BatchSearchRequest`]. Doubles
+/// as the concurrent fan-out bound for `POST /collections:search`; a
+/// request with more items than this is rejected with 400 before any
+/// per-item work starts.
+pub const MAX_BATCH_SEARCH_SIZE: usize = 32;
+
+/// `POST /collections:search` body — an msearch-style batch of independent
+/// `(collection, SearchRequest)` items executed with server-side
+/// concurrent fan-out. `collections:search` is one literal path segment
+/// (AIP-136 custom-method syntax), so it never collides with
+/// `/collections/{collection_id}`.
+///
+/// Each item carries its own full [`SearchRequest`] — `limit`, `sort`,
+/// `cursor`, `collapse`, `routing_key`, and `track_total` may all differ
+/// per item. There is no cross-collection ranking or merged pagination:
+/// results, and cursors, stay independent per item.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub struct BatchSearchRequest {
+    /// At most [`MAX_BATCH_SEARCH_SIZE`] items; a longer batch is rejected
+    /// with 400 before any item runs.
+    pub searches: Vec<BatchSearchItem>,
+}
+
+/// One item of a [`BatchSearchRequest`]. Flattened on the wire, so an item
+/// looks like `{"collection": "...", "query": {...}, "limit": 20, ...}` —
+/// the same fields `POST /collections/{id}/search` accepts, plus the
+/// target `collection`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub struct BatchSearchItem {
+    pub collection: String,
+    #[serde(flatten)]
+    pub request: SearchRequest,
+}
+
+/// `POST /collections:search` response: one [`BatchSearchResult`] per
+/// request item, in the same order and with the same length as
+/// `searches`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub struct BatchSearchResponse {
+    pub results: Vec<BatchSearchResult>,
+}
+
+/// One batch-item outcome, tagged by `status`. A per-item failure (for
+/// example an unknown collection) never fails the whole batch: the
+/// batch-level HTTP status stays 200 and the failure is reported here as
+/// `{"status":"error","code":"collection_not_found","message":"..."}`
+/// alongside `{"status":"ok","response":{...}}` siblings.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "status", rename_all = "lowercase")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub enum BatchSearchResult {
+    Ok { response: SearchResponse },
+    Error { code: String, message: String },
 }
 
 // ---------------------------------------------------------------------------

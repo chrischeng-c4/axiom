@@ -22,14 +22,14 @@ Public API manifest for `projects/lumen/src/spec.rs` generated from AST during S
 |------|--------|------|------------|------|-----------|
 | `field_catalog` | projects/lumen/src/spec.rs | function | pub | 184 | field_catalog() -> Value |
 | `json_schema_json` | projects/lumen/src/spec.rs | function | pub | 30 | json_schema_json() -> String |
-| `llm_auth_md` | projects/lumen/src/spec.rs | function | pub | 345 | llm_auth_md() -> String |
-| `llm_deployment_md` | projects/lumen/src/spec.rs | function | pub | 243 | llm_deployment_md() -> String |
-| `llm_integration_md` | projects/lumen/src/spec.rs | function | pub | 506 | llm_integration_md() -> String |
+| `llm_auth_md` | projects/lumen/src/spec.rs | function | pub | 346 | llm_auth_md() -> String |
+| `llm_deployment_md` | projects/lumen/src/spec.rs | function | pub | 244 | llm_deployment_md() -> String |
+| `llm_integration_md` | projects/lumen/src/spec.rs | function | pub | 547 | llm_integration_md() -> String |
 | `llm_outline_md` | projects/lumen/src/spec.rs | function | pub | 213 | llm_outline_md() -> String |
-| `llm_quickstart_md` | projects/lumen/src/spec.rs | function | pub | 546 | llm_quickstart_md() -> String |
-| `llm_recipes_md` | projects/lumen/src/spec.rs | function | pub | 606 | llm_recipes_md() -> String |
-| `llm_storage_md` | projects/lumen/src/spec.rs | function | pub | 632 | llm_storage_md() -> String |
-| `llm_workflow_md` | projects/lumen/src/spec.rs | function | pub | 419 | llm_workflow_md() -> String |
+| `llm_quickstart_md` | projects/lumen/src/spec.rs | function | pub | 587 | llm_quickstart_md() -> String |
+| `llm_recipes_md` | projects/lumen/src/spec.rs | function | pub | 647 | llm_recipes_md() -> String |
+| `llm_storage_md` | projects/lumen/src/spec.rs | function | pub | 673 | llm_storage_md() -> String |
+| `llm_workflow_md` | projects/lumen/src/spec.rs | function | pub | 420 | llm_workflow_md() -> String |
 | `openapi_json` | projects/lumen/src/spec.rs | function | pub | 15 | openapi_json() -> String |
 | `openapi_yaml` | projects/lumen/src/spec.rs | function | pub | 23 | openapi_yaml() -> String |
 | `query_shapes` | projects/lumen/src/spec.rs | function | pub | 113 | query_shapes() -> Value |
@@ -257,7 +257,8 @@ pub fn llm_outline_md() -> String {
 Use the smallest topic that answers the task:
 
 - `lumen llm --topic workflow` — product model, declare→ingest→search→hydrate, query
-  flavor choices, connection, and non-goals.
+  flavor choices, batch search (`POST /collections:search`), connection, and
+  non-goals.
 - `lumen llm --topic integration` — recommended Postgres/AlloyDB adapter boundary:
   outbox or CDC, external Pub/Sub retry/DLQ ownership, HTTP writes into lumen,
   and no direct external writes to lumen's internal WAL.
@@ -478,6 +479,43 @@ hydrate the hits against your own store.
    filters + sort). You get back ranked `external_id`s + scores.
 4. **Hydrate** — look the returned `external_id`s up in YOUR store to get the
    full records. lumen never had them.
+
+## Batch search (multi-collection fan-out)
+`POST /collections:search` is an msearch-style batch of independent
+`(collection, SearchRequest)` items, executed with server-side concurrent
+fan-out — use it instead of N client-side round-trips when a logical action
+searches multiple collections at once (per-tenant/per-type partitioning,
+for example). `collections:search` is one literal path segment (AIP-136
+custom-method syntax), so it never collides with
+`/collections/{collection_id}`; collection ids may not contain `:` for the
+same reason.
+
+```json
+POST /collections:search
+{ "searches": [
+    { "collection": "users",    "query": {"term": {"field": "tags", "value": "rust"}}, "limit": 10 },
+    { "collection": "products", "query": {"match": {"field": "title", "text": "earbuds"}}, "limit": 5 }
+] }
+→ 200 { "results": [
+    { "status": "ok", "response": { "hits": [...], "total": 3, "took_ms": 1 } },
+    { "status": "error", "code": "collection_not_found", "message": "..." }
+] }
+```
+
+- Each item carries a full `SearchRequest` — `limit`, `sort`, `cursor`,
+  `collapse`, `routing_key`, `track_total` may all differ per item, exactly
+  like `POST /collections/{id}/search`.
+- `results` is the same order and length as `searches`.
+- **Partial failure never fails the batch.** One bad item (for example an
+  unknown collection) reports `{"status":"error","code":"collection_not_found",
+  "message":"..."}` for that item while the other items still return
+  `{"status":"ok","response":{...}}`. The batch-level HTTP status stays 200
+  unless the body is malformed or the batch is over the size limit (400).
+- Max batch size is 32 items — this also bounds the concurrent fan-out. An
+  over-limit batch is rejected with 400 before any item runs.
+- Pagination stays per-item: each result's `cursor` continues independently
+  by resubmitting that one item. There is no merged cursor and no
+  cross-collection score merging/ranking — that is explicitly out of scope.
 
 ## Which "find" to use
 - exact value / membership → `keyword` (`term`, `terms`) or `set`
