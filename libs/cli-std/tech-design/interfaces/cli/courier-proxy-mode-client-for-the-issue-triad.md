@@ -161,3 +161,35 @@ flowchart TD
     r2d[R2d comment courier routing] --> comment_routes_through_courier_when_url_configured[comment_routes_through_courier_when_url_configured]
     r2e[R2e fallback byte identical] --> issue_ops_fall_back_to_direct_github_when_courier_url_unset[issue_ops_fall_back_to_direct_github_when_courier_url_unset]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: libs/cli-std/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: codegen
+    description: "Add resolve_courier_url() and resolve_courier_token() (both #[cfg(feature = \"online\")]), mirroring resolve_github_token()'s env-resolution pattern exactly: read AXIOM_COURIER_URL / AXIOM_COURIER_TOKEN, trim, return None when unset or blank (blank counts as unset), else Some(trimmed value). No fallback subprocess (unlike resolve_github_token()'s gh CLI fallback) -- courier has no local-CLI credential source."
+  - path: libs/cli-std/src/issue.rs
+    action: modify
+    section: logic
+    impl_mode: codegen
+    description: "In the #[cfg(feature = \"online\")] search/view/create/comment functions, branch on crate::resolve_courier_url(): when Some(url), build the request against courier's /v1/issues/{owner}/{name}[/{number}[/comments]] endpoints with header Authorization: Bearer <crate::resolve_courier_token() value> (search: GET {url}/v1/issues/{owner}/{name}?state=&q=&limit=; view: GET {url}/v1/issues/{owner}/{name}/{number}; create: POST {url}/v1/issues/{owner}/{name} with issue_payload() body; comment: POST {url}/v1/issues/{owner}/{name}/{number}/comments with comment_payload() body). When None, execute today's existing direct api.github.com code path completely unchanged. The #[cfg(not(feature = \"online\"))] offline stubs are untouched."
+  - path: libs/cli-std/src/issue.rs
+    action: modify
+    section: unit-test
+    impl_mode: codegen
+    description: "Add #[cfg(test)] cases (using the existing http mock/test harness pattern in issue.rs's tests module) covering: proxy-mode URL/token resolution (Some/None for both AXIOM_COURIER_URL and AXIOM_COURIER_TOKEN, blank-as-unset), proxy-mode request routing for search/view/create/comment (correct courier method+path+Authorization: Bearer header), and fallback-to-direct-GitHub behavior byte-identical to pre-change when the courier env vars are unset."
+  - path: libs/cli-std/tech-design/semantic/source/libs-cli-std-src-lib-rs.md
+    action: modify
+    section: source
+    impl_mode: codegen
+    description: "Regenerate the rust-source-unit mirror for lib.rs so it includes resolve_courier_url()/resolve_courier_token() after aw td gen/fill."
+  - path: libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md
+    action: modify
+    section: source
+    impl_mode: codegen
+    description: "Regenerate the rust-source-unit mirror for issue.rs so it includes the courier-proxy branches in search/view/create/comment after aw td gen/fill."
+```
