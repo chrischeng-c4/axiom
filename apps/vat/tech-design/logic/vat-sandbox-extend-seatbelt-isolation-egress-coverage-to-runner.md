@@ -179,3 +179,25 @@ e2e_tests:
     assertions:
       - "vat compiles with and without default features."
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/vat/tests/vat_runner_sandbox.rs
+    action: modify
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "AC4: add a runner-mode `EgressPolicy::Deny` denial test alongside the existing localhost-only allow/deny test — a runner command with `--isolation seatbelt` + `[network].egress = deny` must be denied outbound network the same way `vat_sandbox_egress`'s direct-mode Deny case already is. AC2: add a sibling assertion in the same run that a declared service (started via start_service, never sandbox_wrap'd) still reaches/serves its local port under the same Deny policy, proving the vat-service exemption is intentional rather than a permissive-default accident."
+  - path: projects/vat/src/commands/run.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: "UT3: extend the existing `#[cfg(test)]` module with a direct unit assertion that `start_service`'s real (non-hermetic-proxy) call path never threads a `Some(sandbox)` into `service_start_command` — the explicit code-level proof (next to the existing `direct_start_service_command_uses_supplied_sandbox_only_for_direct_services` fixture-style test) that the services-stay-unsandboxed decision is asserted, not merely commented."
+  - path: projects/vat/tech-design/logic/apply-the-sandbox-seatbelt-isolation-egress-to-runner-mode-comma.md
+    action: modify
+    section: changes
+    impl_mode: hand-written
+    reason: "AC3: reconcile the predecessor design doc's `capability_refs[0].coverage` frontmatter from `partial` to `full` now that runner-mode commands (spawn_runner_process, run_setup_step) are proven to honor EnvSpec.isolation/egress identically to direct-mode, the fail-closed `sandbox::pick` Result signature (#1300) is threaded through every call site, and the services exemption plus the EgressPolicy::Deny runner-mode case both have explicit regression coverage."
+```
