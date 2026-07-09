@@ -19,8 +19,8 @@ use crate::cli::production::{
 };
 use crate::cli::regenerability_policy::{resolve_regenerability_policy, RegenerabilityAuthority};
 use crate::cli::standardize::{
-    RegenerabilityCoverage, SemanticCoverage, StackMigrationCoverage, StandardizationCoverage,
-    TraceabilityCoverage,
+    DriftMarkerCoverage, RegenerabilityCoverage, SemanticCoverage, StackMigrationCoverage,
+    StandardizationCoverage, TraceabilityCoverage,
 };
 use crate::models::preflight::PreFlightGateReport;
 use crate::models::project::EcBinding;
@@ -30,8 +30,13 @@ use crate::models::project::EcBinding;
 #[command(after_help = r#"Default output is a low-token metrics envelope.
 Use `aw health --project <project> full` for the previous detailed report, or a
 focused section: metrics, capability, gates, tests, ec, cb, cold, traceability,
-regenerable, api, stack, td-lock, claims, blockers.
+regenerable, api, stack, td-lock, claims, blockers, drift-marker.
 Use `-v/--verbose` to include progress events.
+
+`drift-marker` (also summarized compactly in every call's `axes.drift_marker`)
+is the CODEGEN-drift / HANDWRITE-marker-gap audit engine, homed here per
+issue #1276 -- previously reachable only via a bare, slug-less `aw td
+code-check` whole-tree walk (#844). Use it instead of that.
 
 Output schema (JSON default):
 {
@@ -43,7 +48,7 @@ Output schema (JSON default):
   "completion": { "workflow_complete": bool, "requires_hitl": bool, "missing": [string] },
   "next": { "kind": "run_command" | "hitl" | "blocked" | "done" | "error", "command": string?, "reason": string },
   "readiness": object,
-  "axes": { "capability": object, "ec": object, "ec_gen": object, "td": object, "td_gen": object },
+  "axes": { "capability": object, "ec": object, "ec_gen": object, "td": object, "td_gen": object, "drift_marker": object },
   "blockers": object,
   "payload_path": string
 }"#)]
@@ -105,6 +110,7 @@ pub enum ProjectHealthSection {
     TdLock,
     Claims,
     Blockers,
+    DriftMarker,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -181,6 +187,9 @@ pub struct ProjectHealthReport {
     // the slice-E `aw td code-claim <path>` worker verb directly instead of
     // the retired `aw standardize managed run` layer driver.
     pub managed_next_uncovered_file: Option<String>,
+    // #1276: CODEGEN-drift / HANDWRITE-marker-gap audit engine, homed here
+    // instead of behind a bare, slug-less `aw td code-check` (#844).
+    pub drift_marker: DriftMarkerCoverage,
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -730,6 +739,10 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
         cold_rebuilds,
         test_gates,
     );
+    // #1276: drift/marker axis, computed as part of `standardize` above
+    // (zero additional scan cost -- reuses the same inventory pass every
+    // `aw health` call already runs).
+    report.drift_marker = standardize.drift_marker;
     report.traceability_evaluated = verify_traceability;
     report.traceability_note = traceability_note.clone();
     if !caps_ec_only {
@@ -1343,6 +1356,18 @@ impl ProjectHealthReport {
             optional_regenerability_gaps: regenerability_authority.advisory_gaps.clone(),
             blockers,
             managed_next_uncovered_file: managed.uncovered_files.first().cloned(),
+            // #1276: placeholder -- the real value is assigned by the caller
+            // right after construction (`report.drift_marker =
+            // standardize.drift_marker`), same as `traceability_evaluated`
+            // and other post-construction fields below this constructor.
+            drift_marker: DriftMarkerCoverage {
+                project: project.to_string(),
+                clean_files: 0,
+                drift_count: 0,
+                marker_gap_count: 0,
+                uncovered_count: 0,
+                findings: Vec::new(),
+            },
         }
     }
 
@@ -1949,6 +1974,14 @@ pub fn project_health_section_summary(
             "stack_migration": &report.stack_migration,
         }),
         ProjectHealthSection::TdLock => project_td_lock_summary(&report.td_lock),
+        ProjectHealthSection::DriftMarker => serde_json::json!({
+            "project": &report.drift_marker.project,
+            "clean_files": report.drift_marker.clean_files,
+            "drift_count": report.drift_marker.drift_count,
+            "marker_gap_count": report.drift_marker.marker_gap_count,
+            "uncovered_count": report.drift_marker.uncovered_count,
+            "findings": &report.drift_marker.findings,
+        }),
         ProjectHealthSection::Blockers => serde_json::json!({
             "blocker_count": report.blockers.len(),
             "blockers": &report.blockers,
@@ -2050,6 +2083,35 @@ fn project_health_axes_summary(report: &ProjectHealthReport) -> serde_json::Valu
         "ec_gen": project_health_ec_gen_axis(report),
         "td": project_health_td_axis(report),
         "td_gen": project_health_td_gen_axis(report),
+        "drift_marker": project_health_drift_marker_axis(report),
+    })
+}
+
+/// Issue #1276: compact counts-by-status view of the drift/marker axis
+/// (`crate::generate::audit::UnifiedReport::status()` vocabulary:
+/// clean/drift/marker_gap, plus uncovered). Full per-file detail is in the
+/// `drift-marker` section (`project_health_section_summary`); this compact
+/// view follows the same "advisory for self-AW" pattern as the `td`/`td_gen`
+/// axes since drift/marker findings are informational, not a hard
+/// capability/EC gate.
+/// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn project_health_drift_marker_axis(report: &ProjectHealthReport) -> serde_json::Value {
+    let dm = &report.drift_marker;
+    let status = if project_health_caps_ec_only(&report.project) {
+        "advisory"
+    } else if dm.drift_count == 0 && dm.marker_gap_count == 0 && dm.uncovered_count == 0 {
+        "clean"
+    } else if dm.drift_count > 0 {
+        "drift"
+    } else {
+        "marker_gap"
+    };
+    serde_json::json!({
+        "status": status,
+        "clean_files": dm.clean_files,
+        "drift_count": dm.drift_count,
+        "marker_gap_count": dm.marker_gap_count,
+        "uncovered_count": dm.uncovered_count,
     })
 }
 
@@ -2622,6 +2684,15 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
             &report.project,
         ));
     }
+    // #1276: drift/marker findings are advisory (CODEGEN drift + HANDWRITE
+    // marker gaps are reporting, not a hard capability/EC gate), so this
+    // sits after the managed/semantic/traceability hard-blocker tiers above.
+    if let Some(top_finding) = report.drift_marker.top_finding() {
+        return Some(crate::cli::standardize::drift_marker_health_worker_command(
+            &report.project,
+            Some(top_finding),
+        ));
+    }
     if !project_health_missing_evaluations(report).is_empty() {
         return Some(format!("aw health --project {} full", report.project));
     }
@@ -2845,7 +2916,8 @@ fn effective_health_verification_flags(args: &ProjectHealthArgs) -> HealthVerifi
             | ProjectHealthSection::Capability
             | ProjectHealthSection::Gates
             | ProjectHealthSection::TdLock
-            | ProjectHealthSection::Blockers => HealthVerificationFlags::none(),
+            | ProjectHealthSection::Blockers
+            | ProjectHealthSection::DriftMarker => HealthVerificationFlags::none(),
         }
     } else {
         HealthVerificationFlags::none()

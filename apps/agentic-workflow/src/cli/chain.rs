@@ -320,6 +320,13 @@ const EMIT_REGISTRY: &[EmitSite] = &[
         note: "#917: canonical replacement for the deprecated bare `aw run --project <project>` \
                form; subsumes the project root via the existing project-scoped capability loop",
     },
+    EmitSite {
+        source: "cb.rs:bare_code_check_guidance_envelope",
+        sample: "aw health --project agentic-workflow drift-marker --verbose",
+        note: "#1276: bare, slug-less `aw td code-check`'s guidance envelope now points at the \
+               `aw health` drift/marker axis instead of running the retired whole-tree audit \
+               walker (the #844 livelock class) itself",
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1220,6 +1227,25 @@ mod tests {
     #[test]
     fn code_check_with_target_is_chain_valid() {
         assert!(validate_aw_command_string("aw td code-check 915").is_ok());
+    }
+
+    // #1276 AC2/AC3c: no cataloged emit site's sample is the bare, slug-less
+    // `aw td code-check` form (the #844 whole-tree-audit livelock class);
+    // `emit_registry_entries_are_all_chain_valid` above already proves every
+    // sample passes `validate_aw_command_string`, which independently rejects
+    // a slug-less code-check (`bare_code_check_is_chain_invalid`) -- this
+    // test pins the intent directly so a future emit site can't reintroduce
+    // the exact bare string even if some other chain-required-positional
+    // covers it incidentally.
+    #[test]
+    fn no_emit_site_produces_slugless_code_check() {
+        for site in EMIT_REGISTRY {
+            assert_ne!(
+                site.sample, "aw td code-check",
+                "emit site `{}` produces the bare, slug-less `aw td code-check` form",
+                site.source
+            );
+        }
     }
 
     #[test]

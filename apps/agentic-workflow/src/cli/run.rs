@@ -2418,6 +2418,14 @@ mod tests {
             optional_regenerability_gaps: Vec::new(),
             blockers: Vec::new(),
             managed_next_uncovered_file: None,
+            drift_marker: crate::cli::standardize::DriftMarkerCoverage {
+                project: project.to_string(),
+                clean_files: 1,
+                drift_count: 0,
+                marker_gap_count: 0,
+                uncovered_count: 0,
+                findings: Vec::new(),
+            },
         }
     }
 
