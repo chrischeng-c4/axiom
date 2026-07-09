@@ -4476,6 +4476,42 @@ async fn run_check_lifecycle_terminal(
             }
         }
 
+        // Resolved once and shared by the clean-touched-scope precondition
+        // (#807/#1275, immediately below) and the standardization gate
+        // further down — both need this WI's own touched-file set (branch
+        // diff ∪ spec Changes paths) and previously each called
+        // `cb_fill::resolve_touched_scope` independently.
+        let touched_scope =
+            crate::cli::cb_fill::resolve_touched_scope(project_root, &marker_gate_scope);
+
+        // Clean-touched-scope precondition (issue #807 / #1275): refuse to
+        // perform ANY mutation below (the phase-advancing `backend.update`
+        // a few lines down, remote closure, branch landing, terminal
+        // commit, or lock release) while a file in the WI's own touched
+        // scope is dirty in git — unstaged, staged but uncommitted, or
+        // untracked. This is the #807 failure mode: Jet issue #797 was
+        // closed as `td_merged` / `ship:step1_shipped` while three
+        // implementation files sat dirty and uncommitted, because
+        // `commit_cb_code_check_terminal` below only ever commits the
+        // (out-of-repo, `/tmp/aw`-backed) issue-projection file itself —
+        // never the WI's actual implementation files — so nothing
+        // downstream of this gate would otherwise have caught the gap.
+        // Fresh-entry only, matching every other gate in this block: by the
+        // time a WI reaches the `td_merged` retry path the closing
+        // mutation this precondition guards has already happened, and
+        // re-litigating scope cleanliness against a possibly-unrelated
+        // later edit would reintroduce the #846 stuck-lock class.
+        if let Some(message) = dirty_touched_scope_gate_message(project_root, slug, &touched_scope)
+        {
+            let env = serde_json::json!({
+                "action": "error",
+                "slug": slug,
+                "message": message,
+            });
+            println!("{}", serde_json::to_string(&env)?);
+            return Ok(true);
+        }
+
         // Marker gate (issue #859 part a): `aw td fill`'s own apply loop
         // already re-enumerates the whole worktree after every marker write
         // and only advances phase to `cb_filled` once that re-enumeration
@@ -4508,14 +4544,13 @@ async fn run_check_lifecycle_terminal(
         // touches an in-scope file without a CODEGEN/HANDWRITE marker (or
         // leaves a HANDWRITE marker's gap/tracker attrs unfilled) is exactly
         // the kind of drift 標準化 exists to prevent. Scoped to this WI's own
-        // touched-file set (same branch-diff ∪ Changes-paths union the
-        // marker gate above uses via `cb_fill::resolve_touched_scope`) so
+        // touched-file set (`touched_scope`, resolved once above) so
         // pre-existing unmarked files elsewhere in the tree never affect
         // this WI's verdict (no reintroduction of the #854 inherited-marker
         // class). Runs unconditionally (both `cb_filled` and
         // `cb_genned`/legacy entries), unlike the marker gate above.
         if let Some(message) =
-            touched_scope_standardization_gate_message(project_root, &issue, &marker_gate_scope)
+            touched_scope_standardization_gate_message(project_root, &issue, &touched_scope)
         {
             let env = serde_json::json!({
                 "action": "error",
@@ -4708,6 +4743,87 @@ fn resolve_slug_spec_paths(
     rels.into_iter().map(|r| project_root.join(r)).collect()
 }
 
+/// Clean-touched-scope precondition (issue #807 / #1275): find every entry
+/// in `touched` that `git status --porcelain` currently reports as dirty
+/// (unstaged, staged but uncommitted, or untracked) and return a refusal
+/// message naming them plus the remediation next step, or `None` when
+/// `touched` is empty or none of it is dirty. Scoped strictly to `touched`
+/// — never a whole-tree `git status` sweep — for the same reason the
+/// standardization gate below is scoped: a dirty file elsewhere in a
+/// monorepo checkout (someone else's unrelated mid-edit work) must never
+/// block this WI's own completion.
+///
+/// Silently passes (`None`) when git itself is unavailable or `git status`
+/// fails — an unconfigured/non-git project must never brick code-check, the
+/// same failure-open policy `touched_scope_standardization_gate_message`
+/// (via `project_touched_scope_standardization`) and the marker gate above
+/// already follow for their own git/lookup failures.
+fn dirty_touched_scope_gate_message(
+    project_root: &std::path::Path,
+    slug: &str,
+    touched: &[String],
+) -> Option<String> {
+    if touched.is_empty() {
+        return None;
+    }
+    let git_bin = crate::git::find_git_bin()?;
+    // `--untracked-files=all` (not the default `normal` mode): an untracked
+    // *directory* otherwise collapses to a single `?? some/dir/` porcelain
+    // line instead of one line per file inside it, which would silently
+    // miss a touched path like `src/demo.rs` sitting inside a still-wholly-
+    // untracked `src/` (the common shape in a fresh worktree that has never
+    // run `git add` at all).
+    let output = std::process::Command::new(&git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .args(["status", "--porcelain", "--untracked-files=all"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let porcelain = String::from_utf8_lossy(&output.stdout).into_owned();
+    let touched_norm: std::collections::HashSet<String> = touched
+        .iter()
+        .map(|p| normalize_touched_rel_path(p))
+        .collect();
+    let mut dirty: Vec<String> = porcelain
+        .lines()
+        .filter_map(|line| {
+            let raw = line.get(3..)?.trim();
+            if raw.is_empty() {
+                return None;
+            }
+            let raw = raw.rsplit_once(" -> ").map_or(raw, |(_, dst)| dst.trim());
+            let norm = normalize_touched_rel_path(raw);
+            touched_norm.contains(&norm).then_some(norm)
+        })
+        .collect();
+    dirty.sort();
+    dirty.dedup();
+    if dirty.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "td code-check refused: {} touched file(s) have uncommitted changes in git and must be \
+         committed or restored before '{slug}' can close: {}; run `git add <path> && git commit` \
+         (or `git restore <path>` to discard) for each, then re-run `aw td code-check {slug}`",
+        dirty.len(),
+        dirty.join(", "),
+    ))
+}
+
+/// Repo-root-relative path normalization shared by
+/// `dirty_touched_scope_gate_message`'s porcelain-path parsing and its
+/// `touched` scope comparison — trims a leading `./` and normalizes path
+/// separators so both sides of the comparison use the same form regardless
+/// of how each path was originally spelled.
+fn normalize_touched_rel_path(path: &str) -> String {
+    path.trim()
+        .trim_start_matches("./")
+        .replace(std::path::MAIN_SEPARATOR, "/")
+}
+
 /// Resolve the owning project name from an issue's `app:<name>` or `lib:<name>` label,
 /// the same convention `aw wi create --project` and the standardize/health
 /// surfaces use. Deliberately a small local duplicate of `td.rs`'s
@@ -4752,15 +4868,14 @@ fn project_label_for_wi(issue: &crate::issues::Issue) -> Option<&str> {
 fn touched_scope_standardization_gate_message(
     project_root: &std::path::Path,
     issue: &crate::issues::Issue,
-    marker_gate_scope: &[String],
+    touched: &[String],
 ) -> Option<String> {
     let project = project_label_for_wi(issue)?;
-    let touched = crate::cli::cb_fill::resolve_touched_scope(project_root, marker_gate_scope);
     if touched.is_empty() {
         return None;
     }
     let verdict =
-        crate::cli::standardize::project_touched_scope_standardization(project, &touched).ok()?;
+        crate::cli::standardize::project_touched_scope_standardization(project, touched).ok()?;
     if verdict.unmarked.is_empty() && verdict.attr_gap.is_empty() {
         return None;
     }

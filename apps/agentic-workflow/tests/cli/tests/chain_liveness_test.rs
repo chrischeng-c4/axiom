@@ -94,6 +94,28 @@ fn init_seed_repo(git: &Path, root: &Path) {
         .unwrap();
 }
 
+/// Commit every current working-tree change (`git add -A && git commit`).
+/// Real `aw td gen`/`aw td fill` already commit generated/filled
+/// implementation files before terminal `aw td code-check` ever runs; a
+/// fixture that hand-writes a WI's touched-scope file directly (simulating a
+/// hand-written `impl_mode` completion with no gen/fill step) must commit it
+/// the same way so it stays a realistic "ready for code-check" precondition
+/// and doesn't trip the #807/#1275 clean-touched-scope precondition.
+fn commit_all(git: &Path, root: &Path) {
+    Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "-A"])
+        .status()
+        .unwrap();
+    Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "wip: touched-scope fixture"])
+        .status()
+        .unwrap();
+}
+
 /// Repo-root-relative path every seeded demo spec lives at (matches the
 /// `td_no_merge_test.rs` convention: the default `tech_design_path` fallback
 /// for an empty `aw.toml`).
@@ -323,6 +345,7 @@ async fn chain_liveness_code_check_terminates_within_tick_budget() {
     write_demo_changes_spec(root, &[("src/demo.rs", "create")]);
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(root.join("src/demo.rs"), "// implemented\n").unwrap();
+    commit_all(&git, root);
 
     let slug = "chain-liveness-code-check-clean";
     seed_open_issue_at_phase(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
