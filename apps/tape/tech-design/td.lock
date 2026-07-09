@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-09T12:31:47.638504+00:00"
-digest = "sha256:6d352e5bf1b4fc01d00255ba2ecb1730f5f739f87dbb43bab649d7c3f27b5f53"
-source_digest = "sha256:6d352e5bf1b4fc01d00255ba2ecb1730f5f739f87dbb43bab649d7c3f27b5f53"
-ir_digest = "sha256:3421d5433cf60d592bc162bc04331c7d5556e1d452e6809945b3c9e378d00407"
+generated_at = "2026-07-09T13:08:32.104633+00:00"
+digest = "sha256:cc67f97dd5404706269090da41477bde96205ac62e941309a2524dd1c3397545"
+source_digest = "sha256:cc67f97dd5404706269090da41477bde96205ac62e941309a2524dd1c3397545"
+ir_digest = "sha256:189e667fdf57cd3cd95d1284c7ff077f357448940082aa6c9fc3cbde65abf3fe"
 
 [[files]]
 path = "README.md"
@@ -23,6 +23,12 @@ section_count = 3
 path = "interfaces/rest/tape-service-auth.md"
 digest = "sha256:6153519a5ea3e6d405cba97558e66850b627b0a61cabfc02402612a8e25444d2"
 ir_digest = "sha256:08d2e53f4bd35197f47fde2df1486c37a1c4aaa092a2df29d78fc8cb09cd538f"
+section_count = 3
+
+[[files]]
+path = "logic/tape-operator-k8s-dockerfile-cli.md"
+digest = "sha256:28e2a16ce98228be5a97c824afca2949abe7cd75e915423fabf5ec729e7c9b30"
+ir_digest = "sha256:0165a40acac06a3aa22126b07ae1c86da2250a72e59e3a85f5b2641cf7f8820a"
 section_count = 3
 
 [[files]]
