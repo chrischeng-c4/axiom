@@ -2,10 +2,10 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = "projects/jet/tech-design"
-generated_at = "2026-07-09T07:38:14.588492+00:00"
-digest = "sha256:3785f3ce3f4074db76442300b87ff9c19a9795a53ed7e49529fefb80a51bf21f"
-source_digest = "sha256:3785f3ce3f4074db76442300b87ff9c19a9795a53ed7e49529fefb80a51bf21f"
-ir_digest = "sha256:9a599e83824717bb2848dbd9fc734d4afd5503b6548ab748528a47d55b9d6c1a"
+generated_at = "2026-07-09T08:00:08.504026+00:00"
+digest = "sha256:025d404ed6cc5905d8ff95ee5e1949ff5f92a6755a55d548e69f250b1856dc94"
+source_digest = "sha256:025d404ed6cc5905d8ff95ee5e1949ff5f92a6755a55d548e69f250b1856dc94"
+ir_digest = "sha256:c79e72c6d942b7bac2227edd4d7de96d1f89343cdb3a38a72d87b2dfbf5c821d"
 
 [[files]]
 path = "logic/jet-build-lib-dts-object-literal-d-ts-emission-silently-truncate.md"
@@ -53,6 +53,12 @@ section_count = 3
 path = "logic/jet-transform-resolver-dotted-basename-extension-probe-drops-ext.md"
 digest = "sha256:041801664ce3f9eeab9e431fb6b88782010a50e0e239d74a44055b1931be3109"
 ir_digest = "sha256:8b2d8f43c40f96c41f4b34023a4c700ba99774037a1363f173c0926d68e97f2f"
+section_count = 3
+
+[[files]]
+path = "logic/jet-transform-resolver-node-builtin-polyfill-wiring.md"
+digest = "sha256:99c6483b37bbae903bf511a284b6ff0dce4d4caa6ca5427417f57c5abbbea543"
+ir_digest = "sha256:9186d05add543a356bcb295cbda7676c42f227e9cb387b5fb93add7001af90a6"
 section_count = 3
 
 [[files]]
