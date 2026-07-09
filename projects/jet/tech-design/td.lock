@@ -2,16 +2,16 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = "projects/jet/tech-design"
-generated_at = "2026-07-09T04:02:58.059365+00:00"
-digest = "sha256:7adc1b73bf157280b57986d4788c9a01c9d9abc6af0ec6107ea1f64636b981e1"
-source_digest = "sha256:7adc1b73bf157280b57986d4788c9a01c9d9abc6af0ec6107ea1f64636b981e1"
-ir_digest = "sha256:0022322432d8808ad0d6aabbb59cc37f267c14f649c1bb118da49fae4dc49047"
+generated_at = "2026-07-09T04:06:00.841536+00:00"
+digest = "sha256:dcf027b9d2262b564078aee9795279531224329d7d24093a6460771ed727f989"
+source_digest = "sha256:dcf027b9d2262b564078aee9795279531224329d7d24093a6460771ed727f989"
+ir_digest = "sha256:820885bded2884af075b4d4e1e45fa24f3c2d461da6ac5f4238608ecd79b75c2"
 
 [[files]]
 path = "logic/jet-lib-dts-isolateddeclarations-false-positive-on-expr-as-type.md"
-digest = "sha256:c67efa287855be34dba6b4b902ed534a2f09515ca7f9314dc43e6cad81361db2"
-ir_digest = "sha256:f7afaaf5283fb8a2893ca1601a58482b00ffcf4e4298d3804b50de58397602f9"
-section_count = 2
+digest = "sha256:7b77b753f6e2e76d28e3886aad0795d587c95ac203ef16c14aee9e10b2f30f5e"
+ir_digest = "sha256:7b44aa07b88b73a6b714f59d5d203c3ad7ae4f53a02ee0e49485d15c390dd60d"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-browser-cli.md"

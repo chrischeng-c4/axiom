@@ -8,7 +8,7 @@ capability_refs:
     claim: "type-declaration-emission"
     coverage: partial
     rationale: "Pins WI #937 regression coverage for the `expr as Type` assertion variant of the isolatedDeclarations false-positive family inside the Type Declaration Emission work root (jet --lib --dts .d.ts emission)."
-fill_sections: [logic, unit-test]
+fill_sections: [logic, unit-test, changes]
 ---
 
 # jet --lib --dts isolatedDeclarations: `expr as Type` explicit-annotation inference
@@ -90,4 +90,16 @@ flowchart TD
     r2[R2 function return local variable as expression] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_exported_function_return_via_local_variable_as_expression[cargo test -p jet --lib bundler::dts::tests::infers_exported_function_return_via_local_variable_as_expression]
     r3[R3 const identifier as expression real code shape] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_exported_const_identifier_as_expression_signature[cargo test -p jet --lib bundler::dts::tests::infers_exported_const_identifier_as_expression_signature]
     r4[R4 function return local variable without as expression still errors] --> cargo_test_p_jet_lib_bundler_dts_tests_uninferrable_exported_function_return_of_local_variable_without_as_expression_errors[cargo test -p jet --lib bundler::dts::tests::uninferrable_exported_function_return_of_local_variable_without_as_expression_errors]
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/jet/src/bundler/dts.rs
+    action: update
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Add the R1-R4 regression tests specified in the unit-test section to the existing `mod tests` block; the `as_expression`/`satisfies_expression` analyzer mechanism itself (`annotated_expression_type` wired into `infer_variable_declarator_type` and `infer_return_statement_type`) is already implemented and verified working, so this change is test-only."
 ```
