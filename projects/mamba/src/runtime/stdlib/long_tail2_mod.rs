@@ -681,6 +681,14 @@ fn register_asyncio_trsock() {
     super::register_module("asyncio.trsock", attrs);
 }
 
+fn register_asyncore() {
+    let getsockopt_addr = transport_socket_getsockopt as *const () as usize;
+    register_variadic_method_class("file_wrapper", "getsockopt", getsockopt_addr);
+    let mut attrs = build_attrs(&[], &[], &[], &[]);
+    attrs.insert("file_wrapper".into(), make_type_obj("file_wrapper", "asyncore"));
+    super::register_module("asyncore", attrs);
+}
+
 fn register_turtle() {
     let mut attrs = build_attrs(
         &[
@@ -991,6 +999,7 @@ pub fn register() {
     );
     register_asyncio_transports();
     register_asyncio_trsock();
+    register_asyncore();
     register_with(
         "asyncio.events",
         &[
