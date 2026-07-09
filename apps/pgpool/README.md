@@ -114,13 +114,13 @@ Provide a high-throughput PostgreSQL pooler with bounded frontend admission,
 backend connection reuse, transaction/session pool modes, graceful drain, and
 clear observability before platform-specific adapters are added.
 Gate Inventory:
-- pending: pg wire parser conformance
+- apps/pgpool/tests/wire_codec.rs (`cargo test -p pgpool --test wire_codec`)
 - pending: backend pool saturation and drain tests
 - pending: transaction/session mode behavior gates
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| pg-wire-frontend-protocol | epic | 1287 | planned | planned | none | pending: startup/auth/query message conformance tests |
+| pg-wire-frontend-protocol | epic | 1287 | implemented | passing | conformance | apps/pgpool/tests/wire_codec.rs; apps/pgpool/tech-design/logic/pg-wire-message-codec-frontend-backend-frames.md |
 | backend-pool-and-reuse | epic | 1289 | planned | planned | none | pending: pool saturation, reuse, and release tests |
 | transaction-session-pool-modes | epic | 1289 | planned | planned | none | pending: mode behavior gates |
 | serve-entrypoint-and-drain | epic | 1288 | planned | planned | none | pending: serve smoke + drain conformance |
