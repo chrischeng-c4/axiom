@@ -1440,7 +1440,11 @@ fn exec_store_scope_annotation(
     name: &str,
     ty: &crate::source::span::Spanned<crate::parser::ast::TypeExpr>,
 ) {
-    if ctx.frame_scopes.last().is_some_and(|scope| scope.is_function) {
+    if ctx
+        .frame_scopes
+        .last()
+        .is_some_and(|scope| scope.is_function)
+    {
         return;
     }
 
@@ -2112,6 +2116,53 @@ pub fn mb_exec_function_call(func: MbValue, args: Vec<MbValue>) -> MbValue {
     return_value
 }
 
+pub fn mb_exec_function_call_with_kwargs(
+    func: MbValue,
+    args: Vec<MbValue>,
+    kwargs_dict: MbValue,
+) -> MbValue {
+    let kw_pairs = kwargs_dict_pairs(kwargs_dict);
+    if kw_pairs.is_empty() {
+        return mb_exec_function_call(func, args);
+    }
+    if let Some(id) = exec_function_field(func, "__function_id__").and_then(|value| value.as_int())
+    {
+        let binding = {
+            let registry = EXEC_FUNCTIONS.read().unwrap();
+            registry.get(&(id as u64)).cloned()
+        };
+        if let Some(binding) = binding {
+            let mut ctx = ExecContext {
+                globals: binding.globals,
+                locals: binding.locals,
+                frames: binding.captures,
+                frame_scopes: binding.capture_scopes,
+                annotation_class_locals: binding.annotation_class_locals,
+                annotation_class_globals: binding.annotation_class_globals,
+                ..ExecContext::default()
+            };
+            let return_value =
+                exec_call_function_with_kwargs(&mut ctx, &binding.function, &args, &kw_pairs);
+            if exec_has_pending_exception() {
+                return MbValue::none();
+            }
+            if binding.is_async {
+                let coro = crate::runtime::async_rt::mb_coroutine_new(
+                    MbValue::from_ptr(MbObject::new_str(binding.name)),
+                    MbValue::from_ptr(MbObject::new_list(Vec::new())),
+                );
+                crate::runtime::async_rt::mb_coroutine_complete(coro, return_value);
+                return coro;
+            }
+            return return_value;
+        }
+    }
+    exec_raise_type_error(
+        "function takes 0 arguments but keyword arguments were given".to_string(),
+    );
+    MbValue::none()
+}
+
 fn exec_truthy(value: MbValue) -> bool {
     if let Some(b) = value.as_bool() {
         return b;
@@ -2441,6 +2492,135 @@ fn exec_call_function(ctx: &mut ExecContext, func: &ExecFunction, args: &[MbValu
     match flow {
         ExecFlow::Return(value) => value,
         ExecFlow::Normal | ExecFlow::Break | ExecFlow::Continue => MbValue::none(),
+    }
+}
+
+fn exec_call_function_with_kwargs(
+    ctx: &mut ExecContext,
+    func: &ExecFunction,
+    args: &[MbValue],
+    kwargs: &[(String, MbValue)],
+) -> MbValue {
+    let positional_capacity = func
+        .params
+        .iter()
+        .filter(|param| {
+            matches!(param.kind, crate::parser::ast::ParamKind::Regular) && !param.kw_only
+        })
+        .count();
+    let has_star = func
+        .params
+        .iter()
+        .any(|param| matches!(param.kind, crate::parser::ast::ParamKind::Star));
+    let has_double_star = func
+        .params
+        .iter()
+        .any(|param| matches!(param.kind, crate::parser::ast::ParamKind::DoubleStar));
+    if !has_star && args.len() > positional_capacity {
+        exec_raise_type_error(format!(
+            "function takes {} arguments but {} were given",
+            positional_capacity,
+            args.len()
+        ));
+        return MbValue::none();
+    }
+    let mut frame = FxHashMap::default();
+    let mut arg_index = 0usize;
+    let mut used_kwargs = HashSet::new();
+    for (idx, param) in func.params.iter().enumerate() {
+        let value = match param.kind {
+            crate::parser::ast::ParamKind::Regular => {
+                let kw_value = kwargs
+                    .iter()
+                    .find_map(|(name, value)| (name == &param.name).then_some(*value));
+                if !param.kw_only {
+                    if let Some(value) = args.get(arg_index) {
+                        if kw_value.is_some() {
+                            exec_raise_type_error(format!(
+                                "got multiple values for argument '{}'",
+                                param.name
+                            ));
+                            return MbValue::none();
+                        }
+                        arg_index += 1;
+                        *value
+                    } else if let Some(value) = kw_value {
+                        used_kwargs.insert(param.name.clone());
+                        value
+                    } else if let Some(Some(default)) = func.defaults.get(idx) {
+                        *default
+                    } else {
+                        exec_raise_type_error(format!(
+                            "missing required argument: '{}'",
+                            param.name
+                        ));
+                        return MbValue::none();
+                    }
+                } else if let Some(value) = kw_value {
+                    used_kwargs.insert(param.name.clone());
+                    value
+                } else if let Some(Some(default)) = func.defaults.get(idx) {
+                    *default
+                } else {
+                    exec_raise_type_error(format!("missing required argument: '{}'", param.name));
+                    return MbValue::none();
+                }
+            }
+            crate::parser::ast::ParamKind::Star => {
+                let remaining_positional = func.params[idx + 1..]
+                    .iter()
+                    .filter(|later| {
+                        matches!(later.kind, crate::parser::ast::ParamKind::Regular)
+                            && !later.kw_only
+                    })
+                    .count();
+                if args.len() < arg_index + remaining_positional {
+                    exec_raise_type_error(format!("missing required argument: '{}'", param.name));
+                    return MbValue::none();
+                }
+                let take = args.len().saturating_sub(arg_index + remaining_positional);
+                let star_args = args[arg_index..arg_index + take].to_vec();
+                arg_index += take;
+                MbValue::from_ptr(MbObject::new_tuple(star_args))
+            }
+            crate::parser::ast::ParamKind::DoubleStar => {
+                let extra = crate::runtime::dict_ops::mb_dict_new();
+                for (name, value) in kwargs {
+                    if used_kwargs.contains(name) {
+                        continue;
+                    }
+                    unsafe {
+                        crate::runtime::rc::retain_if_ptr(*value);
+                    }
+                    crate::runtime::dict_ops::mb_dict_setitem(
+                        extra,
+                        MbValue::from_ptr(MbObject::new_str(name.clone())),
+                        *value,
+                    );
+                }
+                extra
+            }
+        };
+        if exec_has_pending_exception() {
+            return MbValue::none();
+        }
+        frame.insert(param.name.clone(), value);
+    }
+    if !has_double_star {
+        if let Some((name, _)) = kwargs.iter().find(|(name, _)| !used_kwargs.contains(name)) {
+            exec_raise_type_error(format!("got an unexpected keyword argument '{}'", name));
+            return MbValue::none();
+        }
+    }
+    ctx.frames.push(exec_new_frame(frame));
+    ctx.frame_scopes
+        .push(exec_function_scope(&func.params, &func.body));
+    let flow = exec_block_flow(ctx, &func.body);
+    ctx.frames.pop();
+    ctx.frame_scopes.pop();
+    match flow {
+        ExecFlow::Return(value) => value,
+        _ => MbValue::none(),
     }
 }
 
@@ -3181,105 +3361,129 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                 decorator_values.push(value);
             }
             exec_restore_name_bindings(ctx, masked_type_params);
-            let mut match_args = None;
-            for class_stmt in body {
-                match &class_stmt.node {
-                    Stmt::Assign { target, value } => {
-                        if let crate::parser::ast::Expr::Ident(attr) = &target.node {
-                            if attr == "__match_args__" {
-                                match_args = Some(exec_eval_expr(ctx, &value.node));
-                                if exec_has_pending_exception() {
-                                    return ExecFlow::Normal;
+            let flow = 'class_def: {
+                let mut match_args = None;
+                for class_stmt in body {
+                    match &class_stmt.node {
+                        Stmt::Assign { target, value } => {
+                            if let crate::parser::ast::Expr::Ident(attr) = &target.node {
+                                if attr == "__match_args__" {
+                                    match_args = Some(exec_eval_expr(ctx, &value.node));
+                                    if exec_has_pending_exception() {
+                                        break 'class_def ExecFlow::Normal;
+                                    }
                                 }
                             }
                         }
-                    }
-                    Stmt::VarDecl {
-                        name: attr, value, ..
-                    } if attr == "__match_args__" => {
-                        match_args = Some(exec_eval_expr(ctx, &value.node));
-                        if exec_has_pending_exception() {
-                            return ExecFlow::Normal;
+                        Stmt::VarDecl {
+                            name: attr, value, ..
+                        } if attr == "__match_args__" => {
+                            match_args = Some(exec_eval_expr(ctx, &value.node));
+                            if exec_has_pending_exception() {
+                                break 'class_def ExecFlow::Normal;
+                            }
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
-            }
-            ctx.class_match_args.insert(name.clone(), match_args);
-            let Some(base_values) = exec_class_bases_value(ctx, bases) else {
-                return ExecFlow::Normal;
-            };
-            let explicit_metaclass = exec_class_metaclass_name(ctx, keyword_args);
-            if exec_has_pending_exception() {
-                return ExecFlow::Normal;
-            }
-            let class_name = MbValue::from_ptr(MbObject::new_str(name.clone()));
-            let generic_metadata =
-                exec_prepare_class_generic_metadata(ctx, type_params, base_values);
-            crate::runtime::class::mb_class_define_multi(
-                class_name,
-                generic_metadata.runtime_bases,
-                MbValue::from_ptr(MbObject::new_list(Vec::new())),
-                MbValue::from_ptr(MbObject::new_list(Vec::new())),
-            );
-            if let Some(meta_name) = explicit_metaclass {
-                crate::runtime::class::mb_class_set_metaclass(
+                ctx.class_match_args.insert(name.clone(), match_args);
+                let Some(base_values) = exec_class_bases_value(ctx, bases) else {
+                    break 'class_def ExecFlow::Normal;
+                };
+                let explicit_metaclass = exec_class_metaclass_name(ctx, keyword_args);
+                if exec_has_pending_exception() {
+                    break 'class_def ExecFlow::Normal;
+                }
+                let class_name = MbValue::from_ptr(MbObject::new_str(name.clone()));
+                let mut kwarg_keys = Vec::new();
+                let mut kwarg_values = Vec::new();
+                for (kwarg_name, kwarg_expr) in
+                    keyword_args.iter().filter(|(name, _)| name != "metaclass")
+                {
+                    let value = exec_eval_expr(ctx, &kwarg_expr.node);
+                    if exec_has_pending_exception() {
+                        break 'class_def ExecFlow::Normal;
+                    }
+                    kwarg_keys.push(MbValue::from_ptr(MbObject::new_str(kwarg_name.clone())));
+                    kwarg_values.push(value);
+                }
+                if !kwarg_keys.is_empty() {
+                    crate::runtime::class::mb_class_set_kwargs(
+                        class_name,
+                        MbValue::from_ptr(MbObject::new_list(kwarg_keys)),
+                        MbValue::from_ptr(MbObject::new_list(kwarg_values)),
+                    );
+                }
+                let generic_metadata =
+                    exec_prepare_class_generic_metadata(ctx, type_params, base_values);
+                crate::runtime::class::mb_class_define_multi(
                     class_name,
-                    MbValue::from_ptr(MbObject::new_str(meta_name)),
+                    generic_metadata.runtime_bases,
+                    MbValue::from_ptr(MbObject::new_list(Vec::new())),
+                    MbValue::from_ptr(MbObject::new_list(Vec::new())),
                 );
-            }
-            if let Some(orig_bases) = generic_metadata.orig_bases {
-                crate::runtime::class::mb_class_set_class_attr(
-                    class_name,
-                    MbValue::from_ptr(MbObject::new_str("__orig_bases__".to_string())),
-                    orig_bases,
-                );
-            }
-            if let Some(parameters) = generic_metadata.parameters {
-                crate::runtime::class::mb_class_set_class_attr(
-                    class_name,
-                    MbValue::from_ptr(MbObject::new_str("__parameters__".to_string())),
-                    parameters,
-                );
-            }
-            if let Some(match_args) = match_args {
-                crate::runtime::class::mb_class_set_match_args(class_name, match_args);
-            }
-            if let Some(namespace) = exec_class_body_namespace(ctx, body, !type_params.is_empty()) {
-                for (attr, value) in namespace {
+                if let Some(meta_name) = explicit_metaclass {
+                    crate::runtime::class::mb_class_set_metaclass(
+                        class_name,
+                        MbValue::from_ptr(MbObject::new_str(meta_name)),
+                    );
+                }
+                if let Some(orig_bases) = generic_metadata.orig_bases {
                     crate::runtime::class::mb_class_set_class_attr(
                         class_name,
-                        MbValue::from_ptr(MbObject::new_str(attr)),
-                        value,
+                        MbValue::from_ptr(MbObject::new_str("__orig_bases__".to_string())),
+                        orig_bases,
                     );
                 }
-            }
-            if exec_has_pending_exception() {
-                return ExecFlow::Normal;
-            }
-            crate::runtime::class::mb_class_finalize_definition(class_name);
-            let mut class_value = make_type_object(name);
-            for decorator in decorator_values.into_iter().rev() {
-                if mb_callable(decorator).as_bool() != Some(true) {
-                    let type_name = exec_match_type_name(decorator);
-                    crate::runtime::exception::mb_raise(
-                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str(format!(
-                            "'{type_name}' object is not callable"
-                        ))),
+                if let Some(parameters) = generic_metadata.parameters {
+                    crate::runtime::class::mb_class_set_class_attr(
+                        class_name,
+                        MbValue::from_ptr(MbObject::new_str("__parameters__".to_string())),
+                        parameters,
                     );
-                    return ExecFlow::Normal;
                 }
-                class_value = mb_call_spread(
-                    decorator,
-                    MbValue::from_ptr(MbObject::new_list(vec![class_value])),
-                );
+                if let Some(match_args) = match_args {
+                    crate::runtime::class::mb_class_set_match_args(class_name, match_args);
+                }
+                if let Some(namespace) =
+                    exec_class_body_namespace(ctx, body, !type_params.is_empty())
+                {
+                    for (attr, value) in namespace {
+                        crate::runtime::class::mb_class_set_class_attr(
+                            class_name,
+                            MbValue::from_ptr(MbObject::new_str(attr)),
+                            value,
+                        );
+                    }
+                }
                 if exec_has_pending_exception() {
-                    return ExecFlow::Normal;
+                    break 'class_def ExecFlow::Normal;
                 }
-            }
-            exec_store_name(ctx, name, class_value);
-            ExecFlow::Normal
+                crate::runtime::class::mb_class_finalize_definition(class_name);
+                let mut class_value = make_type_object(name);
+                for decorator in decorator_values.into_iter().rev() {
+                    if mb_callable(decorator).as_bool() != Some(true) {
+                        let type_name = exec_match_type_name(decorator);
+                        crate::runtime::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "'{type_name}' object is not callable"
+                            ))),
+                        );
+                        break 'class_def ExecFlow::Normal;
+                    }
+                    class_value = mb_call_spread(
+                        decorator,
+                        MbValue::from_ptr(MbObject::new_list(vec![class_value])),
+                    );
+                    if exec_has_pending_exception() {
+                        break 'class_def ExecFlow::Normal;
+                    }
+                }
+                exec_store_name(ctx, name, class_value);
+                ExecFlow::Normal
+            };
+            flow
         }
         Stmt::FnDef {
             decorators,
@@ -5193,6 +5397,57 @@ mod tests {
             MbValue::from_ptr(MbObject::new_str("param".to_string())),
         );
         assert_eq!(param.to_bits(), params[0].to_bits());
+    }
+
+    #[test]
+    fn test_exec_generic_class_bases_keep_unmangled_kwargs_and_implicit_generic() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(
+            MbValue::from_ptr(MbObject::new_str(
+                "from typing import Generic\nclass __Base:\n    def __init_subclass__(self, **kwargs):\n        self.kwargs = kwargs\nclass Derived[T](__Base, __kwarg=1):\n    pass\n"
+                    .to_string(),
+            )),
+            globals,
+        );
+
+        assert_eq!(
+            crate::runtime::exception::mb_has_exception().as_bool(),
+            Some(false)
+        );
+
+        let derived = crate::runtime::dict_ops::mb_dict_get(
+            globals,
+            MbValue::from_ptr(MbObject::new_str("Derived".to_string())),
+            MbValue::none(),
+        );
+        let bases = crate::runtime::class::mb_getattr(
+            derived,
+            MbValue::from_ptr(MbObject::new_str("__bases__".to_string())),
+        );
+        let bases = extract_items(bases);
+        assert_eq!(bases.len(), 2);
+        assert_eq!(
+            crate::runtime::class::resolve_class_name(bases[0]).as_deref(),
+            Some("__Base")
+        );
+        assert_eq!(
+            crate::runtime::class::resolve_class_name(bases[1]).as_deref(),
+            Some("typing.Generic")
+        );
+
+        let kwargs = crate::runtime::class::mb_getattr(
+            derived,
+            MbValue::from_ptr(MbObject::new_str("kwargs".to_string())),
+        );
+        let kwarg_value = crate::runtime::dict_ops::mb_dict_get(
+            kwargs,
+            MbValue::from_ptr(MbObject::new_str("__kwarg".to_string())),
+            MbValue::none(),
+        );
+        assert_eq!(kwarg_value.as_int(), Some(1));
     }
 
     #[test]
