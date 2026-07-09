@@ -176,8 +176,8 @@ disp_unary!(d_get_type_hints, mb_typing_get_type_hints);
 disp_nullary!(d_sentinel, mb_typing_sentinel);
 
 /// typing.NamedTuple(name, fields=None, **kwargs). Providing BOTH a positional
-/// fields list and keyword fields is a TypeError; otherwise return the
-/// type-erased sentinel (the functional form is not yet materialized).
+/// fields list and keyword fields is a TypeError; otherwise materialize the
+/// functional namedtuple factory for the supported call forms.
 unsafe extern "C" fn d_namedtuple(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let is_seq = |v: MbValue| -> bool {
@@ -200,6 +200,35 @@ unsafe extern "C" fn d_namedtuple(args_ptr: *const MbValue, nargs: usize) -> MbV
                 }
             })
             .unwrap_or(false)
+    };
+    let is_dict = |v: MbValue| -> bool {
+        v.as_ptr()
+            .map(|p| unsafe { matches!((*p).data, super::super::rc::ObjData::Dict(_)) })
+            .unwrap_or(false)
+    };
+    let attach_annotations = |factory: MbValue, entries: Vec<(String, MbValue)>| -> MbValue {
+        if entries.is_empty() {
+            return factory;
+        }
+        let annotations = super::super::dict_ops::mb_dict_new();
+        for (field, ty) in entries {
+            super::super::dict_ops::mb_dict_setitem(
+                annotations,
+                MbValue::from_ptr(MbObject::new_str(field)),
+                ty,
+            );
+        }
+        if let Some(ptr) = factory.as_ptr() {
+            unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    fields
+                        .write()
+                        .unwrap()
+                        .insert("__annotations__".to_string(), annotations);
+                }
+            }
+        }
+        factory
     };
     if a.len() >= 3 {
         let fields = a.get(1).copied().unwrap_or_else(MbValue::none);
@@ -242,6 +271,26 @@ unsafe extern "C" fn d_namedtuple(args_ptr: *const MbValue, nargs: usize) -> MbV
                 }
             })
             .unwrap_or_default();
+        let annotations: Vec<(String, MbValue)> = items
+            .iter()
+            .filter_map(|item| {
+                item.as_ptr().and_then(|p| unsafe {
+                    match &(*p).data {
+                        ObjData::Tuple(_) | ObjData::List(_) => {
+                            let parts = match &(*p).data {
+                                ObjData::Tuple(t) => t.clone(),
+                                ObjData::List(l) => l.read().unwrap().to_vec(),
+                                _ => Vec::new(),
+                            };
+                            let field = parts.first().copied().and_then(extract_str)?;
+                            let ty = parts.get(1).copied().unwrap_or_else(MbValue::none);
+                            Some((field, ty))
+                        }
+                        _ => None,
+                    }
+                })
+            })
+            .collect();
         let names: Vec<MbValue> = items
             .iter()
             .map(|item| {
@@ -259,7 +308,35 @@ unsafe extern "C" fn d_namedtuple(args_ptr: *const MbValue, nargs: usize) -> MbV
             })
             .collect();
         let names_list = MbValue::from_ptr(MbObject::new_list(names));
-        return super::collections_mod::mb_namedtuple(name, names_list, MbValue::none());
+        let factory = super::collections_mod::mb_namedtuple(name, names_list, MbValue::none());
+        return attach_annotations(factory, annotations);
+    }
+    if !name.is_none() && is_dict(fields_v) {
+        let kw_entries: Vec<(String, MbValue)> = fields_v
+            .as_ptr()
+            .map(|p| unsafe {
+                match &(*p).data {
+                    ObjData::Dict(ref lock) => lock
+                        .read()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|(k, v)| match k {
+                            crate::runtime::dict_ops::DictKey::Str(name) => Some((name.clone(), *v)),
+                            _ => None,
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                }
+            })
+            .unwrap_or_default();
+        let names_list = MbValue::from_ptr(MbObject::new_list(
+            kw_entries
+                .iter()
+                .map(|(field, _)| MbValue::from_ptr(MbObject::new_str(field.clone())))
+                .collect(),
+        ));
+        let factory = super::collections_mod::mb_namedtuple(name, names_list, MbValue::none());
+        return attach_annotations(factory, kw_entries);
     }
     MbValue::none()
 }
