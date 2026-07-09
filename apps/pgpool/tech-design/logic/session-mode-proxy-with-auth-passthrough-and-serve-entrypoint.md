@@ -158,19 +158,19 @@ nodes:
     kind: initial
     label: "Admitting: SessionHandler::handle just received the accepted socket and is calling ConnectionBudget::try_acquire() (R1)"
   rejected_saturated:
-    kind: normal
+    kind: terminal
     label: "RejectedSaturated: budget exhausted — a BackendMessage::ErrorResponse (53300 too_many_connections) is written to the client, then the socket is closed; no other session is affected (AC3)"
   connecting_backend:
     kind: normal
     label: "ConnectingBackend: permit held; dialing the configured backend endpoint within the connect timeout (R3)"
   rejected_backend_unreachable:
-    kind: normal
+    kind: terminal
     label: "RejectedBackendUnreachable: backend TCP connect failed or timed out — an ErrorResponse (08006 connection_failure) is written to the client, the permit is released, the socket is closed"
   auth_relay:
     kind: normal
     label: "AuthRelay: StartupMessage forwarded; alternately relaying Authentication*/PasswordMessage/SaslInitialResponse/SaslResponse frames verbatim between client and backend (R2, AC2)"
   rejected_auth_failed:
-    kind: normal
+    kind: terminal
     label: "RejectedAuthFailed: backend sent ErrorResponse during startup/auth (bad credentials, failed SCRAM exchange) — forwarded to the client verbatim, permit released, both sockets closed"
   established:
     kind: normal
@@ -179,7 +179,7 @@ nodes:
     kind: normal
     label: "Draining: the process received SIGTERM/SIGINT (DrainSignal flipped to Draining); tcp-server's accept loop has stopped admitting new connections, but this session's bidirectional relay keeps running unaffected, bounded by TcpServerConfig.drain_timeout (R4, AC4)"
   closed:
-    kind: final
+    kind: terminal
     label: "Closed: permit released, both sockets closed — either a clean end (client Terminate, or backend/client EOF), a FrameError on either leg, or the drain_timeout elapsing while still Established/Draining (task abandoned)"
 edges:
   - from: admitting
@@ -328,7 +328,6 @@ definitions:
             type: string
         description: "Underlying client or backend socket I/O error (reset, broken pipe, ...)."
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
