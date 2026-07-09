@@ -2,10 +2,10 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = "projects/jet/tech-design"
-generated_at = "2026-07-09T05:49:18.729820+00:00"
-digest = "sha256:6fc404eef6ac6aab7713e49aad6be0678e1e8827b51257d888b3ad04688b1fa6"
-source_digest = "sha256:6fc404eef6ac6aab7713e49aad6be0678e1e8827b51257d888b3ad04688b1fa6"
-ir_digest = "sha256:fcbd7adc6044347363c3b852a85e333a791d01ef62e407949a5d593252bf9497"
+generated_at = "2026-07-09T06:37:42.191812+00:00"
+digest = "sha256:0adc8c9b0f659558c44024a2ec55855558f5a00069eaf84218fd4a6a2219e2f4"
+source_digest = "sha256:0adc8c9b0f659558c44024a2ec55855558f5a00069eaf84218fd4a6a2219e2f4"
+ir_digest = "sha256:55e41c6dde470ad412072b9780be9b99cbf57113cccc636f0fab654f447210ae"
 
 [[files]]
 path = "logic/jet-build-lib-dts-object-literal-d-ts-emission-silently-truncate.md"
@@ -35,6 +35,12 @@ section_count = 3
 path = "logic/jet-lib-dts-isolateddeclarations-object-assign-computed-key-stil.md"
 digest = "sha256:2bdef66d8dce9c4d94c8ae7af32fb9b55855d9211e9df016a8d0b19bd33bb680"
 ir_digest = "sha256:e7b7802f5113923033ed24f4f95a3ec958c9cbfd26c8c00c5a6b771f64869340"
+section_count = 3
+
+[[files]]
+path = "logic/jet-stories-build-png-now-fixed-svg-partially-fixed-barrel-re-ex.md"
+digest = "sha256:933d48ac20cebc4043ef9d99844b84e4ee06677c36f9e644e84a4daba9e2c212"
+ir_digest = "sha256:72471b9360b771aec6889cd7b429adb7d0d181c4be27bd3436d3fb7fda5a8df3"
 section_count = 3
 
 [[files]]
