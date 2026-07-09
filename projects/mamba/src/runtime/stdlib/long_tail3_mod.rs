@@ -223,6 +223,15 @@ fn is_str(v: MbValue) -> bool {
         .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
 }
 
+fn is_str_or_bytes_like(v: MbValue) -> bool {
+    v.as_ptr().is_some_and(|p| unsafe {
+        matches!(
+            (*p).data,
+            ObjData::Str(_) | ObjData::Bytes(_) | ObjData::ByteArray(_)
+        )
+    })
+}
+
 fn is_tuple(v: MbValue) -> bool {
     v.as_ptr()
         .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Tuple(_)) })
@@ -259,6 +268,20 @@ unsafe extern "C" fn dispatch_importlib_cache_from_source(
         return raise_type_error("cache_from_source path must be str");
     }
     dispatch_empty_str(args_ptr, nargs)
+}
+
+unsafe extern "C" fn dispatch_sre_parse_parse_template(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let Some(source) = args.first().copied() else {
+        return raise_type_error("parse_template() missing required argument: 'source'");
+    };
+    if !is_str_or_bytes_like(source) {
+        return raise_type_error("parse_template() argument 'source' must be str or bytes-like");
+    }
+    MbValue::from_ptr(MbObject::new_tuple(Vec::new()))
 }
 
 unsafe extern "C" fn multibyte_decoder_setstate(_self_v: MbValue, args: MbValue) -> MbValue {
@@ -402,6 +425,7 @@ pub fn register() {
     register_zoneinfo();
     register_unittest_subs();
     register_importlib_subs();
+    register_sre_parse();
     register_collections_abc();
     register_email_subs();
     register_internals();
@@ -1679,6 +1703,19 @@ fn register_importlib_subs() {
         ],
         &[],
         &[("MAGIC_NUMBER", "")],
+    );
+}
+
+fn register_sre_parse() {
+    register_with(
+        "sre_parse",
+        &[],
+        &[(
+            "parse_template",
+            dispatch_sre_parse_parse_template as *const () as usize,
+        )],
+        &[],
+        &[],
     );
 }
 
