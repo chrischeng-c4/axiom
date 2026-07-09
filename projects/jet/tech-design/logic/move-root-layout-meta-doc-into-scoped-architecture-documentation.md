@@ -97,3 +97,33 @@ flowchart TD
     fix --> verify_scope
     stale -- no --> done([Layout guide discoverable at docs/architecture/layout.md, linked from README])
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+meta_doc_migration:
+  project: jet
+  legacy_doc_path: projects/jet/LAYOUT.md
+  canonical_doc_path: projects/jet/docs/architecture/layout.md
+  preserved_content:
+    - top_level_path_map
+    - crate_package_naming_conventions
+    - two_halves_of_jet_table
+    - parity_workspace_table
+  pointer_updates:
+    - path: projects/jet/README.md
+      location: "Source map table"
+      from: "`projects/jet/LAYOUT.md`"
+      to: "`projects/jet/docs/architecture/layout.md`"
+  remaining_root_uppercase_meta_docs:
+    - projects/jet/README.md
+  verification:
+    local_checks:
+      - aw td check projects/jet/tech-design/logic/move-root-layout-meta-doc-into-scoped-architecture-documentation.md
+      - aw capability report --project jet
+    stale_source_scan:
+      command: rg -n "projects/jet/LAYOUT.md" --glob '!projects/jet/tech-design/**'
+      allowed_contexts:
+        - projects/jet/tech-design (historical TD text that explicitly names the retired root doc)
+```
