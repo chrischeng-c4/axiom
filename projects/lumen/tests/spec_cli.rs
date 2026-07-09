@@ -842,4 +842,73 @@ fn openapi_is_self_complete_and_uses_port_7373() {
         "servers must use the real port :7373, got {servers:?}"
     );
 }
+
+/// #1298 (epic #1296): the offline `lumen spec` OpenAPI document is stamped
+/// OpenAPI 3.2 and describes the #1297 `QUERY` twins — `QUERY /collections`
+/// and `QUERY /collections/{collection_id}` — each carrying the
+/// `x-post-twin` extension libs/openapi-codegen's IR resolves the POST
+/// fallback path from, alongside the POST twin itself still being
+/// registered.
+#[test]
+fn openapi_json_declares_3_2_and_describes_query_twins() {
+    let v: Value = serde_json::from_str(&openapi_json()).expect("openapi is valid JSON");
+    assert_eq!(
+        v["openapi"], "3.2.0",
+        "OpenAPI document declares 3.2 (RFC 10008 QUERY support)"
+    );
+
+    let collections_query = &v["paths"]["/collections"]["query"];
+    assert!(
+        !collections_query.is_null(),
+        "OpenAPI is missing QUERY /collections: {:?}",
+        v["paths"]["/collections"]
+            .as_object()
+            .map(|p| p.keys().collect::<Vec<_>>())
+    );
+    assert_eq!(
+        collections_query["x-post-twin"], "/collections:search",
+        "QUERY /collections names its POST twin"
+    );
+    assert_eq!(
+        collections_query["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/BatchSearchRequest",
+        "QUERY /collections request body schema matches its POST twin"
+    );
+    assert_eq!(
+        collections_query["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/BatchSearchResponse",
+        "QUERY /collections response schema matches its POST twin"
+    );
+    assert!(
+        !v["paths"]["/collections:search"]["post"].is_null(),
+        "QUERY /collections keeps its POST twin registered"
+    );
+
+    let collection_id_query = &v["paths"]["/collections/{collection_id}"]["query"];
+    assert!(
+        !collection_id_query.is_null(),
+        "OpenAPI is missing QUERY /collections/{{collection_id}}: {:?}",
+        v["paths"]["/collections/{collection_id}"]
+            .as_object()
+            .map(|p| p.keys().collect::<Vec<_>>())
+    );
+    assert_eq!(
+        collection_id_query["x-post-twin"], "/collections/{collection_id}/search",
+        "QUERY /collections/{{collection_id}} names its POST twin"
+    );
+    assert_eq!(
+        collection_id_query["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/SearchRequest",
+        "QUERY /collections/{{collection_id}} request body schema matches its POST twin"
+    );
+    assert_eq!(
+        collection_id_query["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/SearchResponse",
+        "QUERY /collections/{{collection_id}} response schema matches its POST twin"
+    );
+    assert!(
+        !v["paths"]["/collections/{collection_id}/search"]["post"].is_null(),
+        "QUERY /collections/{{collection_id}} keeps its POST twin registered"
+    );
+}
 // CODEGEN-END
