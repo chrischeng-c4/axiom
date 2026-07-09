@@ -4660,6 +4660,44 @@ mod tests {
     }
 
     #[test]
+    fn project_health_ec_axis_is_hard_and_green_once_a_command_is_configured_and_passes() {
+        // #1280: self-AW's EC gate flips from advisory to hard the moment a
+        // real command surface exists and passes verification
+        // (`command_count > 0`) — exactly the fixture-loop inventory case
+        // this issue registers (`aw.toml`'s
+        // `td-cb-lifecycle-automation-self-ec-fixture-loop-gate`).
+        let mut report = ready_project_health_report("agentic-workflow");
+        report.ec = ec_report_for(
+            "td-cb-lifecycle-automation-self-ec-fixture-loop-gate",
+            ProjectTestCommandStatus::Passed,
+        );
+
+        let axis = project_health_ec_axis(&report);
+
+        assert_eq!(axis["status"], "passed");
+        assert_eq!(axis["command_count"], 1);
+        assert_eq!(axis["passed_commands"], 1);
+    }
+
+    #[test]
+    fn project_health_ec_axis_is_hard_and_red_when_the_configured_runner_fails() {
+        // #1280 AC3: a failing fixture-loop command must surface as a hard
+        // "failed" gate (a production blocker), not get silently downgraded
+        // to advisory just because this is aw's own self-health.
+        let mut report = ready_project_health_report("agentic-workflow");
+        report.ec = ec_report_for(
+            "td-cb-lifecycle-automation-self-ec-fixture-loop-gate",
+            ProjectTestCommandStatus::Failed,
+        );
+
+        let axis = project_health_ec_axis(&report);
+
+        assert_eq!(axis["status"], "failed");
+        assert_eq!(axis["command_count"], 1);
+        assert_eq!(axis["passed_commands"], 0);
+    }
+
+    #[test]
     fn claim_closure_closes_when_required_edges_are_present() {
         let document = claim_document(true);
         let case = ec_case("behavior");
