@@ -111,3 +111,20 @@ flowchart TD
     r4[R4 flat object literal unchanged] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_plain_object_literal_const_signature[cargo test -p jet --lib bundler::dts::tests::infers_plain_object_literal_const_signature]
     r5[R5 object assign computed key member unaffected] --> cargo_test_p_jet_lib_bundler_dts_tests_infers_object_literal_method_with_object_assign_computed_key_body[cargo test -p jet --lib bundler::dts::tests::infers_object_literal_method_with_object_assign_computed_key_body]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/jet/src/bundler/dts.rs
+    action: update
+    section: logic
+    impl_mode: hand-written
+    reason: "Empirically re-verified against WI #1263's exact minimal repro (`jet build --lib --format esm --dts` on a standalone `export const flatLiteral = { ltr: 'ltr', rtl: 'rtl' }; export const nestedLiteral = { ltr: 'ltr', heading: { h1: 'editor-heading--h1' } };`) still fails on the current app/jet source tree (post-#1264, commit 75cb5e5ca), so this is a genuine, still-open analyzer gap distinct from #1264's arrow-body-return shape (not an already-implemented case pinned only by tests, contrast WI #937). Factor infer_object_literal_type's body (everything after the Node-to-text extraction step, which is already pure &str manipulation via split_top_level/split_once_top_level) out into a new infer_object_literal_type_from_text(text: &str) -> Option<String> that needs no tree-sitter Node; infer_object_literal_type(node, source) becomes a thin Node-to-text adapter delegating to it. In the member-value-typing chain (after the existing infer_arrow_function_type_from_text check, before the infer_expression_type fallback), add a branch: if value.trim() starts_with('{') and ends_with('}'), recurse via infer_object_literal_type_from_text(value.trim()) and emit `{key}: { nested members }` on success. Recursion terminates because each nested `{ ... }` substring is strictly shorter than its parent, so nesting depth is unbounded by construction. Any value text that is not a bare `{ ... }` literal (Object.assign(...) calls, other call expressions, template literals) falls through unchanged to the existing infer_expression_type fallback, leaving #1238's and #1262's still-open false positives (Object.assign+computed-key body shapes, post-Object.assign-spread property truncation) untouched -- this TD is scoped to plain nested object-literal member values only."
+  - path: projects/jet/src/bundler/dts.rs
+    action: update
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Add the R1-R5 regression tests specified in the unit-test section to the existing mod tests block: R1 pins the WI #1263 minimal-repro positive case (nesting depth 2, all leaves plain string literals); R2 is a positive control at nesting depth 3+ mirroring the issue's real-world fe-shared lexicalTheme shape, proving the recursion has no hard-coded depth cap; R3 is a negative control proving a nested object literal with a genuinely untyped leaf still raises isolatedDeclarations error; R4 and R5 re-assert two pre-existing tests (flat depth-1 object literal from #796, and the Object.assign+computed-key member from the #1262/#1238 family) keep passing unchanged, proving the infer_object_literal_type refactor and the new bare-nested-object-literal branch are behavior-preserving outside the exact new shape."
+```
