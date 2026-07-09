@@ -36,7 +36,7 @@ real-service external peer calibration remain separate work roots.
 | Retention And Backfill | #768 | planned | planned | none | not_ready | retention windows, compaction policy, and batch backfill |
 | HTTP/2 API List | #768 | implemented | verified | smoke | ready | offline `tape spec` route/OpenAPI inventory plus a real h2c + HTTP/1.1 server (#1325) serving `/topics` append/replay/checkpoint |
 | Standard Operational Endpoints | #768 | implemented | verified | smoke | ready | `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` served for real via `libs/service-http` (#1325), with drain-aware readiness and `tape serve` |
-| Kubernetes-Native Deployment | #768 | planned | planned | none | not_ready | dedicated StatefulSet/operator shape |
+| Kubernetes-Native Deployment | #768 | implemented | verified | smoke | ready | CRD/operator/instance render + dockerfile CLI (#1328); StatefulSet topology, offline render tests; no live kind cluster proof yet |
 | Primary Replicas | #1327 | implemented | planned | dogfood | not_ready | raft-host auto-mode leader/follower primary-replica topology over the whole journal; live 3-node kill-9 failover proven, peer-TLS is config-surface + fail-fast validation only (raft-host h2c has no TLS seam yet) |
 | CLI Interface | #768 | implemented | verified | smoke | ready | `tape` CLI for local replay/admin, spec, and agent docs |
 | CLI Standard Surface | #768 | implemented | verified | smoke | ready | shared `llm`, `upgrade`, and `issue` command groups |
@@ -335,18 +335,21 @@ ID: kubernetes-native-deployment
 Type: Devops
 Root WI: #768
 Status: confirmed
-Surfaces: K8s: dedicated StatefulSet/operator topology for topic partitions, storage, probes, backups, and PDBs.
-EC Dimensions: behavior: pending kustomize/operator render gate - CRD, operator, and instance render; stability: pending kind replay dogfood
-Required Verification: smoke, dogfood
+Surfaces: K8s: dedicated StatefulSet/operator topology for topic partitions, storage, probes, and PDBs (#1328); `tape k8s crd|operator|instance render`, `tape k8s operator run` (behind the `operator` cargo feature), and `tape dockerfile render --variant source|release`.
+EC Dimensions: behavior: offline render/CLI gates (`tests/deploy_cli.rs`, `tests/operator.rs`) - CRD structural-schema safety, operator render shape, instance profiles, dockerfile fixture parity; stability: pending live kind replay dogfood (no cluster available in this slice)
+Required Verification: smoke
 Promise:
 Tape runs as a dedicated k8s-native replay service with stable identity,
-persistent storage, backup policy, and operator-managed lifecycle.
+persistent storage, and operator-managed lifecycle. Live-cluster
+dogfood (kind smoke) is a deferred follow-up.
 Gate Inventory:
-- pending: apps/tape/k8s
+- apps/tape/k8s/operator/{crd,rbac,deployment}.yaml
+- apps/tape/tests/deploy_cli.rs
+- apps/tape/tests/operator.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| dedicated-statefulset-operator-topology | epic | #768 | planned | planned | none | pending k8s render/dogfood gates |
+| dedicated-statefulset-operator-topology | epic | #768 | implemented | verified | smoke | apps/tape/tests/{deploy_cli,operator}.rs; #1328 |
 
 ### Primary Replicas
 
