@@ -9,34 +9,38 @@ aliases: [aw:standardize-run]
 
 Human-facing entrypoint for adopting or standardizing an existing project
 under Agentic Workflow ownership. The user asks for the outcome; the agent
-uses `aw standardize audit` plus `aw health`-routed worker verbs as the
+uses `aw health`'s takeover-audit axis plus its routed worker verbs as the
 bounded protocol surface.
 
-`aw standardize` is reduced to the audit-first preservation protocol
-(`audit check` / `audit record`); it is not a parent-workflow loop driver.
-Project readiness metrics -- capability, managed, semantic, traceability,
-command traceability, and regenerable maturity, plus cb/cold verify and
-configured test gates -- live entirely in `aw health`, and `aw health`'s
-`next.command` already names the exact worker verb to run next
-(`aw td promote <target>`, `aw td code-claim <path>`, `aw td gen <slug>` /
-`aw td code-check <slug>`, `aw wi create ...`, `aw capability run --project
-<p>`, ...). There is no `aw standardize` layer-driver subcommand (`managed`,
-`semantic`, or `traceability`) anymore.
+The `aw standardize` namespace is fully retired (#1278, epic #1270 R7): the
+audit-first preservation protocol's reporting half folded into `aw health`'s
+`takeover-audit` axis, and its mutating half (`audit record`) was rehomed as
+`aw td audit-record`. `aw standardize` is not a parent-workflow loop driver
+and is not a runnable command anymore. Project readiness metrics --
+capability, managed, semantic, traceability, command traceability, and
+regenerable maturity, plus cb/cold verify and configured test gates -- live
+entirely in `aw health`, and `aw health`'s `next.command` already names the
+exact worker verb to run next (`aw td promote <target>`, `aw td code-claim
+<path>`, `aw td gen <slug>` / `aw td code-check <slug>`, `aw wi create ...`,
+`aw capability run --project <p>`, `aw td audit-record --project <p>`, ...).
+There is no `aw standardize` layer-driver subcommand (`managed`, `semantic`,
+or `traceability`) anymore.
 
 ## Workflow
 
 1. Resolve the project from the prompt, current branch, or `aw.toml`.
 2. Run the audit-first preservation check before any remediation:
    ```bash
-   aw standardize audit check --project <project>
+   aw health --project <project> takeover-audit --verbose
    ```
-   If `audit_required=true`, record the preservation baseline once:
+   If the axis reports `recorded=false` (`status=not_applicable`), record the
+   preservation baseline once:
    ```bash
-   aw standardize audit record --project <project>
+   aw td audit-record --project <project>
    ```
-   `surfaces_to_preserve` / `safe_levers` name the surfaces that must survive
-   remediation unchanged; treat them as guardrails for every later tick, not
-   optional advice.
+   `surfaces_to_preserve` / `safe_lever_count` name the surfaces that must
+   survive remediation unchanged; treat them as guardrails for every later
+   tick, not optional advice.
 3. Run the project health report:
    ```bash
    aw health --project <project>
@@ -82,9 +86,9 @@ configured test gates -- live entirely in `aw health`, and `aw health`'s
 
 - Do one bounded action at a time.
 - Do not skip verification after a mainthread edit.
-- `aw standardize audit` guardrails apply for the whole remediation loop: do
-  not remove or degrade a surface listed in `surfaces_to_preserve` while
-  chasing a health gap.
+- The takeover-audit `surfaces_to_preserve` guardrail applies for the whole
+  remediation loop: do not remove or degrade a surface it names while chasing
+  a health gap.
 - Capability completion only means README root structure is runnable; it
   does not imply source ownership or production readiness.
 - Generated, vendored, or explicitly out-of-scope files still need binary
@@ -96,11 +100,12 @@ configured test gates -- live entirely in `aw health`, and `aw health`'s
 - Traceability completion means every active command, TD, source ref, and CB
   block closes to at least one README capability unless the TD is valid
   internal scope.
-- Production readiness is reported by `aw health`, not by `aw standardize`
-  itself. Health is gated by capability, managed, semantic, traceability, cb
-  verify, cold verify, configured test gates, and unresolved blocker/HITL
-  state. Regenerability percentage is an automation-maturity signal, not a
-  required 100% gate.
+- Production readiness is reported by `aw health` alone; the takeover-audit
+  axis is advisory (brownfield-only, never a `production_ready` blocker).
+  Health is gated by capability, managed, semantic, traceability, cb verify,
+  cold verify, configured test gates, and unresolved blocker/HITL state.
+  Regenerability percentage is an automation-maturity signal, not a required
+  100% gate.
 - Regenerability maturity means deterministic `HANDWRITE` -> `CODEGEN`
   promotions have been exhausted for the current generator surface; partial
   regenerability is acceptable when remaining gaps are tracked or require

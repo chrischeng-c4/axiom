@@ -2426,6 +2426,14 @@ mod tests {
                 uncovered_count: 0,
                 findings: Vec::new(),
             },
+            takeover_audit: crate::cli::standardize::TakeoverAuditCoverage {
+                project: project.to_string(),
+                recorded: false,
+                audit_path: String::new(),
+                surfaces_to_preserve: Vec::new(),
+                quality_debt_count: 0,
+                safe_lever_count: 0,
+            },
         }
     }
 
@@ -2863,11 +2871,7 @@ test_cmd = "true"
         )
         .unwrap();
         std::fs::write(root_dir.join("apps/jet/README.md"), "# jet\n").unwrap();
-        std::fs::write(
-            root_dir.join("apps/jet/src/lib.rs"),
-            "pub fn demo() {}\n",
-        )
-        .unwrap();
+        std::fs::write(root_dir.join("apps/jet/src/lib.rs"), "pub fn demo() {}\n").unwrap();
         init_git_repo(root_dir);
 
         let root = WorkflowNode {
@@ -2980,11 +2984,7 @@ test_cmd = "true"
         )
         .unwrap();
         std::fs::write(root_dir.join("apps/jet/README.md"), "# jet\n").unwrap();
-        std::fs::write(
-            root_dir.join("apps/jet/src/lib.rs"),
-            "pub fn demo() {}\n",
-        )
-        .unwrap();
+        std::fs::write(root_dir.join("apps/jet/src/lib.rs"), "pub fn demo() {}\n").unwrap();
         init_git_repo(root_dir);
 
         let envelope = project_done_or_dirty_envelope_with_health(
@@ -3031,11 +3031,7 @@ test_cmd = "false"
         )
         .unwrap();
         std::fs::write(root_dir.join("apps/jet/README.md"), "# jet\n").unwrap();
-        std::fs::write(
-            root_dir.join("apps/jet/src/lib.rs"),
-            "pub fn demo() {}\n",
-        )
-        .unwrap();
+        std::fs::write(root_dir.join("apps/jet/src/lib.rs"), "pub fn demo() {}\n").unwrap();
         init_git_repo(root_dir);
 
         let root = WorkflowNode {

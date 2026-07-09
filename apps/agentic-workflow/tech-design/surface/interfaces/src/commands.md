@@ -45,7 +45,6 @@ use crate::cli::issues;
 use crate::cli::llm;
 use crate::cli::project;
 use crate::cli::standard_cli;
-use crate::cli::standardize;
 use crate::cli::view;
 
 /// Agentic Workflow CLI commands
@@ -72,7 +71,7 @@ pub enum Commands {
     /// Read-only repo reader: projects/libs catalog, README capabilities, EC, TD, and native desktop app.
     View(view::ViewArgs),
 
-    /// Manage `.aw/config.toml` and Agentic Workflow configuration producers.
+    /// Manage `aw.toml` and Agentic Workflow configuration producers.
     Conf(conf::ConfArgs),
 
     /// Manage work-items — list/show/create/validate across local + GitHub backends.
@@ -101,9 +100,6 @@ pub enum Commands {
 
     /// External-contract lifecycle: generate tests/tool configs and verify EC gates.
     Ec(ec::EcArgs),
-
-    /// Existing-project workflow guidance and bounded remediation.
-    Standardize(standardize::StandardizeArgs),
 }
 
 /// Run an Agentic Workflow CLI command
@@ -156,16 +152,12 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         Commands::Ec(args) => {
             ec::run(args)?;
         }
-        Commands::Standardize(args) => {
-            standardize::run(args).await?;
-        }
     }
 
     Ok(())
 }
 
 // CODEGEN-END
-
 ```
 
 ## Changes
