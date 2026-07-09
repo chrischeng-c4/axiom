@@ -555,15 +555,6 @@ target = "rust"
 test_cmd = "cargo test -p cclab-grid-wasm"
 
 [[projects]]
-name = "cclab-kv"
-path = "crates/cclab-kv"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-kv/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-kv"
-
-[[projects]]
 name = "cclab-learn"
 path = "crates/cclab-learn"
 
@@ -690,51 +681,6 @@ target = "rust"
 test_cmd = "cargo test -p cclab-wal"
 
 [[projects]]
-name = "agentic-workflow"
-path = "apps/agentic-workflow"
-
-[[projects.workspaces]]
-paths = ["apps/agentic-workflow/**"]
-target = "rust"
-test_cmd = "cargo test -p agentic-workflow"
-
-[[projects]]
-name = "arena"
-path = "apps/arena"
-
-[[projects.workspaces]]
-paths = ["apps/arena/**"]
-target = "rust"
-test_cmd = "cargo test -p arena"
-
-[[projects]]
-name = "cap"
-path = "apps/cap"
-
-[[projects.workspaces]]
-paths = ["apps/cap/**"]
-target = "rust"
-test_cmd = "cargo test -p cap"
-
-[[projects]]
-name = "cgdb"
-path = "apps/cgdb"
-
-[[projects.workspaces]]
-paths = ["apps/cgdb/**"]
-target = "rust"
-test_cmd = "cargo test -p cgdb-smoke"
-
-[[projects]]
-name = "guard"
-path = "apps/guard"
-
-[[projects.workspaces]]
-paths = ["apps/guard/**"]
-target = "rust"
-test_cmd = "cargo test -p guard"
-
-[[projects]]
 name = "lumen"
 path = "projects/lumen"
 
@@ -753,31 +699,31 @@ target = "rust"
 test_cmd = "cargo test -p mamba"
 
 [[projects]]
-name = "meter"
-path = "apps/meter"
+name = "build-stamp"
+path = "libs/build-stamp"
 
 [[projects.workspaces]]
-paths = ["apps/meter/**"]
+paths = ["libs/build-stamp/**"]
 target = "rust"
-test_cmd = "cargo test -p meter"
+test_cmd = "cargo test -p build-stamp"
 
 [[projects]]
-name = "rig"
-path = "apps/rig"
+name = "claimtoken"
+path = "libs/claimtoken"
 
 [[projects.workspaces]]
-paths = ["apps/rig/**"]
+paths = ["libs/claimtoken/**"]
 target = "rust"
-test_cmd = "cargo test -p rig"
+test_cmd = "cargo test -p claimtoken"
 
 [[projects]]
-name = "vat"
-path = "apps/vat"
+name = "cli-std"
+path = "libs/cli-std"
 
 [[projects.workspaces]]
-paths = ["apps/vat/**"]
+paths = ["libs/cli-std/**"]
 target = "rust"
-test_cmd = "cargo test -p vat"
+test_cmd = "cargo test -p cli-std"
 
 [[projects]]
 name = "compass"
@@ -787,5 +733,149 @@ path = "libs/compass"
 paths = ["libs/compass/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-compass"
+
+[[projects]]
+name = "h2c"
+path = "libs/h2c"
+
+[[projects.workspaces]]
+paths = ["libs/h2c/**"]
+target = "rust"
+test_cmd = "cargo test -p h2c"
+
+[[projects]]
+name = "http-server"
+path = "libs/http-server"
+
+[[projects.workspaces]]
+paths = ["libs/http-server/**"]
+target = "rust"
+test_cmd = "cargo test -p http-server"
+
+[[projects]]
+name = "openapi-codegen"
+path = "libs/openapi-codegen"
+
+[[projects.workspaces]]
+paths = ["libs/openapi-codegen/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-openapi-codegen"
+
+[[projects]]
+name = "operator"
+path = "libs/operator"
+
+[[projects.workspaces]]
+paths = ["libs/operator/**"]
+target = "rust"
+test_cmd = "cargo test -p operator"
+
+[[projects]]
+name = "raft-core"
+path = "libs/raft-core"
+
+[[projects.workspaces]]
+paths = ["libs/raft-core/**"]
+target = "rust"
+test_cmd = "cargo test -p raft-core"
+
+[[projects]]
+name = "raft-host"
+path = "libs/raft-host"
+
+[[projects.workspaces]]
+paths = ["libs/raft-host/**"]
+target = "rust"
+test_cmd = "cargo test -p raft-host"
+
+[[projects]]
+name = "server-core"
+path = "libs/server-core"
+
+[[projects.workspaces]]
+paths = ["libs/server-core/**"]
+target = "rust"
+test_cmd = "cargo test -p server-core"
+
+[[projects]]
+name = "service-auth"
+path = "libs/service-auth"
+
+[[projects.workspaces]]
+paths = ["libs/service-auth/**"]
+target = "rust"
+test_cmd = "cargo test -p service-auth"
+
+[[projects]]
+name = "service-backup"
+path = "libs/service-backup"
+
+[[projects.workspaces]]
+paths = ["libs/service-backup/**"]
+target = "rust"
+test_cmd = "cargo test -p service-backup"
+
+[[projects]]
+name = "service-durability"
+path = "libs/service-durability"
+
+[[projects.workspaces]]
+paths = ["libs/service-durability/**"]
+target = "rust"
+test_cmd = "cargo test -p service-durability"
+
+[[projects]]
+name = "service-http"
+path = "libs/service-http"
+
+[[projects.workspaces]]
+paths = ["libs/service-http/**"]
+target = "rust"
+test_cmd = "cargo test -p service-http"
+
+[[projects]]
+name = "service-metrics"
+path = "libs/service-metrics"
+
+[[projects.workspaces]]
+paths = ["libs/service-metrics/**"]
+target = "rust"
+test_cmd = "cargo test -p service-metrics"
+
+[[projects]]
+name = "service-tls"
+path = "libs/service-tls"
+
+[[projects.workspaces]]
+paths = ["libs/service-tls/**"]
+target = "rust"
+test_cmd = "cargo test -p service-tls"
+
+[[projects]]
+name = "surface"
+path = "libs/surface"
+
+[[projects.workspaces]]
+paths = ["libs/surface/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-surface"
+
+[[projects]]
+name = "tcp-server"
+path = "libs/tcp-server"
+
+[[projects.workspaces]]
+paths = ["libs/tcp-server/**"]
+target = "rust"
+test_cmd = "cargo test -p tcp-server"
+
+[[projects]]
+name = "ui-runtime"
+path = "libs/ui-runtime"
+
+[[projects.workspaces]]
+paths = ["libs/ui-runtime/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-ui-runtime"
 
 # END AW SYNC
