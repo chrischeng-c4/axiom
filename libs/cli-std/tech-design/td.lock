@@ -2,10 +2,16 @@ version = 2
 project = "cli-std"
 ir_kind = "td"
 td_path = "libs/cli-std/tech-design"
-generated_at = "2026-07-07T15:58:23.682203+00:00"
-digest = "sha256:0b6909ef965e709c27cf525938e3f28dd266320681f903e6f2bfcbeefb435695"
-source_digest = "sha256:0b6909ef965e709c27cf525938e3f28dd266320681f903e6f2bfcbeefb435695"
-ir_digest = "sha256:71a5136b0d794a510f960935c5293f080f63fa0d7e2db0a3411f9bd729cd9f14"
+generated_at = "2026-07-09T09:19:13.851025+00:00"
+digest = "sha256:4e31b053b3d93ef9081edd4c39b90559357b811fd9ab05b6ebf70f30163a7f85"
+source_digest = "sha256:4e31b053b3d93ef9081edd4c39b90559357b811fd9ab05b6ebf70f30163a7f85"
+ir_digest = "sha256:b420670631c393fa5a2c1e7ffb0d2b7885b07ac4d971ba88b1e3e961f0601140"
+
+[[files]]
+path = "interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md"
+digest = "sha256:66233f4395802c55e6a1f4a26c754ce3dd834755e12a12abbfc73da24b6c5729"
+ir_digest = "sha256:80a9928bb8ec168d523f7f6602d18fcdb8d50ef5abcdf72cbcd16f8f3bb1a87b"
+section_count = 3
 
 [[files]]
 path = "semantic/cli-std-libs-cli-std.md"
