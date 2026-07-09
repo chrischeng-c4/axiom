@@ -47,5 +47,118 @@ fill_sections: [logic, unit-test, changes]
 <!-- type: logic lang: mermaid -->
 
 ```mermaid
-(fill)
+---
+id: tape-docs-scripts-traits-polish-flow
+entry: route
+nodes:
+  route:
+    kind: start
+    label: "apps/tape gains docs/deployment-handoff.md, docs/benchmarks-scale.md, scripts/dev-single.sh, scripts/dev-cluster.sh, plus README/aw.toml polish"
+  deployment_doc:
+    kind: process
+    label: "docs/deployment-handoff.md documents the real dockerfile+k8s-operator path (#1328), bearer-auth flags (#1326), backup/restore (#1329), and raft HA env contract (#1327)"
+  benchmarks_doc:
+    kind: process
+    label: "docs/benchmarks-scale.md documents the existing tests/tape_perf_gate.rs local regression gate and tests/tape_vs_nats_jetstream.rs real-NATS-JetStream replay win gate, no new benchmark classes invented"
+  dev_single_script:
+    kind: process
+    label: "scripts/dev-single.sh boots one tape serve process locally with an embedded file-backed journal"
+  dev_cluster_script:
+    kind: process
+    label: "scripts/dev-cluster.sh boots 3 tape serve processes with REPLICAS_PER_SHARD=3/SHARD_COUNT=1/VOTER_COUNT=3/POD_NAME plus TAPE_DATA_DIR/TAPE_PEER_SERVICE/TAPE_PEERS so raft_host::ClusterTopology::from_env resolves peers and the raft group replicates"
+  kind_scripts_skipped:
+    kind: decision
+    label: "kind-e2e.sh/chaos.sh/soak.sh are NOT added: WI #1328 explicitly deferred live kind-cluster proof, so a kind/chaos/soak script would be untested and aspirational"
+  readme_refresh:
+    kind: process
+    label: "README.md Capability Index rows are checked against their section prose for internal consistency and fixed where stale; Retention And Backfill, Long-Running Stability, and Security Hardening maturity is left untouched"
+  traits_review:
+    kind: process
+    label: "aw.toml [capability.profile].traits reviewed against apps/relay/aw.toml precedent for kubernetes_native; only added if the underlying capability is genuinely implemented, not just rendered"
+  done:
+    kind: terminal
+    label: "cargo build -p tape and cargo test -p tape stay green (docs/scripts/config-only change)"
+edges:
+  - { from: route, to: deployment_doc }
+  - { from: route, to: benchmarks_doc }
+  - { from: route, to: dev_single_script }
+  - { from: route, to: dev_cluster_script }
+  - { from: dev_cluster_script, to: kind_scripts_skipped }
+  - { from: deployment_doc, to: readme_refresh }
+  - { from: benchmarks_doc, to: readme_refresh }
+  - { from: kind_scripts_skipped, to: readme_refresh }
+  - { from: readme_refresh, to: traits_review }
+  - { from: traits_review, to: done }
+---
+flowchart TD
+    route[apps/tape gains docs/scripts + README/aw.toml polish] --> deployment_doc[docs/deployment-handoff.md: dockerfile+operator, auth, backup, raft HA]
+    route --> benchmarks_doc[docs/benchmarks-scale.md: existing tape_perf_gate + tape_vs_nats_jetstream gates]
+    route --> dev_single_script[scripts/dev-single.sh: single-node local dev]
+    route --> dev_cluster_script[scripts/dev-cluster.sh: 3-node local raft cluster]
+    dev_cluster_script --> kind_scripts_skipped[kind-e2e/chaos/soak NOT added: #1328 deferred live kind proof]
+    deployment_doc --> readme_refresh[README Capability Index internal-consistency pass]
+    benchmarks_doc --> readme_refresh
+    kind_scripts_skipped --> readme_refresh
+    readme_refresh --> traits_review[aw.toml traits reviewed vs relay precedent for kubernetes_native]
+    traits_review --> done[cargo build/test -p tape stay green]
+```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: tape-docs-scripts-traits-polish-verification
+requirements:
+  benchmarks_scale_doc:
+    id: R2
+    text: "apps/tape/docs/benchmarks-scale.md documents the existing tape_perf_gate.rs and tape_vs_nats_jetstream.rs gates without inventing new benchmark classes."
+    kind: functional
+    risk: low
+    verify: cargo test -p tape --test tape_perf_gate --test tape_vs_nats_jetstream -- --nocapture
+  build_unaffected:
+    id: R7
+    text: "cargo build -p tape and cargo test -p tape stay green after doc/script-only changes."
+    kind: regression
+    risk: low
+    verify: cargo test -p tape
+  deployment_handoff_doc:
+    id: R1
+    text: "apps/tape/docs/deployment-handoff.md documents the real dockerfile/k8s-operator deploy path, bearer-auth flags, backup/restore, and raft HA env contract."
+    kind: functional
+    risk: low
+    verify: manual doc review against apps/tape/src/bin/tape.rs flag surface
+  dev_cluster_script:
+    id: R4
+    text: "apps/tape/scripts/dev-cluster.sh boots a 3-node local raft cluster using TAPE_DATA_DIR/TAPE_PEER_SERVICE/TAPE_PEERS and the REPLICAS_PER_SHARD/SHARD_COUNT/VOTER_COUNT/POD_NAME quartet."
+    kind: functional
+    risk: medium
+    verify: manual: ./apps/tape/scripts/dev-cluster.sh then curl each node and confirm raft convergence
+  dev_single_script:
+    id: R3
+    text: "apps/tape/scripts/dev-single.sh boots a single-node tape serve process locally."
+    kind: functional
+    risk: low
+    verify: manual: ./apps/tape/scripts/dev-single.sh then curl /healthz
+  readme_consistency:
+    id: R5
+    text: "apps/tape/README.md Capability Index rows are internally consistent with their section prose; Retention And Backfill, Long-Running Stability, and Security Hardening keep unchanged planned/not_ready maturity."
+    kind: regression
+    risk: low
+    verify: manual diff review of apps/tape/README.md
+  traits_review:
+    id: R6
+    text: "apps/tape/aw.toml traits list is reviewed against relay's precedent for kubernetes_native and only changed if genuinely warranted."
+    kind: functional
+    risk: low
+    verify: manual review of apps/tape/aw.toml and apps/relay/aw.toml
+---
+flowchart TD
+    r1[R1 deployment handoff doc] --> manual_doc_review_against_apps_tape_src_bin_tape_rs_flag_surface[manual doc review against apps/tape/src/bin/tape.rs flag surface]
+    r2[R2 benchmarks scale doc] --> cargo_test_p_tape_test_tape_perf_gate_test_tape_vs_nats_jetstream_nocapture[cargo test -p tape --test tape_perf_gate --test tape_vs_nats_jetstream -- --nocapture]
+    r3[R3 dev single script] --> manual_apps_tape_scripts_dev_single_sh_then_curl_healthz[manual: ./apps/tape/scripts/dev-single.sh then curl /healthz]
+    r4[R4 dev cluster script] --> manual_apps_tape_scripts_dev_cluster_sh_then_curl_each_node_and_confirm_raft_convergence[manual: ./apps/tape/scripts/dev-cluster.sh then curl each node and confirm raft convergence]
+    r5[R5 readme consistency] --> manual_diff_review_of_apps_tape_readme_md[manual diff review of apps/tape/README.md]
+    r6[R6 traits review] --> manual_review_of_apps_tape_aw_toml_and_apps_relay_aw_toml[manual review of apps/tape/aw.toml and apps/relay/aw.toml]
+    r7[R7 build unaffected] --> cargo_test_p_tape[cargo test -p tape]
 ```
