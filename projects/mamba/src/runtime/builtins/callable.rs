@@ -55,6 +55,7 @@ pub fn mb_callable(obj: MbValue) -> MbValue {
                         "functools.partial"
                             | "functools.lru_cache_factory"
                             | "functools.lru_cache_wrapper"
+                            | "collections.namedtuple_factory"
                     ) {
                         return MbValue::from_bool(true);
                     }
@@ -157,5 +158,18 @@ mod tests {
             MbValue::from_bool(false),
         );
         assert_eq!(mb_callable(wrapper).as_bool(), Some(true));
+    }
+
+    #[test]
+    fn test_callable_namedtuple_factory() {
+        let factory = crate::runtime::stdlib::collections_mod::mb_namedtuple(
+            MbValue::from_ptr(MbObject::new_str("Point".to_string())),
+            MbValue::from_ptr(MbObject::new_list(vec![
+                MbValue::from_ptr(MbObject::new_str("x".to_string())),
+                MbValue::from_ptr(MbObject::new_str("y".to_string())),
+            ])),
+            MbValue::none(),
+        );
+        assert_eq!(mb_callable(factory).as_bool(), Some(true));
     }
 }
