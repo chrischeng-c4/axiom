@@ -3829,6 +3829,7 @@ fn mb_exec_impl(code: MbValue, globals: Option<MbValue>, locals: Option<MbValue>
         unsafe {
             if let ObjData::CodeObject { ast, .. } = &(*ptr).data {
                 let mut ast = ast.clone();
+                crate::parser::mangle_private_names(&mut ast);
                 if let Some(kind) =
                     exec_pep695_class_type_alias_nested_scope_kind(&ast.stmts, false)
                 {
@@ -3889,6 +3890,7 @@ fn mb_exec_impl(code: MbValue, globals: Option<MbValue>, locals: Option<MbValue>
             return MbValue::none();
         }
     };
+    crate::parser::mangle_private_names(&mut module);
     if let Some(kind) = exec_pep695_class_type_alias_nested_scope_kind(&module.stmts, false) {
         crate::runtime::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
@@ -4554,7 +4556,7 @@ fn mb_compile_impl(
     }
     let mut parser = Parser::new(tokens, &source_str, file_id);
 
-    let ast: Module = match mode_str.as_str() {
+    let mut ast: Module = match mode_str.as_str() {
         "exec" => {
             // Parse as full module (any number of statements)
             match parser.parse_module() {
@@ -4662,6 +4664,7 @@ fn mb_compile_impl(
         }
         _ => unreachable!("mode already validated"),
     };
+    crate::parser::mangle_private_names(&mut ast);
 
     if let Some(err) = validate_compile_nonlocal_declarations(&ast) {
         let span = err
@@ -4675,7 +4678,6 @@ fn mb_compile_impl(
 
     // ── optimize=2 strips docstrings from the compiled module/function/class
     // bodies (matches CPython's -OO / optimize=2 contract) ─────────────────
-    let mut ast = ast;
     if optimize >= 2 {
         strip_ast_docstrings(&mut ast.stmts);
     }
@@ -5145,6 +5147,52 @@ mod tests {
             }
         });
         assert_eq!(name_text.as_deref(), Some("T"));
+    }
+
+    #[test]
+    fn test_exec_generic_class_private_type_param_bounds_are_mangled() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(
+            MbValue::from_ptr(MbObject::new_str(
+                "class Foo[__T, __U: __T]:\n    param = __T\n".to_string(),
+            )),
+            globals,
+        );
+
+        assert_eq!(
+            crate::runtime::exception::mb_has_exception().as_bool(),
+            Some(false)
+        );
+        let cls = crate::runtime::dict_ops::mb_dict_get(
+            globals,
+            MbValue::from_ptr(MbObject::new_str("Foo".to_string())),
+            MbValue::none(),
+        );
+        let type_params = crate::runtime::class::mb_getattr(
+            cls,
+            MbValue::from_ptr(MbObject::new_str("__type_params__".to_string())),
+        );
+        let params = extract_items(type_params);
+        assert_eq!(params.len(), 2);
+
+        let bound = crate::runtime::class::mb_getattr(
+            params[1],
+            MbValue::from_ptr(MbObject::new_str("__bound__".to_string())),
+        );
+        assert_eq!(
+            crate::runtime::exception::mb_has_exception().as_bool(),
+            Some(false)
+        );
+        assert_eq!(bound.to_bits(), params[0].to_bits());
+
+        let param = crate::runtime::class::mb_getattr(
+            cls,
+            MbValue::from_ptr(MbObject::new_str("param".to_string())),
+        );
+        assert_eq!(param.to_bits(), params[0].to_bits());
     }
 
     #[test]

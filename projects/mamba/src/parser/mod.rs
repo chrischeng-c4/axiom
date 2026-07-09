@@ -363,8 +363,14 @@ pub fn parse(source: &str, file_id: FileId) -> crate::error::Result<Module> {
     let mut module = parser.parse_module()?;
     // PEP-classic private name mangling — rewrite `__name` inside class bodies
     // before the type checker and lowering observe the AST.
-    mangle::mangle_module(&mut module);
+    mangle_private_names(&mut module);
     Ok(module)
+}
+
+/// Apply the same post-parse private-name mangling as [`parse`] to ASTs built
+/// by lower-level parser entrypoints such as exec()/compile().
+pub(crate) fn mangle_private_names(module: &mut Module) {
+    mangle::mangle_module(module);
 }
 
 #[cfg(test)]
