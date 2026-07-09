@@ -1855,6 +1855,95 @@ export const nestedLiteral = {
     }
 
     #[test]
+    fn infers_exported_const_object_assign_computed_key_arrow_property_chained_calls_signature() {
+        // R1 (#1238): WI minimal repro -- an object literal with a single
+        // arrow-function property carrying its own explicit return type, whose
+        // concise body is Object.assign({}, ...chain.of.calls.map(callback))
+        // where the callback returns an object with a computed key (the issue's
+        // exact _Query.parse shape: chained replace/split/filter/map calls, a
+        // block-bodied map callback with array destructuring and a computed-key
+        // returned object literal). Must emit the correct .d.ts instead of an
+        // isolatedDeclarations error.
+        let src = r#"export const _Query = {
+    parse: (search: string): Record<string, string> =>
+        Object.assign(
+            {},
+            ...search
+                .replace(/^\?/, '')
+                .split('&')
+                .filter(Boolean)
+                .map((pair) => {
+                    const [key, value] = pair.split('=');
+                    return { [key]: value };
+                }),
+        ),
+};
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("parse: (search: string) => Record<string, string>;"),
+            "object arrow property with Object.assign computed-key body should emit correct type, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_object_assign_computed_key_arrow_property_followed_by_sibling_member_signature() {
+        // R2 (#1238): non-regression control pinning the entanglement with the
+        // still-open WI #1262 (silent property truncation). The same
+        // Object.assign+computed-key arrow-property shape as R1, followed by a
+        // sibling object-literal member. Must emit BOTH members in the output
+        // without silently dropping the sibling property, proving the shared
+        // split_top_level bracket-depth fix does not regress to multi-property
+        // truncation.
+        let src = r#"export const _Query = {
+    parse: (search: string): Record<string, string> =>
+        Object.assign(
+            {},
+            ...search
+                .split('&')
+                .map((pair) => {
+                    const [k, v] = pair.split('=');
+                    return { [k]: v };
+                }),
+        ),
+    stringify: (obj: Record<string, string>): string =>
+        Object.keys(obj).join('&'),
+};
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("parse: (search: string) => Record<string, string>;"),
+            "first arrow property should be emitted, got:\n{dts}"
+        );
+        assert!(
+            dts.contains("stringify: (obj: Record<string, string>) => string;"),
+            "second arrow property should be emitted (not truncated), got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn uninferrable_object_assign_computed_key_arrow_property_without_explicit_return_type_errors()
+    {
+        // R3 (#1238): negative control -- the same Object.assign+computed-key
+        // arrow-property shape as R1, but with the arrow's own explicit return
+        // type annotation removed. Must still raise an isolatedDeclarations
+        // error, proving the inference only fires because the arrow itself
+        // carries an explicit return type (infer_arrow_function_type_from_text
+        // never inspects the Object.assign(...) body) and does not silently
+        // widen to genuinely untyped members.
+        let src = r#"export const _Query = {
+    parse: (rows: Array<{ key: string }>) =>
+        Object.assign({}, ...rows.map((row) => ({ [row.key]: 1 }))),
+};
+"#;
+        let err = emit_declarations(src).unwrap_err();
+        assert!(
+            err.to_string().contains("isolatedDeclarations"),
+            "object arrow property without explicit return type must stay fail-loud, got: {err}"
+        );
+    }
+
+    #[test]
     fn infers_object_literal_method_with_object_assign_computed_key_body() {
         let src = r#"export const columns = {
     render(rows: Array<{ key: string }>): Record<string, number> {
