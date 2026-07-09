@@ -1,5 +1,5 @@
 {
-  "openapi": "3.0.3",
+  "openapi": "3.2.0",
   "info": {
     "title": "lumen",
     "description": "Standalone search and duplicate-detection index. Generic Collection / Field primitive; the caller owns the source of truth.",
@@ -44,6 +44,47 @@
             }
           }
         }
+      },
+      "query": {
+        "tags": [
+          "Query"
+        ],
+        "summary": "msearch-style batch search: N independent `(collection, SearchRequest)`",
+        "description": "items in one HTTP request, fanned out concurrently. `collections:search`\nis one literal path segment (AIP-136 custom-method syntax), so it\nregisters directly in axum next to `/collections` and\n`/collections/{collection_id}` without any capture ambiguity.\n\nOne item failing (e.g. an unknown collection) never fails the batch —\nthe batch-level status stays 200 and that item's [`BatchSearchResult`]\ncarries the error. Only a malformed body or an over-limit batch returns\n400. Cursors, sort, and collapse all stay per-item: there is no merged\ncursor and no cross-collection score merging.",
+        "operationId": "query_collections",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchSearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Per-item results, same order and length as `searches`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchSearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or batch size over the limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-post-twin": "/collections:search"
       }
     },
     "/collections/{collection_id}": {
@@ -133,6 +174,46 @@
             "description": "Unknown collection"
           }
         }
+      },
+      "query": {
+        "tags": [
+          "Query"
+        ],
+        "operationId": "query_collection",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection namespace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Search hits",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-post-twin": "/collections/{collection_id}/search"
       }
     },
     "/collections/{collection_id}/docs/{external_id}": {
@@ -1617,7 +1698,7 @@
               "fields_skipped": {
                 "type": "integer",
                 "format": "int32",
-                "description": "Number of fields skipped as unchanged no-ops. Structurally\npresent but always `0` in this WI — real no-op suppression is a\nfollow-up.",
+                "description": "Number of fields skipped as unchanged no-ops: the incoming\nvalue matched the currently indexed state, so no posting-list\nrewrite and no HNSW tombstone/reinsert happened for that field\n(#1293 server-side no-op suppression). `0` when every field\nactually changed, or when this is the doc's first write.",
                 "minimum": 0
               },
               "fields_written": {
