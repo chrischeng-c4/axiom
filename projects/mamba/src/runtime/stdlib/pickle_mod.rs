@@ -1,4 +1,4 @@
-use super::super::dict_ops::{dict_key_to_mbvalue, to_dict_key};
+use super::super::dict_ops::{dict_get_exact_str, dict_key_to_mbvalue, to_dict_key};
 use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
 use rustc_hash::FxHashMap;
@@ -18,6 +18,11 @@ use rustc_hash::FxHashMap;
 /// subclasses of `pickle.PickleError` (registered in the class registry so
 /// `issubclass` and `except pickle.X` matching both work).
 use std::collections::HashMap;
+
+thread_local! {
+    static PICKLE_GLOBAL_REGISTRY: std::cell::RefCell<HashMap<(String, String), MbValue>> =
+        std::cell::RefCell::new(HashMap::new());
+}
 
 // ── Wire-format opcodes (protocol 2 subset + one private) ──
 //
@@ -605,6 +610,11 @@ impl Encoder {
         self.out.push(b'\n');
     }
 
+    fn emit_global_value(&mut self, module: &str, name: &str, value: MbValue) {
+        remember_global_ref(module, name, value);
+        self.emit_global(module, name);
+    }
+
     fn emit_args_tuple(&mut self, args: &[MbValue]) -> Result<(), ()> {
         if args.is_empty() {
             self.out.push(EMPTY_TUPLE);
@@ -672,6 +682,10 @@ impl Encoder {
                 return Err(());
             }
         }
+        if let Some((module, name)) = global_ref_for_callable(val) {
+            self.emit_global_value(&module, &name, val);
+            return Ok(());
+        }
         if let Some(i) = val.as_int() {
             // random.Random handles are NaN-boxed ints; pickling the raw id
             // would alias the ORIGINAL generator on loads. Snapshot the
@@ -696,7 +710,12 @@ impl Encoder {
             self.out.extend_from_slice(&f.to_bits().to_be_bytes());
             return Ok(());
         }
-        // Function / closure handle: unpicklable.
+        if let Some((module, name)) = global_ref_for_type_object(val) {
+            self.emit_global_value(&module, &name, val);
+            return Ok(());
+        }
+        // Function / closure handle: picklable only when it is a real module
+        // global. Local functions still raise below, matching CPython's split.
         if val.as_func().is_some() {
             self.fail("Can't pickle functions");
             return Err(());
@@ -794,6 +813,10 @@ impl Encoder {
                     ref class_name,
                     ref fields,
                 } => {
+                    if let Some((module, name)) = global_ref_for_named_instance(val, fields) {
+                        self.emit_global_value(&module, &name, val);
+                        return Ok(());
+                    }
                     self.encode_instance(val, class_name, fields)?;
                     self.memoize(key);
                 }
@@ -911,7 +934,7 @@ impl Encoder {
                 };
                 if let Some((target_value, target, args)) = parts {
                     if let Some((module, name)) = global_ref_for_callable(target_value) {
-                        self.emit_global(&module, &name);
+                        self.emit_global_value(&module, &name, target_value);
                         self.emit_args_tuple(&args)?;
                         self.out.push(REDUCE);
                         return Ok(());
@@ -929,11 +952,15 @@ impl Encoder {
             // __reduce__ returned an unexpected shape — fall through to default.
         }
         // Default path: class name + (key, value)* under a MARK.
+        let keep_dunder_fields = matches!(
+            class_name,
+            "GenericAlias" | "types.GenericAlias" | "typing.Alias"
+        );
         let snapshot: Vec<(String, MbValue)> = fields
             .read()
             .unwrap()
             .iter()
-            .filter(|(k, _)| !k.starts_with("__"))
+            .filter(|(k, _)| keep_dunder_fields || !k.starts_with("__"))
             .map(|(k, v)| (k.clone(), *v))
             .collect();
         self.out.push(OP_INST_DEFAULT);
@@ -1545,6 +1572,16 @@ fn new_str(s: &str) -> MbValue {
     MbValue::from_ptr(MbObject::new_str(s.to_string()))
 }
 
+fn instance_field_str(
+    fields: &crate::runtime::rc::MbRwLock<FxHashMap<String, MbValue>>,
+    name: &str,
+) -> Option<String> {
+    fields
+        .read()
+        .ok()
+        .and_then(|f| f.get(name).and_then(|v| extract_str(*v)))
+}
+
 fn tuple_or_list_to_list(value: MbValue) -> MbValue {
     let items = value
         .as_ptr()
@@ -1559,11 +1596,121 @@ fn tuple_or_list_to_list(value: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_list(items))
 }
 
+fn module_attr_is_same(module: &str, name: &str, value: MbValue) -> bool {
+    if let Some(found) = super::super::module::mb_module_attr_lookup(module, name) {
+        let same = found.to_bits() == value.to_bits();
+        unsafe {
+            super::super::rc::release_if_ptr(found);
+        }
+        if same {
+            return true;
+        }
+    }
+    current_globals_lookup(module, name).is_some_and(|found| found.to_bits() == value.to_bits())
+}
+
+fn remember_global_ref(module: &str, name: &str, value: MbValue) {
+    unsafe {
+        super::super::rc::retain_if_ptr(value);
+    }
+    PICKLE_GLOBAL_REGISTRY.with(|registry| {
+        registry
+            .borrow_mut()
+            .insert((module.to_string(), name.to_string()), value);
+    });
+}
+
+fn registered_global_ref(module: &str, name: &str) -> Option<MbValue> {
+    let value = PICKLE_GLOBAL_REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .get(&(module.to_string(), name.to_string()))
+            .copied()
+    })?;
+    unsafe {
+        super::super::rc::retain_if_ptr(value);
+    }
+    Some(value)
+}
+
+fn current_globals_lookup(module: &str, name: &str) -> Option<MbValue> {
+    let current = super::super::closure::current_active_module_name();
+    if module != "__main__" && module != current {
+        return None;
+    }
+    let globals = super::super::closure::build_globals_dict();
+    let ptr = globals.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let value = dict_get_exact_str(&lock.read().unwrap(), name);
+            if let Some(value) = value {
+                super::super::rc::retain_if_ptr(value);
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
 fn global_ref_for_callable(value: MbValue) -> Option<(String, String)> {
     let name = extract_str(super::super::closure::mb_func_get_name(value))?;
     let module = extract_str(super::super::closure::mb_func_get_module(value))
         .unwrap_or_else(|| "builtins".to_string());
     if module.is_empty() || name.is_empty() {
+        return None;
+    }
+    let qualname = extract_str(super::super::closure::mb_func_get_qualname(value))
+        .unwrap_or_else(|| name.clone());
+    if qualname.contains("<locals>") {
+        return None;
+    }
+    Some((module, name))
+}
+
+fn global_ref_for_type_object(value: MbValue) -> Option<(String, String)> {
+    let ptr = value.as_ptr()?;
+    let (module, name) = unsafe {
+        let ObjData::Instance {
+            class_name,
+            fields,
+        } = &(*ptr).data
+        else {
+            return None;
+        };
+        if class_name != "type" {
+            return None;
+        }
+        let name = instance_field_str(fields, "__name__")?;
+        let module = instance_field_str(fields, "__module__").unwrap_or_else(|| {
+            super::super::closure::current_active_module_name()
+        });
+        (module, name)
+    };
+    if module.is_empty() || name.is_empty() || !module_attr_is_same(&module, &name, value) {
+        return None;
+    }
+    Some((module, name))
+}
+
+fn global_ref_for_named_instance(
+    value: MbValue,
+    fields: &crate::runtime::rc::MbRwLock<FxHashMap<String, MbValue>>,
+) -> Option<(String, String)> {
+    let name = instance_field_str(fields, "__name__")?;
+    if name.is_empty() {
+        return None;
+    }
+    if let Some(module) = instance_field_str(fields, "__module__") {
+        if !module.is_empty() && module_attr_is_same(&module, &name, value) {
+            return Some((module, name));
+        }
+        return None;
+    }
+    if module_attr_is_same("__main__", &name, value) {
+        return Some(("__main__".to_string(), name));
+    }
+    let module = super::super::closure::current_active_module_name();
+    if module.is_empty() || !module_attr_is_same(&module, &name, value) {
         return None;
     }
     Some((module, name))
@@ -1575,6 +1722,12 @@ fn default_find_class(module: &str, name: &str) -> MbValue {
     } else {
         module
     };
+    if let Some(value) = registered_global_ref(module_name, name) {
+        return value;
+    }
+    if let Some(value) = current_globals_lookup(module_name, name) {
+        return value;
+    }
     let module_value = super::super::module::mb_import(new_str(module_name));
     if super::super::exception::current_exception_type().is_some() {
         return MbValue::none();
@@ -1582,7 +1735,7 @@ fn default_find_class(module: &str, name: &str) -> MbValue {
     if let Some(ptr) = module_value.as_ptr() {
         unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                if let Some(value) = lock.read().unwrap().get(name).copied() {
+                if let Some(value) = dict_get_exact_str(&lock.read().unwrap(), name) {
                     super::super::rc::retain_if_ptr(value);
                     return value;
                 }
