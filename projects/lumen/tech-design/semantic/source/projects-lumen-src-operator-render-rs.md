@@ -45,7 +45,7 @@ Public API manifest for `projects/lumen/src/operator/render.rs` generated from A
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `render` | projects/lumen/src/operator/render.rs | function | pub | 109 | render(lumen: &Lumen) -> Vec<Value> |
+| `render` | projects/lumen/src/operator/render.rs | function | pub | 112 | render(lumen: &Lumen) -> Vec<Value> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -154,9 +154,12 @@ fn token_registry_source(lumen: &Lumen) -> Option<TokenRegistrySource<'_>> {
 ///
 /// The serving fleet is always a StatefulSet — with its durable
 /// `volumeClaimTemplates`-backed `raft` PVC and headless Service — regardless
-/// of `replicasPerShard`. `replicasPerShard <= 1` means a single member with
-/// no raft consensus (HPA still owns the live replica count); `> 1` means
-/// raft-HA with a fixed peer set (no HPA).
+/// of `replicasPerShard`. `replicasPerShard <= 1` (single shard) means a
+/// single member with no raft consensus: an HPA is still rendered, but
+/// (#1317) clamped to exactly 1 replica — CPU-driven scaling above 1 pod
+/// here would produce uncoordinated shard-0 copies with no consensus link,
+/// confirmed on a kind cluster. `> 1` means raft-HA with a fixed peer set
+/// (no HPA).
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
 pub fn render(lumen: &Lumen) -> Vec<Value> {
     let name = instance(lumen);
@@ -256,9 +259,10 @@ fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
 /// identity, headless binding, downward-API pod identity, and common pod
 /// template shell; Lumen layers its own ConfigMap-driven env, auth-secret
 /// mount, PVC, probes, and observability annotations on top. At
-/// `replicasPerShard <= 1` the HPA still owns the live replica count, so the
-/// single-member path strips the raft-only env vars and resets the apply-time
-/// floor to `autoscaling.minReplicas`.
+/// `replicasPerShard <= 1` (single shard) the single-member path strips the
+/// raft-only env vars and resets the apply-time replica count to exactly 1
+/// (#1317) — `autoscaling.minReplicas` is ignored here since more than one
+/// pod would be an uncoordinated shard-0 copy with no consensus link.
 fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Value {
     let s = &lumen.spec.serving;
     let res = render::guaranteed_resources(&s.cpu, &s.memory);
@@ -379,7 +383,11 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
             let replicas = if lumen.spec.shard_count > 1 {
                 lumen.spec.shard_count as i32
             } else {
-                s.autoscaling.min_replicas
+                // Single shard, single member, no raft consensus (#1317):
+                // clamp to exactly 1 regardless of `autoscaling.minReplicas`
+                // — see `LumenSpec::storage_pod_count` for why more than one
+                // pod here means uncoordinated shard-0 copies.
+                1
             };
             spec.insert("replicas".into(), json!(replicas));
         }
@@ -470,10 +478,15 @@ fn serving_configmap(lumen: &Lumen, cx: &RenderCtx<'_>) -> Value {
 
 fn serving_hpa(lumen: &Lumen, cx: &RenderCtx<'_>) -> Value {
     let a = &lumen.spec.serving.autoscaling;
-    let min_replicas = u32::try_from(a.min_replicas)
-        .expect("serving autoscaling min_replicas must be non-negative");
-    let max_replicas = u32::try_from(a.max_replicas)
-        .expect("serving autoscaling max_replicas must be non-negative");
+    // Only called for single-shard, single-member deployments (`render`'s
+    // `replicas_per_shard <= 1 && shard_count <= 1` guard) — no raft
+    // consensus, so more than one live pod would be an uncoordinated
+    // shard-0 copy behind this HPA-scaled StatefulSet (#1317, confirmed on
+    // a kind cluster). Clamp both bounds to 1 regardless of the CR's
+    // `serving.autoscaling` values; CPU-driven scaling requires opting into
+    // `replicasPerShard > 1` (raft-HA), which never renders an HPA at all.
+    let min_replicas = 1;
+    let max_replicas = 1;
     render::horizontal_pod_autoscaler(HorizontalPodAutoscaler {
         cx,
         name: cx.name,

@@ -305,12 +305,68 @@ fn hpa_is_rendered_for_single_replica_serving() {
     let objs = render(&l);
 
     let hpa = find(&objs, "HorizontalPodAutoscaler", "search");
+    // #1317: at replicasPerShard<=1 with shardCount<=1 there is no raft
+    // consensus, so the HPA's bounds are clamped to exactly 1/1 regardless
+    // of the CR's `serving.autoscaling` values (dev_spec sets min=1/max=3) —
+    // more than one live pod here would be an uncoordinated shard-0 copy.
+    // Confirmed empirically on a kind cluster: with minReplicas raised above
+    // 1, the resulting StatefulSet pods each hold independent local state
+    // and the fronting Service returns divergent results for identical
+    // reads.
     assert_eq!(hpa["spec"]["minReplicas"], 1);
-    assert_eq!(hpa["spec"]["maxReplicas"], 3);
+    assert_eq!(hpa["spec"]["maxReplicas"], 1);
     assert_eq!(hpa["spec"]["scaleTargetRef"]["name"], "search");
     // The serving fleet is a StatefulSet (#812) — the HPA must target it, not
     // the retired Deployment kind.
     assert_eq!(hpa["spec"]["scaleTargetRef"]["kind"], "StatefulSet");
+}
+
+#[test]
+fn single_member_hpa_and_storage_pod_count_clamp_to_one_regardless_of_autoscaling_bounds() {
+    // #1317: default `Autoscaling` (minReplicas: 3, maxReplicas: 12) at the
+    // CRD's own default topology (shardCount: 1, replicasPerShard: 1) must
+    // not fan out to 3+ uncoordinated shard-0 copies.
+    let mut default_bounds_spec = dev_spec();
+    default_bounds_spec.serving.autoscaling = Autoscaling::default();
+    assert_eq!(default_bounds_spec.serving.autoscaling.min_replicas, 3);
+    assert_eq!(default_bounds_spec.serving.autoscaling.max_replicas, 12);
+    assert_eq!(default_bounds_spec.storage_pod_count(), 1);
+
+    let l = lumen("search", default_bounds_spec);
+    let objs = render(&l);
+    let sts = find(&objs, "StatefulSet", "search");
+    assert_eq!(sts["spec"]["replicas"], 1);
+    let hpa = find(&objs, "HorizontalPodAutoscaler", "search");
+    assert_eq!(hpa["spec"]["minReplicas"], 1);
+    assert_eq!(hpa["spec"]["maxReplicas"], 1);
+
+    // Also an explicit, non-default CR bound (minReplicas: 3) — the same
+    // clamp applies whether the bounds come from the CRD default or an
+    // operator's explicit override.
+    let mut explicit_spec = dev_spec();
+    explicit_spec.serving.autoscaling.min_replicas = 3;
+    explicit_spec.serving.autoscaling.max_replicas = 3;
+    assert_eq!(explicit_spec.storage_pod_count(), 1);
+
+    let l = lumen("search", explicit_spec);
+    let objs = render(&l);
+    let sts = find(&objs, "StatefulSet", "search");
+    assert_eq!(sts["spec"]["replicas"], 1);
+    let hpa = find(&objs, "HorizontalPodAutoscaler", "search");
+    assert_eq!(hpa["spec"]["minReplicas"], 1);
+    assert_eq!(hpa["spec"]["maxReplicas"], 1);
+}
+
+#[test]
+fn raft_ha_storage_pod_count_is_unaffected_by_single_member_clamp() {
+    // #1317 regression: `replicasPerShard > 1` (raft-HA) must keep computing
+    // the full fixed membership size — the clamp above only applies to the
+    // no-raft single-member fallback branch.
+    let mut spec = dev_spec();
+    spec.shard_count = 2;
+    spec.replicas_per_shard = 3;
+    spec.serving.autoscaling = Autoscaling::default();
+    assert_eq!(spec.storage_pod_count(), 6);
 }
 
 #[test]
