@@ -1225,6 +1225,28 @@ fn dict_get(d: MbValue, key: &str) -> Option<MbValue> {
     })
 }
 
+fn template_mapping_arg(mapping: MbValue, positional_present: bool) -> Result<MbValue, MbValue> {
+    if !positional_present {
+        return Ok(MbValue::none());
+    }
+    if mapping
+        .as_ptr()
+        .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+    {
+        return Ok(mapping);
+    }
+    if super::super::class::unwrap_dictlike_data(mapping).is_some() {
+        return Ok(mapping);
+    }
+    Err(raise(
+        "TypeError",
+        format!(
+            "'{}' object is not a mapping",
+            super::super::builtins::value_type_name(mapping)
+        ),
+    ))
+}
+
 fn template_string(this: MbValue) -> String {
     let v = super::super::class::mb_getattr_default(this, new_str("template"), MbValue::none());
     str_of(v).unwrap_or_default()
@@ -1240,7 +1262,12 @@ extern "C" fn m_template_init(this: MbValue, template: MbValue) -> MbValue {
 // Template.substitute(self, mapping={}, /, **kwargs)  variadic+kwargs
 extern "C" fn m_template_substitute(this: MbValue, args_list: MbValue, kwargs: MbValue) -> MbValue {
     let items = super::super::builtins::extract_items(args_list);
+    let positional_present = !items.is_empty();
     let mapping = items.first().copied().unwrap_or_else(MbValue::none);
+    let mapping = match template_mapping_arg(mapping, positional_present) {
+        Ok(mapping) => mapping,
+        Err(err) => return err,
+    };
     template_do_substitute(this, mapping, kwargs, false)
 }
 
@@ -1251,7 +1278,12 @@ extern "C" fn m_template_safe_substitute(
     kwargs: MbValue,
 ) -> MbValue {
     let items = super::super::builtins::extract_items(args_list);
+    let positional_present = !items.is_empty();
     let mapping = items.first().copied().unwrap_or_else(MbValue::none);
+    let mapping = match template_mapping_arg(mapping, positional_present) {
+        Ok(mapping) => mapping,
+        Err(err) => return err,
+    };
     template_do_substitute(this, mapping, kwargs, true)
 }
 
@@ -1572,6 +1604,28 @@ mod tests {
     use crate::runtime::exception::{
         current_exception_type, get_exception_message_pub, mb_clear_exception, mb_get_exception,
     };
+    use crate::runtime::rc::MbDictMap;
+
+    fn new_dict_with_str_items(items: &[(&str, MbValue)]) -> MbValue {
+        let dict = MbValue::from_ptr(MbObject::new_dict());
+        let Some(ptr) = dict.as_ptr() else {
+            return dict;
+        };
+        unsafe {
+            let ObjData::Dict(ref lock) = (*ptr).data else {
+                return dict;
+            };
+            let mut data = MbDictMap::default();
+            for (key, value) in items {
+                data.insert(
+                    crate::runtime::dict_ops::DictKey::Str((*key).to_string()),
+                    *value,
+                );
+            }
+            *lock.write().unwrap() = data;
+        }
+        dict
+    }
 
     #[test]
     fn test_capwords_default() {
@@ -1677,5 +1731,56 @@ mod tests {
             Some("format() argument 2 must be str, not int")
         );
         mb_clear_exception();
+    }
+
+    #[test]
+    fn test_template_substitute_rejects_non_mapping_positional_arg() {
+        mb_clear_exception();
+
+        let template = make_instance("Template", vec![("template", new_str("$name"))]);
+        let result = m_template_substitute(
+            template,
+            new_list(vec![MbValue::from_int(12345)]),
+            MbValue::none(),
+        );
+
+        assert!(result.is_none());
+        assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        let exc = mb_get_exception();
+        assert_eq!(
+            get_exception_message_pub(exc).as_deref(),
+            Some("'int' object is not a mapping")
+        );
+        mb_clear_exception();
+    }
+
+    #[test]
+    fn test_template_safe_substitute_rejects_arbitrary_object_positional_arg() {
+        mb_clear_exception();
+
+        let template = make_instance("Template", vec![("template", new_str("$name"))]);
+        let mapping = make_instance("W", vec![]);
+        let result = m_template_safe_substitute(template, new_list(vec![mapping]), MbValue::none());
+
+        assert!(result.is_none());
+        assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        let exc = mb_get_exception();
+        assert_eq!(
+            get_exception_message_pub(exc).as_deref(),
+            Some("'W' object is not a mapping")
+        );
+        mb_clear_exception();
+    }
+
+    #[test]
+    fn test_template_substitute_allows_kwargs_only_without_positional_mapping() {
+        mb_clear_exception();
+
+        let template = make_instance("Template", vec![("template", new_str("$name"))]);
+        let kwargs = new_dict_with_str_items(&[("name", new_str("Ada"))]);
+        let result = m_template_substitute(template, new_list(vec![]), kwargs);
+
+        assert_eq!(str_of(result).as_deref(), Some("Ada"));
+        assert_eq!(current_exception_type(), None);
     }
 }
