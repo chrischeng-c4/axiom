@@ -176,3 +176,65 @@ flowchart TD
     r7[R7 topology from standard env] --> libs_raft_host_src_cluster_rs_tests_shared_exercised_via_tape_s_clustertopology_from_env_call[libs/raft-host/src/cluster.rs::tests (shared, exercised via tape's ClusterTopology::from_env call)]
     r8[R8 single node regression] --> cargo_test_p_tape[cargo test -p tape]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/tape/Cargo.toml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Add the raft-host and service-tls path dependencies (shared driver: RaftHost, RaftStore, RaftStateMachine, ClusterTopology, OutcomeWindow, SnapshotPolicy; shared peer-TLS config/rustls builders); add reqwest + tempfile to dev-dependencies for the cluster/failover integration tests (reqwest already present, tempfile already present)."
+  - path: apps/tape/src/raft.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: "TapeCommand::Append { topic, key, payload, timestamp_ms } / TapeCommand::CheckpointPut { topic, consumer, offset, updated_at_ms } (the replicated commands, both time fields resolved by the caller before proposing so every replica computes the identical value); TapeOutcome::{Appended(TapeEvent), Checkpoint(Result<ConsumerCheckpoint, TapeError>)} (local-only, claimed from an OutcomeWindow, never serialized over the wire); TapeStateMachine (apply = lock the shared Arc<Mutex<TapeJournal>> and call the unchanged journal.append / journal.put_checkpoint_at, stash the outcome, persist the fsynced applied-<node>.idx marker; snapshot/restore = whole-journal serde_json tagged with the applied index; applied_index recovered from the marker at construction); TapeRaft (single-group wrapper: RaftStore::open on {data_dir}/raft, RaftHost::spawn, router() passthrough, propose_append/propose_checkpoint = propose + claim outcome, from_topology(ClusterTopology) constructor, is_leader/leader/applied_index accessors, host_config(snapshot_every))."
+  - path: apps/tape/src/peer_tls.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: "Thin adapter over libs/service-tls mirroring relay's src/peer_tls.rs: TAPE_PEER_TLS_CERT/KEY/CA + TAPE_PEER_MTLS=on|off env contract, PeerTlsConfig::from_env() (None when unset, error on partial config or a mis-pointed path), rustls_server_config/rustls_client_config passthroughs. Config-surface + fail-fast validation only -- raft-host's h2c peer transport has no TLS acceptor/connector seam yet (the shared gap also filed against relay/keep/lumen); termination is not applied."
+  - path: apps/tape/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Register pub mod raft and pub mod peer_tls; add TapeJournal::put_checkpoint_at(topic, consumer, offset, updated_at_ms) (the SAME validation/ordering logic as put_checkpoint, parameterized on the timestamp so raft replicas apply an identical updated_at_ms instead of each computing now_ms() independently); put_checkpoint becomes a thin wrapper calling put_checkpoint_at(..., now_ms()); make now_ms() pub(crate) so server.rs/raft.rs can resolve deterministic timestamps before proposing."
+  - path: apps/tape/src/server.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "AppState optionally carries Arc<TapeRaft> (set_raft/raft accessors); the append handler resolves timestamp_ms = req.timestamp_ms.unwrap_or_else(now_ms) BEFORE checking raft, then when raft is present proposes TapeCommand::Append and returns the claimed TapeEvent outcome (503 raft_unavailable on propose failure or an aged-out outcome, since append is not idempotent and cannot safely be recomputed); the checkpoint_put handler resolves updated_at_ms = now_ms() and, when raft is present, proposes TapeCommand::CheckpointPut and maps the claimed Result<ConsumerCheckpoint, TapeError> the same way the direct-journal path already does (409 conflict for TapeError variants); replay and checkpoint_get are unchanged (node-local reads against the same shared journal); the single-node (no raft) path for every handler is byte-for-byte unchanged."
+  - path: apps/tape/src/bin/tape.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "serve_main gains auto-mode HA (#1327): new --data-dir (TAPE_DATA_DIR) and --peer-service (TAPE_PEER_SERVICE, default tape) flags; when raft_host::cluster::replica_mode() (REPLICAS_PER_SHARD > 1), load + validate tape::peer_tls::PeerTlsConfig::from_env() before spawning (fail fast on partial/mis-pointed config), derive the peer port from --bind, build ClusterTopology::from_env('tape', peer_service, peer_port, 'TAPE_PEERS'), require --data-dir to be set (fail fast otherwise), TapeRaft::from_topology over the shared journal Arc, state.set_raft, and app.merge(raft.router()) outside the bearer-auth /topics data plane; the single-node path (no cluster env) is unchanged byte-for-byte."
+  - path: apps/tape/tests/raft_cluster.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: "An in-process 3-node TapeRaft group over real h2c listeners (relay's tests/raft_cluster.rs shape, adapted to tape's Append/CheckpointPut commands): exactly one leader; a leader append is applied and readable on every node's journal; a follower append is forwarded to the leader by the host; a direct follower POST to the host's peer route answers 421 not-leader; killing (aborting) the leader's task re-elects a survivor with no committed loss; a small SnapshotPolicy threshold compacts the leader's raft log so a late-started fresh node catches up via InstallSnapshot instead of full log replay."
+  - path: apps/tape/tests/raft_persistence.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: "Restart-recovery tests over TapeRaft: a single-node group restarted from its data dir rejoins with its applied index intact (recovered from the fsynced marker) and accepts new proposes with no double-apply; a checkpoint-put proposed before a simulated restart is not re-applied on cold replay thanks to the persisted floor."
+  - path: apps/tape/tests/raft_failover.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: "Live 3-node kill -9 failover test: spawns three real `tape` OS subprocesses (REPLICAS_PER_SHARD=3, TAPE_PEERS local override, distinct --data-dir/--bind per node), waits for a leader, appends events through it, SIGKILLs (not SIGTERM) the leader's process, waits for the survivors to re-elect and keep accepting appends, then asserts every previously committed event is still replayable on every surviving node -- proving no committed event loss across a real process crash, not just an in-process task abort."
+  - path: apps/tape/src/peer_tls.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Unit tests mirroring relay's peer_tls suite: none-set => None; all-set + TAPE_PEER_MTLS=on => required; partial config => 'must all be set together' error; a mis-pointed cert path => error naming the path; a PEM fixture builds both rustls server/client configs."
+  - path: apps/tape/README.md
+    action: modify
+    section: changes
+    impl_mode: hand-written
+    description: "Update the 'Primary Replicas' capability row's maturity/verification from planned/planned/none/not_ready to reflect the raft-host wiring actually landed and verified in this slice (only this row changes)."
+```
