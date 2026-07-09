@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-09T14:39:03.287359+00:00"
-digest = "sha256:fbff464ab416221711c1a4f120e4e7ffc5f41075e93b7f3304434e5aba5e3634"
-source_digest = "sha256:fbff464ab416221711c1a4f120e4e7ffc5f41075e93b7f3304434e5aba5e3634"
-ir_digest = "sha256:9747eb01c23476c8accc15cf3a8e99094f79afd4ab186ce60c7c2bbca9e00ee2"
+generated_at = "2026-07-09T15:11:09.562591+00:00"
+digest = "sha256:93148e5841a158acef4e39956726de3ee3e82f9c21fe131985c922ca19978643"
+source_digest = "sha256:93148e5841a158acef4e39956726de3ee3e82f9c21fe131985c922ca19978643"
+ir_digest = "sha256:4fec8b3df95743fb0bd555e911dd72281267f85a3258d370a6d8710bd5788365"
 
 [[files]]
 path = "README.md"
@@ -41,6 +41,12 @@ section_count = 3
 path = "logic/tape-raft-host-primary-replicas.md"
 digest = "sha256:72ee950649d4c5ac6d73eb95f22e512a5d8dc0bb91806f0ff349d12b6489fae7"
 ir_digest = "sha256:3ecb0fd4bb6e6e967a940d43cc4b397a55c4c335d78903401ec4af00d8752a03"
+section_count = 3
+
+[[files]]
+path = "logic/tape-vat-meter-guard-ec-gates-observability.md"
+digest = "sha256:7c91920c00a15094d73136a5c04d501c9a91022d0343194be462d6098deec1e0"
+ir_digest = "sha256:36794e07a7da5e89aea35046c796a7d4fea5833646953f7084350860ad6c076d"
 section_count = 3
 
 [[files]]
