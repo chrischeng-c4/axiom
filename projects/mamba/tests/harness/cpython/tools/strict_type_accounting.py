@@ -122,6 +122,17 @@ NON_TYPE_REJECTION_MARKERS = (
     "unknown type",
     "unknown generic type",
 )
+TYPE_FIXTURE_SUBJECT_RE = re.compile(r'#\s*subject\s*=\s*"(?P<subject>[^"]+)"')
+TYPE_FIXTURE_SUBJECT_CALL_RE = re.compile(
+    r"^(?P<call>.+)\((?P<param>[^():,\s]+):\s*(?P<label>[^()]*)\)$"
+)
+GENERATED_SIG_BLOCK_RE = re.compile(r"StdlibSig\s*\{\n(?P<body>.*?)\n    \},", re.S)
+GENERATED_SIG_FIELD_RE = re.compile(r'\b(?P<field>module|qualifier|name):\s*"(?P<value>[^"]*)"')
+GENERATED_PARAM_RE = re.compile(
+    r'p\("(?P<name>[^"]+)",\s*CoreTy::(?P<ty>\w+),\s*(?P<star>true|false)\)'
+)
+GENERATED_ENFORCEABLE_RE = re.compile(r"\benforceable:\s*(?P<value>true|false)")
+TYPEVAR_STAYS_UNWALLED_MARKER = "TypeVar param must stay unwalled"
 
 
 @dataclass
@@ -236,6 +247,83 @@ def is_excluded_type_fixture(path: Path) -> bool:
 
 def executable_type_fixtures(paths: list[Path]) -> list[Path]:
     return [path for path in paths if not is_excluded_type_fixture(path)]
+
+
+def parse_generated_signature_param_index() -> dict[tuple[str, str, str], dict[str, Any]]:
+    text = GENERATED_SIGS.read_text(encoding="utf-8", errors="replace")
+    out: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for block in GENERATED_SIG_BLOCK_RE.finditer(text):
+        body = block.group("body")
+        fields = {
+            match.group("field"): match.group("value")
+            for match in GENERATED_SIG_FIELD_RE.finditer(body)
+        }
+        if not {"module", "qualifier", "name"} <= fields.keys():
+            continue
+        enforceable_match = GENERATED_ENFORCEABLE_RE.search(body)
+        out[(fields["module"], fields["qualifier"], fields["name"])] = {
+            "params": {
+                match.group("name"): match.group("ty")
+                for match in GENERATED_PARAM_RE.finditer(body)
+                if match.group("star") != "true"
+            },
+            "enforceable": (
+                enforceable_match is not None
+                and enforceable_match.group("value") == "true"
+            ),
+        }
+    return out
+
+
+def parse_type_fixture_subject(path: Path) -> tuple[str, str] | None:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    subject_match = TYPE_FIXTURE_SUBJECT_RE.search(text)
+    if subject_match is None:
+        return None
+    call_match = TYPE_FIXTURE_SUBJECT_CALL_RE.match(subject_match.group("subject"))
+    if call_match is None:
+        return None
+    return call_match.group("call"), call_match.group("param")
+
+
+def resolve_generated_sig_key(
+    call: str, sigs: dict[tuple[str, str, str], dict[str, Any]]
+) -> tuple[str, str, str] | None:
+    parts = call.split(".")
+    if len(parts) < 2:
+        return None
+    for split in range(len(parts) - 1, 0, -1):
+        module = ".".join(parts[:split])
+        rest = parts[split:]
+        if not rest:
+            continue
+        qualifier = ".".join(rest[:-1])
+        name = rest[-1]
+        key = (module, qualifier, name)
+        if key in sigs:
+            return key
+    return None
+
+
+def unenforceable_generated_param_reason(
+    path: Path, sigs: dict[tuple[str, str, str], dict[str, Any]]
+) -> str | None:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if TYPEVAR_STAYS_UNWALLED_MARKER in text:
+        return "typevar_must_stay_unwalled"
+    parsed = parse_type_fixture_subject(path)
+    if parsed is None:
+        return None
+    call, param = parsed
+    key = resolve_generated_sig_key(call, sigs)
+    if key is None:
+        return None
+    params = sigs[key]["params"]
+    if param not in params:
+        return "generated_param_missing"
+    if params[param] == "Unknown":
+        return "generated_param_unknown"
+    return None
 
 
 def run_mamba(mamba_bin: str, fixture: Path, timeout: int) -> tuple[int | None, str, str]:
@@ -371,6 +459,7 @@ def validate_divergence(
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     mamba_bin = args.mamba_bin or default_mamba_bin()
     type_fixture_candidates = sorted(TYPE_DIR.rglob("*.py")) if TYPE_DIR.exists() else []
+    generated_param_sigs = parse_generated_signature_param_index()
     excluded_non_runtime_stubs = [
         path for path in type_fixture_candidates if is_non_runtime_stub_type_fixture(path)
     ]
@@ -394,7 +483,25 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         for path in type_fixture_candidates
         if is_version_specific_unavailable_type_fixture(path)
     ]
-    type_fixtures_all = executable_type_fixtures(type_fixture_candidates)
+    type_fixture_wall_candidates = executable_type_fixtures(type_fixture_candidates)
+    excluded_unenforceable_generated_params: list[dict[str, str]] = []
+    for path in type_fixture_wall_candidates:
+        reason = unenforceable_generated_param_reason(path, generated_param_sigs)
+        if reason is not None:
+            excluded_unenforceable_generated_params.append(
+                {"path": repo_rel(path), "reason": reason}
+            )
+    excluded_unenforceable_generated_param_paths = {
+        REPO_ROOT / item["path"] for item in excluded_unenforceable_generated_params
+    }
+    type_fixtures_all = [
+        path
+        for path in type_fixture_wall_candidates
+        if path not in excluded_unenforceable_generated_param_paths
+    ]
+    excluded_unenforceable_generated_param_reasons = Counter(
+        item["reason"] for item in excluded_unenforceable_generated_params
+    )
     type_fixtures, enforcement_sampled = selected(type_fixtures_all, args.limit)
     sound_fixtures_all = sorted(
         path for family in SOUND_FAMILIES for path in (SOUND_DIR / family).glob("*.py")
@@ -509,6 +616,15 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "version_removed_type_libs": VERSION_REMOVED_TYPE_LIBS,
             "version_specific_type_fixture_cases": VERSION_SPECIFIC_TYPE_FIXTURES,
             "version_removed_type_fixture_cases": VERSION_REMOVED_TYPE_FIXTURES,
+            "excluded_unenforceable_generated_param_type_fixtures": len(
+                excluded_unenforceable_generated_params
+            ),
+            "excluded_unenforceable_generated_param_reasons": dict(
+                sorted(excluded_unenforceable_generated_param_reasons.items())
+            ),
+            "excluded_unenforceable_generated_param_examples": (
+                excluded_unenforceable_generated_params[: args.show]
+            ),
             "host_python_version": list(sys.version_info[:2]),
         },
         "enforcement": {
@@ -556,7 +672,9 @@ def print_human(report: dict[str, Any]) -> None:
         "  typeshed: "
         f"rows={typeshed['rows']} enforceable={typeshed['enforceable']} "
         f"unknown_skipped={typeshed['unknown_skipped']} "
-        f"fixtures={typeshed['type_fixture_wall']}"
+        f"fixtures={typeshed['type_fixture_wall']} "
+        "excluded_unenforceable_params="
+        f"{typeshed['excluded_unenforceable_generated_param_type_fixtures']}"
     )
     enforcement = report["enforcement"]
     print(

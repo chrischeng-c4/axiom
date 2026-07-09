@@ -195,6 +195,7 @@ pub mod stat_mod;
 pub mod stringprep_mod;
 pub mod support_mod;
 pub mod sysconfig_mod;
+pub mod syslog_mod;
 pub mod termios_mod;
 pub mod test_mod;
 pub mod thirdparty_shells_mod;
@@ -417,6 +418,7 @@ pub fn register_stdlib() {
     concurrent_futures_mod::register();
     dbm_mod::register();
     sysconfig_mod::register();
+    syslog_mod::register();
     reprlib_mod::register();
     quopri_mod::register();
     posixpath_mod::register();

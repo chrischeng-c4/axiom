@@ -442,9 +442,13 @@ fn normalize_temp_mode(mode: &str) -> String {
 /// `delete_on_close=False` defers removal to context-manager exit.
 pub fn mb_tempfile_named_temp_file(args: &[MbValue]) -> MbValue {
     let (pos, kwargs) = split_kwargs(args);
-    let mode = arg_or_kw(&pos, 0, &kwargs, "mode")
-        .and_then(as_text)
-        .unwrap_or_else(|| "w+b".to_string());
+    let mode = match arg_or_kw(&pos, 0, &kwargs, "mode") {
+        Some(v) => match as_text(v) {
+            Some(s) => s,
+            None => return raise_type_error("NamedTemporaryFile() mode must be str"),
+        },
+        None => "w+b".to_string(),
+    };
     // CPython validates through io.open: stripped of 'b'/'t'/'+', the mode
     // must be exactly one of r/w/x/a.
     let base: String = mode
@@ -672,9 +676,13 @@ fn raise_value_error(msg: &str) -> MbValue {
 /// matching CPython's `if self._max_size and tell > self._max_size`).
 pub fn mb_tempfile_spooled_temporary_file_v(args: &[MbValue]) -> MbValue {
     let (pos, kwargs) = split_kwargs(args);
-    let max_size = arg_or_kw(&pos, 0, &kwargs, "max_size")
-        .and_then(|v| v.as_int())
-        .unwrap_or(0);
+    let max_size = match arg_or_kw(&pos, 0, &kwargs, "max_size") {
+        Some(v) => match v.as_int() {
+            Some(n) => n,
+            None => return raise_type_error("SpooledTemporaryFile() max_size must be int"),
+        },
+        None => 0,
+    };
     let mode = arg_or_kw(&pos, 1, &kwargs, "mode")
         .and_then(as_text)
         .unwrap_or_else(|| "w+b".to_string());

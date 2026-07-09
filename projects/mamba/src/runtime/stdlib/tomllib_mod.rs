@@ -6,10 +6,13 @@ use super::super::value::MbValue;
 /// string actually parses into Mamba dict/list/str/int/float/bool/None
 /// values. `load(fp)` accepts a path-string fallback for sources that
 /// already pass a filename through (CPython binary-file objects are
-/// not yet wired). `TOMLDecodeError` remains a sentinel callable; on
-/// malformed TOML, `loads` raises `ValueError` with the parser
-/// diagnostic so a plain `except Exception:` catches it.
+/// not yet wired). `TOMLDecodeError` is registered as a local ValueError
+/// subclass so malformed TOML remains catchable via
+/// `except tomllib.TOMLDecodeError` while its constructor keeps a local
+/// `msg: str` typed wall.
 use std::collections::HashMap;
+
+const TOML_DECODE_ERROR_NAME: &str = "TOMLDecodeError";
 
 unsafe fn args_slice<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue] {
     if nargs == 0 || args_ptr.is_null() {
@@ -152,12 +155,31 @@ fn parse_toml_string(source: &str, parse_float: MbValue) -> MbValue {
         Ok(v) => toml_to_mbvalue(&v, parse_float),
         Err(e) => {
             super::super::exception::mb_raise(
-                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(TOML_DECODE_ERROR_NAME.to_string())),
                 MbValue::from_ptr(MbObject::new_str(format!("tomllib.loads: {}", e))),
             );
             MbValue::none()
         }
     }
+}
+
+unsafe extern "C" fn dispatch_toml_decode_error_init(
+    instance: MbValue,
+    args_list: MbValue,
+) -> MbValue {
+    let args = super::super::builtins::extract_items(args_list);
+    if let Some(msg) = args.first().copied() {
+        if as_string(msg).is_none() {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "TOMLDecodeError() argument 1 must be str".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+    }
+    super::super::exception::mb_exception_init_instance(instance, args_list)
 }
 
 /// `tomllib.loads(s)` — parse a TOML string into a dict tree.
@@ -252,6 +274,18 @@ unsafe extern "C" fn dispatch_toml_decode_error(
     MbValue::from_ptr(MbObject::new_dict())
 }
 
+fn register_toml_decode_error_class() {
+    let init_addr = dispatch_toml_decode_error_init as *const () as usize;
+    let mut methods = HashMap::new();
+    methods.insert("__init__".to_string(), MbValue::from_func(init_addr));
+    super::super::class::mb_class_register(
+        TOML_DECODE_ERROR_NAME,
+        vec!["ValueError".to_string()],
+        methods,
+    );
+    super::super::module::register_variadic_func(init_addr as u64);
+}
+
 /// Register the tomllib module.
 pub fn register() {
     let mut attrs = HashMap::new();
@@ -263,14 +297,10 @@ pub fn register() {
     attrs.insert("loads".into(), MbValue::from_func(addr_loads));
 
     let addr_err = dispatch_toml_decode_error as *const () as usize;
-    // Register TOMLDecodeError as an alias for ValueError (same pattern as
-    // json.JSONDecodeError): CPython's TOMLDecodeError subclasses ValueError,
-    // and `loads` raises ValueError on malformed TOML, so resolving the handler
-    // class to "ValueError" lets `except tomllib.TOMLDecodeError:` catch it.
-    // The func sentinel addr is still tracked below for NATIVE_FUNC_ADDRS.
+    register_toml_decode_error_class();
     attrs.insert(
         "TOMLDecodeError".into(),
-        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(TOML_DECODE_ERROR_NAME.to_string())),
     );
 
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
@@ -286,6 +316,7 @@ pub fn register() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::exception;
 
     fn mk_str(s: &str) -> MbValue {
         MbValue::from_ptr(MbObject::new_str(s.to_string()))
@@ -359,5 +390,39 @@ mod tests {
                 panic!("nums not list");
             }
         }
+    }
+
+    #[test]
+    fn toml_decode_error_init_rejects_non_str_msg() {
+        register_toml_decode_error_class();
+        exception::mb_clear_exception();
+        let instance =
+            MbValue::from_ptr(MbObject::new_instance(TOML_DECODE_ERROR_NAME.to_string()));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(12345),
+            mk_str(""),
+            MbValue::from_int(0),
+        ]));
+        let rv = unsafe { dispatch_toml_decode_error_init(instance, args) };
+        assert!(rv.is_none());
+        assert_eq!(
+            exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn loads_raises_toml_decode_error() {
+        register_toml_decode_error_class();
+        exception::mb_clear_exception();
+        let arg = mk_str("not = [valid");
+        let rv = unsafe { dispatch_loads(&arg, 1) };
+        assert!(rv.is_none());
+        assert_eq!(
+            exception::current_exception_type().as_deref(),
+            Some(TOML_DECODE_ERROR_NAME)
+        );
+        exception::mb_clear_exception();
     }
 }

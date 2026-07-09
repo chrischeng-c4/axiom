@@ -266,6 +266,31 @@ fn populate_unicode_error_fields(
     }
 }
 
+fn populate_toml_decode_error_fields(
+    fields: &mut FxHashMap<String, MbValue>,
+    arg_items: &[MbValue],
+) -> bool {
+    let msg = arg_items.first().copied().unwrap_or_else(MbValue::none);
+    if !msg.is_none() && extract_str(msg).is_none() {
+        raise_type_error_message("TOMLDecodeError() msg must be str");
+        return false;
+    }
+    let doc = arg_items.get(1).copied().unwrap_or_else(MbValue::none);
+    if !doc.is_none() && extract_str(doc).is_none() {
+        raise_type_error_message("TOMLDecodeError() doc must be str");
+        return false;
+    }
+    let pos = arg_items.get(2).copied().unwrap_or_else(MbValue::none);
+    if !pos.is_none() && value_as_i64(pos).is_none() {
+        raise_type_error_message("TOMLDecodeError() pos must be int");
+        return false;
+    }
+    insert_borrowed_field(fields, "msg", msg);
+    insert_borrowed_field(fields, "doc", doc);
+    insert_borrowed_field(fields, "pos", pos);
+    true
+}
+
 fn populate_exception_fields(
     fields: &mut FxHashMap<String, MbValue>,
     type_name: &str,
@@ -310,6 +335,10 @@ fn populate_exception_fields(
         "UnicodeEncodeError" | "UnicodeDecodeError" | "UnicodeTranslateError"
     ) {
         populate_unicode_error_fields(fields, type_name, arg_items);
+    } else if type_name == "TOMLDecodeError"
+        && !populate_toml_decode_error_fields(fields, arg_items)
+    {
+        return false;
     }
     let args_tuple = MbValue::from_ptr(MbObject::new_tuple_borrowed(arg_items.to_vec()));
     fields.insert("args".to_string(), args_tuple);
@@ -1094,7 +1123,7 @@ pub(crate) fn is_builtin_exception_name(name: &str) -> bool {
         // zoneinfo.ZoneInfoNotFoundError derives from KeyError (CPython).
         | "ZoneInfoNotFoundError"
         | "UnicodeError" | "UnicodeDecodeError" | "UnicodeEncodeError" | "UnicodeTranslateError"
-        | "ValueError" | "JSONDecodeError"
+        | "ValueError" | "JSONDecodeError" | "TOMLDecodeError"
         | "OSError" | "IOError"
         | "FileNotFoundError" | "PermissionError" | "IsADirectoryError"
         | "NotADirectoryError" | "FileExistsError" | "ConnectionError"
@@ -1218,7 +1247,7 @@ pub fn is_subclass_of(child: &str, parent: &str) -> bool {
         "ValueError" => matches!(
             child,
             "UnicodeDecodeError" | "UnicodeEncodeError" | "UnicodeTranslateError"
-            | "UnicodeError" | "JSONDecodeError"
+            | "UnicodeError" | "JSONDecodeError" | "TOMLDecodeError"
             // binascii.Error subclasses ValueError (CPython 3.12).
             | "binascii.Error"
             // statistics.StatisticsError subclasses ValueError (CPython 3.12).
