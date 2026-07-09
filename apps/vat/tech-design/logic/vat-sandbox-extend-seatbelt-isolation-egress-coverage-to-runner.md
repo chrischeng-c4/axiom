@@ -105,3 +105,43 @@ commands:
       - "Service/emulator spawns (start_service) remain unwrapped by sandbox_wrap — they keep network to serve/forward regardless of --isolation/[network].egress. This WI adds an explicit test proving that exemption is intentional, not an oversight."
       - "`--isolation none` (default) is unchanged."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: vat-sandbox-runner-coverage-unit-tests
+---
+requirementDiagram
+    requirement pick_fails_closed_reaches_runner_mode {
+      id: UT1
+      text: "sandbox::pick(spec) returns Err (not a silently-degraded backend) when the run's isolation/egress combination cannot be enforced, BEFORE run_configured spawns any service or runner; the error propagates via `.map_err(anyhow::Error::msg)?` at the runner-mode call site exactly as it already does at the direct-mode call site (issue #1300)."
+      risk: high
+      verifymethod: test
+    }
+    requirement runner_and_setup_step_wrapped {
+      id: UT2
+      text: "spawn_runner_process and run_setup_step both resolve their command through sandbox_wrap(backend, rootfs, cmd) before command_with_logs — under isolation=seatbelt the resolved argv is the sandbox-exec wrapped form; under isolation=none it is the raw command unchanged."
+      risk: high
+      verifymethod: test
+    }
+    requirement services_never_wrapped {
+      id: UT3
+      text: "start_service never calls sandbox_wrap for a real service spawn (service_sandbox stays None on the non-hermetic-proxy path); this is asserted directly, not just implied, as the explicit proof of the intentional vat-services exemption (R2/AC2)."
+      risk: high
+      verifymethod: test
+    }
+    test pick_fail_closed_tests {
+      type: functional
+      verifies: pick_fails_closed_reaches_runner_mode
+    }
+    test runner_setup_step_wrap_tests {
+      type: functional
+      verifies: runner_and_setup_step_wrapped
+    }
+    test service_exemption_tests {
+      type: functional
+      verifies: services_never_wrapped
+    }
+```
