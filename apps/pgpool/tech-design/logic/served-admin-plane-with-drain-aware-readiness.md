@@ -345,3 +345,52 @@ definitions:
         type: integer
         minimum: 0
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+# Admin plane config additions for `pgpool serve` (apps/pgpool/src/bin/pgpool.rs
+# ServeArgs). No new pooling/backend config lives here (unchanged from WI
+# #1288/#1289); this section adds only the admin-bind override and the
+# pool-name the admin plane needs to label PoolStats/metrics, since
+# RuntimePlan is single-pool-per-process today (R1, R3).
+
+# Admin plane bind override (R1) — RuntimePlan::default() already binds the
+# admin HTTP plane to 0.0.0.0:9080; this flag/env lets operators override it
+# the same way --bind already overrides the frontend bind.
+admin_bind_override:
+  env: PGPOOL_ADMIN_BIND
+  flag: --admin-bind
+  default: null        # null = use RuntimePlan::admin_bind (0.0.0.0:9080) unchanged
+
+# Pool name (R3) — labels this process's single BackendPool in PoolStats.name,
+# the {pool} path segment in GET /pools/{pool}/stats, and the pool=<name>
+# label on every /metrics gauge line. pgpool runs exactly one pool per
+# process today, so this is a display/addressing label, not a multi-pool
+# selector.
+pool_name:
+  env: PGPOOL_POOL_NAME
+  flag: --pool-name
+  default: "default"
+
+# Admin plane drain timeout (R2 / AC2) — bounds how long the admin HTTP
+# plane's own http_server::serve_h2c_with_options shutdown future waits for
+# in-flight admin requests (e.g. a slow /pools/{pool}/stats) to finish once
+# drain.signal().changed() resolves; independent of, but defaulted equal to,
+# the existing frontend drain_timeout_ms so both planes exit within the same
+# operator-configured bound.
+admin_drain_timeout_ms:
+  env: PGPOOL_ADMIN_DRAIN_TIMEOUT_MS
+  flag: --admin-drain-timeout-ms
+  default: 30000        # 30s; matches RuntimePlan::admin_drain_timeout() default and the existing --drain-timeout-ms
+
+# Frontend bind, backend endpoint, backend connect timeout, frontend drain
+# timeout, and pool acquire timeout are unchanged from WI #1288/#1289
+# (--bind, --backend-host, --backend-port, --backend-connect-timeout-ms,
+# --drain-timeout-ms, --pool-acquire-timeout-ms); listed here only for
+# traceability, not redefined by this TD.
+existing_serve_args:
+  source: "apps/pgpool/src/bin/pgpool.rs ServeArgs (WI #1288/#1289, unchanged)"
+  fields: [bind, backend_host, backend_port, backend_connect_timeout_ms, drain_timeout_ms, pool_acquire_timeout_ms]
+```
