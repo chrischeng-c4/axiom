@@ -117,3 +117,66 @@ flowchart TD
     print_preview --> done_dry([dry-run prints issue+state+comment, no network mutation])
     post_comment --> done_live([Issue open and carries new follow-up comment])
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+jet_issue_comment_cli:
+  clap_surface:
+    file: projects/jet/src/standard_cli.rs
+    fn: issue_command
+    parent_command: issue
+    parent_flags: [subcommand_required: true, arg_required_else_help: true]
+    new_subcommand: comment
+    about: "Comment on an issue and ensure it is open"
+    args:
+      number:
+        required: true
+        value_parser: u64
+        help: "Issue number"
+      dry-run:
+        long: dry-run
+        action: SetTrue
+        help: "Print the reopen/comment request without changing GitHub state"
+      message:
+        num_args: "0.."
+        help: "Follow-up note to add after reopening"
+  dispatch_surface:
+    file: projects/jet/src/standard_cli.rs
+    fn: run_issue
+    match_arm: "Some((\"comment\", m))"
+    calls: cli_std::issue::comment(&TOOL, CommentOptions)
+  field_mapping:
+    number: "m.get_one::<u64>(\"number\").expect(...)"
+    message: "m.get_many::<String>(\"message\") joined with a space, filtered to None when blank"
+    repo: "None (jet always targets TOOL.repo = chrischeng-c4/axiom; no --repo override exposed for comment, matching create/search)"
+    dry_run: "m.get_flag(\"dry-run\")"
+    yes: "true (jet's standard CLI commands run non-interactively; no confirmation prompt surface)"
+  shared_logic_ownership:
+    crate: libs/cli-std
+    module: libs/cli-std/src/issue.rs
+    owns:
+      - "CommentOptions struct definition"
+      - "issue state fetch + auto-reopen-if-closed request"
+      - "followup_comment_body() diagnostics-rich body assembly (render_diagnostics + assemble_body)"
+      - "comment_payload() GitHub comment JSON shaping"
+      - "all GitHub REST API calls (behind the online feature)"
+    jet_must_not_duplicate:
+      - "reqwest/GitHub HTTP calls"
+      - "issue open/closed state resolution"
+      - "diagnostics body formatting"
+  preserved_behavior:
+    search: "unchanged - SearchOptions{query,state,limit}"
+    view: "unchanged - view(&TOOL, number)"
+    create: "unchanged - CreateOptions{title,message,url,repo,label:[app:jet],dry_run,yes:true}"
+  feature_gating:
+    jet_cargo_toml: "projects/jet/Cargo.toml depends on cli-std with features = [\"online\"] unconditionally (no jet-local [features] table)"
+    cli_std_cargo_toml: "libs/cli-std/Cargo.toml: online = [\"dep:reqwest\"]; comment()'s network-mutating body (reopen PATCH + comment POST) is #[cfg(feature = \"online\")]"
+    acceptance_mapping: "'online/release feature build type-checks the comment path' == a standard `cargo build -p jet` (which always compiles cli-std with online enabled) must type-check the new comment dispatch arm and CommentOptions construction"
+  verification_commands:
+    - "cargo build -p jet"
+    - "cargo build -p jet --release"
+    - "cargo test -p jet --lib standard_cli"
+    - "cargo test -p cli-std"
+```
