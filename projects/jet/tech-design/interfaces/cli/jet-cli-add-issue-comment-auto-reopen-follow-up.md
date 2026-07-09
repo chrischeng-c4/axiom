@@ -180,3 +180,56 @@ jet_issue_comment_cli:
     - "cargo test -p jet --lib standard_cli"
     - "cargo test -p cli-std"
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: jet-cli-add-issue-comment-auto-reopen-follow-up-verification
+requirements:
+  comment_dry_run_wires_to_shared_comment_api_without_network_credential:
+    id: R3
+    text: "`run_issue` on a `comment --dry-run` match arm builds `cli_std::issue::CommentOptions` and calls `cli_std::issue::comment`, returning `Ok(())` without requiring a GitHub credential or performing a network mutation (dry-run prints the target issue, resolved state open, and the diagnostics comment body via the shared cli-std preview path)."
+    kind: functional
+    risk: high
+    verify: cargo test -p jet --lib standard_cli::tests::issue_comment_dry_run_returns_ok_without_network_credential
+  comment_parses_number_message_dry_run:
+    id: R2
+    text: "`jet issue comment <number> [message...] [--dry-run]` parses the issue number, joined free-text message, and dry-run flag correctly."
+    kind: functional
+    risk: low
+    verify: cargo test -p jet --lib standard_cli::tests::issue_comment_parses_number_message_and_dry_run
+  issue_help_lists_comment:
+    id: R1
+    text: "`jet issue --help` lists the `comment` subcommand."
+    kind: functional
+    risk: low
+    verify: cargo test -p jet --lib standard_cli::tests::issue_help_lists_comment
+  no_duplicated_github_api_logic_in_jet:
+    id: R5
+    text: "jet's own CLI dispatch (`projects/jet/src/standard_cli.rs`) contains no GitHub HTTP client construction or REST call logic; all issue state/reopen/comment network behavior stays owned by `libs/cli-std`."
+    kind: regression
+    risk: medium
+    verify: ! rg -n "reqwest::|http_client\(|github\.com/repos" projects/jet/src/standard_cli.rs
+  release_build_type_checks_comment_path:
+    id: R6
+    text: "A standard release build of jet (which always compiles `cli-std` with the `online` feature per `projects/jet/Cargo.toml`) type-checks the new `comment` dispatch arm and `CommentOptions` construction."
+    kind: functional
+    risk: medium
+    verify: cargo build -p jet --release
+  search_view_create_regression:
+    id: R4
+    text: "Existing `jet issue search` / `view` / `create` parsing and shared cli-std payload/body-assembly behavior still pass unchanged."
+    kind: regression
+    risk: medium
+    verify: cargo test -p jet --lib standard_cli && cargo test -p cli-std
+---
+flowchart TD
+    r1[R1 issue help lists comment] --> cargo_test_p_jet_lib_standard_cli_tests_issue_help_lists_comment[cargo test -p jet --lib standard_cli::tests::issue_help_lists_comment]
+    r2[R2 comment parses number message dry run] --> cargo_test_p_jet_lib_standard_cli_tests_issue_comment_parses_number_message_and_dry_run[cargo test -p jet --lib standard_cli::tests::issue_comment_parses_number_message_and_dry_run]
+    r3[R3 comment dry run wires to shared comment api without network credential] --> cargo_test_p_jet_lib_standard_cli_tests_issue_comment_dry_run_returns_ok_without_network_credential[cargo test -p jet --lib standard_cli::tests::issue_comment_dry_run_returns_ok_without_network_credential]
+    r4[R4 search view create regression] --> cargo_test_p_jet_lib_standard_cli_cargo_test_p_cli_std[cargo test -p jet --lib standard_cli && cargo test -p cli-std]
+    r5[R5 no duplicated github api logic in jet] --> rg_n_reqwest_http_client_github_com_repos_projects_jet_src_standard_cli_rs[! rg -n "reqwest::|http_client\(|github\.com/repos" projects/jet/src/standard_cli.rs]
+    r6[R6 release build type checks comment path] --> cargo_build_p_jet_release[cargo build -p jet --release]
+```
