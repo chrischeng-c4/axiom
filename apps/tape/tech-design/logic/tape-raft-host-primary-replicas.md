@@ -109,7 +109,6 @@ flowchart TD
     snap --> serve([auto-mode CLI contract: TAPE_DATA_DIR / TAPE_PEER_SERVICE / TAPE_PEERS / TAPE_PEER_TLS_*])
     floor --> serve
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
