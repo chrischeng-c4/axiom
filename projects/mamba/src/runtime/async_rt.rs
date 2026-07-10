@@ -24,8 +24,12 @@ pub use super::async_task::{
 };
 
 /// Coroutine state — similar to generator but for async functions.
+///
+/// The runtime does not currently surface a coroutine-name attribute, so we do
+/// not retain a per-instance copy of the wrapper name. Recursive perf pins such
+/// as #1184 construct large numbers of short-lived coroutines, and cloning the
+/// same function name into every frame was dead allocation work.
 pub struct MbCoroutine {
-    pub name: String,
     pub module_name: String,
     pub state: u32,
     pub locals: Vec<MbValue>,
@@ -186,13 +190,11 @@ pub(crate) fn cleanup_all_async() {
 // ── Coroutine Creation ──
 
 /// Create a new coroutine from an async function.
-pub fn mb_coroutine_new(name: MbValue, locals: MbValue) -> MbValue {
-    let coro_name = extract_str(name).unwrap_or_else(|| "<coroutine>".to_string());
+pub fn mb_coroutine_new(_name: MbValue, locals: MbValue) -> MbValue {
     let module_name = super::closure::current_active_module_name();
     let local_vars = extract_list(locals);
 
     let coro = MbCoroutine {
-        name: coro_name,
         module_name,
         state: 0,
         locals: local_vars,
@@ -228,8 +230,7 @@ fn decode_coroutine_body(fn_ptr: MbValue) -> Option<unsafe extern "C" fn(i64) ->
 /// pins such as #1184. Accepting the frame size and body pointer directly lets
 /// codegen avoid the empty-list allocation/extraction round-trip and the
 /// follow-up registry write in `mb_coroutine_set_body`.
-pub fn mb_coroutine_new_with_body(name: MbValue, local_count: i64, fn_ptr: MbValue) -> MbValue {
-    let coro_name = extract_str(name).unwrap_or_else(|| "<coroutine>".to_string());
+pub fn mb_coroutine_new_with_body(_name: MbValue, local_count: i64, fn_ptr: MbValue) -> MbValue {
     let module_name = super::closure::current_active_module_name();
     let local_count = local_count.max(0) as usize;
     let locals = if local_count == 0 {
@@ -239,7 +240,6 @@ pub fn mb_coroutine_new_with_body(name: MbValue, local_count: i64, fn_ptr: MbVal
     };
 
     let coro = MbCoroutine {
-        name: coro_name,
         module_name,
         state: 0,
         locals,
