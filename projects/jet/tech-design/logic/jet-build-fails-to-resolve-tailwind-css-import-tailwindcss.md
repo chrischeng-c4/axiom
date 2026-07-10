@@ -160,3 +160,30 @@ flowchart TD
     r4[R4 bare specifier directory without resolvable entry surfaces clear error] --> cargo_test_p_jet_lib_css_import_resolver_tests_bare_specifier_directory_without_resolvable_entry_surfaces_clear_error[cargo test -p jet --lib css::import_resolver::tests::bare_specifier_directory_without_resolvable_entry_surfaces_clear_error]
     r5[R5 existing css import resolver suite stays green] --> cargo_test_p_jet_lib_css[cargo test -p jet --lib css::]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/jet/src/resolver/package.rs
+    action: update
+    section: logic
+    impl_mode: hand-written
+    reason: "Add a `style: Option<String>` field to `PackageJson` (alongside the existing `main`/`module`/`exports` fields) so the CSS import resolver can reuse this same struct/`read_package_json` to read the long-standing npm top-level `style` CSS-entry convention, instead of re-implementing package.json parsing in css/import_resolver.rs."
+  - path: projects/jet/src/css/import_resolver.rs
+    action: update
+    section: logic
+    impl_mode: hand-written
+    reason: "Fix WI #1375 R1: when a resolved node_modules/<pkg> bare-specifier candidate path (built by resolve_import_path) is a directory instead of a file, add a new fallback helper (e.g. resolve_package_css_entry) that: (1) builds candidate.join(\"package.json\"); if absent, keeps the existing unresolved-path behavior; (2) calls the existing resolver::package::resolve_exports(package_json, Some(\".\"), [\"style\", \"default\"]) helper (already used by resolver/mod.rs for JS resolution) to look up a CSS entry via the root export; (3) if no exports match, falls back to the new PackageJson.style top-level field; (4) if style is absent, falls back to resolver::package::get_package_main (module || main || \"index.js\"). The final resolved file path is joined with package_dir and returned for resolve_file to read/inline exactly as any other resolved import; if none of the three resolve to an existing file, bail with a descriptive error naming the package.json fallback attempted -- never re-attempt fs::read_to_string on the directory itself (the original \"Is a directory (os error 21)\" defect must not resurface). Reuses resolver::package's existing helpers rather than re-implementing package.json exports resolution, per WI Scope."
+  - path: projects/jet/src/css/import_resolver.rs
+    action: update
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Add the R1-R5 regression tests specified in the unit-test section to the existing mod tests block, each building a minimal fixture package under a tempdir's node_modules/<pkg>/ (a package.json plus a real target .css file) to exercise the directory-fallback path without requiring an actual tailwindcss install: R1 exercises an 'exports' map with a '.' entry; R2 exercises a top-level 'style' field with no matching 'exports' entry; R3 exercises a 'main' field with neither 'exports' nor 'style' present; R4 exercises a directory-only bare specifier with no resolvable package.json entry, asserting a descriptive typed error (not the raw 'Is a directory' OS error and not a silent success); R5 re-runs the pre-existing css::import_resolver test suite (t3/t4/resolve_source_inlines_import/remote_imports_preserved/resolve_file_surfaces_canonicalize_error_for_missing_path/three_level_import_chain_merged) unchanged, proving no regression."
+  - path: projects/jet/README.md
+    action: update
+    section: config
+    impl_mode: hand-written
+    reason: "Add a new 'Fix CSS Bare-Specifier Import Resolution For Package Directories' work-root row (kind: change, WI #1375, impl: planned, verification: none, maturity: smoke) to the Bundler And Production Build capability's work-root table, citing the future `cargo test -p jet --lib css::import_resolver` regression coverage and this TD's path, closing the capability gap described in WI #1375's Capability Alignment section (the CSS import resolver could not resolve a bare package-name @import when node_modules/<pkg> is a directory)."
+```
