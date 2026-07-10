@@ -92,7 +92,6 @@ flowchart TD
     pipeline_returns --> lightningcss_parse[apply_lightningcss calls StyleSheet::parse]
     lightningcss_parse --> parse_succeeds([StyleSheet::parse succeeds -- AC1 satisfied])
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
