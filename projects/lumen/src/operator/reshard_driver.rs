@@ -899,6 +899,54 @@ mod tests {
         assert!(!should_start_split(&lumen));
     }
 
+    // ---- #1386 AC1/AC2: post-cutover usage freshness -------------------
+
+    #[test]
+    fn should_start_split_false_on_stale_pre_cutover_usage() {
+        // AC1: at `Complete` with a usage measurement whose generation
+        // (`usageMeasuredAtMapVersion`) predates the CR's current
+        // `shardMap.version` — the exact shape the shard-usage cache is in
+        // for one scrape tick right after a split's cutover — the driver
+        // must not start a split, regardless of how far past the urgent
+        // threshold the (stale) cached percentage is.
+        let mut s = spec(2, 1, Some(1_000_000));
+        s.shard_map.version = 1; // just cut over to the post-split map
+        let mut usage = BTreeMap::new();
+        usage.insert(0u32, 900_000u64); // 90%, well past urgent(85%)
+        let status = s.reshard_status_with_usage(&usage, 0 /* stale: pre-cutover */);
+        assert_eq!(status.blocking_conditions, vec!["usageStalePostCutover"]);
+        let lumen = lumen_with(
+            s,
+            Some(LumenStatus {
+                reshard: status,
+                ..Default::default()
+            }),
+        );
+        assert!(!should_start_split(&lumen));
+    }
+
+    #[test]
+    fn should_start_split_true_on_fresh_post_cutover_usage_above_urgent() {
+        // AC2: once the usage cache carries a measurement tagged with the
+        // CR's *current* `shardMap.version`, a genuinely still-hot shard is
+        // a legitimate cascade trigger and must start the next split.
+        let mut s = spec(2, 1, Some(1_000_000));
+        s.shard_map.version = 1;
+        let mut usage = BTreeMap::new();
+        usage.insert(1u32, 900_000u64); // 90%, past urgent(85%), fresh
+        let status =
+            s.reshard_status_with_usage(&usage, 1 /* fresh: matches shardMap.version */);
+        assert_eq!(status.blocking_conditions, vec!["urgentThresholdCrossed"]);
+        let lumen = lumen_with(
+            s,
+            Some(LumenStatus {
+                reshard: status,
+                ..Default::default()
+            }),
+        );
+        assert!(should_start_split(&lumen));
+    }
+
     // ---- current/target map helpers -----------------------------------
 
     #[test]

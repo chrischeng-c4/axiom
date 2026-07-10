@@ -25,6 +25,29 @@
 //! spawn_reshard_driver_loop`] (#1319 R2, #1381) — is what actually drives
 //! `workflow.phase` and moves data once a threshold is crossed.
 //!
+//! ## Post-cutover usage freshness (#1386)
+//!
+//! Each [`ShardUsageSnapshot`] the loop below writes into the cache is
+//! tagged with `spec.shardMap.version` as read off the very same CR the
+//! scrape was addressed against — the freshness generation
+//! [`crate::operator::crd::LumenSpec::reshard_status_with_usage`] compares
+//! against the CR's *current* `shard_map.version` before ever reporting a
+//! crossed threshold. Without this, a split's `Complete` cutover (which
+//! bumps `shard_map.version`) races this loop's own
+//! [`SHARD_USAGE_POLL_INTERVAL`] cadence: the cache can still hold a
+//! pre-cutover, pre-eviction reading for up to that whole interval, and
+//! [`crate::operator::reshard_driver::should_start_split`] would otherwise
+//! re-fire off that stale number the very next driver tick — the live bug
+//! #1384's kind proof caught (a second split starting 20s after the first
+//! one's `Complete`, purely off a reading taken before the eviction that
+//! same cutover had just performed). Neither loop needs to synchronize
+//! with the other directly: the generation tag alone is enough, and it
+//! survives an operator failover the same way every other reshard
+//! checkpoint does — it rides on the CR itself (`status.reshard.
+//! usageMeasuredAtMapVersion`, freshly recomputed by whichever replica
+//! next runs `status_patch`), never in this loop's or the driver's
+//! in-process state.
+//!
 //! ## HPA topology-transition handoff (#1385)
 //!
 //! [`render::render`] stops emitting a HorizontalPodAutoscaler once the CR's
@@ -82,9 +105,22 @@ const HPA_HANDOFF_POLL_INTERVAL: Duration = Duration::from_secs(15);
 /// reason).
 const HPA_HANDOFF_LEASE_NAME: &str = "lumen-hpa-handoff";
 
-/// `"<namespace>/<name>" -> "shard_index -> observed bytes"`, refreshed by
+/// One shard-usage measurement (#1386 R1): the raw per-shard bytes plus the
+/// `spec.shardMap.version` that was live on the CR at scrape time — the
+/// freshness generation [`crate::operator::crd::LumenSpec::
+/// reshard_status_with_usage`] compares against the CR's *current*
+/// `spec.shardMap.version` to tell a post-cutover measurement apart from a
+/// pre-cutover one this cache is still holding right after a split
+/// completes.
+#[derive(Clone, Debug)]
+struct ShardUsageSnapshot {
+    measured_at_map_version: u64,
+    usage: BTreeMap<u32, u64>,
+}
+
+/// `"<namespace>/<name>" -> ShardUsageSnapshot`, refreshed by
 /// [`spawn_shard_usage_loop`] and read by [`status_patch`].
-type ShardUsageCache = Mutex<BTreeMap<String, BTreeMap<u32, u64>>>;
+type ShardUsageCache = Mutex<BTreeMap<String, ShardUsageSnapshot>>;
 
 fn shard_usage_cache() -> &'static ShardUsageCache {
     static CACHE: OnceLock<ShardUsageCache> = OnceLock::new();
@@ -205,10 +241,19 @@ fn spawn_shard_usage_loop(client: Client) {
                             continue;
                         }
                         let key = cache_key(&lumen);
+                        // #1386 R1: tag this measurement with the map
+                        // version live on the *same* CR read the scrape
+                        // itself was addressed against, so a status
+                        // computed later can tell whether it predates the
+                        // next cutover.
+                        let snapshot = ShardUsageSnapshot {
+                            measured_at_map_version: lumen.spec.shard_map.version,
+                            usage,
+                        };
                         let mut cache = shard_usage_cache()
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner());
-                        cache.insert(key, usage);
+                        cache.insert(key, snapshot);
                     }
                 }
                 Err(err) => {
@@ -431,7 +476,9 @@ impl ManagedService for Lumen {
             .ok()
             .and_then(|cache| cache.get(&cache_key(self)).cloned());
         let reshard = match usage {
-            Some(usage) if !usage.is_empty() => self.spec.reshard_status_with_usage(&usage),
+            Some(snapshot) if !snapshot.usage.is_empty() => self
+                .spec
+                .reshard_status_with_usage(&snapshot.usage, snapshot.measured_at_map_version),
             _ => self.spec.reshard_status(),
         };
         let phase = if serving_ready >= desired {
