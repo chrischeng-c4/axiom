@@ -573,6 +573,75 @@ fn test_generic_function_call_inference() {
 }
 
 #[test]
+fn test_generic_function_bound_from_parser_accepts_subtype_compatible_call() {
+    let errors = check(
+        "def widen[T: float](x: T) -> T:\n\
+         \x20   return x\n\
+         ok: float = widen(1)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "bounded generic should accept subtype-compatible calls, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_generic_function_bound_from_parser_rejects_incompatible_call() {
+    let errors = check(
+        "def widen[T: float](x: T) -> T:\n\
+         \x20   return x\n\
+         widen(\"oops\")\n",
+    );
+    assert!(
+        errors.iter().any(|e| e.contains("bound violation")),
+        "bounded generic should reject incompatible concrete types, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_generic_function_constraints_from_parser_accept_declared_types() {
+    let errors = check(
+        "def choose[T: (int, str)](x: T) -> T:\n\
+         \x20   return x\n\
+         i: int = choose(1)\n\
+         s: str = choose(\"hi\")\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "constrained generic should accept declared constraint types, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_generic_function_constraints_from_parser_reject_outside_constraint_set() {
+    let errors = check(
+        "def choose[T: (int, str)](x: T) -> T:\n\
+         \x20   return x\n\
+         choose(3.14)\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("must be one of the constrained types")),
+        "constrained generic should reject types outside the constraint set, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_unbounded_generic_function_behavior_is_unchanged() {
+    let errors = check(
+        "def identity[T](x: T) -> T:\n\
+         \x20   return x\n\
+         i: int = identity(1)\n\
+         s: str = identity(\"hi\")\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "unbounded generic functions should retain current behavior, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_generic_class_definition() {
     // Generic class with type params should type-check
     let errors = check(
