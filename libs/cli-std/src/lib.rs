@@ -22,8 +22,15 @@
 //! a test harness (not a `run` function a binary calls) backing the
 //! `chainable_output` archetype trait's gate: `CONTRIBUTING.md` § "CLI
 //! convention: stdout tells the agent the next step".
+//!
+//! A fourth verb, [`connect`], rides behind the `k8s` feature: the
+//! port-forward lifecycle + token-registry Secret resolution every
+//! k8s-native service CLI's `<cli> connect` wants (extracted from `lumen
+//! connect`, #1321/#1376 — see `CONTRIBUTING.md` § "Deploy artifacts").
 
 pub mod chainable;
+#[cfg(feature = "k8s")]
+pub mod connect;
 pub mod issue;
 pub mod llm;
 /// Deprecated alias of [`issue`] — kept until keep/loom/lumen adopt `issue`.

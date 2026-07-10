@@ -693,6 +693,26 @@ builds. Reference adopters: `apps/jet` and `projects/lumen`.
   to that same label. The group is named `issue` (**not** `report`), leaving
   domain `report` verbs (`jet report` = HTML **test** reports) untouched.
 
+A fourth verb, **`connect`**, is a convention for **k8s-native service CLIs**
+specifically (not every CLI — see "Service CLI convention" below for the
+`kubernetes_native` project baseline): `<cli> connect --namespace <ns>
+(--service <svc> | --cr <cr-name>) [--secret <secret>] -- <cmd>...` spawns a
+`kubectl port-forward` for the duration of a wrapped command and tears it down
+(kill + wait) on exit regardless of the wrapped command's status, resolving a
+bearer token from a token-registry Secret when one is in play. Its
+implementation home is `cli_std::connect` (`libs/cli-std/src/connect.rs`,
+behind the `k8s` feature): the port-forward process lifecycle (`ChildGuard`,
+`free_local_port`, `wait_for_local_port_ready`) and the token-registry Secret
+resolution chain (`kubectl_get_json`, `cr_tokens_secret`,
+`resolve_cr_tokens_secret`, `secret_data_bytes`, `select_token`,
+`resolve_token`) are universal to any k8s-native service CLI — a tool adopts
+`connect` by supplying only its own flag surface, its CR-kind lookup
+convention (the `resource_kind` string passed to `resolve_cr_tokens_secret`),
+and a role mapping into `cli_std::connect::Role`. `projects/lumen`
+(`lumen connect`, extracted #1321/#1376) is the reference adopter; keep/relay/
+loom/beam adopting `connect` is tracked as follow-up work per project, not
+required by this convention alone.
+
 ## CLI convention: stdout tells the agent the next step
 
 > Every CLI's machine-readable output must tell the agent what happens next —
