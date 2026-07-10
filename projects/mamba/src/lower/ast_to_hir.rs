@@ -9290,6 +9290,7 @@ impl<'a> AstLowerer<'a> {
                         .tcx
                         .find(&crate::types::Ty::Class {
                             name: class_name.to_string(),
+                            user: None,
                             fields: Vec::new(),
                             match_args: None,
                         })

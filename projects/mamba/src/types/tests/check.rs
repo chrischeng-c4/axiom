@@ -1264,6 +1264,234 @@ fn pep695_default_references_must_point_backward() {
 }
 
 #[test]
+fn pep695_constructor_propagates_inference_and_defaults_to_instances() {
+    let errors = check(
+        "class Box[T]:\n\
+         \x20   value: T = None\n\
+         \x20   def __init__(self, value: T):\n\
+         \x20       self.value = value\n\
+         \x20   def get(self) -> T:\n\
+         \x20       return self.value\n\
+         \x20   def put(self, value: T) -> None:\n\
+         \x20       pass\n\
+         box = Box(\"text\")\n\
+         bad_field: int = box.value\n\
+         bad_keyword: int = Box(value=\"text\").value\n\
+         bad_method: int = Box(\"text\").get()\n\
+         Box(\"text\").put(value=1)\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        4,
+        "constructor inference must reach fields, methods, and keyword calls: {errors:?}"
+    );
+
+    let errors = check(
+        "class Pair[T, U = list[T]]:\n\
+         \x20   second: U = None\n\
+         \x20   def __init__(self, first: T):\n\
+         \x20       pass\n\
+         bad: list[str] = Pair(1).second\n\
+         class DefaultBox[T = int]:\n\
+         \x20   value: T = None\n\
+         bad_default: str = DefaultBox().value\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        2,
+        "unsolved constructor parameters must consume defaults in declaration order: {errors:?}"
+    );
+
+    let errors = check(
+        "class Loose[T]:\n\
+         \x20   value: T = None\n\
+         \x20   def __init__(self):\n\
+         \x20       pass\n\
+         gradual: int = Loose().value\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "an unsolved parameter without a default must remain gradual Any: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_explicit_constructor_specialization_is_preserved() {
+    let errors = check(
+        "class Box[T]:\n\
+         \x20   value: T = None\n\
+         \x20   def __init__(self, value: T):\n\
+         \x20       self.value = value\n\
+         \x20   def get(self) -> T:\n\
+         \x20       return self.value\n\
+         \x20   def put(self, value: T) -> None:\n\
+         \x20       pass\n\
+         bad_field: str = Box[int](1).value\n\
+         bad_method: str = Box[int](1).get()\n\
+         Box[int](1).put(value=\"bad\")\n\
+         Box[int](\"bad\")\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        4,
+        "explicit type arguments must survive construction and constrain arguments: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_generic_function_return_substitutes_user_class() {
+    let errors = check(
+        "class Box[T]:\n\
+         \x20   value: T = None\n\
+         \x20   def __init__(self, value: T):\n\
+         \x20       self.value = value\n\
+         def make[T](value: T) -> Box[T]:\n\
+         \x20   return Box(value)\n\
+         bad: str = make(1).value\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("type mismatch")),
+        "generic function return substitution must recurse through user classes: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_constructor_checks_fixed_parameters_after_inference() {
+    let errors = check(
+        "class Box[T]:\n\
+         \x20   def __init__(self, value: T, label: str):\n\
+         \x20       pass\n\
+         Box(1, 2)\n\
+         Box(value=1, label=2)\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("expected `str`, got `int`"))
+            .count(),
+        2,
+        "constructor inference must still check concrete parameters: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_inference_recurses_through_user_class_arguments() {
+    let errors = check(
+        "class Box[T]:\n\
+         \x20   value: T = None\n\
+         \x20   def __init__(self, value: T):\n\
+         \x20       self.value = value\n\
+         def unwrap[T](box: Box[T]) -> T:\n\
+         \x20   return box.value\n\
+         bad: str = unwrap(Box(1))\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("type mismatch")),
+        "inference must flow from Box[int] into a Box[T] parameter: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_expression_specialization_rejects_non_generic_and_deduplicates_bounds() {
+    let errors = check(
+        "class Plain:\n\
+         \x20   pass\n\
+         Plain[int]()\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type 'Plain' is not generic"))
+            .count(),
+        1,
+        "expression-level specialization must match annotation diagnostics: {errors:?}"
+    );
+
+    let errors = check(
+        "class NumericBox[T: float]:\n\
+         \x20   def __init__(self, value: T):\n\
+         \x20       pass\n\
+         NumericBox[str](\"bad\")\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("bound violation"))
+            .count(),
+        1,
+        "explicit constructor bounds must be diagnosed once: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_parameterized_class_method_access_stays_unbound() {
+    let errors = check(
+        "class Box[T]:\n\
+         \x20   def get(self, fallback: T) -> T:\n\
+         \x20       return fallback\n\
+         dynamic: str = Box[int].get()\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "normal-mode access through a parameterized class object stays dynamic: {errors:?}"
+    );
+
+    let errors = check_strict_type_fixture(
+        "class Box[T]:\n\
+         \x20   def get(self, fallback: T) -> T:\n\
+         \x20       return fallback\n\
+         Box[int].get(Box(1), fallback=\"bad\")\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("expected `int`, got `str`")),
+        "strict unbound calls must retain the receiver and specialize later parameters: {errors:?}"
+    );
+
+    let errors = check_strict_type_fixture(
+        "class PlainBox:\n\
+         \x20   def get(self, fallback: int) -> int:\n\
+         \x20       return fallback\n\
+         PlainBox.get(PlainBox(), fallback=\"bad\")\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("expected `int`, got `str`")),
+        "bare unbound keyword calls must align metadata after the receiver: {errors:?}"
+    );
+
+    let errors = check_strict_type_fixture(
+        "class Box:\n\
+         \x20   def get(self, fallback: int) -> int:\n\
+         \x20       return fallback\n\
+         def outer() -> None:\n\
+         \x20   class Box:\n\
+         \x20       def get(self, fallback: str) -> str:\n\
+         \x20           return fallback\n\
+         \x20   Box.get(Box(), fallback=\"ok\")\n\
+         outer()\n\
+         Box.get(Box(), fallback=\"bad\")\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("expected `int`, got `str`")),
+        "same-named nested classes must not overwrite unbound method metadata: {errors:?}"
+    );
+}
+
+#[test]
 fn test_generic_class_definition() {
     // Generic class with type params should type-check
     let errors = check(
