@@ -1440,6 +1440,41 @@ fn test_async_function_body_reads_locals() {
 }
 
 #[test]
+fn test_async_resume_dispatch_reads_state_once() {
+    let mir =
+        pipeline("async def pair(a, b):\n    x = await a\n    y = await b\n    return x + y\n");
+    let body = mir
+        .bodies
+        .iter()
+        .find(|body| {
+            body.blocks.iter().any(|block| {
+                block.stmts.iter().any(|stmt| {
+                    matches!(
+                        stmt,
+                        MirInst::CallExtern { name, .. } if name == "mb_coroutine_take_resume_value"
+                    )
+                })
+            })
+        })
+        .expect("async body should contain resume dispatch");
+    let get_state_calls = body
+        .blocks
+        .iter()
+        .flat_map(|block| block.stmts.iter())
+        .filter(|stmt| {
+            matches!(
+                stmt,
+                MirInst::CallExtern { name, .. } if name == "mb_coroutine_get_state_i64"
+            )
+        })
+        .count();
+    assert_eq!(
+        get_state_calls, 1,
+        "async resume dispatch should read coroutine state once"
+    );
+}
+
+#[test]
 fn test_nested_async_function_captures_outer_local() {
     let mir = pipeline(
         "async def outer():\n    xs = []\n    async def inner():\n        xs.append(1)\n    await inner()\n",
