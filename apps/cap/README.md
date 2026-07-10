@@ -92,13 +92,14 @@ Required Verification: smoke
 Promise:
 `cap run` wraps local commands in daemon leases, applies memory-pressure backpressure, and emits structured outcomes when a command must wait, pause, resume, or be killed. Independently of memory/CPU pressure, `--timeout <secs>` kills a lease once its wall-clock run time (excluding time spent `Paused`) exceeds the budget, and `--idle-timeout <secs>` kills a lease that makes no CPU progress for that many seconds (also excluding `Paused` time). Both flags default to the daemon's `default_timeout_secs`/`default_idle_timeout_secs` config (0 = disabled) when omitted, and an explicit `0` disables the trigger for that invocation regardless of the config default. Both triggers reuse the existing SIGTERM-grace/SIGKILL escalation and `KillEnvelope` reporting — no new kill mechanism — surfaced as the `AbsoluteTimeout`/`IdleTimeout` classifications with `RaiseTimeoutOrSplit`/`InvestigateHang` actions.
 Gate Inventory:
-- `cargo test -p cap throttle`; `cargo test -p cap sampler`; `cargo test -p cap protocol`; `cargo test -p cap cli`
+- `cargo test -p cap throttle`; `cargo test -p cap sampler`; `cargo test -p cap protocol`; `cargo test -p cap cli`; `cargo test -p cap command_planner`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Lease admission and process supervision | epic | - | implemented | verified | smoke | `cargo test -p cap throttle` |
 | Memory and CPU pressure sampling | epic | - | implemented | verified | smoke | `cargo test -p cap sampler` |
 | Absolute and idle wall-clock timeouts | epic | #1323 | implemented | verified | smoke | `cargo test -p cap throttle` |
+| Command planner cd-prefix native recognition | change | #1378 | planned | planned | none | `cargo test -p cap command_planner` |
 
 ### Daemon Lifecycle and Status
 
