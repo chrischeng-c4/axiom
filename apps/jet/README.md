@@ -184,6 +184,7 @@ EC Dimensions:
 | Transform Resolver Parity | epic | #3782 | implemented | verified | corpus | `cargo test -p jet --lib transform -- --nocapture` |
 | Asset Sourcemap Negative Paths | epic | #3782 | implemented | verified | negative | `cargo test -p jet --lib asset -- --nocapture` |
 | SCSS / Sass Compilation | change | #204 | implemented | verified | conformance | `cargo test -p jet --lib css::scss` — grass-based (pure-Rust, no C deps) SCSS/Sass to CSS: nesting, variables, use/import partials, mixins; fed into the CSS pipeline before minify |
+| Fix CSS Layer Statement Form Parse Error | change | #1377 | implemented | verified | conformance | `cargo test -p jet --lib css::directives -- --nocapture` — the bare CSS Cascade Layers order statement (`@layer theme, base, components, utilities;`) emitted by Tailwind v4 is recognized and dropped by the directive pipeline before the final `lightningcss` parse step, alongside unchanged block-form `@layer name { ... }` inlining — see `projects/jet/tech-design/logic/jet-css-parser-fails-to-parse-tailwind-css-v4-layer-directives.md` |
 
 ### Dev Server And HMR
 
