@@ -463,22 +463,42 @@ impl TypeChecker {
                 }
             }
             Stmt::ClassDef {
-                name,
-                type_params,
-                body,
-                ..
+                name, bases, body, ..
             } => {
-                let _gp = self.register_type_params(type_params);
+                let class_symbol = self.symbols.lookup(name);
+                let aliases: Vec<_> = class_symbol
+                    .and_then(|symbol| self.generic_defs.get(&symbol))
+                    .map(|generic_params| {
+                        generic_params
+                            .params
+                            .iter()
+                            .map(|param| (param.name.clone(), param.id))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !aliases.is_empty() {
+                    self.register_type_param_aliases(&aliases);
+                }
                 let prev_class = self.current_class.replace(name.clone());
                 self.symbols.push_scope();
                 self.preregister_defs(body);
                 self.finalize_generic_metadata_in(body);
+                self.refresh_function_signatures_in(body);
+                if let Some(class_symbol) = class_symbol {
+                    let is_protocol = bases
+                        .iter()
+                        .any(|base| matches!(&base.node, Expr::Ident(name) if name == "Protocol"));
+                    self.rebuild_class_metadata(class_symbol, name, body, is_protocol);
+                }
                 for s in body {
                     self.check_stmt(s);
                 }
                 self.symbols.pop_scope();
                 self.current_class = prev_class;
-                self.unregister_type_params(type_params);
+                if !aliases.is_empty() {
+                    let names: Vec<_> = aliases.into_iter().map(|(name, _)| name).collect();
+                    self.unregister_type_param_aliases(&names);
+                }
             }
             Stmt::EnumDef { .. } => { /* handled in first pass */ }
             Stmt::AugAssign { target, value, .. } => {
@@ -700,6 +720,7 @@ impl TypeChecker {
         }
         self.preregister_defs(body);
         self.finalize_generic_metadata_in(body);
+        self.refresh_function_signatures_in(body);
         // Python scoping rule: any name assigned anywhere in the body is
         // local. Pre-define each such name as Any before walking the body
         // so identifier lookups find the local binding rather than walking
