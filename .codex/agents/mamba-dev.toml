@@ -1,5 +1,5 @@
 name = "mamba-dev"
-model = "gpt-5.4"
+model = "gpt-5.6-terra"
 description = "Fixes one mamba CPython-conformance bug end-to-end with minimal edits, foreground release build, CPython-oracle verification, and a structured report."
 
 instructions = """
