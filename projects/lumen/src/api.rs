@@ -11,6 +11,7 @@
 //! The contract for external consumers is `GET /openapi.json`,
 //! generated at runtime from this module.
 
+use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -42,6 +43,8 @@ use crate::backup_sink::{BackupSink, LocalFsSink};
 use crate::coordinator::{WriteCoordinator, WriteSink};
 use crate::log_entry::RaftLogEntry;
 use crate::raft::{ClusterStateView, RaftRole, ReadConsistency};
+use crate::reshard::ReshardBatch;
+use crate::routing::VirtualBucketShardMap;
 use crate::storage::{ApplyOutcome, DropOutcome, Engine, SnapshotV1, StorageError};
 use crate::types::{
     Analyzer, ApiError, BatchSearchRequest, BatchSearchResponse, BatchSearchResult, CacheStats,
@@ -322,6 +325,9 @@ impl AppState {
         batch_search,
         duplicates,
         stats,
+        backup_scoped,
+        reshard_apply,
+        reshard_evict,
     ),
     components(schemas(
         CreateCollectionRequest,
@@ -488,7 +494,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/admin/backup", get(backup))
         .route("/admin/backup/local", post(backup_to_local))
+        .route("/admin/backup:scoped", post(backup_scoped))
         .route("/admin/restore", post(restore))
+        .route("/admin/reshard:apply", post(reshard_apply))
+        .route("/admin/reshard:evict", post(reshard_evict))
         .layer(from_fn_with_state(auth_state, auth_middleware))
         // Bound request bodies: a bulk index is ~MBs (the item cap is the real
         // guard); 8MiB is the broker payload budget. Rejects oversized
@@ -1552,6 +1561,160 @@ async fn restore(
         subject = auth.subject().unwrap_or("anonymous"),
     );
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------------------
+// Reshard admin verbs (#1380): batch-apply, bucket-scoped export, evict.
+//
+// `reshard.rs`'s tested primitives (`bucket_moves`, `snapshot_reshard_batches`)
+// emit bounded `ReshardBatch` units for checkpointed migration; these three
+// verbs are the wire surface that moves one. All three require `Role::Admin`
+// on `*`, same as `/admin/backup`/`/admin/restore` above.
+// ---------------------------------------------------------------------------
+
+/// `POST /admin/reshard:apply`: additively merge one [`ReshardBatch`] into
+/// the live engine (upsert semantics for the batch's documents; never a
+/// full replace, unlike `/admin/restore`). Idempotent — a retried batch
+/// (operator resume after a checkpoint) converges to the same query-visible
+/// state; see [`Engine::apply_reshard_batch`].
+#[utoipa::path(
+    post,
+    path = "/admin/reshard:apply",
+    tag = "Admin",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Batch merged additively (safe to retry)", body = serde_json::Value),
+        (status = 400, description = "Malformed batch or snapshot version mismatch", body = ApiError)
+    )
+)]
+async fn reshard_apply(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Json(batch): Json<ReshardBatch>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    auth.ensure("*", Role::Admin)?;
+    let outcome = state
+        .engine
+        .apply_reshard_batch(batch.snapshot)
+        .map_err(ApiErr::from)?;
+    tracing::info!(
+        target: "lumen.audit",
+        event = "reshard_batch_applied",
+        subject = auth.subject().unwrap_or("anonymous"),
+        bucket = batch.bucket,
+        from_shard = batch.from_shard,
+        to_shard = batch.to_shard,
+        from_map_version = batch.from_map_version,
+        to_map_version = batch.to_map_version,
+        collections_touched = outcome.collections_touched,
+        documents_upserted = outcome.documents_upserted,
+    );
+    Ok(Json(serde_json::json!({
+        "collections_touched": outcome.collections_touched,
+        "documents_upserted": outcome.documents_upserted,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+struct ScopedBackupRequest {
+    /// Same `virtual_bucket_count` the caller's [`VirtualBucketShardMap`]
+    /// uses — must match what `snapshot_reshard_batches` was/will be called
+    /// with so bucket membership agrees.
+    virtual_bucket_count: u32,
+    /// Only documents whose bucket is in this set are included.
+    buckets: BTreeSet<u32>,
+}
+
+/// `POST /admin/backup:scoped`: like `GET /admin/backup`, but restricted to
+/// documents routed to the requested virtual buckets — a source shard can
+/// export just the buckets that are moving instead of a full-engine dump.
+/// Bucket membership is computed with the same hash `reshard::
+/// snapshot_reshard_batches` uses ([`crate::reshard::snapshot_bucket_subset`]),
+/// so an export and a later-computed batch can never disagree.
+#[utoipa::path(
+    post,
+    path = "/admin/backup:scoped",
+    tag = "Admin",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "SnapshotV1 restricted to the requested virtual buckets", body = serde_json::Value),
+        (status = 400, description = "Invalid virtual_bucket_count", body = ApiError)
+    )
+)]
+async fn backup_scoped(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Json(req): Json<ScopedBackupRequest>,
+) -> Result<Json<SnapshotV1>, ApiErr> {
+    auth.ensure("*", Role::Admin)?;
+    let full = state.engine.snapshot().map_err(ApiErr::from)?;
+    let scoped =
+        crate::reshard::snapshot_bucket_subset(&full, req.virtual_bucket_count, &req.buckets)
+            .map_err(ApiErr::from)?;
+    tracing::info!(
+        target: "lumen.audit",
+        event = "backup_scoped",
+        subject = auth.subject().unwrap_or("anonymous"),
+        virtual_bucket_count = req.virtual_bucket_count,
+        buckets = req.buckets.len(),
+    );
+    Ok(Json(scoped))
+}
+
+#[derive(Debug, Deserialize)]
+struct ReshardEvictRequest {
+    /// This shard's physical index in `assignments`.
+    shard: u32,
+    /// The newer map version being cut over to; carried for audit logging.
+    map_version: u64,
+    /// `bucket -> physical shard` assignment for the newer map. Its length
+    /// is the virtual bucket count.
+    assignments: Vec<u32>,
+    physical_shard_count: u32,
+}
+
+/// `POST /admin/reshard:evict`: source-side post-cutover eviction. Given a
+/// newer virtual-bucket map and this shard's index within it, removes
+/// exactly the documents whose bucket no longer routes to this shard —
+/// nothing else. A separate, explicitly-invoked step; never implicit in
+/// `/admin/reshard:apply` or `/admin/backup*`. Idempotent — a document
+/// already evicted by a prior call no longer matches and is skipped.
+#[utoipa::path(
+    post,
+    path = "/admin/reshard:evict",
+    tag = "Admin",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Documents no longer owned by this shard removed", body = serde_json::Value),
+        (status = 400, description = "Invalid virtual bucket map", body = ApiError)
+    )
+)]
+async fn reshard_evict(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Json(req): Json<ReshardEvictRequest>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    auth.ensure("*", Role::Admin)?;
+    let map =
+        VirtualBucketShardMap::new(req.map_version, req.assignments, req.physical_shard_count)
+            .map_err(ApiErr::from)?;
+    let outcome = state
+        .engine
+        .evict_not_owned(&map, req.shard)
+        .map_err(ApiErr::from)?;
+    tracing::info!(
+        target: "lumen.audit",
+        event = "reshard_evict",
+        subject = auth.subject().unwrap_or("anonymous"),
+        shard = req.shard,
+        map_version = req.map_version,
+        collections_touched = outcome.collections_touched,
+        documents_evicted = outcome.documents_evicted,
+    );
+    Ok(Json(serde_json::json!({
+        "collections_touched": outcome.collections_touched,
+        "documents_evicted": outcome.documents_evicted,
+    })))
 }
 
 // ---------------------------------------------------------------------------
