@@ -170,6 +170,31 @@ impl Substitution {
                     tcx.intern(Ty::Union(new_variants))
                 }
             }
+            Ty::Class {
+                ref name,
+                ref user,
+                ref fields,
+                ref match_args,
+            } => {
+                let new_user = user.as_ref().map(|user| super::ty::UserClass {
+                    symbol: user.symbol,
+                    args: user.args.iter().map(|arg| self.apply(*arg, tcx)).collect(),
+                });
+                let new_fields: Vec<_> = fields
+                    .iter()
+                    .map(|(field_name, field_ty)| (field_name.clone(), self.apply(*field_ty, tcx)))
+                    .collect();
+                if new_user == *user && new_fields == *fields {
+                    ty
+                } else {
+                    tcx.intern(Ty::Class {
+                        name: name.clone(),
+                        user: new_user,
+                        fields: new_fields,
+                        match_args: match_args.clone(),
+                    })
+                }
+            }
             // Primitive types are unchanged
             _ => ty,
         }
@@ -241,6 +266,40 @@ pub fn bind_explicit_type_args(
     (subst, resolved, errors)
 }
 
+/// Complete a partially inferred ordinary-TypeVar substitution.
+///
+/// Constructor inference may solve only some class parameters. Remaining
+/// parameters consume their declared default, or `Any` when no default is
+/// available. Pack and ParamSpec completion waits for richer representations.
+pub fn complete_type_args(
+    generic_params: &GenericParams,
+    mut subst: Substitution,
+    tcx: &mut TypeContext,
+) -> Option<(Substitution, Vec<TypeId>)> {
+    if generic_params
+        .params
+        .iter()
+        .any(|param| param.kind != TypeVarKind::TypeVar)
+    {
+        return None;
+    }
+
+    let mut resolved = Vec::with_capacity(generic_params.len());
+    for param in &generic_params.params {
+        let concrete = subst.get(param.id).unwrap_or_else(|| {
+            param
+                .default
+                .resolved()
+                .map(|default| subst.apply(default, tcx))
+                .unwrap_or_else(|| tcx.any())
+        });
+        let concrete = normalize_constrained_candidate(param, concrete, tcx);
+        subst.insert(param.id, concrete);
+        resolved.push(concrete);
+    }
+    Some((subst, resolved))
+}
+
 /// Infer type arguments by unifying generic parameters with concrete arguments.
 ///
 /// Given `def f[T](x: T, y: T)` called as `f(1, 2)`,
@@ -287,7 +346,11 @@ fn unify_for_inference(
                 let arg = normalize_constrained_candidate(type_var, arg, tcx);
                 if let Some(existing) = subst.get(var_id) {
                     // Already inferred — verify consistency
-                    if existing != arg {
+                    if matches!(tcx.get(existing), Ty::Any | Ty::Error)
+                        && !matches!(tcx.get(arg), Ty::Any | Ty::Error)
+                    {
+                        subst.insert(var_id, arg);
+                    } else if existing != arg && !matches!(tcx.get(arg), Ty::Any | Ty::Error) {
                         let tv_name = type_var.name.as_str();
                         conflicts.push(format!("conflicting types for type parameter '{tv_name}'"));
                     }
@@ -320,6 +383,32 @@ fn unify_for_inference(
             if let Ty::Tuple(args_inner) = arg_ty {
                 for (p, a) in params_inner.iter().zip(args_inner.iter()) {
                     unify_for_inference(*p, *a, type_vars, subst, conflicts, tcx);
+                }
+            }
+        }
+        Ty::Class {
+            user: Some(param_user),
+            ..
+        } => {
+            let arg_ty = tcx.get(arg).clone();
+            if let Ty::Class {
+                user: Some(arg_user),
+                ..
+            } = arg_ty
+            {
+                if param_user.symbol == arg_user.symbol
+                    && param_user.args.len() == arg_user.args.len()
+                {
+                    for (param_arg, concrete_arg) in param_user.args.iter().zip(&arg_user.args) {
+                        unify_for_inference(
+                            *param_arg,
+                            *concrete_arg,
+                            type_vars,
+                            subst,
+                            conflicts,
+                            tcx,
+                        );
+                    }
                 }
             }
         }
@@ -441,6 +530,25 @@ mod tests {
     }
 
     #[test]
+    fn test_infer_type_args_refines_gradual_evidence() {
+        let mut tcx = TypeContext::new();
+        let var_id = TypeVarId(0);
+        let var_ty = tcx.intern(Ty::TypeVar(var_id));
+        let mut gp = GenericParams::new();
+        gp.add("T", var_id, None);
+
+        let (subst, conflicts) =
+            infer_type_args(&gp, &[var_ty, var_ty], &[tcx.any(), tcx.int()], &tcx);
+        assert!(conflicts.is_empty());
+        assert_eq!(subst.get(var_id), Some(tcx.int()));
+
+        let (subst, conflicts) =
+            infer_type_args(&gp, &[var_ty, var_ty], &[tcx.int(), tcx.any()], &tcx);
+        assert!(conflicts.is_empty());
+        assert_eq!(subst.get(var_id), Some(tcx.int()));
+    }
+
+    #[test]
     fn test_generic_params_empty() {
         let gp = GenericParams::new();
         assert!(gp.is_empty());
@@ -544,6 +652,36 @@ mod tests {
         assert!(errors.is_empty());
         assert_eq!(subst.get(TypeVarId(0)), Some(tcx.int()));
         assert_eq!(resolved, vec![tcx.int()]);
+    }
+
+    #[test]
+    fn test_complete_type_args_combines_inference_defaults_and_any() {
+        let mut tcx = TypeContext::new();
+        let t_id = TypeVarId(0);
+        let u_id = TypeVarId(1);
+        let v_id = TypeVarId(2);
+        let t_ty = tcx.intern(Ty::TypeVar(t_id));
+        let default_u = tcx.intern(Ty::List(t_ty));
+        let mut gp = GenericParams::new();
+        gp.add("T", t_id, None);
+        gp.add_param(
+            "U",
+            u_id,
+            TypeVarKind::TypeVar,
+            None,
+            Vec::new(),
+            TypeParamDefault::Resolved(default_u),
+        );
+        gp.add("V", v_id, None);
+
+        let mut inferred = Substitution::new();
+        inferred.insert(t_id, tcx.str());
+        let (completed, resolved) = complete_type_args(&gp, inferred, &mut tcx).unwrap();
+
+        assert_eq!(completed.get(t_id), Some(tcx.str()));
+        assert_eq!(*tcx.get(completed.get(u_id).unwrap()), Ty::List(tcx.str()));
+        assert_eq!(completed.get(v_id), Some(tcx.any()));
+        assert_eq!(resolved.len(), 3);
     }
 
     #[test]
@@ -663,6 +801,39 @@ mod tests {
         let int_ty = tcx.int();
         let none_ty = tcx.none();
         assert_eq!(*tcx.get(result), Ty::Union(vec![int_ty, none_ty]));
+    }
+
+    #[test]
+    fn test_substitution_apply_user_class_identity_and_fields() {
+        let mut tcx = TypeContext::new();
+        let var_id = TypeVarId(0);
+        let var_ty = tcx.intern(Ty::TypeVar(var_id));
+        let class_ty = tcx.intern(Ty::Class {
+            name: "Box".to_string(),
+            user: Some(crate::types::ty::UserClass {
+                symbol: crate::resolve::SymbolId(42),
+                args: vec![var_ty],
+            }),
+            fields: vec![("value".to_string(), var_ty)],
+            match_args: None,
+        });
+        let mut subst = Substitution::new();
+        subst.insert(var_id, tcx.int());
+
+        let applied = subst.apply(class_ty, &mut tcx);
+        let Ty::Class {
+            name,
+            user: Some(user),
+            fields,
+            ..
+        } = tcx.get(applied)
+        else {
+            panic!("expected specialized user class");
+        };
+        assert_eq!(name, "Box");
+        assert_eq!(user.symbol, crate::resolve::SymbolId(42));
+        assert_eq!(user.args, vec![tcx.int()]);
+        assert_eq!(fields, &vec![("value".to_string(), tcx.int())]);
     }
 
     #[test]

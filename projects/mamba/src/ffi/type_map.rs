@@ -27,6 +27,7 @@ pub fn c_type_to_mamba(ct: &CType, tcx: &mut TypeContext) -> TypeId {
             // Named types resolve to class/enum references
             tcx.intern(Ty::Class {
                 name: name.clone(),
+                user: None,
                 fields: vec![],
                 match_args: None,
             })
@@ -43,6 +44,7 @@ pub fn struct_to_class(s: &CStruct, tcx: &mut TypeContext) -> TypeId {
         .collect();
     tcx.intern(Ty::Class {
         name: s.name.clone(),
+        user: None,
         fields,
         match_args: None,
     })
@@ -61,6 +63,7 @@ pub fn enum_to_class(e: &CEnum, tcx: &mut TypeContext) -> TypeId {
         .collect();
     tcx.intern(Ty::Class {
         name: e.name.clone(),
+        user: None,
         fields,
         match_args: None,
     })

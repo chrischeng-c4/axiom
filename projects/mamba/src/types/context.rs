@@ -175,9 +175,13 @@ impl TypeContext {
                 params.iter().any(|param| self.contains_type_var(*param))
                     || self.contains_type_var(*ret)
             }
-            Ty::Class { fields, .. } => fields
-                .iter()
-                .any(|(_, field)| self.contains_type_var(*field)),
+            Ty::Class { user, fields, .. } => {
+                user.as_ref()
+                    .is_some_and(|user| user.args.iter().any(|arg| self.contains_type_var(*arg)))
+                    || fields
+                        .iter()
+                        .any(|(_, field)| self.contains_type_var(*field))
+            }
             Ty::Enum { variants, .. } => variants
                 .iter()
                 .any(|(_, fields)| fields.iter().any(|field| self.contains_type_var(*field))),
@@ -221,7 +225,12 @@ impl TypeContext {
                 }
                 self.collect_type_vars(*ret, vars);
             }
-            Ty::Class { fields, .. } => {
+            Ty::Class { user, fields, .. } => {
+                if let Some(user) = user {
+                    for arg in &user.args {
+                        self.collect_type_vars(*arg, vars);
+                    }
+                }
                 for (_, field) in fields {
                     self.collect_type_vars(*field, vars);
                 }
@@ -365,6 +374,31 @@ mod tests {
         let list_int = tcx.intern(Ty::List(int_ty));
         let list_str = tcx.intern(Ty::List(str_ty));
         assert_ne!(list_int, list_str);
+    }
+
+    #[test]
+    fn test_user_class_symbol_is_part_of_nominal_identity() {
+        let mut tcx = TypeContext::new();
+        let first = tcx.intern(Ty::Class {
+            name: "Nested".to_string(),
+            user: Some(crate::types::ty::UserClass {
+                symbol: crate::resolve::SymbolId(10),
+                args: Vec::new(),
+            }),
+            fields: Vec::new(),
+            match_args: None,
+        });
+        let second = tcx.intern(Ty::Class {
+            name: "Nested".to_string(),
+            user: Some(crate::types::ty::UserClass {
+                symbol: crate::resolve::SymbolId(11),
+                args: Vec::new(),
+            }),
+            fields: Vec::new(),
+            match_args: None,
+        });
+
+        assert_ne!(first, second);
     }
 
     #[test]
