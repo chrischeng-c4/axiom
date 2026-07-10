@@ -224,13 +224,7 @@ fn decode_coroutine_body(fn_ptr: MbValue) -> Option<unsafe extern "C" fn(i64) ->
     Some(unsafe { std::mem::transmute(addr) })
 }
 
-/// Create a new coroutine with a pre-sized frame and registered body.
-///
-/// Async lowering hits coroutine construction on every recursive call in perf
-/// pins such as #1184. Accepting the frame size and body pointer directly lets
-/// codegen avoid the empty-list allocation/extraction round-trip and the
-/// follow-up registry write in `mb_coroutine_set_body`.
-pub fn mb_coroutine_new_with_body(_name: MbValue, local_count: i64, fn_ptr: MbValue) -> MbValue {
+fn mb_coroutine_new_with_body_impl(local_count: i64, fn_ptr: MbValue) -> MbValue {
     let module_name = super::closure::current_active_module_name();
     let local_count = local_count.max(0) as usize;
     let locals = if local_count == 0 {
@@ -257,6 +251,22 @@ pub fn mb_coroutine_new_with_body(_name: MbValue, local_count: i64, fn_ptr: MbVa
     let id = alloc_coro_id();
     COROUTINES.write().unwrap().insert(id, coro);
     MbValue::from_int(id as i64)
+}
+
+/// Create a new coroutine with a pre-sized frame and registered body.
+///
+/// Async lowering hits coroutine construction on every recursive call in perf
+/// pins such as #1184. Accepting the frame size and body pointer directly lets
+/// codegen avoid the empty-list allocation/extraction round-trip and the
+/// follow-up registry write in `mb_coroutine_set_body`.
+pub fn mb_coroutine_new_with_body(_name: MbValue, local_count: i64, fn_ptr: MbValue) -> MbValue {
+    mb_coroutine_new_with_body_impl(local_count, fn_ptr)
+}
+
+/// Async wrapper lowering no longer stores coroutine names, so the recursive
+/// perf path can bypass the dead name argument entirely.
+pub fn mb_coroutine_new_with_body_unnamed(local_count: i64, fn_ptr: MbValue) -> MbValue {
+    mb_coroutine_new_with_body_impl(local_count, fn_ptr)
 }
 
 /// Set the body function pointer for deferred execution (#313 R1).
@@ -1291,6 +1301,25 @@ mod tests {
 
         let name = MbValue::from_ptr(MbObject::new_str("await_child".to_string()));
         let coro = mb_coroutine_new_with_body(name, 2, MbValue::from_func(body as usize));
+
+        let stored = COROUTINES
+            .read()
+            .unwrap()
+            .get(&(coro.as_int().unwrap() as u64))
+            .map(|c| (c.locals.len(), c.body_fn.is_some()))
+            .unwrap();
+        assert_eq!(stored, (2, true));
+
+        mb_coroutine_release(coro);
+    }
+
+    #[test]
+    fn test_coroutine_new_with_body_unnamed_presizes_locals_and_registers_body() {
+        unsafe extern "C" fn body(_: i64) -> i64 {
+            MbValue::none().to_bits() as i64
+        }
+
+        let coro = mb_coroutine_new_with_body_unnamed(2, MbValue::from_func(body as usize));
 
         let stored = COROUTINES
             .read()
