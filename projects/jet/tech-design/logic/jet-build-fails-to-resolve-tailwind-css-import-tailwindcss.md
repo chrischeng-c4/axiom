@@ -114,3 +114,49 @@ flowchart TD
     inline_resolved_entry --> done_inlined
     bail_with_clear_error --> done_error([Directory-only bare specifier with no resolvable entry surfaces a typed descriptive error, never an unhandled I/O 'Is a directory' error])
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: jet-css-bare-specifier-package-entry-resolution-verification
+requirements:
+  bare_specifier_directory_falls_back_to_main_field_when_style_absent:
+    id: R3
+    text: "WI #1375 R1 priority order: when a directory-only bare specifier's package.json has neither an 'exports' match nor a top-level 'style' field, the resolver falls back to the package.json 'main' field to find the real CSS entry file."
+    kind: functional
+    risk: medium
+    verify: cargo test -p jet --lib css::import_resolver::tests::bare_specifier_directory_falls_back_to_main_field_when_style_absent
+  bare_specifier_directory_falls_back_to_style_field_when_exports_absent:
+    id: R2
+    text: "WI #1375 R1 priority order: when a directory-only bare specifier's package.json has no 'exports' match, the resolver falls back to the package.json top-level 'style' field to find the real CSS entry file."
+    kind: functional
+    risk: medium
+    verify: cargo test -p jet --lib css::import_resolver::tests::bare_specifier_directory_falls_back_to_style_field_when_exports_absent
+  bare_specifier_directory_resolves_via_package_json_exports:
+    id: R1
+    text: "WI #1375 AC1/AC2: a bare-specifier @import (e.g. @import \"tailwindcss\";) whose node_modules/<pkg> path is a directory, with a package.json 'exports' map whose '.' entry resolves (via the existing resolve_exports helper with a style-first condition list) to a real CSS file, is inlined by resolve_imports/resolve_source instead of raising \"Is a directory (os error 21)\". Uses a minimal fixture package under a tempdir's node_modules with a package.json pointing at a real CSS file; does not require an actual tailwindcss install."
+    kind: functional
+    risk: high
+    verify: cargo test -p jet --lib css::import_resolver::tests::bare_specifier_directory_resolves_via_package_json_exports
+  bare_specifier_directory_without_resolvable_entry_surfaces_clear_error:
+    id: R4
+    text: "Negative path: a directory-only bare specifier whose package.json has no exports/style/main match (or no package.json at all) surfaces a typed, descriptive error naming the attempted package.json fallback -- never the raw 'Is a directory (os error 21)' I/O error and never a silent false success."
+    kind: regression
+    risk: medium
+    verify: cargo test -p jet --lib css::import_resolver::tests::bare_specifier_directory_without_resolvable_entry_surfaces_clear_error
+  existing_css_import_resolver_suite_stays_green:
+    id: R5
+    text: "WI #1375 AC3: the existing css::import_resolver test suite (relative resolution, circular detection, remote-URL passthrough, three-level import chain, canonicalize-error surfacing) remains green after the package.json fallback change."
+    kind: regression
+    risk: low
+    verify: cargo test -p jet --lib css::
+---
+flowchart TD
+    r1[R1 bare specifier directory resolves via package json exports] --> cargo_test_p_jet_lib_css_import_resolver_tests_bare_specifier_directory_resolves_via_package_json_exports[cargo test -p jet --lib css::import_resolver::tests::bare_specifier_directory_resolves_via_package_json_exports]
+    r2[R2 bare specifier directory falls back to style field when exports absent] --> cargo_test_p_jet_lib_css_import_resolver_tests_bare_specifier_directory_falls_back_to_style_field_when_exports_absent[cargo test -p jet --lib css::import_resolver::tests::bare_specifier_directory_falls_back_to_style_field_when_exports_absent]
+    r3[R3 bare specifier directory falls back to main field when style absent] --> cargo_test_p_jet_lib_css_import_resolver_tests_bare_specifier_directory_falls_back_to_main_field_when_style_absent[cargo test -p jet --lib css::import_resolver::tests::bare_specifier_directory_falls_back_to_main_field_when_style_absent]
+    r4[R4 bare specifier directory without resolvable entry surfaces clear error] --> cargo_test_p_jet_lib_css_import_resolver_tests_bare_specifier_directory_without_resolvable_entry_surfaces_clear_error[cargo test -p jet --lib css::import_resolver::tests::bare_specifier_directory_without_resolvable_entry_surfaces_clear_error]
+    r5[R5 existing css import resolver suite stays green] --> cargo_test_p_jet_lib_css[cargo test -p jet --lib css::]
+```
