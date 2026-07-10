@@ -18,7 +18,7 @@
 
 
 def a() -> None:
-    return 7  # type: ignore[return-value]
+    return 7
 
 
 try:
