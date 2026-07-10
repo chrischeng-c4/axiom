@@ -21,21 +21,22 @@ Public API manifest for `libs/cli-std/src/lib.rs` captured during libs codegen s
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `chainable` | libs/cli-std/src/lib.rs | module | pub | 24 | pub mod chainable; |
-| `issue` | libs/cli-std/src/lib.rs | module | pub | 25 | pub mod issue; |
-| `llm` | libs/cli-std/src/lib.rs | module | pub | 26 | pub mod llm; |
-| `report_issue` | libs/cli-std/src/lib.rs | module | pub | 28 | pub mod report_issue; |
-| `upgrade` | libs/cli-std/src/lib.rs | module | pub | 29 | pub mod upgrade; |
-| `ToolInfo` | libs/cli-std/src/lib.rs | struct | pub | 51 | pub struct ToolInfo { |
-| `tag_prefix` | libs/cli-std/src/lib.rs | function | pub | 69 | pub fn tag_prefix(&self) -> String { |
-| `asset_name` | libs/cli-std/src/lib.rs | function | pub | 74 | pub fn asset_name(&self) -> String { |
-| `inner_binary_path` | libs/cli-std/src/lib.rs | function | pub | 80 | pub fn inner_binary_path(&self) -> String { |
-| `resolve_github_token` | libs/cli-std/src/lib.rs | function | pub | 95 | pub(crate) fn resolve_github_token() -> Option<String> { |
-| `github_get` | libs/cli-std/src/lib.rs | function | pub | 134 | pub(crate) async fn github_get( |
-| `download_bytes` | libs/cli-std/src/lib.rs | function | pub | 153 | pub(crate) async fn download_bytes(client: &reqwest::Client, url: &str) -> anyhow::Result<Vec<u8>> { |
-| `download_text` | libs/cli-std/src/lib.rs | function | pub | 166 | pub(crate) async fn download_text(client: &reqwest::Client, url: &str) -> anyhow::Result<String> { |
-| `confirm` | libs/cli-std/src/lib.rs | function | pub | 181 | pub(crate) fn confirm(prompt: &str) -> anyhow::Result<bool> { |
-| `install_over_self` | libs/cli-std/src/lib.rs | function | pub | 200 | pub(crate) fn install_over_self(bin: &[u8], tmp_label: &str) -> anyhow::Result<()> { |
+| `chainable` | libs/cli-std/src/lib.rs | module | pub | 31 | pub mod chainable; |
+| `connect` | libs/cli-std/src/lib.rs | module | pub | 33 | pub mod connect; (feature `k8s`) |
+| `issue` | libs/cli-std/src/lib.rs | module | pub | 34 | pub mod issue; |
+| `llm` | libs/cli-std/src/lib.rs | module | pub | 35 | pub mod llm; |
+| `report_issue` | libs/cli-std/src/lib.rs | module | pub | 37 | pub mod report_issue; |
+| `upgrade` | libs/cli-std/src/lib.rs | module | pub | 38 | pub mod upgrade; |
+| `ToolInfo` | libs/cli-std/src/lib.rs | struct | pub | 61 | pub struct ToolInfo { |
+| `tag_prefix` | libs/cli-std/src/lib.rs | function | pub | 85 | pub fn tag_prefix(&self) -> String { |
+| `asset_name` | libs/cli-std/src/lib.rs | function | pub | 90 | pub fn asset_name(&self) -> String { |
+| `inner_binary_path` | libs/cli-std/src/lib.rs | function | pub | 96 | pub fn inner_binary_path(&self) -> String { |
+| `resolve_github_token` | libs/cli-std/src/lib.rs | function | pub | 112 | pub(crate) fn resolve_github_token() -> Option<String> { |
+| `github_get` | libs/cli-std/src/lib.rs | function | pub | 151 | pub(crate) async fn github_get( |
+| `download_bytes` | libs/cli-std/src/lib.rs | function | pub | 170 | pub(crate) async fn download_bytes(client: &reqwest::Client, url: &str) -> anyhow::Result<Vec<u8>> { |
+| `download_text` | libs/cli-std/src/lib.rs | function | pub | 183 | pub(crate) async fn download_text(client: &reqwest::Client, url: &str) -> anyhow::Result<String> { |
+| `confirm` | libs/cli-std/src/lib.rs | function | pub | 199 | pub(crate) fn confirm(prompt: &str) -> anyhow::Result<bool> { |
+| `install_over_self` | libs/cli-std/src/lib.rs | function | pub | 219 | pub(crate) fn install_over_self(bin: &[u8], tmp_label: &str) -> anyhow::Result<()> { |
 
 
 ## Source
@@ -66,8 +67,15 @@ Public API manifest for `libs/cli-std/src/lib.rs` captured during libs codegen s
 //! a test harness (not a `run` function a binary calls) backing the
 //! `chainable_output` archetype trait's gate: `CONTRIBUTING.md` § "CLI
 //! convention: stdout tells the agent the next step".
+//!
+//! A fourth verb, [`connect`], rides behind the `k8s` feature: the
+//! port-forward lifecycle + token-registry Secret resolution every
+//! k8s-native service CLI's `<cli> connect` wants (extracted from `lumen
+//! connect`, #1321/#1376 — see `CONTRIBUTING.md` § "Deploy artifacts").
 
 pub mod chainable;
+#[cfg(feature = "k8s")]
+pub mod connect;
 pub mod issue;
 pub mod llm;
 /// Deprecated alias of [`issue`] — kept until keep/loom/lumen adopt `issue`.
@@ -433,4 +441,5 @@ changes:
     impl_mode: codegen
     description: |
       rust-source-unit (td_ast) source for `libs/cli-std/src/lib.rs` captured during libs codegen standardization.
+      Updated (#1376) to declare the new `connect` module (feature `k8s`) alongside `chainable`/`issue`/`llm`/`report_issue`/`upgrade`.
 ```

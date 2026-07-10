@@ -2,10 +2,10 @@ version = 2
 project = "cli-std"
 ir_kind = "td"
 td_path = "libs/cli-std/tech-design"
-generated_at = "2026-07-09T09:46:13.341660+00:00"
-digest = "sha256:963b68f701e5110da55cb79cb47046e60db7c0f3f6fc2084ca08e985a1daee35"
-source_digest = "sha256:963b68f701e5110da55cb79cb47046e60db7c0f3f6fc2084ca08e985a1daee35"
-ir_digest = "sha256:974a62132558fa8f6eb9a8ef609ae49d8ad14e902627b1ef9f53549e490cb922"
+generated_at = "2026-07-10T09:39:35.401152+00:00"
+digest = "sha256:a5b7f7e4e64779b734b053ab8881252424e3f0e1ec851d5dc21277dc59a2df04"
+source_digest = "sha256:a5b7f7e4e64779b734b053ab8881252424e3f0e1ec851d5dc21277dc59a2df04"
+ir_digest = "sha256:cceda34326432d73c644f7280208e1e19d207c44a4c3ecdfc4aff210ad3c4654"
 
 [[files]]
 path = "interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md"
@@ -15,13 +15,19 @@ section_count = 3
 
 [[files]]
 path = "semantic/cli-std-libs-cli-std.md"
-digest = "sha256:37178ea9d04831b0a62067f15d1e0e97c5f136aa07d6b29592ef6f2fd82e6733"
-parse_error = "schema:15-106: section 'schema' at lines 15..106: JSON Schema typed-payload parse error: did not find expected key at line 7 column 1, while parsing a block mapping"
+digest = "sha256:57b8e2438b7844807e5df6b17def78b3fe9d7091c0a4342258cdfe8d32d5476e"
+parse_error = "schema:15-116: section 'schema' at lines 15..116: JSON Schema typed-payload parse error: did not find expected key at line 7 column 1, while parsing a block mapping"
 
 [[files]]
 path = "semantic/source/libs-cli-std-src-chainable-rs.md"
 digest = "sha256:4f8e50822a7aa5a45ae9d24c07a5ae99a3d0fa112426e5da6f9cd6dc69f52eaf"
 ir_digest = "sha256:59e618af638ca0e42659c2fe9527b3dedeee07ebda73913c1c26d040f1a79557"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-cli-std-src-connect-rs.md"
+digest = "sha256:8ef779c569a85cb0bc837221d05fd2210325a0a534cd2bf8420ff30f1c138ef2"
+ir_digest = "sha256:7211cffa02e1776d289aef8f99fab5111bf2eb529f198e2226b3648d46332691"
 section_count = 3
 
 [[files]]
@@ -32,8 +38,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/libs-cli-std-src-lib-rs.md"
-digest = "sha256:372d0bd3d689cc2205ba0e382458e50fe981f370de01cfed53d27c0506129b47"
-ir_digest = "sha256:6cc4da2a82a3e4ca405e287aa3ad2956704d11fb6e032720c338914eb1c6584c"
+digest = "sha256:0a98c312910aa5466286b03120e5e35917ab7b72c4624a999cca6d0c539c7f3a"
+ir_digest = "sha256:3c92ef275b608e552b7abc730aa4ef5866dfb2fb189b084940b0569c96cbed10"
 section_count = 3
 
 [[files]]
