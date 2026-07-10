@@ -36,6 +36,7 @@ pub struct MbCoroutine {
     pub awaiting: bool,
     pub suspend_requested: bool,
     pub pending_await: Option<MbValue>,
+    pub pending_await_coro_id: Option<u64>,
     pub resume_value: Option<MbValue>,
     pub close_raises_ignored_exit: bool,
     /// Body function pointer for deferred execution (#313 R1).
@@ -202,6 +203,7 @@ pub fn mb_coroutine_new(name: MbValue, locals: MbValue) -> MbValue {
         awaiting: false,
         suspend_requested: false,
         pending_await: None,
+        pending_await_coro_id: None,
         resume_value: None,
         close_raises_ignored_exit: false,
         body_fn: None,
@@ -365,6 +367,7 @@ pub fn mb_coroutine_complete(coro_handle: MbValue, result: MbValue) {
                     super::rc::release_if_ptr(pending);
                 }
             }
+            coro.pending_await_coro_id = None;
             if let Some(resume_value) = coro.resume_value.take() {
                 unsafe {
                     super::rc::release_if_ptr(resume_value);
@@ -456,6 +459,12 @@ pub(crate) fn live_await_target_coroutine(coro_like: MbValue) -> Option<MbValue>
     is_live_coroutine(target).then_some(target)
 }
 
+pub(crate) fn live_await_target_coroutine_id(coro_like: MbValue) -> Option<u64> {
+    live_await_target_coroutine(coro_like)
+        .and_then(|coro| coro.as_int())
+        .map(|id| id as u64)
+}
+
 pub(crate) fn await_target_coroutine(coro_like: MbValue) -> Option<MbValue> {
     if is_known_coroutine(coro_like) {
         return Some(coro_like);
@@ -473,6 +482,7 @@ pub(crate) fn tombstone_completed_coroutine(coro_handle: MbValue) {
                 super::rc::release_if_ptr(pending);
             }
         }
+        coro.pending_await_coro_id = None;
         if let Some(resume_value) = coro.resume_value.take() {
             unsafe {
                 super::rc::release_if_ptr(resume_value);
@@ -586,6 +596,7 @@ pub(crate) fn mb_coroutine_suspend_current(awaitable: MbValue) {
         let Some(id) = cell.get() else {
             return;
         };
+        let await_coro_id = live_await_target_coroutine_id(awaitable);
         if let Some(coro) = COROUTINES.write().unwrap().get_mut(&id) {
             coro.suspend_requested = true;
             coro.awaiting = true;
@@ -597,6 +608,7 @@ pub(crate) fn mb_coroutine_suspend_current(awaitable: MbValue) {
                     super::rc::release_if_ptr(previous);
                 }
             }
+            coro.pending_await_coro_id = await_coro_id;
         }
     });
 }
@@ -612,6 +624,27 @@ pub fn mb_coroutine_should_suspend(coro_handle: MbValue) -> MbValue {
         .map(|c| {
             let suspend = c.suspend_requested;
             c.suspend_requested = false;
+            suspend
+        })
+        .unwrap_or(false);
+    MbValue::from_bool(suspend)
+}
+
+pub fn mb_coroutine_should_suspend_set_state_i64(coro_handle: MbValue, state: i64) -> MbValue {
+    let Some(id) = coro_handle.as_int().map(|id| id as u64) else {
+        return MbValue::from_bool(false);
+    };
+    let state = state.max(0) as u32;
+    let suspend = COROUTINES
+        .write()
+        .unwrap()
+        .get_mut(&id)
+        .map(|c| {
+            let suspend = c.suspend_requested;
+            c.suspend_requested = false;
+            if suspend {
+                c.state = state;
+            }
             suspend
         })
         .unwrap_or(false);
@@ -886,6 +919,7 @@ pub fn mb_coroutine_close(coro_handle: MbValue) -> MbValue {
                 super::rc::release_if_ptr(pending);
             }
         }
+        coro.pending_await_coro_id = None;
         if let Some(resume_value) = coro.resume_value.take() {
             unsafe {
                 super::rc::release_if_ptr(resume_value);
@@ -1006,6 +1040,7 @@ pub fn mb_coroutine_release(coro_handle: MbValue) {
                     super::rc::release_if_ptr(pending);
                 }
             }
+            coro.pending_await_coro_id = None;
             if let Some(resume_value) = coro.resume_value.take() {
                 unsafe {
                     super::rc::release_if_ptr(resume_value);
@@ -1205,6 +1240,33 @@ mod tests {
         assert_eq!(live_await_target_coroutine(coro), None);
         assert_eq!(live_await_target_coroutine(wrapper), None);
 
+        mb_coroutine_release(coro);
+    }
+
+    #[test]
+    fn test_coroutine_should_suspend_set_state_combines_hot_suspend_path() {
+        let name = MbValue::from_ptr(MbObject::new_str("await_parent".to_string()));
+        let locals = MbValue::from_ptr(MbObject::new_list(vec![]));
+        let coro = mb_coroutine_new(name, locals);
+        let child_name = MbValue::from_ptr(MbObject::new_str("await_child".to_string()));
+        let child = mb_coroutine_new(child_name, MbValue::from_ptr(MbObject::new_list(vec![])));
+
+        CURRENT_COROUTINE_ID.with(|cell| cell.set(coro.as_int().map(|id| id as u64)));
+        mb_coroutine_suspend_current(child);
+        CURRENT_COROUTINE_ID.with(|cell| cell.set(None));
+
+        assert_eq!(
+            mb_coroutine_should_suspend_set_state_i64(coro, 17).as_bool(),
+            Some(true)
+        );
+        assert_eq!(mb_coroutine_get_state(coro), 17);
+        assert_eq!(
+            mb_coroutine_should_suspend_set_state_i64(coro, 23).as_bool(),
+            Some(false)
+        );
+        assert_eq!(mb_coroutine_get_state(coro), 17);
+
+        mb_coroutine_release(child);
         mb_coroutine_release(coro);
     }
 
