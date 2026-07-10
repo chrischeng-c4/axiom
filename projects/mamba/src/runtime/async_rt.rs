@@ -11,7 +11,8 @@ use super::value::MbValue;
 /// - The event loop drives coroutines to completion
 ///
 /// Task management, event loop, and bridge functions live in `async_task`.
-use std::collections::{BTreeMap, HashMap};
+use rustc_hash::FxHashMap;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // Re-export task/bridge/GIL functions so `symbols.rs` can reference
@@ -141,8 +142,8 @@ unsafe impl Sync for MbTask {}
 // ── Global async runtime state (R5, R7) ──
 
 /// Global coroutine registry — replaces thread_local COROUTINES.
-pub(crate) static COROUTINES: std::sync::LazyLock<MbRwLock<HashMap<u64, MbCoroutine>>> =
-    std::sync::LazyLock::new(|| MbRwLock::new(HashMap::new()));
+pub(crate) static COROUTINES: std::sync::LazyLock<MbRwLock<FxHashMap<u64, MbCoroutine>>> =
+    std::sync::LazyLock::new(|| MbRwLock::new(FxHashMap::default()));
 
 /// Exhausted coroutine handles that have already had their completion consumed.
 ///
@@ -153,8 +154,8 @@ pub(crate) static COMPLETED_COROUTINES: std::sync::LazyLock<MbRwLock<CompletedCo
     std::sync::LazyLock::new(|| MbRwLock::new(CompletedCoroutines::default()));
 
 /// Global task registry — replaces thread_local TASKS.
-pub static TASKS: std::sync::LazyLock<MbRwLock<HashMap<u64, MbTask>>> =
-    std::sync::LazyLock::new(|| MbRwLock::new(HashMap::new()));
+pub static TASKS: std::sync::LazyLock<MbRwLock<FxHashMap<u64, MbTask>>> =
+    std::sync::LazyLock::new(|| MbRwLock::new(FxHashMap::default()));
 
 const CORO_ID_BASE: u64 = 1 << 40;
 
