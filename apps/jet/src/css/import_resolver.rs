@@ -71,7 +71,16 @@ fn process_source(source: &str, base_dir: &Path, visited: &mut HashSet<PathBuf>)
     for line in source.lines() {
         if let Some(import_path) = extract_import_path(line.trim()) {
             let resolved = resolve_import_path(base_dir, &import_path);
-            if resolved.exists() {
+            if resolved.is_dir() {
+                // Bare specifier resolved to a package directory (e.g.
+                // `@import "tailwindcss";` -> node_modules/tailwindcss),
+                // not a flat CSS file. Fall back through the package's
+                // package.json exports/style/main map (GH #1375) instead
+                // of re-attempting fs::read_to_string on the directory.
+                let entry = resolve_package_css_entry(&resolved)?;
+                let inlined = resolve_file(&entry, visited)?;
+                output.push_str(&inlined);
+            } else if resolved.exists() {
                 let inlined = resolve_file(&resolved, visited)?;
                 output.push_str(&inlined);
             } else {
@@ -113,6 +122,58 @@ fn resolve_import_path(base_dir: &Path, import_path: &str) -> PathBuf {
 
     // Fallback — let caller handle the missing file
     base_dir.join(import_path)
+}
+
+/// Resolve a directory-only bare-specifier `@import` (e.g. `@import
+/// "tailwindcss";` where `node_modules/tailwindcss` is a package directory,
+/// not a file) to the package's real CSS entry file, reusing the existing
+/// `resolver::package` package.json helpers instead of re-implementing
+/// exports resolution.
+///
+/// Priority order: `exports` (`["style", "default"]` conditions) -> the
+/// top-level `style` field -> `main`/`module` (via `get_package_main`).
+/// The first candidate that resolves to an existing file on disk wins.
+/// Never falls back to reading the directory itself as a file (GH #1375).
+fn resolve_package_css_entry(package_dir: &Path) -> Result<PathBuf> {
+    let package_json_path = package_dir.join("package.json");
+    if !package_json_path.exists() {
+        bail!(
+            "Cannot resolve CSS entry for package directory {:?}: no package.json found",
+            package_dir
+        );
+    }
+
+    if let Some(exported) = crate::resolver::package::resolve_exports(
+        &package_json_path,
+        Some("."),
+        &["style", "default"],
+    )? {
+        let candidate = package_dir.join(exported.trim_start_matches('.').trim_start_matches('/'));
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    let package = crate::resolver::package::read_package_json(&package_json_path)?;
+    if let Some(style) = package.style {
+        let candidate = package_dir.join(style.trim_start_matches('.').trim_start_matches('/'));
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    if let Ok(main) = crate::resolver::package::get_package_main(&package_json_path) {
+        let candidate = package_dir.join(main.trim_start_matches('.').trim_start_matches('/'));
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    bail!(
+        "Cannot resolve CSS entry for package directory {:?}: package.json {:?} has no exports/style/main entry pointing at an existing file",
+        package_dir,
+        package_json_path
+    );
 }
 
 /// Extract the import path string from a CSS `@import` line.
@@ -358,6 +419,169 @@ mod tests {
             !content.contains("@import"),
             "Output must not contain @import after resolution, got: {}",
             content
+        );
+    }
+
+    /// R1 (GH #1375, WI #1375 AC1/AC2) — a bare-specifier `@import` (e.g.
+    /// `@import "tailwindcss";`) whose `node_modules/<pkg>` path is a
+    /// directory, with a `package.json` `exports` map whose `.` entry
+    /// resolves (via `resolve_exports` with a style-first condition list)
+    /// to a real CSS file, is inlined instead of raising "Is a directory
+    /// (os error 21)".
+    #[test]
+    fn bare_specifier_directory_resolves_via_package_json_exports() {
+        let dir = TempDir::new().unwrap();
+        let pkg_dir = dir.path().join("node_modules").join("tailwindcss");
+        fs::create_dir_all(&pkg_dir).unwrap();
+        fs::write(
+            pkg_dir.join("package.json"),
+            r#"{
+                "name": "tailwindcss",
+                "exports": {
+                    ".": {
+                        "style": "./tailwind.css",
+                        "default": "./index.js"
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            pkg_dir.join("tailwind.css"),
+            "@tailwind base;\n.tw { color: teal; }\n",
+        )
+        .unwrap();
+
+        let index_path = dir.path().join("index.css");
+        fs::write(&index_path, "@import \"tailwindcss\";\n").unwrap();
+
+        let result = resolve_imports(&index_path);
+        assert!(
+            result.is_ok(),
+            "resolve_imports should succeed via exports fallback: {:?}",
+            result
+        );
+        let content = result.unwrap();
+        assert!(
+            content.contains(".tw { color: teal; }"),
+            "Output should contain the package's real CSS entry, got: {}",
+            content
+        );
+    }
+
+    /// R2 (GH #1375) — when a directory-only bare specifier's package.json
+    /// has no `exports` match, the resolver falls back to the top-level
+    /// `style` field to find the real CSS entry file.
+    #[test]
+    fn bare_specifier_directory_falls_back_to_style_field_when_exports_absent() {
+        let dir = TempDir::new().unwrap();
+        let pkg_dir = dir.path().join("node_modules").join("bootstrap");
+        fs::create_dir_all(&pkg_dir).unwrap();
+        fs::write(
+            pkg_dir.join("package.json"),
+            r#"{
+                "name": "bootstrap",
+                "main": "./dist/js/bootstrap.js",
+                "style": "./dist/css/bootstrap.css"
+            }"#,
+        )
+        .unwrap();
+        fs::create_dir_all(pkg_dir.join("dist").join("css")).unwrap();
+        fs::write(
+            pkg_dir.join("dist").join("css").join("bootstrap.css"),
+            ".btn { color: purple; }\n",
+        )
+        .unwrap();
+
+        let index_path = dir.path().join("index.css");
+        fs::write(&index_path, "@import \"bootstrap\";\n").unwrap();
+
+        let result = resolve_imports(&index_path);
+        assert!(
+            result.is_ok(),
+            "resolve_imports should succeed via style fallback: {:?}",
+            result
+        );
+        let content = result.unwrap();
+        assert!(
+            content.contains(".btn { color: purple; }"),
+            "Output should contain the package's style-field CSS entry, got: {}",
+            content
+        );
+    }
+
+    /// R3 (GH #1375) — when a directory-only bare specifier's package.json
+    /// has neither an `exports` match nor a top-level `style` field, the
+    /// resolver falls back to the `main` field to find the real CSS entry.
+    #[test]
+    fn bare_specifier_directory_falls_back_to_main_field_when_style_absent() {
+        let dir = TempDir::new().unwrap();
+        let pkg_dir = dir.path().join("node_modules").join("flat-css-pkg");
+        fs::create_dir_all(&pkg_dir).unwrap();
+        fs::write(
+            pkg_dir.join("package.json"),
+            r#"{
+                "name": "flat-css-pkg",
+                "main": "./entry.css"
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            pkg_dir.join("entry.css"),
+            ".main-entry { color: orange; }\n",
+        )
+        .unwrap();
+
+        let index_path = dir.path().join("index.css");
+        fs::write(&index_path, "@import \"flat-css-pkg\";\n").unwrap();
+
+        let result = resolve_imports(&index_path);
+        assert!(
+            result.is_ok(),
+            "resolve_imports should succeed via main fallback: {:?}",
+            result
+        );
+        let content = result.unwrap();
+        assert!(
+            content.contains(".main-entry { color: orange; }"),
+            "Output should contain the package's main-field CSS entry, got: {}",
+            content
+        );
+    }
+
+    /// R4 (GH #1375) — a directory-only bare specifier whose package.json
+    /// has no exports/style/main match surfaces a typed, descriptive error
+    /// -- never the raw "Is a directory (os error 21)" I/O error and never
+    /// a silent false success.
+    #[test]
+    fn bare_specifier_directory_without_resolvable_entry_surfaces_clear_error() {
+        let dir = TempDir::new().unwrap();
+        let pkg_dir = dir.path().join("node_modules").join("no-entry-pkg");
+        fs::create_dir_all(&pkg_dir).unwrap();
+        fs::write(
+            pkg_dir.join("package.json"),
+            r#"{ "name": "no-entry-pkg" }"#,
+        )
+        .unwrap();
+
+        let index_path = dir.path().join("index.css");
+        fs::write(&index_path, "@import \"no-entry-pkg\";\n").unwrap();
+
+        let result = resolve_imports(&index_path);
+        assert!(
+            result.is_err(),
+            "Should return Err when no exports/style/main entry resolves"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            !err.to_lowercase().contains("is a directory"),
+            "Error must not surface the raw 'Is a directory' I/O error, got: {}",
+            err
+        );
+        assert!(
+            err.contains("package.json"),
+            "Error should name the attempted package.json fallback, got: {}",
+            err
         );
     }
 }

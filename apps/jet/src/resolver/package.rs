@@ -14,6 +14,12 @@ pub struct PackageJson {
     pub main: Option<String>,
     pub module: Option<String>,
     pub exports: Option<serde_json::Value>,
+    /// `style` — the long-standing npm CSS-entry convention (used by e.g.
+    /// bootstrap) naming the package's stylesheet, consulted by the CSS
+    /// `@import` resolver's directory fallback when a bare-specifier's
+    /// `node_modules/<pkg>` path is a package directory rather than a file.
+    /// @issue #1375
+    pub style: Option<String>,
     /// `files` — the npm publish allowlist. When present, `jet pack`/`jet
     /// publish` include ONLY paths matching these entries (plus the always-
     /// included package.json / README / LICENSE), matching npm pack semantics.
