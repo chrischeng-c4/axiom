@@ -1,6 +1,6 @@
 use super::generic::{bind_explicit_type_args, complete_type_args, GenericParams, Substitution};
 use super::protocol::ProtocolRegistry;
-use super::ty::{TypeParamDefault, TypeVarId, TypeVarKind, UserClass};
+use super::ty::{TypeParamDefault, TypeVarId, TypeVarKind, UserClass, UserClassRole};
 use super::{Ty, TypeContext, TypeId};
 use crate::error::MambaError;
 use crate::parser::ast::*;
@@ -172,6 +172,9 @@ pub struct TypeChecker {
     /// Aliases shadowed by nested PEP 695 type-parameter scopes. Each
     /// `register_type_params` call pushes one frame and cleanup restores it.
     type_param_alias_scopes: Vec<Vec<(String, Option<TypeId>)>>,
+    /// Semantic annotation results keyed by source span. Lowering consumes
+    /// these instead of independently re-resolving class/generic annotations.
+    resolved_type_exprs: HashMap<Span, TypeId>,
     /// Full user-function parameter metadata. `Ty::Fn` deliberately keeps a
     /// compact ABI-facing shape, so keyword-only and variadic annotation checks
     /// live in this checker-only side channel.
@@ -217,6 +220,9 @@ pub struct TypeChecker {
     /// only tracks chains reaching `int`/`float`; this map is general-purpose
     /// and unfiltered (any identifier base, not just numeric ones).
     pub(crate) class_bases: HashMap<String, Vec<String>>,
+    /// Nominal base graph for user-class semantics that cannot tolerate
+    /// same-named nested declarations sharing the legacy name map.
+    pub(crate) class_base_symbols: HashMap<SymbolId, Vec<SymbolId>>,
     /// Subject type of the enclosing `match` statement, used to propagate type
     /// into capture / star / AS bindings in `check_pattern` (#827).
     pub(crate) current_match_subject_ty: Option<TypeId>,
@@ -278,6 +284,7 @@ impl TypeChecker {
             diagnostics: Vec::new(),
             generic_defs: HashMap::new(),
             type_param_alias_scopes: Vec::new(),
+            resolved_type_exprs: HashMap::new(),
             function_param_sigs: HashMap::new(),
             protocol_registry: ProtocolRegistry::new(),
             class_methods: HashMap::new(),
@@ -289,6 +296,7 @@ impl TypeChecker {
             user_bare_classes: std::collections::HashSet::new(),
             numeric_derived_classes: std::collections::HashMap::new(),
             class_bases: HashMap::new(),
+            class_base_symbols: HashMap::new(),
             current_match_subject_ty: None,
             comprehension_depth: 0,
             import_origins: HashMap::new(),
@@ -753,6 +761,71 @@ impl TypeChecker {
         self.sym_types.get(sym.0 as usize).and_then(|t| *t)
     }
 
+    fn preregister_user_class_alias(&mut self, value: &Spanned<Expr>) -> Option<TypeId> {
+        match &value.node {
+            Expr::Ident(source) => {
+                let symbol = self.symbols.lookup(source)?;
+                let ty = self.get_sym_type(symbol.0);
+                matches!(
+                    self.tcx.get(ty),
+                    Ty::Class { user: Some(user), .. }
+                        if user.role == UserClassRole::Object
+                )
+                .then_some(ty)
+            }
+            Expr::Index { object, .. } => {
+                let Expr::Ident(source) = &object.node else {
+                    return None;
+                };
+                let source_symbol = self.symbols.lookup(source)?;
+                let source_ty = self.get_sym_type(source_symbol.0);
+                if !matches!(
+                    self.tcx.get(source_ty),
+                    Ty::Class { user: Some(user), .. }
+                        if user.role == UserClassRole::Object
+                ) {
+                    return None;
+                }
+                let type_expr = expr_to_type_expr(value)?;
+                let error_len = self.errors.len();
+                let diagnostic_len = self.diagnostics.len();
+                let resolved = self.resolve_type_expr(&type_expr);
+                self.errors.truncate(error_len);
+                self.diagnostics.truncate(diagnostic_len);
+                match self.tcx.get(resolved) {
+                    Ty::Class {
+                        user: Some(user), ..
+                    } if user.role == UserClassRole::Instance => {
+                        Some(self.with_user_class_role(resolved, UserClassRole::Object))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn invalidate_conditional_user_class_aliases(&mut self, stmts: &[Spanned<Stmt>]) {
+        let mut assigned = Vec::new();
+        let mut declared = Vec::new();
+        crate::resolve::pass::collect_assignment_targets(stmts, &mut assigned, &mut declared);
+        for name in assigned {
+            let Some(symbol) = self
+                .symbols
+                .lookup_in_scope(self.symbols.current_scope_idx(), &name)
+            else {
+                continue;
+            };
+            if matches!(
+                self.tcx.get(self.get_sym_type(symbol.0)),
+                Ty::Class { user: Some(user), .. }
+                    if user.role == UserClassRole::Object
+            ) {
+                self.set_sym_type(symbol.0, self.tcx.any());
+            }
+        }
+    }
+
     /// Check a module. Returns accumulated errors.
     /// First-pass def/class/enum/alias pre-registration, descending into
     /// compound-statement bodies (try/if/while/for/with): a class defined in
@@ -845,6 +918,7 @@ impl TypeChecker {
                         name: name.clone(),
                         user: Some(UserClass {
                             symbol: sym,
+                            role: UserClassRole::Object,
                             args: type_args,
                         }),
                         fields,
@@ -876,6 +950,31 @@ impl TypeChecker {
                         .collect();
                     if !base_names.is_empty() {
                         self.class_bases.insert(name.clone(), base_names);
+                    }
+                    let base_symbols: Vec<SymbolId> = bases
+                        .iter()
+                        .filter_map(|base| {
+                            let base_name = match &base.node {
+                                Expr::Ident(base_name) => base_name,
+                                Expr::Index { object, .. } => {
+                                    let Expr::Ident(base_name) = &object.node else {
+                                        return None;
+                                    };
+                                    base_name
+                                }
+                                _ => return None,
+                            };
+                            let binding = self.symbols.lookup(base_name)?;
+                            match self.tcx.get(self.get_sym_type(binding.0)) {
+                                Ty::Class {
+                                    user: Some(user), ..
+                                } if user.role == UserClassRole::Object => Some(user.symbol),
+                                _ => None,
+                            }
+                        })
+                        .collect();
+                    if !base_symbols.is_empty() {
+                        self.class_base_symbols.insert(sym, base_symbols);
                     }
 
                     // Record a BARE class (no base other than `object`, no
@@ -1072,6 +1171,30 @@ impl TypeChecker {
                             let var_id = self.tcx.new_type_var(name.clone(), None, Vec::new());
                             let tv_ty = self.tcx.intern(Ty::TypeVar(var_id));
                             self.tcx.register_alias(name.clone(), tv_ty);
+                        } else {
+                            let existing = self
+                                .symbols
+                                .lookup_in_scope(self.symbols.current_scope_idx(), name);
+                            match (existing, self.preregister_user_class_alias(value)) {
+                                (Some(symbol), Some(alias_ty)) => {
+                                    self.set_sym_type(symbol.0, alias_ty);
+                                }
+                                (None, Some(alias_ty)) => {
+                                    let symbol =
+                                        self.symbols.define(name.clone(), SymbolKind::Variable);
+                                    self.set_sym_type(symbol.0, alias_ty);
+                                }
+                                (Some(symbol), None)
+                                    if matches!(
+                                        self.tcx.get(self.get_sym_type(symbol.0)),
+                                        Ty::Class { user: Some(user), .. }
+                                            if user.role == UserClassRole::Object
+                                    ) =>
+                                {
+                                    self.set_sym_type(symbol.0, self.tcx.any());
+                                }
+                                _ => {}
+                            }
                         }
                     }
                 }
@@ -1094,6 +1217,16 @@ impl TypeChecker {
                     if let Some(fb) = finally_body {
                         self.preregister_defs(fb);
                     }
+                    self.invalidate_conditional_user_class_aliases(body);
+                    for handler in handlers {
+                        self.invalidate_conditional_user_class_aliases(&handler.body);
+                    }
+                    if let Some(else_body) = else_body {
+                        self.invalidate_conditional_user_class_aliases(else_body);
+                    }
+                    if let Some(finally_body) = finally_body {
+                        self.invalidate_conditional_user_class_aliases(finally_body);
+                    }
                 }
                 Stmt::If {
                     body,
@@ -1108,6 +1241,13 @@ impl TypeChecker {
                     if let Some(eb) = else_body {
                         self.preregister_defs(eb);
                     }
+                    self.invalidate_conditional_user_class_aliases(body);
+                    for (_, eb) in elif_clauses {
+                        self.invalidate_conditional_user_class_aliases(eb);
+                    }
+                    if let Some(eb) = else_body {
+                        self.invalidate_conditional_user_class_aliases(eb);
+                    }
                 }
                 Stmt::While {
                     body, else_body, ..
@@ -1118,6 +1258,10 @@ impl TypeChecker {
                     self.preregister_defs(body);
                     if let Some(eb) = else_body {
                         self.preregister_defs(eb);
+                    }
+                    self.invalidate_conditional_user_class_aliases(body);
+                    if let Some(else_body) = else_body {
+                        self.invalidate_conditional_user_class_aliases(else_body);
                     }
                 }
                 Stmt::With { body, .. } => {
@@ -1144,20 +1288,56 @@ impl TypeChecker {
     fn specialize_user_class(
         &mut self,
         name: &str,
-        symbol: SymbolId,
+        binding_symbol: SymbolId,
         base_ty: TypeId,
         supplied: Option<&[TypeId]>,
         span: Span,
     ) -> TypeId {
-        if !matches!(self.tcx.get(base_ty), Ty::Class { .. }) {
-            return base_ty;
-        }
+        self.specialize_user_class_as(
+            name,
+            binding_symbol,
+            base_ty,
+            supplied,
+            span,
+            UserClassRole::Instance,
+        )
+    }
+
+    pub(crate) fn specialize_user_class_as(
+        &mut self,
+        name: &str,
+        binding_symbol: SymbolId,
+        base_ty: TypeId,
+        supplied: Option<&[TypeId]>,
+        span: Span,
+        role: UserClassRole,
+    ) -> TypeId {
+        let (symbol, base_user) = match self.tcx.get(base_ty) {
+            Ty::Class {
+                user: Some(user), ..
+            } => (user.symbol, Some(user.clone())),
+            Ty::Class { user: None, .. } => (binding_symbol, None),
+            _ => return base_ty,
+        };
         let Some(generic_params) = self.generic_defs.get(&symbol).cloned() else {
             if supplied.is_some() {
                 self.error(span, format!("type '{name}' is not generic"));
             }
-            return base_ty;
+            return self.with_user_class_role(base_ty, role);
         };
+
+        let is_open = base_user.as_ref().is_some_and(|user| {
+            generic_params.params.len() == user.args.len()
+                && generic_params.params.iter().zip(&user.args).all(
+                    |(param, arg)| matches!(self.tcx.get(*arg), Ty::TypeVar(id) if *id == param.id),
+                )
+        });
+        if !is_open {
+            if supplied.is_some() {
+                self.error(span, format!("type '{name}' is already specialized"));
+            }
+            return self.with_user_class_role(base_ty, role);
+        }
 
         let (subst, resolved_args, errors) = if let Some(args) = supplied {
             bind_explicit_type_args(&generic_params, args, &mut self.tcx)
@@ -1165,7 +1345,7 @@ impl TypeChecker {
             let Some((subst, resolved)) =
                 complete_type_args(&generic_params, Substitution::new(), &mut self.tcx)
             else {
-                return base_ty;
+                return self.with_user_class_role(base_ty, role);
             };
             (subst, resolved, Vec::new())
         };
@@ -1173,7 +1353,8 @@ impl TypeChecker {
             self.error(span, error);
         }
 
-        self.apply_user_class_specialization(symbol, base_ty, &subst, &resolved_args)
+        let declaration_ty = self.get_sym_type(symbol.0);
+        self.apply_user_class_specialization(symbol, declaration_ty, &subst, &resolved_args, role)
     }
 
     pub(crate) fn apply_user_class_specialization(
@@ -1182,6 +1363,7 @@ impl TypeChecker {
         base_ty: TypeId,
         subst: &Substitution,
         resolved_args: &[TypeId],
+        role: UserClassRole,
     ) -> TypeId {
         let Ty::Class {
             name: base_name,
@@ -1202,6 +1384,7 @@ impl TypeChecker {
             name: base_name,
             user: Some(UserClass {
                 symbol,
+                role,
                 args: resolved_args.to_vec(),
             }),
             fields,
@@ -1210,7 +1393,39 @@ impl TypeChecker {
         specialized
     }
 
+    pub(crate) fn with_user_class_role(&mut self, ty: TypeId, role: UserClassRole) -> TypeId {
+        let Ty::Class {
+            name,
+            user: Some(mut user),
+            fields,
+            match_args,
+        } = self.tcx.get(ty).clone()
+        else {
+            return ty;
+        };
+        if user.role == role {
+            return ty;
+        }
+        user.role = role;
+        self.tcx.intern(Ty::Class {
+            name,
+            user: Some(user),
+            fields,
+            match_args,
+        })
+    }
+
     pub(crate) fn resolve_type_expr(&mut self, ty: &Spanned<TypeExpr>) -> TypeId {
+        let resolved = self.resolve_type_expr_inner(ty);
+        self.resolved_type_exprs.insert(ty.span, resolved);
+        resolved
+    }
+
+    pub(crate) fn resolved_type_expr(&self, span: Span) -> Option<TypeId> {
+        self.resolved_type_exprs.get(&span).copied()
+    }
+
+    fn resolve_type_expr_inner(&mut self, ty: &Spanned<TypeExpr>) -> TypeId {
         match &ty.node {
             TypeExpr::Named(name) => match name.as_str() {
                 "int" => self.tcx.int(),
@@ -1456,10 +1671,12 @@ impl TypeChecker {
         if matches!(e, Ty::TypeVar(_)) || matches!(a, Ty::TypeVar(_)) {
             return true;
         }
-        // SelfType (the `self` parameter's type) is compatible with any Class type.
-        // `return self` in a method whose return type is the class name is always valid.
-        if matches!(e, Ty::SelfType) || matches!(a, Ty::SelfType) {
-            return true;
+        // SelfType denotes an instance receiver, never the class object.
+        if matches!(e, Ty::SelfType) {
+            return !matches!(a, Ty::Class { user: Some(user), .. } if user.role == UserClassRole::Object);
+        }
+        if matches!(a, Ty::SelfType) {
+            return !matches!(e, Ty::Class { user: Some(user), .. } if user.role == UserClassRole::Object);
         }
         // User-class compatibility is nominal by declaration symbol. Generic
         // arguments are invariant unless either side is still gradual.
@@ -1478,43 +1695,66 @@ impl TypeChecker {
         {
             match (user1, user2) {
                 (Some(left), Some(right)) if left.symbol == right.symbol => {
+                    if left.role != right.role {
+                        return false;
+                    }
                     let args_compatible = left.args.len() == right.args.len()
                         && left.args.iter().zip(&right.args).all(|(left, right)| {
                             left == right
                                 || matches!(self.tcx.get(*left), Ty::Any | Ty::TypeVar(_))
                                 || matches!(self.tcx.get(*right), Ty::Any | Ty::TypeVar(_))
                         });
-                    if args_compatible {
-                        return true;
-                    }
+                    return args_compatible;
                 }
                 (None, None) if n1 == n2 => return true,
                 _ => {}
             }
             // Exception class hierarchy: all exception types are compatible
             // with each other (they all derive from BaseException).
-            if is_exception_class_name(n1) && is_exception_class_name(n2) {
+            if user1.is_none()
+                && user2.is_none()
+                && is_exception_class_name(n1)
+                && is_exception_class_name(n2)
+            {
                 return true;
             }
         }
         // PEP 589: class-form TypedDict is a structural schema at type-check
         // time but its runtime values are plain dicts.
-        if let (Ty::Class { name, .. }, Ty::Dict(_, _)) = (e, a) {
-            if self.typed_dict_classes.contains(name) {
+        if let (Ty::Class { name, user, .. }, Ty::Dict(_, _)) = (e, a) {
+            if !user
+                .as_ref()
+                .is_some_and(|user| user.role == UserClassRole::Object)
+                && self.typed_dict_classes.contains(name)
+            {
                 return true;
             }
         }
         // #314: Protocol structural subtyping — if expected is a protocol class,
         // check if actual class structurally satisfies it
         if let Ty::Class {
-            name: proto_name, ..
+            name: proto_name,
+            user: expected_user,
+            ..
         } = e
         {
-            if self.protocol_registry.get(proto_name).is_some() {
+            if !expected_user
+                .as_ref()
+                .is_some_and(|user| user.role == UserClassRole::Object)
+                && self.protocol_registry.get(proto_name).is_some()
+            {
                 if let Ty::Class {
-                    name: class_name, ..
+                    name: class_name,
+                    user: actual_user,
+                    ..
                 } = a
                 {
+                    if actual_user
+                        .as_ref()
+                        .is_some_and(|user| user.role == UserClassRole::Object)
+                    {
+                        return false;
+                    }
                     let class_methods = self
                         .class_methods
                         .get(class_name)
@@ -1771,12 +2011,14 @@ impl TypeChecker {
                     name: class_name.to_string(),
                     user: Some(UserClass {
                         symbol: class_symbol,
+                        role: UserClassRole::Instance,
                         args: Vec::new(),
                     }),
                     fields: vec![],
                     match_args: None,
                 })
             });
+        let receiver_ty = self.with_user_class_role(receiver_ty, UserClassRole::Instance);
         for stmt in body {
             if let Stmt::FnDef {
                 decorators,
@@ -2060,6 +2302,7 @@ mod tests {
             name: "Box".to_string(),
             user: Some(UserClass {
                 symbol: SymbolId(100),
+                role: UserClassRole::Instance,
                 args: vec![tc.tcx.any()],
             }),
             fields: vec![],
@@ -2069,6 +2312,7 @@ mod tests {
             name: "Box".to_string(),
             user: Some(UserClass {
                 symbol: SymbolId(100),
+                role: UserClassRole::Instance,
                 args: vec![tc.tcx.int()],
             }),
             fields: vec![],
@@ -2086,6 +2330,7 @@ mod tests {
             name: "Box".to_string(),
             user: Some(UserClass {
                 symbol: SymbolId(100),
+                role: UserClassRole::Instance,
                 args: vec![tc.tcx.int()],
             }),
             fields: vec![],
@@ -2095,6 +2340,7 @@ mod tests {
             name: "Box".to_string(),
             user: Some(UserClass {
                 symbol: SymbolId(100),
+                role: UserClassRole::Instance,
                 args: vec![tc.tcx.str()],
             }),
             fields: vec![],
@@ -2111,6 +2357,7 @@ mod tests {
             name: "Foo".to_string(),
             user: Some(UserClass {
                 symbol: SymbolId(100),
+                role: UserClassRole::Instance,
                 args: vec![],
             }),
             fields: vec![],
@@ -2120,6 +2367,7 @@ mod tests {
             name: "Bar".to_string(),
             user: Some(UserClass {
                 symbol: SymbolId(101),
+                role: UserClassRole::Instance,
                 args: vec![],
             }),
             fields: vec![],
