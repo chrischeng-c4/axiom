@@ -1,4 +1,4 @@
-use super::rc::{MbObject, ObjData};
+use super::rc::{MbObject, MbRwLock, ObjData};
 use super::value::MbValue;
 /// Async/await runtime with tokio for Mamba (#293).
 ///
@@ -13,7 +13,6 @@ use super::value::MbValue;
 /// Task management, event loop, and bridge functions live in `async_task`.
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::RwLock;
 
 // Re-export task/bridge/GIL functions so `symbols.rs` can reference
 // them via `async_rt::*` without changing import paths.
@@ -138,20 +137,20 @@ unsafe impl Sync for MbTask {}
 // ── Global async runtime state (R5, R7) ──
 
 /// Global coroutine registry — replaces thread_local COROUTINES.
-pub(crate) static COROUTINES: std::sync::LazyLock<RwLock<HashMap<u64, MbCoroutine>>> =
-    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
+pub(crate) static COROUTINES: std::sync::LazyLock<MbRwLock<HashMap<u64, MbCoroutine>>> =
+    std::sync::LazyLock::new(|| MbRwLock::new(HashMap::new()));
 
 /// Exhausted coroutine handles that have already had their completion consumed.
 ///
 /// Keep a small tombstone so post-completion surface checks (`inspect`,
 /// `iscoroutine`, and "already awaited" errors) still behave like a coroutine
 /// object without retaining the full execution record in `COROUTINES`.
-pub(crate) static COMPLETED_COROUTINES: std::sync::LazyLock<RwLock<CompletedCoroutines>> =
-    std::sync::LazyLock::new(|| RwLock::new(CompletedCoroutines::default()));
+pub(crate) static COMPLETED_COROUTINES: std::sync::LazyLock<MbRwLock<CompletedCoroutines>> =
+    std::sync::LazyLock::new(|| MbRwLock::new(CompletedCoroutines::default()));
 
 /// Global task registry — replaces thread_local TASKS.
-pub static TASKS: std::sync::LazyLock<RwLock<HashMap<u64, MbTask>>> =
-    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
+pub static TASKS: std::sync::LazyLock<MbRwLock<HashMap<u64, MbTask>>> =
+    std::sync::LazyLock::new(|| MbRwLock::new(HashMap::new()));
 
 const CORO_ID_BASE: u64 = 1 << 40;
 

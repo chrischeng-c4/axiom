@@ -171,7 +171,7 @@ pub(crate) fn wait_task_done(task_id: u64, timeout: std::time::Duration) -> bool
     loop {
         let done = TASKS
             .read()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap()
             .get(&task_id)
             .map(|t| t.done)
             .unwrap_or(false);
@@ -192,11 +192,8 @@ mod tests {
     use super::*;
 
     fn reset_async_for_test() {
-        COROUTINES
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        TASKS.write().unwrap_or_else(|e| e.into_inner()).clear();
+        COROUTINES.write().unwrap().clear();
+        TASKS.write().unwrap().clear();
         // Prevent concurrent GC from freeing test MbObjects
         gc_disable();
     }

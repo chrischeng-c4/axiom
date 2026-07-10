@@ -1789,7 +1789,7 @@ pub fn mb_asyncio_run(coro: MbValue) -> MbValue {
         .map(|id| {
             super::super::async_rt::COROUTINES
                 .read()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap()
                 .contains_key(&(id as u64))
         })
         .unwrap_or(false);

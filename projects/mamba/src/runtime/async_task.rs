@@ -1,7 +1,7 @@
 use super::async_rt::{
     alloc_task_id, mb_coroutine_step, mb_coroutine_suspend_current, MbTask, COROUTINES, TASKS,
 };
-use super::rc::{MbObject, ObjData};
+use super::rc::{MbObject, MbRwLock, ObjData};
 use super::value::MbValue;
 /// Task management, event loop, await, orbit bridge, and GIL for Mamba async (#313).
 ///
@@ -13,7 +13,6 @@ use super::value::MbValue;
 /// thread-safe. Tasks can be scheduled on Tokio's multi-threaded executor
 /// for true parallel async I/O.
 use std::collections::HashMap;
-use std::sync::RwLock;
 
 thread_local! {
     static AWAIT_DEADLINE: std::cell::Cell<Option<std::time::Instant>> =
@@ -670,8 +669,8 @@ pub fn mb_orbit_schedule(coro: MbValue) -> MbValue {
 }
 
 /// Global waker registry — maps coroutine IDs to their pending task IDs.
-pub(crate) static WAKERS: std::sync::LazyLock<RwLock<HashMap<u64, u64>>> =
-    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
+pub(crate) static WAKERS: std::sync::LazyLock<MbRwLock<HashMap<u64, u64>>> =
+    std::sync::LazyLock::new(|| MbRwLock::new(HashMap::new()));
 
 /// Register a waker for a coroutine, linking it to a task.
 pub fn mb_orbit_register_waker(coro: MbValue) -> MbValue {
@@ -1227,8 +1226,8 @@ pub fn mb_sleep(seconds: MbValue) -> MbValue {
 }
 
 /// Global timer registry — maps coroutine IDs to their wake-up deadlines.
-static TIMERS: std::sync::LazyLock<RwLock<HashMap<u64, std::time::Instant>>> =
-    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
+static TIMERS: std::sync::LazyLock<MbRwLock<HashMap<u64, std::time::Instant>>> =
+    std::sync::LazyLock::new(|| MbRwLock::new(HashMap::new()));
 
 /// asyncio.wait(tasks, timeout=None).
 pub fn mb_async_wait(tasks: MbValue, _timeout: MbValue) -> MbValue {
