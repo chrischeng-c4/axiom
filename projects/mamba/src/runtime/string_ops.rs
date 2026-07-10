@@ -5244,7 +5244,10 @@ pub fn value_to_string(val: MbValue) -> String {
                         }
                         return String::new();
                     }
-                    format!("<{class_name} instance>")
+                    format!(
+                        "<{} instance>",
+                        super::class::class_display_name(class_name)
+                    )
                 }
                 ObjData::Set(ref lock) => {
                     // Sets can't directly self-reference (elements must be

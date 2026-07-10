@@ -1,4 +1,5 @@
 use super::check::TypeChecker;
+use super::ty::ClassRole;
 use super::{Ty, TypeId};
 use crate::resolve::SymbolKind;
 
@@ -271,12 +272,14 @@ impl TypeChecker {
         for name in &exception_names {
             let class_ty = self.tcx.intern(Ty::Class {
                 name: name.to_string(),
+                role: ClassRole::Object,
                 user: None,
                 fields: vec![],
                 match_args: None,
             });
             let sym = self.symbols.define(name.to_string(), SymbolKind::Class);
             self.set_sym_type(sym.0, class_ty);
+            self.builtin_symbols.insert(name.to_string(), sym);
         }
     }
 }

@@ -625,7 +625,8 @@ fn exec_raise_class_pattern_count_error(class_name: &str, accepted: usize, given
         "sub-patterns"
     };
     exec_raise_type_error(format!(
-        "{class_name}() accepts {accepted} positional {sub} ({given} given)"
+        "{}() accepts {accepted} positional {sub} ({given} given)",
+        crate::runtime::class::class_display_name(class_name)
     ));
 }
 

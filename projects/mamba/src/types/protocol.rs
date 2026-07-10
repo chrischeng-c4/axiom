@@ -36,7 +36,7 @@ pub struct MethodSig {
 }
 
 /// Protocol registry for the type checker.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ProtocolRegistry {
     protocols: HashMap<String, Protocol>,
 }
@@ -153,6 +153,17 @@ impl ProtocolRegistry {
     ) -> bool {
         self.check_conformance(protocol_name, class_methods, class_attrs, tcx)
             .is_empty()
+    }
+
+    pub fn satisfies_definition(
+        protocol: &Protocol,
+        class_methods: &HashMap<String, MethodSig>,
+        class_attrs: &HashMap<String, TypeId>,
+        tcx: &TypeContext,
+    ) -> bool {
+        let mut registry = Self::new();
+        registry.register(protocol.clone());
+        registry.satisfies(&protocol.name, class_methods, class_attrs, tcx)
     }
 }
 

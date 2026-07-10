@@ -2044,6 +2044,70 @@ mod tests {
         module
     }
 
+    fn find_typevar_assign<'a>(
+        stmts: &'a [Spanned<Stmt>],
+        display_name: &str,
+    ) -> Option<(&'a Spanned<Expr>, &'a [CallArg])> {
+        stmts.iter().find_map(|stmt| {
+            let Stmt::Assign { target, value } = &stmt.node else {
+                return None;
+            };
+            let Expr::Call { func, args } = &value.node else {
+                return None;
+            };
+            if !matches!(&func.node, Expr::Ident(name) if name == TYPEVAR_INTRINSIC)
+                || !matches!(
+                    args.first(),
+                    Some(CallArg::Positional(arg))
+                        if matches!(&arg.node, Expr::StrLit(name) if name == display_name)
+                )
+            {
+                return None;
+            }
+            Some((target, args.as_slice()))
+        })
+    }
+
+    fn find_class_body<'a>(stmts: &'a [Spanned<Stmt>], name: &str) -> &'a [Spanned<Stmt>] {
+        stmts
+            .iter()
+            .find_map(|stmt| match &stmt.node {
+                Stmt::ClassDef {
+                    name: class_name,
+                    body,
+                    ..
+                } if class_name == name => Some(body.as_slice()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected class {name}"))
+    }
+
+    fn restores_or_deletes(stmts: &[Spanned<Stmt>], name: &str) -> bool {
+        stmts.iter().any(|stmt| {
+            let Stmt::If {
+                body,
+                else_body: Some(else_body),
+                ..
+            } = &stmt.node
+            else {
+                return false;
+            };
+            body.iter().any(|stmt| {
+                matches!(
+                    &stmt.node,
+                    Stmt::Assign { target, .. }
+                        if matches!(&target.node, Expr::Ident(target) if target == name)
+                )
+            }) && else_body.iter().any(|stmt| {
+                matches!(
+                    &stmt.node,
+                    Stmt::Del(target)
+                        if matches!(&target.node, Expr::Ident(target) if target == name)
+                )
+            })
+        })
+    }
+
     #[test]
     fn generic_fn_injects_typevar_and_type_params() {
         let m = desugared("def f[T]():\n    return T\n");
@@ -2099,9 +2163,10 @@ mod tests {
     #[test]
     fn generic_class_injects_parameters_too() {
         let m = desugared("class C[T]:\n    pass\n");
-        assert_eq!(m.stmts.len(), 5);
-        assert!(matches!(&m.stmts[1].node, Stmt::ClassDef { .. }));
-        let attrs: Vec<&str> = m.stmts[2..]
+        let (target, _) = find_typevar_assign(&m.stmts, "T").expect("T typevar assignment");
+        assert!(matches!(&target.node, Expr::Ident(name) if name == "T"));
+        let attrs: Vec<&str> = m
+            .stmts
             .iter()
             .filter_map(|s| match &s.node {
                 Stmt::Assign { target, .. } => match &target.node {
@@ -2112,83 +2177,53 @@ mod tests {
             })
             .collect();
         assert_eq!(attrs, vec!["__type_params__", "__parameters__"]);
-        assert!(matches!(
-            &m.stmts[4].node,
-            Stmt::Del(target) if matches!(&target.node, Expr::Ident(name) if name == "T")
-        ));
+        assert!(restores_or_deletes(&m.stmts, "T"));
     }
 
     #[test]
     fn generic_class_keeps_type_param_used_by_runtime_body() {
         let m = desugared("class C[T]:\n    def f(self):\n        return T\n");
-        assert_eq!(m.stmts.len(), 5);
         assert!(m.stmts.iter().any(|stmt| matches!(
             &stmt.node,
             Stmt::Assign { target, value }
                 if matches!(&target.node, Expr::Attr { attr, .. } if attr == "__type_params__")
                     && matches!(&value.node, Expr::TupleLit(items) if items.is_empty())
         )));
-        assert!(m
-            .stmts
-            .iter()
-            .all(|stmt| !matches!(&stmt.node, Stmt::Del(target)
-                if matches!(&target.node, Expr::Ident(name) if name == "T"))));
+        assert!(!restores_or_deletes(&m.stmts, "T"));
     }
 
     #[test]
     fn typevar_bound_and_constraints_are_lazy_thunks() {
         let m = desugared("class C[T: Undefined, U: (Undefined,)]:\n    pass\n");
-        match &m.stmts[0].node {
-            Stmt::Assign { target, value } => {
-                assert!(matches!(&target.node, Expr::Ident(n) if n == "T"));
-                match &value.node {
-                    Expr::Call { args, .. } => {
-                        assert!(
-                            matches!(args.get(2), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::Lambda { .. }))
-                        );
-                        assert!(
-                            matches!(args.get(3), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::NoneLit))
-                        );
-                        assert!(
-                            matches!(args.get(4), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::NoneLit))
-                        );
-                    }
-                    other => panic!("expected typevar call, got {other:?}"),
-                }
-            }
-            other => panic!("expected T assign, got {other:?}"),
-        }
-        match &m.stmts[1].node {
-            Stmt::Assign { target, value } => {
-                assert!(matches!(&target.node, Expr::Ident(n) if n == "U"));
-                match &value.node {
-                    Expr::Call { args, .. } => {
-                        assert!(
-                            matches!(args.get(2), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::NoneLit))
-                        );
-                        assert!(
-                            matches!(args.get(3), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::Lambda { .. }))
-                        );
-                        assert!(
-                            matches!(args.get(4), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::NoneLit))
-                        );
-                    }
-                    other => panic!("expected typevar call, got {other:?}"),
-                }
-            }
-            other => panic!("expected U assign, got {other:?}"),
-        }
+        let (target, args) = find_typevar_assign(&m.stmts, "T").expect("T typevar assignment");
+        assert!(matches!(&target.node, Expr::Ident(n) if n == "T"));
+        assert!(
+            matches!(args.get(2), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::Lambda { .. }))
+        );
+        assert!(
+            matches!(args.get(3), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::NoneLit))
+        );
+        assert!(
+            matches!(args.get(4), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::NoneLit))
+        );
+
+        let (target, args) = find_typevar_assign(&m.stmts, "U").expect("U typevar assignment");
+        assert!(matches!(&target.node, Expr::Ident(n) if n == "U"));
+        assert!(
+            matches!(args.get(2), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::NoneLit))
+        );
+        assert!(
+            matches!(args.get(3), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::Lambda { .. }))
+        );
+        assert!(
+            matches!(args.get(4), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::NoneLit))
+        );
     }
 
     #[test]
     fn typevar_default_is_lowered_as_lazy_thunk() {
         let m = desugared("def f[T = Undefined]():\n    return T\n");
-        let Stmt::Assign { value, .. } = &m.stmts[0].node else {
-            panic!("expected typevar assignment");
-        };
-        let Expr::Call { args, .. } = &value.node else {
-            panic!("expected typevar constructor call");
-        };
+        let (_, args) = find_typevar_assign(&m.stmts, "T").expect("T typevar assignment");
         assert!(matches!(
             args.get(4),
             Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::Lambda { .. })
@@ -2233,20 +2268,25 @@ mod tests {
     #[test]
     fn private_class_typevar_binding_uses_mangled_scope_name() {
         let m = desugared("class Foo[__T]:\n    param = __T\n");
-        let Stmt::Assign { target, value } = &m.stmts[0].node else {
-            panic!("expected hoisted typevar assignment");
-        };
+        let (target, args) =
+            find_typevar_assign(&m.stmts, "__T").expect("hoisted typevar assignment");
         assert!(matches!(&target.node, Expr::Ident(name) if name == "_Foo__T"));
-        let Expr::Call { args, .. } = &value.node else {
-            panic!("expected typevar constructor");
-        };
         assert!(matches!(
             args.first(),
             Some(CallArg::Positional(arg)) if matches!(&arg.node, Expr::StrLit(name) if name == "__T")
         ));
-        let Stmt::Assign { value, .. } = &m.stmts[2].node else {
-            panic!("expected __type_params__ assignment");
-        };
+        let value = m
+            .stmts
+            .iter()
+            .find_map(|stmt| match &stmt.node {
+                Stmt::Assign { target, value }
+                    if matches!(&target.node, Expr::Attr { attr, .. } if attr == "__type_params__") =>
+                {
+                    Some(value)
+                }
+                _ => None,
+            })
+            .expect("__type_params__ assignment");
         let Expr::TupleLit(items) = &value.node else {
             panic!("expected params tuple");
         };
@@ -2259,18 +2299,8 @@ mod tests {
     #[test]
     fn private_class_bound_keeps_referenced_mangled_binding_alive() {
         let m = desugared("class Foo[__T, __U: __T]:\n    pass\n");
-        assert!(m.stmts.iter().any(|stmt| {
-            matches!(
-                &stmt.node,
-                Stmt::Del(expr) if matches!(&expr.node, Expr::Ident(name) if name == "_Foo__U")
-            )
-        }));
-        assert!(!m.stmts.iter().any(|stmt| {
-            matches!(
-                &stmt.node,
-                Stmt::Del(expr) if matches!(&expr.node, Expr::Ident(name) if name == "_Foo__T")
-            )
-        }));
+        assert!(restores_or_deletes(&m.stmts, "_Foo__U"));
+        assert!(!restores_or_deletes(&m.stmts, "_Foo__T"));
     }
 
     #[test]
@@ -2335,37 +2365,45 @@ mod tests {
         let m = desugared(
             "class Foo:\n    def meth[__U](self):\n        return __U\n    type Alias[__V] = __V\n",
         );
+        let (target, args) =
+            find_typevar_assign(&m.stmts, "__V").expect("alias typevar assignment");
+        assert!(matches!(&target.node, Expr::Ident(name) if name == "_Foo__V"));
         assert!(matches!(
-            &m.stmts[0].node,
-            Stmt::Assign { target, value }
-                if matches!(&target.node, Expr::Ident(name) if name == "_Foo__V")
-                    && matches!(
-                        &value.node,
-                        Expr::Call { args, .. }
-                            if matches!(
-                                args.first(),
-                                Some(CallArg::Positional(arg))
-                                    if matches!(&arg.node, Expr::StrLit(name) if name == "__V")
-                            )
-                    )
+            args.first(),
+            Some(CallArg::Positional(arg))
+                if matches!(&arg.node, Expr::StrLit(name) if name == "__V")
         ));
+        let (target, args) =
+            find_typevar_assign(&m.stmts, "__U").expect("method typevar assignment");
+        assert!(matches!(&target.node, Expr::Ident(name) if name == "_Foo__U"));
         assert!(matches!(
-            &m.stmts[2].node,
-            Stmt::Assign { target, value }
-                if matches!(&target.node, Expr::Ident(name) if name == "_Foo__U")
-                    && matches!(
-                        &value.node,
-                        Expr::Call { args, .. }
-                            if matches!(
-                                args.first(),
-                                Some(CallArg::Positional(arg))
-                                    if matches!(&arg.node, Expr::StrLit(name) if name == "__U")
-                            )
-                    )
+            args.first(),
+            Some(CallArg::Positional(arg))
+                if matches!(&arg.node, Expr::StrLit(name) if name == "__U")
         ));
-        let Stmt::Assign { target, value } = &m.stmts[4].node else {
-            panic!("expected real alias assignment");
-        };
+
+        let class_body = find_class_body(&m.stmts, "Foo");
+        let (target, value) = class_body
+            .iter()
+            .find_map(|stmt| match &stmt.node {
+                Stmt::Assign { target, value }
+                    if matches!(&target.node, Expr::Ident(name) if name == "Alias")
+                        && matches!(
+                            &value.node,
+                            Expr::Call { func, args }
+                                if matches!(&func.node, Expr::Ident(name) if name == TYPE_ALIAS_INTRINSIC)
+                                    && matches!(
+                                        args.get(1),
+                                        Some(CallArg::Positional(arg))
+                                            if matches!(&arg.node, Expr::Lambda { .. })
+                                    )
+                        ) =>
+                {
+                    Some((target, value))
+                }
+                _ => None,
+            })
+            .expect("real alias assignment");
         assert!(matches!(&target.node, Expr::Ident(name) if name == "Alias"));
         let Expr::Call { args, .. } = &value.node else {
             panic!("expected type alias constructor");
@@ -2383,9 +2421,25 @@ mod tests {
                         )
                 )
         ));
-        let Stmt::Assign { value, .. } = &m.stmts[3].node else {
-            panic!("expected method __type_params__ assignment");
-        };
+        let value = m
+            .stmts
+            .iter()
+            .find_map(|stmt| match &stmt.node {
+                Stmt::Assign { target, value }
+                    if matches!(
+                        &target.node,
+                        Expr::Attr { object, attr }
+                            if attr == "__type_params__"
+                                && matches!(
+                                    &object.node,
+                                    Expr::Attr { object: cls, attr: method }
+                                        if method == "meth"
+                                            && matches!(&cls.node, Expr::Ident(name) if name == "Foo")
+                                )
+                    ) => Some(value),
+                _ => None,
+            })
+            .expect("method __type_params__ assignment");
         let Expr::TupleLit(items) = &value.node else {
             panic!("expected method params tuple");
         };
@@ -2494,12 +2548,28 @@ mod tests {
     #[test]
     fn class_body_type_alias_reads_type_param_from_class_tuple() {
         let m = desugared("class Holder[T]:\n    type Inner = T\n");
-        let Stmt::ClassDef { body, .. } = &m.stmts[1].node else {
-            panic!("expected class definition after typevar binding");
-        };
-        let Stmt::Assign { value, .. } = &body[2].node else {
-            panic!("expected real alias assignment");
-        };
+        let body = find_class_body(&m.stmts, "Holder");
+        let value = body
+            .iter()
+            .find_map(|stmt| match &stmt.node {
+                Stmt::Assign { target, value }
+                    if matches!(&target.node, Expr::Ident(name) if name == "Inner")
+                        && matches!(
+                            &value.node,
+                            Expr::Call { func, args }
+                                if matches!(&func.node, Expr::Ident(name) if name == TYPE_ALIAS_INTRINSIC)
+                                    && matches!(
+                                        args.get(1),
+                                        Some(CallArg::Positional(arg))
+                                            if matches!(&arg.node, Expr::Lambda { .. })
+                                    )
+                        ) =>
+                {
+                    Some(value)
+                }
+                _ => None,
+            })
+            .expect("real alias assignment");
         let Expr::Call { args, .. } = &value.node else {
             panic!("expected type alias constructor");
         };

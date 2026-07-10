@@ -9,6 +9,7 @@ use rustc_hash::FxHashMap;
 /// - Accessing captured variables from within closures
 /// - Decorator application (wrapping functions)
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 const CLOSURE_HANDLE_BASE: i64 = 1i64 << 39;
 const CELL_ID_BASE: i64 = 1i64 << 38;
@@ -543,6 +544,62 @@ pub fn with_closure_cells<R>(closure_handle: MbValue, call: impl FnOnce() -> R) 
     let saved = ACTIVE_CELLS.with(|cells| {
         let mut cells = cells.borrow_mut();
         pairs
+            .iter()
+            .map(|(id, cell)| (id.clone(), cells.insert(id.clone(), *cell)))
+            .collect::<Vec<_>>()
+    });
+    let result = call();
+    ACTIVE_CELLS.with(|cells| {
+        let mut cells = cells.borrow_mut();
+        for (id, old) in saved {
+            if let Some(old_cell) = old {
+                cells.insert(id, old_cell);
+            } else {
+                cells.remove(&id);
+            }
+        }
+    });
+    result
+}
+
+/// Opaque snapshot of the active cells captured while constructing a deferred
+/// coroutine or generator. Cell handles remain owned by the closure runtime;
+/// this context only preserves the scoped symbol-to-cell association.
+#[derive(Clone)]
+pub(crate) struct CapturedCellContext {
+    pairs: Arc<Vec<(ScopedSymbolKey, MbValue)>>,
+}
+
+impl Default for CapturedCellContext {
+    fn default() -> Self {
+        Self {
+            pairs: Arc::new(Vec::new()),
+        }
+    }
+}
+
+pub(crate) fn capture_active_cell_context(ids: &[i64]) -> CapturedCellContext {
+    let pairs = ids
+        .iter()
+        .copied()
+        .map(|id| (scoped_symbol_key(id), active_cell_for_id(id)))
+        .collect();
+    CapturedCellContext {
+        pairs: Arc::new(pairs),
+    }
+}
+
+pub(crate) fn with_captured_cell_context<R>(
+    context: &CapturedCellContext,
+    call: impl FnOnce() -> R,
+) -> R {
+    if context.pairs.is_empty() {
+        return call();
+    }
+    let saved = ACTIVE_CELLS.with(|cells| {
+        let mut cells = cells.borrow_mut();
+        context
+            .pairs
             .iter()
             .map(|(id, cell)| (id.clone(), cells.insert(id.clone(), *cell)))
             .collect::<Vec<_>>()
