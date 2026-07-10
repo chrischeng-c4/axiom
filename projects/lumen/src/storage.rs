@@ -4542,6 +4542,15 @@ impl Engine {
     /// explicitly-invoked step: never implicit in `apply_reshard_batch` or
     /// `snapshot`. Idempotent — a doc already evicted by a prior call no
     /// longer matches and is skipped on retry.
+    ///
+    /// Refreshes `lumen_storage_bytes` inline for every collection actually
+    /// touched (#1386 R2): the gauge otherwise only refreshes on the next
+    /// `GET /collections/{id}/stats` call, which may not come before the
+    /// reshard driver's own usage loop scrapes `/metrics` again — a scrape
+    /// timed right after this cutover's eviction would otherwise still
+    /// report pre-eviction bytes even though it is chronologically
+    /// post-cutover, defeating the cutover-generation freshness check in
+    /// [`crate::operator::crd::LumenSpec::reshard_status_with_usage`].
     /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
     pub fn evict_not_owned(
         &self,
@@ -4584,6 +4593,12 @@ impl Engine {
             }
             documents_evicted = documents_evicted.saturating_add(to_evict.len() as u32);
             collections_touched += 1;
+            // #1386 R2: recompute and publish this collection's real
+            // post-eviction byte footprint immediately, the same
+            // computation `stats()` does, rather than leaving the gauge to
+            // whatever the last `/stats` caller happened to report.
+            let total_bytes: u64 = coll.fields.values().map(|fi| fi.bytes()).sum();
+            self.metrics.set_storage_bytes(total_bytes);
         }
         Ok(ReshardEvictOutcome {
             collections_touched,

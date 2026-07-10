@@ -283,6 +283,68 @@ async fn reshard_evict_removes_only_moved_bucket_docs() {
     assert_eq!(total_docs(&s).await, 16 - evicted_ids.len() as u64);
 }
 
+/// #1386 R2: eviction must refresh `lumen_storage_bytes` inline, not leave
+/// it to the next `/collections/{id}/stats` call — a `/metrics` scrape taken
+/// right after `:evict`, with no intervening `stats` call, must already
+/// reflect the smaller post-eviction footprint. This is what lets a
+/// post-cutover shard-usage scrape (tagged with the new `shardMap.version`)
+/// actually see post-migration reality instead of a stale pre-eviction
+/// gauge value.
+#[tokio::test]
+async fn reshard_evict_refreshes_storage_bytes_gauge_without_a_stats_call() {
+    let s = server();
+    create_users_collection(&s).await;
+    let ids: Vec<String> = (0..16).map(|i| format!("e-{i:02}")).collect();
+    for id in &ids {
+        index_user(&s, id).await;
+    }
+
+    // Establish the pre-eviction gauge value via one `stats` call (the
+    // *last* one this test makes before scraping `/metrics` post-evict).
+    s.get("/collections/u/stats").await.assert_status_ok();
+    let before = storage_bytes_gauge(&s).await;
+    assert!(before > 0, "expected a nonzero pre-eviction gauge value");
+
+    let mut assignments = vec![0u32; VIRTUAL_BUCKET_COUNT as usize];
+    assignments[0] = 1;
+    let new_map = VirtualBucketShardMap::new(1, assignments.clone(), 2).expect("valid shard map");
+    let evicted_any = ids.iter().any(|id| {
+        let b = bucket_of("u", id);
+        assignments[b as usize] != 0
+    });
+    assert!(evicted_any, "fixture should evict at least one document");
+
+    s.post("/admin/reshard:evict")
+        .json(&json!({
+            "shard": 0,
+            "map_version": new_map.version(),
+            "assignments": assignments,
+            "physical_shard_count": 2
+        }))
+        .await
+        .assert_status_ok();
+
+    // No `stats` call in between: `/metrics` alone must already show the
+    // post-eviction value.
+    let after = storage_bytes_gauge(&s).await;
+    assert!(
+        after < before,
+        "expected lumen_storage_bytes to drop after :evict without an intervening \
+         stats call (before={before}, after={after})"
+    );
+}
+
+async fn storage_bytes_gauge(s: &TestServer) -> u64 {
+    let resp = s.get("/metrics").await;
+    resp.assert_status_ok();
+    let body = resp.text();
+    body.lines()
+        .find(|l| l.starts_with("lumen_storage_bytes "))
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|v| v.parse::<u64>().ok())
+        .expect("lumen_storage_bytes gauge line present")
+}
+
 /// AC4: all three new verbs require bearer auth (401) and admin role (403).
 #[tokio::test]
 async fn reshard_admin_verbs_require_admin_auth() {

@@ -37,9 +37,9 @@ Public API manifest for `projects/lumen/src/operator/crd.rs` generated from AST 
 | `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 279 | as_env(self) -> &'static str |
 | `as_str` | projects/lumen/src/operator/crd.rs | function | pub | 218 | as_str(self) -> &'static str |
 | `progress_percent` | projects/lumen/src/operator/crd.rs | function | pub | 227 | progress_percent(self) -> u8 |
-| `reshard_status` | projects/lumen/src/operator/crd.rs | function | pub | 509 | reshard_status(&self) -> LumenReshardStatus |
-| `reshard_status_with_usage` | projects/lumen/src/operator/crd.rs | function | pub | 570 | reshard_status_with_usage(&self, shard_usage_bytes: &BTreeMap<u32, u64>) -> LumenReshardStatus |
-| `storage_pod_count` | projects/lumen/src/operator/crd.rs | function | pub | 490 | storage_pod_count(&self) -> i32 |
+| `reshard_status` | projects/lumen/src/operator/crd.rs | function | pub | 522 | reshard_status(&self) -> LumenReshardStatus |
+| `reshard_status_with_usage` | projects/lumen/src/operator/crd.rs | function | pub | 601 | reshard_status_with_usage(&self, shard_usage_bytes: &BTreeMap<u32, u64>, measured_at_map_version: u64) -> LumenReshardStatus |
+| `storage_pod_count` | projects/lumen/src/operator/crd.rs | function | pub | 503 | storage_pod_count(&self) -> i32 |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -525,6 +525,19 @@ pub struct LumenReshardStatus {
     /// yet — the plain [`LumenSpec::reshard_status`] never sets it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_observed_percent: Option<u8>,
+    /// The `spec.shardMap.version` live when [`Self::max_observed_percent`]
+    /// was captured (#1386 R1/R2) — the usage measurement's freshness
+    /// generation. [`LumenSpec::reshard_status_with_usage`] only reports a
+    /// crossed threshold when this equals the CR's *current*
+    /// `spec.shardMap.version`; a mismatch means the measurement predates
+    /// the most recent split's cutover (immediately after `Complete`, the
+    /// shard-usage cache almost always still holds exactly this — the live
+    /// #1384 proof bug this field closes) and the status instead reports
+    /// `"usageStalePostCutover"`, holding until a fresh post-cutover
+    /// scrape lands. `None` alongside `max_observed_percent == None` (no
+    /// measurement yet).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_measured_at_map_version: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blocking_conditions: Vec<String>,
     #[serde(default)]
@@ -591,6 +604,7 @@ impl LumenSpec {
             target_shard_count: target,
             migration_bytes_per_sec: policy.migration_bytes_per_sec,
             max_observed_percent: None,
+            usage_measured_at_map_version: None,
             blocking_conditions,
             message,
         }
@@ -599,23 +613,41 @@ impl LumenSpec {
     /// Live-usage-aware reshard status (#1319 R1): layers [`Self::reshard_status`]
     /// with real per-shard byte measurements instead of only formatting the
     /// configured percentages into a message. `shard_usage_bytes` maps
-    /// `shard_index -> observed bytes` (see [`super::reconcile`]'s
-    /// pod-`/metrics` measurement loop, the function's only caller).
+    /// `shard_index -> observed bytes`; `measured_at_map_version` is the
+    /// `spec.shardMap.version` that was live on this CR when that usage was
+    /// scraped (see [`super::reconcile`]'s pod-`/metrics` measurement loop,
+    /// the function's only caller).
     ///
     /// Reports whether the busiest shard has crossed `prepareAtPercent` /
-    /// `urgentAtPercent` of `maxShardBytes`. This function itself does
-    /// **not** drive `workflow.phase` or move any data — it only computes
-    /// the status this tick. The autonomous split executor (#1319 R2, #1381:
-    /// computing a target topology, invoking [`crate::reshard::bucket_moves`]
-    /// / [`crate::reshard::snapshot_reshard_batches`], and updating
-    /// `shardMap.assignments`) is a separate loop
-    /// ([`crate::operator::reshard_driver::should_start_split`] /
-    /// `drive_tick`) that reads the `blockingConditions` this function
-    /// writes and acts on them independently.
+    /// `urgentAtPercent` of `maxShardBytes` — but only once
+    /// `measured_at_map_version` matches this CR's *current*
+    /// `shard_map.version` (#1386 R1/R2). A split's cutover bumps
+    /// `shard_map.version` in the very same patch that follows evicting
+    /// moved documents from their old shard, so a mismatch means the
+    /// measurement predates that cutover and still reflects pre-eviction
+    /// usage — most visibly, immediately after a split reaches `Complete`,
+    /// when the shard-usage cache has not yet re-scraped (the exact live
+    /// #1384 bug: a stale post-migration reading re-crossed the threshold
+    /// and cascaded straight into an unwarranted second split). While
+    /// stale, this reports `"usageStalePostCutover"` instead of a
+    /// threshold-crossed condition, holding until a fresh post-cutover
+    /// scrape lands; a genuinely still-hot shard can still trigger the next
+    /// split, but only once the measurement itself is proven post-cutover.
+    ///
+    /// This function itself does **not** drive `workflow.phase` or move any
+    /// data — it only computes the status this tick. The autonomous split
+    /// executor (#1319 R2, #1381: computing a target topology, invoking
+    /// [`crate::reshard::bucket_moves`] / [`crate::reshard::
+    /// snapshot_reshard_batches`], and updating `shardMap.assignments`) is a
+    /// separate loop ([`crate::operator::reshard_driver::
+    /// should_start_split`] / `drive_tick`) that reads the
+    /// `blockingConditions` this function writes and acts on them
+    /// independently.
     /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
     pub fn reshard_status_with_usage(
         &self,
         shard_usage_bytes: &BTreeMap<u32, u64>,
+        measured_at_map_version: u64,
     ) -> LumenReshardStatus {
         let mut status = self.reshard_status();
         let Some(max_shard_bytes) = self.reshard_policy.max_shard_bytes else {
@@ -636,6 +668,25 @@ impl LumenSpec {
             .round()
             .clamp(0.0, 255.0) as u8;
         status.max_observed_percent = Some(percent);
+        status.usage_measured_at_map_version = Some(measured_at_map_version);
+
+        if measured_at_map_version != self.shard_map.version {
+            // #1386 R1: this measurement predates the most recent cutover
+            // (or, less likely, raced ahead of a status write that hasn't
+            // observed it yet) — never let a stale reading drive
+            // `should_start_split`, no matter how urgent the stale
+            // percentage looks.
+            status
+                .blocking_conditions
+                .push("usageStalePostCutover".to_string());
+            status.message = format!(
+                "usage measured at shardMap version {measured_at_map_version}, but the CR is \
+                 now at version {}; holding for a fresh post-cutover measurement before \
+                 evaluating the next split",
+                self.shard_map.version
+            );
+            return status;
+        }
 
         let policy = &self.reshard_policy;
         let prepare_at = policy.start_at_percent.unwrap_or(policy.prepare_at_percent);
@@ -723,4 +774,17 @@ changes:
       pointing at the new `reshard_driver` module (`should_start_split` /
       `drive_tick`) that now consumes `blockingConditions` and actually
       drives `workflow.phase`.
+  - path: projects/lumen/src/operator/crd.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1386 R1/R2/R3: added `LumenReshardStatus.usage_measured_at_map_version`
+      and a new `measured_at_map_version: u64` parameter on
+      `reshard_status_with_usage`, so a stale (pre-cutover) usage
+      measurement — the exact shape the shard-usage cache holds for one
+      scrape tick right after a split completes — reports
+      `"usageStalePostCutover"` instead of a crossed threshold, closing the
+      #1384 cascade-split bug without any change to
+      `reshard_driver::should_start_split`.
 ```

@@ -560,7 +560,7 @@ fn reshard_status_with_usage_falls_back_without_capacity_ceiling() {
     let spec = dev_spec();
     let mut usage = BTreeMap::new();
     usage.insert(0u32, 999_999_999u64);
-    let status = spec.reshard_status_with_usage(&usage);
+    let status = spec.reshard_status_with_usage(&usage, spec.shard_map.version);
     assert_eq!(status, spec.reshard_status());
     assert_eq!(status.max_observed_percent, None);
 }
@@ -570,7 +570,7 @@ fn reshard_status_with_usage_falls_back_when_usage_not_measured_yet() {
     // Policy configured, but no usage sample yet this tick (empty map).
     let mut spec = dev_spec();
     spec.reshard_policy.max_shard_bytes = Some(1_000_000);
-    let status = spec.reshard_status_with_usage(&BTreeMap::new());
+    let status = spec.reshard_status_with_usage(&BTreeMap::new(), spec.shard_map.version);
     assert_eq!(status.max_observed_percent, None);
     assert_eq!(status, spec.reshard_status());
 }
@@ -582,8 +582,12 @@ fn reshard_status_with_usage_below_prepare_threshold() {
     // Defaults: prepare 50%, urgent 85%.
     let mut usage = BTreeMap::new();
     usage.insert(0u32, 100_000u64); // 10%
-    let status = spec.reshard_status_with_usage(&usage);
+    let status = spec.reshard_status_with_usage(&usage, spec.shard_map.version);
     assert_eq!(status.max_observed_percent, Some(10));
+    assert_eq!(
+        status.usage_measured_at_map_version,
+        Some(spec.shard_map.version)
+    );
     assert!(status.blocking_conditions.is_empty());
     assert!(status.message.contains("below prepare threshold"));
 }
@@ -594,7 +598,7 @@ fn reshard_status_with_usage_reports_prepare_threshold_crossed() {
     spec.reshard_policy.max_shard_bytes = Some(1_000_000);
     let mut usage = BTreeMap::new();
     usage.insert(0u32, 600_000u64); // 60%: past prepare(50), below urgent(85)
-    let status = spec.reshard_status_with_usage(&usage);
+    let status = spec.reshard_status_with_usage(&usage, spec.shard_map.version);
     assert_eq!(status.max_observed_percent, Some(60));
     assert_eq!(status.blocking_conditions, vec!["prepareThresholdCrossed"]);
     assert!(status.message.contains("prepare threshold crossed"));
@@ -606,7 +610,7 @@ fn reshard_status_with_usage_reports_urgent_threshold_crossed() {
     spec.reshard_policy.max_shard_bytes = Some(1_000_000);
     let mut usage = BTreeMap::new();
     usage.insert(0u32, 900_000u64); // 90%: past urgent(85)
-    let status = spec.reshard_status_with_usage(&usage);
+    let status = spec.reshard_status_with_usage(&usage, spec.shard_map.version);
     assert_eq!(status.max_observed_percent, Some(90));
     assert_eq!(status.blocking_conditions, vec!["urgentThresholdCrossed"]);
     assert!(status.message.contains("urgent threshold crossed"));
@@ -621,9 +625,48 @@ fn reshard_status_with_usage_picks_the_busiest_shard() {
     usage.insert(0u32, 100_000u64);
     usage.insert(1u32, 950_000u64); // busiest: 95%, urgent
     usage.insert(2u32, 400_000u64);
-    let status = spec.reshard_status_with_usage(&usage);
+    let status = spec.reshard_status_with_usage(&usage, spec.shard_map.version);
     assert_eq!(status.max_observed_percent, Some(95));
     assert!(status.message.contains("shard 1"));
+}
+
+#[test]
+fn reshard_status_with_usage_holds_on_pre_cutover_measurement() {
+    // #1386 R1/R3: a measurement tagged with an older `shardMap.version` than
+    // the CR's current one (the shard-usage cache right after a split
+    // completes, before the next scrape) must not report a crossed
+    // threshold even though the raw percentage is well past urgent — and
+    // the status must visibly say so (not silently look idle).
+    let mut spec = dev_spec();
+    spec.reshard_policy.max_shard_bytes = Some(1_000_000);
+    spec.shard_map.version = 1; // post-cutover
+    let mut usage = BTreeMap::new();
+    usage.insert(0u32, 900_000u64); // 90%: past urgent(85), but stale
+    let status = spec.reshard_status_with_usage(&usage, 0 /* pre-cutover measurement */);
+    assert_eq!(status.max_observed_percent, Some(90));
+    assert_eq!(status.usage_measured_at_map_version, Some(0));
+    assert_eq!(status.blocking_conditions, vec!["usageStalePostCutover"]);
+    assert!(status
+        .message
+        .contains("holding for a fresh post-cutover measurement"));
+}
+
+#[test]
+fn reshard_status_with_usage_reports_urgent_after_fresh_post_cutover_measurement() {
+    // #1386 R2: once the usage cache carries a measurement tagged with the
+    // CR's *current* `shardMap.version`, a genuinely still-hot shard is
+    // reported normally and can legitimately trigger the next split.
+    let mut spec = dev_spec();
+    spec.reshard_policy.max_shard_bytes = Some(1_000_000);
+    spec.shard_map.version = 1; // post-cutover
+    let mut usage = BTreeMap::new();
+    usage.insert(1u32, 900_000u64); // 90%: past urgent(85), fresh
+    let status =
+        spec.reshard_status_with_usage(&usage, 1 /* fresh: matches shardMap.version */);
+    assert_eq!(status.max_observed_percent, Some(90));
+    assert_eq!(status.usage_measured_at_map_version, Some(1));
+    assert_eq!(status.blocking_conditions, vec!["urgentThresholdCrossed"]);
+    assert!(status.message.contains("urgent threshold crossed"));
 }
 
 #[test]
