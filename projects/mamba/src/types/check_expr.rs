@@ -1,7 +1,6 @@
 use super::check::{expr_to_type_expr, FunctionParamSig, NumericRoot, TypeChecker};
-use super::generic::{
-    bind_explicit_type_args, check_bounds, complete_type_args, infer_type_args, Substitution,
-};
+use super::generic::{check_bounds, complete_type_args, infer_type_args, Substitution};
+use super::ty::UserClassRole;
 use super::{Ty, TypeId};
 use crate::parser::ast::*;
 use crate::resolve::SymbolKind;
@@ -482,19 +481,23 @@ impl TypeChecker {
                                         // at runtime). The wall stays up for
                                         // scalars without the protocol
                                         // (chr(1.5) is still rejected here).
-                                        let index_protocol_ok = matches!(
-                                            func_name.as_deref(),
-                                            Some("chr" | "hex" | "oct" | "bin")
-                                        ) && matches!(
-                                            self.tcx.get(expected),
-                                            Ty::Int
-                                        ) && match self.tcx.get(at) {
-                                            Ty::Class { name, .. } => self
-                                                .class_methods
-                                                .get(name)
-                                                .is_some_and(|m| m.contains_key("__index__")),
-                                            _ => false,
-                                        };
+                                        let index_protocol_ok =
+                                            matches!(
+                                                func_name.as_deref(),
+                                                Some("chr" | "hex" | "oct" | "bin")
+                                            ) && matches!(self.tcx.get(expected), Ty::Int)
+                                                && match self.tcx.get(at) {
+                                                    Ty::Class { name, user, .. }
+                                                        if !user.as_ref().is_some_and(|user| {
+                                                            user.role == UserClassRole::Object
+                                                        }) =>
+                                                    {
+                                                        self.class_methods.get(name).is_some_and(
+                                                            |m| m.contains_key("__index__"),
+                                                        )
+                                                    }
+                                                    _ => false,
+                                                };
                                         let bytes_literal_str_mismatch = matches!(
                                             (self.tcx.get(expected), &a.node),
                                             (Ty::Str, Expr::BytesLit(_))
@@ -622,6 +625,20 @@ impl TypeChecker {
                     }
                     // #246: calling a class constructor returns instance of that class
                     Ty::Class { user, .. } => {
+                        if user
+                            .as_ref()
+                            .is_some_and(|user| user.role == UserClassRole::Instance)
+                        {
+                            for arg in args {
+                                self.check_call_arg(arg);
+                            }
+                            let callable = self.class_defines_dunder(func_ty_id, "__call__");
+                            if callable {
+                                return self.tcx.any();
+                            }
+                            self.error(expr.span, "called value is not a function");
+                            return self.tcx.error();
+                        }
                         let class_symbol = user.as_ref().map(|user| user.symbol).or(func_symbol);
                         let init_params = class_symbol
                             .and_then(|symbol| self.class_method_param_sigs.get(&symbol))
@@ -671,7 +688,8 @@ impl TypeChecker {
                                         expr.span,
                                     );
                                 }
-                                return func_ty_id;
+                                return self
+                                    .with_user_class_role(func_ty_id, UserClassRole::Instance);
                             }
                             let (subst, conflicts) = if init_params.is_empty() {
                                 (Substitution::new(), Vec::new())
@@ -695,7 +713,11 @@ impl TypeChecker {
                                 );
                                 if let Some(symbol) = class_symbol {
                                     return self.apply_user_class_specialization(
-                                        symbol, func_ty_id, &completed, &resolved,
+                                        symbol,
+                                        func_ty_id,
+                                        &completed,
+                                        &resolved,
+                                        UserClassRole::Instance,
                                     );
                                 }
                             } else {
@@ -704,7 +726,17 @@ impl TypeChecker {
                                 }
                             }
                         }
-                        func_ty_id
+                        if user.is_some() {
+                            self.check_substituted_constructor_args(
+                                &inference_params,
+                                &inference_args,
+                                &Substitution::new(),
+                                expr.span,
+                            );
+                            self.with_user_class_role(func_ty_id, UserClassRole::Instance)
+                        } else {
+                            func_ty_id
+                        }
                     }
                     Ty::Any => {
                         for arg in args {
@@ -740,11 +772,19 @@ impl TypeChecker {
                     // binds C to a Union of Fn/Class types. If every member is
                     // callable, accept the call and return Any (join of return types).
                     Ty::Union(ref members)
-                        if members.iter().all(|&m| {
-                            matches!(
-                                self.tcx.get(m),
-                                Ty::Fn { .. } | Ty::Class { .. } | Ty::Any | Ty::Error
-                            )
+                        if members.iter().all(|&member| match self.tcx.get(member) {
+                            Ty::Fn { .. } | Ty::Any | Ty::Error => true,
+                            Ty::Class { user: None, .. } => true,
+                            Ty::Class {
+                                user: Some(user), ..
+                            } if user.role == UserClassRole::Object => true,
+                            Ty::Class {
+                                user: Some(user), ..
+                            } if user.role == UserClassRole::Instance => {
+                                self.class_defines_dunder(member, "__call__")
+                            }
+                            Ty::Class { .. } => false,
+                            _ => false,
                         }) =>
                     {
                         for arg in args {
@@ -779,10 +819,9 @@ impl TypeChecker {
                     }
                 }
                 if self.user_class_object(object).is_some() {
-                    // The type model still represents a class object and its
-                    // instances with the same Ty::Class variant. Keep normal-
-                    // mode unbound calls dynamic; only instance expressions
-                    // use the bound method signature below.
+                    // UserClassRole distinguishes the two meanings carried by
+                    // Ty::Class. Keep normal-mode unbound calls dynamic; only
+                    // Instance expressions use the bound signature below.
                     return self.tcx.any();
                 }
                 self.resolve_attr(obj_ty_id, attr, expr.span)
@@ -1467,8 +1506,11 @@ impl TypeChecker {
                 && matches!(sig.name, "isinstance" | "issubclass")
                 && param_idx == 1;
             if classinfo_param {
-                self.check_expr(a);
-                if let Some(name) = self.classinfo_bare_instance_name(a) {
+                let actual = self.check_expr(a);
+                if let Some(name) = self
+                    .classinfo_instance_name_from_type(actual)
+                    .or_else(|| self.classinfo_bare_instance_name(a))
+                {
                     self.error(
                         a.span,
                         format!(
@@ -1555,6 +1597,25 @@ impl TypeChecker {
         // negative scalar wall because bytes literals currently infer to Any.
         let expected = self.core_ty_to_type_id(param.ty);
         let actual = self.check_expr(a);
+        if matches!(param.ty, super::stdlib_sigs::CoreTy::Type) {
+            if let Ty::Class {
+                name,
+                user: Some(user),
+                ..
+            } = self.tcx.get(actual)
+            {
+                if user.role == UserClassRole::Instance {
+                    self.error(
+                        a.span,
+                        format!(
+                            "argument type mismatch: `{name}` does not satisfy parameter `{}`'s type",
+                            param.name,
+                        ),
+                    );
+                    return;
+                }
+            }
+        }
         // A BARE user class instance (`class _W: pass` -> `_W()`) satisfies NO
         // concrete parameter contract: it is not a scalar (str/int/float/
         // bytes/bool; no relevant dunder), not a protocol (no dunders), and
@@ -1583,17 +1644,8 @@ impl TypeChecker {
         // #885: a bare instance stashed in a variable (`w = _W(); f(w)`) has
         // no distinguishing expression shape at the call site, so the
         // syntactic `classinfo_bare_instance_name` helper alone misses it.
-        // Fall back to the inferred type — `Ty::Class{name,..}` whose name is
-        // a registered bare class — mirroring the dict `__ior__`/`__or__`
-        // precedent (check_dict_operator_call above). This CANNOT apply to
-        // `CoreTy::Type`: the current type model represents both the class
-        // object `C` and an instance `C()` as the identical `Ty::Class`, and
-        // `CoreTy::Type` params must keep accepting real class objects such
-        // as `f.__get__(None, C)` / `object.__subclasshook__(C)` — those stay
-        // shape-skip-safe. Every other concrete contract here (scalars, and
-        // the `Typed` nominal/protocol contract) can never legitimately
-        // receive a raw class object either, so widening them to the
-        // inferred type adds no false positives.
+        // Fall back to the inferred type for legacy native classes; user
+        // class objects and instances are distinguished by UserClassRole.
         let bare_arg = self
             .classinfo_bare_instance_name(a)
             .or_else(|| match param.ty {
@@ -1606,20 +1658,14 @@ impl TypeChecker {
                 if matches!(param.ty, super::stdlib_sigs::CoreTy::Type) {
                     return None;
                 }
-                // The type model gives the class object `_W` and an instance
-                // `_W()` the identical `Ty::Class`, so an ident that NAMES a
-                // known class is the class object itself
-                // (`object.__subclasshook__(_W)`, `slice.__new__(slice, ...)`)
-                // — curated `Typed` rows rely on those staying accepted. Only
-                // differently-named idents (variables holding constructor
-                // results) count as instances here.
-                if let Expr::Ident(id) = &a.node {
-                    if self.user_bare_classes.contains(id) || self.class_methods.contains_key(id) {
-                        return None;
-                    }
-                }
                 match self.tcx.get(actual) {
-                    Ty::Class { name, .. } if self.user_bare_classes.contains(name) => {
+                    Ty::Class {
+                        name,
+                        user: Some(user),
+                        ..
+                    } if user.role == UserClassRole::Instance
+                        && self.user_bare_classes.contains(name) =>
+                    {
                         Some(name.clone())
                     }
                     _ => None,
@@ -1815,10 +1861,8 @@ impl TypeChecker {
         }
     }
 
-    /// `isinstance`/`issubclass` classinfo accepts type objects and tuples of
-    /// type objects. The current type model represents both `C` and `C()` as
-    /// `Ty::Class`, so this narrow hook uses expression shape to reject only
-    /// the provably-wrong bare-instance fixtures.
+    /// Syntax fallback for bare-instance classinfo fixtures. Inferred user
+    /// classes use UserClassRole; this also covers shapes whose type widened.
     fn classinfo_bare_instance_name(&self, expr: &Spanned<Expr>) -> Option<String> {
         match &expr.node {
             Expr::Call { func, .. } => match &func.node {
@@ -1828,6 +1872,20 @@ impl TypeChecker {
             Expr::TupleLit(elems) => elems
                 .iter()
                 .find_map(|elem| self.classinfo_bare_instance_name(elem)),
+            _ => None,
+        }
+    }
+
+    fn classinfo_instance_name_from_type(&self, ty: TypeId) -> Option<String> {
+        match self.tcx.get(ty) {
+            Ty::Class {
+                name,
+                user: Some(user),
+                ..
+            } if user.role == UserClassRole::Instance => Some(name.clone()),
+            Ty::Tuple(elements) => elements
+                .iter()
+                .find_map(|element| self.classinfo_instance_name_from_type(*element)),
             _ => None,
         }
     }
@@ -1900,15 +1958,14 @@ impl TypeChecker {
         let Expr::Ident(name) = &object.node else {
             return None;
         };
-        let symbol = self.symbols.lookup(name)?;
-        if self.symbols.get_symbol(symbol).kind != SymbolKind::Class {
-            return None;
+        let binding_symbol = self.symbols.lookup(name)?;
+        let base_ty = self.get_sym_type(binding_symbol.0);
+        match self.tcx.get(base_ty) {
+            Ty::Class {
+                user: Some(user), ..
+            } if user.role == UserClassRole::Object => {}
+            _ => return None,
         }
-        let base_ty = self.get_sym_type(symbol.0);
-        let Some(generic_params) = self.generic_defs.get(&symbol).cloned() else {
-            self.error(span, format!("type '{name}' is not generic"));
-            return Some(base_ty);
-        };
         let expressions = match &index.node {
             Expr::TupleLit(items) => items.as_slice(),
             _ => std::slice::from_ref(index),
@@ -1918,12 +1975,14 @@ impl TypeChecker {
             let type_expr = expr_to_type_expr(expression)?;
             supplied.push(self.resolve_type_expr(&type_expr));
         }
-        let (subst, resolved, errors) =
-            bind_explicit_type_args(&generic_params, &supplied, &mut self.tcx);
-        for error in errors {
-            self.error(span, error);
-        }
-        Some(self.apply_user_class_specialization(symbol, base_ty, &subst, &resolved))
+        Some(self.specialize_user_class_as(
+            name,
+            binding_symbol,
+            base_ty,
+            Some(&supplied),
+            span,
+            UserClassRole::Object,
+        ))
     }
 
     fn check_substituted_constructor_args(
@@ -1952,18 +2011,27 @@ impl TypeChecker {
         &self,
         object: &'a Spanned<Expr>,
     ) -> Option<(&'a str, crate::resolve::SymbolId)> {
-        let name = match &object.node {
-            Expr::Ident(name) => name.as_str(),
+        let (name, symbol) = match &object.node {
+            Expr::Ident(name) => {
+                let symbol = self.symbols.lookup(name)?;
+                (name.as_str(), symbol)
+            }
             Expr::Index { object, .. } => {
                 let Expr::Ident(name) = &object.node else {
                     return None;
                 };
-                name.as_str()
+                let symbol = self.symbols.lookup(name)?;
+                (name.as_str(), symbol)
             }
             _ => return None,
         };
-        let symbol = self.symbols.lookup(name)?;
-        (self.symbols.get_symbol(symbol).kind == SymbolKind::Class).then_some((name, symbol))
+        let Ty::Class {
+            user: Some(user), ..
+        } = self.tcx.get(self.get_sym_type(symbol.0))
+        else {
+            return None;
+        };
+        (user.role == UserClassRole::Object).then_some((name, user.symbol))
     }
 
     /// Resolve attribute access (#246).
@@ -1978,7 +2046,7 @@ impl TypeChecker {
         let user = match self.tcx.get(object_ty) {
             Ty::Class {
                 user: Some(user), ..
-            } if user.symbol == symbol => Some(user.clone()),
+            } if user.symbol == symbol && user.role == UserClassRole::Object => Some(user.clone()),
             _ => None,
         };
         if let Some(user) = user {
@@ -2058,6 +2126,12 @@ impl TypeChecker {
                 _ => self.tcx.any(),
             },
             Ty::Class { user, fields, .. } => {
+                if user
+                    .as_ref()
+                    .is_some_and(|user| user.role == UserClassRole::Object)
+                {
+                    return self.tcx.any();
+                }
                 for (name, ty) in &fields {
                     if name == attr {
                         return *ty;
@@ -2173,7 +2247,13 @@ impl TypeChecker {
         match ty {
             Ty::Int | Ty::Bool => Some(NumericRoot::Int),
             Ty::Float => Some(NumericRoot::Float),
-            Ty::Class { name, .. } => self.numeric_derived_classes.get(name).copied(),
+            Ty::Class { name, user, .. }
+                if !user
+                    .as_ref()
+                    .is_some_and(|user| user.role == UserClassRole::Object) =>
+            {
+                self.numeric_derived_classes.get(name).copied()
+            }
             _ => None,
         }
     }
@@ -2209,9 +2289,32 @@ impl TypeChecker {
     /// anywhere in its chain returns `false` — the walls' rejection of
     /// genuinely non-overriding classes is unchanged.
     fn class_defines_dunder(&self, ty_id: TypeId, dunder: &str) -> bool {
-        let Ty::Class { name, .. } = self.tcx.get(ty_id) else {
+        let Ty::Class { name, user, .. } = self.tcx.get(ty_id) else {
             return false;
         };
+        if let Some(user) = user {
+            if user.role == UserClassRole::Object {
+                return false;
+            }
+            let mut visited = std::collections::HashSet::new();
+            let mut queue = vec![user.symbol];
+            while let Some(symbol) = queue.pop() {
+                if !visited.insert(symbol) {
+                    continue;
+                }
+                if self
+                    .class_methods_by_symbol
+                    .get(&symbol)
+                    .is_some_and(|methods| methods.contains_key(dunder))
+                {
+                    return true;
+                }
+                if let Some(bases) = self.class_base_symbols.get(&symbol) {
+                    queue.extend(bases.iter().copied());
+                }
+            }
+            return false;
+        }
         let mut visited: std::collections::HashSet<&str> = std::collections::HashSet::new();
         let mut queue: Vec<&str> = vec![name.as_str()];
         while let Some(cur) = queue.pop() {
@@ -2240,9 +2343,15 @@ impl TypeChecker {
     /// (unoverridden) case. `None` when `ty_id` isn't a numeric-derived class
     /// (caller keeps its existing fallback).
     fn numeric_derived_result_ty(&mut self, ty_id: TypeId) -> Option<TypeId> {
-        let Ty::Class { name, .. } = self.tcx.get(ty_id) else {
+        let Ty::Class { name, user, .. } = self.tcx.get(ty_id) else {
             return None;
         };
+        if user
+            .as_ref()
+            .is_some_and(|user| user.role == UserClassRole::Object)
+        {
+            return None;
+        }
         match self.numeric_derived_classes.get(name).copied() {
             Some(NumericRoot::Int) => Some(self.tcx.int()),
             Some(NumericRoot::Float) => Some(self.tcx.float()),
@@ -2735,23 +2844,27 @@ impl TypeChecker {
                 let alias_ty = match &pattern.node {
                     Pattern::ClassPattern { cls, .. } => {
                         let class_name = cls.last().map(|s| s.as_str()).unwrap_or("");
-                        self.symbols
+                        let class_ty = self
+                            .symbols
                             .lookup(class_name)
                             .map(|s| self.get_sym_type(s.0))
                             .filter(|&ty| {
                                 matches!(self.tcx.get(ty), crate::types::Ty::Class { .. })
                             })
-                            .unwrap_or_else(|| self.tcx.any())
+                            .unwrap_or_else(|| self.tcx.any());
+                        self.with_user_class_role(class_ty, UserClassRole::Instance)
                     }
                     Pattern::Constructor { path, .. } => {
                         let class_name = path.last().map(|s| s.as_str()).unwrap_or("");
-                        self.symbols
+                        let class_ty = self
+                            .symbols
                             .lookup(class_name)
                             .map(|s| self.get_sym_type(s.0))
                             .filter(|&ty| {
                                 matches!(self.tcx.get(ty), crate::types::Ty::Class { .. })
                             })
-                            .unwrap_or_else(|| self.tcx.any())
+                            .unwrap_or_else(|| self.tcx.any());
+                        self.with_user_class_role(class_ty, UserClassRole::Instance)
                     }
                     // For non-class patterns, propagate the match subject type (#827).
                     _ => self

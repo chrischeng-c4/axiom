@@ -37,10 +37,18 @@ impl TypeParamDefault {
     }
 }
 
-/// Nominal identity and concrete arguments for a user-defined class.
+/// Whether a user-defined class type denotes the class object or an instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UserClassRole {
+    Object,
+    Instance,
+}
+
+/// Nominal identity, role, and concrete arguments for a user-defined class.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UserClass {
     pub symbol: SymbolId,
+    pub role: UserClassRole,
     pub args: Vec<TypeId>,
 }
 
