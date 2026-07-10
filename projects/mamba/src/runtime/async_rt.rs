@@ -427,6 +427,15 @@ fn raise_stop_iteration_value(value: MbValue) -> MbValue {
     MbValue::none()
 }
 
+fn coroutine_post_poll_snapshot(id: u64) -> (bool, Option<MbValue>) {
+    COROUTINES
+        .read()
+        .unwrap()
+        .get(&id)
+        .map(|c| (c.exhausted, c.result))
+        .unwrap_or((true, None))
+}
+
 pub fn is_known_coroutine(coro_handle: MbValue) -> bool {
     let Some(id) = coro_handle.as_int() else {
         return false;
@@ -720,12 +729,7 @@ pub(crate) fn mb_coroutine_send_for_await(
                 if super::exception::current_exception_type().is_some() {
                     return CoroutineAwaitPoll::Error;
                 }
-                let (exhausted, result) = COROUTINES
-                    .read()
-                    .unwrap()
-                    .get(&id)
-                    .map(|c| (c.exhausted, c.result))
-                    .unwrap_or((true, None));
+                let (exhausted, result) = coroutine_post_poll_snapshot(id);
                 if exhausted {
                     let result = result.unwrap_or_else(MbValue::none);
                     unsafe {
@@ -743,12 +747,7 @@ pub(crate) fn mb_coroutine_send_for_await(
         return CoroutineAwaitPoll::Error;
     }
 
-    let (exhausted, result) = COROUTINES
-        .read()
-        .unwrap()
-        .get(&id)
-        .map(|c| (c.exhausted, c.result))
-        .unwrap_or((true, None));
+    let (exhausted, result) = coroutine_post_poll_snapshot(id);
     if exhausted {
         let result = result.unwrap_or_else(MbValue::none);
         unsafe {
@@ -807,12 +806,7 @@ pub fn mb_coroutine_send(coro_handle: MbValue, value: MbValue) -> MbValue {
                 if super::exception::current_exception_type().is_some() {
                     return MbValue::none();
                 }
-                let (exhausted, result) = COROUTINES
-                    .read()
-                    .unwrap()
-                    .get(&id)
-                    .map(|c| (c.exhausted, c.result))
-                    .unwrap_or((true, None));
+                let (exhausted, result) = coroutine_post_poll_snapshot(id);
                 if exhausted {
                     return raise_stop_iteration_value(result.unwrap_or_else(MbValue::none));
                 }
@@ -826,12 +820,7 @@ pub fn mb_coroutine_send(coro_handle: MbValue, value: MbValue) -> MbValue {
         return MbValue::none();
     }
 
-    let (exhausted, result) = COROUTINES
-        .read()
-        .unwrap()
-        .get(&id)
-        .map(|c| (c.exhausted, c.result))
-        .unwrap_or((true, None));
+    let (exhausted, result) = coroutine_post_poll_snapshot(id);
     if exhausted {
         return raise_stop_iteration_value(result.unwrap_or_else(MbValue::none));
     }
