@@ -3,7 +3,7 @@ use super::generic::{check_bounds, infer_type_args, GenericParams};
 use super::{Ty, TypeId};
 use crate::parser::ast::*;
 use crate::resolve::SymbolKind;
-use crate::source::span::Spanned;
+use crate::source::span::{Span, Spanned};
 
 fn decorator_is_typing_overload(expr: &Expr) -> bool {
     match expr {
@@ -12,6 +12,92 @@ fn decorator_is_typing_overload(expr: &Expr) -> bool {
         Expr::Call { func, .. } => decorator_is_typing_overload(&func.node),
         _ => false,
     }
+}
+
+fn is_pep695_saved_binding_try(
+    span: Span,
+    body: &[Spanned<Stmt>],
+    handlers: &[ExceptHandler],
+    else_body: &Option<Vec<Spanned<Stmt>>>,
+    finally_body: &Option<Vec<Spanned<Stmt>>>,
+) -> bool {
+    if else_body.is_some() || finally_body.is_some() {
+        return false;
+    }
+    let [save, mark_present] = body else {
+        return false;
+    };
+    let Stmt::Assign {
+        target: save_target,
+        value: save_value,
+    } = &save.node
+    else {
+        return false;
+    };
+    let (Expr::Ident(save_name), Expr::Ident(_)) = (&save_target.node, &save_value.node) else {
+        return false;
+    };
+    let Some(suffix) = save_name.strip_prefix("__mb_pep695_saved_") else {
+        return false;
+    };
+    let Some(slot) = suffix.strip_prefix(&format!("{}_", span.start)) else {
+        return false;
+    };
+    if slot.parse::<usize>().is_err() {
+        return false;
+    }
+    let had_name = format!("__mb_pep695_had_{suffix}");
+    let Stmt::Assign {
+        target: present_target,
+        value: present_value,
+    } = &mark_present.node
+    else {
+        return false;
+    };
+    if !matches!((&present_target.node, &present_value.node),
+        (Expr::Ident(name), Expr::BoolLit(true)) if name == &had_name)
+    {
+        return false;
+    }
+
+    let [handler] = handlers else {
+        return false;
+    };
+    if handler.name.is_some()
+        || handler.is_star
+        || !matches!(handler.exc_type.as_ref().map(|expr| &expr.node), Some(Expr::Ident(name)) if name == "NameError")
+    {
+        return false;
+    }
+    let [mark_absent] = handler.body.as_slice() else {
+        return false;
+    };
+    let Stmt::Assign {
+        target: absent_target,
+        value: absent_value,
+    } = &mark_absent.node
+    else {
+        return false;
+    };
+    let generated_spans_match = save.span == span
+        && save_target.span == span
+        && save_value.span == span
+        && mark_present.span == span
+        && present_target.span == span
+        && present_value.span == span
+        && handler.span == span
+        && handler
+            .exc_type
+            .as_ref()
+            .is_some_and(|exc_type| exc_type.span == span)
+        && mark_absent.span == span
+        && absent_target.span == span
+        && absent_value.span == span;
+    generated_spans_match
+        && matches!(
+            (&absent_target.node, &absent_value.node),
+            (Expr::Ident(name), Expr::BoolLit(false)) if name == &had_name
+        )
 }
 
 /// Statement type checking, function body checking, and helpers.
@@ -355,8 +441,8 @@ impl TypeChecker {
                     // a bogus tuple//tuple hard error). On shape mismatch or
                     // a non-tuple element type, fall back to Any and defer
                     // to runtime unpacking.
-                    let elem_tys: Option<Vec<TypeId>> = match self.tcx.get(ty) {
-                        Ty::Tuple(ts) if ts.len() == targets.len() => Some(ts.clone()),
+                    let elem_tys: Option<Vec<TypeId>> = match self.semantic_ty(ty) {
+                        Ty::Tuple(ts) if ts.len() == targets.len() => Some(ts),
                         _ => None,
                     };
                     for (i, var) in targets.iter().enumerate() {
@@ -520,7 +606,15 @@ impl TypeChecker {
                 // lives, so a probe immediately followed by a `raise` has its
                 // value-vs-annotation arg enforcement suppressed (it must raise at
                 // runtime, not be rejected at compile time).
+                let saved_allow_runtime_unresolved = self.allow_runtime_unresolved_names;
+                if is_pep695_saved_binding_try(stmt.span, body, handlers, else_body, finally_body) {
+                    // PEP 695 desugaring probes for a pre-existing type-param
+                    // binding under `except NameError`; an absent binding is
+                    // expected runtime state, not a source-level type error.
+                    self.allow_runtime_unresolved_names = true;
+                }
                 self.check_stmt_seq(body);
+                self.allow_runtime_unresolved_names = saved_allow_runtime_unresolved;
                 for handler in handlers {
                     // The exception alias (`as exc`) is defined in the outer scope.
                     // In CPython it's deleted at the end of the except clause, but
@@ -1109,7 +1203,7 @@ impl TypeChecker {
         self.check_expr(index);
         let value_ty = self.check_expr(value);
         let is_slice = matches!(index.node, Expr::Slice { .. });
-        let expected = match self.tcx.get(obj_ty).clone() {
+        let expected = match self.semantic_ty(obj_ty) {
             Ty::List(elem) if is_slice => Some(self.tcx.intern(Ty::List(elem))),
             Ty::List(elem) => Some(elem),
             Ty::Dict(_, value) => Some(value),
@@ -1143,7 +1237,7 @@ impl TypeChecker {
             }
         }
         let iter_ty = self.check_expr(iter);
-        match self.tcx.get(iter_ty).clone() {
+        match self.semantic_ty(iter_ty) {
             Ty::List(elem) => elem,
             Ty::Set(elem) => elem,
             Ty::Dict(k, _) => k,
