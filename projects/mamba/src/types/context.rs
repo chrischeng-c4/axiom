@@ -138,6 +138,38 @@ impl TypeContext {
         info.constraints = constraints;
     }
 
+    /// Whether a type is still parameterized by a TypeVar-like placeholder.
+    /// PEP 695 bounds and constraints must be concrete after name resolution.
+    pub fn contains_type_var(&self, id: TypeId) -> bool {
+        match self.get(id) {
+            Ty::TypeVar(_) | Ty::SelfType | Ty::Infer(_) => true,
+            Ty::List(item) | Ty::Set(item) => self.contains_type_var(*item),
+            Ty::Dict(key, value) => self.contains_type_var(*key) || self.contains_type_var(*value),
+            Ty::Tuple(items) | Ty::Union(items) => {
+                items.iter().any(|item| self.contains_type_var(*item))
+            }
+            Ty::Fn { params, ret, .. } => {
+                params.iter().any(|param| self.contains_type_var(*param))
+                    || self.contains_type_var(*ret)
+            }
+            Ty::Class { fields, .. } => fields
+                .iter()
+                .any(|(_, field)| self.contains_type_var(*field)),
+            Ty::Enum { variants, .. } => variants
+                .iter()
+                .any(|(_, fields)| fields.iter().any(|field| self.contains_type_var(*field))),
+            Ty::Never
+            | Ty::None
+            | Ty::Bool
+            | Ty::Int
+            | Ty::Float
+            | Ty::Str
+            | Ty::Any
+            | Ty::Literal(_)
+            | Ty::Error => false,
+        }
+    }
+
     // --- Subtype checking ---
 
     /// Check if `sub` is a subtype of `sup` (simplified).
@@ -330,6 +362,20 @@ mod tests {
         let info = tcx.get_type_var(id);
         assert_eq!(info.bound, Some(int_ty));
         assert_eq!(info.constraints, vec![int_ty, str_ty]);
+    }
+
+    #[test]
+    fn test_contains_type_var_recurses_through_containers() {
+        let mut tcx = TypeContext::new();
+        let id = tcx.new_type_var("T".to_string(), None, Vec::new());
+        let type_var = tcx.intern(Ty::TypeVar(id));
+        let list_type_var = tcx.intern(Ty::List(type_var));
+        let int_ty = tcx.int();
+        let list_int = tcx.intern(Ty::List(int_ty));
+
+        assert!(tcx.contains_type_var(type_var));
+        assert!(tcx.contains_type_var(list_type_var));
+        assert!(!tcx.contains_type_var(list_int));
     }
 
     #[test]

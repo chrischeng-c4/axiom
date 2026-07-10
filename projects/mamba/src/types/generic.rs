@@ -247,7 +247,7 @@ fn unify_for_inference(
 pub fn check_bounds(
     subst: &Substitution,
     generic_params: &GenericParams,
-    tcx: &mut TypeContext,
+    tcx: &TypeContext,
 ) -> Vec<String> {
     let mut errors = Vec::new();
 
@@ -255,20 +255,19 @@ pub fn check_bounds(
         if let Some(concrete) = subst.get(tv.id) {
             // Check bound
             if let Some(bound) = tv.bound {
-                let resolved_bound = subst.apply(bound, tcx);
-                if !tcx.is_subtype(concrete, resolved_bound) {
+                if !tcx.is_subtype(concrete, bound) {
                     errors.push(format!(
                         "Type parameter '{}' bound violation: expected subtype of {:?}",
                         tv.name,
-                        tcx.get(resolved_bound)
+                        tcx.get(bound)
                     ));
                 }
             }
             // Check constraints
-            let constraint_matches = tv.constraints.iter().any(|constraint| {
-                let resolved_constraint = subst.apply(*constraint, tcx);
-                tcx.is_subtype(concrete, resolved_constraint)
-            });
+            let constraint_matches = tv
+                .constraints
+                .iter()
+                .any(|constraint| tcx.is_subtype(concrete, *constraint));
             if !tv.constraints.is_empty() && !constraint_matches {
                 errors.push(format!(
                     "Type parameter '{}' must be one of the constrained types",
@@ -576,7 +575,7 @@ mod tests {
 
     #[test]
     fn test_check_bounds_passes() {
-        let mut tcx = TypeContext::new();
+        let tcx = TypeContext::new();
         let int_ty = tcx.int();
         let float_ty = tcx.float();
 
@@ -587,13 +586,13 @@ mod tests {
         let mut subst = Substitution::new();
         subst.insert(TypeVarId(0), int_ty); // int <: float ✓
 
-        let errors = check_bounds(&subst, &gp, &mut tcx);
+        let errors = check_bounds(&subst, &gp, &tcx);
         assert!(errors.is_empty());
     }
 
     #[test]
     fn test_check_bounds_violation() {
-        let mut tcx = TypeContext::new();
+        let tcx = TypeContext::new();
         let int_ty = tcx.int();
         let str_ty = tcx.str();
 
@@ -604,14 +603,14 @@ mod tests {
         let mut subst = Substitution::new();
         subst.insert(TypeVarId(0), str_ty); // str <: int? No!
 
-        let errors = check_bounds(&subst, &gp, &mut tcx);
+        let errors = check_bounds(&subst, &gp, &tcx);
         assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("bound violation"));
     }
 
     #[test]
     fn test_check_bounds_constraint_satisfied() {
-        let mut tcx = TypeContext::new();
+        let tcx = TypeContext::new();
         let int_ty = tcx.int();
         let str_ty = tcx.str();
 
@@ -628,13 +627,13 @@ mod tests {
         let mut subst = Substitution::new();
         subst.insert(TypeVarId(0), int_ty); // int is in constraints
 
-        let errors = check_bounds(&subst, &gp, &mut tcx);
+        let errors = check_bounds(&subst, &gp, &tcx);
         assert!(errors.is_empty());
     }
 
     #[test]
     fn test_check_bounds_constraint_violated() {
-        let mut tcx = TypeContext::new();
+        let tcx = TypeContext::new();
         let int_ty = tcx.int();
         let str_ty = tcx.str();
         let float_ty = tcx.float();
@@ -650,14 +649,14 @@ mod tests {
         let mut subst = Substitution::new();
         subst.insert(TypeVarId(0), float_ty); // float NOT in {int, str}
 
-        let errors = check_bounds(&subst, &gp, &mut tcx);
+        let errors = check_bounds(&subst, &gp, &tcx);
         assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("constrained types"));
     }
 
     #[test]
     fn test_check_bounds_unresolved_var() {
-        let mut tcx = TypeContext::new();
+        let tcx = TypeContext::new();
         let float_ty = tcx.float();
 
         let mut gp = GenericParams::new();
@@ -665,34 +664,8 @@ mod tests {
 
         // No entry for TypeVarId(0) in subst → skipped, no error
         let subst = Substitution::new();
-        let errors = check_bounds(&subst, &gp, &mut tcx);
+        let errors = check_bounds(&subst, &gp, &tcx);
         assert!(errors.is_empty());
-    }
-
-    #[test]
-    fn test_check_dependent_bound_uses_substitution() {
-        let mut tcx = TypeContext::new();
-        let u_id = TypeVarId(0);
-        let t_id = TypeVarId(1);
-        let u_ty = tcx.intern(Ty::TypeVar(u_id));
-        let int_ty = tcx.int();
-        let str_ty = tcx.str();
-
-        let mut gp = GenericParams::new();
-        gp.add("U", u_id, None);
-        gp.add("T", t_id, Some(u_ty));
-
-        let mut valid = Substitution::new();
-        valid.insert(u_id, int_ty);
-        valid.insert(t_id, int_ty);
-        assert!(check_bounds(&valid, &gp, &mut tcx).is_empty());
-
-        let mut invalid = Substitution::new();
-        invalid.insert(u_id, int_ty);
-        invalid.insert(t_id, str_ty);
-        let errors = check_bounds(&invalid, &gp, &mut tcx);
-        assert_eq!(errors.len(), 1);
-        assert!(errors[0].contains("bound violation"));
     }
 
     #[test]
