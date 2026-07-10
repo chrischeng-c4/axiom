@@ -13,14 +13,14 @@
 //! /admin/reshard:evict` wire calls a live cluster's pods would answer.
 #![cfg(feature = "operator")]
 
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use axum_test::{TestServer, TestServerConfig, Transport};
 use serde_json::json;
 
-use lumen::api::{router, AppState};
+use lumen::api::{router, AppState, CheckpointSink};
 use lumen::operator::crd::{
     Lumen, LumenReshardStatus, LumenSpec, LumenStatus, ReshardPhase, ReshardPolicy, ServingSpec,
     ShardMapSpec,
@@ -43,6 +43,53 @@ struct Shard {
 fn spin_up_shard() -> Shard {
     let engine = Arc::new(Engine::new());
     let app = router(AppState::open(engine));
+    let server = TestServer::new_with_config(
+        app,
+        TestServerConfig {
+            transport: Some(Transport::HttpRandomPort),
+            ..TestServerConfig::default()
+        },
+    )
+    .expect("bind real test server");
+    let base_url = server
+        .server_address()
+        .expect("server bound to a real address")
+        .to_string()
+        .trim_end_matches('/')
+        .to_string();
+    Shard { server, base_url }
+}
+
+/// #1389 AC2: a [`CheckpointSink`] test double whose success/failure is
+/// controlled from outside — stands in for a real `SegmentCheckpointSink`
+/// (`src/bin/lumen.rs`) hitting a transient disk error, without needing an
+/// actual segment store on disk. Counts calls so a test can assert the
+/// driver actually invoked `/admin/checkpoint` per touched shard, not just
+/// that it happened to succeed.
+struct ControllableCheckpoint {
+    fail: Arc<AtomicBool>,
+    calls: Arc<AtomicI64>,
+}
+
+#[async_trait]
+impl CheckpointSink for ControllableCheckpoint {
+    async fn checkpoint_now(&self) -> anyhow::Result<bool> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail.load(Ordering::SeqCst) {
+            anyhow::bail!("simulated checkpoint failure");
+        }
+        Ok(true)
+    }
+}
+
+/// Like [`spin_up_shard`] but with a controllable checkpoint sink wired in
+/// place of the default no-op, so a test can force `/admin/checkpoint` to
+/// fail on demand.
+fn spin_up_shard_with_checkpoint(fail: Arc<AtomicBool>, calls: Arc<AtomicI64>) -> Shard {
+    let engine = Arc::new(Engine::new());
+    let state =
+        AppState::open(engine).with_checkpoint(Arc::new(ControllableCheckpoint { fail, calls }));
+    let app = router(state);
     let server = TestServer::new_with_config(
         app,
         TestServerConfig {
@@ -428,5 +475,97 @@ async fn drive_tick_never_transitions_when_max_shard_bytes_unset() {
         ReshardPhase::Complete
     );
     assert_eq!(control.snapshot().spec.shard_count, 1);
+}
+
+/// #1389 AC2: the reshard driver's cutover (`shardMap` patch +
+/// `trigger_rolling_restart`) does not fire until `POST /admin/checkpoint`
+/// succeeds on every touched shard — a failing checkpoint on either shard
+/// leaves the workflow in `CatchingUp` (resumable, #1381 semantics) rather
+/// than advancing to `Complete`, and never triggers the restart that would
+/// otherwise race the not-yet-durable migration against a pod restart.
+#[tokio::test]
+async fn cutover_blocked_until_every_touched_shard_checkpoints() {
+    let checkpoint_fail = Arc::new(AtomicBool::new(false));
+    let checkpoint_calls = Arc::new(AtomicI64::new(0));
+    let shard0 = spin_up_shard_with_checkpoint(checkpoint_fail.clone(), checkpoint_calls.clone());
+    let shard1 = spin_up_shard_with_checkpoint(checkpoint_fail.clone(), checkpoint_calls.clone());
+    create_users_collection(&shard0.server).await;
+    create_users_collection(&shard1.server).await;
+
+    let ids: Vec<String> = (0..40).map(|i| format!("u-{i:03}")).collect();
+    for id in &ids {
+        index_user(&shard0.server, id).await;
+    }
+    let moving: Vec<&String> = ids.iter().filter(|id| bucket_of(id) < 4).collect();
+    assert!(!moving.is_empty());
+
+    let cluster = Arc::new(Mutex::new(initial_lumen(
+        Some(1_000_000_000),
+        Some("urgentThresholdCrossed"),
+    )));
+    let shard_urls = vec![shard0.base_url.clone(), shard1.base_url.clone()];
+    let http = reqwest::Client::new();
+    let control = FakeControl::new(cluster.clone(), shard_urls.clone());
+
+    // Drive to CatchingUp (Complete -> PrepareSplit -> Splitting -> CatchingUp,
+    // the real migration pass runs on tick 3).
+    for _ in 0..3 {
+        let lumen = control.snapshot();
+        drive_tick(&control, &http, &lumen).await;
+    }
+    assert_eq!(
+        control.snapshot().spec.reshard_policy.workflow.phase,
+        ReshardPhase::CatchingUp
+    );
+    assert_eq!(control.restart_trigger_calls.load(Ordering::SeqCst), 0);
+
+    // Force every touched shard's `/admin/checkpoint` to fail. The next tick
+    // (CatchingUp -> would-be Complete) must report `Blocked`, leave the
+    // phase at `CatchingUp`, and must NOT have triggered a rolling restart —
+    // the durability gate sits strictly before the cutover patch/restart.
+    checkpoint_fail.store(true, Ordering::SeqCst);
+    let lumen = control.snapshot();
+    let outcome = drive_tick(&control, &http, &lumen).await;
+    match &outcome {
+        DriveOutcome::Blocked(msg) => assert!(
+            msg.contains("checkpoint") || msg.contains("admin/checkpoint"),
+            "expected a checkpoint-related Blocked message, got: {msg}"
+        ),
+        other => panic!("expected Blocked while checkpoint fails, got {other:?}"),
+    }
+    assert_eq!(
+        control.snapshot().spec.reshard_policy.workflow.phase,
+        ReshardPhase::CatchingUp,
+        "must not advance to Complete while a touched shard's checkpoint is failing"
+    );
+    assert_eq!(
+        control.restart_trigger_calls.load(Ordering::SeqCst),
+        0,
+        "must not trigger a rolling restart before every touched shard is durable"
+    );
+    assert_eq!(
+        control.snapshot().spec.shard_map.version,
+        0,
+        "cutover patch must not have applied"
+    );
+
+    // Recover: once checkpoints succeed again, the very next tick completes
+    // the workflow normally — proving the earlier failure left it resumable
+    // rather than wedged.
+    checkpoint_fail.store(false, Ordering::SeqCst);
+    let lumen = control.snapshot();
+    let outcome = drive_tick(&control, &http, &lumen).await;
+    assert_eq!(outcome, DriveOutcome::CompletedSplit { new_map_version: 1 });
+    assert_eq!(
+        control.snapshot().spec.reshard_policy.workflow.phase,
+        ReshardPhase::Complete
+    );
+    assert_eq!(control.restart_trigger_calls.load(Ordering::SeqCst), 1);
+    assert!(
+        checkpoint_calls.load(Ordering::SeqCst) >= 2,
+        "expected at least one /admin/checkpoint call per touched shard across the failing \
+         and succeeding attempts, got {}",
+        checkpoint_calls.load(Ordering::SeqCst)
+    );
 }
 // CODEGEN-END

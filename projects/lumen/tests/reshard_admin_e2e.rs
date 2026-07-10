@@ -1,9 +1,10 @@
 // SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
-//! Reshard admin verbs end-to-end (#1380): bucket-scoped export
+//! Reshard admin verbs end-to-end (#1380, #1389): bucket-scoped export
 //! (`POST /admin/backup:scoped`), additive batch-apply
-//! (`POST /admin/reshard:apply`), and source-side eviction
-//! (`POST /admin/reshard:evict`).
+//! (`POST /admin/reshard:apply`), source-side eviction
+//! (`POST /admin/reshard:evict`), and on-demand durability checkpoint
+//! (`POST /admin/checkpoint`).
 
 use std::sync::Arc;
 
@@ -345,7 +346,7 @@ async fn storage_bytes_gauge(s: &TestServer) -> u64 {
         .expect("lumen_storage_bytes gauge line present")
 }
 
-/// AC4: all three new verbs require bearer auth (401) and admin role (403).
+/// AC4: all four admin verbs require bearer auth (401) and admin role (403).
 #[tokio::test]
 async fn reshard_admin_verbs_require_admin_auth() {
     let s = auth_server(vec![("tok-r", claim("viewer", &[("u", Role::Read)]))]);
@@ -380,6 +381,9 @@ async fn reshard_admin_verbs_require_admin_auth() {
         .json(&evict_body)
         .await
         .assert_status_unauthorized();
+    s.post("/admin/checkpoint")
+        .await
+        .assert_status_unauthorized();
 
     // Authenticated but non-admin role -> 403.
     s.post("/admin/backup:scoped")
@@ -397,9 +401,13 @@ async fn reshard_admin_verbs_require_admin_auth() {
         .json(&evict_body)
         .await
         .assert_status_forbidden();
+    s.post("/admin/checkpoint")
+        .add_header("authorization", "Bearer tok-r")
+        .await
+        .assert_status_forbidden();
 }
 
-/// AC4 (openapi half): the three verbs show up in the generated OpenAPI
+/// AC4 (openapi half): all four verbs show up in the generated OpenAPI
 /// document, same as the rest of the admin surface.
 #[tokio::test]
 async fn reshard_admin_verbs_appear_in_openapi_spec() {
@@ -412,6 +420,7 @@ async fn reshard_admin_verbs_appear_in_openapi_spec() {
         "/admin/backup:scoped",
         "/admin/reshard:apply",
         "/admin/reshard:evict",
+        "/admin/checkpoint",
     ] {
         assert!(
             paths.contains_key(path),
@@ -419,5 +428,23 @@ async fn reshard_admin_verbs_appear_in_openapi_spec() {
             paths.keys().collect::<Vec<_>>()
         );
     }
+}
+
+/// #1389: with no durable store configured (the default `AppState::open`
+/// fixture used across this file), `/admin/checkpoint` is vacuously
+/// satisfied — it succeeds and reports `persisted: false` rather than
+/// erroring, so existing callers (including the reshard driver's own
+/// per-shard checkpoint step) never fail just because a shard happens to run
+/// without segment persistence configured.
+#[tokio::test]
+async fn admin_checkpoint_without_durable_store_is_vacuously_satisfied() {
+    let s = server();
+    create_users_collection(&s).await;
+    index_user(&s, "c1").await;
+
+    let resp = s.post("/admin/checkpoint").await;
+    resp.assert_status_ok();
+    let body: serde_json::Value = resp.json();
+    assert_eq!(body["persisted"], json!(false));
 }
 // CODEGEN-END
