@@ -142,4 +142,24 @@ changes:
     section: unit-test
     impl_mode: hand-written
     reason: "Cover the process-lifecycle (ChildGuard, port polling), token-resolution, and body-builder pure logic without requiring a live cluster."
+  - path: libs/cli-std/src/connect.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: >
+      #1376: the R1/R2 primitives this doc specifies — the ChildGuard
+      port-forward lifecycle (spawn/free_local_port/wait_for_local_port_ready)
+      and the token-registry Secret resolution chain
+      (kubectl_get_json/cr_tokens_secret/resolve_cr_tokens_secret/
+      secret_data_bytes/select_token/resolve_token) — moved verbatim into the
+      new shared `libs/cli-std/src/connect.rs` module (feature `k8s`) so any
+      k8s-native service CLI's own `connect` verb can reuse them, not just
+      lumen's. `projects/lumen/src/bin/lumen.rs` keeps this doc's R3/R4 scope
+      (query body builders/dispatch, flag surface, discoverability) plus a
+      thin adapter over `cli_std::connect` for R1/R2: the `Lumen` CRD-name
+      lookup convention (`resource_kind = "lumen"`) and the
+      `TokenRole -> cli_std::connect::Role` mapping. Behavior, CLI surface,
+      and this doc's R1-R4 contract are unchanged; see
+      `libs/cli-std/tech-design/semantic/source/libs-cli-std-src-connect-rs.md`
+      for the extracted module's own spec.
 ```

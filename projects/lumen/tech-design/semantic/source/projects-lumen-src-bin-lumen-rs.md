@@ -480,7 +480,9 @@ struct ConnectArgs {
 }
 
 /// Bearer-token role required for `lumen connect`/`lumen query`'s Secret
-/// token resolution (R2). Mirrors `service_auth::Role`.
+/// token resolution (R2). Mirrors `service_auth::Role`; lumen's own role
+/// mapping into `cli_std::connect::Role` (#1376) — every k8s-native service
+/// CLI adopting `cli_std::connect` supplies its own such mapping.
 #[derive(Clone, Copy, ValueEnum)]
 enum TokenRole {
     Read,
@@ -489,12 +491,12 @@ enum TokenRole {
 }
 
 /// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
-impl From<TokenRole> for lumen::auth::Role {
+impl From<TokenRole> for cli_std::connect::Role {
     fn from(role: TokenRole) -> Self {
         match role {
-            TokenRole::Read => lumen::auth::Role::Read,
-            TokenRole::Write => lumen::auth::Role::Write,
-            TokenRole::Admin => lumen::auth::Role::Admin,
+            TokenRole::Read => cli_std::connect::Role::Read,
+            TokenRole::Write => cli_std::connect::Role::Write,
+            TokenRole::Admin => cli_std::connect::Role::Admin,
         }
     }
 }
@@ -1397,133 +1399,16 @@ fn restore_file_next_command(url: &str, path: &Path, has_token: bool) -> String 
 }
 
 // ---------------------------------------------------------------------------
-// `lumen connect` / `lumen query` (#1321)
+// `lumen connect` / `lumen query` (#1321) — thin adapter over
+// `cli_std::connect` (#1376): the `kubectl port-forward` process lifecycle
+// (`ChildGuard`, `free_local_port`, `wait_for_local_port_ready`) and the
+// token-registry Secret resolution chain (`kubectl_get_json`,
+// `resolve_cr_tokens_secret`, `resolve_token`) now live in
+// `libs/cli-std/src/connect.rs`, reusable by any k8s-native service CLI.
+// This file keeps only its own flag surface (`ConnectArgs`/`QueryTarget`),
+// the `Lumen` CRD-name lookup convention (`"lumen"` passed as
+// `resource_kind`), and the `TokenRole` -> `cli_std::connect::Role` mapping.
 // ---------------------------------------------------------------------------
-
-/// RAII child-process guard: kills + reaps on drop so a `kubectl
-/// port-forward` never survives the wrapped command (AC1). Prior art:
-/// `projects/preview/tests/kind_lifecycle.rs`'s `ChildGuard`, generalized
-/// here over any `std::process::Command` so it is unit-testable with a fake
-/// child instead of requiring a real cluster.
-/// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
-struct ChildGuard {
-    child: std::process::Child,
-}
-
-/// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
-impl ChildGuard {
-    fn spawn(command: &mut std::process::Command) -> Result<Self> {
-        let child = command.spawn().context("spawn child process")?;
-        Ok(Self { child })
-    }
-}
-
-/// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-/// Bind an ephemeral local port and immediately release it, returning the
-/// number `kubectl port-forward` should target. There is an inherent
-/// TOCTOU race (someone else could bind it first), the same tradeoff
-/// `projects/preview/tests/kind_lifecycle.rs::free_local_port` makes.
-fn free_local_port() -> Result<u16> {
-    let listener =
-        std::net::TcpListener::bind(("127.0.0.1", 0)).context("bind ephemeral local port")?;
-    Ok(listener.local_addr().context("read local addr")?.port())
-}
-
-/// Poll `127.0.0.1:port` until a TCP connect succeeds or `timeout` elapses —
-/// the port-forward readiness gate for AC1 (no fixed sleep, no dependency on
-/// kubectl's own stdout).
-fn wait_for_local_port_ready(port: u16, timeout: Duration) -> Result<()> {
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return Ok(());
-        }
-        if std::time::Instant::now() >= deadline {
-            anyhow::bail!("port-forward to 127.0.0.1:{port} never became ready within {timeout:?}");
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-}
-
-/// Pure: extract `spec.tokensSecret` from a `Lumen` CR's `kubectl get -o
-/// json` output (see `lumen::operator::crd::LumenSpec::tokens_secret`).
-fn cr_tokens_secret(cr_json: &serde_json::Value) -> Option<String> {
-    cr_json["spec"]["tokensSecret"].as_str().map(str::to_string)
-}
-
-/// Run `kubectl get <resource> <name> -n <namespace> -o json` (optionally
-/// through `--context`) and parse the result.
-fn kubectl_get_json(
-    context: Option<&str>,
-    resource: &str,
-    name: &str,
-    namespace: &str,
-) -> Result<serde_json::Value> {
-    let mut cmd = std::process::Command::new("kubectl");
-    if let Some(ctx) = context {
-        cmd.args(["--context", ctx]);
-    }
-    cmd.args(["get", resource, name, "-n", namespace, "-o", "json"]);
-    let output = cmd
-        .output()
-        .with_context(|| format!("run kubectl get {resource} {name} -n {namespace}"))?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "kubectl get {resource} {name} -n {namespace} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    serde_json::from_slice(&output.stdout)
-        .with_context(|| format!("parse kubectl get {resource} {name} JSON"))
-}
-
-/// Resolve a `Lumen` CR's `spec.tokensSecret` (empty when unset).
-fn resolve_cr_tokens_secret(
-    context: Option<&str>,
-    namespace: &str,
-    cr: &str,
-) -> Result<Option<String>> {
-    let cr_json = kubectl_get_json(context, "lumen", cr, namespace)?;
-    Ok(cr_tokens_secret(&cr_json))
-}
-
-/// Pure: decode a Kubernetes Secret's `data.<key>` (base64) field into raw
-/// bytes. `kubectl get secret -o json` always base64-encodes `.data`.
-fn secret_data_bytes(secret_json: &serde_json::Value, key: &str) -> Result<Vec<u8>> {
-    use base64::Engine;
-    let encoded = secret_json["data"][key]
-        .as_str()
-        .with_context(|| format!("secret has no data key `{key}`"))?;
-    base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .context("base64-decode secret data")
-}
-
-/// Pick the first registry token whose roles cover `role` for `collection`
-/// (falling back to the wildcard `*` grant). Pure — unit-testable without
-/// any I/O; deterministic tie-break is not needed since callers name a
-/// specific role/collection scope for their own token.
-fn select_token(
-    registry: &std::collections::HashMap<String, lumen::auth::TokenClaims>,
-    role: lumen::auth::Role,
-    collection: Option<&str>,
-) -> Option<String> {
-    registry.iter().find_map(|(token, claims)| {
-        let granted = collection
-            .and_then(|c| claims.roles.get(c))
-            .or_else(|| claims.roles.get("*"));
-        granted
-            .is_some_and(|granted| granted.covers(role))
-            .then(|| token.clone())
-    })
-}
 
 /// R2: resolve a usable bearer token without the caller decoding the
 /// Secret/JSON by hand. Precedence: `target.token` (explicit flag or
@@ -1531,21 +1416,18 @@ fn select_token(
 /// set, fetch the Secret via kubectl, decode its `token-registry.json` key
 /// (the same schema `lumen llm --topic auth` documents), and pick a token
 /// whose role covers `target.role` for `collection` (or `*`). Returns `None`
-/// when no token can be resolved (e.g. `spec.auth: off` deployments).
+/// when no token can be resolved (e.g. `spec.auth: off` deployments). Thin
+/// wrapper over `cli_std::connect::resolve_token` (#1376).
 /// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
 fn resolve_token(target: &QueryTarget, collection: Option<&str>) -> Result<Option<String>> {
-    if let Some(token) = &target.token {
-        return Ok(Some(token.clone()));
-    }
-    let (Some(namespace), Some(secret)) = (target.namespace.as_deref(), target.secret.as_deref())
-    else {
-        return Ok(None);
-    };
-    let secret_json = kubectl_get_json(target.context.as_deref(), "secret", secret, namespace)?;
-    let bytes = secret_data_bytes(&secret_json, "token-registry.json")?;
-    let registry: std::collections::HashMap<String, lumen::auth::TokenClaims> =
-        serde_json::from_slice(&bytes).context("parse token-registry.json")?;
-    Ok(select_token(&registry, target.role.into(), collection))
+    cli_std::connect::resolve_token(
+        target.token.as_deref(),
+        target.context.as_deref(),
+        target.namespace.as_deref(),
+        target.secret.as_deref(),
+        target.role.into(),
+        collection,
+    )
 }
 
 // The body-builder / URL-resolution helpers below are exercised directly by
@@ -1577,14 +1459,21 @@ async fn connect(args: ConnectArgs) -> Result<()> {
     let secret = match args.secret.clone() {
         Some(secret) => Some(secret),
         None => match &args.cr {
-            Some(cr) => resolve_cr_tokens_secret(args.context.as_deref(), &args.namespace, cr)?,
+            // "lumen" is the `Lumen` CRD's kubectl resource name — lumen's
+            // own CR-kind lookup convention (R2).
+            Some(cr) => cli_std::connect::resolve_cr_tokens_secret(
+                args.context.as_deref(),
+                &args.namespace,
+                "lumen",
+                cr,
+            )?,
             None => None,
         },
     };
 
     let local_port = match args.local_port {
         Some(port) => port,
-        None => free_local_port()?,
+        None => cli_std::connect::free_local_port()?,
     };
 
     let mut pf_cmd = std::process::Command::new("kubectl");
@@ -1600,9 +1489,10 @@ async fn connect(args: ConnectArgs) -> Result<()> {
     ]);
     pf_cmd.stdout(std::process::Stdio::null());
     pf_cmd.stderr(std::process::Stdio::null());
-    let _forward = ChildGuard::spawn(&mut pf_cmd).context("start kubectl port-forward")?;
+    let _forward =
+        cli_std::connect::ChildGuard::spawn(&mut pf_cmd).context("start kubectl port-forward")?;
 
-    wait_for_local_port_ready(local_port, Duration::from_secs(30))?;
+    cli_std::connect::wait_for_local_port_ready(local_port, Duration::from_secs(30))?;
 
     let target = QueryTarget {
         url: None,
@@ -2904,114 +2794,12 @@ mod tests {
         assert_eq!(body["offset"], 0);
     }
 
-    #[test]
-    fn select_token_picks_token_covering_role_for_collection_or_wildcard() {
-        let mut registry = std::collections::HashMap::new();
-        registry.insert(
-            "reader-token".to_string(),
-            lumen::auth::TokenClaims {
-                subject: "reader".into(),
-                roles: [("products".to_string(), lumen::auth::Role::Read)]
-                    .into_iter()
-                    .collect(),
-            },
-        );
-        registry.insert(
-            "admin-token".to_string(),
-            lumen::auth::TokenClaims {
-                subject: "admin".into(),
-                roles: [("*".to_string(), lumen::auth::Role::Admin)]
-                    .into_iter()
-                    .collect(),
-            },
-        );
-
-        let picked = select_token(&registry, lumen::auth::Role::Read, Some("products"));
-        assert!(matches!(
-            picked.as_deref(),
-            Some("reader-token") | Some("admin-token")
-        ));
-        assert_eq!(
-            select_token(&registry, lumen::auth::Role::Admin, Some("products")).as_deref(),
-            Some("admin-token"),
-            "only the wildcard admin token covers admin on `products`"
-        );
-
-        let mut narrow = std::collections::HashMap::new();
-        narrow.insert(
-            "scoped-token".to_string(),
-            lumen::auth::TokenClaims {
-                subject: "scoped".into(),
-                roles: [("orders".to_string(), lumen::auth::Role::Write)]
-                    .into_iter()
-                    .collect(),
-            },
-        );
-        assert!(select_token(&narrow, lumen::auth::Role::Read, Some("products")).is_none());
-    }
-
-    #[test]
-    fn cr_tokens_secret_reads_spec_field() {
-        let cr = serde_json::json!({ "spec": { "tokensSecret": "lumen-tokens" } });
-        assert_eq!(cr_tokens_secret(&cr).as_deref(), Some("lumen-tokens"));
-
-        let cr_missing = serde_json::json!({ "spec": {} });
-        assert_eq!(cr_tokens_secret(&cr_missing), None);
-    }
-
-    #[test]
-    fn secret_data_bytes_decodes_base64_field() {
-        use base64::Engine;
-        let encoded =
-            base64::engine::general_purpose::STANDARD.encode(b"{\"tok\":{\"subject\":\"s\"}}");
-        let secret = serde_json::json!({ "data": { "token-registry.json": encoded } });
-        let bytes = secret_data_bytes(&secret, "token-registry.json").unwrap();
-        assert_eq!(bytes, b"{\"tok\":{\"subject\":\"s\"}}");
-
-        let missing = serde_json::json!({ "data": {} });
-        assert!(secret_data_bytes(&missing, "token-registry.json").is_err());
-    }
-
-    #[test]
-    fn wait_for_local_port_ready_succeeds_against_bound_listener() {
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        assert!(wait_for_local_port_ready(port, Duration::from_secs(2)).is_ok());
-        drop(listener);
-    }
-
-    #[test]
-    fn wait_for_local_port_ready_times_out_against_closed_port() {
-        let port = free_local_port().unwrap();
-        assert!(wait_for_local_port_ready(port, Duration::from_millis(300)).is_err());
-    }
-
-    /// AC1's process-management primitive, unit-tested with a real (but
-    /// harmless) child process instead of a live cluster's `kubectl
-    /// port-forward` — see the report for why this stays a unit test.
-    #[test]
-    fn child_guard_kills_process_on_drop() {
-        let mut cmd = std::process::Command::new("sh");
-        cmd.args(["-c", "sleep 5"]);
-        let guard = ChildGuard::spawn(&mut cmd).expect("spawn sleep");
-        let pid = guard.child.id();
-        drop(guard);
-        std::thread::sleep(Duration::from_millis(200));
-        let status = std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .status()
-            .expect("run kill -0");
-        assert!(
-            !status.success(),
-            "process {pid} should be dead after ChildGuard drop"
-        );
-    }
-
-    #[test]
-    fn child_guard_spawn_nonexistent_binary_errs() {
-        let mut cmd = std::process::Command::new("lumen-connect-test-nonexistent-binary-xyz-1321");
-        assert!(ChildGuard::spawn(&mut cmd).is_err());
-    }
+    // `select_token`/`cr_tokens_secret`/`secret_data_bytes`/
+    // `wait_for_local_port_ready`/`ChildGuard` unit tests moved to
+    // `libs/cli-std/src/connect.rs` (#1376) along with the primitives
+    // themselves; lumen's own coverage is the thin-adapter tests above
+    // (`resolve_base_url_requires_explicit_url`, `build_*_body_*`) plus
+    // `cargo test -p cli-std --features k8s`.
 }
 // CODEGEN-END
 ````
@@ -3067,4 +2855,30 @@ changes:
       `#[cfg(any(test, feature = "backup"))]` so they stay unit-testable
       without requiring `--features backup`. No server-side endpoint or
       token-registry format change; no interactive REPL.
+  - path: projects/lumen/src/bin/lumen.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1376: extracted #1321's `kubectl port-forward` process lifecycle
+      (`ChildGuard`, `free_local_port`, `wait_for_local_port_ready`) and
+      token-registry Secret resolution chain (`kubectl_get_json`,
+      `cr_tokens_secret`, `resolve_cr_tokens_secret`, `secret_data_bytes`,
+      `select_token`) into `libs/cli-std/src/connect.rs` (feature `k8s`),
+      reusable by any k8s-native service CLI's own `connect` verb (see
+      `CONTRIBUTING.md` § "CLI convention"). `lumen connect` is now a thin
+      adapter: `resolve_token` delegates to `cli_std::connect::resolve_token`,
+      and `connect()`'s body calls `cli_std::connect::resolve_cr_tokens_secret`
+      (passing `"lumen"` as the CR-kind lookup string),
+      `cli_std::connect::free_local_port`, `cli_std::connect::ChildGuard`, and
+      `cli_std::connect::wait_for_local_port_ready`. The seven unit tests
+      covering the extracted primitives moved byte-identical to
+      `libs/cli-std/src/connect.rs`'s `#[cfg(test)] mod tests`. This file
+      keeps only its own flag surface (`ConnectArgs`/`QueryTarget`), the
+      `Lumen` CRD-name lookup convention, and the `TokenRole ->
+      cli_std::connect::Role` mapping (`impl From<TokenRole> for
+      cli_std::connect::Role`, retargeted from the removed
+      `lumen::auth::Role`). `lumen query`'s body builders/dispatch are
+      unchanged — out of #1376's scope. Behavior unchanged (verified via
+      `lumen connect --help` / `lumen llm` output diff before/after).
 ```

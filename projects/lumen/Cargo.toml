@@ -47,8 +47,10 @@ h2c = { path = "../../libs/h2c", features = ["server"] }
 # `lumen upgrade` / `lumen issue` — the standard agent-facing CLI ops,
 # shared across the ecosystem (CONTRIBUTING.md "CLI convention"). Offline paths
 # always build; the HTTPS paths are pulled in by lumen's `self-update` /
-# `issue` features via `cli-std/online`.
-cli-std = { path = "../../libs/cli-std", default-features = false }
+# `issue` features via `cli-std/online`. `k8s` pulls in `cli_std::connect`
+# (#1376) — `lumen connect`'s port-forward lifecycle + token-registry Secret
+# resolution, always built (not behind a lumen feature flag).
+cli-std = { path = "../../libs/cli-std", default-features = false, features = ["k8s"] }
 # Shared request-auth plumbing: Lumen supplies only the static role-map verifier
 # and per-collection RBAC policy.
 service-auth = { path = "../../libs/service-auth" }
