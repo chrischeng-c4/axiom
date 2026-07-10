@@ -28,7 +28,7 @@ import time
 
 
 TASKS = 4
-WORK = 40_000
+WORK = 400_000
 
 
 def cpu_work(seed: int, work: int = WORK) -> int:
