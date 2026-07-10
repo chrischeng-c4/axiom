@@ -752,25 +752,158 @@ fn pep695_forward_bound_is_skip_safe() {
 }
 
 #[test]
-fn pep695_dependent_bound_uses_call_substitution() {
+fn pep695_bound_must_be_concrete() {
     let errors = check(
-        "def pair[U, T: U](left: U, right: T) -> T:\n\
-         \x20   return right\n\
-         pair(1, 2)\n",
+        "def invalid[U, T: U](left: U, right: T) -> T:\n\
+         \x20   return right\n",
     );
     assert!(
-        errors.is_empty(),
-        "matching dependent bounds should be accepted: {errors:?}"
+        errors
+            .iter()
+            .any(|error| error.contains("bound must be concrete")),
+        "PEP 695 rejects bounds parameterized by another TypeVar: {errors:?}"
     );
 
     let errors = check(
-        "def pair[U, T: U](left: U, right: T) -> T:\n\
-         \x20   return right\n\
-         pair(1, \"bad\")\n",
+        "def invalid[U, T: list[U]](value: T) -> T:\n\
+         \x20   return value\n",
     );
     assert!(
-        errors.iter().any(|error| error.contains("bound violation")),
-        "a dependent bound must use the inferred U substitution: {errors:?}"
+        errors
+            .iter()
+            .any(|error| error.contains("bound must be concrete")),
+        "nested TypeVars also make a bound non-concrete: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_keyword_arguments_participate_in_inference() {
+    let errors = check(
+        "def choose[T: (int, str)](value: T) -> T:\n\
+         \x20   return value\n\
+         choose(value=1)\n\
+         choose(value=\"ok\")\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "valid keyword arguments should infer constrained types: {errors:?}"
+    );
+
+    let errors = check(
+        "def choose[T: (int, str)](value: T) -> T:\n\
+         \x20   return value\n\
+         choose(value=1.5)\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("constrained types")),
+        "invalid keyword arguments must not bypass generic constraints: {errors:?}"
+    );
+
+    let errors = check(
+        "class Choice[T: (int, str)]:\n\
+         \x20   def __init__(self, value: T) -> None:\n\
+         \x20       pass\n\
+         Choice(value=1)\n\
+         Choice(value=\"ok\")\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "valid constructor keywords should infer constrained types: {errors:?}"
+    );
+
+    let errors = check(
+        "class Choice[T: (int, str)]:\n\
+         \x20   def __init__(self, value: T) -> None:\n\
+         \x20       pass\n\
+         Choice(value=1.5)\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("constrained types")),
+        "invalid constructor keywords must not bypass generic constraints: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_argument_binder_covers_parameter_kinds() {
+    let errors = check(
+        "def choose[T: (int, str)](*, value: T) -> T:\n\
+         \x20   return value\n\
+         choose(value=1.5)\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("constrained types")),
+        "keyword-only parameters must contribute inference evidence: {errors:?}"
+    );
+
+    let errors = check(
+        "def collect[T: (int, str)](*values: T) -> None:\n\
+         \x20   pass\n\
+         collect(1.5)\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("constrained types")),
+        "declared *args must consume explicit positional arguments: {errors:?}"
+    );
+
+    let errors = check(
+        "def collect[T: (int, str)](**values: T) -> None:\n\
+         \x20   pass\n\
+         collect(bad=1.5)\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("constrained types")),
+        "declared **kwargs must consume unmatched explicit keywords: {errors:?}"
+    );
+
+    let errors = check(
+        "def collect[T: (int, str)](value: int, /, **rest: T) -> None:\n\
+         \x20   pass\n\
+         collect(1, value=1.5)\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("constrained types")),
+        "a positional-only name passed by keyword must bind through **kwargs: {errors:?}"
+    );
+
+    let errors = check(
+        "def choose[T: int](value: T) -> T:\n\
+         \x20   return value\n\
+         values: list[str] = [\"dynamic\"]\n\
+         choose(*values)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "dynamic call-site spreads must remain skip-safe for inference: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_constructor_arguments_are_checked_once() {
+    let errors = check(
+        "class Box[T]:\n\
+         \x20   def __init__(self, value: T) -> None:\n\
+         \x20       pass\n\
+         Box(missing)\n",
+    );
+    let undefined_count = errors
+        .iter()
+        .filter(|error| error.contains("undefined name: `missing`"))
+        .count();
+    assert_eq!(
+        undefined_count, 1,
+        "constructor argument expressions must be checked once: {errors:?}"
     );
 }
 
