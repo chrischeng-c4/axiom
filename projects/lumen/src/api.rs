@@ -75,11 +75,60 @@ pub struct AppState {
     /// serving can replace it with a document-router that fans out writes
     /// across independent shard coordinators.
     pub write_backend: Arc<dyn WriteBackend>,
+    /// Durability-on-demand seam for `POST /admin/checkpoint` (#1389).
+    /// Defaults to [`NoopCheckpoint`]; the server binary wires a real
+    /// segment-checkpoint implementation when segment persistence is
+    /// configured. See [`CheckpointSink`].
+    pub checkpoint: Arc<dyn CheckpointSink>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 pub trait SearchBackend: Send + Sync {
     fn search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse>;
+}
+
+/// Forces a synchronous, awaited durability checkpoint of the live engine
+/// state (#1389). The reshard driver's cutover (`operator::reshard_driver::
+/// advance_catching_up`) calls `POST /admin/checkpoint` — which routes here —
+/// on every shard it just migrated data into or evicted data from, and waits
+/// for the response before flipping `spec.shardMap` and triggering the
+/// cutover rolling restart. `Engine::apply_reshard_batch`/`evict_not_owned`
+/// (`storage.rs`, #1380) mutate engine state directly rather than through
+/// `WriteCoordinator`/the AOF, so — unlike ordinary writes — their durability
+/// is not implied by `applied_seq()`; this seam is what makes it durable
+/// on-demand instead of only on the next periodic `LUMEN_SNAPSHOT_SECS` tick.
+///
+/// [`NoopCheckpoint`] is the default (no `--data-dir`/non-segment-persistence
+/// deployments, including every existing test `AppState`): `checkpoint_now`
+/// trivially returns `Ok(false)` (nothing configured to persist, so nothing
+/// to lose across an in-process test's non-restart). The server binary wires
+/// a real segment-checkpoint-backed implementation whenever
+/// `--persistence=segment` + `--data-dir` are configured — exactly the
+/// combination the operator now renders unconditionally at
+/// `replicasPerShard <= 1` (#1387), which is the same topology the reshard
+/// driver is scoped to (see `reshard_driver`'s "Scope rail" doc).
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+#[async_trait]
+pub trait CheckpointSink: Send + Sync {
+    /// Persist current engine state durably and return only once the write
+    /// is committed. `Ok(true)` when a checkpoint was actually written;
+    /// `Ok(false)` when no durable store is configured (a checkpoint request
+    /// against such a deployment is vacuously satisfied — there is nothing
+    /// on disk to fall behind). `Err` on a real write failure, which callers
+    /// (the reshard driver) must treat as "not yet durable" and retry.
+    async fn checkpoint_now(&self) -> Result<bool>;
+}
+
+/// Default [`CheckpointSink`] for deployments/tests with no configured
+/// durable store — see the trait doc.
+struct NoopCheckpoint;
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+#[async_trait]
+impl CheckpointSink for NoopCheckpoint {
+    async fn checkpoint_now(&self) -> Result<bool> {
+        Ok(false)
+    }
 }
 
 #[async_trait]
@@ -255,6 +304,7 @@ impl AppState {
             auth,
             cluster: None,
             writer,
+            checkpoint: Arc::new(NoopCheckpoint),
         }
     }
 
@@ -276,6 +326,14 @@ impl AppState {
 
     pub fn with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self {
         self.write_backend = write_backend;
+        self
+    }
+
+    /// Wire a real [`CheckpointSink`] (#1389) — used by the server binary
+    /// when segment persistence is configured, and by tests that need to
+    /// control/observe `POST /admin/checkpoint` behavior.
+    pub fn with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self {
+        self.checkpoint = checkpoint;
         self
     }
 
@@ -328,6 +386,7 @@ impl AppState {
         backup_scoped,
         reshard_apply,
         reshard_evict,
+        admin_checkpoint,
     ),
     components(schemas(
         CreateCollectionRequest,
@@ -498,6 +557,7 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/restore", post(restore))
         .route("/admin/reshard:apply", post(reshard_apply))
         .route("/admin/reshard:evict", post(reshard_evict))
+        .route("/admin/checkpoint", post(admin_checkpoint))
         .layer(from_fn_with_state(auth_state, auth_middleware))
         // Bound request bodies: a bulk index is ~MBs (the item cap is the real
         // guard); 8MiB is the broker payload budget. Rejects oversized
@@ -1565,11 +1625,15 @@ async fn restore(
 
 // ---------------------------------------------------------------------------
 // Reshard admin verbs (#1380): batch-apply, bucket-scoped export, evict.
+// Plus `/admin/checkpoint` (#1389), the on-demand durability step that makes
+// the other three's mutations survive the cutover restart the driver itself
+// triggers.
 //
 // `reshard.rs`'s tested primitives (`bucket_moves`, `snapshot_reshard_batches`)
-// emit bounded `ReshardBatch` units for checkpointed migration; these three
-// verbs are the wire surface that moves one. All three require `Role::Admin`
-// on `*`, same as `/admin/backup`/`/admin/restore` above.
+// emit bounded `ReshardBatch` units for checkpointed migration; the four
+// verbs below are the wire surface that moves one and makes it durable. All
+// four require `Role::Admin` on `*`, same as `/admin/backup`/`/admin/restore`
+// above.
 // ---------------------------------------------------------------------------
 
 /// `POST /admin/reshard:apply`: additively merge one [`ReshardBatch`] into
@@ -1715,6 +1779,45 @@ async fn reshard_evict(
         "collections_touched": outcome.collections_touched,
         "documents_evicted": outcome.documents_evicted,
     })))
+}
+
+/// `POST /admin/checkpoint` (#1389): force a synchronous durability
+/// checkpoint of the live engine state and return only once it is committed.
+/// The reshard driver's cutover calls this on every shard it just migrated
+/// data into or evicted data from, so `/admin/reshard:apply`/`:evict`'s
+/// mutations — which bypass `WriteCoordinator`/the AOF — reach durability
+/// before the driver triggers the cutover rolling restart, instead of
+/// depending on the next periodic `LUMEN_SNAPSHOT_SECS` tick. `persisted:
+/// false` means no durable store is configured on this node (nothing to
+/// lose on restart, e.g. dev mode); a production/operator deployment with
+/// segment persistence configured always reports `true` on success. See
+/// [`CheckpointSink`].
+#[utoipa::path(
+    post,
+    path = "/admin/checkpoint",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Checkpoint committed (or vacuously satisfied if no durable store is configured)", body = serde_json::Value),
+        (status = 400, description = "Checkpoint write failed", body = ApiError)
+    )
+)]
+async fn admin_checkpoint(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    auth.ensure("*", Role::Admin)?;
+    let persisted = state
+        .checkpoint
+        .checkpoint_now()
+        .await
+        .map_err(ApiErr::from)?;
+    tracing::info!(
+        target: "lumen.audit",
+        event = "admin_checkpoint",
+        subject = auth.subject().unwrap_or("anonymous"),
+        persisted,
+    );
+    Ok(Json(serde_json::json!({ "persisted": persisted })))
 }
 
 // ---------------------------------------------------------------------------

@@ -299,5 +299,86 @@ mod tests {
         assert!(!dir.path().join(".gen-9.tmp").exists());
         assert_eq!(store.load_latest().unwrap().unwrap().1, 8);
     }
+
+    /// #1389 AC1: a `reshard:apply` batch applied to a target shard, and a
+    /// `reshard:evict` on a source shard, both survive a cold start from a
+    /// checkpoint written after those mutations — independent of any
+    /// periodic-snapshot cadence, closing the restart gap `#1387`'s embedded
+    /// persistence left open for reshard's direct-state-mutation admin verbs
+    /// (`Engine::apply_reshard_batch` / `Engine::evict_not_owned`, added by
+    /// `#1380`). This is the engine-level half of `#1389`'s proof; the
+    /// driver-level half (cutover cannot fire before every touched shard's
+    /// checkpoint completes) lives in `tests/reshard_driver_e2e.rs`.
+    #[test]
+    fn reshard_apply_and_evict_survive_checkpoint_and_cold_start() {
+        use crate::routing::VirtualBucketShardMap;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+
+        // Target shard: receives a reshard:apply batch on top of its own
+        // pre-existing data — mirrors what a shard actually looks like
+        // mid-migration.
+        let target = Arc::new(Engine::new());
+        target.create_collection("u", kw_schema()).unwrap();
+        index_kw(&target, "t-existing", "existing@x.com");
+
+        let source = Arc::new(Engine::new());
+        source.create_collection("u", kw_schema()).unwrap();
+        index_kw(&source, "migrated-1", "migrated1@x.com");
+        let batch = source.snapshot().unwrap();
+        let apply_outcome = target.apply_reshard_batch(batch).unwrap();
+        assert_eq!(apply_outcome.documents_upserted, 1);
+        assert_eq!(target.stats("u").unwrap().documents_indexed, 2);
+
+        // Source shard: post-cutover eviction of the bucket that just moved
+        // off of it, under a 2-shard map where bucket 0 now belongs to shard
+        // 1 (mirrors `reshard_evict_removes_only_moved_bucket_docs`).
+        let source_after_cutover = Arc::new(Engine::new());
+        source_after_cutover
+            .create_collection("u", kw_schema())
+            .unwrap();
+        let ids: Vec<String> = (0..8).map(|i| format!("s-{i:02}")).collect();
+        for id in &ids {
+            index_kw(&source_after_cutover, id, &format!("{id}@x.com"));
+        }
+        let mut assignments = vec![0u32; 4];
+        assignments[0] = 1;
+        let new_map = VirtualBucketShardMap::new(1, assignments, 2).unwrap();
+        let evict_outcome = source_after_cutover.evict_not_owned(&new_map, 0).unwrap();
+        assert!(evict_outcome.documents_evicted > 0);
+        let remaining_before_checkpoint =
+            source_after_cutover.stats("u").unwrap().documents_indexed;
+        assert!(remaining_before_checkpoint < ids.len() as u64);
+
+        // Checkpoint both post-mutation states, exactly like
+        // `checkpoint_touched_shards` (#1389) drives per shard before
+        // cutover — this is the synchronous, awaited durability step, not a
+        // background snapshot the driver has no visibility into.
+        store.save(&target, 100).unwrap();
+        let target_docs_before_drop = target.stats("u").unwrap().documents_indexed;
+        drop(target);
+
+        let store2 = SegmentRdbStore::new(dir.path().join("source")).unwrap();
+        store2.save(&source_after_cutover, 100).unwrap();
+        drop(source_after_cutover);
+
+        // Cold start: reload from the checkpoint alone, as a restarted pod
+        // would (WAL replay from `seq + 1` is orthogonal to this proof —
+        // there are no un-checkpointed writes here).
+        let (reloaded_target, seq) = store.load_latest().unwrap().expect("target checkpoint");
+        assert_eq!(seq, 100);
+        assert_eq!(
+            reloaded_target.stats("u").unwrap().documents_indexed,
+            target_docs_before_drop
+        );
+
+        let (reloaded_source, seq2) = store2.load_latest().unwrap().expect("source checkpoint");
+        assert_eq!(seq2, 100);
+        assert_eq!(
+            reloaded_source.stats("u").unwrap().documents_indexed,
+            remaining_before_checkpoint
+        );
+    }
 }
 // CODEGEN-END

@@ -1874,6 +1874,63 @@ fn ensure_trailing_newline(input: &str) -> String {
     }
 }
 
+/// Real [`lumen::api::CheckpointSink`] wiring for segment-persistence mode
+/// (#1389): forces the same synchronous stage-then-rename checkpoint the
+/// periodic snapshotter performs (`SegmentRdbStore::save`), but synchronously
+/// on demand — this is what `POST /admin/checkpoint` answers, and what the
+/// reshard driver's cutover gate (`operator::reshard_driver::
+/// checkpoint_touched_shards`) awaits per touched shard before triggering the
+/// cutover rolling restart. Also prunes + trims the AOF through the
+/// checkpointed sequence, mirroring the periodic path exactly, so an
+/// on-demand checkpoint leaves the AOF in the same state a periodic one
+/// would (and a reshard cutover right after one doesn't leave a redundant,
+/// ever-growing AOF tail).
+struct SegmentCheckpointSink {
+    engine: Arc<Engine>,
+    store: Arc<lumen::segment_rdb::SegmentRdbStore>,
+    writer: Arc<dyn lumen::coordinator::WriteSink>,
+    aof: Option<lumen::coordinator::SharedAof>,
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-bin-lumen-rs.md#source
+#[async_trait::async_trait]
+impl lumen::api::CheckpointSink for SegmentCheckpointSink {
+    async fn checkpoint_now(&self) -> Result<bool> {
+        let seq = self.writer.applied_seq();
+        let store = self.store.clone();
+        let engine = self.engine.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            store.save(&engine, seq)?;
+            store.prune(3)?;
+            Ok(())
+        })
+        .await
+        .context("checkpoint task panicked")??;
+
+        if let Some(aof) = &self.aof {
+            let aof = aof.clone();
+            let trim = tokio::task::spawn_blocking(move || {
+                aof.lock()
+                    .map_err(|_| anyhow::anyhow!("aof writer poisoned"))?
+                    .truncate_through(seq)
+            })
+            .await;
+            match trim {
+                Ok(Ok(())) => tracing::info!(through = seq, "AOF trimmed to on-demand checkpoint"),
+                Ok(Err(e)) => {
+                    tracing::warn!(error = %e, "AOF trim after on-demand checkpoint failed")
+                }
+                Err(e) => tracing::warn!(error = %e, "AOF trim task panicked"),
+            }
+        }
+        tracing::info!(
+            up_to_seq = seq,
+            "on-demand checkpoint written (admin request)"
+        );
+        Ok(true)
+    }
+}
+
 async fn serve(args: ServeArgs) -> Result<()> {
     init_tracing(
         &args.log_level,
@@ -2128,6 +2185,20 @@ async fn serve(args: ServeArgs) -> Result<()> {
     }
 
     let mut state = lumen::api::AppState::with_components(engine.clone(), auth, writer.clone());
+    // #1389: wire a real on-demand checkpoint (`POST /admin/checkpoint`) only
+    // when segment persistence is actually configured — the raft path has
+    // its own snapshot mechanism and is out of the reshard driver's scope
+    // (single-member only), and the default CBOR/no-data-dir path stays
+    // `NoopCheckpoint` (nothing durable to force). Cloned from `segment_store`
+    // before the periodic-snapshotter block below consumes it.
+    if let Some(store) = segment_store.clone() {
+        state = state.with_checkpoint(Arc::new(SegmentCheckpointSink {
+            engine: engine.clone(),
+            store,
+            writer: writer.clone(),
+            aof: aof_writer.clone(),
+        }));
+    }
     // Populate #1310's read-consistency enforcement seam with live cluster
     // state (#1349) — only in raft mode; standalone/legacy-log backends
     // correctly leave `state.cluster` `None` (single authoritative copy).

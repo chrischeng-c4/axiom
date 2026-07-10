@@ -965,8 +965,8 @@ These three routes are the safe procedure for ad hoc or scripted
 snapshot/restore — pull with `GET /admin/backup`, keep the bytes wherever you
 like, push back with `POST /admin/restore` to recover.
 
-### Reshard admin verbs (#1380)
-Three more `Role::Admin`-gated routes support moving a bounded set of
+### Reshard admin verbs (#1380, #1389)
+Four more `Role::Admin`-gated routes support moving a bounded set of
 documents between shards during an operator-driven reshard, without a
 full-engine restore:
 
@@ -987,10 +987,42 @@ full-engine restore:
   removes exactly the documents whose bucket no longer routes to this
   shard — nothing else. A separate, explicitly-invoked step; never implicit
   in `/admin/reshard:apply` or the backup routes above.
+- `POST /admin/checkpoint` — forces a synchronous, awaited durability
+  checkpoint of the live engine state, bypassing the periodic
+  `LUMEN_SNAPSHOT_SECS` cadence. `/admin/reshard:apply` and
+  `/admin/reshard:evict` mutate engine state directly rather than through
+  `WriteCoordinator`/the AOF, so without this verb their effects are only
+  captured by the next periodic segment checkpoint — a window a pod restart
+  can land inside and silently lose (target: the whole batch; source: the
+  eviction, i.e. `documents_indexed` reverting upward). The reshard phase
+  driver (`advance_catching_up`,
+  `src/operator/reshard_driver.rs`) calls this on every shard touched by a
+  split — every old shard plus the new one — and awaits success on all of
+  them before patching `spec.shardMap` and triggering the cutover rolling
+  restart, so a batch or eviction is only ever counted "migrated" once it
+  can survive that restart. Returns `{"persisted": bool}`: `true` when a
+  real durable store was actually written, `false` when no durable store is
+  configured (e.g. tests, or a deployment running without segment
+  persistence) — a vacuous success, not an error, so the verb is always safe
+  to call.
 
-These three verbs are the data-plane building blocks for a reshard; they do
-not sequence a migration end to end or decide *when* to cut over — that is
-the operator phase driver's job (tracked separately).
+  Two designs were considered for this durability gap: (a) route
+  `apply`/`evict` through the AOF/`WriteCoordinator` as new log-entry types,
+  or (b) the explicit synchronous checkpoint step described above, invoked
+  and awaited by the driver per touched shard before cutover. (b) was
+  chosen: it reuses `SegmentRdbStore::save` exactly as the periodic
+  snapshotter already does — a full atomic re-seal of the current engine
+  state, independent of which code path produced that state — with no new
+  WAL record shape, apply-loop branch, or distinct idempotency reasoning.
+  (a) would require a new `ReshardBatch`-shaped log entry that doesn't fit
+  the existing single-mutation entry variants, plus a second, different
+  notion of "already applied" alongside `merge_snapshot_delta`'s own
+  idempotent merge semantics.
+
+These four verbs are the data-plane building blocks for a reshard; only
+`/admin/checkpoint`'s ordering relative to cutover is sequenced by the
+operator phase driver — the rest do not sequence a migration end to end or
+decide *when* to cut over.
 
 ### Direct CLI data movement: `dump` / `export` / `load` / `import`
 For ad hoc SnapshotV1 movement from a shell, use the direct CLI wrappers:

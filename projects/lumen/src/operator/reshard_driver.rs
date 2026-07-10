@@ -50,17 +50,61 @@
 //!   re-sync that closes the gap for documents written to a moved bucket's
 //!   old shard during the `Splitting` window (writes still land on the old
 //!   shard until the map itself flips) — then evict every moved bucket from
-//!   every old shard ([`crate::reshard`]'s `evict` is also idempotent) and
-//!   flip `spec.shardMap` to the target map in the same patch that clears
-//!   `workflow.targetShardCount` and resets phase -> `Complete`. Calling
-//!   evict against the **new**, already-committed map (not the stale old
-//!   one) means the driver never needs to retain the old map across a
-//!   restart — the source of the classic "lost the old map after cutover"
-//!   resumability trap.
+//!   every old shard ([`crate::reshard`]'s `evict` is also idempotent), then
+//!   [`checkpoint_touched_shards`] (#1389, see below), and only then flip
+//!   `spec.shardMap` to the target map in the same patch that clears
+//!   `workflow.targetShardCount` and resets phase -> `Complete`, followed by
+//!   [`trigger_rolling_restart`]. Calling evict against the **new**,
+//!   already-committed map (not the stale old one) means the driver never
+//!   needs to retain the old map across a restart — the source of the
+//!   classic "lost the old map after cutover" resumability trap.
 //!
 //! A driver-side error at any step ([`DriveOutcome::Blocked`]) leaves the CR
 //! spec untouched; the next tick retries the same phase from the same
 //! persisted fields (R3).
+//!
+//! ## Migration durability (#1389)
+//!
+//! `Engine::apply_reshard_batch`/`evict_not_owned` (`storage.rs`, #1380)
+//! mutate engine state directly rather than through `WriteCoordinator`/the
+//! AOF, so — unlike ordinary writes — their durability is not implied by the
+//! engine's normal write path; with #1387's embedded persistence it was
+//! previously captured only by the next periodic `LUMEN_SNAPSHOT_SECS`
+//! checkpoint (default 300s), well after this driver's own cutover restart
+//! (~60-90s later) — observed live as 806 migrated batches lost on the
+//! target and an eviction silently undone on the source (#1387's report).
+//!
+//! Two designs were considered: (a) route `:apply`/`:evict` through the AOF/
+//! `WriteCoordinator` path as new `RaftLogEntry` variants, or (b) an explicit
+//! synchronous checkpoint step the driver invokes and awaits per touched
+//! shard before cutover. **(b) was chosen**: a whole `ReshardBatch`'s
+//! `SnapshotV1` delta can be large (bounded by `MAX_EXTERNAL_IDS_PER_BATCH`,
+//! but still potentially many collections/fields), which sits awkwardly as a
+//! single `WalRecord`/AOF frame designed around one bounded mutation
+//! (`Index`/`ReplaceDocs`/etc); it would also need new apply-loop branches
+//! and idempotency semantics distinct from every existing `RaftLogEntry`
+//! variant, whose apply methods mutate exactly one collection deterministically
+//! rather than merge a whole delta. (b) reuses `segment_rdb.rs`'s
+//! `SegmentRdbStore::save` verbatim — the exact call the periodic snapshotter
+//! already makes, just invoked synchronously on demand via a new
+//! `POST /admin/checkpoint` admin verb ([`crate::api::CheckpointSink`]) — no
+//! new WAL record shape, no new apply-loop branch, no new idempotency
+//! reasoning: `save` already re-seals the *entire* current engine state
+//! (including whatever `:apply`/`:evict` already mutated) atomically
+//! (stage-then-rename), so one checkpoint call captures every migration
+//! mutation made so far, not just the most recent one.
+//!
+//! [`checkpoint_touched_shards`] calls `POST /admin/checkpoint` on
+//! `0..target.physical_shard_count()` — every old shard (`evict_old_shards`'s
+//! target set) plus the new shard (`run_migration_pass`'s only `apply`
+//! destination) — and is invoked from [`advance_catching_up`] AFTER
+//! migration + eviction but BEFORE the `shardMap` cutover patch and
+//! [`trigger_rolling_restart`]. A checkpoint failure on any shard reports
+//! [`DriveOutcome::Blocked`] and leaves `spec` at `CatchingUp` untouched
+//! (R3): the next tick re-runs the whole idempotent
+//! migration+evict+checkpoint sequence, consistent with #1381's
+//! spec-is-the-checkpoint semantics — cutover never fires on a shard whose
+//! migration mutations are not yet durable.
 //!
 //! ## Scope rail: single-member only
 //!
@@ -460,6 +504,55 @@ async fn evict_shard(
     Ok(())
 }
 
+/// `POST /admin/checkpoint` (#1389 R1/R2) against one shard: force its
+/// migration mutations (`:apply`/`:evict`, which bypass `WriteCoordinator`/
+/// the AOF) into the same durability domain ordinary writes reach, and wait
+/// for the response before this shard is considered safe to restart.
+async fn checkpoint_shard(
+    http: &reqwest::Client,
+    base_url: &str,
+    token: Option<&str>,
+) -> Result<()> {
+    let mut req = http.post(format!("{base_url}/admin/checkpoint"));
+    if let Some(token) = token {
+        req = req.bearer_auth(token);
+    }
+    let resp = req
+        .send()
+        .await
+        .with_context(|| format!("POST {base_url}/admin/checkpoint"))?;
+    if !resp.status().is_success() {
+        bail!("{base_url}/admin/checkpoint returned {}", resp.status());
+    }
+    Ok(())
+}
+
+/// #1389 R3: checkpoint every shard `target` touches — every old shard
+/// (`evict_old_shards` runs against all of `0..current.physical_shard_count()`)
+/// plus the new shard (`run_migration_pass`'s only `apply` destination) — which
+/// is exactly `0..target.physical_shard_count()` (this driver only ever grows
+/// by one shard per split). Called from [`advance_catching_up`] AFTER
+/// migration + eviction and BEFORE the `shardMap` cutover patch / rolling
+/// restart, so a failure here leaves the workflow in `CatchingUp` — resumable,
+/// never mid-cutover with undurable data — and the next tick retries the same
+/// (idempotent) migration + eviction + checkpoint sequence.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
+async fn checkpoint_touched_shards(
+    control: &dyn ClusterControl,
+    http: &reqwest::Client,
+    namespace: &str,
+    name: &str,
+    lumen: &Lumen,
+    target: &VirtualBucketShardMap,
+) -> Result<()> {
+    let token = control.admin_token(namespace, lumen).await?;
+    for shard in 0..target.physical_shard_count() {
+        let url = control.shard_base_url(namespace, name, shard);
+        checkpoint_shard(http, &url, token.as_deref()).await?;
+    }
+    Ok(())
+}
+
 fn map_assignments(map: &VirtualBucketShardMap) -> Vec<u32> {
     (0..map.virtual_bucket_count())
         .map(|bucket| map.assignment_for_bucket(bucket).unwrap_or(0))
@@ -658,6 +751,19 @@ async fn advance_catching_up(
 
     if let Err(err) =
         evict_old_shards(control, http, namespace, name, lumen, &current, &target).await
+    {
+        return DriveOutcome::Blocked(err.to_string());
+    }
+
+    // #1389 R1/R2/R3: every touched shard's migration mutations must be
+    // durable BEFORE the cutover patch/restart below — otherwise the restart
+    // this same tick is about to trigger destroys the data it just migrated
+    // (target shards) or resurrects the data it just evicted (source
+    // shards), exactly as observed live in #1387's blocked AC3. A failure
+    // here leaves the CR spec untouched (still `CatchingUp`), so the next
+    // tick retries the whole idempotent migration+evict+checkpoint sequence.
+    if let Err(err) =
+        checkpoint_touched_shards(control, http, namespace, name, lumen, &target).await
     {
         return DriveOutcome::Blocked(err.to_string());
     }
