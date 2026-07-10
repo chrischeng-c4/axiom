@@ -310,6 +310,7 @@ impl TypeChecker {
                 let func_symbol = func_name
                     .as_deref()
                     .and_then(|name| self.symbols.lookup(name));
+                let method_key = self.user_method_key(func);
                 // ① Type-wall PoC HOOK: stdlib argument enforcement. ADDITIVE —
                 // runs before the existing `match func_ty` and never changes the
                 // Any-path return. It only *emits* the existing arg-mismatch
@@ -402,8 +403,19 @@ impl TypeChecker {
                             }
                         }
                         let mut checked_arg_types = Vec::with_capacity(args.len());
-                        let user_param_sigs = func_symbol
-                            .and_then(|symbol| self.function_param_sigs.get(&symbol).cloned());
+                        let user_param_sigs = method_key
+                            .as_ref()
+                            .and_then(|(class_symbol, method_name)| {
+                                self.class_method_param_sigs
+                                    .get(class_symbol)
+                                    .and_then(|methods| methods.get(method_name))
+                                    .cloned()
+                            })
+                            .or_else(|| {
+                                func_symbol.and_then(|symbol| {
+                                    self.function_param_sigs.get(&symbol).cloned()
+                                })
+                            });
                         let mut param_idx = 0;
                         for arg in args {
                             match arg {
@@ -539,38 +551,41 @@ impl TypeChecker {
                                 )
                             });
                         // If generic function, infer type args and check bounds
-                        if let Some(symbol) = func_symbol {
-                            if let Some(gp) = self.generic_defs.get(&symbol).cloned() {
-                                let (subst, conflicts) = infer_type_args(
-                                    &gp,
-                                    &inference_params,
-                                    &inference_args,
-                                    &self.tcx,
-                                );
-                                for err in conflicts {
-                                    self.error(expr.span, err);
-                                }
-                                let bound_errors = check_bounds(&subst, &gp, &self.tcx);
-                                for err in bound_errors {
-                                    self.error(expr.span, err);
-                                }
-                                let applied = subst.apply(ret, &mut self.tcx);
-                                // ABI honesty: a bare-TypeVar return crosses
-                                // the call boundary as a boxed MbValue in the
-                                // integer register (the generic callee
-                                // compiles to the boxed I64 ABI). Substituting
-                                // `float` would make codegen read an F64
-                                // register that was never written — degrade to
-                                // Any so the boxed value is handled
-                                // dynamically. Int/Bool share the I64 register
-                                // file and round-trip unchanged.
-                                if matches!(self.tcx.get(ret), Ty::TypeVar(_))
-                                    && matches!(self.tcx.get(applied), Ty::Float)
-                                {
-                                    return self.tcx.any();
-                                }
-                                return applied;
+                        let generic_params = method_key
+                            .as_ref()
+                            .and_then(|key| self.class_method_generic_defs.get(key))
+                            .cloned()
+                            .or_else(|| {
+                                func_symbol
+                                    .and_then(|symbol| self.generic_defs.get(&symbol))
+                                    .cloned()
+                            });
+                        if let Some(gp) = generic_params {
+                            let (subst, conflicts) =
+                                infer_type_args(&gp, &inference_params, &inference_args, &self.tcx);
+                            for err in conflicts {
+                                self.error(expr.span, err);
                             }
+                            let bound_errors = check_bounds(&subst, &gp, &self.tcx);
+                            for err in bound_errors {
+                                self.error(expr.span, err);
+                            }
+                            let applied = subst.apply(ret, &mut self.tcx);
+                            // ABI honesty: a bare-TypeVar return crosses
+                            // the call boundary as a boxed MbValue in the
+                            // integer register (the generic callee
+                            // compiles to the boxed I64 ABI). Substituting
+                            // `float` would make codegen read an F64
+                            // register that was never written — degrade to
+                            // Any so the boxed value is handled
+                            // dynamically. Int/Bool share the I64 register
+                            // file and round-trip unchanged.
+                            if matches!(self.tcx.get(ret), Ty::TypeVar(_))
+                                && matches!(self.tcx.get(applied), Ty::Float)
+                            {
+                                return self.tcx.any();
+                            }
+                            return applied;
                         }
                         ret
                     }
@@ -693,6 +708,17 @@ impl TypeChecker {
                 if self.strict_type_fixture {
                     if let Some(method_ty) = self.resolve_unbound_class_method(object, attr) {
                         return method_ty;
+                    }
+                }
+                if let Expr::Ident(name) = &object.node {
+                    if self.symbols.lookup(name).is_some_and(|symbol| {
+                        self.symbols.get_symbol(symbol).kind == SymbolKind::Class
+                    }) {
+                        // The type model still represents a class object and
+                        // its instances with the same Ty::Class variant. Keep
+                        // normal-mode unbound calls dynamic; only instance
+                        // expressions use the method signature below.
+                        return self.tcx.any();
                     }
                 }
                 self.resolve_attr(obj_ty_id, attr, expr.span)
@@ -1753,6 +1779,29 @@ impl TypeChecker {
         }
     }
 
+    /// Resolve a bound user-method call to its owner-specific metadata key.
+    fn user_method_key(&self, func: &Spanned<Expr>) -> Option<(crate::resolve::SymbolId, String)> {
+        let Expr::Attr { object, attr } = &func.node else {
+            return None;
+        };
+        let object_ty = match &object.node {
+            Expr::Ident(name) => {
+                let symbol = self.symbols.lookup(name)?;
+                self.get_sym_type(symbol.0)
+            }
+            Expr::Call { func, .. } => {
+                let Expr::Ident(name) = &func.node else {
+                    return None;
+                };
+                let symbol = self.symbols.lookup(name)?;
+                self.get_sym_type(symbol.0)
+            }
+            _ => return None,
+        };
+        let class_symbol = *self.class_symbols_by_type.get(&object_ty)?;
+        Some((class_symbol, attr.clone()))
+    }
+
     /// Resolve attribute access (#246).
     fn resolve_unbound_class_method(
         &mut self,
@@ -1839,7 +1888,19 @@ impl TypeChecker {
                         return *ty;
                     }
                 }
-                // Method lookup would go here; for now return Any
+                if let Some(method) = self
+                    .class_symbols_by_type
+                    .get(&obj_ty_id)
+                    .and_then(|class_symbol| self.class_methods_by_symbol.get(class_symbol))
+                    .and_then(|methods| methods.get(attr))
+                    .cloned()
+                {
+                    return self.tcx.intern(Ty::Fn {
+                        params: method.params,
+                        ret: method.return_type,
+                        variadic: false,
+                    });
+                }
                 self.tcx.any()
             }
             Ty::Any | Ty::Error => self.tcx.any(),

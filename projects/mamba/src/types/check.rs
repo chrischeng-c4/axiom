@@ -180,8 +180,15 @@ pub struct TypeChecker {
     pub(crate) protocol_registry: ProtocolRegistry,
     /// Class method signatures for protocol conformance checking (#314).
     pub(crate) class_methods: HashMap<String, HashMap<String, super::protocol::MethodSig>>,
+    /// User-class method signatures keyed by the owning class symbol.
+    pub(crate) class_methods_by_symbol:
+        HashMap<SymbolId, HashMap<String, super::protocol::MethodSig>>,
     /// Named/kinded method parameters retained for keyword argument matching.
     pub(crate) class_method_param_sigs: HashMap<SymbolId, HashMap<String, Vec<FunctionParamSig>>>,
+    /// Method-local PEP 695 parameters keyed by owning class and method name.
+    pub(crate) class_method_generic_defs: HashMap<(SymbolId, String), GenericParams>,
+    /// Resolve a user-class TypeId back to its declaration symbol.
+    pub(crate) class_symbols_by_type: HashMap<TypeId, SymbolId>,
     /// Class method signatures for bare-class unbound calls such as
     /// `Box.get(obj, arg)`. These include the explicit receiver parameter.
     pub(crate) class_unbound_methods: HashMap<String, HashMap<String, super::protocol::MethodSig>>,
@@ -275,7 +282,10 @@ impl TypeChecker {
             function_param_sigs: HashMap::new(),
             protocol_registry: ProtocolRegistry::new(),
             class_methods: HashMap::new(),
+            class_methods_by_symbol: HashMap::new(),
             class_method_param_sigs: HashMap::new(),
+            class_method_generic_defs: HashMap::new(),
+            class_symbols_by_type: HashMap::new(),
             class_unbound_methods: HashMap::new(),
             typed_dict_classes: HashSet::new(),
             user_bare_classes: std::collections::HashSet::new(),
@@ -474,11 +484,38 @@ impl TypeChecker {
         let Some(symbol) = self.symbols.lookup(name) else {
             return;
         };
-        let Some(mut gp) = self.generic_defs.get(&symbol).cloned() else {
+        let Some(gp) = self.generic_defs.get(&symbol).cloned() else {
             return;
         };
-        if gp.params.len() != type_params.len() {
+        let Some(gp) = self.finalize_generic_params(gp, type_params) else {
             return;
+        };
+        self.generic_defs.insert(symbol, gp);
+    }
+
+    fn finalize_class_method_generic_metadata(
+        &mut self,
+        class_symbol: SymbolId,
+        method_name: &str,
+        type_params: &[crate::parser::ast::TypeParam],
+    ) {
+        let key = (class_symbol, method_name.to_string());
+        let Some(gp) = self.class_method_generic_defs.get(&key).cloned() else {
+            return;
+        };
+        let Some(gp) = self.finalize_generic_params(gp, type_params) else {
+            return;
+        };
+        self.class_method_generic_defs.insert(key, gp);
+    }
+
+    fn finalize_generic_params(
+        &mut self,
+        mut gp: GenericParams,
+        type_params: &[crate::parser::ast::TypeParam],
+    ) -> Option<GenericParams> {
+        if gp.params.len() != type_params.len() {
+            return None;
         }
 
         let aliases: Vec<_> = gp
@@ -523,7 +560,7 @@ impl TypeChecker {
         }
 
         self.unregister_type_params(type_params);
-        self.generic_defs.insert(symbol, gp);
+        Some(gp)
     }
 
     pub(crate) fn finalize_generic_metadata_in(&mut self, stmts: &[Spanned<Stmt>]) {
@@ -534,10 +571,32 @@ impl TypeChecker {
                 }
                 | Stmt::AsyncFnDef {
                     name, type_params, ..
-                }
-                | Stmt::ClassDef {
-                    name, type_params, ..
                 } => self.finalize_generic_param_metadata(name, type_params),
+                Stmt::ClassDef {
+                    name,
+                    type_params,
+                    body,
+                    ..
+                } => {
+                    self.finalize_generic_param_metadata(name, type_params);
+                    if let Some(class_symbol) = self.symbols.lookup(name) {
+                        for method in body {
+                            match &method.node {
+                                Stmt::FnDef {
+                                    name, type_params, ..
+                                }
+                                | Stmt::AsyncFnDef {
+                                    name, type_params, ..
+                                } => self.finalize_class_method_generic_metadata(
+                                    class_symbol,
+                                    name,
+                                    type_params,
+                                ),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
 
@@ -685,6 +744,7 @@ impl TypeChecker {
                     });
                     let sym = self.symbols.define(name.clone(), SymbolKind::Class);
                     self.set_sym_type(sym.0, class_ty);
+                    self.class_symbols_by_type.insert(class_ty, sym);
                     if is_typed_dict {
                         self.typed_dict_classes.insert(name.clone());
                     }
@@ -1108,11 +1168,13 @@ impl TypeChecker {
                                 } else {
                                     fields
                                 };
-                                self.tcx.intern(Ty::Class {
+                                let specialized = self.tcx.intern(Ty::Class {
                                     name: param_name,
                                     fields: new_fields,
                                     match_args: None,
-                                })
+                                });
+                                self.class_symbols_by_type.insert(specialized, sym);
+                                specialized
                             } else {
                                 base_ty
                             }
@@ -1538,11 +1600,19 @@ impl TypeChecker {
                 params,
                 return_ty,
                 ..
+            }
+            | Stmt::AsyncFnDef {
+                decorators,
+                name,
+                type_params,
+                params,
+                return_ty,
+                ..
             } = &stmt.node
             {
                 // Generic methods (`def meth[U](...)`) resolve their own
                 // type params within the signature (PEP 695).
-                let _gp = self.register_type_params(type_params);
+                let gp = self.register_type_params(type_params);
                 let param_sigs: Vec<FunctionParamSig> = params
                     .iter()
                     .filter(|p| p.name != "self")
@@ -1569,6 +1639,10 @@ impl TypeChecker {
                     None
                 };
                 self.unregister_type_params(type_params);
+                if !gp.is_empty() {
+                    self.class_method_generic_defs
+                        .insert((class_symbol, name.clone()), gp);
+                }
                 methods.insert(
                     name.clone(),
                     MethodSig {
@@ -1589,6 +1663,8 @@ impl TypeChecker {
             }
         }
         if !methods.is_empty() {
+            self.class_methods_by_symbol
+                .insert(class_symbol, methods.clone());
             self.class_methods.insert(class_name.to_string(), methods);
             self.class_method_param_sigs
                 .insert(class_symbol, method_param_sigs);

@@ -976,6 +976,78 @@ fn pep695_nested_class_constructor_uses_symbol_identity() {
 }
 
 #[test]
+fn pep695_generic_method_enforces_bounds_and_infers_return() {
+    let errors = check(
+        "class Picker:\n\
+         \x20   def pick[T: int](self, value: T) -> T:\n\
+         \x20       return value\n\
+         picker = Picker()\n\
+         good: int = picker.pick(1)\n\
+         picker.pick(\"bad\")\n",
+    );
+    let violations = errors
+        .iter()
+        .filter(|error| error.contains("bound violation"))
+        .count();
+    assert_eq!(
+        violations, 1,
+        "generic methods must enforce their local bounds: {errors:?}"
+    );
+
+    let errors = check(
+        "class Identity:\n\
+         \x20   def apply[T](self, value: T) -> T:\n\
+         \x20       return value\n\
+         identity = Identity()\n\
+         text: str = identity.apply(\"ok\")\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "generic method return types should use call inference: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_generic_method_uses_owner_identity_and_keyword_binding() {
+    let errors = check(
+        "class IntPicker:\n\
+         \x20   def pick[T: int](self, value: T) -> T:\n\
+         \x20       return value\n\
+         class StrPicker:\n\
+         \x20   def pick[T: str](self, value: T) -> T:\n\
+         \x20       return value\n\
+         IntPicker().pick(value=\"bad\")\n\
+         StrPicker().pick(value=1)\n",
+    );
+    let violations = errors
+        .iter()
+        .filter(|error| error.contains("bound violation"))
+        .count();
+    assert_eq!(
+        violations, 2,
+        "same-named methods must use their owning class metadata: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_generic_method_forward_bound_is_finalized() {
+    let errors = check(
+        "class Picker:\n\
+         \x20   def pick[T: Later](self, value: T) -> T:\n\
+         \x20       return value\n\
+         class Later:\n\
+         \x20   pass\n\
+         class Other:\n\
+         \x20   pass\n\
+         Picker().pick(Other())\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("bound violation")),
+        "method-local forward bounds must be finalized after preregistration: {errors:?}"
+    );
+}
+
+#[test]
 fn test_generic_class_definition() {
     // Generic class with type params should type-check
     let errors = check(
