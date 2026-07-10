@@ -27,16 +27,22 @@ Public API manifest for `projects/lumen/src/raft.rs` generated from AST during S
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ReadConsistency` | raft_host (re-export) | enum | pub use | 36 |  |
-| `ClusterState` | projects/lumen/src/raft.rs | struct | pub | 162 |  |
-| `ClusterStateView` | projects/lumen/src/raft.rs | struct | pub | 213 |  |
-| `PeerAddr` | projects/lumen/src/raft.rs | struct | pub | 72 |  |
-| `RaftGroup` | projects/lumen/src/raft.rs | struct | pub | 65 |  |
-| `RaftRole` | projects/lumen/src/raft.rs | enum | pub | 41 |  |
-| `from_config` | projects/lumen/src/raft.rs | function | pub | 95 | from_config(         cfg: &ClusterConfig,         prefix: &str,         headless_service: &str,         raft_port: u16,         client_port: u16,     ) -> anyhow::Result<Self> |
-| `leader` | projects/lumen/src/raft.rs | function | pub | 153 | leader(&self) -> Option<&PeerAddr> |
-| `new` | projects/lumen/src/raft.rs | function | pub | 175 | new(cfg: &ClusterConfig, group: RaftGroup) -> anyhow::Result<Self> |
-| `snapshot` | projects/lumen/src/raft.rs | function | pub | 197 | snapshot(&self) -> ClusterStateView |
+| `ReadConsistency` | raft_host (re-export) | enum | pub use | 45 |  |
+| `ClusterState` | projects/lumen/src/raft.rs | struct | pub | 193 |  |
+| `ClusterStateView` | projects/lumen/src/raft.rs | struct | pub | 359 |  |
+| `PeerAddr` | projects/lumen/src/raft.rs | struct | pub | 97 |  |
+| `RaftGroup` | projects/lumen/src/raft.rs | struct | pub | 90 |  |
+| `RaftRole` | projects/lumen/src/raft.rs | enum | pub | 50 |  |
+| `from_config` | projects/lumen/src/raft.rs | function | pub | 120 | from_config(         cfg: &ClusterConfig,         prefix: &str,         headless_service: &str,         raft_port: u16,         client_port: u16,     ) -> anyhow::Result<Self> |
+| `leader` | projects/lumen/src/raft.rs | function | pub | 178 | leader(&self) -> Option<&PeerAddr> |
+| `new` | projects/lumen/src/raft.rs | function | pub | 215 | new(cfg: &ClusterConfig, group: RaftGroup) -> anyhow::Result<Self> |
+| `from_snapshot` | projects/lumen/src/raft.rs | function | pub | 254 | from_snapshot(pod_name: String, shard_index: u32, replica_index: u32, role: RaftRole, group: RaftGroup, applied_index: u64, leader_term: u64, replication_lag_ms: u64) -> Self |
+| `role` | projects/lumen/src/raft.rs | function | pub | 289 | role(&self) -> RaftRole |
+| `set_role` | projects/lumen/src/raft.rs | function | pub | 294 | set_role(&self, role: RaftRole) |
+| `leader_index` | projects/lumen/src/raft.rs | function | pub | 300 | leader_index(&self) -> Option<u32> |
+| `set_leader_index` | projects/lumen/src/raft.rs | function | pub | 309 | set_leader_index(&self, leader: Option<u32>) |
+| `leader_peer` | projects/lumen/src/raft.rs | function | pub | 317 | leader_peer(&self) -> Option<&PeerAddr> |
+| `snapshot` | projects/lumen/src/raft.rs | function | pub | 322 | snapshot(&self) -> ClusterStateView |
 
 `ReadConsistency` (header name + `from_header` parsing) and the
 `RaftRole`/`PeerAddr`/`ClusterStateView` shapes are now canonically defined
@@ -44,6 +50,15 @@ in `libs/raft-host` (`read_consistency.rs` / `view.rs`, #1003); this file
 re-exports `ReadConsistency` directly and keeps `utoipa::ToSchema`-deriving
 wrappers with `From<raft_host::*>` conversions for the other three so
 `/openapi.json` stays byte-identical.
+
+`ClusterState::role`/`leader_index` are private `AtomicU8`/`AtomicU32`
+fields updated in place (not replaced) by a background poller for the
+process lifetime (`spawn_cluster_state_poller` in `src/bin/lumen.rs`,
+#1349); `role()`/`set_role()`/`leader_index()`/`set_leader_index()`/
+`leader_peer()` are the read/write accessors, and `from_snapshot()` is an
+explicit-initial-state constructor used by both `lumen serve --wal raft`'s
+bootstrap default (before the poller's first tick) and by tests that need a
+deterministic `ClusterState` without a running raft cluster.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -52,11 +67,16 @@ wrappers with `From<raft_host::*>` conversions for the other three so
 // CODEGEN-BEGIN
 //! Per-shard replication surface.
 //!
-//! This module currently carries the public cluster-state DTOs — readiness,
-//! peer DNS map, role inspection, read-consistency parsing, and the wire shape
-//! of `/debug/cluster`. The next implementation slice wires this surface to
-//! `libs/raft-core` so multi-pod Lumen owns write ordering and primary/replica
-//! synchronization itself.
+//! This module carries the public cluster-state DTOs — readiness, peer DNS
+//! map, role inspection, read-consistency parsing, and the wire shape of
+//! `/debug/cluster` — plus [`ClusterState`]'s live-mutable role/leader/lag
+//! fields. Write ordering + replication is `libs/raft-core` via
+//! `libs/raft-host` (#515/#524); `lumen serve --wal raft` keeps
+//! `ClusterState` current for the process lifetime by polling the same
+//! `RaftHost` the write path already drives (`spawn_cluster_state_poller` in
+//! `src/bin/lumen.rs`, #1349) — this module owns the DTOs and the
+//! interior-mutable update surface (`role`/`set_role`,
+//! `leader_index`/`set_leader_index`, `snapshot`), not the polling itself.
 //!
 //! Lumen's multi-pod auto path uses Lumen-owned primary/replica replication.
 //!
@@ -75,12 +95,16 @@ wrappers with `From<raft_host::*>` conversions for the other three so
 //! (keep/relay/loom) to pull in utoipa whether or not it exposes an OpenAPI
 //! doc.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::config::ClusterConfig;
+
+/// Sentinel for [`ClusterState::leader_index`]: no leader currently known
+/// (mid-election, or the group hasn't elected one yet).
+const NO_LEADER: u32 = u32::MAX;
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 pub use raft_host::ReadConsistency;
@@ -93,6 +117,22 @@ pub enum RaftRole {
     Follower,
     Learner,
     Candidate,
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
+impl RaftRole {
+    /// Decode the `AtomicU8` encoding [`ClusterState::role`] stores (the
+    /// enum's own discriminant order — see the `as u8` encode side in
+    /// [`ClusterState::set_role`]). Unknown values fall back to `Candidate`
+    /// (never silently claim `Leader`/a stale role for a corrupt byte).
+    fn from_u8(v: u8) -> Self {
+        match v {
+            v if v == Self::Leader as u8 => Self::Leader,
+            v if v == Self::Follower as u8 => Self::Follower,
+            v if v == Self::Learner as u8 => Self::Learner,
+            _ => Self::Candidate,
+        }
+    }
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
@@ -205,26 +245,48 @@ impl RaftGroup {
     }
 }
 
-/// Live cluster snapshot for `/debug/cluster`. Cheap to clone; updated
-/// in place from background replication tasks.
+/// Live cluster snapshot for `/debug/cluster`. Cheap to clone (held behind
+/// `Arc`); `role`/`leader_index`/`applied_index`/`leader_term`/
+/// `replication_lag_ms` are updated in place from a background task that
+/// polls the raft engine's own election state (`RaftHost::is_leader`/
+/// `leader`) for the process lifetime — see `spawn_cluster_state_poller` in
+/// `src/bin/lumen.rs` (#1349). `group`'s peer addresses are immutable
+/// (derived once from static topology config); only role membership is
+/// live, computed in [`ClusterState::snapshot`] from `leader_index`.
 #[derive(Debug)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 pub struct ClusterState {
     pub pod_name: String,
     pub shard_index: u32,
     pub replica_index: u32,
-    pub role: RaftRole,
+    /// This pod's own role, as an `AtomicU8` encoding of [`RaftRole`] (see
+    /// [`RaftRole::from_u8`]/[`ClusterState::set_role`]) so a background
+    /// task can update it without replacing the whole `Arc<ClusterState>`.
+    /// Read via [`ClusterState::role`], not this field directly.
+    role: AtomicU8,
     pub group: RaftGroup,
     pub applied_index: AtomicU64,
     pub leader_term: AtomicU64,
     pub replication_lag_ms: AtomicU64,
+    /// The replica index (== raft `NodeId`, see `RaftGroup::from_config`)
+    /// this pod currently believes holds shard leadership, or [`NO_LEADER`]
+    /// when unknown. Drives both this pod's own `Leader`/`Follower` split
+    /// and the live `peers[].role` view in [`ClusterState::snapshot`].
+    leader_index: AtomicU32,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 impl ClusterState {
     pub fn new(cfg: &ClusterConfig, group: RaftGroup) -> anyhow::Result<Self> {
-        let role = if cfg.is_voter()? {
-            if cfg.replica_index()? == 0 {
+        let is_voter = cfg.is_voter()?;
+        let replica_index = cfg.replica_index()?;
+        // Bootstrap default before the live poller's first tick: matches the
+        // pre-#1349 static "replica 0 is leader" stub so standalone/not-yet-
+        // polled construction (e.g. tests) stays deterministic. The poller
+        // overwrites this with the raft engine's real election result once
+        // `--wal raft` starts serving.
+        let role = if is_voter {
+            if replica_index == 0 {
                 RaftRole::Leader
             } else {
                 RaftRole::Follower
@@ -232,25 +294,124 @@ impl ClusterState {
         } else {
             RaftRole::Learner
         };
+        let leader_index = if is_voter { 0 } else { NO_LEADER };
         Ok(Self {
             pod_name: cfg.pod_name.clone(),
             shard_index: cfg.shard_index()?,
-            replica_index: cfg.replica_index()?,
-            role,
+            replica_index,
+            role: AtomicU8::new(role as u8),
             group,
             applied_index: AtomicU64::new(0),
             leader_term: AtomicU64::new(1),
             replication_lag_ms: AtomicU64::new(0),
+            leader_index: AtomicU32::new(leader_index),
         })
     }
 
+    /// Build a `ClusterState` with an explicit initial role/leader/lag,
+    /// bypassing config derivation (`new`'s bootstrap-default path is still
+    /// the one `lumen serve` uses before its live poller's first tick).
+    /// This constructor is for callers that already know the exact snapshot
+    /// they want to start from — e.g. tests exercising
+    /// `enforce_read_consistency` against a deterministic primary-replica
+    /// state without a running raft cluster.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_snapshot(
+        pod_name: String,
+        shard_index: u32,
+        replica_index: u32,
+        role: RaftRole,
+        group: RaftGroup,
+        applied_index: u64,
+        leader_term: u64,
+        replication_lag_ms: u64,
+    ) -> Self {
+        let leader_index = match role {
+            RaftRole::Leader => replica_index,
+            _ => group
+                .peers
+                .iter()
+                .position(|p| p.role == RaftRole::Leader)
+                .map(|i| i as u32)
+                .unwrap_or(NO_LEADER),
+        };
+        Self {
+            pod_name,
+            shard_index,
+            replica_index,
+            role: AtomicU8::new(role as u8),
+            group,
+            applied_index: AtomicU64::new(applied_index),
+            leader_term: AtomicU64::new(leader_term),
+            replication_lag_ms: AtomicU64::new(replication_lag_ms),
+            leader_index: AtomicU32::new(leader_index),
+        }
+    }
+
+    /// This pod's current role. Live once a background poller is running
+    /// (`--wal raft`); a fixed bootstrap value otherwise (see `new`/
+    /// `from_snapshot`).
+    pub fn role(&self) -> RaftRole {
+        RaftRole::from_u8(self.role.load(Ordering::Relaxed))
+    }
+
+    /// Set this pod's live role (background poller only).
+    pub fn set_role(&self, role: RaftRole) {
+        self.role.store(role as u8, Ordering::Relaxed);
+    }
+
+    /// The replica index this pod currently believes is shard leader, or
+    /// `None` when unknown (mid-election).
+    pub fn leader_index(&self) -> Option<u32> {
+        match self.leader_index.load(Ordering::Relaxed) {
+            NO_LEADER => None,
+            idx => Some(idx),
+        }
+    }
+
+    /// Set the currently known leader's replica index (background poller
+    /// only); `None` clears it back to "unknown".
+    pub fn set_leader_index(&self, leader: Option<u32>) {
+        self.leader_index
+            .store(leader.unwrap_or(NO_LEADER), Ordering::Relaxed);
+    }
+
+    /// The peer entry for the currently known leader, if any — replaces
+    /// `RaftGroup::leader()`'s static "replica 0" stub for live lookups
+    /// (e.g. the `read_consistency_not_leader` error message).
+    pub fn leader_peer(&self) -> Option<&PeerAddr> {
+        self.leader_index()
+            .and_then(|idx| self.group.peers.get(idx as usize))
+    }
+
     pub fn snapshot(&self) -> ClusterStateView {
+        let leader_index = self.leader_index();
+        // Learner membership is static config (learners never contest
+        // leadership); voter role is live, derived from `leader_index` —
+        // this is what turns `group`'s static peer roles into the actual
+        // live view for `/debug/cluster` (#1349 AC1).
+        let peers = self
+            .group
+            .peers
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let role = if p.role == RaftRole::Learner {
+                    RaftRole::Learner
+                } else if leader_index == Some(i as u32) {
+                    RaftRole::Leader
+                } else {
+                    RaftRole::Follower
+                };
+                PeerAddr { role, ..p.clone() }
+            })
+            .collect();
         ClusterStateView {
             pod_name: self.pod_name.clone(),
             shard_index: self.shard_index,
             replica_index: self.replica_index,
-            role: self.role,
-            peers: self.group.peers.clone(),
+            role: self.role(),
+            peers,
             applied_index: self.applied_index.load(Ordering::Relaxed),
             leader_term: self.leader_term.load(Ordering::Relaxed),
             replication_lag_ms: self.replication_lag_ms.load(Ordering::Relaxed),
@@ -447,7 +608,6 @@ mod tests {
     }
 }
 // CODEGEN-END
-
 ````
 
 ## Changes

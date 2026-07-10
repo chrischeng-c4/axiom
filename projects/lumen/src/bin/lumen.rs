@@ -1910,6 +1910,13 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let mut raft_host: Option<Arc<raft_host::RaftHost>> = None;
     #[cfg(feature = "raft-wal")]
     let mut raft_writer: Option<Arc<dyn lumen::coordinator::WriteSink>> = None;
+    // Live `ClusterState` for `AppState::with_cluster` (#1349): populated only
+    // in raft mode, kept current for the process lifetime by
+    // `spawn_cluster_state_poller` below. `None` here (standalone/legacy-log
+    // backends) is correct — `enforce_read_consistency` no-ops when
+    // `state.cluster` is `None`.
+    #[cfg(feature = "raft-wal")]
+    let mut raft_cluster: Option<Arc<lumen::raft::ClusterState>> = None;
     // k8s-native auto-detect: `--wal auto` (the default) picks raft when the
     // StatefulSet runs >1 replica per shard, else embedded — so single-node /
     // local dev needs no flags or cluster env.
@@ -1969,6 +1976,34 @@ async fn serve(args: ServeArgs) -> Result<()> {
                     ..Default::default()
                 },
             ));
+
+            // Live cluster state (#1349): the same `ClusterConfig`/`RaftGroup`
+            // shape `AppState::with_cluster`'s consumer (`enforce_read_consistency`,
+            // `GET /debug/cluster`) already expects, seeded with the same
+            // topology math as `topo` above (#1002 delegation keeps them from
+            // drifting) so `group.peers` names line up with raft `NodeId`s
+            // 1:1 by replica index.
+            let cluster_cfg =
+                lumen::config::ClusterConfig::from_env().context("raft: cluster config")?;
+            let group = lumen::raft::RaftGroup::from_config(
+                &cluster_cfg,
+                "lumen",
+                &headless,
+                args.port,
+                args.port,
+            )
+            .context("raft: build raft group")?;
+            let cluster_state = Arc::new(
+                lumen::raft::ClusterState::new(&cluster_cfg, group)
+                    .context("raft: build cluster state")?,
+            );
+            spawn_cluster_state_poller(
+                host.clone(),
+                cluster_state.clone(),
+                cluster_cfg.is_voter()?,
+            );
+            raft_cluster = Some(cluster_state);
+
             raft_host = Some(Arc::clone(&host));
             raft_writer = Some(Arc::new(lumen::raft_sm::RaftWriteSink::new(host, sm)));
             None
@@ -2093,6 +2128,13 @@ async fn serve(args: ServeArgs) -> Result<()> {
     }
 
     let mut state = lumen::api::AppState::with_components(engine.clone(), auth, writer.clone());
+    // Populate #1310's read-consistency enforcement seam with live cluster
+    // state (#1349) — only in raft mode; standalone/legacy-log backends
+    // correctly leave `state.cluster` `None` (single authoritative copy).
+    #[cfg(feature = "raft-wal")]
+    if let Some(cluster) = raft_cluster {
+        state = state.with_cluster(cluster);
+    }
     if !args.search_shard_segment_dirs.is_empty() {
         let shards = load_search_shard_segment_roots(&args.search_shard_segment_dirs)?;
         tracing::info!(shard_count = shards.len(), "search backend=segment-sharded");
@@ -2229,6 +2271,66 @@ async fn serve(args: ServeArgs) -> Result<()> {
     #[cfg(feature = "otel")]
     opentelemetry::global::shutdown_tracer_provider();
     Ok(())
+}
+
+/// Keeps `AppState.cluster` (#1310's read-consistency enforcement seam)
+/// current for the process lifetime (#1349): polls the already-running
+/// `RaftHost` for its live role/leader view (`is_leader`/`leader`, both
+/// pre-existing — no new raft-host surface added) and republishes it onto
+/// the shared `ClusterState` via its atomic setters, so every concurrently
+/// running request handler observes the latest election result without a
+/// restart. Runs for the life of the `serve` process; errors from the raft
+/// host (e.g. transient watch-channel lag) are not fatal to serving and are
+/// simply retried on the next tick.
+///
+/// Replication lag is reported as `0` on the leader and `u64::MAX`
+/// ("unknown") on every follower/learner: deriving a true milliseconds-lag
+/// figure would need new peer RPC surface this WI intentionally does not
+/// add (see #1349's scope guardrail), so `ReadConsistency::Bounded` is kept
+/// conservative — an unknown lag always fails the bound rather than
+/// silently serving a stale follower.
+#[cfg(feature = "raft-wal")]
+fn spawn_cluster_state_poller(
+    host: Arc<raft_host::RaftHost>,
+    cluster: Arc<lumen::raft::ClusterState>,
+    is_voter: bool,
+) {
+    use lumen::raft::RaftRole;
+    let applied_rx = host.applied_watch();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_millis(200));
+        loop {
+            ticker.tick().await;
+            let is_leader = host.is_leader().await;
+            let leader = host.leader().await;
+            let role = if !is_voter {
+                RaftRole::Learner
+            } else if is_leader {
+                RaftRole::Leader
+            } else if leader.is_some() {
+                RaftRole::Follower
+            } else {
+                RaftRole::Candidate
+            };
+            let prev = cluster.role();
+            cluster.set_role(role);
+            cluster.set_leader_index(leader.map(|n| n as u32));
+            cluster.replication_lag_ms.store(
+                if role == RaftRole::Leader {
+                    0
+                } else {
+                    u64::MAX
+                },
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            cluster
+                .applied_index
+                .store(*applied_rx.borrow(), std::sync::atomic::Ordering::Relaxed);
+            if role != prev {
+                tracing::info!(pod = %cluster.pod_name, from = ?prev, to = ?role, "raft role changed");
+            }
+        }
+    });
 }
 
 fn apply_bootstrap_seed(engine: &Engine, seed_uri: Option<&str>) -> Result<bool> {
@@ -2768,5 +2870,95 @@ mod tests {
     // themselves; lumen's own coverage is the thin-adapter tests above
     // (`resolve_base_url_requires_explicit_url`, `build_*_body_*`) plus
     // `cargo test -p cli-std --features k8s`.
+
+    // -----------------------------------------------------------------
+    // `spawn_cluster_state_poller` (#1349)
+    // -----------------------------------------------------------------
+
+    /// #1349 AC1/AC2 (unit-level): a single-voter `RaftHost` always wins its
+    /// own election, so `spawn_cluster_state_poller` must converge the
+    /// shared `ClusterState` from its pre-poller bootstrap value to
+    /// `RaftRole::Leader` — driven by the real raft engine's own
+    /// `is_leader`/`leader` results, not a manually-set role. This is the
+    /// same seam `enforce_read_consistency` (#1310, `src/api.rs`) reads via
+    /// `AppState.cluster`; the live 3-node localhost cluster in this WI's
+    /// report additionally proves the HTTP-facing accept/reject behavior
+    /// end-to-end.
+    #[cfg(feature = "raft-wal")]
+    #[tokio::test]
+    async fn cluster_state_poller_converges_role_to_live_election_result() {
+        use lumen::raft::{ClusterState, PeerAddr, RaftGroup, RaftRole};
+
+        let tmp = std::env::temp_dir().join(format!(
+            "lumen-cluster-poller-test-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("t")
+        ));
+        let _ = std::fs::create_dir_all(&tmp);
+        let sm = lumen::raft_sm::EngineSm::new(Arc::new(Engine::new()), 0);
+        let host = Arc::new(raft_host::RaftHost::spawn(
+            0,
+            raft_host::Membership {
+                voters: vec![0],
+                learners: vec![],
+            },
+            std::collections::HashMap::new(),
+            raft_host::RaftStore::open(tmp.to_str().unwrap(), 0, raft_host::FsyncPolicy::Os)
+                .unwrap(),
+            sm.clone() as Arc<dyn raft_host::RaftStateMachine>,
+            raft_host::HostConfig::default(),
+        ));
+
+        // Bootstrap value deliberately wrong (Follower/no-leader), matching
+        // how a real pod starts before its first poller tick — proves the
+        // assertion below observes the poller's live update, not the
+        // constructor's static default.
+        let cluster = Arc::new(ClusterState::from_snapshot(
+            "lumen-0".to_string(),
+            0,
+            0,
+            RaftRole::Follower,
+            RaftGroup {
+                shard_index: 0,
+                peers: vec![PeerAddr {
+                    pod_name: "lumen-0".to_string(),
+                    host: "127.0.0.1".to_string(),
+                    raft_port: 0,
+                    client_port: 0,
+                    role: RaftRole::Follower,
+                }],
+            },
+            0,
+            1,
+            u64::MAX,
+        ));
+        assert_eq!(cluster.role(), RaftRole::Follower, "bootstrap sanity check");
+
+        spawn_cluster_state_poller(host, cluster.clone(), true);
+
+        let converged = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if cluster.role() == RaftRole::Leader {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await;
+        assert!(
+            converged.is_ok(),
+            "poller did not converge role to Leader within bound"
+        );
+        assert_eq!(cluster.leader_index(), Some(0));
+        assert_eq!(
+            cluster
+                .replication_lag_ms
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "leader reports zero lag, not the unknown sentinel"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }
 // CODEGEN-END
