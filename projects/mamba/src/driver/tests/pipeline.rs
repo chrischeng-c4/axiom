@@ -1031,7 +1031,7 @@ fn test_async_function_creates_coroutine() {
         f.blocks.iter().any(|b| {
             b.stmts.iter().any(|s| {
                 matches!(s,
-                    MirInst::CallExtern { name, .. } if name == "mb_coroutine_new_with_body"
+                    MirInst::CallExtern { name, .. } if name == "mb_coroutine_new_with_body_unnamed"
                 )
             })
         })
@@ -1048,7 +1048,7 @@ fn test_async_function_creates_coroutine() {
     });
     assert!(
         has_coro_new_with_body,
-        "wrapper should call mb_coroutine_new_with_body"
+        "wrapper should call mb_coroutine_new_with_body_unnamed"
     );
     assert!(has_coro_complete, "body should call mb_coroutine_complete");
 }
@@ -1131,7 +1131,9 @@ fn test_sync_function_no_coroutine() {
         b.stmts.iter().any(|s| {
             matches!(s,
                 MirInst::CallExtern { name, .. }
-                    if name == "mb_coroutine_new" || name == "mb_coroutine_new_with_body"
+                    if name == "mb_coroutine_new"
+                        || name == "mb_coroutine_new_with_body"
+                        || name == "mb_coroutine_new_with_body_unnamed"
             )
         })
     });

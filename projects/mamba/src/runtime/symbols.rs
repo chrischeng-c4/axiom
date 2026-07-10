@@ -2393,6 +2393,13 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_coroutine_new_with_body_unnamed",
+            async_rt::mb_coroutine_new_with_body_unnamed
+                as fn(i64, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_await",
             async_rt::mb_await as fn(super::MbValue) -> super::MbValue,
             [I64],
@@ -4543,6 +4550,7 @@ mod tests {
         for expected in [
             "mb_coroutine_new",
             "mb_coroutine_new_with_body",
+            "mb_coroutine_new_with_body_unnamed",
             "mb_coroutine_complete",
         ] {
             assert!(

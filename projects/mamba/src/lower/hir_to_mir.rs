@@ -2835,12 +2835,6 @@ impl<'a> HirToMir<'a> {
             .collect();
 
         // Create coroutine with pre-sized locals and registered body.
-        let name_vreg = self.fresh_vreg();
-        self.current_stmts.push(MirInst::LoadConst {
-            dest: name_vreg,
-            value: MirConst::Str(format!("fn_{}", func.name.0)),
-            ty: self.tcx.str(),
-        });
         let local_count_vreg = self.fresh_vreg();
         self.current_stmts.push(MirInst::LoadConst {
             dest: local_count_vreg,
@@ -2856,8 +2850,8 @@ impl<'a> HirToMir<'a> {
         let coro_handle = self.fresh_vreg();
         self.current_stmts.push(MirInst::CallExtern {
             dest: Some(coro_handle),
-            name: "mb_coroutine_new_with_body".to_string(),
-            args: vec![name_vreg, local_count_vreg, body_fn_ptr],
+            name: "mb_coroutine_new_with_body_unnamed".to_string(),
+            args: vec![local_count_vreg, body_fn_ptr],
             ty: int_ty,
         });
 
