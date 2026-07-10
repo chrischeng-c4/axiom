@@ -138,3 +138,133 @@ this transient global-cwd mutation is safe under the session's existing
 single-invocation-at-a-time model; it is not safe under concurrent in-process
 native execution, and that constraint is documented at the `WithCwd` variant
 and the guard type rather than silently assumed.
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: recognize-cd-dir-native-command-prefix-in-command-planner-verification
+requirements:
+  cd_prefix_cat_replans_native:
+    id: R1
+    text: "'cd <dir> && cat <file>' is recognized and native-plans the cat tail, matching AC1's cat example."
+    kind: functional
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::cd_prefix_cat_replans_native
+  cd_prefix_find_replans_native:
+    id: R1
+    text: "'cd <dir> && find . -type f' is recognized and native-plans the find tail, matching AC1's find example."
+    kind: functional
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::cd_prefix_find_replans_native
+  cd_prefix_glob_in_dir_disqualifies:
+    id: R4
+    text: "A cd segment containing a glob character (e.g. 'cd /tmp/*' or 'cd /tmp/build??') is not recognized and the full original command falls back to bash unchanged (AC3)."
+    kind: regression
+    risk: high
+    verify: cargo test -p cap command_planner::tests::cd_prefix_glob_in_dir_disqualifies
+  cd_prefix_grep_replans_native:
+    id: R1
+    text: "'cd <dir> && grep <literal> <file>' is recognized and native-plans the grep tail, matching AC1's grep example."
+    kind: functional
+    risk: high
+    verify: cargo test -p cap command_planner::tests::cd_prefix_grep_replans_native
+  cd_prefix_ls_replans_native:
+    id: R1
+    text: "'cd <dir> && ls -la' is recognized and native-plans the ls tail once the cd segment resolves, matching AC1's ls example."
+    kind: functional
+    risk: high
+    verify: cargo test -p cap command_planner::tests::cd_prefix_ls_replans_native
+  cd_prefix_missing_directory_falls_back_to_bash_unchanged:
+    id: R3
+    text: "'cd <dir> && <tail>' where <dir> does not exist or is not a directory is a planning failure that falls back to the full original command through bash unchanged, mirroring real cd's short-circuit failure instead of guessing."
+    kind: regression
+    risk: high
+    verify: cargo test -p cap command_planner::tests::cd_prefix_missing_directory_falls_back_to_bash_unchanged
+  cd_prefix_multiple_ampersand_operators_disqualifies:
+    id: R4
+    text: "More than one top-level '&&' (e.g. 'cd /tmp && cd sub && ls') disqualifies the whole line and it falls back to bash unchanged (AC3, matches the 'beyond one cd + one tail command' out-of-scope boundary)."
+    kind: regression
+    risk: high
+    verify: cargo test -p cap command_planner::tests::cd_prefix_multiple_ampersand_operators_disqualifies
+  cd_prefix_native_plan_carries_resolved_absolute_path:
+    id: R2
+    text: "The NativePlan produced for a recognized 'cd <dir> && <tail>' carries the resolved absolute directory in its reason text and preserves the full original command string, so cap explain surfaces the resolved cwd (AC1)."
+    kind: functional
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::cd_prefix_native_plan_carries_resolved_absolute_path
+  cd_prefix_non_native_tail_falls_back_to_bash_unchanged:
+    id: R3
+    text: "'cd <dir> && <tail>' where <tail> alone is not independently native-plannable produces the unmodified original full command string (cd prefix included) routed through bash -c, never a partial native-tail execution (AC2)."
+    kind: functional
+    risk: high
+    verify: cargo test -p cap command_planner::tests::cd_prefix_non_native_tail_falls_back_to_bash_unchanged
+  cd_prefix_or_operator_disqualifies:
+    id: R4
+    text: "'cd <dir> || <tail>' (using '||' instead of '&&') is not recognized by the cd-prefix recognizer and falls back to bash unchanged (AC3, matches the 'cd combined with ||' out-of-scope boundary)."
+    kind: regression
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::cd_prefix_or_operator_disqualifies
+  cd_prefix_resolves_relative_dir_against_current_dir:
+    id: R2
+    text: "A relative <dir> in the cd segment resolves against std::env::current_dir() (the session's captured cwd), and the resolved absolute path is used as the effective cwd for the re-planned tail, distinct from an absolute <dir> which is used as-is."
+    kind: functional
+    risk: high
+    verify: cargo test -p cap command_planner::tests::cd_prefix_resolves_relative_dir_against_current_dir
+  cd_prefix_sed_replans_native:
+    id: R1
+    text: "'cd <dir> && sed -n \"1,5p\" <file>' is recognized and native-plans the sed -n tail, matching AC1's sed -n example."
+    kind: functional
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::cd_prefix_sed_replans_native
+  cd_prefix_semicolon_after_cd_disqualifies:
+    id: R4
+    text: "A ';' anywhere in the cd segment (e.g. 'cd /tmp; ls && cat file') is not recognized and the full original command falls back to bash unchanged (AC3)."
+    kind: regression
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::cd_prefix_semicolon_after_cd_disqualifies
+  cd_prefix_shell_variable_in_dir_disqualifies:
+    id: R4
+    text: "A cd segment containing a shell variable (e.g. 'cd \"$HOME/work\"') is not recognized and the full original command falls back to bash unchanged (AC3)."
+    kind: regression
+    risk: high
+    verify: cargo test -p cap command_planner::tests::cd_prefix_shell_variable_in_dir_disqualifies
+  cd_prefix_wc_replans_native:
+    id: R1
+    text: "'cd <dir> && wc -l <file>' is recognized and native-plans the wc tail, matching AC1's wc example."
+    kind: functional
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::cd_prefix_wc_replans_native
+  cd_prefix_wrong_head_arity_disqualifies:
+    id: R4
+    text: "A head segment that is not exactly two words with the first word literally 'cd' (e.g. missing the directory argument, or an extra word before '&&') disqualifies the line and it falls back to bash unchanged."
+    kind: regression
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::cd_prefix_wrong_head_arity_disqualifies
+  existing_native_commands_without_cd_prefix_unaffected:
+    id: R5
+    text: "Existing plan_native / plan_shell / pipe-fusion native replacement behavior for commands without a leading 'cd &&' prefix is byte-for-byte unaffected by the new recognizer (AC4 regression coverage over the existing command_planner.rs test suite)."
+    kind: regression
+    risk: high
+    verify: cargo test -p cap command_planner
+---
+flowchart TD
+    r1[R1 cd prefix cat replans native] --> cargo_test_p_cap_command_planner_tests_cd_prefix_cat_replans_native[cargo test -p cap command_planner::tests::cd_prefix_cat_replans_native]
+    r1[R1 cd prefix find replans native] --> cargo_test_p_cap_command_planner_tests_cd_prefix_find_replans_native[cargo test -p cap command_planner::tests::cd_prefix_find_replans_native]
+    r1[R1 cd prefix grep replans native] --> cargo_test_p_cap_command_planner_tests_cd_prefix_grep_replans_native[cargo test -p cap command_planner::tests::cd_prefix_grep_replans_native]
+    r1[R1 cd prefix ls replans native] --> cargo_test_p_cap_command_planner_tests_cd_prefix_ls_replans_native[cargo test -p cap command_planner::tests::cd_prefix_ls_replans_native]
+    r1[R1 cd prefix sed replans native] --> cargo_test_p_cap_command_planner_tests_cd_prefix_sed_replans_native[cargo test -p cap command_planner::tests::cd_prefix_sed_replans_native]
+    r1[R1 cd prefix wc replans native] --> cargo_test_p_cap_command_planner_tests_cd_prefix_wc_replans_native[cargo test -p cap command_planner::tests::cd_prefix_wc_replans_native]
+    r2[R2 cd prefix native plan carries resolved absolute path] --> cargo_test_p_cap_command_planner_tests_cd_prefix_native_plan_carries_resolved_absolute_path[cargo test -p cap command_planner::tests::cd_prefix_native_plan_carries_resolved_absolute_path]
+    r2[R2 cd prefix resolves relative dir against current dir] --> cargo_test_p_cap_command_planner_tests_cd_prefix_resolves_relative_dir_against_current_dir[cargo test -p cap command_planner::tests::cd_prefix_resolves_relative_dir_against_current_dir]
+    r3[R3 cd prefix missing directory falls back to bash unchanged] --> cargo_test_p_cap_command_planner_tests_cd_prefix_missing_directory_falls_back_to_bash_unchanged[cargo test -p cap command_planner::tests::cd_prefix_missing_directory_falls_back_to_bash_unchanged]
+    r3[R3 cd prefix non native tail falls back to bash unchanged] --> cargo_test_p_cap_command_planner_tests_cd_prefix_non_native_tail_falls_back_to_bash_unchanged[cargo test -p cap command_planner::tests::cd_prefix_non_native_tail_falls_back_to_bash_unchanged]
+    r4[R4 cd prefix glob in dir disqualifies] --> cargo_test_p_cap_command_planner_tests_cd_prefix_glob_in_dir_disqualifies[cargo test -p cap command_planner::tests::cd_prefix_glob_in_dir_disqualifies]
+    r4[R4 cd prefix multiple ampersand operators disqualifies] --> cargo_test_p_cap_command_planner_tests_cd_prefix_multiple_ampersand_operators_disqualifies[cargo test -p cap command_planner::tests::cd_prefix_multiple_ampersand_operators_disqualifies]
+    r4[R4 cd prefix or operator disqualifies] --> cargo_test_p_cap_command_planner_tests_cd_prefix_or_operator_disqualifies[cargo test -p cap command_planner::tests::cd_prefix_or_operator_disqualifies]
+    r4[R4 cd prefix semicolon after cd disqualifies] --> cargo_test_p_cap_command_planner_tests_cd_prefix_semicolon_after_cd_disqualifies[cargo test -p cap command_planner::tests::cd_prefix_semicolon_after_cd_disqualifies]
+    r4[R4 cd prefix shell variable in dir disqualifies] --> cargo_test_p_cap_command_planner_tests_cd_prefix_shell_variable_in_dir_disqualifies[cargo test -p cap command_planner::tests::cd_prefix_shell_variable_in_dir_disqualifies]
+    r4[R4 cd prefix wrong head arity disqualifies] --> cargo_test_p_cap_command_planner_tests_cd_prefix_wrong_head_arity_disqualifies[cargo test -p cap command_planner::tests::cd_prefix_wrong_head_arity_disqualifies]
+    r5[R5 existing native commands without cd prefix unaffected] --> cargo_test_p_cap_command_planner[cargo test -p cap command_planner]
+```
