@@ -128,3 +128,49 @@ verification_commands:
   - "cargo test -p jet --lib css::directives -- --nocapture"
   - "cargo test -p jet --lib css:: -- --nocapture"
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: jet-css-layer-statement-form-verification
+requirements:
+  block_form_layer_inlining_not_regressed:
+    id: AC3
+    text: "Existing block-form @layer name { ... } inlining (base/components/utilities routing and css.contains(name) assertions) is unchanged by the statement-form fix."
+    kind: regression
+    risk: medium
+    verify: cargo test -p jet --lib css::directives
+  directives_suite_stays_green:
+    id: R2
+    text: "The full css::directives test suite (including all pre-existing @tailwind/@apply/@layer block-form tests) remains green after the statement-form fix lands."
+    kind: regression
+    risk: low
+    verify: cargo test -p jet --lib css::directives
+  regression_test_covers_statement_plus_block_form:
+    id: AC2
+    text: "A new regression test exercises the statement form combined with at least one block-form @layer rule and passes."
+    kind: functional
+    risk: medium
+    verify: cargo test -p jet --lib css::directives::tests::process_layer_directives_strips_bare_statement_form_alongside_block_form -- --nocapture
+  statement_and_block_form_combined_parses_via_lightningcss:
+    id: AC1
+    text: "CSS containing a leading @layer theme, base, components, utilities; statement combined with a block-form @layer rule compiles through apply_lightningcss without raising \"CSS parse error: Unexpected token AtKeyword\"."
+    kind: functional
+    risk: high
+    verify: cargo test -p jet --lib css::apply_lightningcss_accepts_stripped_layer_statement_form_output
+  statement_form_stripped_before_lightningcss:
+    id: R1
+    text: "The bare @layer <name>, <name>, ...; cascade-layer order statement is recognized and removed from the CSS by process_layer_directives before the final lightningcss parse step, so process_directives never returns an unstripped statement-form @layer at-rule."
+    kind: functional
+    risk: high
+    verify: cargo test -p jet --lib css::directives::tests::process_layer_directives_strips_bare_statement_form_alongside_block_form
+---
+flowchart TD
+    ac1[AC1 statement and block form combined parses via lightningcss] --> cargo_test_p_jet_lib_css_apply_lightningcss_accepts_stripped_layer_statement_form_output[cargo test -p jet --lib css::apply_lightningcss_accepts_stripped_layer_statement_form_output]
+    r1[R1 statement form stripped before lightningcss] --> cargo_test_p_jet_lib_css_directives_tests_process_layer_directives_strips_bare_statement_form_alongside_block_form[cargo test -p jet --lib css::directives::tests::process_layer_directives_strips_bare_statement_form_alongside_block_form]
+    ac2[AC2 regression test covers statement plus block form] --> cargo_test_p_jet_lib_css_directives_tests_process_layer_directives_strips_bare_statement_form_alongside_block_form_nocapture[cargo test -p jet --lib css::directives::tests::process_layer_directives_strips_bare_statement_form_alongside_block_form -- --nocapture]
+    r2[R2 directives suite stays green] --> cargo_test_p_jet_lib_css_directives[cargo test -p jet --lib css::directives]
+    ac3[AC3 block form layer inlining not regressed] --> cargo_test_p_jet_lib_css_directives
+```
