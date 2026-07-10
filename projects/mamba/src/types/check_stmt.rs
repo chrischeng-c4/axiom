@@ -1,4 +1,5 @@
 use super::check::TypeChecker;
+use super::generic::{check_bounds, infer_type_args, GenericParams};
 use super::{Ty, TypeId};
 use crate::parser::ast::*;
 use crate::resolve::SymbolKind;
@@ -239,11 +240,18 @@ impl TypeChecker {
                 ..
             } => {
                 // Re-register type params for body checking scope
-                let _gp = self.register_type_params(type_params);
+                let gp = self.register_type_params(type_params);
                 let overload_decorated = decorators
                     .iter()
                     .any(|d| decorator_is_typing_overload(&d.node));
-                self.check_fn_body(name, params, return_ty.as_ref(), body, overload_decorated);
+                self.check_fn_body(
+                    name,
+                    &gp,
+                    params,
+                    return_ty.as_ref(),
+                    body,
+                    overload_decorated,
+                );
                 self.unregister_type_params(type_params);
             }
             Stmt::If {
@@ -603,6 +611,7 @@ impl TypeChecker {
     pub(crate) fn check_fn_body(
         &mut self,
         name: &str,
+        generic_params: &GenericParams,
         params: &[Param],
         return_ty: Option<&Spanned<TypeExpr>>,
         body: &[Spanned<Stmt>],
@@ -622,6 +631,16 @@ impl TypeChecker {
             if let Some(default) = &param.default {
                 let declared_ty = self.resolve_type_expr(&param.ty);
                 let default_ty = self.check_expr(default);
+                if !generic_params.is_empty() {
+                    let (subst, conflicts) =
+                        infer_type_args(generic_params, &[declared_ty], &[default_ty], &self.tcx);
+                    for error in conflicts {
+                        self.error(default.span, error);
+                    }
+                    for error in check_bounds(&subst, generic_params, &self.tcx) {
+                        self.error(default.span, error);
+                    }
+                }
                 if !self.types_compatible(declared_ty, default_ty) {
                     self.error(
                         default.span,
