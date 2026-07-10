@@ -407,6 +407,26 @@ mod tests {
             output.css
         );
     }
+
+    /// Regression test for #1377: `apply_lightningcss` must accept the
+    /// output of `process_layer_directives` for CSS containing a leading
+    /// bare `@layer theme, base, components, utilities;` statement (as
+    /// emitted by Tailwind v4) combined with a block-form `@layer` rule --
+    /// proving the statement form no longer reaches lightningcss unstripped
+    /// and raises no "CSS parse error: Unexpected token AtKeyword".
+    #[test]
+    fn apply_lightningcss_accepts_stripped_layer_statement_form_output() {
+        use crate::css::directives::process_layer_directives;
+
+        let input = "@layer theme, base, components, utilities;\n@layer base { h1 { margin: 0; } }";
+        let processed = process_layer_directives(input).css;
+        let result = apply_lightningcss(&processed, false);
+        assert!(
+            result.is_ok(),
+            "apply_lightningcss should accept the stripped-statement-form output: {:?}",
+            result
+        );
+    }
 }
 
 // ─── lightningcss integration ─────────────────────────────────────────────────

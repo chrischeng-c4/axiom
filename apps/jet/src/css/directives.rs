@@ -118,6 +118,25 @@ pub fn process_layer_directives(source: &str) -> LayerOutput {
         css.push_str(&remaining[..pos]);
         remaining = &remaining[pos + "@layer ".len()..];
 
+        // Classify this occurrence by whichever terminator appears first:
+        // '{' means the block form (`@layer name { ... }`, existing
+        // behavior below); ';' appearing before any '{' means the bare
+        // cascade-layer order statement form (e.g. Tailwind v4's
+        // `@layer theme, base, components, utilities;`), which carries no
+        // body to route and is dropped without emitting replacement text.
+        let brace_pos = remaining.find('{');
+        let semi_pos = remaining.find(';');
+        let is_statement_form = matches!(
+            (brace_pos, semi_pos),
+            (Some(b), Some(s)) if s < b
+        ) || matches!((brace_pos, semi_pos), (None, Some(_)));
+
+        if is_statement_form {
+            let semi = semi_pos.expect("statement form implies semi_pos is Some");
+            remaining = remaining.get(semi + 1..).unwrap_or("");
+            continue;
+        }
+
         // Determine layer name
         let name_end = remaining
             .find(|c: char| c == '{' || c.is_whitespace())
@@ -370,6 +389,39 @@ mod tests {
             result.utilities_additions.contains("custom"),
             "utilities_additions should contain custom: {}",
             result.utilities_additions
+        );
+    }
+
+    /// Regression test for #1377: Tailwind v4 emits a bare cascade-layer
+    /// order statement (`@layer theme, base, components, utilities;`) with
+    /// no `{ ... }` body ahead of its actual `@layer` block-form rules.
+    /// The statement form must be stripped without disturbing block-form
+    /// `@layer` inlining that follows it in the same source.
+    #[test]
+    fn process_layer_directives_strips_bare_statement_form_alongside_block_form() {
+        let input = "@layer theme, base, components, utilities;\n@layer base { h1 { margin: 0; } }";
+        let result = process_layer_directives(input);
+        assert!(
+            !result
+                .css
+                .contains("@layer theme, base, components, utilities;"),
+            "bare @layer statement form should be stripped: {}",
+            result.css
+        );
+        assert!(
+            !result.css.contains("AtKeyword"),
+            "css should not contain an unstripped at-rule token: {}",
+            result.css
+        );
+        assert!(
+            result.base_additions.contains("h1"),
+            "base_additions should still contain h1 from the block-form rule: {}",
+            result.base_additions
+        );
+        assert!(
+            result.css.contains("h1"),
+            "css should still contain the inlined block-form h1 rule: {}",
+            result.css
         );
     }
 }
