@@ -923,6 +923,33 @@ These three routes are the safe procedure for ad hoc or scripted
 snapshot/restore — pull with `GET /admin/backup`, keep the bytes wherever you
 like, push back with `POST /admin/restore` to recover.
 
+### Reshard admin verbs (#1380)
+Three more `Role::Admin`-gated routes support moving a bounded set of
+documents between shards during an operator-driven reshard, without a
+full-engine restore:
+
+- `POST /admin/backup:scoped` — like `GET /admin/backup`, but restricted to
+  documents routed to a requested set of virtual buckets:
+  `{"virtual_bucket_count": N, "buckets": [0, 3, ...]}`. Bucket membership is
+  computed with the same hash the engine's own routing uses, so an export
+  and a batch computed against the same map can never disagree about which
+  documents belong to which bucket.
+- `POST /admin/reshard:apply` — additively merges one `ReshardBatch`'s
+  snapshot into the live engine: upsert semantics for the batch's documents,
+  never a full replace, so a target shard's pre-existing data outside the
+  batch is untouched. Safe to retry — replaying the same batch (operator
+  resume after a checkpoint) converges to the same query-visible state.
+- `POST /admin/reshard:evict` — source-side post-cutover cleanup. Given a
+  newer virtual-bucket map (`{"shard": N, "map_version": V, "assignments":
+  [...], "physical_shard_count": N}`) and this shard's own index within it,
+  removes exactly the documents whose bucket no longer routes to this
+  shard — nothing else. A separate, explicitly-invoked step; never implicit
+  in `/admin/reshard:apply` or the backup routes above.
+
+These three verbs are the data-plane building blocks for a reshard; they do
+not sequence a migration end to end or decide *when* to cut over — that is
+the operator phase driver's job (tracked separately).
+
 ### Direct CLI data movement: `dump` / `export` / `load` / `import`
 For ad hoc SnapshotV1 movement from a shell, use the direct CLI wrappers:
 

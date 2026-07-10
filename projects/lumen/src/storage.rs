@@ -34,6 +34,7 @@ use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::metrics::Metrics;
+use crate::routing::VirtualBucketShardMap;
 use crate::tokenize;
 use crate::types::{
     Analyzer, CacheStats, CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup,
@@ -4465,6 +4466,131 @@ impl Engine {
         Ok(())
     }
 
+    // -- Reshard admin verbs (#1380) -----------------------------------------
+
+    /// `POST /admin/reshard:apply`: additively merge one `ReshardBatch`'s
+    /// partial snapshot into the live engine — upsert semantics for the
+    /// batch's documents, never a full replace, so a target shard's
+    /// pre-existing collections/documents outside the batch are untouched.
+    ///
+    /// Reuses the same [`Collection::to_snapshot`]/[`Collection::from_snapshot`]
+    /// machinery `snapshot`/`restore` use: for a collection the target
+    /// already has, the live collection is snapshotted, merged with the
+    /// delta via [`crate::reshard::merge_snapshot_delta`] (bucket-batch
+    /// deltas are computed by [`crate::reshard::snapshot_reshard_batches`]),
+    /// and rebuilt in one write-lock scope so a concurrent read never
+    /// observes a torn state. A collection the target doesn't have yet is
+    /// inserted straight from the delta.
+    ///
+    /// Idempotent: `merge_snapshot_delta` unions postings/forward maps by
+    /// key, so replaying the same batch (operator resume after a checkpoint)
+    /// re-inserts identical entries and leaves query-visible state
+    /// unchanged. Per-field `bytes` size counters are a saturating-add
+    /// heuristic and are not strictly idempotent, but they never feed query
+    /// results.
+    /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+    pub fn apply_reshard_batch(&self, delta: SnapshotV1) -> Result<ReshardApplyOutcome> {
+        if delta.version != SNAPSHOT_VERSION {
+            bail!(
+                "reshard batch snapshot version mismatch: got {}, supported {}",
+                delta.version,
+                SNAPSHOT_VERSION
+            );
+        }
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        let mut collections_touched = 0u32;
+        let mut documents_upserted = 0u32;
+        for (collection_id, delta_collection) in delta.collections {
+            documents_upserted =
+                documents_upserted.saturating_add(delta_collection.eid_fields.len() as u32);
+            let merged_collection = match state.collections.get(&collection_id) {
+                Some(existing) => {
+                    let base_snapshot = existing.to_snapshot()?;
+                    let base = SnapshotV1 {
+                        version: delta.version,
+                        collections: BTreeMap::from([(collection_id.clone(), base_snapshot)]),
+                    };
+                    let delta_wrap = SnapshotV1 {
+                        version: delta.version,
+                        collections: BTreeMap::from([(collection_id.clone(), delta_collection)]),
+                    };
+                    let merged = crate::reshard::merge_snapshot_delta(base, delta_wrap)?;
+                    merged
+                        .collections
+                        .into_iter()
+                        .next()
+                        .map(|(_, c)| c)
+                        .ok_or_else(|| anyhow!("reshard merge produced no collection"))?
+                }
+                None => delta_collection,
+            };
+            state
+                .collections
+                .insert(collection_id, Collection::from_snapshot(merged_collection)?);
+            collections_touched += 1;
+        }
+        Ok(ReshardApplyOutcome {
+            collections_touched,
+            documents_upserted,
+        })
+    }
+
+    /// `POST /admin/reshard:evict`: source-side post-cutover eviction.
+    /// Given a newer virtual-bucket map `to` and this shard's physical
+    /// index `this_shard`, removes exactly the documents whose bucket now
+    /// routes to a different shard under `to` — nothing else. A separate,
+    /// explicitly-invoked step: never implicit in `apply_reshard_batch` or
+    /// `snapshot`. Idempotent — a doc already evicted by a prior call no
+    /// longer matches and is skipped on retry.
+    /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+    pub fn evict_not_owned(
+        &self,
+        to: &VirtualBucketShardMap,
+        this_shard: u32,
+    ) -> Result<ReshardEvictOutcome> {
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        let mut collections_touched = 0u32;
+        let mut documents_evicted = 0u32;
+        for (collection_id, coll) in state.collections.iter_mut() {
+            if coll.deleted_at.is_some() {
+                continue;
+            }
+            let to_evict: Vec<(u32, String)> = coll
+                .eid_fields
+                .keys()
+                .filter_map(|&id| {
+                    let external_id = coll.interner.resolve(id).to_string();
+                    let route = to.route_document(collection_id, None, &external_id);
+                    (route.shard != this_shard).then_some((id, external_id))
+                })
+                .collect();
+            if to_evict.is_empty() {
+                continue;
+            }
+            coll.clear_search_cache();
+            coll.clear_number_filter_caches();
+            for (id, external_id) in &to_evict {
+                let fields: Vec<String> = coll
+                    .eid_fields
+                    .get(id)
+                    .map(|s| s.iter().cloned().collect())
+                    .unwrap_or_default();
+                for f in fields {
+                    if let Some(fi) = coll.fields.get_mut(&f) {
+                        fi.drop_eid(*id, external_id);
+                    }
+                }
+                coll.eid_fields.remove(id);
+            }
+            documents_evicted = documents_evicted.saturating_add(to_evict.len() as u32);
+            collections_touched += 1;
+        }
+        Ok(ReshardEvictOutcome {
+            collections_touched,
+            documents_evicted,
+        })
+    }
+
     pub fn stats(&self, collection_id: &str) -> Result<StatsResponse> {
         let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
         let coll = state
@@ -8723,6 +8849,22 @@ pub struct CollectionSnapshot {
     pub version: u32,
     pub eid_fields: HashMap<String, BTreeSet<String>>,
     pub fields: BTreeMap<String, FieldIndexSnapshot>,
+}
+
+/// Response summary for `POST /admin/reshard:apply` (#1380 R1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+pub struct ReshardApplyOutcome {
+    pub collections_touched: u32,
+    pub documents_upserted: u32,
+}
+
+/// Response summary for `POST /admin/reshard:evict` (#1380 R3).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+pub struct ReshardEvictOutcome {
+    pub collections_touched: u32,
+    pub documents_evicted: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

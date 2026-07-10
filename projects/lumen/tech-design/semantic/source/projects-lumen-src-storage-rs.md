@@ -20,61 +20,65 @@ Public API manifest for `projects/lumen/src/storage.rs` generated from AST durin
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ApplyOutcome` | projects/lumen/src/storage.rs | enum | pub | 4566 |  |
-| `CollectionSnapshot` | projects/lumen/src/storage.rs | struct | pub | 8721 |  |
-| `DropOutcome` | projects/lumen/src/storage.rs | enum | pub | 65 |  |
-| `Engine` | projects/lumen/src/storage.rs | struct | pub | 2937 |  |
-| `FieldIndexSnapshot` | projects/lumen/src/storage.rs | enum | pub | 8731 |  |
-| `MAX_INDEX_ITEMS` | projects/lumen/src/storage.rs | constant | pub | 56 |  |
-| `MAX_SORT_KEYS` | projects/lumen/src/storage.rs | constant | pub | 61 |  |
-| `Postings` | projects/lumen/src/storage.rs | struct | pub | 322 |  |
-| `SnapshotV1` | projects/lumen/src/storage.rs | struct | pub | 8712 |  |
-| `SortableF64` | projects/lumen/src/storage.rs | struct | pub | 113 |  |
-| `StorageError` | projects/lumen/src/storage.rs | enum | pub | 78 |  |
-| `__collection_schema` | projects/lumen/src/storage.rs | function | pub | 10243 | __collection_schema(         &self,         collection_id: &str,     ) -> Result<BTreeMap<String, FieldSpec>>  |
-| `__field_forward_probe` | projects/lumen/src/storage.rs | function | pub | 10280 | __field_forward_probe(         &self,         collection_id: &str,         field: &str,     ) -> Result<(usize, usize, bool)>  |
-| `__open_collection_from_segments` | projects/lumen/src/storage.rs | function | pub | 10259 | __open_collection_from_segments(         collection_id: &str,         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<std::sync::Arc<Engine>>  |
-| `__seal_collection_to_segments` | projects/lumen/src/storage.rs | function | pub | 10227 | __seal_collection_to_segments(         &self,         collection_id: &str,         dir: &std::path::Path,         applied_seq: u64,     ) -> Result<()>  |
-| `__seal_hash_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10163 | __seal_hash_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_keyword_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9973 | __seal_keyword_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_number_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9910 | __seal_number_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_set_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10039 | __seal_set_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_text_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10107 | __seal_text_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_vector_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10200 | __seal_vector_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `add_field` | projects/lumen/src/storage.rs | function | pub | 3140 | add_field(&self, collection_id: &str, field_name: &str, spec: FieldSpec) -> Result<u32> |
-| `apply_raft_entry` | projects/lumen/src/storage.rs | function | pub | 4524 | apply_raft_entry(&self, entry: crate::log_entry::RaftLogEntry) -> Result<ApplyOutcome> |
-| `bits` | projects/lumen/src/storage.rs | function | pub | 150 | bits(self) -> u64 |
-| `create_collection` | projects/lumen/src/storage.rs | function | pub | 2996 | create_collection(         &self,         collection_id: &str,         req: CreateCollectionRequest,     ) -> Result<CreateCollectionResponse> |
-| `delete` | projects/lumen/src/storage.rs | function | pub | 3370 | delete(         &self,         collection_id: &str,         external_id: &str,         field: Option<&str>,     ) -> Result<()> |
-| `docids` | projects/lumen/src/storage.rs | function | pub | 339 | docids(&self) -> &[u32] |
-| `drop_collection` | projects/lumen/src/storage.rs | function | pub | 3065 | drop_collection(&self, collection_id: &str, force: bool) -> Result<DropOutcome> |
-| `drop_field` | projects/lumen/src/storage.rs | function | pub | 3085 | drop_field(&self, collection_id: &str, field_name: &str) -> Result<u32> |
-| `duplicates` | projects/lumen/src/storage.rs | function | pub | 4279 | duplicates(         &self,         collection_id: &str,         req: DuplicatesRequest,     ) -> Result<DuplicatesResponse> |
-| `flush_to_segments` | projects/lumen/src/storage.rs | function | pub | 9760 | flush_to_segments(&self, dir: &std::path::Path, up_to_seq: u64) -> Result<()>  |
-| `from_bits` | projects/lumen/src/storage.rs | function | pub | 158 | from_bits(bits: u64) -> Self |
-| `from_sorted` | projects/lumen/src/storage.rs | function | pub | 333 | from_sorted(docids: Vec<u32>, tfs: Vec<u32>) -> Self |
-| `index` | projects/lumen/src/storage.rs | function | pub | 3179 | index(&self, collection_id: &str, req: IndexRequest) -> Result<IndexResponse> |
-| `is_draining` | projects/lumen/src/storage.rs | function | pub | 2975 | is_draining(&self) -> bool |
-| `list_collections` | projects/lumen/src/storage.rs | function | pub | 3167 | list_collections(&self) -> Result<Vec<String>> |
-| `metrics` | projects/lumen/src/storage.rs | function | pub | 2963 | metrics(&self) -> &Metrics |
-| `new` | projects/lumen/src/storage.rs | function | pub | 119 | new(x: f64) -> Result<Self> |
-| `new` | projects/lumen/src/storage.rs | function | pub | 119 | new() -> Self  |
-| `number_value_for_external_id` | projects/lumen/src/storage.rs | function | pub | 3723 | number_value_for_external_id(         &self,         collection_id: &str,         external_id: &str,         field: &str,     ) -> Result<Option<f64>> |
-| `open_from_segments` | projects/lumen/src/storage.rs | function | pub | 9570 | open_from_segments(         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<Self>  |
-| `reopen_from_segment_dir` | projects/lumen/src/storage.rs | function | pub | 9804 | reopen_from_segment_dir(&self, dir: &std::path::Path) -> Result<u64>  |
-| `replace_docs` | projects/lumen/src/storage.rs | function | pub | 3429 | replace_docs(         &self,         collection_id: &str,         req: ReplaceDocsRequest,     ) -> Result<ReplaceDocsResponse> |
-| `restore` | projects/lumen/src/storage.rs | function | pub | 4450 | restore(&self, snap: SnapshotV1) -> Result<()> |
-| `seal_to_segments` | projects/lumen/src/storage.rs | function | pub | 9535 | seal_to_segments(&mut self, dir: &std::path::Path, applied_seq: u64) -> Result<()>  |
-| `search` | projects/lumen/src/storage.rs | function | pub | 3751 | search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> |
-| `search_fast_string_term` | projects/lumen/src/storage.rs | function | pub | 4220 | search_fast_string_term(         &self,         collection_id: &str,         field: &str,         value: &str,         limit: u32,     ) -> Result<SearchResponse> |
-| `segment_field_probe` | projects/lumen/src/storage.rs | function | pub | 9846 | segment_field_probe(&self, collection_id: &str, field: &str) -> Result<(usize, bool)>  |
-| `snapshot` | projects/lumen/src/storage.rs | function | pub | 4435 | snapshot(&self) -> Result<SnapshotV1> |
-| `start_drain` | projects/lumen/src/storage.rs | function | pub | 2971 | start_drain(&self) |
-| `stats` | projects/lumen/src/storage.rs | function | pub | 4468 | stats(&self, collection_id: &str) -> Result<StatsResponse> |
-| `sweep_deleted` | projects/lumen/src/storage.rs | function | pub | 3115 | sweep_deleted(&self, grace: Duration) -> Result<usize> |
-| `tfs` | projects/lumen/src/storage.rs | function | pub | 343 | tfs(&self) -> &[u32] |
-| `to_f64` | projects/lumen/src/storage.rs | function | pub | 135 | to_f64(self) -> f64 |
-| `validate_query` | projects/lumen/src/storage.rs | function | pub | 4855 | validate_query(root: &QueryNode) -> std::result::Result<(), StorageError> |
+| `ApplyOutcome` | projects/lumen/src/storage.rs | enum | pub | 4692 |  |
+| `CollectionSnapshot` | projects/lumen/src/storage.rs | struct | pub | 8847 |  |
+| `DropOutcome` | projects/lumen/src/storage.rs | enum | pub | 66 |  |
+| `Engine` | projects/lumen/src/storage.rs | struct | pub | 2938 |  |
+| `FieldIndexSnapshot` | projects/lumen/src/storage.rs | enum | pub | 8873 |  |
+| `MAX_INDEX_ITEMS` | projects/lumen/src/storage.rs | constant | pub | 57 |  |
+| `MAX_SORT_KEYS` | projects/lumen/src/storage.rs | constant | pub | 62 |  |
+| `Postings` | projects/lumen/src/storage.rs | struct | pub | 323 |  |
+| `ReshardApplyOutcome` | projects/lumen/src/storage.rs | struct | pub | 8857 | #1380 R1: response summary for `POST /admin/reshard:apply`. |
+| `ReshardEvictOutcome` | projects/lumen/src/storage.rs | struct | pub | 8865 | #1380 R3: response summary for `POST /admin/reshard:evict`. |
+| `SnapshotV1` | projects/lumen/src/storage.rs | struct | pub | 8838 |  |
+| `SortableF64` | projects/lumen/src/storage.rs | struct | pub | 114 |  |
+| `StorageError` | projects/lumen/src/storage.rs | enum | pub | 79 |  |
+| `__collection_schema` | projects/lumen/src/storage.rs | function | pub | 10385 | __collection_schema(         &self,         collection_id: &str,     ) -> Result<BTreeMap<String, FieldSpec>>  |
+| `__field_forward_probe` | projects/lumen/src/storage.rs | function | pub | 10422 | __field_forward_probe(         &self,         collection_id: &str,         field: &str,     ) -> Result<(usize, usize, bool)>  |
+| `__open_collection_from_segments` | projects/lumen/src/storage.rs | function | pub | 10401 | __open_collection_from_segments(         collection_id: &str,         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<std::sync::Arc<Engine>>  |
+| `__seal_collection_to_segments` | projects/lumen/src/storage.rs | function | pub | 10369 | __seal_collection_to_segments(         &self,         collection_id: &str,         dir: &std::path::Path,         applied_seq: u64,     ) -> Result<()>  |
+| `__seal_hash_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10305 | __seal_hash_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_keyword_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10115 | __seal_keyword_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_number_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10052 | __seal_number_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_set_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10181 | __seal_set_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_text_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10249 | __seal_text_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_vector_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10342 | __seal_vector_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `add_field` | projects/lumen/src/storage.rs | function | pub | 3141 | add_field(&self, collection_id: &str, field_name: &str, spec: FieldSpec) -> Result<u32> |
+| `apply_raft_entry` | projects/lumen/src/storage.rs | function | pub | 4650 | apply_raft_entry(&self, entry: crate::log_entry::RaftLogEntry) -> Result<ApplyOutcome> |
+| `apply_reshard_batch` | projects/lumen/src/storage.rs | function | pub | 4492 | #1380 R1: additively merge one `ReshardBatch`'s snapshot into the live engine (upsert semantics, idempotent on retry). apply_reshard_batch(&self, delta: SnapshotV1) -> Result<ReshardApplyOutcome> |
+| `bits` | projects/lumen/src/storage.rs | function | pub | 151 | bits(self) -> u64 |
+| `create_collection` | projects/lumen/src/storage.rs | function | pub | 2997 | create_collection(         &self,         collection_id: &str,         req: CreateCollectionRequest,     ) -> Result<CreateCollectionResponse> |
+| `delete` | projects/lumen/src/storage.rs | function | pub | 3371 | delete(         &self,         collection_id: &str,         external_id: &str,         field: Option<&str>,     ) -> Result<()> |
+| `docids` | projects/lumen/src/storage.rs | function | pub | 340 | docids(&self) -> &[u32] |
+| `drop_collection` | projects/lumen/src/storage.rs | function | pub | 3066 | drop_collection(&self, collection_id: &str, force: bool) -> Result<DropOutcome> |
+| `drop_field` | projects/lumen/src/storage.rs | function | pub | 3086 | drop_field(&self, collection_id: &str, field_name: &str) -> Result<u32> |
+| `duplicates` | projects/lumen/src/storage.rs | function | pub | 4280 | duplicates(         &self,         collection_id: &str,         req: DuplicatesRequest,     ) -> Result<DuplicatesResponse> |
+| `evict_not_owned` | projects/lumen/src/storage.rs | function | pub | 4546 | #1380 R3: source-side post-cutover eviction under a newer `VirtualBucketShardMap` (idempotent). evict_not_owned(         &self,         to: &VirtualBucketShardMap,         this_shard: u32,     ) -> Result<ReshardEvictOutcome> |
+| `flush_to_segments` | projects/lumen/src/storage.rs | function | pub | 9902 | flush_to_segments(&self, dir: &std::path::Path, up_to_seq: u64) -> Result<()>  |
+| `from_bits` | projects/lumen/src/storage.rs | function | pub | 159 | from_bits(bits: u64) -> Self |
+| `from_sorted` | projects/lumen/src/storage.rs | function | pub | 334 | from_sorted(docids: Vec<u32>, tfs: Vec<u32>) -> Self |
+| `index` | projects/lumen/src/storage.rs | function | pub | 3180 | index(&self, collection_id: &str, req: IndexRequest) -> Result<IndexResponse> |
+| `is_draining` | projects/lumen/src/storage.rs | function | pub | 2976 | is_draining(&self) -> bool |
+| `list_collections` | projects/lumen/src/storage.rs | function | pub | 3168 | list_collections(&self) -> Result<Vec<String>> |
+| `metrics` | projects/lumen/src/storage.rs | function | pub | 2964 | metrics(&self) -> &Metrics |
+| `new` | projects/lumen/src/storage.rs | function | pub | 120 | new(x: f64) -> Result<Self> |
+| `new` | projects/lumen/src/storage.rs | function | pub | 2960 | new() -> Self  |
+| `number_value_for_external_id` | projects/lumen/src/storage.rs | function | pub | 3724 | number_value_for_external_id(         &self,         collection_id: &str,         external_id: &str,         field: &str,     ) -> Result<Option<f64>> |
+| `open_from_segments` | projects/lumen/src/storage.rs | function | pub | 9712 | open_from_segments(         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<Self>  |
+| `reopen_from_segment_dir` | projects/lumen/src/storage.rs | function | pub | 9946 | reopen_from_segment_dir(&self, dir: &std::path::Path) -> Result<u64>  |
+| `replace_docs` | projects/lumen/src/storage.rs | function | pub | 3430 | replace_docs(         &self,         collection_id: &str,         req: ReplaceDocsRequest,     ) -> Result<ReplaceDocsResponse> |
+| `restore` | projects/lumen/src/storage.rs | function | pub | 4451 | restore(&self, snap: SnapshotV1) -> Result<()> |
+| `seal_to_segments` | projects/lumen/src/storage.rs | function | pub | 9677 | seal_to_segments(&mut self, dir: &std::path::Path, applied_seq: u64) -> Result<()>  |
+| `search` | projects/lumen/src/storage.rs | function | pub | 3752 | search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> |
+| `search_fast_string_term` | projects/lumen/src/storage.rs | function | pub | 4221 | search_fast_string_term(         &self,         collection_id: &str,         field: &str,         value: &str,         limit: u32,     ) -> Result<SearchResponse> |
+| `segment_field_probe` | projects/lumen/src/storage.rs | function | pub | 9988 | segment_field_probe(&self, collection_id: &str, field: &str) -> Result<(usize, bool)>  |
+| `snapshot` | projects/lumen/src/storage.rs | function | pub | 4436 | snapshot(&self) -> Result<SnapshotV1> |
+| `start_drain` | projects/lumen/src/storage.rs | function | pub | 2972 | start_drain(&self) |
+| `stats` | projects/lumen/src/storage.rs | function | pub | 4594 | stats(&self, collection_id: &str) -> Result<StatsResponse> |
+| `sweep_deleted` | projects/lumen/src/storage.rs | function | pub | 3116 | sweep_deleted(&self, grace: Duration) -> Result<usize> |
+| `tfs` | projects/lumen/src/storage.rs | function | pub | 344 | tfs(&self) -> &[u32] |
+| `to_f64` | projects/lumen/src/storage.rs | function | pub | 136 | to_f64(self) -> f64 |
+| `validate_query` | projects/lumen/src/storage.rs | function | pub | 4981 | validate_query(root: &QueryNode) -> std::result::Result<(), StorageError> |
 
 ## Source
 <!-- type: rust-source-unit lang: rust -->
@@ -116,6 +120,7 @@ use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::metrics::Metrics;
+use crate::routing::VirtualBucketShardMap;
 use crate::tokenize;
 use crate::types::{
     Analyzer, CacheStats, CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup,
@@ -4547,6 +4552,131 @@ impl Engine {
         Ok(())
     }
 
+    // -- Reshard admin verbs (#1380) -----------------------------------------
+
+    /// `POST /admin/reshard:apply`: additively merge one `ReshardBatch`'s
+    /// partial snapshot into the live engine — upsert semantics for the
+    /// batch's documents, never a full replace, so a target shard's
+    /// pre-existing collections/documents outside the batch are untouched.
+    ///
+    /// Reuses the same [`Collection::to_snapshot`]/[`Collection::from_snapshot`]
+    /// machinery `snapshot`/`restore` use: for a collection the target
+    /// already has, the live collection is snapshotted, merged with the
+    /// delta via [`crate::reshard::merge_snapshot_delta`] (bucket-batch
+    /// deltas are computed by [`crate::reshard::snapshot_reshard_batches`]),
+    /// and rebuilt in one write-lock scope so a concurrent read never
+    /// observes a torn state. A collection the target doesn't have yet is
+    /// inserted straight from the delta.
+    ///
+    /// Idempotent: `merge_snapshot_delta` unions postings/forward maps by
+    /// key, so replaying the same batch (operator resume after a checkpoint)
+    /// re-inserts identical entries and leaves query-visible state
+    /// unchanged. Per-field `bytes` size counters are a saturating-add
+    /// heuristic and are not strictly idempotent, but they never feed query
+    /// results.
+    /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+    pub fn apply_reshard_batch(&self, delta: SnapshotV1) -> Result<ReshardApplyOutcome> {
+        if delta.version != SNAPSHOT_VERSION {
+            bail!(
+                "reshard batch snapshot version mismatch: got {}, supported {}",
+                delta.version,
+                SNAPSHOT_VERSION
+            );
+        }
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        let mut collections_touched = 0u32;
+        let mut documents_upserted = 0u32;
+        for (collection_id, delta_collection) in delta.collections {
+            documents_upserted =
+                documents_upserted.saturating_add(delta_collection.eid_fields.len() as u32);
+            let merged_collection = match state.collections.get(&collection_id) {
+                Some(existing) => {
+                    let base_snapshot = existing.to_snapshot()?;
+                    let base = SnapshotV1 {
+                        version: delta.version,
+                        collections: BTreeMap::from([(collection_id.clone(), base_snapshot)]),
+                    };
+                    let delta_wrap = SnapshotV1 {
+                        version: delta.version,
+                        collections: BTreeMap::from([(collection_id.clone(), delta_collection)]),
+                    };
+                    let merged = crate::reshard::merge_snapshot_delta(base, delta_wrap)?;
+                    merged
+                        .collections
+                        .into_iter()
+                        .next()
+                        .map(|(_, c)| c)
+                        .ok_or_else(|| anyhow!("reshard merge produced no collection"))?
+                }
+                None => delta_collection,
+            };
+            state
+                .collections
+                .insert(collection_id, Collection::from_snapshot(merged_collection)?);
+            collections_touched += 1;
+        }
+        Ok(ReshardApplyOutcome {
+            collections_touched,
+            documents_upserted,
+        })
+    }
+
+    /// `POST /admin/reshard:evict`: source-side post-cutover eviction.
+    /// Given a newer virtual-bucket map `to` and this shard's physical
+    /// index `this_shard`, removes exactly the documents whose bucket now
+    /// routes to a different shard under `to` — nothing else. A separate,
+    /// explicitly-invoked step: never implicit in `apply_reshard_batch` or
+    /// `snapshot`. Idempotent — a doc already evicted by a prior call no
+    /// longer matches and is skipped on retry.
+    /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+    pub fn evict_not_owned(
+        &self,
+        to: &VirtualBucketShardMap,
+        this_shard: u32,
+    ) -> Result<ReshardEvictOutcome> {
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        let mut collections_touched = 0u32;
+        let mut documents_evicted = 0u32;
+        for (collection_id, coll) in state.collections.iter_mut() {
+            if coll.deleted_at.is_some() {
+                continue;
+            }
+            let to_evict: Vec<(u32, String)> = coll
+                .eid_fields
+                .keys()
+                .filter_map(|&id| {
+                    let external_id = coll.interner.resolve(id).to_string();
+                    let route = to.route_document(collection_id, None, &external_id);
+                    (route.shard != this_shard).then_some((id, external_id))
+                })
+                .collect();
+            if to_evict.is_empty() {
+                continue;
+            }
+            coll.clear_search_cache();
+            coll.clear_number_filter_caches();
+            for (id, external_id) in &to_evict {
+                let fields: Vec<String> = coll
+                    .eid_fields
+                    .get(id)
+                    .map(|s| s.iter().cloned().collect())
+                    .unwrap_or_default();
+                for f in fields {
+                    if let Some(fi) = coll.fields.get_mut(&f) {
+                        fi.drop_eid(*id, external_id);
+                    }
+                }
+                coll.eid_fields.remove(id);
+            }
+            documents_evicted = documents_evicted.saturating_add(to_evict.len() as u32);
+            collections_touched += 1;
+        }
+        Ok(ReshardEvictOutcome {
+            collections_touched,
+            documents_evicted,
+        })
+    }
+
     pub fn stats(&self, collection_id: &str) -> Result<StatsResponse> {
         let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
         let coll = state
@@ -8805,6 +8935,22 @@ pub struct CollectionSnapshot {
     pub version: u32,
     pub eid_fields: HashMap<String, BTreeSet<String>>,
     pub fields: BTreeMap<String, FieldIndexSnapshot>,
+}
+
+/// Response summary for `POST /admin/reshard:apply` (#1380 R1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+pub struct ReshardApplyOutcome {
+    pub collections_touched: u32,
+    pub documents_upserted: u32,
+}
+
+/// Response summary for `POST /admin/reshard:evict` (#1380 R3).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+pub struct ReshardEvictOutcome {
+    pub collections_touched: u32,
+    pub documents_evicted: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

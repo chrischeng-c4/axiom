@@ -23,6 +23,120 @@
     }
   ],
   "paths": {
+    "/admin/backup:scoped": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "`POST /admin/backup:scoped`: like `GET /admin/backup`, but restricted to",
+        "description": "documents routed to the requested virtual buckets — a source shard can\nexport just the buckets that are moving instead of a full-engine dump.\nBucket membership is computed with the same hash `reshard::\nsnapshot_reshard_batches` uses ([`crate::reshard::snapshot_bucket_subset`]),\nso an export and a later-computed batch can never disagree.",
+        "operationId": "backup_scoped",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "SnapshotV1 restricted to the requested virtual buckets",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid virtual_bucket_count",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/reshard:apply": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "`POST /admin/reshard:apply`: additively merge one [`ReshardBatch`] into",
+        "description": "the live engine (upsert semantics for the batch's documents; never a\nfull replace, unlike `/admin/restore`). Idempotent — a retried batch\n(operator resume after a checkpoint) converges to the same query-visible\nstate; see [`Engine::apply_reshard_batch`].",
+        "operationId": "reshard_apply",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Batch merged additively (safe to retry)",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed batch or snapshot version mismatch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/reshard:evict": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "`POST /admin/reshard:evict`: source-side post-cutover eviction. Given a",
+        "description": "newer virtual-bucket map and this shard's index within it, removes\nexactly the documents whose bucket no longer routes to this shard —\nnothing else. A separate, explicitly-invoked step; never implicit in\n`/admin/reshard:apply` or `/admin/backup*`. Idempotent — a document\nalready evicted by a prior call no longer matches and is skipped.",
+        "operationId": "reshard_evict",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Documents no longer owned by this shard removed",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid virtual bucket map",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/collections": {
       "get": {
         "tags": [

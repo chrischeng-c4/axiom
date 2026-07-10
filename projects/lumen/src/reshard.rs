@@ -11,6 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{bail, Result};
+use serde::{Deserialize, Serialize};
 
 use crate::routing::VirtualBucketShardMap;
 use crate::storage::{CollectionSnapshot, FieldIndexSnapshot, SnapshotV1};
@@ -23,7 +24,10 @@ pub struct BucketMove {
     pub to_shard: u32,
 }
 
-#[derive(Clone, Debug)]
+/// #1380: `Serialize`/`Deserialize` make a batch postable to `POST
+/// /admin/reshard:apply` as-is — the wire payload for the admin apply verb
+/// is this struct's exact JSON shape, no separate DTO.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
 pub struct ReshardBatch {
     pub from_map_version: u64,
@@ -169,6 +173,36 @@ pub fn merge_snapshot_delta(mut base: SnapshotV1, delta: SnapshotV1) -> Result<S
         }
     }
     Ok(base)
+}
+
+/// Restrict a snapshot to only the external_ids routed to one of `buckets`,
+/// computed with the exact same `route_document` hash
+/// `snapshot_reshard_batches` uses (`route_hash(collection_id, external_id) %
+/// virtual_bucket_count`). Backs the bucket-scoped export admin verb (`POST
+/// /admin/backup:scoped`, #1380 R2) so an export and the batches later
+/// computed against the same map can never disagree about bucket
+/// membership. `physical_shard_count` is irrelevant to bucket selection, so
+/// callers only need to agree on `virtual_bucket_count`.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
+pub fn snapshot_bucket_subset(
+    snapshot: &SnapshotV1,
+    virtual_bucket_count: u32,
+    buckets: &BTreeSet<u32>,
+) -> Result<SnapshotV1> {
+    let map = VirtualBucketShardMap::balanced(0, virtual_bucket_count, 1)?;
+    let mut external_ids: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (collection_id, collection) in &snapshot.collections {
+        for external_id in collection.eid_fields.keys() {
+            let bucket = map.route_document(collection_id, None, external_id).bucket;
+            if buckets.contains(&bucket) {
+                external_ids
+                    .entry(collection_id.clone())
+                    .or_default()
+                    .insert(external_id.clone());
+            }
+        }
+    }
+    snapshot_subset(snapshot, &external_ids)
 }
 
 fn ids_map_from_pairs(
@@ -614,6 +648,62 @@ mod tests {
             .sum();
         assert_eq!(hits, moved_ids);
         assert!(moved_ids < 24, "split should move only reassigned buckets");
+    }
+
+    #[test]
+    fn snapshot_bucket_subset_matches_route_document_membership() {
+        let collection_id = "users";
+        let source = Engine::new();
+        source
+            .create_collection(
+                collection_id,
+                CreateCollectionRequest {
+                    fields: BTreeMap::from([("email".into(), field(FieldType::Keyword))]),
+                },
+            )
+            .unwrap();
+        for i in 0..16 {
+            let external_id = format!("doc-{i:02}");
+            source
+                .index(
+                    collection_id,
+                    IndexRequest {
+                        request_id: None,
+                        items: vec![item(
+                            &external_id,
+                            "email",
+                            FieldValue::String(format!("{external_id}@example.com")),
+                        )],
+                    },
+                )
+                .unwrap();
+        }
+        let snapshot = source.snapshot().unwrap();
+        let virtual_bucket_count = 8;
+        let buckets = BTreeSet::from([0u32, 3]);
+        let scoped = snapshot_bucket_subset(&snapshot, virtual_bucket_count, &buckets).unwrap();
+
+        let map = VirtualBucketShardMap::balanced(0, virtual_bucket_count, 1).unwrap();
+        let expected: BTreeSet<String> = snapshot.collections[collection_id]
+            .eid_fields
+            .keys()
+            .filter(|external_id| {
+                buckets.contains(&map.route_document(collection_id, None, external_id).bucket)
+            })
+            .cloned()
+            .collect();
+
+        let got: BTreeSet<String> = scoped
+            .collections
+            .get(collection_id)
+            .map(|c| c.eid_fields.keys().cloned().collect())
+            .unwrap_or_default();
+        assert_eq!(got, expected);
+        assert!(!expected.is_empty(), "test buckets should select some docs");
+        assert!(
+            expected.len() < 16,
+            "bucket-scoped export should not return everything"
+        );
     }
 
     fn field(field_type: FieldType) -> FieldSpec {

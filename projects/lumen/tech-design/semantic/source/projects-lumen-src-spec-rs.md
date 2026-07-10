@@ -20,16 +20,16 @@ Public API manifest for `projects/lumen/src/spec.rs` generated from AST during S
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `field_catalog` | projects/lumen/src/spec.rs | function | pub | 201 | field_catalog() -> Value |
+| `field_catalog` | projects/lumen/src/spec.rs | function | pub | 208 | field_catalog() -> Value |
 | `json_schema_json` | projects/lumen/src/spec.rs | function | pub | 47 | json_schema_json() -> String |
-| `llm_auth_md` | projects/lumen/src/spec.rs | function | pub | 365 | llm_auth_md() -> String |
-| `llm_deployment_md` | projects/lumen/src/spec.rs | function | pub | 263 | llm_deployment_md() -> String |
-| `llm_integration_md` | projects/lumen/src/spec.rs | function | pub | 628 | llm_integration_md() -> String |
-| `llm_outline_md` | projects/lumen/src/spec.rs | function | pub | 230 | llm_outline_md() -> String |
-| `llm_quickstart_md` | projects/lumen/src/spec.rs | function | pub | 668 | llm_quickstart_md() -> String |
-| `llm_recipes_md` | projects/lumen/src/spec.rs | function | pub | 728 | llm_recipes_md() -> String |
-| `llm_storage_md` | projects/lumen/src/spec.rs | function | pub | 754 | llm_storage_md() -> String |
-| `llm_workflow_md` | projects/lumen/src/spec.rs | function | pub | 439 | llm_workflow_md() -> String |
+| `llm_auth_md` | projects/lumen/src/spec.rs | function | pub | 379 | llm_auth_md() -> String |
+| `llm_deployment_md` | projects/lumen/src/spec.rs | function | pub | 277 | llm_deployment_md() -> String |
+| `llm_integration_md` | projects/lumen/src/spec.rs | function | pub | 647 | llm_integration_md() -> String |
+| `llm_outline_md` | projects/lumen/src/spec.rs | function | pub | 237 | llm_outline_md() -> String |
+| `llm_quickstart_md` | projects/lumen/src/spec.rs | function | pub | 687 | llm_quickstart_md() -> String |
+| `llm_recipes_md` | projects/lumen/src/spec.rs | function | pub | 762 | llm_recipes_md() -> String |
+| `llm_storage_md` | projects/lumen/src/spec.rs | function | pub | 788 | llm_storage_md() -> String |
+| `llm_workflow_md` | projects/lumen/src/spec.rs | function | pub | 453 | llm_workflow_md() -> String |
 | `openapi_json` | projects/lumen/src/spec.rs | function | pub | 16 | openapi_json() -> String |
 | `openapi_yaml` | projects/lumen/src/spec.rs | function | pub | 22 | openapi_yaml() -> String |
 | `query_shapes` | projects/lumen/src/spec.rs | function | pub | 130 | query_shapes() -> Value |
@@ -963,6 +963,33 @@ per-collection grant) when `spec.auth: required`:
 These three routes are the safe procedure for ad hoc or scripted
 snapshot/restore — pull with `GET /admin/backup`, keep the bytes wherever you
 like, push back with `POST /admin/restore` to recover.
+
+### Reshard admin verbs (#1380)
+Three more `Role::Admin`-gated routes support moving a bounded set of
+documents between shards during an operator-driven reshard, without a
+full-engine restore:
+
+- `POST /admin/backup:scoped` — like `GET /admin/backup`, but restricted to
+  documents routed to a requested set of virtual buckets:
+  `{"virtual_bucket_count": N, "buckets": [0, 3, ...]}`. Bucket membership is
+  computed with the same hash the engine's own routing uses, so an export
+  and a batch computed against the same map can never disagree about which
+  documents belong to which bucket.
+- `POST /admin/reshard:apply` — additively merges one `ReshardBatch`'s
+  snapshot into the live engine: upsert semantics for the batch's documents,
+  never a full replace, so a target shard's pre-existing data outside the
+  batch is untouched. Safe to retry — replaying the same batch (operator
+  resume after a checkpoint) converges to the same query-visible state.
+- `POST /admin/reshard:evict` — source-side post-cutover cleanup. Given a
+  newer virtual-bucket map (`{"shard": N, "map_version": V, "assignments":
+  [...], "physical_shard_count": N}`) and this shard's own index within it,
+  removes exactly the documents whose bucket no longer routes to this
+  shard — nothing else. A separate, explicitly-invoked step; never implicit
+  in `/admin/reshard:apply` or the backup routes above.
+
+These three verbs are the data-plane building blocks for a reshard; they do
+not sequence a migration end to end or decide *when* to cut over — that is
+the operator phase driver's job (tracked separately).
 
 ### Direct CLI data movement: `dump` / `export` / `load` / `import`
 For ad hoc SnapshotV1 movement from a shell, use the direct CLI wrappers:
