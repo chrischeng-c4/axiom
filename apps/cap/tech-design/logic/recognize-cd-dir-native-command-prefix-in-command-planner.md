@@ -268,3 +268,96 @@ flowchart TD
     r4[R4 cd prefix wrong head arity disqualifies] --> cargo_test_p_cap_command_planner_tests_cd_prefix_wrong_head_arity_disqualifies[cargo test -p cap command_planner::tests::cd_prefix_wrong_head_arity_disqualifies]
     r5[R5 existing native commands without cd prefix unaffected] --> cargo_test_p_cap_command_planner[cargo test -p cap command_planner]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/cap/src/command_planner.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Add a new `NativeCommand::WithCwd(Box<NativeCommand>, PathBuf)` variant
+      wrapping any existing native command with a per-invocation effective
+      cwd override. Add a `plan_cd_prefix(command: &str, label: Option<String>)
+      -> Option<NativePlan>` helper: a quote-aware scanner locates exactly one
+      top-level `&&` (a stray `&` or a second `&&` disqualifies); the head
+      segment must be free of shell control syntax (reusing the existing
+      `has_shell_control_syntax`, which already rejects glob/var/`;`/`|`/`~`/
+      backtick/extra `&`) and must tokenize via the existing
+      `split_simple_shell_words` into exactly `["cd", <dir>]`; `<dir>`
+      resolves to an absolute path (as-is if absolute, else joined onto
+      `std::env::current_dir()`) and must exist and be a directory or the
+      whole line is disqualified. The tail is re-planned by recursively
+      calling the existing `plan_shell(tail, label)` (reusing pipe-fusion and
+      single-command planning unchanged); a `CommandPlan::External` result
+      disqualifies the whole line (no partial execution). A
+      `CommandPlan::Native(inner)` result is rewrapped as
+      `NativeCommand::WithCwd(Box::new(inner.command), resolved_dir)` with
+      `original` set to the full `cd <dir> && <tail>` string and `reason`
+      naming the resolved absolute directory. `plan_shell` calls
+      `plan_cd_prefix` once its existing pipe-fusion attempt and existing
+      shell-metachar-free single-command attempt both decline, immediately
+      before constructing its existing final `bash -c <original>` fallback;
+      a `None` result falls straight through to that unchanged fallback
+      construction (pure additive insertion, no existing branch reordered or
+      removed).
+
+  - path: apps/cap/src/command_planner.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Refactor `run_native_to`'s existing native-command dispatch match (no
+      behavior change to any existing arm) into a private
+      `run_native_command(command: &NativeCommand, stdout, stderr) ->
+      Result<i32>` helper, so `run_native_to` becomes a thin wrapper calling
+      `run_native_command(&plan.command, stdout, stderr)`. Add one new match
+      arm `NativeCommand::WithCwd(inner, dir) => { let _guard =
+      CwdGuard::enter(dir)?; run_native_command(inner, stdout, stderr) }`
+      where `CwdGuard` is a small RAII type that captures
+      `std::env::current_dir()` on construction, calls
+      `std::env::set_current_dir(dir)`, and restores the captured directory
+      in its `Drop` impl, so the process-global cwd override is scoped to
+      exactly one recursive dispatch of the wrapped `NativeCommand` and never
+      persists across invocations (matches R2's per-invocation, not
+      stateful, requirement). Add one new arm to `CommandPlan::explain()`'s
+      existing native-command description match for `NativeCommand::WithCwd`
+      (a fixed `"cap-native cd-prefix"` label; the resolved absolute
+      directory is already surfaced via `NativePlan.reason`, not this label).
+
+  - path: apps/cap/src/command_planner.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: >
+      Add `command_planner::tests` cases for: native replanning of `cd <dir>
+      && ls -la`, `grep <literal> <file>`, `cat <file>`, `find . -type f`, `wc
+      -l <file>`, and `sed -n '1,5p' <file>` tails (AC1); relative `<dir>`
+      resolution against a temp-dir-scoped `std::env::current_dir()` versus an
+      absolute `<dir>` used as-is (R2); the resolved absolute directory
+      surfacing in the produced `NativePlan.reason` while `original` keeps the
+      full `cd <dir> && <tail>` string (R2/AC1); a non-native tail (e.g. an
+      unsupported pipe) causing the full original command, cd prefix
+      included, to fall back to bash unchanged (R3/AC2); a nonexistent or
+      non-directory `<dir>` falling back to bash unchanged (R3); disqualified
+      cd segments — a glob, a `$VAR`/`"$VAR"` reference, a stray `;`, a `||`
+      instead of `&&`, a second top-level `&&`, and wrong head arity — each
+      falling back to bash unchanged (R4/AC3); and a full existing-suite run
+      proving no `command_planner.rs` test regresses (R5/AC4).
+
+  - path: apps/cap/README.md
+    action: modify
+    section: overview
+    impl_mode: hand-written
+    description: >
+      Update the `cap run "<command string>"` hook-boundary row under
+      Command Lease Throttling to note that `cd <dir> && <tail>` is now a
+      recognized native-plannable prefix (no longer listed among the
+      unconditional dynamic-fallback triggers) when `<tail>` alone is
+      native-plannable, and mark the "Command planner cd-prefix native
+      recognition" work root `implemented`/`verified` once `cargo test -p cap
+      command_planner` covers it.
+```
