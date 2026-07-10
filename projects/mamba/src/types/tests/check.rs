@@ -50,6 +50,14 @@ fn check_runtime(src: &str) -> Vec<String> {
     errors.into_iter().map(|e| e.to_string()).collect()
 }
 
+fn check_desugared(src: &str) -> Vec<String> {
+    let mut module = parser::parse(src, FileId(0)).expect("parse failed");
+    crate::lower::pep695::desugar_module(&mut module);
+    let mut checker = TypeChecker::new();
+    let errors = checker.check_module(&module);
+    errors.into_iter().map(|e| e.to_string()).collect()
+}
+
 #[test]
 fn test_valid_fibonacci() {
     let errors = check(
@@ -491,6 +499,367 @@ fn pep695_generic_type_alias_applies_defaults_and_constraints() {
 }
 
 #[test]
+fn pep695_productive_direct_recursive_alias_checks_every_level() {
+    let errors = check(
+        "type Node = tuple[int, Node] | None\n\
+         empty: Node = None\n\
+         one: Node = (1, None)\n\
+         deep: Node = (1, (2, None))\n\
+         bad: Node = (1, (\"bad\", None))\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        1,
+        "recursive back-edges must retain their leaf types: {errors:?}"
+    );
+    assert_eq!(errors.len(), 1, "unexpected diagnostics: {errors:?}");
+    assert!(
+        errors
+            .iter()
+            .all(|error| !error.contains("recursive type alias")),
+        "a tuple-guarded recursive alias is productive: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_productive_mutual_recursive_alias_resolves_scc() {
+    let errors = check(
+        "type Left = Right\n\
+         type Right = tuple[int, Left] | None\n\
+         good: Left = (1, (2, None))\n\
+         bad: Left = (\"bad\", None)\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        1,
+        "a productive mutual SCC must remain structurally checked: {errors:?}"
+    );
+    assert_eq!(errors.len(), 1, "unexpected diagnostics: {errors:?}");
+}
+
+#[test]
+fn pep695_mutual_generic_and_periodic_recursive_aliases_are_regular() {
+    let errors = check(
+        "type Left[T] = tuple[T, Right[T]] | None\n\
+         type Right[T] = tuple[T, Left[T]] | None\n\
+         good: Left[int] = (1, (2, None))\n\
+         bad: Left[int] = (1, (\"bad\", None))\n\
+         type Flip[T, U] = tuple[T, Flip[U, T]] | None\n\
+         flip: Flip[int, str] = (1, (\"two\", (3, None)))\n\
+         bad_flip: Flip[int, str] = (1, (2, None))\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        2,
+        "mutual and argument-periodic recursion must close to finite graphs: {errors:?}"
+    );
+    assert_eq!(errors.len(), 2, "unexpected diagnostics: {errors:?}");
+    assert!(
+        errors
+            .iter()
+            .all(|error| !error.contains("unproductive recursive type alias")),
+        "guarded periodic cycles are productive: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_union_forwarding_requires_a_later_structural_guard() {
+    let errors = check(
+        "type Guarded = int | GuardedList\n\
+         type GuardedList = list[Guarded]\n\
+         good: Guarded = [1, [2]]\n\
+         bad: Guarded = [\"bad\"]\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        1,
+        "a structural constructor reached through a union must guard recursion: {errors:?}"
+    );
+    assert_eq!(errors.len(), 1, "unexpected diagnostics: {errors:?}");
+    assert!(
+        errors
+            .iter()
+            .all(|error| !error.contains("unproductive recursive type alias")),
+        "the list edge makes this mutual cycle productive: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_generic_recursive_alias_specializations_are_independent() {
+    let errors = check(
+        "type Chain[T] = tuple[T, Chain[T]] | None\n\
+         ints: Chain[int] = (1, (2, None))\n\
+         texts: Chain[str] = (\"a\", (\"b\", None))\n\
+         bad_nested: Chain[int] = (1, (\"bad\", None))\n\
+         bad_cross: Chain[int] = texts\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        2,
+        "recursive generic instances must substitute and cache by arguments: {errors:?}"
+    );
+    assert_eq!(errors.len(), 2, "unexpected diagnostics: {errors:?}");
+}
+
+#[test]
+fn pep695_productive_argument_changing_recursive_alias_materializes_lazily() {
+    let errors = check(
+        "type Growing[T] = tuple[T, Growing[list[T]]] | None\n\
+         good: Growing[int] = (1, ([2], ([[3]], None)))\n\
+         bad: Growing[int] = (1, ([2], (\"bad\", None)))\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        1,
+        "argument-changing productive recursion must expand only as deeply as consumed: {errors:?}"
+    );
+    assert_eq!(errors.len(), 1, "unexpected diagnostics: {errors:?}");
+}
+
+#[test]
+fn pep695_generic_inference_reads_recursive_alias_arguments() {
+    let errors = check(
+        "type Chain[T] = list[Chain[T]]\n\
+         def inferred[T](value: Chain[T]) -> T:\n\
+         \x20   raise RuntimeError()\n\
+         ints: Chain[int] = []\n\
+         good: int = inferred(ints)\n\
+         bad: str = inferred(ints)\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        1,
+        "generic inference must unify recursive alias instance arguments: {errors:?}"
+    );
+    assert_eq!(errors.len(), 1, "unexpected diagnostics: {errors:?}");
+}
+
+#[test]
+fn pep695_nullable_recursive_alias_participates_in_generic_inference() {
+    let errors = check(
+        "type Chain[T] = tuple[T, Chain[T]] | None\n\
+         def inferred[T](value: Chain[T]) -> T:\n\
+         \x20   raise RuntimeError()\n\
+         ints: Chain[int] = None\n\
+         good: int = inferred(ints)\n\
+         bad: str = inferred(ints)\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        1,
+        "union-shaped recursive aliases must still infer their parameters: {errors:?}"
+    );
+    assert_eq!(errors.len(), 1, "unexpected diagnostics: {errors:?}");
+}
+
+#[test]
+fn pep695_non_regular_alias_comparison_is_depth_bounded() {
+    let errors = check(
+        "type Growing[T] = tuple[T, Growing[list[T]]] | None\n\
+         ints: Growing[int] = None\n\
+         bools: Growing[bool] = None\n\
+         bounded: Growing[int] = bools\n\
+         type Other[T] = tuple[T, Other[list[T]]] | None\n\
+         other: Other[int] = ints\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        2,
+        "non-regular coinduction must terminate conservatively: {errors:?}"
+    );
+    assert_eq!(errors.len(), 2, "unexpected diagnostics: {errors:?}");
+}
+
+#[test]
+fn pep695_recursive_alias_captures_enclosing_class_type_params() {
+    let src = "class Holder[T]:\n\
+         \x20   type Chain = tuple[T, Chain] | None\n\
+         \x20   def accept(self, value: Chain) -> None:\n\
+         \x20       pass\n\
+         Holder[int]().accept((1, (2, None)))\n\
+         Holder[int]().accept((1, (\"bad\", None)))\n";
+    for (stage, errors) in [("source", check(src)), ("desugared", check_desugared(src))] {
+        assert_eq!(
+            errors
+                .iter()
+                .filter(|error| {
+                    error.contains("type mismatch") || error.contains("expected `int`")
+                })
+                .count(),
+            1,
+            "captured class TypeVars must specialize through every recursive edge ({stage}): {errors:?}"
+        );
+        assert_eq!(
+            errors.len(),
+            1,
+            "unexpected diagnostics after {stage} checking: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn pep695_save_probe_shape_does_not_hide_user_undefined_names() {
+    let errors = check(
+        "try:\n\
+         \x20   __mb_pep695_saved_0_0 = missing\n\
+         \x20   __mb_pep695_had_0_0 = True\n\
+         except NameError:\n\
+         \x20   __mb_pep695_had_0_0 = False\n",
+    );
+    assert_eq!(errors.len(), 1, "unexpected diagnostics: {errors:?}");
+    assert!(
+        errors[0].contains("undefined name: `missing`"),
+        "user-authored lookalikes must not gain synthetic-name privileges: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_quoted_recursive_forward_ref_is_not_any() {
+    let errors = check(
+        "type Quoted = tuple[int, \"Quoted\"] | None\n\
+         good: Quoted = (1, (2, None))\n\
+         bad: Quoted = (1, (\"bad\", None))\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        1,
+        "alias-local quoted forward refs must preserve recursion: {errors:?}"
+    );
+    assert_eq!(errors.len(), 1, "unexpected diagnostics: {errors:?}");
+}
+
+#[test]
+fn pep695_quoted_recursive_forward_ref_parses_full_type_expressions() {
+    let errors = check(
+        "type Chain[T] = tuple[T, \"Chain[T]\"] | None\n\
+         good: Chain[int] = (1, (2, None))\n\
+         bad: Chain[int] = (1, (\"bad\", None))\n\
+         type Left = \"Right | None\"\n\
+         type Right = list[Left]\n\
+         left: Left = [None]\n",
+    );
+    assert_eq!(
+        errors.len(),
+        1,
+        "compound quoted forward refs must be parsed rather than erased: {errors:?}"
+    );
+    assert!(errors[0].contains("type mismatch"), "{errors:?}");
+}
+
+#[test]
+fn pep695_recursive_alias_compatibility_is_coinductive_and_discriminating() {
+    let errors = check(
+        "type IntA = tuple[int, IntA] | None\n\
+         type IntB = tuple[int, IntB] | None\n\
+         type StrPath = tuple[str, StrPath] | None\n\
+         a: IntA = None\n\
+         b: IntB = None\n\
+         s: StrPath = None\n\
+         ok_ab: IntA = b\n\
+         ok_ba: IntB = a\n\
+         bad: IntA = s\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        1,
+        "equivalent cycles must terminate while different leaves reject: {errors:?}"
+    );
+    assert_eq!(errors.len(), 1, "unexpected diagnostics: {errors:?}");
+}
+
+#[test]
+fn pep695_recursive_alias_back_edges_remain_semantic_in_consumers() {
+    let errors = check(
+        "type Nest = list[Nest]\n\
+         def bad_index(value: Nest) -> int:\n\
+         \x20   return value[0][0]\n\
+         def bad_iter(value: Nest) -> str:\n\
+         \x20   for item in value[0]:\n\
+         \x20       return item\n\
+         \x20   return \"\"\n\
+         def bad_method(value: Nest) -> None:\n\
+         \x20   value[0].append(1)\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| {
+                error.contains("return type mismatch")
+                    || error.contains("argument type mismatch")
+                    || error.contains("expected `Nest`")
+            })
+            .count(),
+        3,
+        "shape consumers must unfold recursive back-edges without erasing them: {errors:?}"
+    );
+    assert_eq!(errors.len(), 3, "unexpected diagnostics: {errors:?}");
+}
+
+#[test]
+fn pep695_unproductive_recursive_alias_cycles_are_rejected_once() {
+    for (source, alias) in [
+        ("type Loop = Loop\nx: Loop = 1\ny: Loop = \"x\"\n", "Loop"),
+        ("type A = B\ntype B = A\nx: A = 1\ny: B = 2\n", "A"),
+        ("type Generic[T] = Generic[T]\n", "Generic"),
+        ("type Changing[T] = Changing[list[T]]\n", "Changing"),
+        ("type UnionLoop = int | UnionLoop\n", "UnionLoop"),
+        (
+            "type UnionA = int | UnionB\ntype UnionB = str | UnionA\n",
+            "UnionA",
+        ),
+    ] {
+        let errors = check(source);
+        assert_eq!(errors.len(), 1, "unexpected diagnostics: {errors:?}");
+        assert_eq!(
+            errors
+                .iter()
+                .filter(|error| error.contains("unproductive recursive type alias"))
+                .count(),
+            1,
+            "a head-only alias cycle must produce one stable diagnostic: {errors:?}"
+        );
+        assert!(errors[0].contains(alias), "missing alias name: {errors:?}");
+        assert!(
+            errors.iter().all(|error| !error.contains("unknown type")),
+            "cycle detection must not degrade into name lookup errors: {errors:?}"
+        );
+    }
+}
+
+#[test]
 fn pep695_type_aliases_are_forward_resolved_and_lexically_scoped() {
     let errors = check(
         "type Forward = Later\n\
@@ -742,6 +1111,51 @@ fn pep695_desugared_generic_alias_type_reaches_hir() {
         };
         assert_eq!(items, &vec![checker.tcx.int(), checker.tcx.int()]);
     }
+}
+
+#[test]
+fn pep695_recursive_alias_back_edge_reaches_hir_and_mir() {
+    let mut module = parser::parse(
+        "type Nest = list[Nest]\n\
+         def peel(value: Nest) -> Nest:\n\
+         \x20   return value[0][0]\n",
+        FileId(0),
+    )
+    .expect("parse failed");
+    crate::lower::pep695::desugar_module(&mut module);
+
+    let mut checker = TypeChecker::new();
+    let errors = checker.check_module(&module);
+    assert!(errors.is_empty(), "type check failed: {errors:?}");
+    let peel = checker.symbols.lookup("peel").expect("peel registered");
+    let hir = crate::lower::ast_to_hir::lower_module(&module, &checker).expect("lower failed");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| function.name == peel)
+        .expect("peel lowered");
+    let crate::hir::HirStmt::Return {
+        value: Some(value), ..
+    } = &function.body[0]
+    else {
+        panic!("peel return was not lowered");
+    };
+    let crate::types::Ty::AliasRef(instance) = checker.tcx.get(value.ty()) else {
+        panic!("nested indexing erased the recursive alias back-edge");
+    };
+    let head = checker
+        .tcx
+        .semantic_head_id(value.ty())
+        .expect("recursive alias head remained unresolved");
+    let crate::types::Ty::List(nested) = checker.tcx.get(head) else {
+        panic!("recursive alias lost its productive list head");
+    };
+    assert_eq!(
+        checker.tcx.get(*nested),
+        &crate::types::Ty::AliasRef(*instance)
+    );
+
+    let _mir = crate::lower::lower_hir_to_mir(&hir, &checker.tcx);
 }
 
 // --- #245: Builtin function stubs ---

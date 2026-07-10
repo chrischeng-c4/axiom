@@ -979,8 +979,8 @@ impl TypeChecker {
                 for gen in generators {
                     let iter_ty = self.check_expr(&gen.iter);
                     // Infer element type from iterable (List[T] → T, else Any)
-                    let elem_ty = match self.tcx.get(iter_ty) {
-                        Ty::List(inner) => *inner,
+                    let elem_ty = match self.semantic_ty(iter_ty) {
+                        Ty::List(inner) => inner,
                         _ => self.tcx.any(),
                     };
                     // Tuple-destructuring targets (`for a, b in pairs`) bind
@@ -991,8 +991,8 @@ impl TypeChecker {
                     // mismatch / non-tuple element → Any, deferring to runtime
                     // unpacking.
                     let target_elem_tys: Option<Vec<TypeId>> = if gen.unpack_target {
-                        match self.tcx.get(elem_ty) {
-                            Ty::Tuple(ts) if ts.len() == gen.targets.len() => Some(ts.clone()),
+                        match self.semantic_ty(elem_ty) {
+                            Ty::Tuple(ts) if ts.len() == gen.targets.len() => Some(ts),
                             _ => None,
                         }
                     } else {
@@ -1028,8 +1028,8 @@ impl TypeChecker {
                 self.comprehension_depth += 1;
                 for gen in generators {
                     let iter_ty = self.check_expr(&gen.iter);
-                    let elem_ty = match self.tcx.get(iter_ty) {
-                        Ty::List(inner) => *inner,
+                    let elem_ty = match self.semantic_ty(iter_ty) {
+                        Ty::List(inner) => inner,
                         _ => self.tcx.any(),
                     };
                     // Tuple-destructuring targets (`for a, b in pairs`) bind
@@ -1040,8 +1040,8 @@ impl TypeChecker {
                     // mismatch / non-tuple element → Any, deferring to runtime
                     // unpacking.
                     let target_elem_tys: Option<Vec<TypeId>> = if gen.unpack_target {
-                        match self.tcx.get(elem_ty) {
-                            Ty::Tuple(ts) if ts.len() == gen.targets.len() => Some(ts.clone()),
+                        match self.semantic_ty(elem_ty) {
+                            Ty::Tuple(ts) if ts.len() == gen.targets.len() => Some(ts),
                             _ => None,
                         }
                     } else {
@@ -2072,7 +2072,7 @@ impl TypeChecker {
 
     /// Resolve attribute access (#246).
     fn resolve_attr(&mut self, obj_ty_id: TypeId, attr: &str, _span: Span) -> TypeId {
-        match self.tcx.get(obj_ty_id).clone() {
+        match self.semantic_ty(obj_ty_id) {
             Ty::List(elem) => match attr {
                 "append" | "remove" => self.tcx.intern(Ty::Fn {
                     params: vec![elem],
@@ -2180,7 +2180,7 @@ impl TypeChecker {
 
     /// Resolve subscript / index access (#248).
     fn resolve_subscript(&mut self, obj_ty: TypeId, _span: Span) -> TypeId {
-        match self.tcx.get(obj_ty).clone() {
+        match self.semantic_ty(obj_ty) {
             Ty::List(elem) => elem,
             Ty::Dict(_, v) => v,
             Ty::Tuple(ts) if !ts.is_empty() => {
