@@ -20,25 +20,26 @@ Public API manifest for `projects/lumen/src/operator/crd.rs` generated from AST 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AuthMode` | projects/lumen/src/operator/crd.rs | enum | pub | 262 |  |
-| `Autoscaling` | projects/lumen/src/operator/crd.rs | struct | pub | 403 |  |
-| `LogFormat` | projects/lumen/src/operator/crd.rs | enum | pub | 239 |  |
-| `LumenReshardStatus` | projects/lumen/src/operator/crd.rs | struct | pub | 455 |  |
-| `LumenSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 37 |  |
-| `LumenStatus` | projects/lumen/src/operator/crd.rs | struct | pub | 427 |  |
-| `ReshardPhase` | projects/lumen/src/operator/crd.rs | enum | pub | 206 |  |
-| `ReshardPolicy` | projects/lumen/src/operator/crd.rs | struct | pub | 161 |  |
-| `ReshardWorkflowSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 196 |  |
-| `ServingBackupSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 380 |  |
-| `ServingBootstrapSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 357 |  |
-| `ServingSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 289 |  |
-| `ShardMapSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 133 |  |
-| `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 250 | as_env(self) -> &'static str |
-| `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 277 | as_env(self) -> &'static str |
-| `as_str` | projects/lumen/src/operator/crd.rs | function | pub | 216 | as_str(self) -> &'static str |
-| `progress_percent` | projects/lumen/src/operator/crd.rs | function | pub | 225 | progress_percent(self) -> u8 |
-| `reshard_status` | projects/lumen/src/operator/crd.rs | function | pub | 484 | reshard_status(&self) -> LumenReshardStatus |
-| `storage_pod_count` | projects/lumen/src/operator/crd.rs | function | pub | 474 | storage_pod_count(&self) -> i32 |
+| `AuthMode` | projects/lumen/src/operator/crd.rs | enum | pub | 264 |  |
+| `Autoscaling` | projects/lumen/src/operator/crd.rs | struct | pub | 405 |  |
+| `LogFormat` | projects/lumen/src/operator/crd.rs | enum | pub | 241 |  |
+| `LumenReshardStatus` | projects/lumen/src/operator/crd.rs | struct | pub | 457 |  |
+| `LumenSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 39 |  |
+| `LumenStatus` | projects/lumen/src/operator/crd.rs | struct | pub | 429 |  |
+| `ReshardPhase` | projects/lumen/src/operator/crd.rs | enum | pub | 208 |  |
+| `ReshardPolicy` | projects/lumen/src/operator/crd.rs | struct | pub | 163 |  |
+| `ReshardWorkflowSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 198 |  |
+| `ServingBackupSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 382 |  |
+| `ServingBootstrapSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 359 |  |
+| `ServingSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 291 |  |
+| `ShardMapSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 135 |  |
+| `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 252 | as_env(self) -> &'static str |
+| `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 279 | as_env(self) -> &'static str |
+| `as_str` | projects/lumen/src/operator/crd.rs | function | pub | 218 | as_str(self) -> &'static str |
+| `progress_percent` | projects/lumen/src/operator/crd.rs | function | pub | 227 | progress_percent(self) -> u8 |
+| `reshard_status` | projects/lumen/src/operator/crd.rs | function | pub | 509 | reshard_status(&self) -> LumenReshardStatus |
+| `reshard_status_with_usage` | projects/lumen/src/operator/crd.rs | function | pub | 568 | reshard_status_with_usage(&self, shard_usage_bytes: &BTreeMap<u32, u64>) -> LumenReshardStatus |
+| `storage_pod_count` | projects/lumen/src/operator/crd.rs | function | pub | 490 | storage_pod_count(&self) -> i32 |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -55,6 +56,8 @@ Public API manifest for `projects/lumen/src/operator/crd.rs` generated from AST 
 //! reconcile loop in [`super::reconcile`] turns this spec into StatefulSet,
 //! Service, ConfigMap, HPA (single-member regime only), PDB, and
 //! ServiceAccount objects, garbage-collected via owner references.
+
+use std::collections::BTreeMap;
 
 use kube::CustomResource;
 use schemars::JsonSchema;
@@ -500,7 +503,13 @@ pub struct LumenStatus {
 pub struct LumenReshardStatus {
     #[serde(default)]
     pub phase: String,
+    // Schema default corrected (#1319 R3) to match the actual runtime value
+    // (`ReshardPolicy::default().max_shard_bytes.is_none() == true`), not
+    // `bool::default()` (`false`) — the CRD's declared default used to
+    // disagree with what the operator always reports at the CRD's own
+    // `reshardPolicy` defaults.
     #[serde(default)]
+    #[schemars(default = "default_reshard_recommendation_only")]
     pub recommendation_only: bool,
     #[serde(default)]
     pub progress_percent: u8,
@@ -508,6 +517,14 @@ pub struct LumenReshardStatus {
     pub target_shard_count: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub migration_bytes_per_sec: Option<u64>,
+    /// Highest observed percent of `maxShardBytes` across shards, from the
+    /// live per-shard usage measurement (#1319 R1;
+    /// [`super::reconcile`]'s pod-`/metrics` measurement loop is the only
+    /// caller of [`LumenSpec::reshard_status_with_usage`], which sets this).
+    /// `None` when `maxShardBytes` is unset or usage has not been measured
+    /// yet — the plain [`LumenSpec::reshard_status`] never sets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_observed_percent: Option<u8>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blocking_conditions: Vec<String>,
     #[serde(default)]
@@ -522,7 +539,16 @@ impl LumenSpec {
         } else if self.shard_count > 1 {
             self.shard_count as i32
         } else {
-            self.serving.autoscaling.min_replicas
+            // Single shard, single member, no raft consensus (#1317): every
+            // pod's `shard_index` (`ordinal % shard_count`) collapses to 0,
+            // so more than one live pod here means multiple uncoordinated
+            // local copies behind one Service — confirmed empirically on a
+            // kind cluster (a write via one pod is invisible on the others;
+            // a load-balanced Service returns divergent results for the
+            // same read). Clamp to exactly 1 regardless of the CR's
+            // `serving.autoscaling` bounds; CPU-driven scaling requires
+            // opting into `replicasPerShard > 1` (raft-HA).
+            1
         }
     }
 
@@ -564,9 +590,77 @@ impl LumenSpec {
             progress_percent: policy.workflow.phase.progress_percent(),
             target_shard_count: target,
             migration_bytes_per_sec: policy.migration_bytes_per_sec,
+            max_observed_percent: None,
             blocking_conditions,
             message,
         }
+    }
+
+    /// Live-usage-aware reshard status (#1319 R1): layers [`Self::reshard_status`]
+    /// with real per-shard byte measurements instead of only formatting the
+    /// configured percentages into a message. `shard_usage_bytes` maps
+    /// `shard_index -> observed bytes` (see [`super::reconcile`]'s
+    /// pod-`/metrics` measurement loop, the function's only caller).
+    ///
+    /// Reports whether the busiest shard has crossed `prepareAtPercent` /
+    /// `urgentAtPercent` of `maxShardBytes`. It does **not** drive
+    /// `workflow.phase` or move any data — the autonomous split executor
+    /// (#1319 R2: computing a target topology, invoking
+    /// [`crate::reshard::bucket_moves`] / [`crate::reshard::
+    /// snapshot_reshard_batches`], and updating `shardMap.assignments`) is a
+    /// separate, not-yet-implemented follow-up; a crossed threshold is
+    /// reported here, never acted on.
+    /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
+    pub fn reshard_status_with_usage(
+        &self,
+        shard_usage_bytes: &BTreeMap<u32, u64>,
+    ) -> LumenReshardStatus {
+        let mut status = self.reshard_status();
+        let Some(max_shard_bytes) = self.reshard_policy.max_shard_bytes else {
+            // recommendation-only: nothing to compare usage against.
+            return status;
+        };
+        if max_shard_bytes == 0 {
+            return status;
+        }
+        let Some((&busiest_shard, &busiest_bytes)) =
+            shard_usage_bytes.iter().max_by_key(|(_, bytes)| **bytes)
+        else {
+            // Usage not measured yet this tick; keep the policy-only status.
+            return status;
+        };
+
+        let percent = ((busiest_bytes as f64 / max_shard_bytes as f64) * 100.0)
+            .round()
+            .clamp(0.0, 255.0) as u8;
+        status.max_observed_percent = Some(percent);
+
+        let policy = &self.reshard_policy;
+        let prepare_at = policy.start_at_percent.unwrap_or(policy.prepare_at_percent);
+        status.message = if percent >= policy.urgent_at_percent {
+            status
+                .blocking_conditions
+                .push("urgentThresholdCrossed".to_string());
+            format!(
+                "urgent threshold crossed: shard {busiest_shard} at {percent}% of maxShardBytes \
+                 (urgent {}%)",
+                policy.urgent_at_percent
+            )
+        } else if percent >= prepare_at {
+            status
+                .blocking_conditions
+                .push("prepareThresholdCrossed".to_string());
+            format!(
+                "prepare threshold crossed: shard {busiest_shard} at {percent}% of \
+                 maxShardBytes (prepare {prepare_at}%)"
+            )
+        } else {
+            format!(
+                "shard {busiest_shard} at {percent}% of maxShardBytes; below prepare \
+                 threshold ({prepare_at}%)"
+            )
+        };
+        status
     }
 }
 
@@ -584,6 +678,12 @@ fn default_reshard_prepare_percent() -> u8 {
 }
 fn default_reshard_urgent_percent() -> u8 {
     85
+}
+// #1319 R3: the declared CRD schema default must match the actual runtime
+// default (`ReshardPolicy::default().max_shard_bytes.is_none() == true`),
+// not `bool::default()` (`false`).
+fn default_reshard_recommendation_only() -> bool {
+    true
 }
 fn default_serving_cpu() -> String {
     "2".into()

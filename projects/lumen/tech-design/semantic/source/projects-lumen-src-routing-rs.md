@@ -27,33 +27,34 @@ Public API manifest for `projects/lumen/src/routing.rs` generated from AST durin
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `DEFAULT_VIRTUAL_BUCKET_COUNT` | projects/lumen/src/routing.rs | constant | pub | 31 |  |
-| `EngineShardSearch` | projects/lumen/src/routing.rs | struct | pub | 63 |  |
-| `EngineShardWrite` | projects/lumen/src/routing.rs | struct | pub | 106 |  |
-| `SearchShardTarget` | projects/lumen/src/routing.rs | enum | pub | 173 |  |
-| `ShardRoute` | projects/lumen/src/routing.rs | struct | pub | 62 |  |
-| `VirtualBucketShardMap` | projects/lumen/src/routing.rs | struct | pub | 79 |  |
-| `assignment_for_bucket` | projects/lumen/src/routing.rs | function | pub | 141 | assignment_for_bucket(&self, bucket: u32) -> Option<u32> |
-| `balanced` | projects/lumen/src/routing.rs | function | pub | 87 | balanced(version: u64, virtual_bucket_count: u32, physical_shard_count: u32) -> Result<Self> |
-| `document_shard_index` | projects/lumen/src/routing.rs | function | pub | 45 | document_shard_index(collection_id: &str, external_id: &str, shard_count: usize) -> usize |
-| `is_empty` | projects/lumen/src/routing.rs | function | pub | 79 | is_empty(&self) -> bool |
-| `is_empty` | projects/lumen/src/routing.rs | function | pub | 122 | is_empty(&self) -> bool |
-| `len` | projects/lumen/src/routing.rs | function | pub | 75 | len(&self) -> usize |
-| `len` | projects/lumen/src/routing.rs | function | pub | 118 | len(&self) -> usize |
-| `merge_shard_search_responses` | projects/lumen/src/routing.rs | function | pub | 363 | merge_shard_search_responses(     req: &SearchRequest,     responses: impl IntoIterator<Item = SearchResponse>,     took_us: u64,     sort_value: K, ) -> SearchResponse |
+| `DEFAULT_VIRTUAL_BUCKET_COUNT` | projects/lumen/src/routing.rs | constant | pub | 32 |  |
+| `EngineShardSearch` | projects/lumen/src/routing.rs | struct | pub | 188 |  |
+| `EngineShardWrite` | projects/lumen/src/routing.rs | struct | pub | 253 |  |
+| `SearchShardTarget` | projects/lumen/src/routing.rs | enum | pub | 73 |  |
+| `ShardRoute` | projects/lumen/src/routing.rs | struct | pub | 63 |  |
+| `VirtualBucketShardMap` | projects/lumen/src/routing.rs | struct | pub | 80 |  |
+| `assignment_for_bucket` | projects/lumen/src/routing.rs | function | pub | 142 | assignment_for_bucket(&self, bucket: u32) -> Option<u32> |
+| `balanced` | projects/lumen/src/routing.rs | function | pub | 88 | balanced(version: u64, virtual_bucket_count: u32, physical_shard_count: u32) -> Result<Self> |
+| `document_shard_index` | projects/lumen/src/routing.rs | function | pub | 46 | document_shard_index(collection_id: &str, external_id: &str, shard_count: usize) -> usize |
+| `is_empty` | projects/lumen/src/routing.rs | function | pub | 214 | is_empty(&self) -> bool |
+| `is_empty` | projects/lumen/src/routing.rs | function | pub | 282 | is_empty(&self) -> bool |
+| `len` | projects/lumen/src/routing.rs | function | pub | 210 | len(&self) -> usize |
+| `len` | projects/lumen/src/routing.rs | function | pub | 278 | len(&self) -> usize |
+| `merge_shard_search_responses` | projects/lumen/src/routing.rs | function | pub | 590 | merge_shard_search_responses(     req: &SearchRequest,     responses: impl IntoIterator<Item = SearchResponse>,     took_us: u64,     sort_value: K, ) -> SearchResponse |
 | `new_with_shard_map` | projects/lumen/src/routing.rs | function | pub | 202 | new_with_shard_map(shards: Vec<Arc<Engine>>, shard_map: VirtualBucketShardMap) -> Self |
 | `new` | projects/lumen/src/routing.rs | function | pub | 69 | new(shards: Vec<Arc<Engine>>) -> Self |
 | `new` | projects/lumen/src/routing.rs | function | pub | 112 | new(writers: Vec<Arc<WriteCoordinator>>) -> Self |
-| `physical_shard_count` | projects/lumen/src/routing.rs | function | pub | 137 | physical_shard_count(&self) -> u32 |
-| `route_document` | projects/lumen/src/routing.rs | function | pub | 145 | route_document(&self, collection_id: &str, routing_key: Option<&str>, external_id: &str) -> ShardRoute |
-| `route_key` | projects/lumen/src/routing.rs | function | pub | 154 | route_key(&self, collection_id: &str, routing_key: &str) -> ShardRoute |
-| `search_target` | projects/lumen/src/routing.rs | function | pub | 166 | search_target(&self, collection_id: &str, routing_key: Option<&str>) -> SearchShardTarget |
-| `search_shards_parallel` | projects/lumen/src/routing.rs | function | pub | 325 | search_shards_parallel(     collection_id: &str,     req: SearchRequest,     shards: &[S],     search: F,     sort_value: K, ) -> Result<SearchResponse> |
-| `shard_host` | projects/lumen/src/routing.rs | function | pub | 57 | shard_host(prefix: &str, shard: u32, headless_service: &str) -> String |
-| `shard_index` | projects/lumen/src/routing.rs | function | pub | 32 | shard_index(collection_id: &str, shard_count: u32) -> u32 |
-| `single` | projects/lumen/src/routing.rs | function | pub | 125 | single() -> Self |
-| `version` | projects/lumen/src/routing.rs | function | pub | 129 | version(&self) -> u64 |
-| `virtual_bucket_count` | projects/lumen/src/routing.rs | function | pub | 133 | virtual_bucket_count(&self) -> u32 |
+| `physical_shard_count` | projects/lumen/src/routing.rs | function | pub | 138 | physical_shard_count(&self) -> u32 |
+| `route_document` | projects/lumen/src/routing.rs | function | pub | 146 | route_document(&self, collection_id: &str, routing_key: Option<&str>, external_id: &str) -> ShardRoute |
+| `route_key` | projects/lumen/src/routing.rs | function | pub | 155 | route_key(&self, collection_id: &str, routing_key: &str) -> ShardRoute |
+| `search_target` | projects/lumen/src/routing.rs | function | pub | 167 | search_target(&self, collection_id: &str, routing_key: Option<&str>) -> SearchShardTarget |
+| `search_shards_parallel` | projects/lumen/src/routing.rs | function | pub | 552 | search_shards_parallel(     collection_id: &str,     req: SearchRequest,     shards: &[S],     search: F,     sort_value: K, ) -> Result<SearchResponse> |
+| `shard_host` | projects/lumen/src/routing.rs | function | pub | 182 | shard_host(prefix: &str, shard: u32, headless_service: &str) -> String |
+| `shard_index` | projects/lumen/src/routing.rs | function | pub | 35 | shard_index(collection_id: &str, shard_count: u32) -> u32 |
+| `single` | projects/lumen/src/routing.rs | function | pub | 126 | single() -> Self |
+| `version` | projects/lumen/src/routing.rs | function | pub | 130 | version(&self) -> u64 |
+| `virtual_bucket_count` | projects/lumen/src/routing.rs | function | pub | 134 | virtual_bucket_count(&self) -> u32 |
+
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -84,8 +85,9 @@ use crate::coordinator::WriteCoordinator;
 use crate::log_entry::RaftLogEntry;
 use crate::storage::{ApplyOutcome, DropOutcome, Engine};
 use crate::types::{
-    CreateCollectionRequest, CreateCollectionResponse, IndexRequest, IndexResponse, SearchHit,
-    SearchRequest, SearchResponse, SortOrder,
+    CreateCollectionRequest, CreateCollectionResponse, IndexRequest, IndexResponse, ReplaceDocItem,
+    ReplaceDocResult, ReplaceDocsRequest, ReplaceDocsResponse, SearchHit, SearchRequest,
+    SearchResponse, SortOrder,
 };
 
 pub const DEFAULT_VIRTUAL_BUCKET_COUNT: u32 = 4096;
@@ -478,6 +480,67 @@ impl WriteBackend for EngineShardWrite {
             bytes_written,
             shard_lag_ms,
         })
+    }
+
+    async fn replace_docs(
+        &self,
+        collection_id: String,
+        req: ReplaceDocsRequest,
+    ) -> Result<ReplaceDocsResponse> {
+        self.require_shards()?;
+        let total = req.docs.len();
+        let mut shard_reqs: Vec<Vec<ReplaceDocItem>> =
+            (0..self.writers.len()).map(|_| Vec::new()).collect();
+        let mut shard_positions: Vec<Vec<usize>> =
+            (0..self.writers.len()).map(|_| Vec::new()).collect();
+
+        for (idx, item) in req.docs.into_iter().enumerate() {
+            let shard = self
+                .shard_map
+                .route_document(&collection_id, None, &item.external_id)
+                .shard as usize;
+            shard_positions[shard].push(idx);
+            shard_reqs[shard].push(item);
+        }
+
+        let mut futures = Vec::new();
+        let mut shard_order = Vec::new();
+        for (shard, docs) in shard_reqs.into_iter().enumerate() {
+            if docs.is_empty() {
+                continue;
+            }
+            let writer = self.writers[shard].clone();
+            let collection_id = collection_id.clone();
+            shard_order.push(shard);
+            futures.push(async move {
+                writer
+                    .submit(RaftLogEntry::ReplaceDocs {
+                        collection_id,
+                        req: ReplaceDocsRequest { docs },
+                    })
+                    .await
+            });
+        }
+
+        let outcomes = try_join_all(futures).await?;
+        // Reassemble in the caller's original `req.docs` order — shard
+        // fan-out only preserves order *within* a shard, so each result
+        // is placed back at its origin index rather than appended in
+        // shard-completion order.
+        let mut results: Vec<Option<ReplaceDocResult>> = (0..total).map(|_| None).collect();
+        for (shard, outcome) in shard_order.into_iter().zip(outcomes) {
+            let ApplyOutcome::Replaced(resp) = outcome else {
+                bail!("unexpected apply outcome: {outcome:?}");
+            };
+            for (pos, result) in shard_positions[shard].iter().zip(resp.results) {
+                results[*pos] = Some(result);
+            }
+        }
+        let results: Vec<ReplaceDocResult> = results
+            .into_iter()
+            .map(|r| r.expect("every original index assigned exactly one shard result"))
+            .collect();
+        Ok(ReplaceDocsResponse { results })
     }
 
     async fn delete(

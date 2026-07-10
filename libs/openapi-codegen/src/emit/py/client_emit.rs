@@ -31,10 +31,17 @@ pub fn emit(ops: &[OperationIR], tm: &TypeMap) -> String {
     out.push_str("    async def request(self, method: str, url: str, *, params: dict[str, Any], headers: dict[str, Any], json: Any = None, data: Any = None, content: Any = None, timeout: Optional[float] = None) -> ResponseLike: ...\n\n\n");
 
     out.push_str("class Client:\n");
-    out.push_str("    def __init__(self, base_url: str, *, client: Optional[SupportsRequest] = None, default_headers: Optional[Mapping[str, Any]] = None, auth_token: Optional[str] = None) -> None:\n");
+    out.push_str("    def __init__(self, base_url: str, *, client: Optional[SupportsRequest] = None, default_headers: Optional[Mapping[str, Any]] = None, auth_token: Optional[str] = None, use_post_fallback: bool = False) -> None:\n");
     out.push_str("        self._base_url = base_url.rstrip(\"/\")\n");
     out.push_str("        self._client = client or H2CClient()\n");
     out.push_str("        self._default_headers: dict[str, Any] = dict(default_headers or {})\n");
+    out.push_str(
+        "        # Epic #1296 POST-twin fallback: route QUERY operations through their\n",
+    );
+    out.push_str(
+        "        # documented POST twin instead of the HTTP QUERY method (RFC 10008).\n",
+    );
+    out.push_str("        self._use_post_fallback = use_post_fallback\n");
     out.push_str("        if auth_token is not None:\n");
     out.push_str(
         "            self._default_headers[\"Authorization\"] = f\"Bearer {auth_token}\"\n",
@@ -59,10 +66,17 @@ pub fn emit(ops: &[OperationIR], tm: &TypeMap) -> String {
     }
 
     out.push_str("\n\nclass AsyncClient:\n");
-    out.push_str("    def __init__(self, base_url: str, *, client: Optional[AsyncSupportsRequest] = None, default_headers: Optional[Mapping[str, Any]] = None, auth_token: Optional[str] = None) -> None:\n");
+    out.push_str("    def __init__(self, base_url: str, *, client: Optional[AsyncSupportsRequest] = None, default_headers: Optional[Mapping[str, Any]] = None, auth_token: Optional[str] = None, use_post_fallback: bool = False) -> None:\n");
     out.push_str("        self._base_url = base_url.rstrip(\"/\")\n");
     out.push_str("        self._client = client or AsyncH2CClient()\n");
     out.push_str("        self._default_headers: dict[str, Any] = dict(default_headers or {})\n");
+    out.push_str(
+        "        # Epic #1296 POST-twin fallback: route QUERY operations through their\n",
+    );
+    out.push_str(
+        "        # documented POST twin instead of the HTTP QUERY method (RFC 10008).\n",
+    );
+    out.push_str("        self._use_post_fallback = use_post_fallback\n");
     out.push_str("        if auth_token is not None:\n");
     out.push_str(
         "            self._default_headers[\"Authorization\"] = f\"Bearer {auth_token}\"\n",
@@ -162,6 +176,17 @@ fn emit_method(ir: &OperationIR, tm: &TypeMap, reg: &mut NameRegistry, is_async:
     }
     m.push_str(&format!("        _path = f\"{path}\"\n"));
 
+    // Epic #1296 POST-twin fallback: a `QUERY` operation always carries a
+    // twin path (`x-post-twin` override, else its own path); at call time,
+    // `self._use_post_fallback` picks POST + twin path over HTTP QUERY.
+    let twin = ir.post_twin_path.as_ref().map(|twin_path| {
+        let mut twin_path = twin_path.clone();
+        for (p, (snake, ..)) in ir.path_params.iter().zip(&path_anns) {
+            twin_path = twin_path.replace(&format!("{{{}}}", p.name), &format!("{{{snake}}}"));
+        }
+        twin_path
+    });
+
     m.push_str("        _params: dict[str, Any] = {}\n");
     for (p, (snake, _, req)) in ir.query_params.iter().zip(&query_anns) {
         if *req {
@@ -198,15 +223,25 @@ fn emit_method(ir: &OperationIR, tm: &TypeMap, reg: &mut NameRegistry, is_async:
         ""
     };
 
+    let method_expr = match &twin {
+        Some(twin_path) => {
+            m.push_str("        if self._use_post_fallback:\n");
+            m.push_str("            _method = \"POST\"\n");
+            m.push_str(&format!("            _path = f\"{twin_path}\"\n"));
+            m.push_str("        else:\n");
+            m.push_str(&format!("            _method = \"{}\"\n", ir.http_method));
+            "_method".to_string()
+        }
+        None => format!("\"{}\"", ir.http_method),
+    };
+
     if is_async {
         m.push_str(&format!(
-            "        _resp = await self._client.request(\"{}\", self._base_url + _path, params=_params, headers=_headers{json_arg})\n",
-            ir.http_method
+            "        _resp = await self._client.request({method_expr}, self._base_url + _path, params=_params, headers=_headers{json_arg})\n"
         ));
     } else {
         m.push_str(&format!(
-            "        _resp = self._client.request(\"{}\", self._base_url + _path, params=_params, headers=_headers{json_arg})\n",
-            ir.http_method
+            "        _resp = self._client.request({method_expr}, self._base_url + _path, params=_params, headers=_headers{json_arg})\n"
         ));
     }
     m.push_str("        _resp.raise_for_status()\n");
@@ -234,5 +269,75 @@ fn response(ir: &OperationIR, tm: &TypeMap) -> (String, String) {
 
 fn esc(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::build_type_map;
+    use crate::ir::openapi::Spec;
+    use crate::ir::operations;
+
+    fn spec(json: &str) -> Spec {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn init_signatures_accept_use_post_fallback() {
+        let s = spec(r##"{"paths":{}}"##);
+        let tm = build_type_map(&s);
+        let out = emit(&operations::build(&s), &tm);
+        assert!(out.contains("use_post_fallback: bool = False"));
+        assert!(out.contains("self._use_post_fallback = use_post_fallback"));
+        // Both Client and AsyncClient carry the flag.
+        assert_eq!(out.matches("use_post_fallback: bool = False").count(), 2);
+    }
+
+    #[test]
+    fn query_operation_sends_query_method_with_json_body_by_default() {
+        let s = spec(
+            r##"{"paths":{"/pets":{
+              "query":{"operationId":"searchPets",
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object"}}}},
+                "responses":{"200":{"content":{"application/json":{"schema":{"type":"array","items":{"type":"string"}}}}}}}}}}"##,
+        );
+        let tm = build_type_map(&s);
+        let out = emit(&operations::build(&s), &tm);
+        assert!(out.contains("def search_pets(self, *, body:"));
+        assert!(out.contains("if self._use_post_fallback:"));
+        assert!(out.contains("_method = \"POST\""));
+        assert!(out.contains("_path = f\"/pets\""));
+        assert!(out.contains("_method = \"QUERY\""));
+        assert!(out.contains(
+            "_resp = self._client.request(_method, self._base_url + _path, params=_params, headers=_headers, json=_json)"
+        ));
+    }
+
+    #[test]
+    fn query_operation_honors_x_post_twin_path_override() {
+        let s = spec(
+            r##"{"paths":{"/pets/{petId}":{
+              "query":{"operationId":"searchPetById","x-post-twin":"/pets/{petId}/search",
+                "parameters":[{"name":"petId","in":"path","required":true,"schema":{"type":"integer"}}],
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object"}}}},
+                "responses":{"200":{"content":{"application/json":{"schema":{"type":"string"}}}}}}}}}"##,
+        );
+        let tm = build_type_map(&s);
+        let out = emit(&operations::build(&s), &tm);
+        assert!(out.contains("_path = f\"/pets/{pet_id}/search\""));
+    }
+
+    #[test]
+    fn non_query_operation_has_no_fallback_branch() {
+        let s = spec(
+            r##"{"paths":{"/pets":{"get":{"operationId":"listPets","responses":{"200":{"content":{"application/json":{"schema":{"type":"array","items":{"type":"string"}}}}}}}}}}"##,
+        );
+        let tm = build_type_map(&s);
+        let out = emit(&operations::build(&s), &tm);
+        assert!(!out.contains("if self._use_post_fallback:"));
+        assert!(out.contains(
+            "_resp = self._client.request(\"GET\", self._base_url + _path, params=_params, headers=_headers)"
+        ));
+    }
 }
 // CODEGEN-END

@@ -11,18 +11,20 @@
 //! The contract for external consumers is `GET /openapi.json`,
 //! generated at runtime from this module.
 
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
 use axum::{
-    extract::{Extension, Path, Query, State},
-    http::StatusCode,
+    extract::{Extension, FromRequest, Path, Query, Request, State},
+    http::{Method, StatusCode},
     middleware::from_fn_with_state,
     response::{IntoResponse, Json},
     routing::{delete, get, post, put},
     Router,
 };
+use futures::future::join_all;
 use serde::Deserialize;
 use service_http::{MetricsProvider, ReadinessHook};
 use utoipa::{
@@ -39,14 +41,17 @@ use crate::auth::{auth_middleware, AuthConfig, AuthContext, LumenVerifier, Role}
 use crate::backup_sink::{BackupSink, LocalFsSink};
 use crate::coordinator::{WriteCoordinator, WriteSink};
 use crate::log_entry::RaftLogEntry;
-use crate::raft::{ClusterStateView, ReadConsistency};
+use crate::raft::{ClusterStateView, RaftRole, ReadConsistency};
 use crate::storage::{ApplyOutcome, DropOutcome, Engine, SnapshotV1, StorageError};
 use crate::types::{
-    Analyzer, ApiError, CacheStats, CreateCollectionRequest, CreateCollectionResponse,
-    DuplicateGroup, DuplicatesRequest, DuplicatesResponse, FieldSpec, FieldStats, FieldType,
-    FieldValue, IndexItem, IndexRequest, IndexResponse, KnnQuery, MatchOp, MatchQuery, QueryNode,
-    RangeQuery, SearchHit, SearchRequest, SearchResponse, StatsResponse, StorageStats, TermQuery,
-    TermsQuery, VectorBackend, VectorMetric, VectorQuantize, VectorSpec,
+    Analyzer, ApiError, BatchSearchRequest, BatchSearchResponse, BatchSearchResult, CacheStats,
+    CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup, DuplicatesRequest,
+    DuplicatesResponse, FieldSpec, FieldStats, FieldType, FieldValue, IndexItem, IndexRequest,
+    IndexResponse, KnnQuery, MatchOp, MatchQuery, QueryNode, RangeQuery, ReplaceDocBody,
+    ReplaceDocItem, ReplaceDocResult, ReplaceDocsRequest, ReplaceDocsResponse, SearchHit,
+    SearchRequest, SearchResponse, StatsResponse, StorageStats, TermQuery, TermsQuery,
+    VectorBackend, VectorMetric, VectorQuantize, VectorSpec, MAX_BATCH_REPLACE_SIZE,
+    MAX_BATCH_SEARCH_SIZE,
 };
 use crate::wal::{MemWal, SharedWal};
 
@@ -86,6 +91,12 @@ pub trait WriteBackend: Send + Sync {
     async fn drop_collection(&self, collection_id: String, force: bool) -> Result<DropOutcome>;
 
     async fn index(&self, collection_id: String, req: IndexRequest) -> Result<IndexResponse>;
+
+    async fn replace_docs(
+        &self,
+        collection_id: String,
+        req: ReplaceDocsRequest,
+    ) -> Result<ReplaceDocsResponse>;
 
     async fn delete(
         &self,
@@ -160,6 +171,21 @@ impl WriteBackend for LocalWriteBackend {
             .await?
         {
             ApplyOutcome::Indexed(r) => Ok(r),
+            other => Err(Self::unexpected(other)),
+        }
+    }
+
+    async fn replace_docs(
+        &self,
+        collection_id: String,
+        req: ReplaceDocsRequest,
+    ) -> Result<ReplaceDocsResponse> {
+        match self
+            .writer
+            .submit(RaftLogEntry::ReplaceDocs { collection_id, req })
+            .await?
+        {
+            ApplyOutcome::Replaced(r) => Ok(r),
             other => Err(Self::unexpected(other)),
         }
     }
@@ -290,7 +316,10 @@ impl AppState {
         drop_field,
         index,
         delete_external_id,
+        replace_docs,
+        replace_doc,
         search,
+        batch_search,
         duplicates,
         stats,
     ),
@@ -308,6 +337,11 @@ impl AppState {
         IndexItem,
         FieldValue,
         IndexResponse,
+        ReplaceDocsRequest,
+        ReplaceDocItem,
+        ReplaceDocsResponse,
+        ReplaceDocResult,
+        ReplaceDocBody,
         SearchRequest,
         QueryNode,
         MatchQuery,
@@ -315,6 +349,9 @@ impl AppState {
         TermQuery,
         TermsQuery,
         RangeQuery,
+        // #1307: $ref'd by RangeQuery's gt/gte/lt/lte bounds (untagged f64 | String) —
+        // same dangling-ref reason as the #200 note below, registered explicitly.
+        crate::types::RangeBound,
         KnnQuery,
         crate::types::RrfQuery,
         crate::types::ExistsQuery,
@@ -330,6 +367,10 @@ impl AppState {
         crate::types::SortMissing,
         SearchHit,
         SearchResponse,
+        BatchSearchRequest,
+        crate::types::BatchSearchItem,
+        BatchSearchResponse,
+        BatchSearchResult,
         DuplicatesRequest,
         DuplicateGroup,
         DuplicatesResponse,
@@ -392,17 +433,49 @@ pub fn router(state: AppState) -> Router {
     // them without a token even when auth is required.
     let auth_state = Arc::new(LumenVerifier::new(state.auth.clone()));
     let data_plane = Router::new()
-        .route("/collections", get(list_collections))
+        .route(
+            "/collections",
+            get(list_collections)
+                .options(collections_query_probe)
+                .head(collections_query_probe)
+                // Epic #1296 R1: `QUERY /collections` is a dual-registered
+                // twin of `POST /collections:search` (#1271 batch search).
+                // Axum has no native `Method::QUERY` support yet
+                // (tokio-rs/axum#3799, PR #3801 open), so this is the interim
+                // dispatch — `fallback` runs for any method not explicitly
+                // registered above (`GET`, `OPTIONS`, `HEAD`), and the
+                // handler re-checks by hand. Replace with a native
+                // `MethodFilter::QUERY` combinator once that PR lands.
+                .fallback(collections_query_dispatch),
+        )
         .route(
             "/collections/{collection_id}",
-            put(create_collection).delete(drop_collection),
+            put(create_collection)
+                .delete(drop_collection)
+                .options(collection_id_query_probe)
+                .head(collection_id_query_probe)
+                // Epic #1296 R1: `QUERY /collections/{collection_id}` is a
+                // dual-registered twin of `POST
+                // /collections/{collection_id}/search`. See the
+                // `/collections` route above for the interim-fallback
+                // rationale.
+                .fallback(collection_id_query_dispatch),
         )
         .route("/collections/{collection_id}/index", post(index))
         .route(
             "/collections/{collection_id}/index/{external_id}",
             delete(delete_external_id),
         )
+        .route(
+            "/collections/{collection_id}/docs:replace",
+            put(replace_docs),
+        )
+        .route(
+            "/collections/{collection_id}/docs/{external_id}",
+            put(replace_doc),
+        )
         .route("/collections/{collection_id}/search", post(search))
+        .route("/collections:search", post(batch_search))
         .route("/collections/{collection_id}/duplicates", post(duplicates))
         .route("/collections/{collection_id}/stats", get(stats))
         .route(
@@ -487,6 +560,76 @@ fn read_consistency_from(headers: &HeaderMap) -> ReadConsistency {
             .get("x-read-consistency")
             .and_then(|h| h.to_str().ok()),
     )
+}
+
+/// Enforces a resolved `x-read-consistency` against this pod's live
+/// per-shard cluster state (`AppState::cluster`) before a read reaches the
+/// local engine (#1310).
+///
+/// Standalone and legacy external-log builds (`state.cluster` is `None`)
+/// have exactly one authoritative copy per shard, so every consistency
+/// level is trivially satisfied there — this is a no-op, matching today's
+/// behavior unchanged. Primary-replica mode (`state.cluster` is `Some`) is
+/// the only place a request's resolved [`ReadConsistency`] can actually
+/// diverge from what gets served:
+/// - [`ReadConsistency::Any`] is unconstrained.
+/// - [`ReadConsistency::Leader`] only succeeds on the pod that currently
+///   holds `RaftRole::Leader` for this shard; lumen has no read-forwarding
+///   surface, so a non-leader replica rejects the request rather than
+///   silently serving a possibly-stale local copy.
+/// - [`ReadConsistency::Bounded`] succeeds on the leader (never stale) or
+///   on a follower/learner whose `replication_lag_ms` is at or under the
+///   requested bound; a replica over the bound rejects rather than
+///   silently serving a stale read.
+fn enforce_read_consistency(state: &AppState, consistency: ReadConsistency) -> Result<(), ApiErr> {
+    let Some(cluster) = state.cluster.as_ref() else {
+        return Ok(());
+    };
+    match consistency {
+        ReadConsistency::Any => Ok(()),
+        ReadConsistency::Leader => {
+            if cluster.role == RaftRole::Leader {
+                return Ok(());
+            }
+            Err(match cluster.group.leader() {
+                Some(leader) => ApiErr::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "read_consistency_not_leader",
+                    format!(
+                        "replica `{}` is not the shard {} leader (current leader is `{}`); \
+                         leader-consistency reads must reach it",
+                        cluster.pod_name, cluster.shard_index, leader.pod_name
+                    ),
+                ),
+                None => ApiErr::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "read_consistency_no_leader",
+                    format!(
+                        "shard {} has no reachable leader; leader-consistency reads cannot be satisfied",
+                        cluster.shard_index
+                    ),
+                ),
+            })
+        }
+        ReadConsistency::Bounded(bound_ms) => {
+            if cluster.role == RaftRole::Leader {
+                return Ok(());
+            }
+            let lag_ms = cluster.replication_lag_ms.load(Ordering::Relaxed);
+            if lag_ms <= bound_ms {
+                Ok(())
+            } else {
+                Err(ApiErr::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "read_consistency_lag_exceeded",
+                    format!(
+                        "replica `{}` lag {lag_ms}ms exceeds bounded({bound_ms}ms) consistency",
+                        cluster.pod_name
+                    ),
+                ))
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -719,6 +862,109 @@ async fn delete_external_id(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Batch full-replacement upsert: each item's `fields` becomes the doc's
+/// entire indexed state, implicitly deleting any declared schema field the
+/// doc has today but that is absent from `fields`. `docs:replace` is one
+/// literal path segment (AIP-136 custom-method syntax) appended after
+/// `{collection_id}`, so it registers directly in axum next to
+/// `/collections/{collection_id}/docs/{external_id}` without any capture
+/// ambiguity — collection ids are validated to reject `:`.
+///
+/// PUT is deliberate: this is idempotent full replacement (plus optional
+/// doc-level last-write-wins), so replaying the same request converges to
+/// the same state. Own the *complete* row for a doc? Use `docs:replace`.
+/// Own only *some* fields and want to add/update those without touching
+/// the rest? Use `POST .../index` instead.
+///
+/// One bad item (unknown field, type mismatch) never fails the batch — the
+/// batch-level status stays 200 and that item's [`ReplaceDocResult`]
+/// carries the error. Only a malformed body or an over-limit batch returns
+/// 400.
+#[utoipa::path(
+    put,
+    path = "/collections/{collection_id}/docs:replace",
+    tag = "Index",
+    params(("collection_id" = String, Path, description = "Collection namespace")),
+    request_body = ReplaceDocsRequest,
+    responses(
+        (status = 200, description = "Per-item results, same order and length as `docs`", body = ReplaceDocsResponse),
+        (status = 400, description = "Malformed body or batch size over the limit", body = ApiError)
+    )
+)]
+async fn replace_docs(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(collection_id): Path<String>,
+    Json(req): Json<ReplaceDocsRequest>,
+) -> Result<Json<ReplaceDocsResponse>, ApiErr> {
+    auth.ensure(&collection_id, Role::Write)?;
+    if req.docs.len() > MAX_BATCH_REPLACE_SIZE {
+        return Err(ApiErr::new(
+            StatusCode::BAD_REQUEST,
+            "batch_too_large",
+            format!(
+                "batch has {} items, max is {MAX_BATCH_REPLACE_SIZE}",
+                req.docs.len()
+            ),
+        ));
+    }
+    let resp = state
+        .write_backend
+        .replace_docs(collection_id.clone(), req)
+        .await
+        .map_err(ApiErr::from)?;
+    Ok(Json(resp))
+}
+
+/// Single-resource sugar over `docs:replace`: exactly the one-item batch
+/// `{"docs": [{"external_id": ..., "version": ..., "fields": {...}}]}`,
+/// unwrapped back into a bare [`ReplaceDocResult`]. See [`replace_docs`]
+/// for the full-replacement / doc-level LWW semantics — the batch-level
+/// status stays 200 here too; a bad item comes back as
+/// `{"status":"error",...}` in the body rather than as an HTTP error.
+#[utoipa::path(
+    put,
+    path = "/collections/{collection_id}/docs/{external_id}",
+    tag = "Index",
+    params(
+        ("collection_id" = String, Path, description = "Collection namespace"),
+        ("external_id"   = String, Path, description = "Caller-owned identifier")
+    ),
+    request_body = ReplaceDocBody,
+    responses(
+        (status = 200, description = "Replacement result for this doc", body = ReplaceDocResult),
+        (status = 400, description = "Malformed body", body = ApiError)
+    )
+)]
+async fn replace_doc(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path((collection_id, external_id)): Path<(String, String)>,
+    Json(body): Json<ReplaceDocBody>,
+) -> Result<Json<ReplaceDocResult>, ApiErr> {
+    auth.ensure(&collection_id, Role::Write)?;
+    let req = ReplaceDocsRequest {
+        docs: vec![ReplaceDocItem {
+            external_id,
+            version: body.version,
+            fields: body.fields,
+        }],
+    };
+    let resp = state
+        .write_backend
+        .replace_docs(collection_id.clone(), req)
+        .await
+        .map_err(ApiErr::from)?;
+    let result = resp.results.into_iter().next().ok_or_else(|| {
+        ApiErr::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "no result for single-doc replace".to_string(),
+        )
+    })?;
+    Ok(Json(result))
+}
+
 // ---------------------------------------------------------------------------
 // Query
 // ---------------------------------------------------------------------------
@@ -738,17 +984,242 @@ async fn search(
     Path(collection_id): Path<String>,
     Json(req): Json<SearchRequest>,
 ) -> Result<Json<SearchResponse>, ApiErr> {
-    auth.ensure(&collection_id, Role::Read)?;
-    let _consistency = read_consistency_from(&headers);
-    // Standalone and legacy external-log builds satisfy this locally. Primary-
-    // replica mode will enforce leader/bounded/any against the live cluster
-    // state once the raft_core-backed surface is wired.
-    Ok(Json(
-        state
-            .search_backend
-            .search(&collection_id, req)
-            .map_err(ApiErr::from)?,
-    ))
+    Ok(Json(search_core(
+        &state,
+        &auth,
+        &headers,
+        &collection_id,
+        req,
+    )?))
+}
+
+/// Shared implementation behind `POST /collections/{collection_id}/search`
+/// and its `QUERY /collections/{collection_id}` twin
+/// ([`collection_id_query_dispatch`], epic #1296 R1: every QUERY endpoint
+/// keeps a POST twin — same handler, identical response).
+fn search_core(
+    state: &AppState,
+    auth: &AuthContext,
+    headers: &HeaderMap,
+    collection_id: &str,
+    req: SearchRequest,
+) -> Result<SearchResponse, ApiErr> {
+    auth.ensure(collection_id, Role::Read)?;
+    let consistency = read_consistency_from(headers);
+    enforce_read_consistency(state, consistency)?;
+    state
+        .search_backend
+        .search(collection_id, req)
+        .map_err(ApiErr::from)
+}
+
+/// msearch-style batch search: N independent `(collection, SearchRequest)`
+/// items in one HTTP request, fanned out concurrently. `collections:search`
+/// is one literal path segment (AIP-136 custom-method syntax), so it
+/// registers directly in axum next to `/collections` and
+/// `/collections/{collection_id}` without any capture ambiguity.
+///
+/// One item failing (e.g. an unknown collection) never fails the batch —
+/// the batch-level status stays 200 and that item's [`BatchSearchResult`]
+/// carries the error. Only a malformed body or an over-limit batch returns
+/// 400. Cursors, sort, and collapse all stay per-item: there is no merged
+/// cursor and no cross-collection score merging.
+#[utoipa::path(
+    post,
+    path = "/collections:search",
+    tag = "Query",
+    request_body = BatchSearchRequest,
+    responses(
+        (status = 200, description = "Per-item results, same order and length as `searches`", body = BatchSearchResponse),
+        (status = 400, description = "Malformed body or batch size over the limit", body = ApiError)
+    )
+)]
+async fn batch_search(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
+    Json(req): Json<BatchSearchRequest>,
+) -> Result<Json<BatchSearchResponse>, ApiErr> {
+    Ok(Json(batch_search_core(&state, &auth, &headers, req).await?))
+}
+
+/// Shared implementation behind `POST /collections:search` and its `QUERY
+/// /collections` twin ([`collections_query_dispatch`], epic #1296 R1: every
+/// QUERY endpoint keeps a POST twin — same handler, identical response).
+async fn batch_search_core(
+    state: &AppState,
+    auth: &AuthContext,
+    headers: &HeaderMap,
+    req: BatchSearchRequest,
+) -> Result<BatchSearchResponse, ApiErr> {
+    if req.searches.len() > MAX_BATCH_SEARCH_SIZE {
+        return Err(ApiErr::new(
+            StatusCode::BAD_REQUEST,
+            "batch_too_large",
+            format!(
+                "batch has {} items, max is {MAX_BATCH_SEARCH_SIZE}",
+                req.searches.len()
+            ),
+        ));
+    }
+    let consistency = read_consistency_from(headers);
+    enforce_read_consistency(state, consistency)?;
+    let results = join_all(req.searches.into_iter().map(|item| {
+        let state = state.clone();
+        let auth = auth.clone();
+        async move {
+            if let Err(e) = auth.ensure(&item.collection, Role::Read) {
+                return batch_search_auth_error(e);
+            }
+            match state.search_backend.search(&item.collection, item.request) {
+                Ok(response) => BatchSearchResult::Ok { response },
+                Err(e) => batch_search_storage_error(e),
+            }
+        }
+    }))
+    .await;
+    Ok(BatchSearchResponse { results })
+}
+
+// ---------------------------------------------------------------------------
+// QUERY (RFC 10008) — dual-registered POST twins (epic #1296 R1)
+// ---------------------------------------------------------------------------
+//
+// axum has no native `Method::QUERY`/`MethodFilter::QUERY` yet
+// (tokio-rs/axum#3799, PR #3801 open). The interim dispatch below registers
+// each route's `fallback` — the handler axum calls for any method not
+// explicitly claimed by that route's `get`/`post`/`put`/`delete`/`options`/
+// `head` combinators — and re-checks the method by hand via
+// `Method::from_bytes(b"QUERY")`. Replace `is_query_method` and both
+// `*_query_dispatch` fallbacks with native `MethodFilter::QUERY` combinators
+// once that PR lands; `*_query_probe` (OPTIONS/HEAD) can move to ordinary
+// combinators unchanged.
+
+/// `true` for the RFC 10008 QUERY method. `http::Method` has no `QUERY`
+/// constant yet, so this matches the wire token the same way
+/// `Method::from_bytes(b"QUERY")` would.
+fn is_query_method(method: &Method) -> bool {
+    Method::from_bytes(b"QUERY").is_ok_and(|query| *method == query)
+}
+
+/// 405 for any method that reaches a QUERY-dispatch fallback without
+/// actually being QUERY. Normal traffic never hits this arm — `PUT`/
+/// `DELETE`/`GET`/`OPTIONS`/`HEAD` are all claimed by explicit combinators
+/// ahead of the fallback — it only guards stray/unsupported methods.
+fn query_method_not_allowed(allow: &'static str) -> axum::response::Response {
+    axum::response::Response::builder()
+        .status(StatusCode::METHOD_NOT_ALLOWED)
+        .header(axum::http::header::ALLOW, allow)
+        .body(axum::body::Body::empty())
+        .expect("static not-allowed headers are always valid")
+}
+
+/// `OPTIONS`/`HEAD` probe response shared by both QUERY targets: advertises
+/// `Accept-Query: application/json` (RFC 10008 discovery) and lists the
+/// target's full method set, QUERY included, in `Allow`.
+fn query_probe_response(allow: &'static str) -> axum::response::Response {
+    axum::response::Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .header(axum::http::header::ALLOW, allow)
+        .header("accept-query", "application/json")
+        .body(axum::body::Body::empty())
+        .expect("static probe headers are always valid")
+}
+
+async fn collection_id_query_probe() -> axum::response::Response {
+    query_probe_response("PUT, DELETE, QUERY, OPTIONS, HEAD")
+}
+
+async fn collections_query_probe() -> axum::response::Response {
+    query_probe_response("GET, QUERY, OPTIONS, HEAD")
+}
+
+/// `QUERY /collections/{collection_id}` — dual-registered twin of `POST
+/// /collections/{collection_id}/search` (same [`search_core`] handler,
+/// identical response for identical bodies). Content-Type is mandatory on
+/// QUERY per RFC 10008; reusing [`Json`]'s own `FromRequest` for the body
+/// gives that for free — missing/mismatched `Content-Type` rejects with 415,
+/// byte-identical to what the POST twin already returns for the same input.
+async fn collection_id_query_dispatch(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(collection_id): Path<String>,
+    request: Request,
+) -> axum::response::Response {
+    if !is_query_method(request.method()) {
+        return query_method_not_allowed("PUT, DELETE, QUERY, OPTIONS, HEAD");
+    }
+    let headers = request.headers().clone();
+    match Json::<SearchRequest>::from_request(request, &state).await {
+        Ok(Json(req)) => match search_core(&state, &auth, &headers, &collection_id, req) {
+            Ok(resp) => Json(resp).into_response(),
+            Err(e) => e.into_response(),
+        },
+        Err(rejection) => rejection.into_response(),
+    }
+}
+
+/// `QUERY /collections` — dual-registered twin of `POST /collections:search`
+/// (same [`batch_search_core`] handler, identical response for identical
+/// bodies). See [`collection_id_query_dispatch`] for the Content-Type/415
+/// and interim-fallback rationale.
+async fn collections_query_dispatch(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    request: Request,
+) -> axum::response::Response {
+    if !is_query_method(request.method()) {
+        return query_method_not_allowed("GET, QUERY, OPTIONS, HEAD");
+    }
+    let headers = request.headers().clone();
+    match Json::<BatchSearchRequest>::from_request(request, &state).await {
+        Ok(Json(req)) => match batch_search_core(&state, &auth, &headers, req).await {
+            Ok(resp) => Json(resp).into_response(),
+            Err(e) => e.into_response(),
+        },
+        Err(rejection) => rejection.into_response(),
+    }
+}
+
+/// Classify one batch item's search failure into a
+/// [`BatchSearchResult::Error`] instead of failing the whole batch. Mirrors
+/// `From<anyhow::Error> for ApiErr`'s `StorageError` classification, but the
+/// `code` values line up with the batch wire contract
+/// (`"collection_not_found"`, ...) rather than `ApiErr`'s internal `kind`
+/// strings.
+fn batch_search_storage_error(e: anyhow::Error) -> BatchSearchResult {
+    let code = match e.downcast_ref::<StorageError>() {
+        Some(StorageError::CollectionNotFound(_)) => "collection_not_found",
+        Some(StorageError::InvalidCollectionName(_)) => "invalid_collection_name",
+        Some(StorageError::UnknownField { .. }) => "unknown_field",
+        Some(StorageError::TypeMismatch { .. }) => "type_mismatch",
+        Some(StorageError::DuplicatesOnText(_)) => "bad_request",
+        Some(StorageError::InvalidNumber(_)) => "invalid_number",
+        Some(StorageError::BulkLimit { .. }) => "bulk_limit",
+        Some(StorageError::QueryTooComplex(_)) => "query_too_complex",
+        Some(StorageError::Gone(_)) => "gone",
+        Some(StorageError::UnsupportedSort(_)) => "unsupported_sort",
+        None => "bad_request",
+    };
+    BatchSearchResult::Error {
+        code: code.to_string(),
+        message: e.to_string(),
+    }
+}
+
+/// Classify one batch item's auth rejection into a
+/// [`BatchSearchResult::Error`].
+fn batch_search_auth_error(e: crate::auth::AuthErr) -> BatchSearchResult {
+    match e {
+        crate::auth::AuthErr::Forbidden {
+            subject,
+            needed,
+            collection_id,
+        } => BatchSearchResult::Error {
+            code: "forbidden".to_string(),
+            message: format!("subject `{subject}` lacks {needed:?} on `{collection_id}`"),
+        },
+    }
 }
 
 #[utoipa::path(
@@ -1086,7 +1557,61 @@ async fn restore(
 pub fn openapi() -> utoipa::openapi::OpenApi {
     let mut doc = ApiDoc::openapi();
     doc.info.version = env!("CARGO_PKG_VERSION").to_string();
+    inject_query_twins(&mut doc);
     doc
+}
+
+/// Describe the #1297 `QUERY` twins (OpenAPI 3.2 / RFC 10008, epic #1296 R1)
+/// in the generated document: `QUERY /collections` (twin of `POST
+/// /collections:search`) and `QUERY /collections/{collection_id}` (twin of
+/// `POST /collections/{collection_id}/search`).
+///
+/// utoipa 4.2.3 predates OpenAPI 3.2 and has no `PathItemType::Query`
+/// variant, so the operation is injected as raw JSON via
+/// `PathItem::extensions` — utoipa `#[serde(flatten)]`s that map into the
+/// serialized path-item object next to `get`/`post`/etc, giving a `"query"`
+/// key byte-identical in shape to a native one. `libs/openapi-codegen`'s IR
+/// (`ir/operations.rs`, #1298) only needs that serialized `"query"` key plus
+/// an `x-post-twin` extension pointing at the POST twin path; it does not
+/// require a typed enum variant to parse the operation. (The `"openapi"`
+/// version field itself stays at utoipa's fixed `3.0.3` here — that enum has
+/// no 3.2 variant — `lumen spec`'s offline output stamps 3.2 on top; see
+/// `spec::openapi_value`.)
+fn inject_query_twins(doc: &mut utoipa::openapi::OpenApi) {
+    let twin = |doc: &utoipa::openapi::OpenApi, twin_path: &str, operation_id: &str| {
+        let mut op = doc
+            .paths
+            .paths
+            .get(twin_path)?
+            .operations
+            .get(&openapi::PathItemType::Post)?
+            .clone();
+        op.operation_id = Some(operation_id.to_string());
+        op.extensions
+            .get_or_insert_with(Default::default)
+            .insert("x-post-twin".to_string(), serde_json::json!(twin_path));
+        Some(serde_json::to_value(&op).expect("Operation serializes to JSON"))
+    };
+
+    if let Some(query_op) = twin(
+        doc,
+        "/collections/{collection_id}/search",
+        "query_collection",
+    ) {
+        if let Some(item) = doc.paths.paths.get_mut("/collections/{collection_id}") {
+            item.extensions
+                .get_or_insert_with(Default::default)
+                .insert("query".to_string(), query_op);
+        }
+    }
+
+    if let Some(query_op) = twin(doc, "/collections:search", "query_collections") {
+        if let Some(item) = doc.paths.paths.get_mut("/collections") {
+            item.extensions
+                .get_or_insert_with(Default::default)
+                .insert("query".to_string(), query_op);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1122,6 +1647,11 @@ impl From<anyhow::Error> for ApiErr {
                 StorageError::CollectionNotFound(_) => {
                     Self::new(StatusCode::NOT_FOUND, "not_found", e.to_string())
                 }
+                StorageError::InvalidCollectionName(_) => Self::new(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_collection_name",
+                    e.to_string(),
+                ),
                 StorageError::UnknownField { .. } => Self::new(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "unknown_field",

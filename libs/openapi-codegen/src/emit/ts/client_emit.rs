@@ -27,6 +27,12 @@ const FETCH_RUNTIME: &str = r##"export interface ClientConfig {
   fetch?: typeof fetch;
   headers?: Record<string, string>;
   transport?: TransportPolicy;
+  /**
+   * Epic #1296 POST-twin fallback: when true, every generated `QUERY`
+   * operation is sent as `POST` against its documented twin path instead of
+   * the HTTP `QUERY` method (RFC 10008). Off by default.
+   */
+  usePostFallback?: boolean;
 }
 
 export interface TransportPolicy {
@@ -165,6 +171,12 @@ export interface ClientConfig {
   axios?: AxiosInstance;
   headers?: Record<string, string>;
   transport?: TransportPolicy;
+  /**
+   * Epic #1296 POST-twin fallback: when true, every generated `QUERY`
+   * operation is sent as `POST` against its documented twin path instead of
+   * the HTTP `QUERY` method (RFC 10008). Off by default.
+   */
+  usePostFallback?: boolean;
 }
 
 export interface TransportPolicy {
@@ -320,10 +332,26 @@ fn emit_method(p: &OperationPlan) -> String {
         None => "()".to_string(),
     };
 
-    let mut args = vec![
-        format!("method: \"{}\"", p.http_method),
-        format!("path: {}", path_template(p)),
-    ];
+    let mut args = match &p.post_twin_path {
+        // OpenAPI 3.2 `QUERY` operation with a POST-twin fallback target:
+        // route through `config.usePostFallback` at call time so a single
+        // generated client can serve either transport (epic #1296 policy).
+        Some(twin) if p.http_method == "QUERY" => vec![
+            format!(
+                "method: config.usePostFallback ? \"POST\" : \"{}\"",
+                p.http_method
+            ),
+            format!(
+                "path: config.usePostFallback ? {} : {}",
+                path_template_for(twin),
+                path_template_for(&p.path_raw)
+            ),
+        ],
+        _ => vec![
+            format!("method: \"{}\"", p.http_method),
+            format!("path: {}", path_template_for(&p.path_raw)),
+        ],
+    };
     if !p.query_params.is_empty() {
         let entries = p
             .query_params
@@ -371,10 +399,12 @@ fn emit_method(p: &OperationPlan) -> String {
     )
 }
 
-/// `/pets/{petId}` → `` `/pets/${data.path.petId}` ``.
-fn path_template(p: &OperationPlan) -> String {
+/// `/pets/{petId}` → `` `/pets/${data.path.petId}` ``. Takes a raw path
+/// template rather than an [`OperationPlan`] so it can also render a
+/// POST-twin fallback path that shares the same `{param}` names.
+fn path_template_for(raw: &str) -> String {
     let mut out = String::from("`");
-    let mut chars = p.path_raw.chars().peekable();
+    let mut chars = raw.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '{' {
             let mut name = String::new();
@@ -507,6 +537,42 @@ mod tests {
         assert!(out.contains(
             "return request<HealthResponse>(config, { method: \"GET\", path: `/health`, expectBody: false });"
         ));
+    }
+
+    #[test]
+    fn query_operation_emits_query_method_with_post_fallback_ternary() {
+        let out = render(
+            r##"{"paths":{"/pets":{
+              "query":{"operationId":"searchPets",
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object"}}}},
+                "responses":{"200":{"content":{"application/json":{"schema":{"type":"array","items":{"type":"string"}}}}}}}}}}"##,
+        );
+        assert!(out.contains("searchPets(data: SearchPetsData): Promise<SearchPetsResponse> {"));
+        assert!(out.contains("method: config.usePostFallback ? \"POST\" : \"QUERY\""));
+        assert!(out.contains("path: config.usePostFallback ? `/pets` : `/pets`"));
+        assert!(out.contains("body: data.body"));
+    }
+
+    #[test]
+    fn query_operation_honors_x_post_twin_path_in_fallback_branch() {
+        let out = render(
+            r##"{"paths":{"/pets/{petId}":{
+              "query":{"operationId":"searchPetById","x-post-twin":"/pets/{petId}/search",
+                "parameters":[{"name":"petId","in":"path","required":true,"schema":{"type":"integer"}}],
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object"}}}},
+                "responses":{"200":{"content":{"application/json":{"schema":{"type":"string"}}}}}}}}}"##,
+        );
+        assert!(out.contains(
+            "path: config.usePostFallback ? `/pets/${data.path.petId}/search` : `/pets/${data.path.petId}`"
+        ));
+    }
+
+    #[test]
+    fn client_config_declares_use_post_fallback_flag() {
+        let fetch = emit_runtime(HttpClient::Fetch);
+        assert!(fetch.contains("usePostFallback?: boolean;"));
+        let axios = emit_runtime(HttpClient::Axios);
+        assert!(axios.contains("usePostFallback?: boolean;"));
     }
 
     #[test]
