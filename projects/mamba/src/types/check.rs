@@ -1,6 +1,6 @@
-use super::generic::{GenericParams, Substitution};
+use super::generic::{bind_explicit_type_args, GenericParams, Substitution};
 use super::protocol::ProtocolRegistry;
-use super::ty::TypeVarId;
+use super::ty::{TypeParamDefault, TypeVarId, TypeVarKind};
 use super::{Ty, TypeContext, TypeId};
 use crate::error::MambaError;
 use crate::parser::ast::*;
@@ -349,7 +349,19 @@ impl TypeChecker {
     }
 
     pub(crate) fn error(&mut self, span: Span, msg: impl Into<String>) {
-        self.errors.push(MambaError::type_err(span, msg));
+        let message = msg.into();
+        if self.errors.iter().any(|error| {
+            matches!(
+                error,
+                MambaError::Type {
+                    span: existing_span,
+                    message: existing_message,
+                } if *existing_span == span && existing_message == &message
+            )
+        }) {
+            return;
+        }
+        self.errors.push(MambaError::type_err(span, message));
     }
 
     /// Current error count — pair with `truncate_errors` to speculatively
@@ -389,25 +401,36 @@ impl TypeChecker {
     ) -> GenericParams {
         let mut gp = GenericParams::new();
 
-        // Allocate every TypeVar first so bounds such as `T: Wrapper[U]`
-        // can resolve all declaration-local parameter names.
+        // Allocate every parameter first so lazy metadata can keep stable
+        // identities while the declaration-local aliases are in scope.
         let allocated: Vec<_> = type_params
             .iter()
             .map(|param| {
-                let var_id = self.tcx.new_type_var(param.name.clone(), None, Vec::new());
-                (param, var_id)
+                let kind = match param.kind {
+                    TypeParamKind::TypeVar => TypeVarKind::TypeVar,
+                    TypeParamKind::TypeVarTuple => TypeVarKind::TypeVarTuple,
+                    TypeParamKind::ParamSpec => TypeVarKind::ParamSpec,
+                };
+                let var_id = self.tcx.new_type_param(
+                    param.name.clone(),
+                    kind,
+                    None,
+                    Vec::new(),
+                    TypeParamDefault::None,
+                );
+                (param, var_id, kind)
             })
             .collect();
         let aliases: Vec<_> = allocated
             .iter()
-            .map(|(param, var_id)| (param.name.clone(), *var_id))
+            .map(|(param, var_id, _)| (param.name.clone(), *var_id))
             .collect();
         self.register_type_param_aliases(&aliases);
 
         // Resolve metadata only after the complete alias scope exists. A
         // lazy forward reference that is not resolvable during preregistration
         // is intentionally omitted without leaking an `unknown type` error.
-        for (param, var_id) in allocated {
+        for (param, var_id, kind) in allocated {
             let bound = param
                 .bound
                 .as_ref()
@@ -422,10 +445,17 @@ impl TypeChecker {
                         .collect::<Option<Vec<_>>>()
                 })
                 .unwrap_or_default();
+            let default = match &param.default {
+                None => TypeParamDefault::None,
+                Some(expr) => self
+                    .resolve_type_param_metadata_expr(expr)
+                    .map(TypeParamDefault::Resolved)
+                    .unwrap_or(TypeParamDefault::Unresolved),
+            };
 
             self.tcx
-                .set_type_var_metadata(var_id, bound, constraints.clone());
-            gp.add_with_constraints(&param.name, var_id, bound, constraints);
+                .set_type_var_metadata(var_id, bound, constraints.clone(), default);
+            gp.add_param(&param.name, var_id, kind, bound, constraints, default);
         }
 
         gp
@@ -523,9 +553,15 @@ impl TypeChecker {
             .iter()
             .map(|tv| (tv.name.clone(), tv.id))
             .collect();
+        let param_positions: HashMap<_, _> = gp
+            .params
+            .iter()
+            .enumerate()
+            .map(|(index, tv)| (tv.id, (index, tv.kind)))
+            .collect();
         self.register_type_param_aliases(&aliases);
 
-        for (param, tv) in type_params.iter().zip(gp.params.iter_mut()) {
+        for (index, (param, tv)) in type_params.iter().zip(gp.params.iter_mut()).enumerate() {
             if let Some(expr) = &param.bound {
                 if let Some(bound) = self.resolve_type_param_metadata_expr(expr) {
                     if self.tcx.contains_type_var(bound) {
@@ -555,8 +591,73 @@ impl TypeChecker {
                     }
                 }
             }
+            if let Some(expr) = &param.default {
+                tv.default = self
+                    .resolve_type_param_metadata_expr(expr)
+                    .map(TypeParamDefault::Resolved)
+                    .unwrap_or(TypeParamDefault::Unresolved);
+            }
+            if let Some(default) = tv.default.resolved() {
+                let references = self.tcx.type_vars_in(default);
+                let invalid_scope = references.iter().any(|referenced| {
+                    param_positions
+                        .get(referenced)
+                        .is_none_or(|(position, _)| *position >= index)
+                });
+                let invalid_kind = match self.tcx.get(default) {
+                    Ty::TypeVar(referenced) => param_positions
+                        .get(referenced)
+                        .is_some_and(|(_, kind)| *kind != tv.kind),
+                    _ => false,
+                };
+                if invalid_scope || invalid_kind {
+                    if let Some(expr) = &param.default {
+                        self.error(
+                            expr.span,
+                            format!(
+                                "default for type parameter '{}' may only reference earlier parameters of the same kind",
+                                tv.name
+                            ),
+                        );
+                    }
+                    tv.default = TypeParamDefault::Unresolved;
+                }
+            }
+            if let Some(default) = tv.default.resolved() {
+                if !self.tcx.contains_type_var(default) {
+                    if let Some(bound) = tv.bound {
+                        if !self.tcx.is_subtype(default, bound) {
+                            if let Some(expr) = &param.default {
+                                self.error(
+                                    expr.span,
+                                    format!(
+                                        "default for type parameter '{}' violates its bound",
+                                        tv.name
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    if !tv.constraints.is_empty()
+                        && !tv
+                            .constraints
+                            .iter()
+                            .any(|constraint| default == *constraint)
+                    {
+                        if let Some(expr) = &param.default {
+                            self.error(
+                                expr.span,
+                                format!(
+                                    "default for type parameter '{}' violates its constraints",
+                                    tv.name
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
             self.tcx
-                .set_type_var_metadata(tv.id, tv.bound, tv.constraints.clone());
+                .set_type_var_metadata(tv.id, tv.bound, tv.constraints.clone(), tv.default);
         }
 
         self.unregister_type_params(type_params);
@@ -1035,6 +1136,70 @@ impl TypeChecker {
         std::mem::take(&mut self.errors)
     }
 
+    fn specialize_user_class(
+        &mut self,
+        name: &str,
+        symbol: SymbolId,
+        base_ty: TypeId,
+        supplied: Option<&[TypeId]>,
+        span: Span,
+    ) -> TypeId {
+        let Ty::Class {
+            fields, match_args, ..
+        } = self.tcx.get(base_ty).clone()
+        else {
+            return base_ty;
+        };
+        let Some(generic_params) = self.generic_defs.get(&symbol).cloned() else {
+            if supplied.is_some() {
+                self.error(span, format!("type '{name}' is not generic"));
+            }
+            return base_ty;
+        };
+
+        let (subst, resolved_args, errors) = if let Some(args) = supplied {
+            bind_explicit_type_args(&generic_params, args, &mut self.tcx)
+        } else {
+            if generic_params
+                .params
+                .iter()
+                .any(|param| param.kind != TypeVarKind::TypeVar)
+            {
+                return base_ty;
+            }
+            let mut subst = Substitution::new();
+            let mut resolved = Vec::with_capacity(generic_params.len());
+            for param in &generic_params.params {
+                let concrete = param
+                    .default
+                    .resolved()
+                    .map(|default| subst.apply(default, &mut self.tcx))
+                    .unwrap_or_else(|| self.tcx.any());
+                subst.insert(param.id, concrete);
+                resolved.push(concrete);
+            }
+            (subst, resolved, Vec::new())
+        };
+        for error in errors {
+            self.error(span, error);
+        }
+
+        let fields = fields
+            .iter()
+            .map(|(field_name, field_ty)| {
+                (field_name.clone(), subst.apply(*field_ty, &mut self.tcx))
+            })
+            .collect();
+        let arg_names: Vec<String> = resolved_args.iter().map(|arg| self.ty_name(*arg)).collect();
+        let specialized = self.tcx.intern(Ty::Class {
+            name: format!("{name}[{}]", arg_names.join(", ")),
+            fields,
+            match_args,
+        });
+        self.class_symbols_by_type.insert(specialized, symbol);
+        specialized
+    }
+
     pub(crate) fn resolve_type_expr(&mut self, ty: &Spanned<TypeExpr>) -> TypeId {
         match &ty.node {
             TypeExpr::Named(name) => match name.as_str() {
@@ -1091,7 +1256,8 @@ impl TypeChecker {
                     }
                     // User-defined type — look up in symbols
                     if let Some(sym) = self.symbols.lookup(name) {
-                        self.get_sym_type(sym.0)
+                        let base_ty = self.get_sym_type(sym.0);
+                        self.specialize_user_class(name, sym, base_ty, None, ty.span)
                     } else if name.contains('.') {
                         // Dotted reference like `collections.abc.Mapping`
                         // (#1576): external/forward type — treat as Any so
@@ -1129,6 +1295,20 @@ impl TypeChecker {
                     "dict" if inner.len() == 2 => self.tcx.intern(Ty::Dict(inner[0], inner[1])),
                     "tuple" => self.tcx.intern(Ty::Tuple(inner)),
                     "set" | "frozenset" if inner.len() == 1 => self.tcx.intern(Ty::Set(inner[0])),
+                    "list" | "set" | "frozenset" => {
+                        self.error(
+                            ty.span,
+                            format!("expected 1 type argument, got {}", inner.len()),
+                        );
+                        self.tcx.error()
+                    }
+                    "dict" => {
+                        self.error(
+                            ty.span,
+                            format!("expected 2 type arguments, got {}", inner.len()),
+                        );
+                        self.tcx.error()
+                    }
                     "Callable" if inner.len() >= 2 => {
                         // #243: Callable[[params...], ret] → Fn type
                         let ret = inner[inner.len() - 1];
@@ -1143,41 +1323,7 @@ impl TypeChecker {
                         // Support user-defined generic types like Box[int]
                         if let Some(sym) = self.symbols.lookup(name) {
                             let base_ty = self.get_sym_type(sym.0);
-                            // Create a parameterized version with args
-                            if let Ty::Class { fields, .. } = self.tcx.get(base_ty).clone() {
-                                let arg_names: Vec<String> =
-                                    inner.iter().map(|a| self.ty_name(*a)).collect();
-                                let param_name = format!("{}[{}]", name, arg_names.join(", "));
-                                // Substitute type params in fields so Box[int].value = int
-                                let new_fields = if let Some(gp) =
-                                    self.generic_defs.get(&sym).cloned()
-                                {
-                                    let mut subst = Substitution::new();
-                                    for (tv, concrete) in gp.params.iter().zip(inner.iter()) {
-                                        subst.insert(tv.id, *concrete);
-                                    }
-                                    for error in
-                                        super::generic::check_bounds(&subst, &gp, &self.tcx)
-                                    {
-                                        self.error(ty.span, error);
-                                    }
-                                    fields
-                                        .iter()
-                                        .map(|(n, t)| (n.clone(), subst.apply(*t, &mut self.tcx)))
-                                        .collect()
-                                } else {
-                                    fields
-                                };
-                                let specialized = self.tcx.intern(Ty::Class {
-                                    name: param_name,
-                                    fields: new_fields,
-                                    match_args: None,
-                                });
-                                self.class_symbols_by_type.insert(specialized, sym);
-                                specialized
-                            } else {
-                                base_ty
-                            }
+                            self.specialize_user_class(name, sym, base_ty, Some(&inner), ty.span)
                         } else if let Some(alias_ty) = self.tcx.resolve_alias(name) {
                             alias_ty
                         } else if name.contains('.') {

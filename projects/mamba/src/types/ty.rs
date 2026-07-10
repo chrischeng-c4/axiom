@@ -6,6 +6,35 @@ pub struct TypeId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TypeVarId(pub u32);
 
+/// Static kind of a PEP 695 type parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TypeVarKind {
+    TypeVar,
+    TypeVarTuple,
+    ParamSpec,
+}
+
+/// Static resolution state for a PEP 696 type-parameter default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TypeParamDefault {
+    None,
+    Unresolved,
+    Resolved(TypeId),
+}
+
+impl TypeParamDefault {
+    pub fn is_present(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    pub fn resolved(self) -> Option<TypeId> {
+        match self {
+            Self::Resolved(ty) => Some(ty),
+            Self::None | Self::Unresolved => None,
+        }
+    }
+}
+
 /// Literal value for `Literal[42]` / `Literal["a", "b"]` types (#243).
 #[derive(Debug, Clone, PartialEq)]
 pub enum LiteralValue {
