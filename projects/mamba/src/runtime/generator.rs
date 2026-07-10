@@ -226,6 +226,9 @@ struct GenEntry {
     body_fn_addr: u64,
     /// Original generator function value used for `gi_code` metadata.
     origin_func: MbValue,
+    /// Closure-cell environment captured when the deferred generator object
+    /// was constructed. Boxed so the resume cache can hold a stable pointer.
+    capture_context: Box<super::closure::CapturedCellContext>,
     /// Captured arguments.
     args: Vec<MbValue>,
     /// Argument names in declaration order for inspect.getgeneratorlocals.
@@ -340,6 +343,7 @@ struct GenActive {
     last_resumed_id: std::cell::Cell<u64>,
     /// Resume-cache coro_ctx ptr — paired with last_resumed_id.
     last_resumed_ctx: std::cell::Cell<*mut CoroContext>,
+    last_resumed_capture_context: std::cell::Cell<*const super::closure::CapturedCellContext>,
 }
 
 thread_local! {
@@ -353,6 +357,7 @@ thread_local! {
         active_ctx: std::cell::Cell::new(std::ptr::null_mut()),
         last_resumed_id: std::cell::Cell::new(u64::MAX),
         last_resumed_ctx: std::cell::Cell::new(std::ptr::null_mut()),
+        last_resumed_capture_context: std::cell::Cell::new(std::ptr::null()),
     };
 
     /// Fast value-transfer cells between yield and resume. Bundled into a
@@ -484,6 +489,7 @@ pub fn mb_generator_create(name: MbValue, body_fn_addr: MbValue, origin_func: Mb
         state: GenState::Created,
         body_fn_addr: fn_addr,
         origin_func,
+        capture_context: Box::new(Default::default()),
         args: Vec::new(),
         arg_names: Vec::new(),
         yield_local_name: None,
@@ -503,6 +509,35 @@ pub fn mb_generator_create(name: MbValue, body_fn_addr: MbValue, origin_func: Mb
     // already understands — peek-ahead, exhaustion latching, etc.
     super::iter::register_generator_iter(handle);
     handle
+}
+
+pub fn mb_generator_capture_cells(gen_handle: MbValue, capture_ids: MbValue) {
+    let Some(id) = gen_handle.as_int().map(|id| id as u64) else {
+        return;
+    };
+    let ids: Vec<i64> = capture_ids
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::List(ref values) = (*ptr).data {
+                Some(
+                    values
+                        .read()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|value| value.as_int())
+                        .collect(),
+                )
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+    let context = super::closure::capture_active_cell_context(&ids);
+    GENERATORS.with(|generators| {
+        if let Some(entry) = generators.borrow_mut().get_mut(&id) {
+            entry.capture_context = Box::new(context);
+        }
+    });
 }
 
 /// Store an argument for the generator.
@@ -679,54 +714,60 @@ fn resume_generator(id: u64, send_value: MbValue) -> MbValue {
     // HashMap lookup entirely. Single TLS hit reads both id + ctx.
     let cached_ctx = GEN_ACTIVE.with(|a| {
         if a.last_resumed_id.get() == id {
-            Some(a.last_resumed_ctx.get())
+            Some((
+                a.last_resumed_ctx.get(),
+                a.last_resumed_capture_context.get(),
+            ))
         } else {
             None
         }
     });
 
-    let (gen_ctx_ptr, has_signal) = if let Some(ctx_ptr) = cached_ctx {
-        (ctx_ptr, false)
-    } else {
-        // Slow path: full borrow, check state, init if Created.
-        let prep = GENERATORS.with(|gens| {
-            let mut gens = gens.borrow_mut();
-            let entry = match gens.get_mut(&id) {
-                Some(e) => e,
-                None => return None,
-            };
-            match entry.state {
-                GenState::Completed => return None,
-                GenState::Created => {
-                    let stack_top = entry.coro_stack.top();
-                    init_coro_context(&mut *entry.coro_ctx, stack_top);
-                    entry.state = GenState::Suspended;
+    let (gen_ctx_ptr, has_signal, capture_context_ptr) =
+        if let Some((ctx_ptr, context_ptr)) = cached_ctx {
+            (ctx_ptr, false, context_ptr)
+        } else {
+            // Slow path: full borrow, check state, init if Created.
+            let prep = GENERATORS.with(|gens| {
+                let mut gens = gens.borrow_mut();
+                let entry = match gens.get_mut(&id) {
+                    Some(e) => e,
+                    None => return None,
+                };
+                match entry.state {
+                    GenState::Completed => return None,
+                    GenState::Created => {
+                        let stack_top = entry.coro_stack.top();
+                        init_coro_context(&mut *entry.coro_ctx, stack_top);
+                        entry.state = GenState::Suspended;
+                    }
+                    GenState::Suspended => {}
                 }
-                GenState::Suspended => {}
-            }
-            let has_signal = entry.throw_request.is_some() || entry.close_request;
-            let ctx_ptr = &*entry.coro_ctx as *const CoroContext as *mut CoroContext;
-            Some((ctx_ptr, has_signal))
-        });
+                let has_signal = entry.throw_request.is_some() || entry.close_request;
+                let ctx_ptr = &*entry.coro_ctx as *const CoroContext as *mut CoroContext;
+                let capture_context_ptr = &*entry.capture_context as *const _;
+                Some((ctx_ptr, has_signal, capture_context_ptr))
+            });
 
-        match prep {
-            Some(p) => {
-                // Populate cache only when no throw/close signal is pending —
-                // control paths need to re-read entry state on the next resume.
-                if !p.1 {
-                    GEN_ACTIVE.with(|a| {
-                        a.last_resumed_id.set(id);
-                        a.last_resumed_ctx.set(p.0);
-                    });
+            match prep {
+                Some(p) => {
+                    // Populate cache only when no throw/close signal is pending —
+                    // control paths need to re-read entry state on the next resume.
+                    if !p.1 {
+                        GEN_ACTIVE.with(|a| {
+                            a.last_resumed_id.set(id);
+                            a.last_resumed_ctx.set(p.0);
+                            a.last_resumed_capture_context.set(p.2);
+                        });
+                    }
+                    p
                 }
-                p
+                None => {
+                    raise_stop_iteration(MbValue::none());
+                    return MbValue::none();
+                }
             }
-            None => {
-                raise_stop_iteration(MbValue::none());
-                return MbValue::none();
-            }
-        }
-    };
+        };
 
     // Clear stale exceptions/control transfers unless a throw/close is pending.
     if !has_signal {
@@ -753,9 +794,10 @@ fn resume_generator(id: u64, send_value: MbValue) -> MbValue {
     RUNNING_GEN_STACK.with(|stack| stack.borrow_mut().push(id));
 
     // === SWAP: caller → generator ===
-    unsafe {
+    let capture_context = unsafe { &*capture_context_ptr };
+    super::closure::with_captured_cell_context(capture_context, || unsafe {
         swap_context(caller_ctx_ptr, gen_ctx_ptr);
-    }
+    });
     // === SWAP BACK: generator yielded or completed ===
 
     RUNNING_GEN_STACK.with(|stack| {
@@ -786,6 +828,7 @@ fn resume_generator(id: u64, send_value: MbValue) -> MbValue {
             if a.last_resumed_id.get() == id {
                 a.last_resumed_id.set(u64::MAX);
                 a.last_resumed_ctx.set(std::ptr::null_mut());
+                a.last_resumed_capture_context.set(std::ptr::null());
             }
         });
         // Preserve any exception the generator body unwound with — only
@@ -929,6 +972,7 @@ pub fn mb_generator_throw(gen_handle: MbValue, exc_type: MbValue, exc_msg: MbVal
             if a.last_resumed_id.get() == id {
                 a.last_resumed_id.set(u64::MAX);
                 a.last_resumed_ctx.set(std::ptr::null_mut());
+                a.last_resumed_capture_context.set(std::ptr::null());
             }
         });
 
@@ -1018,6 +1062,7 @@ pub fn mb_generator_close(gen_handle: MbValue) {
             if a.last_resumed_id.get() == id {
                 a.last_resumed_id.set(u64::MAX);
                 a.last_resumed_ctx.set(std::ptr::null_mut());
+                a.last_resumed_capture_context.set(std::ptr::null());
             }
         });
 
@@ -1129,6 +1174,7 @@ pub fn mb_generator_release(gen_handle: MbValue) {
             if a.last_resumed_id.get() == id {
                 a.last_resumed_id.set(u64::MAX);
                 a.last_resumed_ctx.set(std::ptr::null_mut());
+                a.last_resumed_capture_context.set(std::ptr::null());
             }
         });
         GENERATORS.with(|gens| gens.borrow_mut().remove(&id));
@@ -1187,6 +1233,7 @@ pub(crate) fn cleanup_generator_state_for_runtime_reset() {
         a.active_ctx.set(std::ptr::null_mut());
         a.last_resumed_id.set(u64::MAX);
         a.last_resumed_ctx.set(std::ptr::null_mut());
+        a.last_resumed_capture_context.set(std::ptr::null());
     });
     NEXT_GEN_ID.store(GEN_ID_BASE, Ordering::Relaxed);
     GEN_XFER.with(|x| {

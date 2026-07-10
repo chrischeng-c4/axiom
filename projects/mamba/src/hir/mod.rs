@@ -119,7 +119,11 @@ pub struct NamedTupleBaseSpec {
 
 #[derive(Debug, Clone)]
 pub struct HirClass {
+    /// Declaration-unique implementation identity. Repeated declarations keep
+    /// distinct class registries even when they rebind the same Python name.
     pub name: SymbolId,
+    /// Runtime slot written when this class statement executes.
+    pub bind_name: SymbolId,
     pub base: Option<SymbolId>,
     /// All base classes for multiple inheritance (P1 OOP conformance).
     /// When non-empty, takes priority over `base` for MRO computation.
@@ -145,8 +149,10 @@ pub struct HirClass {
     /// Explicit `__match_args__` tuple from the class body, if present (#827).
     /// When set, takes priority over `__init__`-derived match args in lowering.
     pub explicit_match_args: Option<Vec<String>>,
-    /// Metaclass name from `class Foo(metaclass=Meta)`, if specified.
-    pub metaclass: Option<String>,
+    /// Runtime metaclass expression from `class Foo(metaclass=Meta)`, if specified.
+    /// Keeping the value expression preserves nominal identity when same-named
+    /// metaclasses are rebound to distinct class objects.
+    pub metaclass: Option<HirExpr>,
     /// Class-level attribute assignments from class body (P2-R3).
     /// e.g., `attr = Verbose()` in class body → (attr_name, value_expr).
     /// Used for descriptor protocol support.
@@ -333,7 +339,10 @@ pub enum HirStmt {
     /// post-decorator class. Only emitted for classes with decorators
     /// (#1690 — proper fix for #1686 trade-off).
     ClassDefPlaceholder {
+        /// Declaration-unique class implementation symbol.
         name: SymbolId,
+        /// Python name slot rebound by this class statement.
+        bind_name: SymbolId,
         span: Span,
     },
     /// match/case statement (#309)
@@ -529,15 +538,14 @@ pub enum HirPattern {
     /// Literal value pattern: `case 42:`, `case "hello":`
     Literal(HirExpr),
     /// Capture pattern: `case x:` — binds subject to variable
-    Capture(SymbolId),
+    Capture(SymbolId, TypeId),
     /// OR pattern: `case 1 | 2 | 3:`
     Or(Vec<HirPattern>),
     /// Sequence pattern: `case [a, b, c]:`
     Sequence(Vec<HirPattern>),
     /// Class pattern: `case Point(x=0, y=0):`
     Class {
-        class: SymbolId,
-        class_name: String,
+        class: HirExpr,
         args: Vec<(String, HirPattern)>,
     },
     /// Mapping pattern: `case {"key": val, **rest}:` (#827)
@@ -552,6 +560,7 @@ pub enum HirPattern {
     As {
         pattern: Box<HirPattern>,
         name: SymbolId,
+        ty: TypeId,
     },
     /// Star capture in sequence pattern: `[a, *rest, b]` (#827)
     Star(Option<SymbolId>),
@@ -827,9 +836,10 @@ mod tests {
 
     #[test]
     fn test_hir_pattern_variants() {
+        let tcx = make_tcx();
         assert!(matches!(HirPattern::Wildcard, HirPattern::Wildcard));
-        let cap = HirPattern::Capture(SymbolId(5));
-        assert!(matches!(cap, HirPattern::Capture(SymbolId(5))));
+        let cap = HirPattern::Capture(SymbolId(5), tcx.int());
+        assert!(matches!(cap, HirPattern::Capture(SymbolId(5), _)));
         let or = HirPattern::Or(vec![HirPattern::Wildcard, HirPattern::Wildcard]);
         if let HirPattern::Or(pats) = &or {
             assert_eq!(pats.len(), 2);
@@ -857,13 +867,16 @@ mod tests {
 
     #[test]
     fn test_hir_pattern_as() {
+        let tcx = make_tcx();
         let as_pat = HirPattern::As {
             pattern: Box::new(HirPattern::Wildcard),
             name: SymbolId(7),
+            ty: tcx.int(),
         };
-        if let HirPattern::As { pattern, name } = &as_pat {
+        if let HirPattern::As { pattern, name, ty } = &as_pat {
             assert!(matches!(pattern.as_ref(), HirPattern::Wildcard));
             assert_eq!(*name, SymbolId(7));
+            assert_eq!(*ty, tcx.int());
         } else {
             panic!("expected As");
         }
@@ -901,6 +914,7 @@ mod tests {
         let int_ty = tcx.int();
         let cls = HirClass {
             name: SymbolId(0),
+            bind_name: SymbolId(0),
             base: Some(SymbolId(1)),
             all_bases: vec![SymbolId(1)],
             runtime_base_exprs: Vec::new(),

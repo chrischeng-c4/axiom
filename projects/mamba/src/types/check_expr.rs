@@ -1,9 +1,11 @@
-use super::check::{expr_to_type_expr, FunctionParamSig, NumericRoot, TypeChecker};
+use super::check::{
+    expr_to_type_expr, ClassPatternTarget, FunctionParamSig, NumericRoot, TypeChecker,
+};
 use super::generic::{check_bounds, complete_type_args, infer_type_args, Substitution};
-use super::ty::UserClassRole;
+use super::ty::ClassRole;
 use super::{Ty, TypeId};
 use crate::parser::ast::*;
-use crate::resolve::SymbolKind;
+use crate::resolve::{SymbolId, SymbolKind};
 use crate::source::span::{Span, Spanned};
 
 fn bind_explicit_inference_args(
@@ -224,6 +226,11 @@ impl TypeChecker {
             Expr::BinOp { op, lhs, rhs } => {
                 let lt = self.check_expr(lhs);
                 let rt = self.check_expr(rhs);
+                if matches!(*op, BinOp::And | BinOp::Or) {
+                    let mut conditional = Vec::new();
+                    crate::resolve::pass::collect_walrus_targets(&rhs.node, &mut conditional);
+                    self.invalidate_conditional_binding_names(conditional);
+                }
                 self.check_binop(*op, lt, rt, expr.span)
             }
             Expr::UnaryOp { op, operand } => {
@@ -487,15 +494,25 @@ impl TypeChecker {
                                                 Some("chr" | "hex" | "oct" | "bin")
                                             ) && matches!(self.tcx.get(expected), Ty::Int)
                                                 && match self.tcx.get(at) {
-                                                    Ty::Class { name, user, .. }
-                                                        if !user.as_ref().is_some_and(|user| {
-                                                            user.role == UserClassRole::Object
-                                                        }) =>
-                                                    {
-                                                        self.class_methods.get(name).is_some_and(
-                                                            |m| m.contains_key("__index__"),
-                                                        )
-                                                    }
+                                                    Ty::Class {
+                                                        name,
+                                                        role: ClassRole::Instance,
+                                                        user,
+                                                        ..
+                                                    } => user
+                                                        .as_ref()
+                                                        .and_then(|user| {
+                                                            self.class_methods_by_symbol
+                                                                .get(&user.symbol)
+                                                        })
+                                                        .or_else(|| {
+                                                            user.is_none()
+                                                                .then(|| self.class_methods.get(name))
+                                                                .flatten()
+                                                        })
+                                                        .is_some_and(|methods| {
+                                                            methods.contains_key("__index__")
+                                                        }),
                                                     _ => false,
                                                 };
                                         let bytes_literal_str_mismatch = matches!(
@@ -624,11 +641,8 @@ impl TypeChecker {
                         ret
                     }
                     // #246: calling a class constructor returns instance of that class
-                    Ty::Class { user, .. } => {
-                        if user
-                            .as_ref()
-                            .is_some_and(|user| user.role == UserClassRole::Instance)
-                        {
+                    Ty::Class { role, user, .. } => {
+                        if role == ClassRole::Instance {
                             for arg in args {
                                 self.check_call_arg(arg);
                             }
@@ -688,8 +702,7 @@ impl TypeChecker {
                                         expr.span,
                                     );
                                 }
-                                return self
-                                    .with_user_class_role(func_ty_id, UserClassRole::Instance);
+                                return self.with_class_role(func_ty_id, ClassRole::Instance);
                             }
                             let (subst, conflicts) = if init_params.is_empty() {
                                 (Substitution::new(), Vec::new())
@@ -717,7 +730,7 @@ impl TypeChecker {
                                         func_ty_id,
                                         &completed,
                                         &resolved,
-                                        UserClassRole::Instance,
+                                        ClassRole::Instance,
                                     );
                                 }
                             } else {
@@ -733,10 +746,8 @@ impl TypeChecker {
                                 &Substitution::new(),
                                 expr.span,
                             );
-                            self.with_user_class_role(func_ty_id, UserClassRole::Instance)
-                        } else {
-                            func_ty_id
                         }
+                        self.with_class_role(func_ty_id, ClassRole::Instance)
                     }
                     Ty::Any => {
                         for arg in args {
@@ -754,6 +765,7 @@ impl TypeChecker {
                         if let Some(class_name) = self.native_ctor_class_call(func) {
                             return self.tcx.intern(Ty::Class {
                                 name: class_name.to_string(),
+                                role: ClassRole::Instance,
                                 user: None,
                                 fields: Vec::new(),
                                 match_args: None,
@@ -774,16 +786,14 @@ impl TypeChecker {
                     Ty::Union(ref members)
                         if members.iter().all(|&member| match self.tcx.get(member) {
                             Ty::Fn { .. } | Ty::Any | Ty::Error => true,
-                            Ty::Class { user: None, .. } => true,
                             Ty::Class {
-                                user: Some(user), ..
-                            } if user.role == UserClassRole::Object => true,
+                                role: ClassRole::Object,
+                                ..
+                            } => true,
                             Ty::Class {
-                                user: Some(user), ..
-                            } if user.role == UserClassRole::Instance => {
-                                self.class_defines_dunder(member, "__call__")
-                            }
-                            Ty::Class { .. } => false,
+                                role: ClassRole::Instance,
+                                ..
+                            } => self.class_defines_dunder(member, "__call__"),
                             _ => false,
                         }) =>
                     {
@@ -819,7 +829,7 @@ impl TypeChecker {
                     }
                 }
                 if self.user_class_object(object).is_some() {
-                    // UserClassRole distinguishes the two meanings carried by
+                    // ClassRole distinguishes the two meanings carried by
                     // Ty::Class. Keep normal-mode unbound calls dynamic; only
                     // Instance expressions use the bound signature below.
                     return self.tcx.any();
@@ -940,8 +950,21 @@ impl TypeChecker {
             } => {
                 self.check_expr(condition);
                 let bt = self.check_expr(body);
-                self.check_expr(else_body);
-                bt
+                let et = self.check_expr(else_body);
+                let joined = if bt == et {
+                    bt
+                } else if self.types_compatible(bt, et) {
+                    bt
+                } else if self.types_compatible(et, bt) {
+                    et
+                } else {
+                    self.tcx.any()
+                };
+                let mut conditional = Vec::new();
+                crate::resolve::pass::collect_walrus_targets(&body.node, &mut conditional);
+                crate::resolve::pass::collect_walrus_targets(&else_body.node, &mut conditional);
+                self.invalidate_conditional_binding_names(conditional);
+                joined
             }
             Expr::Lambda { params, body } => {
                 self.symbols.push_scope();
@@ -1017,6 +1040,9 @@ impl TypeChecker {
                 self.check_expr(element);
                 self.comprehension_depth -= 1;
                 self.symbols.pop_scope();
+                let mut conditional = Vec::new();
+                crate::resolve::pass::collect_walrus_targets(&expr.node, &mut conditional);
+                self.invalidate_conditional_binding_names(conditional);
                 self.tcx.any()
             }
             Expr::DictComp {
@@ -1067,6 +1093,9 @@ impl TypeChecker {
                 let val_ty = self.check_expr(value);
                 self.comprehension_depth -= 1;
                 self.symbols.pop_scope();
+                let mut conditional = Vec::new();
+                crate::resolve::pass::collect_walrus_targets(&expr.node, &mut conditional);
+                self.invalidate_conditional_binding_names(conditional);
                 // Dict(key_ty, val_ty) from the comprehension's key/value
                 // exprs, mirroring the dict-literal arm; fall back to
                 // Dict(Any, Any) when a side is unresolvable (Ty::Error)
@@ -1185,7 +1214,14 @@ impl TypeChecker {
         };
         let actual = self.check_expr(arg);
         let bare_arg = match self.tcx.get(actual) {
-            Ty::Class { name, .. } if self.user_bare_classes.contains(name) => Some(name.clone()),
+            Ty::Class {
+                name,
+                user: Some(user),
+                ..
+            } if self.user_bare_class_symbols.contains(&user.symbol) => Some(name.clone()),
+            Ty::Class {
+                name, user: None, ..
+            } if self.user_bare_classes.contains(name) => Some(name.clone()),
             _ => None,
         };
         if self.is_concrete_scalar(actual) || bare_arg.is_some() {
@@ -1250,7 +1286,8 @@ impl TypeChecker {
                 let Expr::Ident(base) = &object.node else {
                     return None;
                 };
-                let (module, qual) = self.import_origins.get(base)?;
+                let symbol = self.symbols.lookup(base)?;
+                let (module, qual) = self.import_origins.get(&symbol)?;
                 if !qual.is_empty() {
                     return None;
                 }
@@ -1259,7 +1296,10 @@ impl TypeChecker {
                     .find(|&&(m, c)| m == module.as_str() && c == attr.as_str())
                     .map(|&(_, c)| c)
             }
-            Expr::Ident(name) => self.class_ref_origins.get(name).copied(),
+            Expr::Ident(name) => self
+                .symbols
+                .lookup(name)
+                .and_then(|symbol| self.class_ref_origins.get(&symbol).copied()),
             _ => None,
         }
     }
@@ -1344,19 +1384,20 @@ impl TypeChecker {
             // Bare name: a from-imported module function (`strerror(...)`) OR a
             // from-imported stdlib class called as a constructor (`Cls(...)`).
             //
-            // The import-time qualifier (recorded in `import_origins`) is only a
-            // hint. We do not trust the qualifier alone:
-            // we try the module-fn key `(module, "", name)` first, and on a miss
-            // fall back to the constructor key `(module, name, "__init__")`.
+            // Preserve the imported member independently of its local alias:
+            // try the module-fn key `(module, "", member)` first, and on a miss
+            // fall back to the constructor key `(module, member, "__init__")`.
             // The `self` receiver is already stripped from `__init__` param rows,
             // so positional alignment starts at the first real argument. Names not
             // in `import_origins` (user-defined classes, locals) resolve to None.
             Expr::Ident(name) => self
-                .import_origins
-                .get(name)
-                .and_then(|(module, _qual)| {
-                    super::stdlib_sigs::get(module, "", name)
-                        .or_else(|| super::stdlib_sigs::get(module, name, "__init__"))
+                .symbols
+                .lookup(name)
+                .and_then(|symbol| self.import_origins.get(&symbol))
+                .and_then(|(module, member)| {
+                    let member = if member.is_empty() { name } else { member };
+                    super::stdlib_sigs::get(module, "", member)
+                        .or_else(|| super::stdlib_sigs::get(module, member, "__init__"))
                 })
                 .or_else(|| {
                     if self.is_unshadowed_builtin(name) {
@@ -1370,7 +1411,10 @@ impl TypeChecker {
             // `obj.handle_entityref(...)` (instance method).
             Expr::Attr { object, attr } => {
                 if let Expr::Ident(base) = &object.node {
-                    if let Some((module, qual)) = self.import_origins.get(base) {
+                    let base_symbol = self.symbols.lookup(base);
+                    if let Some((module, qual)) =
+                        base_symbol.and_then(|symbol| self.import_origins.get(&symbol))
+                    {
                         // `base.attr(...)` is either a module function or a
                         // class/static method. Resolving `date.fromtimestamp(...)`
                         // needs us to try `base` itself as the class qualifier —
@@ -1400,12 +1444,12 @@ impl TypeChecker {
                             }
                             class_sig
                         }
-                    } else if let Some(cls) = self.instance_origins.get(base).cloned() {
-                        // `base` is a stdlib instance — recover its module from
-                        // the class's import origin, then resolve a method sig.
-                        self.import_origins
-                            .get(&cls)
-                            .and_then(|(module, _q)| super::stdlib_sigs::get(module, &cls, attr))
+                    } else if let Some((module, class_name)) =
+                        base_symbol.and_then(|symbol| self.instance_origins.get(&symbol))
+                    {
+                        // `base` is a stdlib instance. Its immutable origin is
+                        // independent of later rebinding of the constructor name.
+                        super::stdlib_sigs::get(module, class_name, attr)
                     } else if let Some(sym) = self.symbols.lookup(base) {
                         if matches!(self.tcx.get(self.get_sym_type(sym.0)), Ty::List(_)) {
                             super::stdlib_sigs::get("builtins", "list", attr)
@@ -1417,8 +1461,12 @@ impl TypeChecker {
                             // `f.__get__(..., owner)` enforceable without pretending
                             // that `builtins.function` is importable in CPython.
                             super::stdlib_sigs::get("builtins", "function", attr)
-                        } else if let Ty::Class { name, .. } =
-                            self.tcx.get(self.get_sym_type(sym.0)).clone()
+                        } else if let Ty::Class {
+                            name,
+                            role: ClassRole::Instance,
+                            user: None,
+                            ..
+                        } = self.tcx.get(self.get_sym_type(sym.0)).clone()
                         {
                             // #886: `instance_origins` missed (no direct
                             // `x = Cls(...)` provenance through an import) but
@@ -1600,20 +1648,18 @@ impl TypeChecker {
         if matches!(param.ty, super::stdlib_sigs::CoreTy::Type) {
             if let Ty::Class {
                 name,
-                user: Some(user),
+                role: ClassRole::Instance,
                 ..
             } = self.tcx.get(actual)
             {
-                if user.role == UserClassRole::Instance {
-                    self.error(
-                        a.span,
-                        format!(
-                            "argument type mismatch: `{name}` does not satisfy parameter `{}`'s type",
-                            param.name,
-                        ),
-                    );
-                    return;
-                }
+                self.error(
+                    a.span,
+                    format!(
+                        "argument type mismatch: `{name}` does not satisfy parameter `{}`'s type",
+                        param.name,
+                    ),
+                );
+                return;
             }
         }
         // A BARE user class instance (`class _W: pass` -> `_W()`) satisfies NO
@@ -1644,8 +1690,8 @@ impl TypeChecker {
         // #885: a bare instance stashed in a variable (`w = _W(); f(w)`) has
         // no distinguishing expression shape at the call site, so the
         // syntactic `classinfo_bare_instance_name` helper alone misses it.
-        // Fall back to the inferred type for legacy native classes; user
-        // class objects and instances are distinguished by UserClassRole.
+        // Fall back to the inferred type; class objects and instances are
+        // distinguished by the universal ClassRole.
         let bare_arg = self
             .classinfo_bare_instance_name(a)
             .or_else(|| match param.ty {
@@ -1661,13 +1707,16 @@ impl TypeChecker {
                 match self.tcx.get(actual) {
                     Ty::Class {
                         name,
+                        role: ClassRole::Instance,
                         user: Some(user),
                         ..
-                    } if user.role == UserClassRole::Instance
-                        && self.user_bare_classes.contains(name) =>
-                    {
-                        Some(name.clone())
-                    }
+                    } if self.user_bare_class_symbols.contains(&user.symbol) => Some(name.clone()),
+                    Ty::Class {
+                        name,
+                        role: ClassRole::Instance,
+                        user: None,
+                        ..
+                    } if self.user_bare_classes.contains(name) => Some(name.clone()),
                     _ => None,
                 }
             });
@@ -1861,12 +1910,30 @@ impl TypeChecker {
         }
     }
 
-    /// Syntax fallback for bare-instance classinfo fixtures. Inferred user
-    /// classes use UserClassRole; this also covers shapes whose type widened.
+    /// Syntax fallback for bare-instance classinfo fixtures. This also covers
+    /// shapes whose inferred type widened.
     fn classinfo_bare_instance_name(&self, expr: &Spanned<Expr>) -> Option<String> {
         match &expr.node {
             Expr::Call { func, .. } => match &func.node {
-                Expr::Ident(name) if self.user_bare_classes.contains(name) => Some(name.clone()),
+                Expr::Ident(name) => self
+                    .symbols
+                    .lookup(name)
+                    .and_then(|symbol| match self.tcx.get(self.get_sym_type(symbol.0)) {
+                        Ty::Class {
+                            role: ClassRole::Object,
+                            user: Some(user),
+                            ..
+                        } if self.user_bare_class_symbols.contains(&user.symbol) => {
+                            Some(name.clone())
+                        }
+                        Ty::Class { user: None, .. }
+                            if self.user_bare_classes.contains(name) =>
+                        {
+                            Some(name.clone())
+                        }
+                        _ => None,
+                    })
+                    .or_else(|| self.user_bare_classes.contains(name).then(|| name.clone())),
                 _ => None,
             },
             Expr::TupleLit(elems) => elems
@@ -1880,9 +1947,9 @@ impl TypeChecker {
         match self.tcx.get(ty) {
             Ty::Class {
                 name,
-                user: Some(user),
+                role: ClassRole::Instance,
                 ..
-            } if user.role == UserClassRole::Instance => Some(name.clone()),
+            } => Some(name.clone()),
             Ty::Tuple(elements) => elements
                 .iter()
                 .find_map(|element| self.classinfo_instance_name_from_type(*element)),
@@ -1962,8 +2029,10 @@ impl TypeChecker {
         let base_ty = self.get_sym_type(binding_symbol.0);
         match self.tcx.get(base_ty) {
             Ty::Class {
-                user: Some(user), ..
-            } if user.role == UserClassRole::Object => {}
+                role: ClassRole::Object,
+                user: Some(_),
+                ..
+            } => {}
             _ => return None,
         }
         let expressions = match &index.node {
@@ -1981,7 +2050,7 @@ impl TypeChecker {
             base_ty,
             Some(&supplied),
             span,
-            UserClassRole::Object,
+            ClassRole::Object,
         ))
     }
 
@@ -2026,12 +2095,51 @@ impl TypeChecker {
             _ => return None,
         };
         let Ty::Class {
-            user: Some(user), ..
+            role: ClassRole::Object,
+            user: Some(user),
+            ..
         } = self.tcx.get(self.get_sym_type(symbol.0))
         else {
             return None;
         };
-        (user.role == UserClassRole::Object).then_some((name, user.symbol))
+        Some((name, user.symbol))
+    }
+
+    fn specialize_class_member_type(
+        &mut self,
+        class_symbol: SymbolId,
+        class_args: &[TypeId],
+        ty: TypeId,
+    ) -> TypeId {
+        let Some(params) = self.generic_defs.get(&class_symbol).cloned() else {
+            return ty;
+        };
+        let mut subst = Substitution::new();
+        for (param, arg) in params.params.iter().zip(class_args) {
+            subst.insert(param.id, *arg);
+        }
+        subst.apply(ty, &mut self.tcx)
+    }
+
+    pub(crate) fn resolve_property_setter_type(
+        &mut self,
+        object_ty: TypeId,
+        attr: &str,
+    ) -> Option<TypeId> {
+        let Ty::Class {
+            role: ClassRole::Instance,
+            user: Some(user),
+            ..
+        } = self.semantic_ty(object_ty)
+        else {
+            return None;
+        };
+        let setter_ty = self
+            .class_property_setters
+            .get(&user.symbol)?
+            .get(attr)
+            .copied()?;
+        Some(self.specialize_class_member_type(user.symbol, &user.args, setter_ty))
     }
 
     /// Resolve attribute access (#246).
@@ -2045,8 +2153,10 @@ impl TypeChecker {
         let mut sig = self.class_unbound_methods.get(&symbol)?.get(attr)?.clone();
         let user = match self.tcx.get(object_ty) {
             Ty::Class {
-                user: Some(user), ..
-            } if user.symbol == symbol && user.role == UserClassRole::Object => Some(user.clone()),
+                role: ClassRole::Object,
+                user: Some(user),
+                ..
+            } if user.symbol == symbol => Some(user.clone()),
             _ => None,
         };
         if let Some(user) = user {
@@ -2125,12 +2235,20 @@ impl TypeChecker {
                 }
                 _ => self.tcx.any(),
             },
-            Ty::Class { user, fields, .. } => {
-                if user
-                    .as_ref()
-                    .is_some_and(|user| user.role == UserClassRole::Object)
-                {
+            Ty::Class {
+                role, user, fields, ..
+            } => {
+                if role == ClassRole::Object {
                     return self.tcx.any();
+                }
+                if let Some((symbol, args, property_ty)) = user.as_ref().and_then(|user| {
+                    self.class_property_getters
+                        .get(&user.symbol)
+                        .and_then(|properties| properties.get(attr))
+                        .copied()
+                        .map(|ty| (user.symbol, user.args.clone(), ty))
+                }) {
+                    return self.specialize_class_member_type(symbol, &args, property_ty);
                 }
                 for (name, ty) in &fields {
                     if name == attr {
@@ -2247,13 +2365,23 @@ impl TypeChecker {
         match ty {
             Ty::Int | Ty::Bool => Some(NumericRoot::Int),
             Ty::Float => Some(NumericRoot::Float),
-            Ty::Class { name, user, .. }
-                if !user
-                    .as_ref()
-                    .is_some_and(|user| user.role == UserClassRole::Object) =>
-            {
-                self.numeric_derived_classes.get(name).copied()
-            }
+            Ty::Class {
+                name,
+                role: ClassRole::Instance,
+                user,
+                ..
+            } => user
+                .as_ref()
+                .and_then(|user| {
+                    self.numeric_derived_class_symbols
+                        .get(&user.symbol)
+                        .copied()
+                })
+                .or_else(|| {
+                    user.is_none()
+                        .then(|| self.numeric_derived_classes.get(name).copied())
+                        .flatten()
+                }),
             _ => None,
         }
     }
@@ -2289,13 +2417,16 @@ impl TypeChecker {
     /// anywhere in its chain returns `false` — the walls' rejection of
     /// genuinely non-overriding classes is unchanged.
     fn class_defines_dunder(&self, ty_id: TypeId, dunder: &str) -> bool {
-        let Ty::Class { name, user, .. } = self.tcx.get(ty_id) else {
+        let Ty::Class {
+            name, role, user, ..
+        } = self.tcx.get(ty_id)
+        else {
             return false;
         };
+        if *role == ClassRole::Object {
+            return false;
+        }
         if let Some(user) = user {
-            if user.role == UserClassRole::Object {
-                return false;
-            }
             let mut visited = std::collections::HashSet::new();
             let mut queue = vec![user.symbol];
             while let Some(symbol) = queue.pop() {
@@ -2343,16 +2474,28 @@ impl TypeChecker {
     /// (unoverridden) case. `None` when `ty_id` isn't a numeric-derived class
     /// (caller keeps its existing fallback).
     fn numeric_derived_result_ty(&mut self, ty_id: TypeId) -> Option<TypeId> {
-        let Ty::Class { name, user, .. } = self.tcx.get(ty_id) else {
+        let Ty::Class {
+            name, role, user, ..
+        } = self.tcx.get(ty_id)
+        else {
             return None;
         };
-        if user
-            .as_ref()
-            .is_some_and(|user| user.role == UserClassRole::Object)
-        {
+        if *role == ClassRole::Object {
             return None;
         }
-        match self.numeric_derived_classes.get(name).copied() {
+        let root = user
+            .as_ref()
+            .and_then(|user| {
+                self.numeric_derived_class_symbols
+                    .get(&user.symbol)
+                    .copied()
+            })
+            .or_else(|| {
+                user.is_none()
+                    .then(|| self.numeric_derived_classes.get(name).copied())
+                    .flatten()
+            });
+        match root {
             Some(NumericRoot::Int) => Some(self.tcx.int()),
             Some(NumericRoot::Float) => Some(self.tcx.float()),
             None => None,
@@ -2459,9 +2602,19 @@ impl TypeChecker {
                 }
                 // Class instances may define __add__/__sub__/__mul__/... —
                 // defer to runtime dunder dispatch via Any.
-                if matches!(self.tcx.get(lt), Ty::Class { .. })
-                    || matches!(self.tcx.get(rt), Ty::Class { .. })
-                {
+                if matches!(
+                    self.tcx.get(lt),
+                    Ty::Class {
+                        role: ClassRole::Instance,
+                        ..
+                    }
+                ) || matches!(
+                    self.tcx.get(rt),
+                    Ty::Class {
+                        role: ClassRole::Instance,
+                        ..
+                    }
+                ) {
                     return self.tcx.any();
                 }
                 // Union-of-numerics (e.g. a subscript on a heterogeneous
@@ -2575,7 +2728,10 @@ impl TypeChecker {
                         | Ty::Set(_)
                         | Ty::Tuple(_)
                         | Ty::Any
-                        | Ty::Class { .. }
+                        | Ty::Class {
+                            role: ClassRole::Instance,
+                            ..
+                        }
                 );
                 let rt_ok = matches!(
                     self.tcx.get(rt),
@@ -2587,7 +2743,10 @@ impl TypeChecker {
                         | Ty::Set(_)
                         | Ty::Tuple(_)
                         | Ty::Any
-                        | Ty::Class { .. }
+                        | Ty::Class {
+                            role: ClassRole::Instance,
+                            ..
+                        }
                 );
                 if !lt_ok || !rt_ok {
                     self.error(span, "comparison requires numeric types");
@@ -2735,36 +2894,30 @@ impl TypeChecker {
                 // Look up the class type so we can propagate field types into
                 // keyword sub-patterns (#827).  E.g. `case Point(x=a):` should
                 // type `a` as `int` (the type of `Point.x`), not as `Point`.
-                let class_name = cls.last().map(|s| s.as_str()).unwrap_or("");
+                let class_target = self.class_pattern_target(cls);
+                if class_target == ClassPatternTarget::Invalid {
+                    self.error(pattern.span, "class pattern target must be a class");
+                }
 
                 // Built-in self-subject patterns: case int(x), case str(s), etc.
                 // These have ONE positional arg that captures the subject itself.
-                let builtin_capture_ty = match class_name {
-                    "int" => Some(self.tcx.int()),
-                    "bool" => Some(self.tcx.bool()),
-                    "str" => Some(self.tcx.str()),
-                    "float" => Some(self.tcx.float()),
-                    "list" => Some(self.tcx.any()),
-                    "tuple" => Some(self.tcx.any()),
-                    "dict" => Some(self.tcx.any()),
-                    _ => None,
-                };
-                if let Some(capture_ty) = builtin_capture_ty {
-                    let prev = self.current_match_subject_ty.replace(capture_ty);
-                    for (_, sub_pat) in patterns {
-                        self.check_pattern(sub_pat);
+                if let ClassPatternTarget::Instance(capture_ty) = class_target {
+                    if matches!(self.tcx.get(capture_ty), Ty::Class { .. }) {
+                        // User, builtin-exception, and FFI class metadata is handled below.
+                    } else {
+                        let prev = self.current_match_subject_ty.replace(capture_ty);
+                        for (_, sub_pat) in patterns {
+                            self.check_pattern(sub_pat);
+                        }
+                        self.current_match_subject_ty = prev;
+                        return;
                     }
-                    self.current_match_subject_ty = prev;
-                    return;
                 }
                 let (class_fields, explicit_match_args): (
                     Vec<(String, TypeId)>,
                     Option<Vec<String>>,
-                ) = self
-                    .symbols
-                    .lookup(class_name)
-                    .map(|sym| {
-                        let ty = self.get_sym_type(sym.0);
+                ) = match class_target {
+                    ClassPatternTarget::Instance(ty) => {
                         if let Ty::Class {
                             fields, match_args, ..
                         } = self.tcx.get(ty).clone()
@@ -2773,8 +2926,9 @@ impl TypeChecker {
                         } else {
                             (Vec::new(), None)
                         }
-                    })
-                    .unwrap_or_default();
+                    }
+                    ClassPatternTarget::Unknown | ClassPatternTarget::Invalid => (Vec::new(), None),
+                };
 
                 // Build positional field types (#827):
                 // - explicit `__match_args__` present (even empty): use it (empty → no positional slots).
@@ -2842,30 +2996,10 @@ impl TypeChecker {
                 self.check_pattern(pattern);
                 let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
                 let alias_ty = match &pattern.node {
-                    Pattern::ClassPattern { cls, .. } => {
-                        let class_name = cls.last().map(|s| s.as_str()).unwrap_or("");
-                        let class_ty = self
-                            .symbols
-                            .lookup(class_name)
-                            .map(|s| self.get_sym_type(s.0))
-                            .filter(|&ty| {
-                                matches!(self.tcx.get(ty), crate::types::Ty::Class { .. })
-                            })
-                            .unwrap_or_else(|| self.tcx.any());
-                        self.with_user_class_role(class_ty, UserClassRole::Instance)
-                    }
-                    Pattern::Constructor { path, .. } => {
-                        let class_name = path.last().map(|s| s.as_str()).unwrap_or("");
-                        let class_ty = self
-                            .symbols
-                            .lookup(class_name)
-                            .map(|s| self.get_sym_type(s.0))
-                            .filter(|&ty| {
-                                matches!(self.tcx.get(ty), crate::types::Ty::Class { .. })
-                            })
-                            .unwrap_or_else(|| self.tcx.any());
-                        self.with_user_class_role(class_ty, UserClassRole::Instance)
-                    }
+                    Pattern::ClassPattern { cls, .. } => match self.class_pattern_target(cls) {
+                        ClassPatternTarget::Instance(ty) => ty,
+                        ClassPatternTarget::Unknown | ClassPatternTarget::Invalid => self.tcx.any(),
+                    },
                     // For non-class patterns, propagate the match subject type (#827).
                     _ => self
                         .current_match_subject_ty

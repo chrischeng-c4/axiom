@@ -53,17 +53,7 @@ pub fn mb_type(val: MbValue) -> MbValue {
                     return make_type_object("dict");
                 }
                 ObjData::Instance { class_name, fields } if class_name == "type" => {
-                    if let Some(type_name) = fields.read().ok().and_then(|f| {
-                        f.get("__name__").and_then(|v| {
-                            v.as_ptr().and_then(|p| {
-                                if let ObjData::Str(ref s) = (*p).data {
-                                    Some(s.clone())
-                                } else {
-                                    None
-                                }
-                            })
-                        })
-                    }) {
+                    if let Some(type_name) = type_object_registry_key(val) {
                         if let Some(meta) = class::class_metaclass_name(&type_name) {
                             return make_type_object(&meta);
                         }
@@ -120,17 +110,23 @@ pub(crate) fn reject_non_constructible_type_object(name: &str) -> Option<MbValue
 
 // ── Type object singleton cache ────────────────────────────────────────────────
 //
-// Per-thread cache of `type(x)` results keyed by type-name string.
+// Process-global cache of `type(x)` results keyed by runtime identity.
 // `mb_type()` and `mb_builtin_type_obj()` share the same cache so that
-// `type(True) is bool` holds: both sides resolve to the same heap pointer.
+// `type(True) is bool` holds: both sides resolve to the same heap pointer. The
+// cache is shared across worker threads because Python class objects keep one
+// process-wide identity when passed to another thread.
 //
 // GC note: the objects are never freed because they are GC-rooted on first
 // creation and the cache keeps one permanent ref. Returned values are retained
 // for the caller, so a JIT-side release cannot invalidate the cached singleton.
-thread_local! {
-    static TYPE_OBJ_CACHE: std::cell::RefCell<FxHashMap<String, MbValue>> =
-        std::cell::RefCell::new(FxHashMap::default());
+#[derive(Default)]
+struct TypeObjectState {
+    cache: FxHashMap<String, MbValue>,
+    registry_keys: FxHashMap<u64, String>,
 }
+
+static TYPE_OBJECT_STATE: std::sync::LazyLock<parking_lot::RwLock<TypeObjectState>> =
+    std::sync::LazyLock::new(|| parking_lot::RwLock::new(TypeObjectState::default()));
 
 /// Create (or look up) a type object singleton for the given type name.
 ///
@@ -138,47 +134,95 @@ thread_local! {
 /// The first call allocates and GC-roots the object; subsequent calls return
 /// the same heap pointer, making `type(x) is int` / `type(x) is bool` work.
 pub(crate) fn make_type_object(name: &str) -> MbValue {
-    TYPE_OBJ_CACHE.with(|cache| {
-        // Fast path: already cached.
-        if let Some(&val) = cache.borrow().get(name) {
+    make_type_object_with_display_name(name, name)
+}
+
+pub(crate) fn make_type_object_with_display_name(
+    registry_key: &str,
+    display_name: &str,
+) -> MbValue {
+    // Fast path: already cached.
+    {
+        let state = TYPE_OBJECT_STATE.read();
+        if let Some(&val) = state.cache.get(registry_key) {
+            if registry_key != display_name {
+                set_type_object_string_field(val, "__name__", display_name);
+            }
             unsafe {
                 rc::retain_if_ptr(val);
             }
             return val;
         }
-        // Slow path: create the singleton.
-        let mut fields = FxHashMap::default();
-        fields.insert(
-            "__name__".to_string(),
-            MbValue::from_ptr(MbObject::new_str(name.to_string())),
-        );
-        fields.insert(
-            "__module__".to_string(),
-            MbValue::from_ptr(MbObject::new_str("builtins".to_string())),
-        );
-        fields.insert(
-            "__doc__".to_string(),
-            MbValue::from_ptr(MbObject::new_str(format!("{name} type object."))),
-        );
-        let obj = Box::new(MbObject {
-            header: rc::MbObjectHeader {
-                rc: std::sync::atomic::AtomicU32::new(1),
-                kind: ObjKind::Instance,
-            },
-            data: ObjData::Instance {
-                class_name: "type".to_string(),
-                fields: crate::runtime::rc::MbRwLock::new(fields),
-            },
-        });
-        let val = MbValue::from_ptr(Box::into_raw(obj));
-        // Root the object so the GC never frees it.
-        gc::gc_add_root(val);
-        cache.borrow_mut().insert(name.to_string(), val);
+    }
+
+    let mut state = TYPE_OBJECT_STATE.write();
+    // Another thread may have populated this identity while the write lock was
+    // pending, so re-check before allocating.
+    if let Some(&val) = state.cache.get(registry_key) {
+        if registry_key != display_name {
+            set_type_object_string_field(val, "__name__", display_name);
+        }
         unsafe {
             rc::retain_if_ptr(val);
         }
-        val
-    })
+        return val;
+    }
+    // Slow path: create the singleton.
+    let mut fields = FxHashMap::default();
+    fields.insert(
+        "__name__".to_string(),
+        MbValue::from_ptr(MbObject::new_str(display_name.to_string())),
+    );
+    fields.insert(
+        "__module__".to_string(),
+        MbValue::from_ptr(MbObject::new_str("builtins".to_string())),
+    );
+    fields.insert(
+        "__doc__".to_string(),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "{display_name} type object."
+        ))),
+    );
+    let obj = Box::new(MbObject {
+        header: rc::MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: "type".to_string(),
+            fields: crate::runtime::rc::MbRwLock::new(fields),
+        },
+    });
+    let val = MbValue::from_ptr(Box::into_raw(obj));
+    // Root the object so the GC never frees it.
+    gc::gc_add_root(val);
+    state.cache.insert(registry_key.to_string(), val);
+    state
+        .registry_keys
+        .insert(val.to_bits(), registry_key.to_string());
+    unsafe {
+        rc::retain_if_ptr(val);
+    }
+    val
+}
+
+fn set_type_object_string_field(type_obj: MbValue, field_name: &str, value: &str) {
+    let Some(ptr) = type_obj.as_ptr() else {
+        return;
+    };
+    unsafe {
+        let ObjData::Instance { class_name, fields } = &(*ptr).data else {
+            return;
+        };
+        if class_name != "type" {
+            return;
+        }
+        let value = MbValue::from_ptr(MbObject::new_str(value.to_string()));
+        let old = fields.write().unwrap().insert(field_name.to_string(), value);
+        if let Some(old) = old {
+            rc::release_if_ptr(old);
+        }
+    }
 }
 
 fn str_field(
@@ -218,6 +262,31 @@ pub(crate) fn type_object_display_name(val: MbValue) -> Option<String> {
     }
 }
 
+pub(crate) fn type_object_registry_key(val: MbValue) -> Option<String> {
+    let state = TYPE_OBJECT_STATE.read();
+    if let Some(key) = state.registry_keys.get(&val.to_bits()).cloned() {
+        return Some(key);
+    }
+    if let Some(key) = state
+        .cache
+        .iter()
+        .find_map(|(key, cached)| (cached.to_bits() == val.to_bits()).then(|| key.clone()))
+    {
+        return Some(key);
+    }
+    drop(state);
+    let ptr = val.as_ptr()?;
+    unsafe {
+        let ObjData::Instance { class_name, fields } = &(*ptr).data else {
+            return None;
+        };
+        if class_name != "type" {
+            return None;
+        }
+        str_field(fields, "__name__")
+    }
+}
+
 pub(crate) fn type_object_repr_name(val: MbValue) -> Option<String> {
     type_object_display_name(val).map(|name| format!("<class '{name}'>"))
 }
@@ -245,8 +314,8 @@ pub(crate) fn set_type_object_attr(type_name: &str, attr_name: &str, value: MbVa
 ///
 /// Called from JIT code generated for builtin type names used in non-call
 /// position (e.g. `bool`, `int`, `list` on the right-hand side of `is`).
-/// Shares the same `TYPE_OBJ_CACHE` as `make_type_object` / `mb_type()`, so
-/// `type(True) is bool` evaluates to `True`.
+/// Shares the same process-global type-object cache as `make_type_object` /
+/// `mb_type()`, so `type(True) is bool` evaluates to `True`.
 pub fn mb_builtin_type_obj(name: MbValue) -> MbValue {
     let name_str: String = if let Some(ptr) = name.as_ptr() {
         unsafe {
@@ -260,6 +329,32 @@ pub fn mb_builtin_type_obj(name: MbValue) -> MbValue {
         String::new()
     };
     make_type_object(&name_str)
+}
+
+/// Return the singleton type object for a user class whose runtime identity is
+/// distinct from its Python-visible name.
+pub fn mb_user_type_obj(registry_key: MbValue, display_name: MbValue) -> MbValue {
+    let registry_key = registry_key
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Str(ref value) = (*ptr).data {
+                Some(value.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+    let display_name = display_name
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Str(ref value) = (*ptr).data {
+                Some(value.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| registry_key.clone());
+    make_type_object_with_display_name(&registry_key, &display_name)
 }
 
 fn value_is_abstractmethod_marker(val: MbValue) -> bool {
@@ -409,11 +504,21 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
         }
     }
 
-    // 4. Register the class in the class registry
-    class::mb_class_register(&class_name, base_names.clone(), methods);
+    // 4. Register the class under an identity that is independent of its
+    // Python-visible name. `type("C", ...)` may be evaluated repeatedly and
+    // every evaluation must produce a distinct class object without replacing
+    // the method table or MRO of an earlier same-named class.
+    let registry_key = class::fresh_dynamic_class_runtime_key(&class_name);
+    let type_obj = make_type_object_with_display_name(&registry_key, &class_name);
+    class::mb_class_register_user_named(
+        &registry_key,
+        &class_name,
+        base_names.clone(),
+        methods,
+    );
 
     // 5. Set class attributes (non-method entries from dict)
-    let cls_name_val = MbValue::from_ptr(MbObject::new_str(class_name.clone()));
+    let cls_name_val = MbValue::from_ptr(MbObject::new_str(registry_key.clone()));
     for (key, val) in &class_attrs {
         let attr_name_val = MbValue::from_ptr(MbObject::new_str(key.clone()));
         class::mb_class_set_class_attr(cls_name_val, attr_name_val, *val);
@@ -425,14 +530,10 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
                 .map(|name| MbValue::from_ptr(MbObject::new_str(name)))
                 .collect(),
         ));
-        class::mb_class_set_abstractmethods(
-            MbValue::from_ptr(MbObject::new_str(class_name.clone())),
-            names,
-        );
+        class::mb_class_set_abstractmethods(cls_name_val, names);
     }
 
     // 6. Return a type object with CPython-visible class metadata.
-    let type_obj = make_type_object(&class_name);
     if let Some(ptr) = type_obj.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {

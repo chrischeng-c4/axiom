@@ -159,17 +159,7 @@ unsafe extern "C" fn dispatch_new_class(args_ptr: *const MbValue, nargs: usize) 
                 if !exec_body.is_none() {
                     let _ = super::super::class::mb_call1_val(exec_body, ns);
                 }
-                let type_obj = super::super::builtins::mb_type3_kwargs(name, bases_t, ns, kwds);
-                if let Some(class_name) = name.as_ptr().and_then(|p| unsafe {
-                    if let ObjData::Str(ref s) = (*p).data {
-                        Some(s.clone())
-                    } else {
-                        None
-                    }
-                }) {
-                    return MbValue::from_ptr(MbObject::new_str(class_name));
-                }
-                return type_obj;
+                return super::super::builtins::mb_type3_kwargs(name, bases_t, ns, kwds);
             }
         }
         let ns = MbValue::from_ptr(MbObject::new_dict());
@@ -361,10 +351,10 @@ pub fn register() {
 // -- Type object constructor helper --
 
 /// Create a type object instance with a given __name__. Routes through the
-/// builtins TYPE_OBJ_CACHE singleton so `type(x) is types.XType` identity
-/// holds (the same cache backs `type()`), then tops up the extra fields the
-/// types module surfaces (__qualname__, UnionType.__args__) — idempotent
-/// singleton mutation.
+/// process-global builtins type-object cache so `type(x) is types.XType`
+/// identity holds (the same cache backs `type()`), then tops up the extra
+/// fields the types module surfaces (__qualname__, UnionType.__args__) —
+/// idempotent singleton mutation.
 fn make_type_obj(name: &str) -> MbValue {
     let val = super::super::builtins::make_type_object(name);
     if let Some(ptr) = val.as_ptr() {
@@ -534,30 +524,20 @@ pub fn mb_types_new_class_impl(name: MbValue, bases: MbValue, exec_body: MbValue
     } else {
         bases
     };
-    // mb_type3 registers the class (and returns a `type` object). Normal user
-    // classes are represented as the class-name string — the form whose
-    // __name__/__bases__/isinstance resolve through the registry — so return
-    // that for consistency.
     let explicit_type_params = dict_get_str(ns, "__type_params__");
-    let _ = super::super::builtins::mb_type3(name, bases, ns);
-    if let Some(s) = name.as_ptr().and_then(|p| unsafe {
-        if let ObjData::Str(ref s) = (*p).data {
-            Some(s.clone())
-        } else {
-            None
-        }
-    }) {
-        set_dynamic_class_generic_metadata(&s, bases);
-        if let Some(type_params) = explicit_type_params {
-            super::super::class::mb_class_set_class_attr(
-                MbValue::from_ptr(MbObject::new_str(s.clone())),
-                MbValue::from_ptr(MbObject::new_str("__type_params__".to_string())),
-                type_params,
-            );
-        }
-        return MbValue::from_ptr(MbObject::new_str(s));
+    let type_obj = super::super::builtins::mb_type3(name, bases, ns);
+    let Some(registry_key) = super::super::class::resolve_class_name(type_obj) else {
+        return type_obj;
+    };
+    set_dynamic_class_generic_metadata(&registry_key, bases);
+    if let Some(type_params) = explicit_type_params {
+        super::super::class::mb_class_set_class_attr(
+            MbValue::from_ptr(MbObject::new_str(registry_key)),
+            MbValue::from_ptr(MbObject::new_str("__type_params__".to_string())),
+            type_params,
+        );
     }
-    name
+    type_obj
 }
 
 /// types.new_class(name, bases=(), kwds=None, exec_body=None) -> type
@@ -1037,9 +1017,40 @@ mod tests {
     fn test_new_class_uses_provided_name() {
         let name = MbValue::from_ptr(MbObject::new_str("MyClass".to_string()));
         let cls = mb_types_new_class(name);
+        assert_eq!(class_name_of(cls).as_deref(), Some("type"));
+        let visible_name = crate::runtime::class::mb_getattr(
+            cls,
+            MbValue::from_ptr(MbObject::new_str("__name__".to_string())),
+        );
+        assert_eq!(get_str(visible_name).as_deref(), Some("MyClass"));
+        let registry_key = crate::runtime::class::resolve_class_name(cls)
+            .expect("types.new_class should return a registered type object");
+        assert_ne!(registry_key, "MyClass");
+    }
+
+    #[test]
+    fn test_new_class_same_name_allocates_fresh_identity() {
+        let first = mb_types_new_class(MbValue::from_ptr(MbObject::new_str("Same".to_string())));
+        let second = mb_types_new_class(MbValue::from_ptr(MbObject::new_str("Same".to_string())));
+        assert_ne!(first.to_bits(), second.to_bits());
         assert_eq!(
-            crate::runtime::class::resolve_class_name(cls).as_deref(),
-            Some("MyClass")
+            crate::runtime::builtins::mb_eq(first, second).as_bool(),
+            Some(false)
+        );
+
+        let first_key = crate::runtime::class::resolve_class_name(first)
+            .expect("first types.new_class result should have a registry key");
+        let first_instance = crate::runtime::class::mb_instance_new(
+            MbValue::from_ptr(MbObject::new_str(first_key)),
+            MbValue::none(),
+        );
+        assert_eq!(
+            crate::runtime::builtins::mb_type(first_instance).to_bits(),
+            first.to_bits()
+        );
+        assert_eq!(
+            crate::runtime::class::mb_isinstance(first_instance, second).as_bool(),
+            Some(false)
         );
     }
 

@@ -197,13 +197,13 @@ impl Substitution {
             }
             Ty::Class {
                 ref name,
+                role,
                 ref user,
                 ref fields,
                 ref match_args,
             } => {
                 let new_user = user.as_ref().map(|user| super::ty::UserClass {
                     symbol: user.symbol,
-                    role: user.role,
                     args: user.args.iter().map(|arg| self.apply(*arg, tcx)).collect(),
                 });
                 let new_fields: Vec<_> = fields
@@ -215,6 +215,7 @@ impl Substitution {
                 } else {
                     tcx.intern(Ty::Class {
                         name: name.clone(),
+                        role,
                         user: new_user,
                         fields: new_fields,
                         match_args: match_args.clone(),
@@ -530,17 +531,19 @@ fn unify_for_inference_step(
             }
         }
         Ty::Class {
+            role: param_role,
             user: Some(param_user),
             ..
         } => {
             let arg_ty = tcx.get(arg).clone();
             if let Ty::Class {
+                role: arg_role,
                 user: Some(arg_user),
                 ..
             } = arg_ty
             {
                 if param_user.symbol == arg_user.symbol
-                    && param_user.role == arg_user.role
+                    && param_role == arg_role
                     && param_user.args.len() == arg_user.args.len()
                 {
                     for (param_arg, concrete_arg) in param_user.args.iter().zip(&arg_user.args) {
@@ -578,12 +581,25 @@ fn inference_shapes_match(param: TypeId, arg: TypeId, tcx: &TypeContext) -> bool
         | (Ty::Fn { .. }, Ty::Fn { .. }) => true,
         (
             Ty::Class {
-                user: Some(param), ..
+                name: param_name,
+                role: param_role,
+                user: param_user,
+                ..
             },
             Ty::Class {
-                user: Some(arg), ..
+                name: arg_name,
+                role: arg_role,
+                user: arg_user,
+                ..
             },
-        ) => param.symbol == arg.symbol && param.role == arg.role,
+        ) => {
+            param_role == arg_role
+                && match (param_user, arg_user) {
+                    (Some(param), Some(arg)) => param.symbol == arg.symbol,
+                    (None, None) => param_name == arg_name,
+                    _ => false,
+                }
+        }
         (left, right) => std::mem::discriminant(left) == std::mem::discriminant(right),
     }
 }
@@ -1011,9 +1027,9 @@ mod tests {
         let var_ty = tcx.intern(Ty::TypeVar(var_id));
         let class_ty = tcx.intern(Ty::Class {
             name: "Box".to_string(),
+            role: crate::types::ty::ClassRole::Instance,
             user: Some(crate::types::ty::UserClass {
                 symbol: crate::resolve::SymbolId(42),
-                role: crate::types::ty::UserClassRole::Instance,
                 args: vec![var_ty],
             }),
             fields: vec![("value".to_string(), var_ty)],
@@ -1034,7 +1050,13 @@ mod tests {
         };
         assert_eq!(name, "Box");
         assert_eq!(user.symbol, crate::resolve::SymbolId(42));
-        assert_eq!(user.role, crate::types::ty::UserClassRole::Instance);
+        assert!(matches!(
+            tcx.get(applied),
+            Ty::Class {
+                role: crate::types::ty::ClassRole::Instance,
+                ..
+            }
+        ));
         assert_eq!(user.args, vec![tcx.int()]);
         assert_eq!(fields, &vec![("value".to_string(), tcx.int())]);
     }

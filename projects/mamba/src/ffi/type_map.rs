@@ -1,6 +1,6 @@
 use super::c_types::*;
 use crate::types::context::TypeContext;
-use crate::types::ty::{Ty, TypeId};
+use crate::types::ty::{ClassRole, Ty, TypeId};
 
 /// Map a C type to a Mamba type (#257).
 pub fn c_type_to_mamba(ct: &CType, tcx: &mut TypeContext) -> TypeId {
@@ -27,6 +27,7 @@ pub fn c_type_to_mamba(ct: &CType, tcx: &mut TypeContext) -> TypeId {
             // Named types resolve to class/enum references
             tcx.intern(Ty::Class {
                 name: name.clone(),
+                role: ClassRole::Instance,
                 user: None,
                 fields: vec![],
                 match_args: None,
@@ -44,6 +45,7 @@ pub fn struct_to_class(s: &CStruct, tcx: &mut TypeContext) -> TypeId {
         .collect();
     tcx.intern(Ty::Class {
         name: s.name.clone(),
+        role: ClassRole::Object,
         user: None,
         fields,
         match_args: None,
@@ -63,6 +65,7 @@ pub fn enum_to_class(e: &CEnum, tcx: &mut TypeContext) -> TypeId {
         .collect();
     tcx.intern(Ty::Class {
         name: e.name.clone(),
+        role: ClassRole::Object,
         user: None,
         fields,
         match_args: None,
@@ -166,8 +169,11 @@ mod tests {
         };
         let ty = struct_to_class(&s, &mut tcx);
         match tcx.get(ty) {
-            Ty::Class { name, fields, .. } => {
+            Ty::Class {
+                name, role, fields, ..
+            } => {
                 assert_eq!(name, "Point");
+                assert_eq!(*role, ClassRole::Object);
                 assert_eq!(fields.len(), 2);
             }
             _ => panic!("expected Class type"),
@@ -192,8 +198,11 @@ mod tests {
         };
         let ty = enum_to_class(&e, &mut tcx);
         match tcx.get(ty) {
-            Ty::Class { name, fields, .. } => {
+            Ty::Class {
+                name, role, fields, ..
+            } => {
                 assert_eq!(name, "Color");
+                assert_eq!(*role, ClassRole::Object);
                 assert_eq!(fields[0].0, "RED");
                 assert_eq!(fields[1].0, "GREEN");
             }
@@ -276,8 +285,11 @@ mod tests {
         let named = CType::Named("MyStruct".into());
         let mapped = c_type_to_mamba(&named, &mut tcx);
         match tcx.get(mapped) {
-            Ty::Class { name, fields, .. } => {
+            Ty::Class {
+                name, role, fields, ..
+            } => {
                 assert_eq!(name, "MyStruct");
+                assert_eq!(*role, ClassRole::Instance);
                 assert!(fields.is_empty());
             }
             _ => panic!("expected Class type for Named"),

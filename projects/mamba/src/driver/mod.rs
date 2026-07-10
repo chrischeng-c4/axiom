@@ -884,6 +884,485 @@ mod tests {
         );
     }
 
+    #[test]
+    fn pep634_builtin_self_match_classes_bind_the_subject() {
+        for (class_name, subject) in [
+            ("bool", "True"),
+            ("bytearray", "bytearray(b\"x\")"),
+            ("bytes", "b\"x\""),
+            ("dict", "{\"x\": 1}"),
+            ("float", "1.5"),
+            ("frozenset", "frozenset([1])"),
+            ("int", "1"),
+            ("list", "[1]"),
+            ("set", "set([1])"),
+            ("str", "\"x\""),
+            ("tuple", "(1,)"),
+        ] {
+            let src = format!(
+                "subject = {subject}\nmatch subject:\n    case {class_name}(value):\n        if value == subject:\n            print(\"matched\")\n"
+            );
+            let previous = crate::runtime::output::begin_capture();
+            let mut session = CompilerSession::new(CompilerConfig::default());
+            let result = session.run_source(&src, "pep634_builtin_self_match_class.py");
+            let captured = crate::runtime::output::end_capture(previous);
+            crate::runtime::cleanup_all_runtime_state();
+
+            result.unwrap_or_else(|error| panic!("{class_name} self-match failed: {error}"));
+            assert_eq!(
+                captured.trim(),
+                "matched",
+                "{class_name} must bind the whole subject"
+            );
+        }
+    }
+
+    #[test]
+    fn class_patterns_evaluate_alias_values_instead_of_alias_names() {
+        let src = r#"
+BuiltinAlias = int
+match 7:
+    case BuiltinAlias(value):
+        print(value)
+class Point:
+    __match_args__ = ("x",)
+    def __init__(self, x):
+        self.x = x
+PointAlias = Point
+match Point(9):
+    case PointAlias(value):
+        print(value)
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "class_pattern_alias_values.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.expect("class-pattern aliases should run from source");
+        assert_eq!(captured.lines().collect::<Vec<_>>(), ["7", "9"]);
+    }
+
+    #[test]
+    fn repeated_function_definitions_bind_in_source_order() {
+        let src = r#"
+def value() -> int:
+    return 1
+old = value
+print(value())
+def value() -> str:
+    return "two"
+print(old())
+print(value())
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "repeated_function_definitions.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.expect("repeated function definitions should run from source");
+        assert_eq!(captured.lines().collect::<Vec<_>>(), ["1", "1", "two"]);
+    }
+
+    #[test]
+    fn nested_and_conditional_function_definitions_bind_their_runtime_slots() {
+        let src = r#"
+def outer():
+    def value():
+        return 1
+    old = value
+    def value():
+        return 2
+    print(old())
+    print(value())
+outer()
+if True:
+    def conditional():
+        return 3
+print(conditional())
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "nested_function_bindings.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.expect("nested and conditional function definitions should run from source");
+        assert_eq!(captured.lines().collect::<Vec<_>>(), ["1", "2", "3"]);
+    }
+
+    #[test]
+    fn repeated_class_definitions_keep_runtime_identity_and_source_order() {
+        let src = r#"
+class C:
+    def value(self):
+        return 1
+Old = C
+old = C()
+class C:
+    def value(self):
+        return "two"
+new = C()
+print(Old is C)
+print(type(old) is Old)
+print(type(old) is C)
+print(old.value())
+print(new.value())
+print(Old.__name__)
+print(C.__name__)
+print(isinstance(old, Old))
+print(isinstance(old, C))
+Previous = C
+class C(C):
+    pass
+print(C.__bases__[0] is Previous)
+def replace(cls):
+    return 42
+@replace
+class Decorated:
+    pass
+print(Decorated)
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "repeated_class_definitions.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.expect("repeated class definitions should run from source");
+        assert_eq!(
+            captured.lines().collect::<Vec<_>>(),
+            [
+                "False", "True", "False", "1", "two", "C", "C", "True", "False", "True",
+                "42"
+            ]
+        );
+    }
+
+    #[test]
+    fn nested_and_conditional_class_definitions_bind_their_runtime_slots() {
+        let src = r#"
+def outer():
+    class Local:
+        def value(self):
+            return 1
+    old = Local
+    class Local:
+        def value(self):
+            return 2
+    print(old().value())
+    print(Local().value())
+    print(old is Local)
+outer()
+if True:
+    class Conditional:
+        def value(self):
+            return 3
+print(Conditional().value())
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "nested_class_bindings.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.expect("nested and conditional class definitions should run from source");
+        assert_eq!(
+            captured.lines().collect::<Vec<_>>(),
+            ["1", "2", "False", "3"]
+        );
+    }
+
+    #[test]
+    fn each_class_statement_execution_allocates_fresh_runtime_identity() {
+        let src = r#"
+def make():
+    class C:
+        def value(self):
+            return 1
+    return C
+First = make()
+Second = make()
+first = First()
+second = Second()
+print(First is Second)
+print(type(first) is First)
+print(type(first) is Second)
+print(type(second) is Second)
+print(first)
+print(second)
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "fresh_class_execution_identity.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.expect("each class statement execution should allocate a fresh identity");
+        assert_eq!(
+            captured.lines().collect::<Vec<_>>(),
+            ["False", "True", "False", "True", "<C instance>", "<C instance>"]
+        );
+    }
+
+    #[test]
+    fn repeated_local_class_execution_keeps_its_class_cell_identity() {
+        let src = r#"
+class BaseOne:
+    def value(self):
+        return 1
+class BaseTwo:
+    def value(self):
+        return 2
+def make(base):
+    class Child(base):
+        def value(self):
+            return super().value()
+        def owner(self):
+            return __class__
+    return Child
+First = make(BaseOne)
+Second = make(BaseTwo)
+print(First().owner() is First)
+print(First().owner() is Second)
+print(Second().owner() is Second)
+print(First.__bases__[0] is BaseOne)
+print(Second.__bases__[0] is BaseTwo)
+print(First.__bases__[0].__name__)
+print(Second.__bases__[0].__name__)
+print(First().value())
+print(Second().value())
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "repeated_local_class_cell.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.unwrap_or_else(|error| {
+            panic!(
+                "each local class execution should retain its own class cell: {error}; output={captured:?}"
+            )
+        });
+        assert_eq!(
+            captured.lines().collect::<Vec<_>>(),
+            ["True", "False", "True", "True", "True", "BaseOne", "BaseTwo", "1", "2"]
+        );
+    }
+
+    #[test]
+    fn runtime_class_base_runs_init_subclass_once_with_kwargs() {
+        let src = r#"
+events = []
+class Base:
+    def __init_subclass__(cls, **kwargs):
+        events.append(kwargs["flag"])
+def make(base):
+    class Child(base, flag=7):
+        pass
+    return Child
+Child = make(Base)
+print(len(events))
+print(events[0])
+print(Child.__bases__[0] is Base)
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "runtime_base_init_subclass.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.unwrap_or_else(|error| {
+            panic!("runtime class base lifecycle failed: {error}; output={captured:?}")
+        });
+        assert_eq!(captured.lines().collect::<Vec<_>>(), ["1", "7", "True"]);
+    }
+
+    #[test]
+    fn class_cell_survives_descriptors_methods_and_class_decorators() {
+        let src = r#"
+from typing import Any
+def identity(func: Any) -> Any:
+    return func
+def make():
+    class C:
+        @property
+        def owner(self):
+            return __class__
+        @owner.setter
+        def owner(self, value):
+            self.setter_owner = __class__
+        @owner.deleter
+        def owner(self):
+            self.deleter_owner = __class__
+        @classmethod
+        def class_owner(cls):
+            return (__class__, cls)
+        @staticmethod
+        def static_owner():
+            return __class__
+        @identity
+        def decorated_owner(self):
+            return __class__
+    return C
+First = make()
+old_method = First().decorated_owner
+Second = make()
+first = First()
+first.owner = 1
+del first.owner
+print(first.owner is First)
+print(first.setter_owner is First)
+print(first.deleter_owner is First)
+print(First.static_owner() is First)
+print(Second.static_owner() is Second)
+print(old_method() is First)
+class Sub(First):
+    pass
+owners = Sub.class_owner()
+print(owners[0] is First)
+print(owners[1] is Sub)
+class Plain:
+    def owner(self):
+        return __class__
+print(Plain().owner() is Plain)
+def replace(cls: Any) -> Any:
+    return cls()
+@replace
+class Decorated:
+    def owner(self):
+        return __class__
+print(getattr(Decorated, "owner")() is type(Decorated))
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "class_cell_descriptors.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.unwrap_or_else(|error| {
+            panic!("class-cell descriptor lifecycle failed: {error}; output={captured:?}")
+        });
+        assert_eq!(
+            captured.lines().collect::<Vec<_>>(),
+            ["True", "True", "True", "True", "True", "True", "True", "True", "True", "True"]
+        );
+    }
+
+    #[test]
+    fn deferred_methods_keep_their_class_cell_identity() {
+        let src = r#"
+import asyncio
+def make():
+    class C:
+        async def async_owner(self):
+            return __class__
+        def generator_owner(self):
+            yield __class__
+    return C
+First = make()
+Second = make()
+print(asyncio.run(First().async_owner()) is First)
+print(asyncio.run(Second().async_owner()) is Second)
+print(next(First().generator_owner()) is First)
+print(next(Second().generator_owner()) is Second)
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "deferred_method_class_cell.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.unwrap_or_else(|error| {
+            panic!("deferred method class-cell lifecycle failed: {error}; output={captured:?}")
+        });
+        assert_eq!(
+            captured.lines().collect::<Vec<_>>(),
+            ["True", "True", "True", "True"]
+        );
+    }
+
+    #[test]
+    fn zero_arg_super_without_a_first_parameter_raises_runtime_error() {
+        let src = r#"
+class C:
+    @staticmethod
+    def broken():
+        return super()
+try:
+    C.broken()
+except RuntimeError as error:
+    print(str(error))
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "zero_arg_super_no_parameter.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.expect("zero-argument super without a first parameter should be catchable");
+        assert_eq!(captured.trim(), "super(): no arguments");
+    }
+
+    #[test]
+    fn user_metaclass_identity_survives_same_name_rebinding() {
+        let src = r#"
+class Meta(type):
+    pass
+OldMeta = Meta
+class Meta(type):
+    pass
+class First(metaclass=OldMeta):
+    pass
+class Second(metaclass=Meta):
+    pass
+print(type(First) is OldMeta)
+print(type(First) is Meta)
+print(type(Second) is Meta)
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "same_name_metaclass_identity.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.expect("same-named metaclasses should retain nominal identity");
+        assert_eq!(
+            captured.lines().collect::<Vec<_>>(),
+            ["True", "False", "True"]
+        );
+    }
+
+    #[test]
+    fn metaclass_definition_hooks_receive_visible_class_name() {
+        let src = r#"
+class HookMeta(type):
+    @classmethod
+    def __prepare__(mcls, name, bases):
+        print("prepare:" + name)
+        return {}
+    def __new__(mcls, name, bases, namespace):
+        print("new:" + name)
+    def __init__(cls, name, bases, namespace):
+        print("init:" + name)
+class Visible(metaclass=HookMeta):
+    pass
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "visible_metaclass_hook_names.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.expect("metaclass definition hooks should run from source");
+        assert_eq!(
+            captured.lines().collect::<Vec<_>>(),
+            ["prepare:Visible", "new:Visible", "init:Visible"]
+        );
+        assert!(!captured.contains("__mamba_user_class__"));
+    }
+
     #[cfg(feature = "native-modules")]
     #[test]
     fn native_modules_feature_links_mambalibs_http() {
@@ -972,6 +1451,27 @@ print(app.endpoint_count)
 
         result.expect("dotted mambalibs.http import should run from source");
         assert_eq!(captured.trim(), "1");
+    }
+
+    #[test]
+    fn dotted_class_pattern_runs_from_source() {
+        let src = r#"
+import datetime
+subject = datetime.date(2024, 1, 2)
+match subject:
+    case datetime.date():
+        print("matched")
+    case _:
+        print("missed")
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "dotted_class_pattern.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.expect("dotted class pattern should resolve from its module binding");
+        assert_eq!(captured.trim(), "matched");
     }
 
     #[cfg(feature = "native-modules")]

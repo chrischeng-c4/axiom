@@ -266,6 +266,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_user_type_obj",
+            builtins::mb_user_type_obj as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_range",
             builtins::mb_range as fn(super::MbValue) -> super::MbValue,
             [I64],
@@ -1746,6 +1752,25 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Void
         ),
         rt_sym!(
+            "mb_class_define_multi_named",
+            class::mb_class_define_multi_named
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ),
+            [I64, I64, I64, I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_class_runtime_key",
+            class::mb_class_runtime_key as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
             "mb_class_update_bases",
             class::mb_class_update_bases as fn(super::MbValue, super::MbValue),
             [I64, I64],
@@ -1944,6 +1969,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!(
             "mb_generator_store_arg",
             generator::mb_generator_store_arg as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_generator_capture_cells",
+            generator::mb_generator_capture_cells as fn(super::MbValue, super::MbValue),
             [I64, I64],
             Void
         ),
@@ -2398,6 +2429,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
                 as fn(i64, super::MbValue) -> super::MbValue,
             [I64, I64],
             I64
+        ),
+        rt_sym!(
+            "mb_coroutine_capture_cells",
+            async_rt::mb_coroutine_capture_cells as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
         ),
         rt_sym!(
             "mb_await",

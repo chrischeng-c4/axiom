@@ -815,17 +815,16 @@ pub(crate) fn special_form(name: &str) -> MbValue {
     })
 }
 
-/// Structural identity key for alias args/members (type objects collapse to
-/// their cached-singleton name, aliases recurse, plain values keep type+repr
+/// Structural identity key for alias args/members (type objects use their
+/// nominal registry key, aliases recurse, plain values keep type+repr
 /// so Literal[0] != Literal[False]).
 fn alias_key(v: MbValue) -> String {
     if let Some(cls) = instance_class_of(v) {
         match cls.as_str() {
             "type" => {
-                let n = instance_field_of(v, "__name__")
-                    .and_then(|x| extract_str(x))
-                    .unwrap_or_default();
-                return format!("T:{n}");
+                let identity = super::super::builtins::type_object_registry_key(v)
+                    .unwrap_or_else(|| format!("bits:{:016x}", v.to_bits()));
+                return format!("T:{identity}");
             }
             "typing.SpecialForm" => {
                 let n = instance_field_of(v, "_name")

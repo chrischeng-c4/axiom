@@ -3,16 +3,17 @@ use crate::codegen::CodegenBackend;
 use crate::codegen::CodegenOutput;
 use crate::diagnostic;
 use crate::error::MambaError;
-use crate::hir::HirFunction;
+use crate::hir::{HirClass, HirFunction};
 use crate::lower;
 use crate::lower::ReplSymInfo;
 use crate::parser;
+use crate::resolve::SymbolId;
 use crate::runtime::MbValue;
 use crate::source::SourceMap;
 use crate::types::TypeChecker;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 /// REPL (Read-Eval-Print Loop) for Mamba (#316).
 ///
 /// Provides an interactive Python-like interpreter shell with:
@@ -29,12 +30,21 @@ pub struct Repl {
     checker: TypeChecker,
     line_count: u32,
     verbose: bool,
-    /// Variable names persisted across iterations (R3).
-    known_globals: HashSet<String>,
+    /// Exact runtime bindings persisted across iterations (R3).
+    known_globals: HashSet<SymbolId>,
     /// Accumulated function definitions from previous iterations (R3).
     accumulated_functions: Vec<HirFunction>,
+    /// Class metadata retained for nested classes in accumulated functions.
+    accumulated_classes: Vec<HirClass>,
     /// Accumulated SymbolId → (name, type) mapping across iterations.
     accumulated_syms: ReplSymInfo,
+    /// Canonical Python name → current binding symbol.
+    accumulated_bindings: HashMap<String, SymbolId>,
+    /// Class binding names available as runtime base expressions.
+    known_class_names: HashSet<String>,
+    /// Keep prior JIT code alive because persisted class method tables retain
+    /// function pointers into the module that created them.
+    jit_backends: Vec<CraneliftJitBackend>,
 }
 
 impl Repl {
@@ -46,7 +56,11 @@ impl Repl {
             verbose: false,
             known_globals: HashSet::new(),
             accumulated_functions: Vec::new(),
+            accumulated_classes: Vec::new(),
             accumulated_syms: ReplSymInfo::new(),
+            accumulated_bindings: HashMap::new(),
+            known_class_names: HashSet::new(),
+            jit_backends: Vec::new(),
         }
     }
 
@@ -158,6 +172,15 @@ impl Repl {
 
     /// Core evaluation returning (raw_result, has_expression_echo).
     fn eval_raw(&mut self, input: &str) -> Result<(i64, bool), String> {
+        let checker_snapshot = self.checker.clone();
+        let result = self.eval_raw_inner(input);
+        if result.is_err() {
+            self.checker = checker_snapshot;
+        }
+        result
+    }
+
+    fn eval_raw_inner(&mut self, input: &str) -> Result<(i64, bool), String> {
         self.line_count += 1;
         let file_name = format!("<repl:{}>", self.line_count);
         let file_id = self.source_map.add_file(file_name, input.to_string());
@@ -179,16 +202,23 @@ impl Repl {
         }
 
         // Lower AST → HIR (REPL-aware: pre-seed known globals from prev iterations)
-        let hir = lower::lower_module_repl(&module, &self.checker, &self.accumulated_syms)
-            .map_err(|errs| {
-                errs.iter()
-                    .map(|e| format!("LowerError: {}", self.format_error(e)))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })?;
+        let hir = lower::lower_module_repl(
+            &module,
+            &self.checker,
+            &self.accumulated_syms,
+            &self.accumulated_bindings,
+            &self.known_class_names,
+        )
+        .map_err(|errs| {
+            errs.iter()
+                .map(|e| format!("LowerError: {}", self.format_error(e)))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })?;
 
         // Save new definitions for cross-iteration persistence (R3)
         let new_functions = hir.functions.clone();
+        let new_classes = hir.classes.clone();
         // Build ReplSymInfo: merge sym_names with sym_types
         let new_syms: ReplSymInfo = hir
             .sym_names
@@ -204,12 +234,14 @@ impl Repl {
             .collect();
 
         // Lower HIR → MIR (REPL-aware: restore/save globals, echo last expr)
-        let prev: Vec<String> = self.known_globals.iter().cloned().collect();
+        let prev: Vec<SymbolId> = self.known_globals.iter().copied().collect();
         let (mir_module, new_globals, has_echo) = lower::lower_hir_to_mir_repl(
             &hir,
             &self.checker.tcx,
+            &self.checker.symbols,
             &prev,
             &self.accumulated_functions,
+            &self.accumulated_classes,
         );
 
         if self.verbose {
@@ -228,11 +260,33 @@ impl Repl {
                 let main_fn: fn() -> i64 = unsafe { std::mem::transmute(entry) };
                 let result = main_fn();
                 // Update state only after successful execution (avoids ghost globals)
-                for g in new_globals {
-                    self.known_globals.insert(g);
+                self.known_globals = new_globals.iter().copied().collect();
+                for &symbol in &new_globals {
+                    if let Some(name) = hir.sym_names.get(&symbol) {
+                        self.accumulated_bindings.insert(name.clone(), symbol);
+                    }
+                }
+                for function in &new_functions {
+                    let binding = function.bind_name.unwrap_or(function.name);
+                    if let Some(name) = hir.sym_names.get(&binding) {
+                        self.accumulated_bindings.insert(name.clone(), binding);
+                    }
+                }
+                for class in &new_classes {
+                    if let Some(name) = hir
+                        .sym_names
+                        .get(&class.bind_name)
+                        .or_else(|| hir.sym_names.get(&class.name))
+                    {
+                        self.accumulated_bindings
+                            .insert(name.clone(), class.bind_name);
+                        self.known_class_names.insert(name.clone());
+                    }
                 }
                 self.accumulated_functions.extend(new_functions);
+                self.accumulated_classes.extend(new_classes);
                 self.accumulated_syms.extend(new_syms);
+                self.jit_backends.push(backend);
                 // Decode NaN-boxed int results to raw i64 for consistent REPL
                 // semantics (R7). The R7 fix causes emit_internal_call to NaN-box
                 // primitive callee results, so the JIT entry now returns a NaN-boxed
@@ -327,6 +381,14 @@ fn needs_continuation(input: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn has_global(repl: &Repl, name: &str) -> bool {
+        repl.known_globals.iter().any(|symbol| {
+            repl.accumulated_syms
+                .get(symbol)
+                .is_some_and(|(stored_name, _)| stored_name == name)
+        })
+    }
+
     #[test]
     fn test_needs_continuation() {
         assert!(needs_continuation("if x > 0:"));
@@ -353,7 +415,7 @@ mod tests {
         // Iteration 1: define variable
         let (_, echo) = repl.eval_raw("x: int = 42\n").unwrap();
         assert!(!echo, "assignment should not echo");
-        assert!(repl.known_globals.contains("x"));
+        assert!(has_global(&repl, "x"));
         // Iteration 2: use persisted variable in expression — should echo 42
         let (val, echo) = repl.eval_raw("x\n").unwrap();
         assert!(echo, "bare variable should echo");
@@ -371,6 +433,82 @@ mod tests {
         let (val, echo) = repl.eval_raw("double(21)\n").unwrap();
         assert!(echo, "function call expression should echo");
         assert_eq!(val, 42, "double(21) should return 42");
+    }
+
+    #[test]
+    fn test_repl_repeated_classes_keep_runtime_identity() {
+        let mut repl = Repl::new();
+        repl.eval_raw(
+            "class C:\n    def value(self) -> int:\n        return 1\nOld = C\nold = Old()\n",
+        )
+        .unwrap();
+        repl.eval_raw("class C:\n    def value(self) -> int:\n        return 2\nnew = C()\n")
+            .unwrap();
+
+        assert_eq!(repl.eval_raw("old.value()\n").unwrap().0, 1);
+        assert_eq!(repl.eval_raw("new.value()\n").unwrap().0, 2);
+        assert_eq!(
+            repl.eval_raw("1 if type(old) is Old else 0\n").unwrap().0,
+            1
+        );
+        assert_eq!(repl.eval_raw("1 if type(old) is C else 0\n").unwrap().0, 0);
+    }
+
+    #[test]
+    fn test_repl_prior_class_can_be_a_new_base() {
+        let mut repl = Repl::new();
+        repl.eval_raw("class Base:\n    def value(self) -> int:\n        return 7\n")
+            .unwrap();
+        repl.eval_raw("class Child(Base):\n    pass\n").unwrap();
+        assert_eq!(repl.eval_raw("Child().value()\n").unwrap().0, 7);
+    }
+
+    #[test]
+    fn test_repl_accumulated_function_keeps_nested_class_metadata() {
+        let mut repl = Repl::new();
+        repl.eval_raw("def make():\n    class Local:\n        pass\n    return Local\n")
+            .unwrap();
+        repl.eval_raw("A = make()\nB = make()\n").unwrap();
+        assert_eq!(repl.eval_raw("1 if A is B else 0\n").unwrap().0, 0);
+        assert_eq!(
+            repl.eval_raw("1 if A.__name__ == 'Local' else 0\n")
+                .unwrap()
+                .0,
+            1
+        );
+    }
+
+    #[test]
+    fn test_repl_accumulated_function_keeps_nested_class_body_metadata() {
+        let mut repl = Repl::new();
+        repl.eval_raw(
+            "def make():\n    class Outer:\n        class Inner:\n            pass\n    return Outer.Inner\n",
+        )
+        .unwrap();
+        repl.eval_raw("First = make()\nSecond = make()\n")
+            .unwrap();
+        assert_eq!(
+            repl.eval_raw("1 if First is Second else 0\n").unwrap().0,
+            0
+        );
+        assert_eq!(
+            repl.eval_raw("1 if First.__name__ == 'Inner' else 0\n")
+                .unwrap()
+                .0,
+            1
+        );
+    }
+
+    #[test]
+    fn test_repl_class_binding_is_visible_to_same_eval_methods() {
+        let mut repl = Repl::new();
+        let (value, echo) = repl
+            .eval_raw(
+                "class C:\n    def owner(self):\n        return C\n1 if C().owner() is C else 0\n",
+            )
+            .unwrap();
+        assert!(echo);
+        assert_eq!(value, 1);
     }
 
     #[test]
@@ -406,12 +544,64 @@ mod tests {
     }
 
     #[test]
+    fn test_repl_failed_function_definition_rolls_back_checker() {
+        let mut repl = Repl::new();
+        repl.eval_raw("keep: int = 40\n").unwrap();
+        let keep_symbol = repl
+            .checker
+            .symbols
+            .lookup("keep")
+            .expect("valid binding must exist before the failed iteration");
+
+        let failed = repl.eval_raw(
+            "def ghost_function(value: int) -> int:\n    return 'wrong'\n",
+        );
+        assert!(failed.is_err(), "invalid function definition must fail");
+        assert!(
+            repl.checker.symbols.lookup("ghost_function").is_none(),
+            "failed function definition leaked a checker symbol"
+        );
+        assert_eq!(
+            repl.checker.symbols.lookup("keep"),
+            Some(keep_symbol),
+            "rollback must preserve the prior valid binding identity"
+        );
+        assert_eq!(repl.eval_raw("keep + 2\n").unwrap().0, 42);
+    }
+
+    #[test]
+    fn test_repl_failed_class_definition_rolls_back_checker() {
+        let mut repl = Repl::new();
+        repl.eval_raw("keep: int = 39\n").unwrap();
+        let keep_symbol = repl
+            .checker
+            .symbols
+            .lookup("keep")
+            .expect("valid binding must exist before the failed iteration");
+
+        let failed = repl.eval_raw(
+            "class GhostClass:\n    def broken(self) -> int:\n        return 'wrong'\n",
+        );
+        assert!(failed.is_err(), "invalid class definition must fail");
+        assert!(
+            repl.checker.symbols.lookup("GhostClass").is_none(),
+            "failed class definition leaked a checker symbol"
+        );
+        assert_eq!(
+            repl.checker.symbols.lookup("keep"),
+            Some(keep_symbol),
+            "rollback must preserve the prior valid binding identity"
+        );
+        assert_eq!(repl.eval_raw("keep + 3\n").unwrap().0, 42);
+    }
+
+    #[test]
     fn test_repl_multiple_variables_across_iterations() {
         let mut repl = Repl::new();
         repl.eval_raw("a: int = 1\n").unwrap();
         repl.eval_raw("b: int = 2\n").unwrap();
-        assert!(repl.known_globals.contains("a"));
-        assert!(repl.known_globals.contains("b"));
+        assert!(has_global(&repl, "a"));
+        assert!(has_global(&repl, "b"));
         // Use both persisted variables — should echo 3
         let (val, echo) = repl.eval_raw("a + b\n").unwrap();
         assert!(echo, "expression should echo");

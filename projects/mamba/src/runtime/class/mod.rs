@@ -16,6 +16,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 mod cells;
 mod descriptors;
@@ -66,7 +67,10 @@ pub(crate) const FROZENSET_SUBCLASS_VALUE_FIELD: &str = "__mamba_frozenset_value
 /// A class definition stored at runtime.
 #[derive(Clone)]
 pub struct MbClass {
+    /// Runtime registry key used for nominal identity and MRO lookup.
     pub name: String,
+    /// Python-visible source name (`__name__`, repr, and diagnostics).
+    pub display_name: String,
     /// Base classes (direct parents)
     pub bases: Vec<String>,
     /// Method Resolution Order (computed via C3 linearization)
@@ -93,6 +97,7 @@ struct NamedTupleBaseShape {
 #[derive(Clone)]
 pub(crate) struct ThreadClassState {
     class_registry: HashMap<String, MbClass>,
+    class_runtime_key_aliases: HashMap<String, String>,
     user_classes: HashSet<String>,
     callable_registry: HashSet<u64>,
     slots_registry: HashMap<String, Vec<String>>,
@@ -110,13 +115,15 @@ pub(crate) struct ThreadClassState {
 thread_local! {
     static CLASS_REGISTRY: std::cell::RefCell<HashMap<String, MbClass>> =
         std::cell::RefCell::new(HashMap::new());
-    /// Names of classes defined in the user's program (lowered via
-    /// `mb_class_define_multi`/`mb_class_define`), as opposed to native stdlib
-    /// stub classes registered through `mb_class_register` directly. Used by
-    /// mb_getattr to decide whether a missing attribute should raise
-    /// AttributeError: only when the instance's ENTIRE MRO is user-defined, so
-    /// native parents (whose __init__ populates attributes outside mamba's
-    /// instance fields) keep the lenient None return.
+    static CLASS_RUNTIME_KEY_ALIASES: std::cell::RefCell<HashMap<String, String>> =
+        std::cell::RefCell::new(HashMap::new());
+    /// Runtime identities of Python-created classes (lowered class statements
+    /// and dynamic `type()` classes), as opposed to native stdlib stub classes
+    /// registered through `mb_class_register` directly. Used by mb_getattr to
+    /// decide whether a missing attribute should raise AttributeError: only
+    /// when the instance's ENTIRE MRO is user-defined, so native parents (whose
+    /// __init__ populates attributes outside mamba's instance fields) keep the
+    /// lenient None return.
     static USER_CLASSES: std::cell::RefCell<HashSet<String>> =
         std::cell::RefCell::new(HashSet::new());
     /// Registry of valid callable function pointer addresses.
@@ -173,6 +180,8 @@ thread_local! {
     static USER_ABC_OWN_ABSTRACT: std::cell::RefCell<HashMap<String, HashSet<String>>> =
         std::cell::RefCell::new(HashMap::new());
 }
+
+static NEXT_CLASS_RUNTIME_KEY: AtomicU64 = AtomicU64::new(1);
 
 /// abc: record the names declared `@abc.abstractmethod` on a class. Called by
 /// the class-definition lowering immediately after `mb_class_define_multi`.
@@ -478,7 +487,8 @@ pub fn mb_user_abc_reject_abstract_instantiation(class_name: &str) -> Option<MbV
     super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
         MbValue::from_ptr(MbObject::new_str(format!(
-            "Can't instantiate abstract class {class_name} without an implementation for abstract {word} {joined}",
+            "Can't instantiate abstract class {} without an implementation for abstract {word} {joined}",
+            class_display_name(class_name),
         ))),
     );
     Some(MbValue::none())
@@ -1294,8 +1304,59 @@ pub fn class_is_registered(name: &str) -> bool {
     CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(name))
 }
 
-/// Returns true iff `name` is a user-defined class registered by compiled
-/// Python code, not a native/builtin runtime class.
+fn resolve_class_runtime_key(name: &str) -> String {
+    CLASS_RUNTIME_KEY_ALIASES.with(|aliases| {
+        aliases
+            .borrow()
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| name.to_string())
+    })
+}
+
+fn fresh_class_runtime_key(identity: &str) -> String {
+    let serial = NEXT_CLASS_RUNTIME_KEY.fetch_add(1, Ordering::Relaxed);
+    format!("{identity}@{serial}")
+}
+
+/// Allocate an identity for a class produced by `type(name, bases, namespace)`.
+/// Dynamic classes have no stable declaration token, so their visible name must
+/// never be installed in `CLASS_RUNTIME_KEY_ALIASES`: multiple same-named type
+/// objects must remain independently addressable for their entire lifetimes.
+pub(crate) fn fresh_dynamic_class_runtime_key(display_name: &str) -> String {
+    fresh_class_runtime_key(&format!("__mamba_dynamic_class__:{display_name}"))
+}
+
+/// Materialize one execution-unique runtime key for a compiled class
+/// declaration. The declaration key remains a stable reference used by base
+/// metadata; its alias is updated each time the class statement executes.
+pub fn mb_class_runtime_key(declaration_key: MbValue) -> MbValue {
+    let declaration_key = extract_str(declaration_key).unwrap_or_default();
+    let runtime_key = fresh_class_runtime_key(&declaration_key);
+    CLASS_RUNTIME_KEY_ALIASES.with(|aliases| {
+        aliases
+            .borrow_mut()
+            .insert(declaration_key, runtime_key.clone());
+    });
+    MbValue::from_ptr(MbObject::new_str(runtime_key))
+}
+
+pub(crate) fn class_display_name(name: &str) -> String {
+    CLASS_REGISTRY.with(|reg| {
+        reg.borrow()
+            .get(name)
+            .map(|class| class.display_name.clone())
+            .unwrap_or_else(|| name.to_string())
+    })
+}
+
+fn class_type_object(name: &str) -> MbValue {
+    let display_name = class_display_name(name);
+    super::builtins::make_type_object_with_display_name(name, &display_name)
+}
+
+/// Returns true iff `name` is a Python-created class, not a native/builtin
+/// runtime class.
 pub(crate) fn class_is_user_defined(name: &str) -> bool {
     USER_CLASSES.with(|classes| classes.borrow().contains(name))
 }
@@ -1360,7 +1421,7 @@ fn call_set_name_if_present(owner_name: &str, attr_name: &str, val: MbValue) {
         if addr != 0 {
             let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
             if is_registered {
-                let owner = MbValue::from_ptr(MbObject::new_str(owner_name.to_string()));
+                let owner = class_type_object(owner_name);
                 let attr_str = MbValue::from_ptr(MbObject::new_str(attr_name.to_string()));
                 // REQ: JIT-compiled functions use SystemV/C calling convention.
                 let func: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
@@ -1386,6 +1447,31 @@ fn make_instance_dict_proxy(instance: MbValue) -> MbValue {
 }
 
 pub fn mb_class_register(name: &str, bases: Vec<String>, methods: HashMap<String, MbValue>) {
+    mb_class_register_named(name, name, bases, methods);
+}
+
+/// Register a Python-created class while preserving a separate runtime identity
+/// and user-visible display name. Native runtime classes must continue to use
+/// `mb_class_register`/`mb_class_register_named` so they retain lenient lookup
+/// behavior for attributes populated outside mamba's instance-field storage.
+pub(crate) fn mb_class_register_user_named(
+    name: &str,
+    display_name: &str,
+    bases: Vec<String>,
+    methods: HashMap<String, MbValue>,
+) {
+    USER_CLASSES.with(|classes| {
+        classes.borrow_mut().insert(name.to_string());
+    });
+    mb_class_register_named(name, display_name, bases, methods);
+}
+
+pub(crate) fn mb_class_register_named(
+    name: &str,
+    display_name: &str,
+    bases: Vec<String>,
+    methods: HashMap<String, MbValue>,
+) {
     // Register all method addresses as valid callables.
     // R1 P1: Also unwrap classmethod/staticmethod wrappers to register
     // the underlying function address (not the wrapper pointer).
@@ -1412,6 +1498,7 @@ pub fn mb_class_register(name: &str, bases: Vec<String>, methods: HashMap<String
             name.to_string(),
             MbClass {
                 name: name.to_string(),
+                display_name: display_name.to_string(),
                 bases,
                 mro,
                 methods,
@@ -1459,7 +1546,6 @@ pub fn mb_class_register(name: &str, bases: Vec<String>, methods: HashMap<String
     apply_typeddict_class_kwargs(name, &class_kwargs);
 
     // Call __init_subclass__ on each direct base (PEP 487)
-    let cls_val = MbValue::from_ptr(MbObject::new_str(name.to_string()));
     for base_name in &bases_for_hook {
         let hook = lookup_method(base_name, "__init_subclass__");
         if !hook.is_none() {
@@ -1467,6 +1553,7 @@ pub fn mb_class_register(name: &str, bases: Vec<String>, methods: HashMap<String
             if addr != 0 {
                 let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
                 if is_registered {
+                    let cls_val = class_type_object(name);
                     let pos_args = MbValue::from_ptr(MbObject::new_list(vec![cls_val]));
                     let kwargs_dict = if class_kwargs.is_empty() {
                         MbValue::from_ptr(MbObject::new_dict())
@@ -1580,7 +1667,43 @@ pub fn mb_class_define_multi(
     method_values: MbValue,
 ) {
     let class_name = extract_str(name).unwrap_or_else(|| "object".to_string());
-    let class_qualname = super::closure::current_definition_qualname(&class_name);
+    mb_class_define_multi_impl(
+        class_name.clone(),
+        class_name,
+        bases_list,
+        method_names,
+        method_values,
+    );
+}
+
+/// Register a user class using a declaration-unique runtime key while keeping
+/// the source spelling for Python-visible metadata.
+pub fn mb_class_define_multi_named(
+    registry_key: MbValue,
+    display_name: MbValue,
+    bases_list: MbValue,
+    method_names: MbValue,
+    method_values: MbValue,
+) {
+    let registry_key = extract_str(registry_key).unwrap_or_else(|| "object".to_string());
+    let display_name = extract_str(display_name).unwrap_or_else(|| registry_key.clone());
+    mb_class_define_multi_impl(
+        registry_key,
+        display_name,
+        bases_list,
+        method_names,
+        method_values,
+    );
+}
+
+fn mb_class_define_multi_impl(
+    class_name: String,
+    class_display_name: String,
+    bases_list: MbValue,
+    method_names: MbValue,
+    method_values: MbValue,
+) {
+    let class_qualname = super::closure::current_definition_qualname(&class_display_name);
     let mut bases = Vec::new();
     if let Some(ptr) = bases_list.as_ptr() {
         unsafe {
@@ -1621,10 +1744,7 @@ pub fn mb_class_define_multi(
         }
     }
 
-    USER_CLASSES.with(|u| {
-        u.borrow_mut().insert(class_name.clone());
-    });
-    mb_class_register(&class_name, bases, methods);
+    mb_class_register_user_named(&class_name, &class_display_name, bases, methods);
     if !module_name.is_empty() {
         super::builtins::set_type_object_attr(
             &class_name,
@@ -1740,7 +1860,6 @@ pub fn mb_class_update_bases(name: MbValue, bases_list: MbValue) {
     });
     install_abc_mixins(&class_name, &mro);
 
-    let cls_val = MbValue::from_ptr(MbObject::new_str(class_name.clone()));
     for base_name in &bases_for_hook {
         let hook = lookup_method(base_name, "__init_subclass__");
         if !hook.is_none() {
@@ -1748,6 +1867,7 @@ pub fn mb_class_update_bases(name: MbValue, bases_list: MbValue) {
             if addr != 0 {
                 let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
                 if is_registered {
+                    let cls_val = class_type_object(&class_name);
                     let pos_args = MbValue::from_ptr(MbObject::new_list(vec![cls_val]));
                     let kwargs_dict = if class_kwargs.is_empty() {
                         MbValue::from_ptr(MbObject::new_dict())
@@ -1889,7 +2009,7 @@ fn try_get_dunder_on_value(val: MbValue, dunder: &str) -> Option<MbValue> {
 /// routes through the metaclass's `__call__` method.
 pub fn mb_class_set_metaclass(class_name: MbValue, metaclass_name: MbValue) {
     let name = extract_str(class_name).unwrap_or_default();
-    let meta = extract_str(metaclass_name).unwrap_or_default();
+    let meta = resolve_class_name(metaclass_name).unwrap_or_default();
     if meta.is_empty() {
         return;
     }
@@ -2114,7 +2234,7 @@ fn prepared_class_namespace(meta: &str, class_name: &str) -> Option<MbValue> {
     if lookup_method(meta, "__prepare__").is_none() {
         return None;
     }
-    let name_val = MbValue::from_ptr(MbObject::new_str(class_name.to_string()));
+    let name_val = MbValue::from_ptr(MbObject::new_str(class_display_name(class_name)));
     let bases = class_bases_tuple(class_name);
     let prepared = mb_call_metaclass_prepare(meta, name_val, bases);
     if super::exception::current_exception_type().is_some() {
@@ -2254,7 +2374,8 @@ fn run_metaclass_definition_hooks(
         return;
     }
     let bases = class_bases_tuple(class_name);
-    let name_val = MbValue::from_ptr(MbObject::new_str(class_name.to_string()));
+    let display_name = class_display_name(class_name);
+    let name_val = MbValue::from_ptr(MbObject::new_str(display_name.clone()));
     let meta_val = make_type_object(meta);
     call_metaclass_method(meta, "__new__", vec![meta_val, name_val, bases, namespace]);
     if super::exception::current_exception_type().is_some() {
@@ -2269,7 +2390,7 @@ fn run_metaclass_definition_hooks(
 
     let namespace = build_class_namespace_dict(class_name);
     let bases = class_bases_tuple(class_name);
-    let name_val = MbValue::from_ptr(MbObject::new_str(class_name.to_string()));
+    let name_val = MbValue::from_ptr(MbObject::new_str(display_name));
     let class_val = make_type_object(class_name);
     call_metaclass_method(
         meta,
@@ -3055,7 +3176,7 @@ fn seed_namedtuple_subclass_fields(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
             MbValue::from_ptr(MbObject::new_str(format!(
                 "{}() takes {} positional arguments but {} were given",
-                class_name,
+                class_display_name(class_name),
                 shape.fields.len(),
                 items.len(),
             ))),
@@ -3073,7 +3194,7 @@ fn seed_namedtuple_subclass_fields(
                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                 MbValue::from_ptr(MbObject::new_str(format!(
                     "{}() takes {} positional arguments but {} were given",
-                    class_name,
+                    class_display_name(class_name),
                     shape.fields.len(),
                     items.len(),
                 ))),
@@ -3087,7 +3208,7 @@ fn seed_namedtuple_subclass_fields(
                 let mut guard = fields.write().unwrap();
                 guard.insert(
                     "_namedtuple_name".to_string(),
-                    MbValue::from_ptr(MbObject::new_str(class_name.to_string())),
+                    MbValue::from_ptr(MbObject::new_str(class_display_name(class_name))),
                 );
                 let ordered: Vec<MbValue> = shape
                     .fields
@@ -3307,7 +3428,7 @@ pub(crate) fn object_new_unbound(items: &[MbValue]) -> MbValue {
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
             MbValue::from_ptr(MbObject::new_str(format!(
                 "{}.__new__() takes exactly one argument",
-                class_name
+                class_display_name(&class_name)
             ))),
         );
         return MbValue::none();
@@ -4246,10 +4367,11 @@ pub(crate) fn builtin_type_new_unbound(type_name: &str, items: &[MbValue]) -> Op
         return Some(result);
     }
     if !class_is_or_inherits(&class_name, type_name) {
+        let display_name = class_display_name(&class_name);
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
             MbValue::from_ptr(MbObject::new_str(format!(
-                "{type_name}.__new__({class_name}): {class_name} is not a subtype of {type_name}"
+                "{type_name}.__new__({display_name}): {display_name} is not a subtype of {type_name}"
             ))),
         );
         return Some(MbValue::none());
@@ -4313,7 +4435,6 @@ pub fn mb_raise_instance(instance: MbValue) {
                 ref fields,
             } = (*ptr).data
             {
-                let fields_guard = fields.read().unwrap();
                 // `raise SomeException` where the operand is a bare type OBJECT
                 // (class_name "type" carrying __name__, e.g. a class held in a
                 // variable: `e = StopIteration; raise e`) raises an instance of
@@ -4321,13 +4442,12 @@ pub fn mb_raise_instance(instance: MbValue) {
                 // "type". Resolving it here is what lets the iterator protocol
                 // recognise a variable-raised StopIteration as exhaustion.
                 let resolved_type = if class_name == "type" {
-                    fields_guard
-                        .get("__name__")
-                        .and_then(|v| extract_str(*v))
+                    super::builtins::type_object_registry_key(instance)
                         .unwrap_or_else(|| class_name.clone())
                 } else {
                     class_name.clone()
                 };
+                let fields_guard = fields.read().unwrap();
                 let msg = fields_guard
                     .get("message")
                     .and_then(|v| exception_message_str(*v))
@@ -6061,7 +6181,8 @@ pub fn mb_collections_abc_reject_abstract_instantiation(class_name: &str) -> Opt
     super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
         MbValue::from_ptr(MbObject::new_str(format!(
-            "Can't instantiate abstract class {class_name} with abstract method {missing}",
+            "Can't instantiate abstract class {} with abstract method {missing}",
+            class_display_name(class_name),
         ))),
     );
     Some(MbValue::none())
@@ -6072,7 +6193,8 @@ pub fn mb_numbers_abc_reject_abstract_instantiation(class_name: &str) -> Option<
     super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
         MbValue::from_ptr(MbObject::new_str(format!(
-            "Can't instantiate abstract class {class_name} with abstract method {missing}",
+            "Can't instantiate abstract class {} with abstract method {missing}",
+            class_display_name(class_name),
         ))),
     );
     Some(MbValue::none())
@@ -6094,7 +6216,8 @@ pub fn mb_contextlib_abc_reject_abstract_instantiation(class_name: &str) -> Opti
     super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
         MbValue::from_ptr(MbObject::new_str(format!(
-            "Can't instantiate abstract class {class_name} with abstract method {missing}",
+            "Can't instantiate abstract class {} with abstract method {missing}",
+            class_display_name(class_name),
         ))),
     );
     Some(MbValue::none())
@@ -7136,12 +7259,7 @@ fn mb_getattr_impl(
             } = (*ptr).data
             {
                 if cn == "type" {
-                    // Try to get the type name from __name__ field.
-                    if let Some(type_name_str) = fields
-                        .read()
-                        .ok()
-                        .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
-                    {
+                    if let Some(type_name_str) = super::builtins::type_object_registry_key(obj) {
                         if let Some(value) =
                             type_surface_attr_value(&type_name_str, &attr_name, Some(fields))
                         {
@@ -7240,8 +7358,7 @@ fn mb_getattr_impl(
                             if super::stdlib::functools_mod::is_singledispatchmethod_descriptor(
                                 method,
                             ) {
-                                let cls_val =
-                                    MbValue::from_ptr(MbObject::new_str(type_name_str.clone()));
+                                let cls_val = class_type_object(&type_name_str);
                                 return super::stdlib::functools_mod::mb_singledispatchmethod_get(
                                     method, cls_val,
                                 );
@@ -7365,7 +7482,8 @@ fn mb_getattr_impl(
                                         "AttributeError".to_string(),
                                     )),
                                     MbValue::from_ptr(MbObject::new_str(format!(
-                                        "type object '{type_name_str}' has no attribute '{attr_name}'"
+                                        "type object '{}' has no attribute '{attr_name}'",
+                                        class_display_name(&type_name_str)
                                     ))),
                                 );
                                 return MbValue::none();
@@ -7910,12 +8028,8 @@ fn mb_getattr_impl(
                         return MbValue::from_ptr(Box::into_raw(bound));
                     }
                     if class_name == "type" && attr_name == "__dict__" {
-                        let type_name = fields
-                            .read()
-                            .unwrap()
-                            .get("__name__")
-                            .and_then(|v| extract_str(*v))
-                            .unwrap_or_default();
+                        let type_name =
+                            super::builtins::type_object_registry_key(obj).unwrap_or_default();
                         return class_namespace_mappingproxy(&type_name, Some(fields));
                     }
                     if (class_name == "collections.defaultdict"
@@ -8018,7 +8132,7 @@ fn mb_getattr_impl(
                                 MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
                                 MbValue::from_ptr(MbObject::new_str(format!(
                                     "'{}' object has no attribute '__dict__'",
-                                    class_name
+                                    class_display_name(class_name)
                                 ))),
                             );
                             return MbValue::none();
@@ -8206,7 +8320,8 @@ fn mb_getattr_impl(
                             let instance = super::exception::mb_attribute_error_with_name_obj(
                                 &format!(
                                     "'{}' object has no attribute '{}'",
-                                    class_name, attr_name
+                                    class_display_name(class_name),
+                                    attr_name
                                 ),
                                 &attr_name,
                                 obj,
@@ -8319,7 +8434,7 @@ fn mb_getattr_impl(
                                 if let Some(meta_desc) =
                                     metaclass_data_descriptor_for_class(s, &attr_name)
                                 {
-                                    let cls_val = MbValue::from_ptr(MbObject::new_str(s.clone()));
+                                    let cls_val = class_type_object(s);
                                     return invoke_descriptor_get(meta_desc, cls_val);
                                 }
                                 // Class methods and class attributes via MRO
@@ -8328,7 +8443,7 @@ fn mb_getattr_impl(
                                     if super::stdlib::functools_mod::is_singledispatchmethod_descriptor(
                                         method,
                                     ) {
-                                        let cls_val = MbValue::from_ptr(MbObject::new_str(s.clone()));
+                                        let cls_val = class_type_object(s);
                                         return super::stdlib::functools_mod::mb_singledispatchmethod_get(
                                             method, cls_val,
                                         );
@@ -8378,8 +8493,7 @@ fn mb_getattr_impl(
                                             )
                                         });
                                         if is_descriptor {
-                                            let cls_val =
-                                                MbValue::from_ptr(MbObject::new_str(s.clone()));
+                                            let cls_val = class_type_object(s);
                                             return invoke_descriptor_get(mmethod, cls_val);
                                         }
                                         let (unwrapped, _) = unwrap_descriptor_method(mmethod);
@@ -8400,7 +8514,8 @@ fn mb_getattr_impl(
                                             "AttributeError".to_string(),
                                         )),
                                         MbValue::from_ptr(MbObject::new_str(format!(
-                                            "type object '{s}' has no attribute '{attr_name}'"
+                                            "type object '{}' has no attribute '{attr_name}'",
+                                            class_display_name(s)
                                         ))),
                                     );
                                     return MbValue::none();
@@ -9286,6 +9401,12 @@ fn invoke_descriptor_delete(desc: MbValue, instance: MbValue) {
                         );
                         return;
                     }
+                    if !super::closure::mb_closure_get_func(deleter).is_none() {
+                        let args = MbValue::from_ptr(MbObject::new_list_borrowed(vec![instance]));
+                        let _ = super::builtins::mb_call_spread(deleter, args);
+                        super::rc::release_if_ptr(args);
+                        return;
+                    }
                     if let Some(addr) = deleter.as_func() {
                         if addr > 4096 {
                             let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(addr);
@@ -10095,18 +10216,7 @@ pub fn mb_dir(obj: MbValue) -> MbValue {
                     // TYPE OBJECT (`dir(str)`, `dir(MyClass)`): list the named
                     // type's methods, not the type-object wrapper's fields.
                     if class_name == "type" {
-                        let type_name: Option<String> = {
-                            let guard = fields.read().unwrap();
-                            guard.get("__name__").and_then(|v| {
-                                v.as_ptr().and_then(|p| {
-                                    if let ObjData::Str(ref s) = (*p).data {
-                                        Some(s.clone())
-                                    } else {
-                                        None
-                                    }
-                                })
-                            })
-                        };
+                        let type_name = super::builtins::type_object_registry_key(obj);
                         if let Some(tn) = type_name {
                             let builtin = builtin_type_method_names_by_name(&tn);
                             if builtin.is_empty() {
@@ -10398,12 +10508,7 @@ fn mb_setattr_default(obj: MbValue, attr: MbValue, value: MbValue) {
                             | "__instancecheck__"
                     )
                 {
-                    if let Some(type_name) = fields
-                        .read()
-                        .unwrap()
-                        .get("__name__")
-                        .and_then(|value| extract_str(*value))
-                    {
+                    if let Some(type_name) = super::builtins::type_object_registry_key(obj) {
                         let is_class =
                             CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(&type_name));
                         if is_class {
@@ -10690,7 +10795,8 @@ fn mb_setattr_default(obj: MbValue, attr: MbValue, value: MbValue) {
                                 MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
                                 MbValue::from_ptr(MbObject::new_str(format!(
                                     "'{}' object has no attribute '{}'",
-                                    class_name, attr_name
+                                    class_display_name(class_name),
+                                    attr_name
                                 ))),
                             );
                             return;
@@ -10948,7 +11054,8 @@ fn mb_delattr_default(obj: MbValue, attr: MbValue) {
                         super::exception::mb_raise(
                             MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
                             MbValue::from_ptr(MbObject::new_str(format!(
-                                "type object '{class_name}' has no attribute '{attr_name}'"
+                                "type object '{}' has no attribute '{attr_name}'",
+                                class_display_name(&class_name)
                             ))),
                         );
                     }
@@ -10984,7 +11091,8 @@ fn mb_delattr_default(obj: MbValue, attr: MbValue) {
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
                         MbValue::from_ptr(MbObject::new_str(format!(
-                            "'{class_name}' object has no attribute '{attr_name}'"
+                            "'{}' object has no attribute '{attr_name}'",
+                            class_display_name(class_name)
                         ))),
                     );
                 }
@@ -11371,23 +11479,7 @@ pub fn mb_hasattr(obj: MbValue, attr: MbValue) -> MbValue {
 /// class_name == "type" and a `__name__` field). Returns `None` for non-type
 /// values.
 fn type_object_name(obj: MbValue) -> Option<String> {
-    if let Some(ptr) = obj.as_ptr() {
-        unsafe {
-            if let ObjData::Instance {
-                class_name: ref cn,
-                ref fields,
-            } = (*ptr).data
-            {
-                if cn == "type" {
-                    return fields
-                        .read()
-                        .ok()
-                        .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)));
-                }
-            }
-        }
-    }
-    None
+    super::builtins::type_object_registry_key(obj)
 }
 
 // ── Method Lookup via MRO ──
@@ -12198,28 +12290,8 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
     }
     // Handle type objects (returned by type()): Instance with class_name="type"
     // and __name__ field containing the actual type name.
-    let target = if let Some(ptr) = class_name.as_ptr() {
-        unsafe {
-            if let ObjData::Instance {
-                class_name: ref cn,
-                ref fields,
-            } = (*ptr).data
-            {
-                if cn == "type" {
-                    fields
-                        .read()
-                        .unwrap()
-                        .get("__name__")
-                        .and_then(|v| extract_str(*v))
-                        .unwrap_or_default()
-                } else {
-                    // Not a type object; use the class name as string for isinstance
-                    extract_str(class_name).unwrap_or_default()
-                }
-            } else {
-                extract_str(class_name).unwrap_or_default()
-            }
-        }
+    let target = if class_name.as_ptr().is_some() {
+        resolve_class_name(class_name).unwrap_or_default()
     } else if let Some(addr) = class_name.as_func() {
         // Native-dispatcher function pointers used as types — e.g.
         // `threading.Thread` is a constructor dispatcher rather than a real
@@ -12268,7 +12340,7 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
             .filter(|m| !m.is_none())
     });
     if let Some(method) = meta_check {
-        let cls_val = MbValue::from_ptr(MbObject::new_str(target.clone()));
+        let cls_val = class_type_object(&target);
         let out = call_method_value2(method, cls_val, obj);
         if super::exception::mb_has_exception().as_bool() == Some(true) || out.is_none() {
             // The user dunder hit a runtime gap (e.g. cls.__dict__ /
@@ -12539,7 +12611,8 @@ fn raise_class_pattern_count_error(class_name: &str, accepted: usize, given: usi
         "sub-patterns"
     };
     raise_class_pattern_type_error(format!(
-        "{class_name}() accepts {accepted} positional {sub} ({given} given)"
+        "{}() accepts {accepted} positional {sub} ({given} given)",
+        class_display_name(class_name)
     ));
 }
 
@@ -12587,7 +12660,8 @@ fn class_pattern_pos_attr_name(class_name: &str, pos: usize) -> Option<String> {
                 ObjData::Tuple(items) => items.clone(),
                 _ => {
                     raise_class_pattern_type_error(format!(
-                        "{class_name}.__match_args__ must be a tuple (got {})",
+                        "{}.__match_args__ must be a tuple (got {})",
+                        class_display_name(class_name),
                         match_args_type_name(match_args)
                     ));
                     return None;
@@ -12596,7 +12670,8 @@ fn class_pattern_pos_attr_name(class_name: &str, pos: usize) -> Option<String> {
         }
     } else {
         raise_class_pattern_type_error(format!(
-            "{class_name}.__match_args__ must be a tuple (got {})",
+            "{}.__match_args__ must be a tuple (got {})",
+            class_display_name(class_name),
             match_args_type_name(match_args)
         ));
         return None;
@@ -12619,7 +12694,8 @@ fn class_pattern_pos_attr_name(class_name: &str, pos: usize) -> Option<String> {
         };
         if !seen.insert(name.clone()) {
             raise_class_pattern_type_error(format!(
-                "{class_name}() got multiple sub-patterns for attribute '{name}'"
+                "{}() got multiple sub-patterns for attribute '{name}'",
+                class_display_name(class_name)
             ));
             return None;
         }
@@ -12633,7 +12709,7 @@ fn class_pattern_pos_attr_name(class_name: &str, pos: usize) -> Option<String> {
 /// PEP 634 positional class pattern match: get the value of positional attribute `pos`
 /// by looking up `obj.__class__.__match_args__[pos]` and returning `getattr(obj, that_attr)`.
 pub fn mb_match_pos_arg(obj: MbValue, class_name_val: MbValue, pos: i64) -> MbValue {
-    let class_name = match extract_str(class_name_val) {
+    let class_name = match resolve_class_name(class_name_val) {
         Some(n) => n,
         None => return MbValue::none(),
     };
@@ -12695,7 +12771,7 @@ pub fn mb_instance_hasattr(obj: MbValue, attr: MbValue) -> MbValue {
 /// Returns true if the class has `__match_args__[pos]` AND the object instance
 /// actually has the attribute named by `__match_args__[pos]`.
 pub fn mb_class_has_pos_match(obj: MbValue, class_name_val: MbValue, pos: i64) -> MbValue {
-    let class_name = match extract_str(class_name_val) {
+    let class_name = match resolve_class_name(class_name_val) {
         Some(n) => n,
         None => return MbValue::from_bool(false),
     };
@@ -12916,7 +12992,7 @@ pub fn mb_issubclass(child: MbValue, parent: MbValue) -> MbValue {
             .filter(|m| !m.is_none())
     });
     if let Some(method) = meta_check {
-        let cls_val = MbValue::from_ptr(MbObject::new_str(parent_name.clone()));
+        let cls_val = class_type_object(&parent_name);
         let out = call_method_value2(method, cls_val, child);
         if super::exception::mb_has_exception().as_bool() == Some(true) || out.is_none() {
             // User dunder hit a runtime gap — fall back to the nominal check.
@@ -13188,7 +13264,20 @@ pub fn mb_check_abstract(class_name: MbValue) -> MbValue {
 /// `super(ClassName, instance)` → proxy object that resolves methods
 /// starting from the next class in MRO after ClassName.
 pub fn mb_super(class_name: MbValue, instance: MbValue) -> MbValue {
-    let name = resolve_class_name(class_name).unwrap_or_default();
+    let Some(name) = resolve_class_name(class_name).filter(|name| !name.is_empty()) else {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("super(): no arguments".to_string())),
+        );
+        return MbValue::none();
+    };
+    if instance.is_none() {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("super(): no arguments".to_string())),
+        );
+        return MbValue::none();
+    }
     // Create a super proxy as a special instance with __super_class__ and __super_self__
     let proxy = MbObject::new_instance("__super__".to_string());
     unsafe {
@@ -14028,13 +14117,8 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                     // Builtin type objects: PEP 585 generics subscript into
                     // aliases (list[int]); non-generic scalars raise (#22).
                     if class_name == "type" {
-                        let tn = fields
-                            .read()
-                            .unwrap()
-                            .get("__name__")
-                            .copied()
-                            .and_then(extract_str)
-                            .unwrap_or_default();
+                        let tn =
+                            super::builtins::type_object_registry_key(obj).unwrap_or_default();
                         match tn.as_str() {
                             "list" | "dict" | "set" | "frozenset" | "tuple" | "type" => {
                                 return super::stdlib::typing_mod::pep585_subscript(obj, key);
@@ -14773,7 +14857,8 @@ pub fn mb_obj_delitem(obj: MbValue, key: MbValue) {
                         super::exception::mb_raise(
                             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                             MbValue::from_ptr(MbObject::new_str(format!(
-                                "'{class_name}' object doesn't support item deletion"
+                                "'{}' object doesn't support item deletion",
+                                class_display_name(class_name)
                             ))),
                         );
                     }
@@ -15263,7 +15348,10 @@ pub fn mb_obj_str(obj: MbValue) -> MbValue {
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
-                return MbValue::from_ptr(MbObject::new_str(format!("<{class_name} instance>")));
+                let display_name = class_display_name(class_name);
+                return MbValue::from_ptr(MbObject::new_str(format!(
+                    "<{display_name} instance>"
+                )));
             }
         }
     }
@@ -15531,11 +15619,7 @@ fn mb_call0_impl(func: MbValue) -> MbValue {
             } = (*ptr).data
             {
                 if class_name == "type" {
-                    if let Some(type_name) = fields
-                        .read()
-                        .ok()
-                        .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
-                    {
+                    if let Some(type_name) = super::builtins::type_object_registry_key(func) {
                         // Singleton types: `type(None)()` / `type(...)()` /
                         // `type(NotImplemented)()` return the singleton itself,
                         // not a fresh instance (`type(None)() is None`).
@@ -16003,17 +16087,7 @@ pub fn mb_call_method_kwargs(
         }
     }
 
-    if let Some(type_name) = receiver.as_ptr().and_then(|p| unsafe {
-        match &(*p).data {
-            ObjData::Str(s) => Some(s.clone()),
-            ObjData::Instance { class_name, fields } if class_name == "type" => fields
-                .read()
-                .unwrap()
-                .get("__name__")
-                .and_then(|v| extract_str(*v)),
-            _ => None,
-        }
-    }) {
+    if let Some(type_name) = resolve_class_name(receiver) {
         if let Some(result) = super::stdlib::ast_mod::mb_ast_init_unbound_method_kwargs(
             &type_name,
             &name,
@@ -17688,24 +17762,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     {
         // Extract the effective type name from the receiver — either from a
         // plain string (old path) or from a type-singleton object (new path).
-        let type_name_opt: Option<String> = if let Some(ptr) = receiver.as_ptr() {
-            unsafe {
-                match &(*ptr).data {
-                    ObjData::Str(ref s) => Some(s.clone()),
-                    ObjData::Instance {
-                        class_name: ref cn,
-                        ref fields,
-                    } if cn == "type" => fields
-                        .read()
-                        .unwrap()
-                        .get("__name__")
-                        .and_then(|v| extract_str(*v)),
-                    _ => None,
-                }
-            }
-        } else {
-            None
-        };
+        let type_name_opt = resolve_class_name(receiver);
 
         if let Some(ref s) = type_name_opt {
             if class_is_registered(s) {
@@ -19853,8 +19910,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         if let Some(meta_desc) =
                             metaclass_data_descriptor_for_class(&class_name_str, &name)
                         {
-                            let cls_val =
-                                MbValue::from_ptr(MbObject::new_str(class_name_str.clone()));
+                            let cls_val = class_type_object(&class_name_str);
                             let callable = invoke_descriptor_get(meta_desc, cls_val);
                             return super::builtins::mb_call_spread(callable, args);
                         }
@@ -20457,7 +20513,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         return super::builtins::mb_call_spread(resolved, args);
                     }
                     let instance = super::exception::mb_attribute_error_with_name_obj(
-                        &format!("'{class_name}' object has no attribute '{name}'"),
+                        &format!(
+                            "'{}' object has no attribute '{name}'",
+                            class_display_name(class_name)
+                        ),
                         &name,
                         receiver,
                     );
@@ -20563,7 +20622,7 @@ fn extract_str(val: MbValue) -> Option<String> {
 pub(crate) fn resolve_class_name(val: MbValue) -> Option<String> {
     // Try plain string first (most common path)
     if let Some(s) = extract_str(val) {
-        return Some(s);
+        return Some(resolve_class_runtime_key(&s));
     }
     // Native-dispatcher function pointers used as types (e.g. io.StringIO is a
     // constructor dispatcher). Map the pointer to its recorded class name so
@@ -20586,10 +20645,7 @@ pub(crate) fn resolve_class_name(val: MbValue) -> Option<String> {
         } = (*ptr).data
         {
             if cn == "type" {
-                fields
-                    .read()
-                    .ok()
-                    .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
+                super::builtins::type_object_registry_key(val)
             } else if cn == "collections.namedtuple_factory" {
                 fields
                     .read()
@@ -20667,6 +20723,7 @@ fn reset_class_lookup_caches() {
 pub(crate) fn snapshot_thread_class_state() -> ThreadClassState {
     ThreadClassState {
         class_registry: CLASS_REGISTRY.with(|c| c.borrow().clone()),
+        class_runtime_key_aliases: CLASS_RUNTIME_KEY_ALIASES.with(|c| c.borrow().clone()),
         user_classes: USER_CLASSES.with(|c| c.borrow().clone()),
         callable_registry: CALLABLE_REGISTRY.with(|c| c.borrow().clone()),
         slots_registry: SLOTS_REGISTRY.with(|c| c.borrow().clone()),
@@ -20684,6 +20741,7 @@ pub(crate) fn snapshot_thread_class_state() -> ThreadClassState {
 pub(crate) fn replace_thread_class_state(next: ThreadClassState) -> ThreadClassState {
     let previous = snapshot_thread_class_state();
     CLASS_REGISTRY.with(|c| *c.borrow_mut() = next.class_registry);
+    CLASS_RUNTIME_KEY_ALIASES.with(|c| *c.borrow_mut() = next.class_runtime_key_aliases);
     USER_CLASSES.with(|c| *c.borrow_mut() = next.user_classes);
     CALLABLE_REGISTRY.with(|c| *c.borrow_mut() = next.callable_registry);
     SLOTS_REGISTRY.with(|c| *c.borrow_mut() = next.slots_registry);
@@ -20707,6 +20765,8 @@ pub(crate) fn replace_thread_class_state(next: ThreadClassState) -> ThreadClassS
 /// code paths makes release unsafe. Leaked objects reclaimed at process exit.
 pub(crate) fn cleanup_all_classes() {
     let _ = CLASS_REGISTRY.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = CLASS_RUNTIME_KEY_ALIASES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = USER_CLASSES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = CALLABLE_REGISTRY.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = SLOTS_REGISTRY.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = DICT_SUPPRESSED.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
@@ -21890,9 +21950,11 @@ mod tests {
     fn test_init_subclass_basic() {
         static HOOK_INVOKED: std::sync::atomic::AtomicBool =
             std::sync::atomic::AtomicBool::new(false);
+        static HOOK_OWNER: AtomicU64 = AtomicU64::new(0);
 
-        extern "C" fn hook_fn(_cls: MbValue) -> MbValue {
+        extern "C" fn hook_fn(cls: MbValue) -> MbValue {
             HOOK_INVOKED.store(true, std::sync::atomic::Ordering::SeqCst);
+            HOOK_OWNER.store(cls.to_bits(), std::sync::atomic::Ordering::SeqCst);
             MbValue::none()
         }
 
@@ -21920,6 +21982,11 @@ mod tests {
         assert!(
             HOOK_INVOKED.load(std::sync::atomic::Ordering::SeqCst),
             "__init_subclass__ hook was not called when IscChild_T2 was registered"
+        );
+        assert_eq!(
+            HOOK_OWNER.load(std::sync::atomic::Ordering::SeqCst),
+            make_type_object("IscChild_T2").to_bits(),
+            "__init_subclass__ must receive the actual class type object"
         );
     }
 
@@ -24013,9 +24080,11 @@ mod tests {
         // registering a class that has an instance of it as a class attribute.
         use std::sync::atomic::{AtomicBool, Ordering};
         static S6_SET_NAME_CALLED: AtomicBool = AtomicBool::new(false);
+        static S6_SET_NAME_OWNER: AtomicU64 = AtomicU64::new(0);
 
-        extern "C" fn s6_set_name(_self: MbValue, _owner: MbValue, _name: MbValue) -> MbValue {
+        extern "C" fn s6_set_name(_self: MbValue, owner: MbValue, _name: MbValue) -> MbValue {
             S6_SET_NAME_CALLED.store(true, Ordering::SeqCst);
+            S6_SET_NAME_OWNER.store(owner.to_bits(), Ordering::SeqCst);
             MbValue::none()
         }
 
@@ -24078,7 +24147,7 @@ mod tests {
                 if addr != 0 {
                     let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
                     if is_registered {
-                        let owner = MbValue::from_ptr(MbObject::new_str("S6MyClass".to_string()));
+                        let owner = class_type_object("S6MyClass");
                         let attr_str = MbValue::from_ptr(MbObject::new_str(attr_name.clone()));
                         let func: fn(MbValue, MbValue, MbValue) -> MbValue =
                             unsafe { std::mem::transmute(addr as usize) };
@@ -24091,6 +24160,11 @@ mod tests {
         assert!(
             S6_SET_NAME_CALLED.load(Ordering::SeqCst),
             "S6: __set_name__ must be called on descriptor attributes after class creation"
+        );
+        assert_eq!(
+            S6_SET_NAME_OWNER.load(Ordering::SeqCst),
+            make_type_object("S6MyClass").to_bits(),
+            "__set_name__ must receive the actual class type object"
         );
     }
 

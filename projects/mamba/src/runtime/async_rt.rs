@@ -43,6 +43,7 @@ pub struct MbCoroutine {
     pub pending_await_coro_id: Option<u64>,
     pub resume_value: Option<MbValue>,
     pub close_raises_ignored_exit: bool,
+    pub capture_context: super::closure::CapturedCellContext,
     /// Body function pointer for deferred execution (#313 R1).
     /// Set by compiled wrapper via `mb_coroutine_set_body`.
     /// Called by `mb_coroutine_step` to execute the body on first step.
@@ -122,6 +123,7 @@ fn compact_completed_coroutine(coro: &mut MbCoroutine) {
     coro.locals = Vec::new();
     coro.module_name = String::new();
     coro.body_fn = None;
+    coro.capture_context = Default::default();
     coro.running = false;
 }
 
@@ -208,6 +210,7 @@ pub fn mb_coroutine_new(_name: MbValue, locals: MbValue) -> MbValue {
         pending_await_coro_id: None,
         resume_value: None,
         close_raises_ignored_exit: false,
+        capture_context: Default::default(),
         body_fn: None,
     };
     let id = alloc_coro_id();
@@ -247,6 +250,7 @@ fn mb_coroutine_new_with_body_impl(local_count: i64, fn_ptr: MbValue) -> MbValue
         pending_await_coro_id: None,
         resume_value: None,
         close_raises_ignored_exit: false,
+        capture_context: Default::default(),
         body_fn: decode_coroutine_body(fn_ptr),
     };
     let id = alloc_coro_id();
@@ -268,6 +272,20 @@ pub fn mb_coroutine_new_with_body(_name: MbValue, local_count: i64, fn_ptr: MbVa
 /// perf path can bypass the dead name argument entirely.
 pub fn mb_coroutine_new_with_body_unnamed(local_count: i64, fn_ptr: MbValue) -> MbValue {
     mb_coroutine_new_with_body_impl(local_count, fn_ptr)
+}
+
+pub fn mb_coroutine_capture_cells(coro_handle: MbValue, capture_ids: MbValue) {
+    let Some(id) = coro_handle.as_int().map(|id| id as u64) else {
+        return;
+    };
+    let ids: Vec<i64> = extract_list(capture_ids)
+        .into_iter()
+        .filter_map(|value| value.as_int())
+        .collect();
+    let context = super::closure::capture_active_cell_context(&ids);
+    if let Some(coro) = COROUTINES.write().unwrap().get_mut(&id) {
+        coro.capture_context = context;
+    }
 }
 
 /// Set the body function pointer for deferred execution (#313 R1).
@@ -327,6 +345,7 @@ fn mb_coroutine_step_with_post(
         Invoke {
             body: unsafe extern "C" fn(i64) -> i64,
             module_name: Option<String>,
+            capture_context: super::closure::CapturedCellContext,
         },
         Idle,
         Error,
@@ -382,6 +401,7 @@ fn mb_coroutine_step_with_post(
                         } else {
                             Some(coro.module_name.clone())
                         },
+                        capture_context: coro.capture_context.clone(),
                     }
                 } else {
                     // Fail fast: no body function registered (#313 R1)
@@ -408,7 +428,11 @@ fn mb_coroutine_step_with_post(
                 result: Some(result),
             };
         }
-        StepPlan::Invoke { body, module_name } => {
+        StepPlan::Invoke {
+            body,
+            module_name,
+            capture_context,
+        } => {
             // Call the compiled body function with coroutine handle.
             let previous = CURRENT_COROUTINE_ID.with(|cell| {
                 let previous = cell.get();
@@ -428,7 +452,10 @@ fn mb_coroutine_step_with_post(
                 super::closure::push_active_module_name(module_name);
             }
             let _module_guard = ModuleGuard(pushed_module);
-            let raw_return = unsafe { body(coro_handle.to_bits() as i64) };
+            let raw_return =
+                super::closure::with_captured_cell_context(&capture_context, || unsafe {
+                    body(coro_handle.to_bits() as i64)
+                });
             body_return = Some(MbValue::from_bits(raw_return as u64));
             CURRENT_COROUTINE_ID.with(|cell| cell.set(previous));
             clear_running = true;

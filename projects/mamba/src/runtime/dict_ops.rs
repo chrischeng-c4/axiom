@@ -908,7 +908,8 @@ impl std::fmt::Display for DictKey {
             } => {
                 write!(
                     f,
-                    "<{class_name} at {:p}>",
+                    "<{} at {:p}>",
+                    super::class::class_display_name(class_name),
                     *ptr as *const super::rc::MbObject
                 )
             }

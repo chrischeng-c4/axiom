@@ -39,6 +39,8 @@ struct Resolver {
     comprehension_depth: usize,
     /// Scope indices representing function scope boundaries (for walrus target placement).
     function_scope_stack: Vec<usize>,
+    /// Class namespaces are executable scopes but are not lexical parents of methods.
+    class_scope_stack: Vec<usize>,
 }
 
 impl Resolver {
@@ -49,6 +51,7 @@ impl Resolver {
             name_map: Vec::new(),
             comprehension_depth: 0,
             function_scope_stack: vec![0], // global scope as default
+            class_scope_stack: Vec::new(),
         }
     }
 
@@ -73,6 +76,10 @@ impl Resolver {
                 }
                 Stmt::EnumDef { name, .. } => {
                     let id = self.symbols.define(name.clone(), SymbolKind::Enum);
+                    self.name_map.push((stmt.span, id));
+                }
+                Stmt::TypeAlias { name, .. } => {
+                    let id = self.symbols.define(name.clone(), SymbolKind::Variable);
                     self.name_map.push((stmt.span, id));
                 }
                 Stmt::ExprStmt(_) => {
@@ -119,14 +126,22 @@ impl Resolver {
                 }
                 | Stmt::For {
                     body, else_body, ..
+                }
+                | Stmt::AsyncFor {
+                    body, else_body, ..
                 } => {
                     self.register_defs_in(body);
                     if let Some(eb) = else_body {
                         self.register_defs_in(eb);
                     }
                 }
-                Stmt::With { body, .. } => {
+                Stmt::With { body, .. } | Stmt::AsyncWith { body, .. } => {
                     self.register_defs_in(body);
+                }
+                Stmt::Match { arms, .. } => {
+                    for arm in arms {
+                        self.register_defs_in(&arm.body);
+                    }
                 }
                 _ => {}
             }
@@ -159,7 +174,11 @@ impl Resolver {
                 self.resolve_expr(value);
             }
             Stmt::FnDef { params, body, .. } | Stmt::AsyncFnDef { params, body, .. } => {
-                self.symbols.push_scope();
+                let mut lexical_parent = self.symbols.current_scope_idx();
+                while self.class_scope_stack.contains(&lexical_parent) {
+                    lexical_parent = self.symbols.parent_scope(lexical_parent).unwrap_or(0);
+                }
+                self.symbols.push_scope_with_parent(lexical_parent);
                 let func_scope = self.symbols.current_scope_idx();
                 self.function_scope_stack.push(func_scope);
                 for param in params {
@@ -194,9 +213,12 @@ impl Resolver {
             }
             Stmt::ClassDef { body, .. } => {
                 self.symbols.push_scope();
+                self.class_scope_stack
+                    .push(self.symbols.current_scope_idx());
                 for s in body {
                     self.resolve_stmt(s);
                 }
+                self.class_scope_stack.pop();
                 self.symbols.pop_scope();
             }
             Stmt::If {
@@ -338,11 +360,27 @@ impl Resolver {
             }
             Stmt::Global(names) => {
                 for name in names {
-                    // Define or look up the symbol, then classify as Global
-                    let id = if let Some(existing) = self.symbols.lookup(name) {
-                        existing
+                    let current = self.symbols.current_scope_idx();
+                    let id = if self.function_scope_stack.contains(&current) {
+                        self.symbols
+                            .lookup_in_scope(current, name)
+                            .unwrap_or_else(|| {
+                                self.symbols.define(name.clone(), SymbolKind::Variable)
+                            })
                     } else {
-                        self.symbols.define(name.clone(), SymbolKind::Variable)
+                        let module_id = self
+                            .symbols
+                            .lookup_in_scope(0, name)
+                            .unwrap_or_else(|| {
+                                self.symbols.define_in_scope(
+                                    0,
+                                    name.clone(),
+                                    SymbolKind::Variable,
+                                )
+                            });
+                        self.symbols
+                            .bind_symbol_in_scope(current, name.clone(), module_id);
+                        module_id
                     };
                     self.symbols.set_var_class(id, VariableClass::Global);
                     self.name_map.push((stmt.span, id));
@@ -697,7 +735,17 @@ pub fn collect_assignment_targets(
                     assigned.push(name.clone());
                 }
             }
-            Stmt::Assign { target, .. } | Stmt::AugAssign { target, .. } => {
+            Stmt::BareAnnotation { name, .. } => {
+                if !assigned.iter().any(|n| n == name) {
+                    assigned.push(name.clone());
+                }
+            }
+            Stmt::TypeAlias { name, .. } => {
+                if !assigned.iter().any(|n| n == name) {
+                    assigned.push(name.clone());
+                }
+            }
+            Stmt::Assign { target, .. } | Stmt::AugAssign { target, .. } | Stmt::Del(target) => {
                 collect_expr_targets(&target.node, assigned);
             }
             Stmt::For {
@@ -778,6 +826,7 @@ pub fn collect_assignment_targets(
             }
             Stmt::Match { arms, .. } => {
                 for arm in arms {
+                    collect_pattern_targets(&arm.pattern.node, assigned);
                     collect_assignment_targets(&arm.body, assigned, declared);
                 }
             }
@@ -858,12 +907,61 @@ fn collect_expr_targets(expr: &Expr, assigned: &mut Vec<String>) {
     }
 }
 
+fn collect_pattern_targets(pattern: &Pattern, assigned: &mut Vec<String>) {
+    match pattern {
+        Pattern::Binding(name) => {
+            if !assigned.iter().any(|candidate| candidate == name) {
+                assigned.push(name.clone());
+            }
+        }
+        Pattern::Constructor { fields, .. } => {
+            for field in fields {
+                if !assigned.iter().any(|candidate| candidate == field) {
+                    assigned.push(field.clone());
+                }
+            }
+        }
+        Pattern::Or(patterns) | Pattern::Sequence(patterns) => {
+            for pattern in patterns {
+                collect_pattern_targets(&pattern.node, assigned);
+            }
+        }
+        Pattern::Mapping { pairs, rest } => {
+            for (_, pattern) in pairs {
+                collect_pattern_targets(&pattern.node, assigned);
+            }
+            if let Some(rest) = rest {
+                if !assigned.iter().any(|candidate| candidate == rest) {
+                    assigned.push(rest.clone());
+                }
+            }
+        }
+        Pattern::ClassPattern { patterns, .. } => {
+            for (_, pattern) in patterns {
+                collect_pattern_targets(&pattern.node, assigned);
+            }
+        }
+        Pattern::Star(Some(name)) => {
+            if !assigned.iter().any(|candidate| candidate == name) {
+                assigned.push(name.clone());
+            }
+        }
+        Pattern::As { pattern, name } => {
+            collect_pattern_targets(&pattern.node, assigned);
+            if !assigned.iter().any(|candidate| candidate == name) {
+                assigned.push(name.clone());
+            }
+        }
+        Pattern::Wildcard | Pattern::Literal(_) | Pattern::Star(None) => {}
+    }
+}
+
 /// Scan an expression for walrus targets. Walrus `x := expr` names are
 /// locals of the enclosing function (PEP 572), so the assignment-target
 /// pre-scan must visit every expression position in the body — including
 /// conditions, return values, comprehensions — not just Assign statement
 /// targets.
-fn collect_walrus_targets(expr: &Expr, assigned: &mut Vec<String>) {
+pub(crate) fn collect_walrus_targets(expr: &Expr, assigned: &mut Vec<String>) {
     match expr {
         Expr::Walrus { target, value } => {
             if !assigned.iter().any(|n| n == target) {
@@ -903,9 +1001,20 @@ fn collect_walrus_targets(expr: &Expr, assigned: &mut Vec<String>) {
                 collect_walrus_targets(&s.node, assigned);
             }
         }
-        Expr::TupleLit(elems) | Expr::ListLit(elems) | Expr::SetLit(elems) => {
+        Expr::TupleLit(elems)
+        | Expr::ListLit(elems)
+        | Expr::SetLit(elems)
+        | Expr::UnpackTarget(elems) => {
             for e in elems {
                 collect_walrus_targets(&e.node, assigned);
+            }
+        }
+        Expr::DictLit(entries) => {
+            for (key, value) in entries {
+                if let Some(key) = key {
+                    collect_walrus_targets(&key.node, assigned);
+                }
+                collect_walrus_targets(&value.node, assigned);
             }
         }
         Expr::IfExpr {
@@ -917,13 +1026,81 @@ fn collect_walrus_targets(expr: &Expr, assigned: &mut Vec<String>) {
             collect_walrus_targets(&body.node, assigned);
             collect_walrus_targets(&else_body.node, assigned);
         }
+        Expr::ListComp {
+            element,
+            generators,
+        }
+        | Expr::SetComp {
+            element,
+            generators,
+        }
+        | Expr::GeneratorExpr {
+            element,
+            generators,
+        } => {
+            collect_walrus_targets(&element.node, assigned);
+            for generator in generators {
+                collect_walrus_targets(&generator.iter.node, assigned);
+                for condition in &generator.conditions {
+                    collect_walrus_targets(&condition.node, assigned);
+                }
+            }
+        }
+        Expr::DictComp {
+            key,
+            value,
+            generators,
+        } => {
+            collect_walrus_targets(&key.node, assigned);
+            collect_walrus_targets(&value.node, assigned);
+            for generator in generators {
+                collect_walrus_targets(&generator.iter.node, assigned);
+                for condition in &generator.conditions {
+                    collect_walrus_targets(&condition.node, assigned);
+                }
+            }
+        }
+        Expr::FString(parts) => {
+            fn visit_parts(parts: &[FStringPart], assigned: &mut Vec<String>) {
+                for part in parts {
+                    if let FStringPart::Expr(expr, spec) = part {
+                        collect_walrus_targets(&expr.node, assigned);
+                        if let Some(spec) = spec {
+                            visit_parts(spec, assigned);
+                        }
+                    }
+                }
+            }
+            visit_parts(parts, assigned);
+        }
+        Expr::Yield(Some(value)) => collect_walrus_targets(&value.node, assigned),
+        Expr::YieldFrom(value) | Expr::Await(value) => {
+            collect_walrus_targets(&value.node, assigned)
+        }
         Expr::ChainedCompare { operands, .. } => {
             for o in operands {
                 collect_walrus_targets(&o.node, assigned);
             }
         }
         Expr::Starred(inner) => collect_walrus_targets(&inner.node, assigned),
-        _ => {}
+        Expr::Lambda { params, .. } => {
+            for param in params {
+                if let Some(default) = &param.default {
+                    collect_walrus_targets(&default.node, assigned);
+                }
+            }
+        }
+        Expr::IntLit(_)
+        | Expr::BigIntLit(_)
+        | Expr::FloatLit(_)
+        | Expr::ComplexLit(_)
+        | Expr::StrLit(_)
+        | Expr::BytesLit(_)
+        | Expr::BoolLit(_)
+        | Expr::NoneLit
+        | Expr::Ellipsis
+        | Expr::Ident(_)
+        | Expr::Yield(None) => {}
     }
 }
 
@@ -945,6 +1122,15 @@ pub fn collect_walrus_targets_in_stmts(stmts: &[Spanned<Stmt>], assigned: &mut V
             Stmt::VarDecl { value, .. } => collect_walrus_targets(&value.node, assigned),
             Stmt::ExprStmt(e) => collect_walrus_targets(&e.node, assigned),
             Stmt::Return(Some(e)) => collect_walrus_targets(&e.node, assigned),
+            Stmt::Del(target) => collect_walrus_targets(&target.node, assigned),
+            Stmt::Raise { value, from } => {
+                if let Some(value) = value {
+                    collect_walrus_targets(&value.node, assigned);
+                }
+                if let Some(from) = from {
+                    collect_walrus_targets(&from.node, assigned);
+                }
+            }
             Stmt::If {
                 condition,
                 body,
@@ -1019,6 +1205,9 @@ pub fn collect_walrus_targets_in_stmts(stmts: &[Spanned<Stmt>], assigned: &mut V
             Stmt::Match { expr, arms } => {
                 collect_walrus_targets(&expr.node, assigned);
                 for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        collect_walrus_targets(&guard.node, assigned);
+                    }
                     collect_walrus_targets_in_stmts(&arm.body, assigned);
                 }
             }
@@ -1028,8 +1217,49 @@ pub fn collect_walrus_targets_in_stmts(stmts: &[Spanned<Stmt>], assigned: &mut V
                     collect_walrus_targets(&m.node, assigned);
                 }
             }
-            // Nested function/class definitions carry their own scope; their
-            // walrus targets belong to them, not to us.
+            Stmt::FnDef {
+                decorators, params, ..
+            }
+            | Stmt::AsyncFnDef {
+                decorators, params, ..
+            } => {
+                for decorator in decorators {
+                    collect_walrus_targets(&decorator.node, assigned);
+                }
+                for param in params {
+                    if let Some(default) = &param.default {
+                        collect_walrus_targets(&default.node, assigned);
+                    }
+                }
+            }
+            Stmt::ClassDef {
+                decorators,
+                bases,
+                keyword_args,
+                ..
+            } => {
+                for decorator in decorators {
+                    collect_walrus_targets(&decorator.node, assigned);
+                }
+                for base in bases {
+                    collect_walrus_targets(&base.node, assigned);
+                }
+                for (_, value) in keyword_args {
+                    collect_walrus_targets(&value.node, assigned);
+                }
+            }
+            Stmt::EnumDef { variants, .. } => {
+                for variant in variants {
+                    for field in &variant.fields {
+                        if let Some(default) = &field.default {
+                            collect_walrus_targets(&default.node, assigned);
+                        }
+                    }
+                }
+            }
+            Stmt::TypeAlias { value, .. } => collect_walrus_targets(&value.node, assigned),
+            // Nested function/class bodies carry their own scope and are not
+            // traversed by the arms above.
             _ => {}
         }
     }

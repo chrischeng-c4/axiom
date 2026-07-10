@@ -2,7 +2,7 @@
 
 use crate::parser;
 use crate::source::span::FileId;
-use crate::types::ty::{TypeParamDefault, TypeVarKind, UserClassRole};
+use crate::types::ty::{ClassRole, TypeParamDefault, TypeVarKind};
 use crate::types::TypeChecker;
 
 fn check(src: &str) -> Vec<String> {
@@ -1480,7 +1480,7 @@ fn pep695_forward_bound_is_skip_safe() {
 
     let later_sym = checker.symbols.lookup("Later").expect("Later registered");
     let later_ty = checker.get_sym_type(later_sym.0);
-    let later_instance = checker.with_user_class_role(later_ty, UserClassRole::Instance);
+    let later_instance = checker.with_class_role(later_ty, ClassRole::Instance);
     let keep_symbol = checker.symbols.lookup("keep").unwrap();
     let keep_param = &checker.generic_defs[&keep_symbol].params[0];
     assert_eq!(keep_param.bound, Some(later_instance));
@@ -2312,6 +2312,69 @@ fn user_class_objects_are_distinct_from_instances() {
 }
 
 #[test]
+fn builtin_and_native_class_objects_are_distinct_from_instances() {
+    let errors = check(
+        "good: ValueError = ValueError(\"boom\")\n\
+         bad: ValueError = ValueError\n\
+         err = ValueError(\"boom\")\n\
+         err()\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        1,
+        "a builtin class object must not satisfy its instance annotation: {errors:?}"
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("called value is not a function"))
+            .count(),
+        1,
+        "a constructed builtin exception must not remain a constructor: {errors:?}"
+    );
+    assert_eq!(errors.len(), 2, "unexpected diagnostics: {errors:?}");
+
+    let errors = check(
+        "ErrorAlias = ValueError\n\
+         def take(error: ErrorAlias) -> None:\n\
+         \x20   pass\n\
+         take(ErrorAlias(\"ok\"))\n\
+         take(ErrorAlias)\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        1,
+        "builtin class aliases must remain constructors but not instances: {errors:?}"
+    );
+    assert_eq!(errors.len(), 1, "unexpected diagnostics: {errors:?}");
+
+    let errors = check(
+        "import queue\n\
+         q = queue.Queue()\n\
+         q.qsize()\n\
+         q()\n\
+         QueueAlias = queue.Queue\n\
+         QueueAlias().qsize()\n\
+         QueueAlias()()\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("called value is not a function"))
+            .count(),
+        2,
+        "native constructor results must be instances while aliases remain callable: {errors:?}"
+    );
+    assert_eq!(errors.len(), 2, "unexpected diagnostics: {errors:?}");
+}
+
+#[test]
 fn user_class_object_aliases_preserve_specialization_and_construction() {
     let errors = check(
         "class Box[T]:\n\
@@ -2430,7 +2493,9 @@ fn user_class_annotation_role_reaches_hir() {
 
     for ty in [function.params[0].1, function.return_ty] {
         let crate::types::Ty::Class {
-            user: Some(user), ..
+            role,
+            user: Some(user),
+            ..
         } = checker.tcx.get(ty)
         else {
             panic!(
@@ -2438,7 +2503,7 @@ fn user_class_annotation_role_reaches_hir() {
                 checker.tcx.get(ty)
             );
         };
-        assert_eq!(user.role, UserClassRole::Instance);
+        assert_eq!(*role, ClassRole::Instance);
         assert_eq!(user.args, vec![checker.tcx.int()]);
     }
 }
@@ -2478,13 +2543,15 @@ fn user_class_alias_preregistration_tracks_rebinding() {
         panic!("take must be a function");
     };
     let crate::types::Ty::Class {
-        user: Some(user), ..
+        role,
+        user: Some(user),
+        ..
     } = checker.tcx.get(params[0])
     else {
         panic!("rebound Alias must resolve to B instance");
     };
     assert_eq!(user.symbol, b);
-    assert_eq!(user.role, UserClassRole::Instance);
+    assert_eq!(*role, ClassRole::Instance);
 
     for source in [
         "class A:\n    pass\nAlias = A\nAlias = 42\ndef take(value: Alias) -> None:\n    pass\n",
@@ -2641,6 +2708,839 @@ fn test_match_class_pattern_narrows_type() {
         errors.is_empty(),
         "class pattern body should type-check cleanly: {errors:?}"
     );
+}
+
+#[test]
+fn test_match_class_pattern_rejects_instance_target() {
+    let errors = check(
+        "class C:\n\
+         \x20   pass\n\
+         pattern = C()\n\
+         subject = C()\n\
+         match subject:\n\
+         \x20   case pattern() as captured:\n\
+         \x20       pass\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("class pattern target must be a class"))
+            .count(),
+        1,
+        "a known instance must not be accepted as a class-pattern head: {errors:?}"
+    );
+    assert_eq!(errors.len(), 1, "unexpected diagnostics: {errors:?}");
+
+    let errors = check(
+        "class C:\n\
+         \x20   pass\n\
+         Alias = C\n\
+         match C():\n\
+         \x20   case Alias():\n\
+         \x20       pass\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "a class-object alias must remain a valid pattern head: {errors:?}"
+    );
+
+    let errors = check(
+        "from external import C\n\
+         match 1:\n\
+         \x20   case C():\n\
+         \x20       pass\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "an unresolved imported pattern head must stay skip-when-unsure: {errors:?}"
+    );
+
+    let errors = check(
+        "class C:\n\
+         \x20   pass\n\
+         int = C()\n\
+         match C():\n\
+         \x20   case int():\n\
+         \x20       pass\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("class pattern target must be a class"))
+            .count(),
+        1,
+        "a shadowed builtin instance must not remain a valid pattern head: {errors:?}"
+    );
+
+    let errors = check(
+        "class C:\n\
+         \x20   pass\n\
+         ValueError = C()\n\
+         match C():\n\
+         \x20   case ValueError():\n\
+         \x20       pass\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("class pattern target must be a class"))
+            .count(),
+        1,
+        "a shadowed builtin exception must not remain a valid pattern head: {errors:?}"
+    );
+
+    let errors = check(
+        "match ValueError(\"boom\"):\n\
+         \x20   case ValueError():\n\
+         \x20       pass\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "an unshadowed builtin exception must remain a valid pattern head: {errors:?}"
+    );
+
+    let errors = check(
+        "class C:\n\
+         \x20   pass\n\
+         def local() -> None:\n\
+         \x20   pattern = C()\n\
+         \x20   int = C()\n\
+         \x20   ValueError = C()\n\
+         \x20   match C():\n\
+         \x20       case pattern():\n\
+         \x20           pass\n\
+         \x20   match C():\n\
+         \x20       case int():\n\
+         \x20           pass\n\
+         \x20   match C():\n\
+         \x20       case ValueError():\n\
+         \x20           pass\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("class pattern target must be a class"))
+            .count(),
+        3,
+        "first assignment must refine function-local Any placeholders: {errors:?}"
+    );
+
+    let errors = check(
+        "def local() -> None:\n\
+         \x20   Alias = int\n\
+         \x20   match 1:\n\
+         \x20       case Alias(value):\n\
+         \x20           keep: int = value\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "function-local primitive class aliases must retain provenance: {errors:?}"
+    );
+
+    let errors = check(
+        "class C:\n\
+         \x20   pass\n\
+         def outer() -> None:\n\
+         \x20   def inner() -> None:\n\
+         \x20       match C():\n\
+         \x20           case captured():\n\
+         \x20               pass\n\
+         \x20   captured = C()\n\
+         \x20   inner()\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("class pattern target must be a class"))
+            .count(),
+        1,
+        "late-bound closures must see a single known local instance assignment: {errors:?}"
+    );
+
+    let errors = check(
+        "class C:\n\
+         \x20   pass\n\
+         def outer() -> None:\n\
+         \x20   def inner() -> None:\n\
+         \x20       match C():\n\
+         \x20           case Alias():\n\
+         \x20               pass\n\
+         \x20   Alias = C\n\
+         \x20   inner()\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "late-bound class-object aliases must remain valid pattern heads: {errors:?}"
+    );
+
+    let errors = check(
+        "import external\n\
+         C = 1\n\
+         match 1:\n\
+         \x20   case external.C():\n\
+         \x20       pass\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "a dotted unknown pattern head must not consult an unrelated local tail: {errors:?}"
+    );
+
+    let errors = check(
+        "Alias = int\n\
+         match 1:\n\
+         \x20   case Alias(value):\n\
+         \x20       keep: int = value\n\
+         match set():\n\
+         \x20   case set(value):\n\
+         \x20       pass\n\
+         match bytes():\n\
+         \x20   case bytes(value):\n\
+         \x20       pass\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "primitive builtin classes and their aliases must remain valid pattern heads: {errors:?}"
+    );
+
+    let errors = check(
+        "def ordinary() -> None:\n\
+         \x20   pass\n\
+         match 1:\n\
+         \x20   case ordinary():\n\
+         \x20       pass\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("class pattern target must be a class"))
+            .count(),
+        1,
+        "a known ordinary function must not become a class-pattern head: {errors:?}"
+    );
+}
+
+#[test]
+fn test_match_class_pattern_closure_seed_disqualifies_other_rebindings() {
+    for source in [
+        "class C:\n\
+         \x20   pass\n\
+         def outer() -> None:\n\
+         \x20   def inner() -> None:\n\
+         \x20       match C():\n\
+         \x20           case captured():\n\
+         \x20               pass\n\
+         \x20   captured = C()\n\
+         \x20   for captured in [C]:\n\
+         \x20       pass\n\
+         \x20   inner()\n",
+        "class C:\n\
+         \x20   pass\n\
+         def outer() -> None:\n\
+         \x20   def inner() -> None:\n\
+         \x20       match C():\n\
+         \x20           case captured():\n\
+         \x20               pass\n\
+         \x20   captured = C()\n\
+         \x20   (captured,) = (C,)\n\
+         \x20   inner()\n",
+        "class C:\n\
+         \x20   pass\n\
+         def outer() -> None:\n\
+         \x20   def inner() -> None:\n\
+         \x20       match C():\n\
+         \x20           case captured():\n\
+         \x20               pass\n\
+         \x20   captured = C()\n\
+         \x20   match 1:\n\
+         \x20       case _ if (captured := C):\n\
+         \x20           pass\n\
+         \x20   inner()\n",
+    ] {
+        let errors = check(source);
+        assert_eq!(
+            errors
+                .iter()
+                .filter(|error| error.contains("class pattern target must be a class"))
+                .count(),
+            0,
+            "closure seeding must remain conservative across rebinding forms: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn test_match_class_pattern_closure_respects_local_shadowing_forms() {
+    for statement in [
+        "    del captured\n",
+        "    captured: C\n",
+        "    match C:\n        case captured:\n            pass\n",
+    ] {
+        let source = format!(
+            "class C:\n\
+             \x20   pass\n\
+             captured = C()\n\
+             def outer() -> None:\n\
+             \x20   def inner() -> None:\n\
+             \x20       match C():\n\
+             \x20           case captured():\n\
+             \x20               pass\n\
+             {statement}\
+             \x20   inner()\n"
+        );
+        let errors = check(&source);
+        assert_eq!(
+            errors
+                .iter()
+                .filter(|error| error.contains("class pattern target must be a class"))
+                .count(),
+            0,
+            "function-local binding forms must shadow outer instances: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn test_match_class_pattern_closure_alias_seed_requires_one_binding_event() {
+    for (alias, rebinding) in [
+        ("C", "for Alias in [D()]:\n        pass"),
+        ("C", "match D():\n        case Alias:\n            pass"),
+        ("int", "for Alias in [D()]:\n        pass"),
+    ] {
+        let source = format!(
+            "class C:\n\
+             \x20   x: int = 1\n\
+             class D:\n\
+             \x20   pass\n\
+             def outer() -> None:\n\
+             \x20   def inner() -> None:\n\
+             \x20       match C():\n\
+             \x20           case Alias(x=value):\n\
+             \x20               keep: str = value\n\
+             \x20   Alias = {alias}\n\
+             \x20   {rebinding}\n\
+             \x20   inner()\n"
+        );
+        let errors = check(&source);
+        assert!(
+            errors.is_empty(),
+            "competing bindings must discard preregistered class metadata: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn test_preregister_binding_counts_preserve_sequential_inference() {
+    for source in [
+        "x = 1\nx = 2\nkeep: str = x\n",
+        "def local() -> None:\n    x = 1\n    x = 2\n    keep: str = x\n",
+    ] {
+        let errors = check(source);
+        assert_eq!(
+            errors
+                .iter()
+                .filter(|error| error.contains("type mismatch: expected `str`, got `int`"))
+                .count(),
+            1,
+            "binding-count guards must not predeclare ordinary variables as Any: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn test_class_alias_preregistration_does_not_overwrite_parameters() {
+    let errors = check(
+        "class C:\n\
+         \x20   pass\n\
+         class D:\n\
+         \x20   pass\n\
+         def outer(Alias: D) -> None:\n\
+         \x20   def inner() -> None:\n\
+         \x20       match C():\n\
+         \x20           case Alias():\n\
+         \x20               pass\n\
+         \x20   inner()\n\
+         \x20   Alias = C\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("class pattern target must be a class"))
+            .count(),
+        1,
+        "a later class alias must not overwrite the parameter's initial instance type: {errors:?}"
+    );
+}
+
+#[test]
+fn test_class_alias_preregistration_respects_global_and_nonlocal() {
+    for source in [
+        "class C:\n\
+         \x20   pass\n\
+         class D:\n\
+         \x20   pass\n\
+         Alias = D()\n\
+         def outer() -> None:\n\
+         \x20   global Alias\n\
+         \x20   def inner() -> None:\n\
+         \x20       match C():\n\
+         \x20           case Alias():\n\
+         \x20               pass\n\
+         \x20   inner()\n\
+         \x20   Alias = C\n",
+        "class C:\n\
+         \x20   pass\n\
+         class D:\n\
+         \x20   pass\n\
+         def enclosing() -> None:\n\
+         \x20   Alias = D()\n\
+         \x20   def outer() -> None:\n\
+         \x20       nonlocal Alias\n\
+         \x20       def inner() -> None:\n\
+         \x20           match C():\n\
+         \x20               case Alias():\n\
+         \x20                   pass\n\
+         \x20       inner()\n\
+         \x20       Alias = C\n\
+         \x20   outer()\n",
+    ] {
+        let errors = check(source);
+        assert_eq!(
+            errors
+                .iter()
+                .filter(|error| error.contains("class pattern target must be a class"))
+                .count(),
+            1,
+            "global/nonlocal declarations must preserve the outer instance type: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn global_and_nonlocal_resolve_only_legal_enclosing_scopes() {
+    let errors = check(
+        "class C:\n\
+         \x20   pass\n\
+         Alias = C()\n\
+         class Holder:\n\
+         \x20   Alias = C\n\
+         \x20   def method(self) -> None:\n\
+         \x20       global Alias\n\
+         \x20       match C():\n\
+         \x20           case Alias():\n\
+         \x20               pass\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("class pattern target must be a class"))
+            .count(),
+        1,
+        "global must resolve the module binding, not a class binding: {errors:?}"
+    );
+
+    let errors = check(
+        "class C:\n\
+         \x20   pass\n\
+         def outer() -> None:\n\
+         \x20   Alias = C()\n\
+         \x20   class Holder:\n\
+         \x20       Alias = C\n\
+         \x20       def method(self) -> None:\n\
+         \x20           nonlocal Alias\n\
+         \x20           match C():\n\
+         \x20               case Alias():\n\
+         \x20                   pass\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("class pattern target must be a class"))
+            .count(),
+        1,
+        "nonlocal must skip class scopes and use the enclosing function: {errors:?}"
+    );
+
+    let errors = check("Alias = 1\ndef invalid() -> None:\n    nonlocal Alias\n");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("no binding for nonlocal `Alias` found")),
+        "module bindings cannot satisfy nonlocal: {errors:?}"
+    );
+}
+
+#[test]
+fn function_body_global_analysis_does_not_mutate_module_state() {
+    let errors = check(
+        "class C:\n\
+         \x20   pass\n\
+         Alias = C()\n\
+         def mutate() -> None:\n\
+         \x20   global Alias\n\
+         \x20   Alias = C\n\
+         match C():\n\
+         \x20   case Alias():\n\
+         \x20       pass\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("class pattern target must be a class"))
+            .count(),
+        1,
+        "checking an uncalled function must not change the module binding: {errors:?}"
+    );
+
+    let errors = check(
+        "from os import strerror\n\
+         def mutate() -> None:\n\
+         \x20   global strerror\n\
+         \x20   strerror = lambda value: value\n\
+         \x20   strerror(\"inside\")\n\
+         strerror(\"outside\")\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("argument type mismatch"))
+            .count(),
+        1,
+        "global writes must affect body flow without erasing module provenance: {errors:?}"
+    );
+}
+
+#[test]
+fn method_free_names_skip_the_enclosing_class_namespace() {
+    let errors = check(
+        "from os import strerror\n\
+         class Holder:\n\
+         \x20   strerror = lambda value: value\n\
+         \x20   def method(self) -> None:\n\
+         \x20       strerror(\"bad\")\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("argument type mismatch"))
+            .count(),
+        1,
+        "a method free name must resolve at module scope, not class scope: {errors:?}"
+    );
+
+    let errors = check(
+        "class C:\n\
+         \x20   pass\n\
+         def outer() -> None:\n\
+         \x20   Alias = C()\n\
+         \x20   class Holder:\n\
+         \x20       Alias = C\n\
+         \x20       def method(self) -> None:\n\
+         \x20           match C():\n\
+         \x20               case Alias():\n\
+         \x20                   pass\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("class pattern target must be a class"))
+            .count(),
+        1,
+        "a method in a nested class must close over the outer function: {errors:?}"
+    );
+}
+
+#[test]
+fn recursive_calls_see_the_reasserted_function_declaration() {
+    let errors = check(
+        "class C:\n\
+         \x20   pass\n\
+         recursive = C\n\
+         def recursive(value: int) -> int:\n\
+         \x20   return recursive(\"bad\")\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("argument type mismatch")),
+        "recursive calls must see the stable def signature: {errors:?}"
+    );
+}
+
+#[test]
+fn repeated_function_declarations_keep_occurrence_signatures() {
+    let errors = check(
+        "def convert(value: int) -> int:\n\
+         \x20   return value\n\
+         convert(\"bad\")\n\
+         def convert(value: str) -> str:\n\
+         \x20   return value\n\
+         convert(1)\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("argument type mismatch"))
+            .count(),
+        2,
+        "each call must use the declaration active at that source position: {errors:?}"
+    );
+}
+
+#[test]
+fn repeated_function_bodies_keep_occurrence_return_types() {
+    let errors = check(
+        "def convert(value: int) -> int:\n\
+         \x20   return \"bad\"\n\
+         def convert(value: str) -> str:\n\
+         \x20   return 1\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("return type mismatch"))
+            .count(),
+        2,
+        "each body must use its own declaration signature: {errors:?}"
+    );
+}
+
+#[test]
+fn repeated_classes_keep_nominal_identity_and_clear_active_methods() {
+    let errors = check(
+        "class C:\n\
+         \x20   def __neg__(self) -> int:\n\
+         \x20       return 1\n\
+         Old = C\n\
+         class C:\n\
+         \x20   pass\n\
+         current: C = Old()\n\
+         old_neg: int = -Old()\n\
+         -C()\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        1,
+        "an alias of the first class must remain nominally distinct: {errors:?}"
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("unary `-` requires numeric type"))
+            .count(),
+        1,
+        "the second bare class must not inherit the first class's methods: {errors:?}"
+    );
+}
+
+#[test]
+fn repeated_classes_preserve_numeric_and_index_traits_by_symbol() {
+    let errors = check(
+        "class Numeric(int):\n\
+         \x20   pass\n\
+         OldNumeric = Numeric\n\
+         class Numeric:\n\
+         \x20   pass\n\
+         -OldNumeric(1)\n\
+         -Numeric()\n\
+         class Indexed:\n\
+         \x20   def __index__(self) -> int:\n\
+         \x20       return 1\n\
+         OldIndexed = Indexed\n\
+         class Indexed:\n\
+         \x20   def marker(self) -> None:\n\
+         \x20       pass\n\
+         hex(OldIndexed())\n\
+         hex(Indexed())\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("unary `-` requires numeric type"))
+            .count(),
+        1,
+        "only the active bare Numeric class should fail: {errors:?}"
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("argument type mismatch"))
+            .count(),
+        1,
+        "only the active bare Indexed class should lack __index__: {errors:?}"
+    );
+}
+
+#[test]
+fn repeated_classes_preserve_typed_dict_and_protocol_traits_by_symbol() {
+    let errors = check(
+        "from typing import Protocol, TypedDict\n\
+         class Row(TypedDict):\n\
+         \x20   value: int\n\
+         OldRow = Row\n\
+         class Row:\n\
+         \x20   pass\n\
+         old_row: OldRow = {\"value\": 1}\n\
+         current_row: Row = {\"value\": 1}\n\
+         class Runnable(Protocol):\n\
+         \x20   def run(self) -> int:\n\
+         \x20       pass\n\
+         OldRunnable = Runnable\n\
+         class Runnable:\n\
+         \x20   pass\n\
+         class Impl:\n\
+         \x20   def run(self) -> int:\n\
+         \x20       return 1\n\
+         old_protocol: OldRunnable = Impl()\n\
+         current_protocol: Runnable = Impl()\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        2,
+        "only the active non-TypedDict/non-Protocol classes should reject structural values: {errors:?}"
+    );
+}
+
+#[test]
+fn same_named_class_base_resolves_before_the_new_binding() {
+    let errors = check(
+        "class C:\n\
+         \x20   def __neg__(self) -> int:\n\
+         \x20       return 1\n\
+         class C(C):\n\
+         \x20   pass\n\
+         result: int = -C()\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "class C(C) must inherit from the prior C declaration, not itself: {errors:?}"
+    );
+}
+
+#[test]
+fn test_class_alias_preregistration_preserves_builtin_until_assignment() {
+    let errors = check(
+        "class C:\n\
+         \x20   def __init__(self: C, value: int) -> None:\n\
+         \x20       pass\n\
+         keep: int = int(\"1\")\n\
+         int = C\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "a later builtin shadow must not alter earlier builtin calls: {errors:?}"
+    );
+}
+
+#[test]
+fn test_declarations_reassert_identity_after_earlier_alias_assignment() {
+    let errors = check(
+        "class C:\n\
+         \x20   pass\n\
+         def outer() -> None:\n\
+         \x20   Alias = C\n\
+         \x20   def Alias() -> None:\n\
+         \x20       pass\n\
+         \x20   def inner() -> None:\n\
+         \x20       match C():\n\
+         \x20           case Alias():\n\
+         \x20               pass\n\
+         \x20   inner()\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("class pattern target must be a class"))
+            .count(),
+        1,
+        "a later function declaration must replace an earlier class alias: {errors:?}"
+    );
+
+    let errors = check(
+        "Alias = int\n\
+         def Alias() -> None:\n\
+         \x20   pass\n\
+         match 1:\n\
+         \x20   case Alias(value):\n\
+         \x20       pass\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("class pattern target must be a class"))
+            .count(),
+        1,
+        "a declaration must clear primitive builtin alias provenance: {errors:?}"
+    );
+
+    let errors = check(
+        "class C:\n\
+         \x20   pass\n\
+         def accept(value: C) -> None:\n\
+         \x20   pass\n\
+         Alias = C\n\
+         class Alias:\n\
+         \x20   pass\n\
+         accept(Alias())\n",
+    );
+    assert!(
+        !errors.is_empty(),
+        "a later class declaration must restore its own nominal identity"
+    );
+
+    let errors = check(
+        "class C:\n\
+         \x20   pass\n\
+         Alias = C\n\
+         enum Alias:\n\
+         \x20   One\n\
+         match C():\n\
+         \x20   case Alias():\n\
+         \x20       pass\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("class pattern target must be a class"))
+            .count(),
+        1,
+        "a later enum declaration must replace an earlier class alias: {errors:?}"
+    );
+}
+
+#[test]
+fn test_alias_metadata_is_cleared_by_later_mutations() {
+    for mutation in [
+        "(Alias,) = (D(),)",
+        "del Alias",
+        "Alias += 1",
+        "type Alias = C",
+    ] {
+        let source = format!(
+            "class C:\n\
+             \x20   x: int = 1\n\
+             class D:\n\
+             \x20   pass\n\
+             Alias = C\n\
+             {mutation}\n\
+             def inner() -> None:\n\
+             \x20   match C():\n\
+             \x20       case Alias(x=value):\n\
+             \x20           keep: str = value\n"
+        );
+        let errors = check(&source);
+        assert_eq!(
+            errors
+                .iter()
+                .filter(|error| error.contains("type mismatch: expected `str`, got `int`"))
+                .count(),
+            0,
+            "later mutation must discard stale class metadata: {errors:?}"
+        );
+    }
 }
 
 #[test]
@@ -3446,6 +4346,26 @@ fn test_stdlib_module_fn_wrong_scalar_rejected() {
 }
 
 #[test]
+fn test_stdlib_from_import_alias_uses_original_member_contract() {
+    let errors = check("from os import strerror as err\nerr(\"x\")\n");
+    assert!(
+        errors.iter().any(|error| error.contains("argument type mismatch")),
+        "a function import alias must retain the imported member: {errors:?}"
+    );
+
+    let errors = check(
+        "class _W:\n\
+         \x20   pass\n\
+         from fileinput import FileInput as Input\n\
+         Input(_W())\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("argument type mismatch")),
+        "a constructor import alias must retain the imported member: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_module_fn_correct_scalar_clean() {
     // Correct calls must NOT be rejected (the ② behavior oracle).
     let errors = check("from os import strerror\nstrerror(2)\n");
@@ -4140,6 +5060,19 @@ fn test_stdlib_isinstance_classinfo_rejected() {
     );
 
     let errors = check(
+        "isinstance(None, ValueError)\n\
+         isinstance(None, ValueError(\"boom\"))\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("does not satisfy parameter `class_or_tuple`"))
+            .count(),
+        1,
+        "builtin class objects are valid classinfo but their instances are not: {errors:?}"
+    );
+
+    let errors = check(
         "class MyType:\n\
          \x20   pass\n\
          ClassAlias = MyType\n\
@@ -4209,5 +5142,226 @@ fn test_stdlib_non_stdlib_call_untouched() {
     assert!(
         errors.is_empty(),
         "user strerror must be untouched, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_stdlib_provenance_is_keyed_by_binding_identity() {
+    let errors = check(
+        "from os import strerror\n\
+         def local(strerror):\n\
+         \x20   strerror(\"ok\")\n\
+         strerror(\"ok\")\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("argument type mismatch"))
+            .count(),
+        1,
+        "a parameter shadow must not inherit import provenance: {errors:?}"
+    );
+
+    let errors = check(
+        "from os import strerror\n\
+         strerror = lambda value: value\n\
+         strerror(\"ok\")\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "a direct assignment must clear import provenance: {errors:?}"
+    );
+
+    let errors = check(
+        "from html.parser import HTMLParser\n\
+         obj = object.__new__(HTMLParser)\n\
+         def local(obj):\n\
+         \x20   obj.handle_entityref(12345)\n\
+         obj.handle_entityref(12345)\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("argument type mismatch"))
+            .count(),
+        1,
+        "a parameter shadow must not inherit instance provenance: {errors:?}"
+    );
+
+    let errors = check(
+        "import queue\n\
+         Alias = queue.Queue\n\
+         def local(Alias):\n\
+         \x20   inside: int = Alias()\n\
+         outside: int = Alias()\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        1,
+        "a parameter shadow must not inherit native class-reference provenance: {errors:?}"
+    );
+}
+
+#[test]
+fn test_stdlib_instance_origin_survives_constructor_rebinding() {
+    let errors = check(
+        "from html.parser import HTMLParser\n\
+         obj = object.__new__(HTMLParser)\n\
+         HTMLParser = 0\n\
+         obj.handle_entityref(12345)\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("argument type mismatch")),
+        "an existing instance must retain its immutable class origin: {errors:?}"
+    );
+}
+
+#[test]
+fn test_stdlib_provenance_propagates_through_value_aliases() {
+    let errors = check(
+        "from os import strerror\n\
+         alias = strerror\n\
+         alias(\"x\")\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("argument type mismatch")),
+        "a function value alias must retain import provenance: {errors:?}"
+    );
+
+    let errors = check(
+        "from html.parser import HTMLParser\n\
+         Parser = HTMLParser\n\
+         obj = object.__new__(Parser)\n\
+         obj.handle_entityref(12345)\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("argument type mismatch")),
+        "a constructor value alias must retain import provenance: {errors:?}"
+    );
+
+    let errors = check(
+        "from html.parser import HTMLParser\n\
+         obj = object.__new__(HTMLParser)\n\
+         alias = obj\n\
+         alias.handle_entityref(12345)\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("argument type mismatch")),
+        "an instance value alias must retain immutable instance provenance: {errors:?}"
+    );
+}
+
+#[test]
+fn conditional_joins_clear_class_and_stdlib_provenance() {
+    for source in [
+        "import queue\n\
+         Alias = lambda: 0\n\
+         if True:\n\
+         \x20   Alias = lambda: 0\n\
+         else:\n\
+         \x20   Alias = queue.Queue\n\
+         value: int = Alias()\n",
+        "import queue\n\
+         Alias = lambda: 0\n\
+         match 0:\n\
+         \x20   case 0:\n\
+         \x20       Alias = lambda: 0\n\
+         \x20   case _:\n\
+         \x20       Alias = queue.Queue\n\
+         value: int = Alias()\n",
+        "import queue\n\
+         Alias = lambda: 0\n\
+         if False:\n\
+         \x20   (Alias := queue.Queue)\n\
+         value: int = Alias()\n",
+        "from html.parser import HTMLParser\n\
+         obj = object()\n\
+         if True:\n\
+         \x20   obj = object()\n\
+         else:\n\
+         \x20   obj = object.__new__(HTMLParser)\n\
+         obj.handle_entityref(12345)\n",
+    ] {
+        let errors = check(source);
+        assert!(
+            errors.is_empty(),
+            "a mutually exclusive path must not leave definite class provenance: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn expression_control_flow_joins_class_identity() {
+    for source in [
+        "class C:\n\
+         \x20   pass\n\
+         def choose(cond: bool) -> None:\n\
+         \x20   Alias = C if cond else C()\n\
+         \x20   Alias()()\n",
+        "class C:\n\
+         \x20   pass\n\
+         Alias = C\n\
+         False and (Alias := C())\n\
+         Alias()()\n",
+        "class C:\n\
+         \x20   pass\n\
+         Alias = C\n\
+         [(Alias := C()) for item in []]\n\
+         Alias()()\n",
+        "class C:\n\
+         \x20   pass\n\
+         def choose(cond: bool) -> None:\n\
+         \x20   Alias = C\n\
+         \x20   value = (Alias := C) if cond else (Alias := C())\n\
+         \x20   Alias()()\n",
+    ] {
+        let errors = check(source);
+        assert!(
+            errors.is_empty(),
+            "a lazy or mutually exclusive expression must not leave a definite class role: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn property_getter_and_setter_keep_distinct_type_contracts() {
+    let valid = check(
+        "class Box:\n\
+         \x20   @property\n\
+         \x20   def value(self) -> int:\n\
+         \x20       return 1\n\
+         \x20   @value.setter\n\
+         \x20   def value(self, new: str) -> None:\n\
+         \x20       pass\n\
+         box = Box()\n\
+         read: int = box.value\n\
+         box.value = \"ok\"\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "getter reads and setter writes must use separate contracts: {valid:?}"
+    );
+
+    let invalid = check(
+        "class Box:\n\
+         \x20   @property\n\
+         \x20   def value(self) -> int:\n\
+         \x20       return 1\n\
+         \x20   @value.setter\n\
+         \x20   def value(self, new: str) -> None:\n\
+         \x20       pass\n\
+         box = Box()\n\
+         box.value = 1\n",
+    );
+    assert_eq!(
+        invalid
+            .iter()
+            .filter(|error| error.contains("type mismatch in assignment"))
+            .count(),
+        1,
+        "setter annotations must reject the wrong assigned value: {invalid:?}"
     );
 }

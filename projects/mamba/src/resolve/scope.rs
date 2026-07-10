@@ -38,7 +38,7 @@ pub enum VariableClass {
 }
 
 /// A scope containing symbol bindings.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Scope {
     pub parent: Option<usize>,
     symbols: HashMap<String, SymbolId>,
@@ -62,11 +62,14 @@ impl Scope {
 }
 
 /// Symbol table managing all scopes and symbols.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SymbolTable {
     scopes: Vec<Scope>,
     symbols: Vec<SymbolInfo>,
     current_scope: usize,
+    /// Dynamic traversal return points. A method's lexical parent skips its
+    /// class namespace, but finishing the method must resume that class body.
+    scope_return_stack: Vec<usize>,
     /// Variable classification for symbols (populated by resolver).
     var_classes: HashMap<SymbolId, VariableClass>,
     /// Maps inner (Free) SymbolId → outer (Cell) SymbolId for nonlocal variables.
@@ -80,6 +83,7 @@ impl SymbolTable {
             scopes: vec![global],
             symbols: Vec::new(),
             current_scope: 0,
+            scope_return_stack: Vec::new(),
             var_classes: HashMap::new(),
             nonlocal_mapping: HashMap::new(),
         }
@@ -87,13 +91,20 @@ impl SymbolTable {
 
     pub fn push_scope(&mut self) {
         let parent = self.current_scope;
+        self.push_scope_with_parent(parent);
+    }
+
+    pub fn push_scope_with_parent(&mut self, parent: usize) {
+        self.scope_return_stack.push(self.current_scope);
         let scope = Scope::new(Some(parent));
         self.current_scope = self.scopes.len();
         self.scopes.push(scope);
     }
 
     pub fn pop_scope(&mut self) {
-        if let Some(parent) = self.scopes[self.current_scope].parent {
+        if let Some(previous) = self.scope_return_stack.pop() {
+            self.current_scope = previous;
+        } else if let Some(parent) = self.scopes[self.current_scope].parent {
             self.current_scope = parent;
         }
     }
@@ -159,6 +170,12 @@ impl SymbolTable {
     /// Look up a name in a specific scope (not walking parents).
     pub fn lookup_in_scope(&self, scope_idx: usize, name: &str) -> Option<SymbolId> {
         self.scopes[scope_idx].lookup(name)
+    }
+
+    /// Bind an existing symbol identity in a lexical scope. `global` uses this
+    /// to make local lookup resolve directly to the module binding.
+    pub fn bind_symbol_in_scope(&mut self, scope_idx: usize, name: String, id: SymbolId) {
+        self.scopes[scope_idx].define(name, id);
     }
 
     /// Define a symbol in the enclosing (parent) scope.

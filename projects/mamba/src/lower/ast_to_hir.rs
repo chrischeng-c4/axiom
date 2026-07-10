@@ -456,6 +456,13 @@ fn genexpr_body_from_comprehensions(
     body
 }
 
+fn runtime_rebound_names_in_scope(stmts: &[Spanned<ast::Stmt>]) -> HashSet<String> {
+    crate::types::check::same_scope_binding_events(stmts)
+        .into_iter()
+        .filter_map(|(name, count)| (count > 1).then_some(name))
+        .collect()
+}
+
 /// Coarse float/int classification of an AST expression used purely to soundly
 /// infer an unannotated function's return type. `Unknown` means "could be either"
 /// and is treated conservatively (the caller does not force a primitive type).
@@ -3447,13 +3454,22 @@ pub fn lower_module_repl(
     module: &ast::Module,
     checker: &TypeChecker,
     prev_syms: &ReplSymInfo,
+    prev_bindings: &HashMap<String, SymbolId>,
+    prev_class_names: &HashSet<String>,
 ) -> Result<HirModule, Vec<MambaError>> {
     let mut lowerer = AstLowerer::new(checker);
-    // Pre-seed local_names and local_types with accumulated info
-    for (&sym_id, (name, ty)) in prev_syms {
-        lowerer.local_names.entry(name.clone()).or_insert(sym_id);
+    // Preserve all prior symbol metadata for recompiling accumulated bodies,
+    // but seed name resolution only from canonical Python bindings. Multiple
+    // declaration symbols may intentionally share one display name.
+    for (&sym_id, (_, ty)) in prev_syms {
         lowerer.local_types.entry(sym_id).or_insert(*ty);
     }
+    for (name, &sym_id) in prev_bindings {
+        lowerer.local_names.insert(name.clone(), sym_id);
+    }
+    lowerer
+        .runtime_class_base_names
+        .extend(prev_class_names.iter().cloned());
     // Advance next_local_sym past any pre-seeded IDs to avoid collisions
     let max_pre = prev_syms.keys().map(|s| s.0).max().unwrap_or(999_999);
     if lowerer.next_local_sym <= max_pre {
@@ -3461,6 +3477,10 @@ pub fn lower_module_repl(
     }
     lowerer.lower(module);
     if lowerer.errors.is_empty() {
+        for (&sym_id, (name, ty)) in prev_syms {
+            lowerer.result.sym_names.entry(sym_id).or_insert_with(|| name.clone());
+            lowerer.result.sym_types.entry(sym_id).or_insert(*ty);
+        }
         // Merge local_names into result.sym_names instead of overwriting.
         // result.sym_names may already contain method names stored during lower_class
         // (via direct result.sym_names.insert); those must survive scope clears (#827).
@@ -3649,6 +3669,9 @@ struct AstLowerer<'a> {
     /// MbValue at runtime (the TypeVar erases to `any`), so the int-default
     /// fallback for unresolved annotations must not fire for these names.
     active_type_params: std::collections::HashSet<String>,
+    /// Names with multiple same-scope binding events. Function/class uses must
+    /// load the Python slot instead of selecting one declaration statically.
+    active_runtime_rebound_names: HashSet<String>,
 }
 
 impl<'a> AstLowerer<'a> {
@@ -3671,6 +3694,7 @@ impl<'a> AstLowerer<'a> {
             local_declared_names: Vec::new(),
             runtime_class_base_names: Vec::new(),
             active_type_params: std::collections::HashSet::new(),
+            active_runtime_rebound_names: HashSet::new(),
             local_names: HashMap::new(),
             local_types: HashMap::new(),
             next_local_sym: 1_000_000,
@@ -4055,6 +4079,7 @@ impl<'a> AstLowerer<'a> {
         // that only ever receive floats are monomorphized as `float` and float
         // returns are typed correctly (the float-return-inference soundness wall).
         self.collect_float_hints(module);
+        self.active_runtime_rebound_names = runtime_rebound_names_in_scope(&module.stmts);
         collect_mutated_defaults(&module.stmts, &mut self.funcs_with_mutated_defaults);
         collect_functools_partial_targets(
             &module.stmts,
@@ -4071,6 +4096,16 @@ impl<'a> AstLowerer<'a> {
                     decorators,
                     ..
                 } => {
+                    let bind_sym = self.resolve_name(name, stmt.span).unwrap_or_else(|| {
+                        self.checker
+                            .declaration_symbol(stmt)
+                            .expect("function declarations must be preregistered")
+                    });
+                    let declaration_sym = self
+                        .checker
+                        .declaration_symbol(stmt)
+                        .unwrap_or(bind_sym);
+                    let repeated = self.active_runtime_rebound_names.contains(name);
                     // PEP 695 desugaring now places `T = __mb_pep695_typevar__`
                     // after the `def`, but the resolver still sees that later
                     // binding. Mark the names as temporarily unbound so
@@ -4153,8 +4188,9 @@ impl<'a> AstLowerer<'a> {
                         &mut self.active_type_params,
                         type_params.iter().map(|p| p.name.clone()).collect(),
                     );
-                    let lowered = if is_decorated || redef_of_overload {
+                    let lowered = if is_decorated || redef_of_overload || repeated {
                         self.lower_decorated_fn(
+                            declaration_sym,
                             name,
                             params_for_lower,
                             return_for_lower,
@@ -4162,7 +4198,14 @@ impl<'a> AstLowerer<'a> {
                             stmt.span,
                         )
                     } else {
-                        self.lower_fn(name, params, return_ty, body, stmt.span)
+                        self.lower_fn(
+                            declaration_sym,
+                            name,
+                            params,
+                            return_ty,
+                            body,
+                            stmt.span,
+                        )
                     };
                     self.active_type_params = saved_tps;
                     if let Some(mut func) = lowered {
@@ -4179,9 +4222,6 @@ impl<'a> AstLowerer<'a> {
                             // type to any_ty as well so call sites treat the dispatch
                             // result uniformly.
                             let any_ty = self.checker.tcx.any();
-                            let bind_sym = func.name;
-                            let impl_sym = self.fresh_function_impl_symbol(name, any_ty);
-                            func.name = impl_sym;
                             func.bind_name = Some(bind_sym);
                             func.return_ty = any_ty;
                             // Update func_return_tys so call-site lookup at
@@ -4205,6 +4245,20 @@ impl<'a> AstLowerer<'a> {
                             // Record overload-ness so the impl can lower dynamically.
                             self.decorated_top_level_names
                                 .insert(name.clone(), (bind_sym, overload_decorated));
+                        } else if repeated {
+                            let any_ty = self.checker.tcx.any();
+                            self.decorated_top_level_names.remove(name);
+                            func.bind_name = Some(bind_sym);
+                            func.return_ty = any_ty;
+                            self.func_return_tys.insert(bind_sym, any_ty);
+                            self.func_return_tys.insert(func.name, any_ty);
+                            self.result.top_level.push(HirStmt::FuncDefPlaceholder {
+                                name: func.name,
+                                bind_name: Some(bind_sym),
+                                span: stmt.span,
+                                redef: true,
+                                func_sig: Some(declared_sig.clone()),
+                            });
                         } else if self.decorated_top_level_names.remove(name).is_some() {
                             // A non-decorated def redefining a name previously bound
                             // by a DECORATED def: emit a placeholder flagged as a
@@ -4259,6 +4313,16 @@ impl<'a> AstLowerer<'a> {
                     decorators,
                     ..
                 } => {
+                    let bind_sym = self.resolve_name(name, stmt.span).unwrap_or_else(|| {
+                        self.checker
+                            .declaration_symbol(stmt)
+                            .expect("function declarations must be preregistered")
+                    });
+                    let declaration_sym = self
+                        .checker
+                        .declaration_symbol(stmt)
+                        .unwrap_or(bind_sym);
+                    let repeated = self.active_runtime_rebound_names.contains(name);
                     self.module_del_stmt_names.extend(
                         type_params
                             .iter()
@@ -4292,8 +4356,9 @@ impl<'a> AstLowerer<'a> {
                         &mut self.active_type_params,
                         type_params.iter().map(|p| p.name.clone()).collect(),
                     );
-                    let lowered = if is_decorated {
+                    let lowered = if is_decorated || repeated {
                         self.lower_decorated_fn(
+                            declaration_sym,
                             name,
                             params_for_lower,
                             return_for_lower,
@@ -4301,7 +4366,14 @@ impl<'a> AstLowerer<'a> {
                             stmt.span,
                         )
                     } else {
-                        self.lower_fn(name, params, return_ty, body, stmt.span)
+                        self.lower_fn(
+                            declaration_sym,
+                            name,
+                            params,
+                            return_ty,
+                            body,
+                            stmt.span,
+                        )
                     };
                     self.active_type_params = saved_tps;
                     if let Some(mut func) = lowered {
@@ -4334,9 +4406,6 @@ impl<'a> AstLowerer<'a> {
                         self.result.top_level.extend(default_setup);
                         if !func.decorators.is_empty() {
                             let any_ty = self.checker.tcx.any();
-                            let bind_sym = func.name;
-                            let impl_sym = self.fresh_function_impl_symbol(name, any_ty);
-                            func.name = impl_sym;
                             func.bind_name = Some(bind_sym);
                             func.return_ty = any_ty;
                             self.func_return_tys.insert(bind_sym, any_ty);
@@ -4350,6 +4419,20 @@ impl<'a> AstLowerer<'a> {
                             });
                             self.decorated_top_level_names
                                 .insert(name.clone(), (bind_sym, overload_decorated));
+                        } else if repeated {
+                            let any_ty = self.checker.tcx.any();
+                            self.decorated_top_level_names.remove(name);
+                            func.bind_name = Some(bind_sym);
+                            func.return_ty = any_ty;
+                            self.func_return_tys.insert(bind_sym, any_ty);
+                            self.func_return_tys.insert(func.name, any_ty);
+                            self.result.top_level.push(HirStmt::FuncDefPlaceholder {
+                                name: func.name,
+                                bind_name: Some(bind_sym),
+                                span: stmt.span,
+                                redef: true,
+                                func_sig: Some(declared_sig.clone()),
+                            });
                         } else if self.decorated_top_level_names.remove(name).is_some() {
                             // Non-decorated async def redefining a decorated name —
                             // re-store the global (see sync FnDef arm).
@@ -4393,8 +4476,19 @@ impl<'a> AstLowerer<'a> {
                     keyword_args,
                     ..
                 } => {
+                    let bind_sym = self.resolve_name(name, stmt.span).unwrap_or_else(|| {
+                        self.checker
+                            .declaration_symbol(stmt)
+                            .expect("class declarations must be preregistered")
+                    });
+                    let declaration_sym = self
+                        .checker
+                        .declaration_symbol(stmt)
+                        .unwrap_or(bind_sym);
                     self.collect_class_stmt(
                         name,
+                        declaration_sym,
+                        bind_sym,
                         body,
                         bases,
                         decorators,
@@ -4402,7 +4496,7 @@ impl<'a> AstLowerer<'a> {
                         keyword_args,
                         stmt.span,
                         true,
-                        false,
+                        true,
                     );
                     self.module_deleted_names.remove(name);
                     self.module_del_stmt_names.remove(name);
@@ -4471,13 +4565,14 @@ impl<'a> AstLowerer<'a> {
 
     fn lower_fn(
         &mut self,
+        name_id: SymbolId,
         name: &str,
         params: &[ast::Param],
         _return_ty: &Option<Spanned<ast::TypeExpr>>,
         body: &[Spanned<ast::Stmt>],
         span: Span,
     ) -> Option<HirFunction> {
-        self.lower_fn_inner(name, params, _return_ty, body, span, false, false)
+        self.lower_fn_inner(name_id, name, params, _return_ty, body, span, false, false)
     }
 
     fn ast_param_info(params: &[ast::Param]) -> Vec<ParamInfo> {
@@ -4540,17 +4635,19 @@ impl<'a> AstLowerer<'a> {
     /// produce garbage.
     fn lower_decorated_fn(
         &mut self,
+        name_id: SymbolId,
         name: &str,
         params: &[ast::Param],
         _return_ty: &Option<Spanned<ast::TypeExpr>>,
         body: &[Spanned<ast::Stmt>],
         span: Span,
     ) -> Option<HirFunction> {
-        self.lower_fn_inner(name, params, _return_ty, body, span, false, true)
+        self.lower_fn_inner(name_id, name, params, _return_ty, body, span, false, true)
     }
 
     fn lower_fn_inner(
         &mut self,
+        name_id: SymbolId,
         name: &str,
         params: &[ast::Param],
         _return_ty: &Option<Spanned<ast::TypeExpr>>,
@@ -4559,7 +4656,10 @@ impl<'a> AstLowerer<'a> {
         is_method: bool,
         is_decorated: bool,
     ) -> Option<HirFunction> {
-        let name_id = self.resolve_name(name, span)?;
+        self.result
+            .sym_names
+            .entry(name_id)
+            .or_insert_with(|| name.to_string());
         // Save entire outer scope state so nested function lowering doesn't corrupt it.
         // enter_local_scope() clears local_names/local_types; after nested lowering we
         // must restore the outer function's local bindings so its remaining body stmts
@@ -4674,6 +4774,18 @@ impl<'a> AstLowerer<'a> {
             }
             found
         };
+        let class_base_params: std::collections::HashSet<String> = body
+            .iter()
+            .filter_map(|stmt| match &stmt.node {
+                ast::Stmt::ClassDef { bases, .. } => Some(bases),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|base| match &base.node {
+                ast::Expr::Ident(name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
         // Generator params arrive through `mb_generator_store_arg` / `call_body_fn`,
         // which always carry a NaN-boxed MbValue (i64). The "raw-int convention"
         // (defaulting an unannotated param to `int`) is unsound for generators:
@@ -4748,6 +4860,10 @@ impl<'a> AstLowerer<'a> {
                             // An unannotated param used in `==`/`!=`/`in` must compare
                             // by value, so it cannot keep the raw-int identity path.
                             _ if value_compared_params.contains(&p.name) => any_ty,
+                            // A class base is a runtime type object. Keeping the
+                            // legacy raw-int ABI would re-box its pointer bits as
+                            // an integer before `mb_class_update_bases` sees it.
+                            _ if class_base_params.contains(&p.name) => any_ty,
                             // Unannotated generator params stay `any` (NaN-boxed) — the
                             // int default is unsound for float args crossing the i64
                             // generator trampoline ABI.
@@ -4860,7 +4976,12 @@ impl<'a> AstLowerer<'a> {
             self.func_return_tys.insert(name_id, ret_ty);
         }
 
+        let saved_runtime_rebound_names = std::mem::replace(
+            &mut self.active_runtime_rebound_names,
+            runtime_rebound_names_in_scope(body),
+        );
         let hir_body: Vec<HirStmt> = body.iter().filter_map(|s| self.lower_stmt(s)).collect();
+        self.active_runtime_rebound_names = saved_runtime_rebound_names;
 
         self.local_assigned_names = saved_local_assigned;
         self.local_declared_names = saved_declared;
@@ -4934,6 +5055,8 @@ impl<'a> AstLowerer<'a> {
     fn collect_class_stmt(
         &mut self,
         name: &str,
+        declaration_sym: SymbolId,
+        bind_sym: SymbolId,
         body: &[Spanned<ast::Stmt>],
         bases: &[Spanned<ast::Expr>],
         decorators: &[Spanned<ast::Expr>],
@@ -4946,7 +5069,17 @@ impl<'a> AstLowerer<'a> {
         let placeholder_sym: std::cell::Cell<Option<SymbolId>> = std::cell::Cell::new(None);
         let stmt_span = span;
         let dataclass_decorated = decorators.iter().any(|d| decorator_is_dataclass(&d.node));
-        if let Some(mut cls) = self.lower_class(name, body, bases, stmt_span, dataclass_decorated) {
+        let class_sym = SymbolId(self.next_local_sym);
+        self.next_local_sym += 1;
+        if let Some(mut cls) = self.lower_class(
+            class_sym,
+            bind_sym,
+            name,
+            body,
+            bases,
+            stmt_span,
+            dataclass_decorated,
+        ) {
             // PEP 557: register the synthesized __init__'s parameter
             // shape (declaration order; base dataclass fields first;
             // ClassVar / KW_ONLY sentinel / field(init=False) fields
@@ -5019,7 +5152,9 @@ impl<'a> AstLowerer<'a> {
                 .iter()
                 .filter_map(|b| {
                     if let ast::Expr::Ident(name) = &b.node {
-                        self.resolve_name(name, stmt_span)
+                        self.checker
+                            .class_base_symbol_named(declaration_sym, name)
+                            .or_else(|| self.resolve_name(name, stmt_span))
                     } else if let ast::Expr::Attr { attr, .. } = &b.node {
                         // `class X(unittest.TestCase):` — treat the
                         // attribute's bare name as the base class id
@@ -5080,21 +5215,13 @@ impl<'a> AstLowerer<'a> {
                 .iter()
                 .filter_map(|d| self.lower_expr(d))
                 .collect();
-            // Extract metaclass keyword arg if present. The value
-            // may be a bare name (`metaclass=Meta`) or an attribute
-            // access (`metaclass=abc.ABCMeta`); in both cases the
-            // metaclass identity is the leaf name.
-            cls.metaclass = keyword_args.iter().find_map(|(k, v)| {
-                if k == "metaclass" {
-                    match &v.node {
-                        ast::Expr::Ident(meta_name) => Some(meta_name.clone()),
-                        ast::Expr::Attr { attr, .. } => Some(attr.clone()),
-                        _ => None,
-                    }
-                } else {
-                    None
-                }
-            });
+            // Preserve the runtime metaclass value. A source leaf name is not
+            // an identity: Python permits rebinding same-named metaclasses,
+            // and attribute/call expressions may produce the metaclass too.
+            cls.metaclass = keyword_args
+                .iter()
+                .find(|(k, _)| k == "metaclass")
+                .and_then(|(_, value)| self.lower_expr(value));
             // R10: Extract non-metaclass keyword arguments for __init_subclass__.
             cls.class_kwargs = keyword_args
                 .iter()
@@ -5155,10 +5282,12 @@ impl<'a> AstLowerer<'a> {
                 || !bases.is_empty()
                 || !type_params.is_empty()
                 || has_cross_class_property_decorator
+                || force_textual_registration
             {
                 if placeholder_to_top {
                     self.result.top_level.push(HirStmt::ClassDefPlaceholder {
                         name: cls.name,
+                        bind_name: cls.bind_name,
                         span: stmt_span,
                     });
                 }
@@ -5170,16 +5299,11 @@ impl<'a> AstLowerer<'a> {
         placeholder_sym.get()
     }
 
-    fn class_base_needs_runtime_eval(&mut self, expr: &ast::Expr) -> bool {
-        match expr {
-            ast::Expr::Ident(name) => self.runtime_class_base_names.iter().any(|n| n == name),
-            ast::Expr::Starred(_) => true,
-            // Subscripted bases such as `Base[T]` or `Base[lambda: ...]` need
-            // runtime evaluation so the class-update pass can preserve both
-            // the resolved base class and the original generic alias.
-            ast::Expr::Index { .. } => true,
-            _ => false,
-        }
+    fn class_base_needs_runtime_eval(&mut self, _expr: &ast::Expr) -> bool {
+        // Python evaluates every base expression at the class statement. A
+        // source name is not a stable class identity: it may be an alias, a
+        // factory result, a REPL binding, or a same-named prior definition.
+        true
     }
 
     fn lower_runtime_class_base_list(
@@ -5451,13 +5575,14 @@ impl<'a> AstLowerer<'a> {
 
     fn lower_class(
         &mut self,
+        name_id: SymbolId,
+        bind_name: SymbolId,
         name: &str,
         body: &[Spanned<ast::Stmt>],
         bases: &[Spanned<ast::Expr>],
         span: Span,
         dataclass_decorated: bool,
     ) -> Option<HirClass> {
-        let name_id = self.resolve_name(name, span)?;
         self.result
             .sym_names
             .entry(name_id)
@@ -5641,13 +5766,14 @@ impl<'a> AstLowerer<'a> {
                     // Using define_local would reuse the same SymbolId when multiple classes
                     // define methods with the same name (e.g. two `__enter__` methods), causing
                     // duplicate MIR body names and Cranelift "Duplicate definition" errors.
-                    let method_sym = {
+                    let method_sym = self.checker.declaration_symbol(stmt).unwrap_or_else(|| {
                         let id = SymbolId(self.next_local_sym);
                         self.next_local_sym += 1;
-                        self.local_names.insert(mname.to_string(), id);
-                        self.local_types.insert(id, self.checker.tcx.int());
                         id
-                    };
+                    });
+                    self.local_names.insert(mname.to_string(), method_sym);
+                    self.local_types
+                        .insert(method_sym, self.checker.tcx.int());
                     method_name_map.push((mname.to_string(), method_sym));
                     let method_is_decorated = !decorators.is_empty();
                     if self.in_function_body {
@@ -5679,12 +5805,14 @@ impl<'a> AstLowerer<'a> {
                                 }
                             })
                             .collect();
-                    if Self::stmts_need_class_cell(mbody) {
+                    let method_needs_class_cell = Self::stmts_need_class_cell(mbody);
+                    if method_needs_class_cell {
                         class_cell_required = true;
                     }
                     let saved_class_cell = self.local_names.get("__class__").copied();
                     self.local_names.insert("__class__".to_string(), name_id);
                     let lowered_method = self.lower_fn_inner(
+                        method_sym,
                         mname,
                         params,
                         return_ty,
@@ -5718,6 +5846,10 @@ impl<'a> AstLowerer<'a> {
                         .entry(method_sym)
                         .or_insert_with(|| mname.to_string());
                     if let Some(mut m) = lowered_method {
+                        if method_needs_class_cell && !m.captures.contains(&name_id) {
+                            m.captures.push(name_id);
+                            m.captures.sort_by_key(|sym| sym.0);
+                        }
                         let declared_method_sig =
                             func_sig_meta(params, return_ty, &method_param_info);
                         self.result
@@ -5786,15 +5918,21 @@ impl<'a> AstLowerer<'a> {
                     keyword_args: nested_keyword_args,
                     ..
                 } => {
-                    let nested_sym = self
+                    let nested_bind_sym = self
                         .resolve_name(nested_name, stmt.span)
                         .unwrap_or_else(|| self.define_local(nested_name, self.checker.tcx.any()));
+                    let nested_declaration_sym = self
+                        .checker
+                        .declaration_symbol(stmt)
+                        .unwrap_or(nested_bind_sym);
                     self.result
                         .sym_names
-                        .entry(nested_sym)
+                        .entry(nested_bind_sym)
                         .or_insert_with(|| nested_name.clone());
                     let nested_placeholder = self.collect_class_stmt(
                         nested_name,
+                        nested_declaration_sym,
+                        nested_bind_sym,
                         nested_body,
                         nested_bases,
                         nested_decorators,
@@ -5802,17 +5940,18 @@ impl<'a> AstLowerer<'a> {
                         nested_keyword_args,
                         stmt.span,
                         false,
-                        false,
+                        true,
                     );
                     if let Some(name) = nested_placeholder {
                         class_body_stmts.push(HirStmt::ClassDefPlaceholder {
                             name,
+                            bind_name: nested_bind_sym,
                             span: stmt.span,
                         });
                     }
                     push_class_attr!(
                         nested_name.clone(),
-                        HirExpr::Var(nested_sym, self.checker.tcx.any())
+                        HirExpr::Var(nested_bind_sym, self.checker.tcx.any())
                     );
                 }
                 // `__match_args__ = ("x", "y")` — explicit tuple assignment (#827)
@@ -5993,6 +6132,7 @@ impl<'a> AstLowerer<'a> {
         });
         Some(HirClass {
             name: name_id,
+            bind_name,
             base: None,
             all_bases: Vec::new(),
             runtime_base_exprs: Vec::new(),
@@ -6042,8 +6182,14 @@ impl<'a> AstLowerer<'a> {
                     .sym_names
                     .entry(sym)
                     .or_insert_with(|| name.clone());
-                let _ = self.collect_class_stmt(
+                let declaration_sym = self
+                    .checker
+                    .declaration_symbol(stmt)
+                    .unwrap_or(sym);
+                let class_sym = self.collect_class_stmt(
                     name,
+                    declaration_sym,
+                    sym,
                     body,
                     bases,
                     decorators,
@@ -6052,7 +6198,7 @@ impl<'a> AstLowerer<'a> {
                     stmt.span,
                     false,
                     true,
-                );
+                )?;
                 if self.in_function_body {
                     self.local_deleted_names.remove(name);
                 } else {
@@ -6060,7 +6206,8 @@ impl<'a> AstLowerer<'a> {
                     self.module_del_stmt_names.remove(name);
                 }
                 return Some(HirStmt::ClassDefPlaceholder {
-                    name: sym,
+                    name: class_sym,
+                    bind_name: sym,
                     span: stmt.span,
                 });
             }
@@ -6917,8 +7064,19 @@ impl<'a> AstLowerer<'a> {
                 // Nested function definition inside a function body.
                 // Define the function name in the current (outer) local scope first so the
                 // outer function body can call it, and so resolve_name works inside lower_fn.
-                let fn_sym = self.define_local(name, self.checker.tcx.any());
-                let is_decorated = !decorators.is_empty();
+                let fn_sym = if self.in_function_body {
+                    self.define_local(name, self.checker.tcx.any())
+                } else {
+                    self.resolve_name(name, stmt.span).unwrap_or_else(|| {
+                        self.checker
+                            .declaration_symbol(stmt)
+                            .expect("module function declarations must be preregistered")
+                    })
+                };
+                let declaration_sym = self
+                    .checker
+                    .declaration_symbol(stmt)
+                    .unwrap_or_else(|| self.fresh_function_impl_symbol(name, self.checker.tcx.any()));
                 let overload_decorated = decorators
                     .iter()
                     .any(|d| decorator_is_typing_overload(&d.node));
@@ -6942,19 +7100,21 @@ impl<'a> AstLowerer<'a> {
                     &mut self.active_type_params,
                     type_params.iter().map(|p| p.name.clone()).collect(),
                 );
-                let lowered = if is_decorated {
-                    self.lower_decorated_fn(
-                        name,
-                        params_for_lower,
-                        return_for_lower,
-                        body,
-                        stmt.span,
-                    )
-                } else {
-                    self.lower_fn(name, params, return_ty, body, stmt.span)
-                };
+                let lowered = self.lower_decorated_fn(
+                    declaration_sym,
+                    name,
+                    params_for_lower,
+                    return_for_lower,
+                    body,
+                    stmt.span,
+                );
                 self.active_type_params = saved_tps;
                 if let Some(mut func) = lowered {
+                    let any_ty = self.checker.tcx.any();
+                    func.bind_name = Some(fn_sym);
+                    func.return_ty = any_ty;
+                    self.func_return_tys.insert(fn_sym, any_ty);
+                    self.func_return_tys.insert(func.name, any_ty);
                     self.result
                         .func_sigs
                         .insert(func.name.0, declared_sig.clone());
@@ -6975,12 +7135,11 @@ impl<'a> AstLowerer<'a> {
                 // Return a placeholder that will be resolved at call-site (the function is
                 // now in result.functions). The local sym binding allows callers to emit
                 // a Call MirInst against fn_sym.
-                let _ = fn_sym;
                 let placeholder = HirStmt::FuncDefPlaceholder {
-                    name: fn_sym,
-                    bind_name: None,
+                    name: declaration_sym,
+                    bind_name: Some(fn_sym),
                     span: stmt.span,
-                    redef: false,
+                    redef: true,
                     func_sig: Some(declared_sig),
                 };
                 Some(placeholder)
@@ -6995,8 +7154,19 @@ impl<'a> AstLowerer<'a> {
                 ..
             } => {
                 // Nested async function inside a function body — same as FnDef above.
-                let fn_sym = self.define_local(name, self.checker.tcx.any());
-                let is_decorated = !decorators.is_empty();
+                let fn_sym = if self.in_function_body {
+                    self.define_local(name, self.checker.tcx.any())
+                } else {
+                    self.resolve_name(name, stmt.span).unwrap_or_else(|| {
+                        self.checker
+                            .declaration_symbol(stmt)
+                            .expect("module function declarations must be preregistered")
+                    })
+                };
+                let declaration_sym = self
+                    .checker
+                    .declaration_symbol(stmt)
+                    .unwrap_or_else(|| self.fresh_function_impl_symbol(name, self.checker.tcx.any()));
                 // PEP 695: see the module-level FnDef arm — type-param names
                 // must reach the param/return type lowering.
                 let saved_tps = std::mem::replace(
@@ -7004,13 +7174,21 @@ impl<'a> AstLowerer<'a> {
                     type_params.iter().map(|p| p.name.clone()).collect(),
                 );
                 let declared_sig = func_sig_meta(params, return_ty, &[]);
-                let lowered = if is_decorated {
-                    self.lower_decorated_fn(name, params, return_ty, body, stmt.span)
-                } else {
-                    self.lower_fn(name, params, return_ty, body, stmt.span)
-                };
+                let lowered = self.lower_decorated_fn(
+                    declaration_sym,
+                    name,
+                    params,
+                    return_ty,
+                    body,
+                    stmt.span,
+                );
                 self.active_type_params = saved_tps;
                 if let Some(mut func) = lowered {
+                    let any_ty = self.checker.tcx.any();
+                    func.bind_name = Some(fn_sym);
+                    func.return_ty = any_ty;
+                    self.func_return_tys.insert(fn_sym, any_ty);
+                    self.func_return_tys.insert(func.name, any_ty);
                     self.result
                         .func_sigs
                         .insert(func.name.0, declared_sig.clone());
@@ -7032,12 +7210,11 @@ impl<'a> AstLowerer<'a> {
                     }
                     self.result.functions.push(func);
                 }
-                let _ = fn_sym;
                 Some(HirStmt::FuncDefPlaceholder {
-                    name: fn_sym,
-                    bind_name: None,
+                    name: declaration_sym,
+                    bind_name: Some(fn_sym),
                     span: stmt.span,
-                    redef: false,
+                    redef: true,
                     func_sig: Some(declared_sig),
                 })
             }
@@ -9293,6 +9470,7 @@ impl<'a> AstLowerer<'a> {
                         .tcx
                         .find(&crate::types::Ty::Class {
                             name: class_name.to_string(),
+                            role: crate::types::ty::ClassRole::Instance,
                             user: None,
                             fields: Vec::new(),
                             match_args: None,
@@ -9716,7 +9894,9 @@ impl<'a> AstLowerer<'a> {
                 for (target, sym) in &module_walrus_target_names {
                     self.forced_global_names.insert(target.clone(), *sym);
                 }
-                if let Some(mut func) = self.lower_fn(&fn_name, &[], &return_ty, &body, expr.span) {
+                if let Some(mut func) =
+                    self.lower_fn(fn_sym, &fn_name, &[], &return_ty, &body, expr.span)
+                {
                     self.forced_global_names = saved_forced_global_names;
                     if !module_walrus_target_syms.is_empty() {
                         if let Some(HirStmt::Global { names, .. }) = func.body.first_mut() {
@@ -10176,7 +10356,7 @@ impl<'a> AstLowerer<'a> {
                     .current_match_subject_ty
                     .unwrap_or_else(|| self.checker.tcx.any());
                 let sym = self.define_local(name, ty);
-                HirPattern::Capture(sym)
+                HirPattern::Capture(sym, ty)
             }
             ast::Pattern::Literal(expr) => {
                 let spanned = Spanned {
@@ -10217,7 +10397,40 @@ impl<'a> AstLowerer<'a> {
                 for name in &binding_names {
                     let consistent = per_name_consistent.get(name).copied().unwrap_or(true);
                     if !consistent {
-                        self.define_local(name, any_ty);
+                        let sym = self.define_local(name, any_ty);
+                        fn widen_binding(pattern: &mut HirPattern, symbol: SymbolId, any_ty: TypeId) {
+                            match pattern {
+                                HirPattern::Capture(sym, ty) if *sym == symbol => *ty = any_ty,
+                                HirPattern::Or(patterns) | HirPattern::Sequence(patterns) => {
+                                    for pattern in patterns {
+                                        widen_binding(pattern, symbol, any_ty);
+                                    }
+                                }
+                                HirPattern::Class { args, .. } => {
+                                    for (_, pattern) in args {
+                                        widen_binding(pattern, symbol, any_ty);
+                                    }
+                                }
+                                HirPattern::Mapping { pairs, .. } => {
+                                    for (_, pattern) in pairs {
+                                        widen_binding(pattern, symbol, any_ty);
+                                    }
+                                }
+                                HirPattern::As { pattern, name, ty } => {
+                                    widen_binding(pattern, symbol, any_ty);
+                                    if *name == symbol {
+                                        *ty = any_ty;
+                                    }
+                                }
+                                HirPattern::Wildcard
+                                | HirPattern::Literal(_)
+                                | HirPattern::Capture(_, _)
+                                | HirPattern::Star(_) => {}
+                            }
+                        }
+                        for pattern in &mut hir_pats {
+                            widen_binding(pattern, sym, any_ty);
+                        }
                     }
                 }
                 HirPattern::Or(hir_pats)
@@ -10250,8 +10463,20 @@ impl<'a> AstLowerer<'a> {
                 HirPattern::Sequence(hir_pats)
             }
             ast::Pattern::ClassPattern { cls, patterns } => {
-                let class_name_str = cls.last()?.clone(); // use last segment for dotted paths
-                let class_sym = self.resolve_name(&class_name_str, pat.span)?;
+                let mut class_head = ast::Expr::Ident(cls.first()?.clone());
+                for segment in &cls[1..] {
+                    class_head = ast::Expr::Attr {
+                        object: Box::new(Spanned {
+                            node: class_head,
+                            span: pat.span,
+                        }),
+                        attr: segment.clone(),
+                    };
+                }
+                let class = self.lower_expr(&Spanned {
+                    node: class_head,
+                    span: pat.span,
+                })?;
                 let args: Vec<(String, HirPattern)> = patterns
                     .iter()
                     .enumerate()
@@ -10262,8 +10487,7 @@ impl<'a> AstLowerer<'a> {
                     })
                     .collect();
                 HirPattern::Class {
-                    class: class_sym,
-                    class_name: class_name_str,
+                    class,
                     args,
                 }
             }
@@ -10291,19 +10515,31 @@ impl<'a> AstLowerer<'a> {
                     };
                     return Some(HirPattern::Literal(self.lower_expr(&spanned)?));
                 }
-                let class_name_str = path.last()?.clone(); // use last segment for dotted paths
-                let class_sym = self.resolve_name(&class_name_str, pat.span)?;
+                let mut class_head = ast::Expr::Ident(path.first()?.clone());
+                for segment in &path[1..] {
+                    class_head = ast::Expr::Attr {
+                        object: Box::new(Spanned {
+                            node: class_head,
+                            span: pat.span,
+                        }),
+                        attr: segment.clone(),
+                    };
+                }
+                let class = self.lower_expr(&Spanned {
+                    node: class_head,
+                    span: pat.span,
+                })?;
                 let args: Vec<(String, HirPattern)> = fields
                     .iter()
                     .enumerate()
                     .map(|(i, f)| {
-                        let sym = self.define_local(f, self.checker.tcx.any());
-                        (format!("_{i}"), HirPattern::Capture(sym))
+                        let ty = self.checker.tcx.any();
+                        let sym = self.define_local(f, ty);
+                        (format!("_{i}"), HirPattern::Capture(sym, ty))
                     })
                     .collect();
                 HirPattern::Class {
-                    class: class_sym,
-                    class_name: class_name_str,
+                    class,
                     args,
                 }
             }
@@ -10366,6 +10602,7 @@ impl<'a> AstLowerer<'a> {
                 HirPattern::As {
                     pattern: Box::new(inner),
                     name: sym,
+                    ty,
                 }
             }
         })
@@ -12005,10 +12242,15 @@ mod tests {
             &["Outer"],
         );
         let inner_sym = hir
-            .sym_names
+            .classes
             .iter()
-            .find_map(|(sym, name)| (name == "Inner").then_some(*sym))
-            .expect("Inner symbol should be present");
+            .find(|class| {
+                hir.sym_names
+                    .get(&class.name)
+                    .is_some_and(|name| name == "Inner")
+            })
+            .map(|class| class.name)
+            .expect("Inner implementation symbol should be present");
         let outer = hir
             .classes
             .iter()
@@ -12191,8 +12433,9 @@ mod tests {
     }
 
     #[test]
-    fn test_lower_class_top_level_is_empty() {
-        // ClassDef should not produce a top_level HirStmt (no placeholder without decorators)
+    fn test_lower_class_produces_textual_placeholder() {
+        // Every class statement must materialize at its source position so
+        // repeated and conditional definitions preserve Python binding order.
         let hir = helper_lower_with_classes(
             vec![sp(Stmt::ClassDef {
                 decorators: vec![],
@@ -12204,7 +12447,11 @@ mod tests {
             })],
             &["NoTop"],
         );
-        assert!(hir.top_level.is_empty());
+        let class = hir.classes.first().expect("class should lower");
+        assert!(hir.top_level.iter().any(
+            |stmt| matches!(stmt, HirStmt::ClassDefPlaceholder { name, bind_name, .. }
+                if *name == class.name && *bind_name == class.bind_name)
+        ));
     }
 
     #[test]
@@ -13122,7 +13369,7 @@ async def main():
             }],
         })]);
         if let HirStmt::Match { cases, .. } = &hir.top_level[0] {
-            assert!(matches!(&cases[0].pattern, HirPattern::Capture(_)));
+            assert!(matches!(&cases[0].pattern, HirPattern::Capture(..)));
         } else {
             panic!("expected Match");
         }

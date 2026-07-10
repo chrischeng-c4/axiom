@@ -145,11 +145,13 @@ pub use truthiness::{
     mb_is_identity, mb_is_none, mb_is_not_identity, mb_is_not_none, mb_is_truthy, mb_not,
 };
 pub(crate) use type_objects::{
-    make_type_object, reject_non_constructible_type_object, set_type_object_attr,
-    type_object_display_name, type_object_repr_name,
+    make_type_object, make_type_object_with_display_name, reject_non_constructible_type_object,
+    set_type_object_attr, type_object_display_name, type_object_registry_key,
+    type_object_repr_name,
 };
 pub use type_objects::{
     mb_builtin_type_obj, mb_type, mb_type2, mb_type3, mb_type3_kwargs, mb_type_no_args,
+    mb_user_type_obj,
 };
 pub(crate) use type_union::{is_type_name, make_union_type_value, union_type_repr};
 use type_union::{mb_bitor_type_union, TypeUnionBuild};
@@ -474,10 +476,16 @@ pub fn mb_print(val: MbValue) -> MbValue {
                                 if let ObjData::Str(ref s) = (*p).data {
                                     mb_outln!("{s}");
                                 } else {
-                                    mb_outln!("<{class_name} instance>");
+                                    mb_outln!(
+                                        "<{} instance>",
+                                        super::class::class_display_name(class_name)
+                                    );
                                 }
                             } else {
-                                mb_outln!("<{class_name} instance>");
+                                mb_outln!(
+                                    "<{} instance>",
+                                    super::class::class_display_name(class_name)
+                                );
                             }
                         } else if let Some((base, payload)) =
                             super::class::builtin_data_payload(val)
@@ -498,7 +506,10 @@ pub fn mb_print(val: MbValue) -> MbValue {
                                 mb_outln!("");
                             }
                         } else {
-                            mb_outln!("<{class_name} instance>");
+                            mb_outln!(
+                                "<{} instance>",
+                                super::class::class_display_name(class_name)
+                            );
                         }
                     }
                 }
@@ -749,7 +760,10 @@ fn print_value_str(val: MbValue) {
                                     return;
                                 }
                             }
-                            mb_out!("<{class_name} instance>");
+                            mb_out!(
+                                "<{} instance>",
+                                super::class::class_display_name(class_name)
+                            );
                             return;
                         }
                         // Builtin-subclass instance without a __str__/
@@ -2990,30 +3004,14 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
                         _ => false,
                     };
                 }
-                // Type objects compare by the class they name: `type(x)`
-                // allocates a fresh Instance per call, but all type objects
-                // naming the same class are the same class object.
+                // Type objects compare by nominal registry identity, not by
+                // their mutable/display-only `__name__`. Distinct same-named
+                // classes must remain unequal.
                 (
-                    ObjData::Instance {
-                        class_name: ca,
-                        fields: fa,
-                    },
-                    ObjData::Instance {
-                        class_name: cb,
-                        fields: fb,
-                    },
+                    ObjData::Instance { class_name: ca, .. },
+                    ObjData::Instance { class_name: cb, .. },
                 ) if ca == "type" && cb == "type" => {
-                    let name_of = |f: &super::rc::MbRwLock<super::rc::InstanceFields>| {
-                        f.read().ok().and_then(|g| {
-                            g.get("__name__").and_then(|v| v.as_ptr()).and_then(|p| {
-                                match &(*p).data {
-                                    ObjData::Str(s) => Some(s.clone()),
-                                    _ => None,
-                                }
-                            })
-                        })
-                    };
-                    return match (name_of(fa), name_of(fb)) {
+                    return match (type_object_registry_key(a), type_object_registry_key(b)) {
                         (Some(na), Some(nb)) => na == nb,
                         _ => false,
                     };
@@ -3249,25 +3247,7 @@ fn mb_values_identical(a: MbValue, b: MbValue) -> bool {
             // and `type(a) is type(b)` behave like CPython for registered
             // classes and builtin type names.
             let type_obj_name = |p: *mut MbObject| -> Option<String> {
-                if let ObjData::Instance {
-                    ref class_name,
-                    ref fields,
-                } = (*p).data
-                {
-                    if class_name == "type" {
-                        return fields.read().ok().and_then(|f| {
-                            f.get("__name__").and_then(|v| {
-                                if let Some(np) = v.as_ptr() {
-                                    if let ObjData::Str(ref n) = (*np).data {
-                                        return Some(n.clone());
-                                    }
-                                }
-                                None
-                            })
-                        });
-                    }
-                }
-                None
+                type_object_registry_key(MbValue::from_ptr(p))
             };
             let resolves_to_type_name = |p: *mut MbObject, name: &str| -> bool {
                 match &(*p).data {
@@ -3309,17 +3289,8 @@ fn mb_values_identical(a: MbValue, b: MbValue) -> bool {
                 match &(*p).data {
                     ObjData::Str(ref s) => Some(s.clone()),
                     ObjData::Instance {
-                        ref class_name,
-                        ref fields,
-                    } if class_name == "type" => fields.read().ok().and_then(|f| {
-                        f.get("__name__").and_then(|v| v.as_ptr()).and_then(|np| {
-                            if let ObjData::Str(ref n) = (*np).data {
-                                Some(n.clone())
-                            } else {
-                                None
-                            }
-                        })
-                    }),
+                        ref class_name, ..
+                    } if class_name == "type" => type_object_registry_key(v),
                     _ => None,
                 }
             })
@@ -5150,25 +5121,14 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
                 }
             }
             if let ObjData::Instance {
-                ref class_name,
-                ref fields,
+                ref class_name, ..
             } = (*ptr).data
             {
                 // `weakref.ref(obj[, cb])` — the `ref` attribute is a type
                 // stub (class_name="type", __name__="ReferenceType"); calling
                 // it constructs a new ReferenceType instance.
                 if class_name == "type" {
-                    let name = fields
-                        .read()
-                        .unwrap()
-                        .get("__name__")
-                        .and_then(|v| {
-                            v.as_ptr().and_then(|p| match &(*p).data {
-                                super::rc::ObjData::Str(ref s) => Some(s.clone()),
-                                _ => None,
-                            })
-                        })
-                        .unwrap_or_default();
+                    let name = type_object_registry_key(func).unwrap_or_default();
                     if let Some(result) =
                         super::class::mb_collections_abc_reject_abstract_instantiation(&name)
                     {
@@ -9948,6 +9908,197 @@ def f():
     }
 
     #[test]
+    fn repeated_type3_creation_preserves_nominal_identity() {
+        super::super::class::cleanup_all_classes();
+
+        let make_dynamic = |x: i64| {
+            let name = MbValue::from_ptr(MbObject::new_str("RepeatedDynamic".to_string()));
+            let bases = MbValue::from_ptr(MbObject::new_tuple(Vec::new()));
+            let namespace = super::super::dict_ops::mb_dict_new();
+            super::super::dict_ops::mb_dict_setitem(
+                namespace,
+                MbValue::from_ptr(MbObject::new_str("x".to_string())),
+                MbValue::from_int(x),
+            );
+            mb_type3(name, bases, namespace)
+        };
+
+        let first = make_dynamic(1);
+        let first_key = super::super::class::resolve_class_name(first)
+            .expect("first dynamic class should have a registry key");
+        let first_instance = super::super::class::mb_instance_new(
+            MbValue::from_ptr(MbObject::new_str(first_key.clone())),
+            MbValue::none(),
+        );
+
+        let second = make_dynamic(2);
+        let second_key = super::super::class::resolve_class_name(second)
+            .expect("second dynamic class should have a registry key");
+        let second_instance = super::super::class::mb_instance_new(
+            MbValue::from_ptr(MbObject::new_str(second_key.clone())),
+            MbValue::none(),
+        );
+
+        assert_ne!(first.to_bits(), second.to_bits());
+        assert_ne!(first_key, second_key);
+        assert_eq!(mb_eq(first, second).as_bool(), Some(false));
+        assert_eq!(mb_ne(first, second).as_bool(), Some(true));
+        assert_eq!(mb_type(first_instance).to_bits(), first.to_bits());
+        assert_ne!(mb_type(first_instance).to_bits(), second.to_bits());
+        assert_eq!(value_type_name(first_instance), "RepeatedDynamic");
+        assert_eq!(
+            super::super::class::mb_isinstance(first_instance, first).as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            super::super::class::mb_isinstance(first_instance, second).as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            super::super::class::mb_issubclass(first, second).as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            super::super::class::mb_getattr(
+                first_instance,
+                MbValue::from_ptr(MbObject::new_str("x".to_string())),
+            )
+            .as_int(),
+            Some(1)
+        );
+        assert_eq!(
+            super::super::class::mb_getattr(
+                second_instance,
+                MbValue::from_ptr(MbObject::new_str("x".to_string())),
+            )
+            .as_int(),
+            Some(2)
+        );
+        let int_type = make_type_object("int");
+        let first_union = mb_bitor(first, int_type);
+        let second_union = mb_bitor(second, int_type);
+        assert_eq!(mb_eq(first_union, second_union).as_bool(), Some(false));
+
+        for class_obj in [first, second] {
+            let name = super::super::class::mb_getattr(
+                class_obj,
+                MbValue::from_ptr(MbObject::new_str("__name__".to_string())),
+            );
+            assert_eq!(mb_str_value(name).as_deref(), Some("RepeatedDynamic"));
+        }
+
+        super::super::class::cleanup_all_classes();
+    }
+
+    #[test]
+    fn dynamic_type3_missing_attribute_uses_display_name() {
+        super::super::class::cleanup_all_classes();
+        crate::runtime::exception::mb_clear_exception();
+
+        let type_obj = mb_type3(
+            MbValue::from_ptr(MbObject::new_str("DynamicStrictMissing".to_string())),
+            MbValue::from_ptr(MbObject::new_tuple(Vec::new())),
+            super::super::dict_ops::mb_dict_new(),
+        );
+        let registry_key = super::super::class::resolve_class_name(type_obj)
+            .expect("dynamic type should expose its registry identity");
+        assert!(super::super::class::class_is_user_defined(&registry_key));
+        assert!(!super::super::class::class_is_user_defined("object"));
+
+        let instance = super::super::class::mb_instance_new(
+            MbValue::from_ptr(MbObject::new_str(registry_key.clone())),
+            MbValue::none(),
+        );
+        let missing = super::super::class::mb_getattr(
+            instance,
+            MbValue::from_ptr(MbObject::new_str("missing".to_string())),
+        );
+        assert!(missing.is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("AttributeError")
+        );
+        let exception = crate::runtime::exception::mb_get_exception();
+        let message = crate::runtime::exception::get_exception_message_pub(exception)
+            .expect("missing dynamic attribute should carry a message");
+        assert_eq!(
+            message,
+            "'DynamicStrictMissing' object has no attribute 'missing'"
+        );
+        assert!(!message.contains(&registry_key));
+
+        crate::runtime::exception::mb_clear_exception();
+        super::super::class::cleanup_all_classes();
+    }
+
+    #[test]
+    fn user_type_object_identity_survives_cross_thread_transfer() {
+        super::super::class::cleanup_all_classes();
+
+        let type_obj = mb_type3(
+            MbValue::from_ptr(MbObject::new_str("CrossThreadUserType".to_string())),
+            MbValue::from_ptr(MbObject::new_tuple(Vec::new())),
+            super::super::dict_ops::mb_dict_new(),
+        );
+        let registry_key = type_object_registry_key(type_obj)
+            .expect("parent thread should resolve the dynamic registry key");
+        assert_ne!(registry_key, "CrossThreadUserType");
+        let instance = super::super::class::mb_call0(type_obj);
+        assert!(instance.as_ptr().is_some());
+        let class_snapshot = super::super::class::snapshot_thread_class_state();
+
+        let worker_key = registry_key.clone();
+        std::thread::spawn(move || {
+            let previous_classes = super::super::class::replace_thread_class_state(class_snapshot);
+
+            assert_eq!(type_object_registry_key(type_obj), Some(worker_key.clone()));
+            let visible_name = super::super::class::mb_getattr(
+                type_obj,
+                MbValue::from_ptr(MbObject::new_str("__name__".to_string())),
+            );
+            assert_eq!(
+                mb_str_value(visible_name).as_deref(),
+                Some("CrossThreadUserType")
+            );
+            assert_ne!(
+                mb_str_value(visible_name).as_deref(),
+                Some(worker_key.as_str())
+            );
+
+            let instance_type = mb_type(instance);
+            assert_eq!(instance_type.to_bits(), type_obj.to_bits());
+            assert_eq!(
+                super::super::class::mb_isinstance(instance, type_obj).as_bool(),
+                Some(true)
+            );
+
+            let called_instance = super::super::class::mb_call0(type_obj);
+            let called_type = mb_type(called_instance);
+            assert_eq!(called_type.to_bits(), type_obj.to_bits());
+            assert_eq!(
+                super::super::class::mb_isinstance(called_instance, type_obj).as_bool(),
+                Some(true)
+            );
+
+            unsafe {
+                super::super::rc::release_if_ptr(visible_name);
+                super::super::rc::release_if_ptr(instance_type);
+                super::super::rc::release_if_ptr(called_type);
+                super::super::rc::release_if_ptr(called_instance);
+            }
+            super::super::class::replace_thread_class_state(previous_classes);
+        })
+        .join()
+        .expect("cross-thread type-object identity worker should not panic");
+
+        unsafe {
+            super::super::rc::release_if_ptr(instance);
+            super::super::rc::release_if_ptr(type_obj);
+        }
+        super::super::class::cleanup_all_classes();
+    }
+
+    #[test]
     fn test_type3_empty_class() {
         super::super::class::cleanup_all_classes();
 
@@ -9961,13 +10112,15 @@ def f():
         assert!(type_obj.as_ptr().is_some());
 
         // Instance should be creatable
-        let cls_name_val = MbValue::from_ptr(MbObject::new_str("TestType3Empty".to_string()));
+        let registry_key = super::super::class::resolve_class_name(type_obj)
+            .expect("dynamic type should expose its registry identity");
+        let cls_name_val = MbValue::from_ptr(MbObject::new_str(registry_key.clone()));
         let instance = super::super::class::mb_instance_new(cls_name_val, MbValue::none());
         assert!(instance.as_ptr().is_some());
         unsafe {
             let ptr = instance.as_ptr().unwrap();
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
-                assert_eq!(class_name, "TestType3Empty");
+                assert_eq!(class_name, &registry_key);
             } else {
                 panic!("expected Instance");
             }
@@ -10000,10 +10153,12 @@ def f():
             MbValue::from_int(42),
         );
 
-        let _type_obj = mb_type3(name, bases, dict);
+        let type_obj = mb_type3(name, bases, dict);
 
         // Create instance and verify 'x' is accessible as class attr
-        let cls_name_val = MbValue::from_ptr(MbObject::new_str("TestType3Dunder".to_string()));
+        let registry_key = super::super::class::resolve_class_name(type_obj)
+            .expect("dynamic type should expose its registry identity");
+        let cls_name_val = MbValue::from_ptr(MbObject::new_str(registry_key));
         let instance = super::super::class::mb_instance_new(cls_name_val, MbValue::none());
         let x_attr = super::super::class::mb_getattr(
             instance,
@@ -10026,7 +10181,9 @@ def f():
         let type_obj = mb_type3(name, bases, dict);
 
         // Create an instance
-        let cls_name_val = MbValue::from_ptr(MbObject::new_str("TestType3Inst".to_string()));
+        let registry_key = super::super::class::resolve_class_name(type_obj)
+            .expect("dynamic type should expose its registry identity");
+        let cls_name_val = MbValue::from_ptr(MbObject::new_str(registry_key));
         let instance = super::super::class::mb_instance_new(cls_name_val, MbValue::none());
 
         // isinstance(instance, type_obj) should be True
@@ -10044,10 +10201,12 @@ def f():
         let name = MbValue::from_ptr(MbObject::new_str("TestType3NoBases".to_string()));
         let bases = MbValue::from_ptr(MbObject::new_tuple(vec![]));
         let dict = super::super::dict_ops::mb_dict_new();
-        let _type_obj = mb_type3(name, bases, dict);
+        let type_obj = mb_type3(name, bases, dict);
 
         // Instance should be an instance of object
-        let cls_name_val = MbValue::from_ptr(MbObject::new_str("TestType3NoBases".to_string()));
+        let registry_key = super::super::class::resolve_class_name(type_obj)
+            .expect("dynamic type should expose its registry identity");
+        let cls_name_val = MbValue::from_ptr(MbObject::new_str(registry_key));
         let instance = super::super::class::mb_instance_new(cls_name_val, MbValue::none());
         let obj_name = MbValue::from_ptr(MbObject::new_str("object".to_string()));
         let result = super::super::class::mb_isinstance(instance, obj_name);
@@ -10133,10 +10292,12 @@ def f():
             MbValue::from_ptr(MbObject::new_str("y".to_string())),
             MbValue::from_int(10),
         );
-        let _type_obj = mb_type3(name, bases, dict);
+        let type_obj = mb_type3(name, bases, dict);
 
         // isinstance(Child(), Base) should work via MRO
-        let child_name = MbValue::from_ptr(MbObject::new_str("TestType3Child".to_string()));
+        let registry_key = super::super::class::resolve_class_name(type_obj)
+            .expect("dynamic type should expose its registry identity");
+        let child_name = MbValue::from_ptr(MbObject::new_str(registry_key));
         let instance = super::super::class::mb_instance_new(child_name, MbValue::none());
         let base_name = MbValue::from_ptr(MbObject::new_str("TestType3Base".to_string()));
         let result = super::super::class::mb_isinstance(instance, base_name);
