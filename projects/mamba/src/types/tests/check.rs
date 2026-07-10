@@ -1048,6 +1048,72 @@ fn pep695_generic_method_forward_bound_is_finalized() {
 }
 
 #[test]
+fn pep695_constrained_inference_promotes_to_declared_constraint() {
+    let errors = check(
+        "def same[T: (int, str)](left: T, right: T) -> T:\n\
+         \x20   return left\n\
+         value: int = same(True, 1)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "bool and int should both solve a constrained TypeVar to int: {errors:?}"
+    );
+
+    let errors = check(
+        "def choose[T: (int, str)](value: T) -> T:\n\
+         \x20   return value\n\
+         result: bool = choose(True)\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("type mismatch")),
+        "a bool argument must promote the constrained return type to int: {errors:?}"
+    );
+
+    let errors = check(
+        "def choose[T: (float, int)](value: T) -> T:\n\
+         \x20   return value\n\
+         result: int = choose(1)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "an exact constraint match must beat an earlier wider constraint: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_generic_defaults_are_checked_against_bounds() {
+    let errors = check(
+        "def valid[T: (int, str)](value: T = 1) -> T:\n\
+         \x20   return value\n\
+         def invalid[T: (int, str)](value: T = 1.5) -> T:\n\
+         \x20   return value\n",
+    );
+    let violations = errors
+        .iter()
+        .filter(|error| error.contains("constrained types"))
+        .count();
+    assert_eq!(
+        violations, 1,
+        "generic parameter defaults must use constraint checking: {errors:?}"
+    );
+
+    let errors = check(
+        "def valid[T: float](value: T = 1) -> T:\n\
+         \x20   return value\n\
+         def invalid[T: float](value: T = \"bad\") -> T:\n\
+         \x20   return value\n",
+    );
+    let violations = errors
+        .iter()
+        .filter(|error| error.contains("bound violation"))
+        .count();
+    assert_eq!(
+        violations, 1,
+        "generic parameter defaults must use upper-bound checking: {errors:?}"
+    );
+}
+
+#[test]
 fn test_generic_class_definition() {
     // Generic class with type params should type-check
     let errors = check(
