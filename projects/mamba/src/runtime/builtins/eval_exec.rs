@@ -5735,9 +5735,9 @@ mod tests {
             MbValue::from_ptr(MbObject::new_str("X".to_string())),
             MbValue::none(),
         );
-        let int_obj = crate::runtime::class::mb_builtin_type_obj(MbValue::from_ptr(
-            MbObject::new_str("int".to_string()),
-        ));
+        let int_obj = crate::runtime::builtins::type_objects::mb_builtin_type_obj(
+            MbValue::from_ptr(MbObject::new_str("int".to_string())),
+        );
         assert_eq!(annotation.to_bits(), int_obj.to_bits());
     }
 

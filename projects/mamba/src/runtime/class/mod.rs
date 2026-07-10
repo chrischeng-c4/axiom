@@ -23543,10 +23543,10 @@ mod tests {
             crate::runtime::exception::current_exception_type().as_deref(),
             Some("TypeError")
         );
-        let exc = crate::runtime::exception::mb_get_current_exception();
+        let exc = crate::runtime::exception::mb_get_exception();
         assert_eq!(
-            exc.msg,
-            "Cannot create a consistent method resolution order (MRO) for bases object, Generic"
+            crate::runtime::exception::get_exception_message_pub(exc).as_deref(),
+            Some("Cannot create a consistent method resolution order (MRO) for bases object, Generic")
         );
         crate::runtime::exception::clear_current_exception();
     }

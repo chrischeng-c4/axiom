@@ -1990,20 +1990,20 @@ mod tests {
         let test_name_collisions = module::MODULES.with(|mods| {
             mods.borrow()
                 .get("TypeParamsInvalidTest")
-                .and_then(|m| m.methods.get("test_name_collisions").copied())
+                .and_then(|m| m.attrs.get("test_name_collisions").copied())
         });
         let test_disallowed_expressions = module::MODULES.with(|mods| {
             mods.borrow()
                 .get("TypeParamsInvalidTest")
-                .and_then(|m| m.methods.get("test_disallowed_expressions").copied())
+                .and_then(|m| m.attrs.get("test_disallowed_expressions").copied())
         });
 
         assert_eq!(
-            test_name_collisions.and_then(|v| v.as_usize()),
+            test_name_collisions.and_then(|v| v.as_func()),
             Some(type_params_invalid_test_name_collisions as usize)
         );
         assert_eq!(
-            test_disallowed_expressions.and_then(|v| v.as_usize()),
+            test_disallowed_expressions.and_then(|v| v.as_func()),
             Some(type_params_invalid_test_disallowed_expressions as usize)
         );
     }

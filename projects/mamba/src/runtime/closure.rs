@@ -2862,26 +2862,26 @@ mod tests {
         ]));
         mb_func_set_params(closure, params);
 
-        let class_t = super::pep695::make_typevar_instance("__T", 0, vec![], None);
-        let method_u = super::pep695::make_typevar_instance("__U", 0, vec![], None);
-        super::pep695::func_attrs_set(
+        let class_t = crate::runtime::pep695::make_typevar_instance("__T", 0, vec![], None);
+        let method_u = crate::runtime::pep695::make_typevar_instance("__U", 0, vec![], None);
+        crate::runtime::pep695::func_attrs_set(
             closure,
             MbValue::from_ptr(MbObject::new_str("__type_params__".into())),
             MbValue::from_ptr(MbObject::new_tuple(vec![method_u])),
         );
-        super::pep695::func_attrs_set(
+        crate::runtime::pep695::func_attrs_set(
             closure,
             MbValue::from_ptr(MbObject::new_str("__mb_class_type_params__".into())),
             MbValue::from_ptr(MbObject::new_tuple(vec![class_t])),
         );
 
         let annotations = mb_func_get_annotations(closure);
-        let arg = super::dict_ops::mb_dict_get(
+        let arg = crate::runtime::dict_ops::mb_dict_get(
             annotations,
             MbValue::from_ptr(MbObject::new_str("arg".into())),
             MbValue::none(),
         );
-        let arg2 = super::dict_ops::mb_dict_get(
+        let arg2 = crate::runtime::dict_ops::mb_dict_get(
             annotations,
             MbValue::from_ptr(MbObject::new_str("arg2".into())),
             MbValue::none(),
