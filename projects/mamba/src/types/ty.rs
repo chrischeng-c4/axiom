@@ -1,3 +1,5 @@
+use crate::resolve::SymbolId;
+
 /// Unique identifier for a type in the TypeContext.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TypeId(pub u32);
@@ -35,6 +37,13 @@ impl TypeParamDefault {
     }
 }
 
+/// Nominal identity and concrete arguments for a user-defined class.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UserClass {
+    pub symbol: SymbolId,
+    pub args: Vec<TypeId>,
+}
+
 /// Literal value for `Literal[42]` / `Literal["a", "b"]` types (#243).
 #[derive(Debug, Clone, PartialEq)]
 pub enum LiteralValue {
@@ -68,6 +77,7 @@ pub enum Ty {
     /// `match_args: Some(names)` = explicit (even `Some(vec![])` means no positional matching).
     Class {
         name: String,
+        user: Option<UserClass>,
         fields: Vec<(String, TypeId)>,
         match_args: Option<Vec<String>>,
     },
@@ -230,6 +240,7 @@ mod tests {
     fn test_ty_class() {
         let c = Ty::Class {
             name: "Foo".to_string(),
+            user: None,
             fields: vec![("x".to_string(), TypeId(3))],
             match_args: None,
         };

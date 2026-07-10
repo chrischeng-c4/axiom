@@ -1,6 +1,6 @@
-use super::generic::{bind_explicit_type_args, GenericParams, Substitution};
+use super::generic::{bind_explicit_type_args, complete_type_args, GenericParams, Substitution};
 use super::protocol::ProtocolRegistry;
-use super::ty::{TypeParamDefault, TypeVarId, TypeVarKind};
+use super::ty::{TypeParamDefault, TypeVarId, TypeVarKind, UserClass};
 use super::{Ty, TypeContext, TypeId};
 use crate::error::MambaError;
 use crate::parser::ast::*;
@@ -187,11 +187,10 @@ pub struct TypeChecker {
     pub(crate) class_method_param_sigs: HashMap<SymbolId, HashMap<String, Vec<FunctionParamSig>>>,
     /// Method-local PEP 695 parameters keyed by owning class and method name.
     pub(crate) class_method_generic_defs: HashMap<(SymbolId, String), GenericParams>,
-    /// Resolve a user-class TypeId back to its declaration symbol.
-    pub(crate) class_symbols_by_type: HashMap<TypeId, SymbolId>,
     /// Class method signatures for bare-class unbound calls such as
     /// `Box.get(obj, arg)`. These include the explicit receiver parameter.
-    pub(crate) class_unbound_methods: HashMap<String, HashMap<String, super::protocol::MethodSig>>,
+    pub(crate) class_unbound_methods:
+        HashMap<SymbolId, HashMap<String, super::protocol::MethodSig>>,
     /// User classes declared with `TypedDict` in their base chain. Runtime
     /// instances of these classes are plain dict values, so a variable annotated
     /// as the TypedDict class accepts dict literals/values.
@@ -285,7 +284,6 @@ impl TypeChecker {
             class_methods_by_symbol: HashMap::new(),
             class_method_param_sigs: HashMap::new(),
             class_method_generic_defs: HashMap::new(),
-            class_symbols_by_type: HashMap::new(),
             class_unbound_methods: HashMap::new(),
             typed_dict_classes: HashSet::new(),
             user_bare_classes: std::collections::HashSet::new(),
@@ -838,14 +836,21 @@ impl TypeChecker {
                     let fields = self.collect_class_fields(body);
                     let match_args = self.collect_match_args(body);
                     let is_typed_dict = bases.iter().any(|b| self.base_is_typed_dict(&b.node));
+                    let sym = self.symbols.define(name.clone(), SymbolKind::Class);
+                    let mut type_args = Vec::with_capacity(gp.len());
+                    for param in &gp.params {
+                        type_args.push(self.tcx.intern(Ty::TypeVar(param.id)));
+                    }
                     let class_ty = self.tcx.intern(Ty::Class {
                         name: name.clone(),
+                        user: Some(UserClass {
+                            symbol: sym,
+                            args: type_args,
+                        }),
                         fields,
                         match_args,
                     });
-                    let sym = self.symbols.define(name.clone(), SymbolKind::Class);
                     self.set_sym_type(sym.0, class_ty);
-                    self.class_symbols_by_type.insert(class_ty, sym);
                     if is_typed_dict {
                         self.typed_dict_classes.insert(name.clone());
                     }
@@ -1144,12 +1149,9 @@ impl TypeChecker {
         supplied: Option<&[TypeId]>,
         span: Span,
     ) -> TypeId {
-        let Ty::Class {
-            fields, match_args, ..
-        } = self.tcx.get(base_ty).clone()
-        else {
+        if !matches!(self.tcx.get(base_ty), Ty::Class { .. }) {
             return base_ty;
-        };
+        }
         let Some(generic_params) = self.generic_defs.get(&symbol).cloned() else {
             if supplied.is_some() {
                 self.error(span, format!("type '{name}' is not generic"));
@@ -1160,43 +1162,51 @@ impl TypeChecker {
         let (subst, resolved_args, errors) = if let Some(args) = supplied {
             bind_explicit_type_args(&generic_params, args, &mut self.tcx)
         } else {
-            if generic_params
-                .params
-                .iter()
-                .any(|param| param.kind != TypeVarKind::TypeVar)
-            {
+            let Some((subst, resolved)) =
+                complete_type_args(&generic_params, Substitution::new(), &mut self.tcx)
+            else {
                 return base_ty;
-            }
-            let mut subst = Substitution::new();
-            let mut resolved = Vec::with_capacity(generic_params.len());
-            for param in &generic_params.params {
-                let concrete = param
-                    .default
-                    .resolved()
-                    .map(|default| subst.apply(default, &mut self.tcx))
-                    .unwrap_or_else(|| self.tcx.any());
-                subst.insert(param.id, concrete);
-                resolved.push(concrete);
-            }
+            };
             (subst, resolved, Vec::new())
         };
         for error in errors {
             self.error(span, error);
         }
 
+        self.apply_user_class_specialization(symbol, base_ty, &subst, &resolved_args)
+    }
+
+    pub(crate) fn apply_user_class_specialization(
+        &mut self,
+        symbol: SymbolId,
+        base_ty: TypeId,
+        subst: &Substitution,
+        resolved_args: &[TypeId],
+    ) -> TypeId {
+        let Ty::Class {
+            name: base_name,
+            fields,
+            match_args,
+            ..
+        } = self.tcx.get(base_ty).clone()
+        else {
+            return base_ty;
+        };
         let fields = fields
             .iter()
             .map(|(field_name, field_ty)| {
                 (field_name.clone(), subst.apply(*field_ty, &mut self.tcx))
             })
             .collect();
-        let arg_names: Vec<String> = resolved_args.iter().map(|arg| self.ty_name(*arg)).collect();
         let specialized = self.tcx.intern(Ty::Class {
-            name: format!("{name}[{}]", arg_names.join(", ")),
+            name: base_name,
+            user: Some(UserClass {
+                symbol,
+                args: resolved_args.to_vec(),
+            }),
             fields,
             match_args,
         });
-        self.class_symbols_by_type.insert(specialized, symbol);
         specialized
     }
 
@@ -1451,18 +1461,35 @@ impl TypeChecker {
         if matches!(e, Ty::SelfType) || matches!(a, Ty::SelfType) {
             return true;
         }
-        // #314: Parameterized class compatible with bare base class
-        // (e.g., Box[T] ≈ Box, Container[int] ≈ Container)
-        // but NOT differently parameterized (Box[int] ≠ Box[str])
-        if let (Ty::Class { name: n1, .. }, Ty::Class { name: n2, .. }) = (e, a) {
-            let base1 = n1.split('[').next().unwrap_or(n1);
-            let base2 = n2.split('[').next().unwrap_or(n2);
-            if base1 == base2 {
-                let has1 = n1.contains('[');
-                let has2 = n2.contains('[');
-                if !has1 || !has2 || n1 == n2 {
-                    return true;
+        // User-class compatibility is nominal by declaration symbol. Generic
+        // arguments are invariant unless either side is still gradual.
+        if let (
+            Ty::Class {
+                name: n1,
+                user: user1,
+                ..
+            },
+            Ty::Class {
+                name: n2,
+                user: user2,
+                ..
+            },
+        ) = (e, a)
+        {
+            match (user1, user2) {
+                (Some(left), Some(right)) if left.symbol == right.symbol => {
+                    let args_compatible = left.args.len() == right.args.len()
+                        && left.args.iter().zip(&right.args).all(|(left, right)| {
+                            left == right
+                                || matches!(self.tcx.get(*left), Ty::Any | Ty::TypeVar(_))
+                                || matches!(self.tcx.get(*right), Ty::Any | Ty::TypeVar(_))
+                        });
+                    if args_compatible {
+                        return true;
+                    }
                 }
+                (None, None) if n1 == n2 => return true,
+                _ => {}
             }
             // Exception class hierarchy: all exception types are compatible
             // with each other (they all derive from BaseException).
@@ -1639,6 +1666,14 @@ impl TypeChecker {
                 let ps: Vec<_> = params.iter().map(|p| self.ty_name(*p)).collect();
                 format!("({}) -> {}", ps.join(", "), self.ty_name(*ret))
             }
+            Ty::Class {
+                name,
+                user: Some(user),
+                ..
+            } if !user.args.is_empty() => {
+                let args: Vec<_> = user.args.iter().map(|arg| self.ty_name(*arg)).collect();
+                format!("{name}[{}]", args.join(", "))
+            }
             Ty::Class { name, .. } => name.clone(),
             Ty::Enum { name, .. } => name.clone(),
             Ty::TypeVar(id) => {
@@ -1734,6 +1769,10 @@ impl TypeChecker {
             .unwrap_or_else(|| {
                 self.tcx.intern(Ty::Class {
                     name: class_name.to_string(),
+                    user: Some(UserClass {
+                        symbol: class_symbol,
+                        args: Vec::new(),
+                    }),
                     fields: vec![],
                     match_args: None,
                 })
@@ -1817,7 +1856,7 @@ impl TypeChecker {
         }
         if !unbound_methods.is_empty() {
             self.class_unbound_methods
-                .insert(class_name.to_string(), unbound_methods);
+                .insert(class_symbol, unbound_methods);
         }
     }
 
@@ -2019,11 +2058,19 @@ mod tests {
         let mut tc = TypeChecker::new();
         let c1 = tc.tcx.intern(Ty::Class {
             name: "Box".to_string(),
+            user: Some(UserClass {
+                symbol: SymbolId(100),
+                args: vec![tc.tcx.any()],
+            }),
             fields: vec![],
             match_args: None,
         });
         let c2 = tc.tcx.intern(Ty::Class {
-            name: "Box[int]".to_string(),
+            name: "Box".to_string(),
+            user: Some(UserClass {
+                symbol: SymbolId(100),
+                args: vec![tc.tcx.int()],
+            }),
             fields: vec![],
             match_args: None,
         });
@@ -2036,12 +2083,20 @@ mod tests {
     fn test_types_compatible_class_different_params() {
         let mut tc = TypeChecker::new();
         let c1 = tc.tcx.intern(Ty::Class {
-            name: "Box[int]".to_string(),
+            name: "Box".to_string(),
+            user: Some(UserClass {
+                symbol: SymbolId(100),
+                args: vec![tc.tcx.int()],
+            }),
             fields: vec![],
             match_args: None,
         });
         let c2 = tc.tcx.intern(Ty::Class {
-            name: "Box[str]".to_string(),
+            name: "Box".to_string(),
+            user: Some(UserClass {
+                symbol: SymbolId(100),
+                args: vec![tc.tcx.str()],
+            }),
             fields: vec![],
             match_args: None,
         });
@@ -2054,11 +2109,19 @@ mod tests {
         let mut tc = TypeChecker::new();
         let c1 = tc.tcx.intern(Ty::Class {
             name: "Foo".to_string(),
+            user: Some(UserClass {
+                symbol: SymbolId(100),
+                args: vec![],
+            }),
             fields: vec![],
             match_args: None,
         });
         let c2 = tc.tcx.intern(Ty::Class {
             name: "Bar".to_string(),
+            user: Some(UserClass {
+                symbol: SymbolId(101),
+                args: vec![],
+            }),
             fields: vec![],
             match_args: None,
         });
@@ -2122,6 +2185,7 @@ mod tests {
         let mut tc = TypeChecker::new();
         let class_ty = tc.tcx.intern(Ty::Class {
             name: "MyClass".to_string(),
+            user: None,
             fields: vec![],
             match_args: None,
         });
