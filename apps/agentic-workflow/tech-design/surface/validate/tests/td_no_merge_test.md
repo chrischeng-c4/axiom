@@ -26,7 +26,7 @@ No public AST symbols.
 <!-- source-from-target: strip-handwrite -->
 
 <!-- source-snapshot: path=apps/agentic-workflow/tests/cli/tests/td_no_merge_test.rs -->
-```rust
+`````rust
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/validate/tests/td_no_merge_test.md#source
 // CODEGEN-BEGIN
 //! Regression tests proving the removed TD merge command is no longer part of the CLI surface.
@@ -1161,6 +1161,35 @@ fn commit_all(git: &std::path::Path, root: &std::path::Path) {
         .unwrap();
 }
 
+/// Commit the current TD/spec setup with the exact lifecycle trailers written
+/// by `aw td create`. The parent of this commit is the #1382 implementation
+/// evidence baseline; later source/test commits must change every promised
+/// hand-written create/modify path.
+fn commit_td_init(git: &std::path::Path, root: &std::path::Path, slug: &str) {
+    use std::process::Command;
+
+    Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "-A"])
+        .status()
+        .unwrap();
+    let message = format!(
+        "td({slug}) - test lifecycle\n\nLifecycle-Slug: {slug}\nWork-Item: {slug}\nLifecycle-Stage: Td-Init"
+    );
+    let commit = Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", &message])
+        .output()
+        .unwrap();
+    assert!(
+        commit.status.success(),
+        "Td-Init fixture commit failed: {}",
+        String::from_utf8_lossy(&commit.stderr)
+    );
+}
+
 /// Repo-root-relative path `write_847_changes_spec` always writes to —
 /// shared by `#847`/`#854` tests as the `Issue.implements` entry that scopes
 /// both terminal gates to this WI's own spec (issue #854).
@@ -1312,6 +1341,215 @@ async fn test_code_check_refuses_when_all_changes_paths_missing() {
         0,
         "refused code-check must not land a Cb-CodeCheck trailer commit"
     );
+}
+
+/// #1382: existing MODIFY targets are not implementation evidence. Even
+/// though both paths exist, uppercase actions and a zero target diff after
+/// this slug's Td-Init must refuse terminal completion.
+#[tokio::test]
+async fn test_code_check_refuses_unchanged_hand_written_modify_paths() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::create_dir_all(root.join("tests")).unwrap();
+    std::fs::write(root.join("src/demo.rs"), "pub fn existing() {}\n").unwrap();
+    std::fs::write(
+        root.join("tests/demo_test.rs"),
+        "#[test]\nfn existing() {}\n",
+    )
+    .unwrap();
+    commit_all(&git, root);
+
+    let slug = "hand-written-zero-diff-test";
+    write_847_changes_spec(
+        root,
+        &[("src/demo.rs", "MODIFY"), ("tests/demo_test.rs", "MODIFY")],
+    );
+    commit_td_init(&git, root, slug);
+    seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
+
+    let output = Command::new(&aw_bin)
+        .args(["td", "code-check", slug])
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "protocol refusal exits 0: {stdout}"
+    );
+    assert!(
+        stdout.contains("\"action\":\"error\"")
+            && stdout.contains("no committed lifecycle diff since Td-Init"),
+        "unchanged existing paths must be refused, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("src/demo.rs") && stdout.contains("tests/demo_test.rs"),
+        "refusal must name every unchanged promised path, got:\n{stdout}"
+    );
+
+    let after = LocalBackend::from_project_root(root)
+        .get(slug)
+        .await
+        .expect("read issue")
+        .expect("issue remains");
+    assert_eq!(after.phase.as_deref(), Some(td_phase::CB_FILLED));
+    assert_eq!(count_cb_code_check_trailer_commits(&git, root), 0);
+}
+
+/// #1382: evidence is per promised path, not an any-diff signal. Changing one
+/// of two hand-written MODIFY targets must still refuse and name the other.
+#[tokio::test]
+async fn test_code_check_refuses_partial_hand_written_lifecycle_diff() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::create_dir_all(root.join("tests")).unwrap();
+    std::fs::write(root.join("src/demo.rs"), "pub fn existing() {}\n").unwrap();
+    std::fs::write(
+        root.join("tests/demo_test.rs"),
+        "#[test]\nfn existing() {}\n",
+    )
+    .unwrap();
+    commit_all(&git, root);
+
+    let slug = "hand-written-partial-diff-test";
+    write_847_changes_spec(
+        root,
+        &[
+            ("src/demo.rs", "MODIFY"),
+            ("tests/demo_test.rs", "MODIFY"),
+            ("tests/required_target.rs", "MODIFY"),
+        ],
+    );
+    commit_td_init(&git, root, slug);
+    std::fs::write(root.join("src/demo.rs"), "pub fn implemented() {}\n").unwrap();
+    commit_all(&git, root);
+    seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
+
+    let output = Command::new(&aw_bin)
+        .args(["td", "code-check", slug])
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "protocol refusal exits 0: {stdout}"
+    );
+    assert!(
+        stdout.contains("\"action\":\"error\"")
+            && stdout.contains("2 of 3 hand-written create/modify path(s)"),
+        "a partial target diff must be refused, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("tests/demo_test.rs")
+            && stdout.contains("no committed lifecycle diff since Td-Init")
+            && stdout.contains("tests/required_target.rs")
+            && stdout.contains("missing on disk"),
+        "refusal must distinguish unchanged and missing targets, got:\n{stdout}"
+    );
+
+    let after = LocalBackend::from_project_root(root)
+        .get(slug)
+        .await
+        .expect("read issue")
+        .expect("issue remains");
+    assert_eq!(after.phase.as_deref(), Some(td_phase::CB_FILLED));
+    assert_eq!(count_cb_code_check_trailer_commits(&git, root), 0);
+}
+
+/// #1382: once every promised hand-written path has a committed net diff
+/// after Td-Init, the evidence gate must allow the normal terminal path.
+#[tokio::test]
+async fn test_code_check_accepts_complete_hand_written_lifecycle_diff() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::create_dir_all(root.join("tests")).unwrap();
+    std::fs::write(root.join("src/demo.rs"), "pub fn existing() {}\n").unwrap();
+    std::fs::write(
+        root.join("tests/demo_test.rs"),
+        "#[test]\nfn existing() {}\n",
+    )
+    .unwrap();
+    commit_all(&git, root);
+
+    let slug = "hand-written-complete-diff-test";
+    write_847_changes_spec(
+        root,
+        &[("src/demo.rs", "MODIFY"), ("tests/demo_test.rs", "MODIFY")],
+    );
+    commit_td_init(&git, root, slug);
+    std::fs::write(root.join("src/demo.rs"), "pub fn implemented() {}\n").unwrap();
+    std::fs::write(
+        root.join("tests/demo_test.rs"),
+        "#[test]\nfn implemented() { assert!(true); }\n",
+    )
+    .unwrap();
+    commit_all(&git, root);
+    seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
+
+    let output = Command::new(&aw_bin)
+        .args(["td", "code-check", slug])
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("\"action\":\"done\""),
+        "complete target evidence should pass, got:\n{stdout}"
+    );
+
+    let after = LocalBackend::from_project_root(root)
+        .get(slug)
+        .await
+        .expect("read issue")
+        .expect("issue remains");
+    assert_eq!(after.phase.as_deref(), Some(td_phase::TD_MERGED));
+    assert_eq!(count_cb_code_check_trailer_commits(&git, root), 1);
 }
 
 /// AC1: `--allow-empty-impl` is the restored escape hatch — it skips the
@@ -2551,7 +2789,7 @@ async fn test_code_check_touched_scope_ignores_unrelated_unmarked_file() {
 }
 
 // CODEGEN-END
-```
+`````
 
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -2578,6 +2816,11 @@ changes:
       are 0-of-N present on disk refuses completion and names the missing
       paths; `--allow-empty-impl` overrides the refusal; partial presence
       (some but not all paths present) is warn-only and still completes.
+      Also covers #1382: every hand-written create/modify path must carry a
+      committed net diff from the completing slug's exact Td-Init baseline;
+      pre-existing targets and partial target diffs refuse terminal closure,
+      uppercase MODIFY actions remain in the evidence denominator, and a
+      complete per-path diff passes.
       Also covers #854: the terminal marker gate (and the #847
       empty-implementation gate) scope to the completing WI's own TD spec
       instead of the whole worktree, so an unrelated inherited HANDWRITE

@@ -4684,19 +4684,29 @@ async fn run_check_lifecycle_terminal(
             return Ok(true);
         }
 
-        // Empty-implementation gate (issue #847, restoring the removed `aw
-        // td merge` Bug-2 guard): refuse completion when a spec's Changes
-        // section lists N create/modify entries and every one of them is
-        // missing on disk — the signature of gen-code having been skipped
-        // entirely (e.g. a hand-written batch with no scaffold that was
-        // never actually implemented). `--allow-empty-impl` overrides for
-        // legitimate spec-only completions.
+        // Implementation-evidence gates. Issue #847 catches the 0-of-N
+        // missing-file signature. Issue #1382 additionally requires every
+        // hand-written create/modify path to carry a committed diff from
+        // this slug's Td-Init baseline; an old file merely existing on a
+        // persistent project branch is not implementation evidence.
+        // `--allow-empty-impl` remains the explicit escape hatch for an
+        // intentional spec-only completion.
         if allow_empty_impl {
             eprintln!(
-                "[td code-check] WARNING: --allow-empty-impl set; skipping empty-implementation gate"
+                "[td code-check] WARNING: --allow-empty-impl set; skipping implementation-evidence gates"
             );
         } else if let Some(message) =
             empty_implementation_gate_message(project_root, slug, &slug_spec_paths)
+        {
+            let env = serde_json::json!({
+                "action": "error",
+                "slug": slug,
+                "message": message,
+            });
+            println!("{}", serde_json::to_string(&env)?);
+            return Ok(true);
+        } else if let Some(message) =
+            hand_written_implementation_gate_message(project_root, slug, &slug_spec_paths)
         {
             let env = serde_json::json!({
                 "action": "error",
@@ -5163,6 +5173,177 @@ fn empty_implementation_gate_message(
         }
         None
     }
+}
+
+/// Return the committed, repo-relative paths changed after this slug's most
+/// recent exact `Td-Init` trailer. The init commit's parent is the baseline:
+/// the TD/spec commit itself is lifecycle setup, while implementation must be
+/// introduced by later commits. This keeps a persistent project branch's old
+/// divergence from satisfying a new WI's hand-written implementation gate.
+///
+/// `Ok(None)` is reserved for synthetic/legacy entries with no lifecycle
+/// history at all. If the slug has lifecycle commits but no usable `Td-Init`,
+/// verification fails closed and the caller requires `--allow-empty-impl`.
+fn committed_paths_since_td_init(
+    project_root: &std::path::Path,
+    slug: &str,
+) -> Result<Option<BTreeSet<String>>> {
+    use crate::issues::types::lifecycle_trailer;
+
+    let git_bin = crate::git::find_git_bin()
+        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let slug_line = format!("Lifecycle-Slug: {slug}");
+    let log = std::process::Command::new(&git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .args([
+            "log",
+            "--format=%H%x00%B%x1e",
+            "--fixed-strings",
+            "--grep",
+            &slug_line,
+            "HEAD",
+        ])
+        .output()
+        .context("git log failed while locating Td-Init")?;
+    if !log.status.success() {
+        anyhow::bail!(
+            "git log failed while locating Td-Init: {}",
+            String::from_utf8_lossy(&log.stderr).trim()
+        );
+    }
+
+    let mut saw_slug_history = false;
+    let mut init_commit = None;
+    for record in String::from_utf8_lossy(&log.stdout).split('\x1e') {
+        let record = record.trim_start_matches('\n');
+        let Some((hash, body)) = record.split_once('\0') else {
+            continue;
+        };
+        if !lifecycle_trailer::body_has_slug_trailer(body, slug) {
+            continue;
+        }
+        saw_slug_history = true;
+        if lifecycle_trailer::body_has_stage_trailer(body, lifecycle_trailer::TD_INIT) {
+            init_commit = Some(hash.trim().to_string());
+            break;
+        }
+    }
+
+    let Some(init_commit) = init_commit else {
+        if saw_slug_history {
+            anyhow::bail!("lifecycle history for '{slug}' has no exact Td-Init trailer");
+        }
+        return Ok(None);
+    };
+
+    let parent = std::process::Command::new(&git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .args(["rev-parse", &format!("{init_commit}^")])
+        .output()
+        .context("git rev-parse Td-Init parent failed")?;
+    if !parent.status.success() {
+        anyhow::bail!(
+            "cannot resolve parent of Td-Init commit {}: {}",
+            init_commit,
+            String::from_utf8_lossy(&parent.stderr).trim()
+        );
+    }
+    let baseline = String::from_utf8_lossy(&parent.stdout).trim().to_string();
+    let diff_range = format!("{baseline}..HEAD");
+    let diff = std::process::Command::new(&git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .args(["diff", "--name-only", "--no-renames", &diff_range, "--"])
+        .output()
+        .context("git diff failed while verifying hand-written implementation")?;
+    if !diff.status.success() {
+        anyhow::bail!(
+            "git diff {} failed: {}",
+            diff_range,
+            String::from_utf8_lossy(&diff.stderr).trim()
+        );
+    }
+
+    Ok(Some(
+        String::from_utf8_lossy(&diff.stdout)
+            .lines()
+            .filter(|path| !path.trim().is_empty())
+            .map(normalize_touched_rel_path)
+            .collect(),
+    ))
+}
+
+/// Issue #1382: every `impl_mode: hand-written` create/modify path must have
+/// a committed net diff from this WI's `Td-Init` parent to `HEAD`. File
+/// existence is insufficient because modify targets normally predate the WI.
+/// Actions are matched case-insensitively so canonical `MODIFY` entries cannot
+/// disappear from the evidence denominator.
+fn hand_written_implementation_gate_message(
+    project_root: &std::path::Path,
+    slug: &str,
+    spec_paths: &[std::path::PathBuf],
+) -> Option<String> {
+    let promised: BTreeSet<String> = spec_paths
+        .iter()
+        .filter_map(|spec_abs| std::fs::read_to_string(spec_abs).ok())
+        .flat_map(|content| crate::generate::apply::extract_change_entries(&content))
+        .filter(|entry| {
+            matches!(
+                entry.impl_mode,
+                crate::generate::apply::ImplMode::HandWritten
+            ) && (entry.action.eq_ignore_ascii_case("create")
+                || entry.action.eq_ignore_ascii_case("modify"))
+        })
+        .map(|entry| normalize_touched_rel_path(&entry.path))
+        .collect();
+    if promised.is_empty() {
+        return None;
+    }
+
+    let changed = match committed_paths_since_td_init(project_root, slug) {
+        Ok(Some(changed)) => changed,
+        // Synthetic/legacy fixtures without any lifecycle commit history keep
+        // the pre-#1382 behavior. Every real `aw td create` lifecycle writes
+        // an exact Td-Init trailer, so a partially-corrupt history still
+        // fails closed through the error arm below.
+        Ok(None) => return None,
+        Err(error) => {
+            return Some(format!(
+                "refusing to complete code-check: cannot verify hand-written implementation \
+                 evidence for '{slug}': {error:#}; repair the lifecycle history, or pass \
+                 --allow-empty-impl for an intentional spec-only completion"
+            ));
+        }
+    };
+    let incomplete: Vec<String> = promised
+        .iter()
+        .filter_map(|path| {
+            if !project_root.join(path).exists() {
+                Some(format!("{path} (missing on disk)"))
+            } else if !changed.contains(path) {
+                Some(format!(
+                    "{path} (no committed lifecycle diff since Td-Init)"
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+    if incomplete.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "refusing to complete code-check: {} of {} hand-written create/modify path(s) lack \
+         required implementation evidence: {}; create, implement, and commit every listed path, \
+         then re-run `aw td code-check {slug}` (or pass --allow-empty-impl for an intentional \
+         spec-only completion)",
+        incomplete.len(),
+        promised.len(),
+        incomplete.join(", "),
+    ))
 }
 
 /// Outcome of [`land_td_lifecycle_branch`] — reported in the terminal `done`
@@ -5815,7 +5996,6 @@ fn commit_cb_claim_trailer(
     }
     Ok(())
 }
-
 // CODEGEN-END
 `````
 
@@ -5842,5 +6022,8 @@ changes:
       code_check_target_is_slug, and the #860 dead top-level CbArgs/run
       removal). The mirror previously snapshotted pre-merge-removal content
       and ended mid-file (~cb.md:3467 vs cb.rs 5500+ lines).
+      Issue #1382 adds per-path committed implementation evidence for every
+      hand-written create/modify entry, measured from the completing slug's
+      exact Td-Init parent so pre-existing project-branch divergence cannot
+      satisfy a new lifecycle.
 ```
-
