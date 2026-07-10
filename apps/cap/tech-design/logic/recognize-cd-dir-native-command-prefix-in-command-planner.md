@@ -138,7 +138,6 @@ this transient global-cwd mutation is safe under the session's existing
 single-invocation-at-a-time model; it is not safe under concurrent in-process
 native execution, and that constraint is documented at the `WithCwd` variant
 and the guard type rather than silently assumed.
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
