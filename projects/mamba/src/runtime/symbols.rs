@@ -2434,6 +2434,13 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_coroutine_should_suspend_set_state_i64",
+            async_rt::mb_coroutine_should_suspend_set_state_i64
+                as fn(super::MbValue, i64) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_coroutine_get_state_i64",
             async_rt::mb_coroutine_get_state_i64 as fn(super::MbValue) -> i64,
             [I64],

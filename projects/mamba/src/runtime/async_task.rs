@@ -378,17 +378,33 @@ fn throw_await_iterator(iterator: MbValue, exc_type: MbValue, exc_msg: MbValue) 
     AwaitResume::Complete(MbValue::none())
 }
 
+fn resume_pending_live_coroutine(coro_id: u64, value: MbValue) -> AwaitResume {
+    let coro = MbValue::from_int(coro_id as i64);
+    match super::async_rt::mb_coroutine_send_for_await(coro, value) {
+        super::async_rt::CoroutineAwaitPoll::Yielded(yielded) => AwaitResume::Yield(yielded),
+        super::async_rt::CoroutineAwaitPoll::Complete(result) => {
+            super::async_rt::tombstone_completed_coroutine(coro);
+            AwaitResume::Complete(result)
+        }
+        super::async_rt::CoroutineAwaitPoll::Error => AwaitResume::Yield(MbValue::none()),
+    }
+}
+
 pub(crate) fn mb_coroutine_resume_pending_await(
     coro_handle: MbValue,
     value: MbValue,
 ) -> Option<AwaitResume> {
     let id = coro_handle.as_int()? as u64;
-    let pending = COROUTINES
-        .read()
-        .unwrap()
-        .get(&id)
-        .and_then(|coro| coro.pending_await)?;
-    let resumed = resume_await_iterator(pending, value);
+    let (pending_coro_id, pending) = {
+        let coros = COROUTINES.read().unwrap();
+        let coro = coros.get(&id)?;
+        (coro.pending_await_coro_id, coro.pending_await)
+    };
+    let resumed = if let Some(pending_coro_id) = pending_coro_id {
+        resume_pending_live_coroutine(pending_coro_id, value)
+    } else {
+        resume_await_iterator(pending?, value)
+    };
     if matches!(resumed, AwaitResume::Complete(_)) {
         if let Some(coro) = COROUTINES.write().unwrap().get_mut(&id) {
             if let Some(pending) = coro.pending_await.take() {
@@ -396,6 +412,7 @@ pub(crate) fn mb_coroutine_resume_pending_await(
                     super::rc::release_if_ptr(pending);
                 }
             }
+            coro.pending_await_coro_id = None;
             coro.suspend_requested = false;
             coro.awaiting = false;
         }
@@ -409,12 +426,16 @@ pub(crate) fn mb_coroutine_throw_pending_await(
     exc_msg: MbValue,
 ) -> Option<AwaitResume> {
     let id = coro_handle.as_int()? as u64;
-    let pending = COROUTINES
-        .read()
-        .unwrap()
-        .get(&id)
-        .and_then(|coro| coro.pending_await)?;
-    let resumed = throw_await_iterator(pending, exc_type, exc_msg);
+    let (pending_coro_id, pending) = {
+        let coros = COROUTINES.read().unwrap();
+        let coro = coros.get(&id)?;
+        (coro.pending_await_coro_id, coro.pending_await)
+    };
+    let resumed = if let Some(pending_coro_id) = pending_coro_id {
+        throw_await_iterator(MbValue::from_int(pending_coro_id as i64), exc_type, exc_msg)
+    } else {
+        throw_await_iterator(pending?, exc_type, exc_msg)
+    };
     if matches!(resumed, AwaitResume::Complete(_)) {
         if let Some(coro) = COROUTINES.write().unwrap().get_mut(&id) {
             if let Some(pending) = coro.pending_await.take() {
@@ -422,6 +443,7 @@ pub(crate) fn mb_coroutine_throw_pending_await(
                     super::rc::release_if_ptr(pending);
                 }
             }
+            coro.pending_await_coro_id = None;
             coro.suspend_requested = false;
             coro.awaiting = false;
         }
