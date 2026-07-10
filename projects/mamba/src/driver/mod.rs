@@ -1349,10 +1349,24 @@ class HookMeta(type):
         return {}
     def __new__(mcls, name, bases, namespace):
         print("new:" + name)
+        created = type.__new__(mcls, name, bases, namespace)
+        print("new-done:" + name)
+        return created
     def __init__(cls, name, bases, namespace):
         print("init:" + name)
-class Visible(metaclass=HookMeta):
-    pass
+        type.__init__(cls, name, bases, namespace)
+class Descriptor:
+    def __set_name__(self, owner, name):
+        print("set:" + name)
+class Base:
+    def __init_subclass__(cls):
+        print("base:" + str(cls().owner() is cls))
+class Visible(Base, metaclass=HookMeta):
+    field = Descriptor()
+    def owner(self):
+        return __class__
+print(type(Visible) is HookMeta)
+print(Visible().owner() is Visible)
 "#;
         let previous = crate::runtime::output::begin_capture();
         let mut session = CompilerSession::new(CompilerConfig::default());
@@ -1363,9 +1377,186 @@ class Visible(metaclass=HookMeta):
         result.expect("metaclass definition hooks should run from source");
         assert_eq!(
             captured.lines().collect::<Vec<_>>(),
-            ["prepare:Visible", "new:Visible", "init:Visible"]
+            [
+                "prepare:Visible",
+                "new:Visible",
+                "set:field",
+                "base:True",
+                "new-done:Visible",
+                "init:Visible",
+                "True",
+                "True"
+            ]
         );
         assert!(!captured.contains("__mamba_user_class__"));
+    }
+
+    #[test]
+    fn metaclass_non_type_result_flows_through_decorator_and_binding() {
+        let src = r#"
+def decorate(value):
+    print("decorate:" + str(value))
+    return value + 1
+
+class Descriptor:
+    def __set_name__(self, owner, name):
+        print("set:" + name)
+
+class Base:
+    def __init_subclass__(cls):
+        print("base")
+
+class ValueMeta(type):
+    def __new__(mcls, name, bases, namespace):
+        print("new:" + name)
+        return 41
+    def __init__(cls, name, bases, namespace):
+        print("init:" + name)
+
+@decorate
+class Value(Base, metaclass=ValueMeta):
+    field = Descriptor()
+
+print(Value)
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "metaclass_non_type_result.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.expect("the metaclass result must become the class statement value");
+        assert_eq!(
+            captured.lines().collect::<Vec<_>>(),
+            ["new:Value", "decorate:41", "42"]
+        );
+    }
+
+    #[test]
+    fn default_type_fills_classcell_before_init_subclass() {
+        let src = r#"
+class Base:
+    def __init_subclass__(cls):
+        print(cls().owner() is cls)
+
+class Child(Base):
+    def owner(self):
+        return __class__
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "default_type_classcell_timing.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.expect("default type must fill __class__ before __init_subclass__");
+        assert_eq!(captured.trim(), "True");
+    }
+
+    #[test]
+    fn nondelegating_metaclass_does_not_prefill_classcell() {
+        let src = r#"
+class ValueMeta(type):
+    def __new__(mcls, name, bases, namespace):
+        return 41
+
+class Value(metaclass=ValueMeta):
+    def owner(self):
+        return __class__
+"#;
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let error = session
+            .run_source(src, "nondelegating_metaclass_classcell.py")
+            .expect_err("a metaclass that skips type.__new__ must not fill __class__");
+        crate::runtime::cleanup_all_runtime_state();
+
+        assert!(
+            error.to_string().contains("__class__ not set defining 'Value'"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn metaclass_may_remove_classcell_after_type_new() {
+        let src = r#"
+class ValueMeta(type):
+    def __new__(mcls, name, bases, namespace):
+        created = type.__new__(mcls, name, bases, namespace)
+        namespace.pop("__classcell__", None)
+        return created
+
+class Value(metaclass=ValueMeta):
+    def owner(self):
+        return __class__
+
+print(Value().owner() is Value)
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "metaclass_removes_consumed_classcell.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.expect("a consumed classcell need not remain in the namespace");
+        assert_eq!(captured.trim(), "True");
+    }
+
+    #[test]
+    fn metaclass_initializes_through_the_result_type() {
+        let src = r#"
+class Meta(type):
+    def __new__(mcls, name, bases, namespace):
+        if name == "Target":
+            return Existing
+        return type.__new__(mcls, name, bases, namespace)
+    def __init__(cls, name, bases, namespace):
+        if name == "Target":
+            print("Meta:" + name)
+
+class SubMeta(Meta):
+    def __init__(cls, name, bases, namespace):
+        if name == "Target":
+            print("Sub:" + name)
+
+class Existing(metaclass=SubMeta):
+    pass
+
+class Target(metaclass=Meta):
+    pass
+
+print(Target is Existing)
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "metaclass_result_type_init.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.expect("metaclass __init__ must dispatch through type(result)");
+        assert_eq!(captured.lines().collect::<Vec<_>>(), ["Sub:Target", "True"]);
+    }
+
+    #[test]
+    fn type_new_rejects_a_non_cell_classcell() {
+        let src = r#"
+class ValueMeta(type):
+    def __new__(mcls, name, bases, namespace):
+        namespace["__classcell__"] = 42
+        return type.__new__(mcls, name, bases, namespace)
+
+class Value(metaclass=ValueMeta):
+    pass
+"#;
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let error = session
+            .run_source(src, "metaclass_invalid_classcell.py")
+            .expect_err("type.__new__ must reject a non-cell __classcell__");
+        crate::runtime::cleanup_all_runtime_state();
+
+        assert!(
+            error.to_string().contains("__classcell__ must be a nonlocal cell"),
+            "unexpected error: {error}"
+        );
     }
 
     #[cfg(feature = "native-modules")]
