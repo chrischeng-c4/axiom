@@ -386,6 +386,16 @@ fn value_is_abstractmethod_marker(val: MbValue) -> bool {
 // @spec .aw/changes/mamba-type-3arg/groups/mamba-type-3arg-core/specs/mamba-type-3arg-spec.md#R2
 // @spec .aw/changes/mamba-type-3arg/groups/mamba-type-3arg-core/specs/mamba-type-3arg-spec.md#R4
 pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
+    let type_obj = mb_type3_deferred(name, bases, dict);
+    if exception::current_exception_type().is_none() {
+        if let Some(class_name) = class::resolve_class_name(type_obj) {
+            class::dispatch_type_new_creation_hooks(&class_name);
+        }
+    }
+    type_obj
+}
+
+pub(crate) fn mb_type3_deferred(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
     // 1. Extract name string
     let Some(class_name) = name.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Str(ref s) = (*ptr).data {
@@ -456,6 +466,7 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
     let mut methods = std::collections::HashMap::new();
     let mut class_attrs: Vec<(String, MbValue)> = Vec::new();
     let mut abstract_names: Vec<String> = Vec::new();
+    let mut classcell_marker = None;
     let namespace_dict = dict_ops::mb_dict_new();
     let dict_source = if dict
         .as_ptr()
@@ -478,9 +489,7 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
             for (k, v) in pairs.iter() {
                 let key = k.to_string();
                 if key == "__classcell__" {
-                    if !class::consume_classcell_marker_for_type_new(&class_name, *v) {
-                        return MbValue::none();
-                    }
+                    classcell_marker = Some(*v);
                     continue;
                 }
                 dict_ops::mb_dict_setitem(
@@ -508,14 +517,31 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
     // Python-visible name. `type("C", ...)` may be evaluated repeatedly and
     // every evaluation must produce a distinct class object without replacing
     // the method table or MRO of an earlier same-named class.
-    let registry_key = class::fresh_dynamic_class_runtime_key(&class_name);
+    let staged_registry_key = class::claim_staged_type_new_target(&class_name);
+    let registry_key = staged_registry_key
+        .clone()
+        .unwrap_or_else(|| class::fresh_dynamic_class_runtime_key(&class_name));
     let type_obj = make_type_object_with_display_name(&registry_key, &class_name);
-    class::mb_class_register_user_named(
-        &registry_key,
-        &class_name,
-        base_names.clone(),
-        methods,
-    );
+    if staged_registry_key.is_some() {
+        class::mb_class_register_user_named_reusing_staged(
+            &registry_key,
+            &class_name,
+            base_names.clone(),
+            methods,
+        );
+    } else {
+        class::mb_class_register_user_named(
+            &registry_key,
+            &class_name,
+            base_names.clone(),
+            methods,
+        );
+    }
+    if let Some(marker) = classcell_marker {
+        if !class::record_classcell_value_for_type_new(marker, type_obj) {
+            return MbValue::none();
+        }
+    }
 
     // 5. Set class attributes (non-method entries from dict)
     let cls_name_val = MbValue::from_ptr(MbObject::new_str(registry_key.clone()));
@@ -565,7 +591,7 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
 }
 
 pub fn mb_type3_kwargs(name: MbValue, bases: MbValue, dict: MbValue, kwargs: MbValue) -> MbValue {
-    let type_obj = mb_type3(name, bases, dict);
+    let type_obj = mb_type3_deferred(name, bases, dict);
     let Some(class_name) = class::resolve_class_name(type_obj) else {
         return type_obj;
     };
@@ -581,6 +607,7 @@ pub fn mb_type3_kwargs(name: MbValue, bases: MbValue, dict: MbValue, kwargs: MbV
     });
     if let Some(meta) = metaclass {
         let Some(meta_name) = class::resolve_class_name(meta) else {
+            class::discard_pending_type_new_creation_hooks(&class_name);
             exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                 MbValue::from_ptr(MbObject::new_str("metaclass must be a class".to_string())),
@@ -591,10 +618,11 @@ pub fn mb_type3_kwargs(name: MbValue, bases: MbValue, dict: MbValue, kwargs: MbV
             MbValue::from_ptr(MbObject::new_str(class_name.clone())),
             MbValue::from_ptr(MbObject::new_str(meta_name)),
         );
-        class::mb_class_finalize_definition_with_namespace(
+        return class::mb_class_finalize_definition_with_namespace(
             MbValue::from_ptr(MbObject::new_str(class_name)),
             dict,
         );
     }
+    class::dispatch_type_new_creation_hooks(&class_name);
     type_obj
 }
