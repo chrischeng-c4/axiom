@@ -136,6 +136,7 @@ Gate Inventory:
 | Remove TD merge command | change | #914 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests test_td_merge_subcommand_is_removed`; apps/agentic-workflow/tech-design/surface/validate/tests/td_no_merge_test.md; refs #851 |
 | Chain liveness proof | change | #914 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests chain_liveness`; apps/agentic-workflow/tech-design/surface/validate/tests/chain_liveness_test.md; refs #921 |
 | Self-EC fixture-loop gate | change | #1280 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture`; apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_self_ec_fixture_loop_gate.rs; apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md; refs #1279, #1280 |
+| Hand-written implementation evidence gate | change | #1382 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests td_no_merge_test:: -- --nocapture`; every hand-written create/modify path must have a committed diff since its exact Td-Init baseline before terminal code-check can close |
 | td surface convergence (EC-gated terminal, check unification, verb lifecycle policy, fixture-loop self-EC) | epic | #1270 | implemented | passing | smoke | children #1272-#1281 + #858 (rescoped); gates: chain conformance per removal, fixture-loop e2e (#1279), self-EC inventory (#1280) |
 
 ### Project-Local TD and EC Gates
