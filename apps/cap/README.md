@@ -99,7 +99,7 @@ Gate Inventory:
 | Lease admission and process supervision | epic | - | implemented | verified | smoke | `cargo test -p cap throttle` |
 | Memory and CPU pressure sampling | epic | - | implemented | verified | smoke | `cargo test -p cap sampler` |
 | Absolute and idle wall-clock timeouts | epic | #1323 | implemented | verified | smoke | `cargo test -p cap throttle` |
-| Command planner cd-prefix native recognition | change | #1378 | planned | planned | none | `cargo test -p cap command_planner` |
+| Command planner cd-prefix native recognition | change | #1378 | implemented | verified | smoke | `cargo test -p cap command_planner` |
 
 ### Daemon Lifecycle and Status
 
@@ -195,7 +195,7 @@ Hook boundary:
 | Layer | Responsibility |
 |---|---|
 | Agent Bash hook | Receives the Bash tool's command string and rewrites it to `cap run '<original>'`. It should stay thin: empty-command and recursion prevention only. |
-| `cap run "<command string>"` | Owns command-string wrapping. A resident light-shell session captures the current cwd/env, attempts conservative in-process native stages for proven shell-free commands and selected fused pipelines, and dynamically falls back to `bash -c <original>` for redirects, unsupported pipes, globs, shell variables, `cd && ...`, shell builtins, and unproven command shapes. |
+| `cap run "<command string>"` | Owns command-string wrapping. A resident light-shell session captures the current cwd/env, attempts conservative in-process native stages for proven shell-free commands and selected fused pipelines, and dynamically falls back to `bash -c <original>` for redirects, unsupported pipes, globs, shell variables, shell builtins, and unproven command shapes. `cd <dir> && <tail>` is now recognized as a native-plannable prefix when `<tail>` alone is native-plannable (the resolved `<dir>` becomes a per-invocation cwd override for the re-planned tail); any other `cd`-involving shape, or a `<tail>` that isn't independently native-plannable, still falls back to `bash -c <original>` unchanged. |
 | `cap run -- <argv...>` | Manual explicit argv mode. It skips shell-string parsing and plans the exact argv the user supplied. |
 | cap command planner | Owns same-name native dispatch decisions, behavior parity, and fallback behavior. |
 

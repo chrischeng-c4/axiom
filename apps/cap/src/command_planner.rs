@@ -267,6 +267,15 @@ pub enum NativeCommand {
     SedPrint(SedPrintPlan),
     WcAll(WcAllPlan),
     WcLines(WcLinesPlan),
+    /// Wraps any existing native command with a per-invocation effective cwd
+    /// override, produced by `plan_cd_prefix` for the `cd <dir> && <tail>`
+    /// shape. `run_native_command` scopes the `std::env::set_current_dir`
+    /// mutation to exactly one recursive dispatch via `CwdGuard`; this is a
+    /// per-invocation override of the process's single global cwd, safe only
+    /// under the resident shell's single-invocation-at-a-time model — never
+    /// dispatch two `WithCwd` commands concurrently in-process.
+    /// @spec apps/cap/tech-design/logic/recognize-cd-dir-native-command-prefix-in-command-planner.md#changes
+    WithCwd(Box<NativeCommand>, PathBuf),
 }
 
 /// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
@@ -2178,6 +2187,7 @@ impl CommandPlan {
                         WcCountMode::Bytes => "cap-native wc -c",
                         WcCountMode::Words => "cap-native wc -w",
                     },
+                    NativeCommand::WithCwd(_, _) => "cap-native cd-prefix",
                 };
                 [
                     format!("original: {}", plan.original),
@@ -2218,6 +2228,10 @@ pub fn plan_shell(command: &str, label: Option<String>) -> CommandPlan {
         }
     }
 
+    if let Some(cd_plan) = plan_cd_prefix(&original, planned_label.clone()) {
+        return CommandPlan::Native(cd_plan);
+    }
+
     CommandPlan::External(ExternalPlan {
         program: "bash".to_string(),
         args: vec!["-c".to_string(), original.clone()],
@@ -2226,6 +2240,121 @@ pub fn plan_shell(command: &str, label: Option<String>) -> CommandPlan {
         implementation: ExternalImplementation::Original,
         reason: "shell command string requires bash semantics; running under bash -c".to_string(),
         fallback: None,
+    })
+}
+
+/// Quote-aware scan for exactly one top-level `&&` in `command`. Returns the
+/// byte index of the first `&` of that pair. A lone `&` not immediately
+/// followed by a second `&`, a second top-level `&&`, or an unterminated
+/// quote disqualifies the whole line (`None`).
+/// @spec apps/cap/tech-design/logic/recognize-cd-dir-native-command-prefix-in-command-planner.md#logic
+fn find_single_top_level_and_and(command: &str) -> Option<usize> {
+    #[derive(Clone, Copy)]
+    enum State {
+        Normal,
+        Single,
+        Double,
+    }
+
+    let mut state = State::Normal;
+    let mut chars = command.char_indices().peekable();
+    let mut found: Option<usize> = None;
+    while let Some((idx, ch)) = chars.next() {
+        match state {
+            State::Normal => match ch {
+                '\'' => state = State::Single,
+                '"' => state = State::Double,
+                '\\' => {
+                    if chars.next().is_none() {
+                        return None;
+                    }
+                }
+                '&' => {
+                    if matches!(chars.peek(), Some((_, '&'))) {
+                        chars.next();
+                        if found.is_some() {
+                            return None;
+                        }
+                        found = Some(idx);
+                    } else {
+                        return None;
+                    }
+                }
+                _ => {}
+            },
+            State::Single => {
+                if ch == '\'' {
+                    state = State::Normal;
+                }
+            }
+            State::Double => match ch {
+                '"' => state = State::Normal,
+                '\\' => {
+                    if chars.next().is_none() {
+                        return None;
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+
+    if !matches!(state, State::Normal) {
+        return None;
+    }
+    found
+}
+
+/// Recognize the exact `cd <dir> && <tail>` shell prefix: a quote-aware scan
+/// for exactly one top-level `&&`, a `cd`-only head (validated via the
+/// existing `has_shell_control_syntax` / `split_simple_shell_words`
+/// helpers), a `<dir>` that resolves (absolute as-is, else joined onto
+/// `std::env::current_dir()`) to an existing directory, and a `<tail>` that
+/// independently re-plans to `CommandPlan::Native` via the existing
+/// `plan_shell`. Any disqualification returns `None`, so the caller falls
+/// straight through to the unmodified `bash -c <original>` fallback — never
+/// a partial native-tail execution with a stale `cd` prefix silently
+/// dropped.
+/// @spec apps/cap/tech-design/logic/recognize-cd-dir-native-command-prefix-in-command-planner.md#logic
+fn plan_cd_prefix(command: &str, label: Option<String>) -> Option<NativePlan> {
+    let original = command.trim();
+    let and_idx = find_single_top_level_and_and(original)?;
+    let head = original[..and_idx].trim();
+    let tail = original[and_idx + 2..].trim();
+    if tail.is_empty() {
+        return None;
+    }
+
+    if has_shell_control_syntax(head) {
+        return None;
+    }
+    let words = split_simple_shell_words(head)?;
+    if words.len() != 2 || words[0] != "cd" {
+        return None;
+    }
+
+    let dir_arg = Path::new(&words[1]);
+    let resolved = if dir_arg.is_absolute() {
+        dir_arg.to_path_buf()
+    } else {
+        env::current_dir().ok()?.join(dir_arg)
+    };
+    if !resolved.is_dir() {
+        return None;
+    }
+
+    let CommandPlan::Native(inner) = plan_shell(tail, label.clone()) else {
+        return None;
+    };
+
+    Some(NativePlan {
+        command: NativeCommand::WithCwd(Box::new(inner.command), resolved.clone()),
+        label,
+        original: original.to_string(),
+        reason: format!(
+            "cd-prefix recognized; tail re-planned natively with cwd {}",
+            resolved.display()
+        ),
     })
 }
 
@@ -9511,12 +9640,50 @@ pub fn run_native(plan: &NativePlan) -> Result<ExitCode> {
     Ok(exit_code_from_i32(code))
 }
 
+/// RAII guard that captures the process's current working directory on
+/// construction, switches to `dir`, and restores the captured directory when
+/// dropped. Used by `NativeCommand::WithCwd` to scope a
+/// `std::env::set_current_dir` mutation to exactly one recursive
+/// `run_native_command` dispatch. This mutates the process's single global
+/// cwd; it is safe under the resident shell's single-invocation-at-a-time
+/// model and NOT safe if two `WithCwd` commands are ever dispatched
+/// concurrently in-process.
+/// @spec apps/cap/tech-design/logic/recognize-cd-dir-native-command-prefix-in-command-planner.md#changes
+struct CwdGuard {
+    previous: PathBuf,
+}
+
+/// @spec apps/cap/tech-design/logic/recognize-cd-dir-native-command-prefix-in-command-planner.md#changes
+impl CwdGuard {
+    fn enter(dir: &Path) -> Result<Self> {
+        let previous = env::current_dir().context("failed to read current working directory")?;
+        env::set_current_dir(dir)
+            .with_context(|| format!("failed to set current directory to {}", dir.display()))?;
+        Ok(Self { previous })
+    }
+}
+
+/// @spec apps/cap/tech-design/logic/recognize-cd-dir-native-command-prefix-in-command-planner.md#changes
+impl Drop for CwdGuard {
+    fn drop(&mut self) {
+        let _ = env::set_current_dir(&self.previous);
+    }
+}
+
 pub(crate) fn run_native_to(
     plan: &NativePlan,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> Result<i32> {
-    match &plan.command {
+    run_native_command(&plan.command, stdout, stderr)
+}
+
+fn run_native_command(
+    command: &NativeCommand,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Result<i32> {
+    match command {
         NativeCommand::True => Ok(0),
         NativeCommand::False => Ok(1),
         NativeCommand::PipeEmptyProducer(pipe) => run_pipe_empty_producer(pipe, stdout, stderr),
@@ -9864,6 +10031,10 @@ pub(crate) fn run_native_to(
         NativeCommand::SedPrint(sed) => run_sed_print(sed, stdout, stderr),
         NativeCommand::WcAll(wc) => run_wc_all(wc, stdout, stderr),
         NativeCommand::WcLines(wc) => run_wc_lines(wc, stdout, stderr),
+        NativeCommand::WithCwd(inner, dir) => {
+            let _guard = CwdGuard::enter(dir)?;
+            run_native_command(inner, stdout, stderr)
+        }
     }
 }
 
@@ -19009,6 +19180,216 @@ mod tests {
             panic!("expected grep replacement");
         };
         assert_eq!(plan.implementation, ExternalImplementation::Replacement);
+    }
+
+    // @spec apps/cap/tech-design/logic/recognize-cd-dir-native-command-prefix-in-command-planner.md#unit-test
+
+    /// Serializes tests that must temporarily mutate the process's real
+    /// `std::env::current_dir()` (cargo test runs test fns concurrently in
+    /// one process by default).
+    static CD_PREFIX_CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Restores the process cwd on drop (including on panic/assertion
+    /// failure), so a failing test never leaves a mutated cwd behind for
+    /// later tests in this same process.
+    struct RestoreCwdOnDrop(PathBuf);
+
+    impl Drop for RestoreCwdOnDrop {
+        fn drop(&mut self) {
+            let _ = env::set_current_dir(&self.0);
+        }
+    }
+
+    fn expect_cd_prefix_native(command: &str) -> (PathBuf, NativeCommand) {
+        match plan_shell(command, None) {
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::WithCwd(inner, dir),
+                ..
+            }) => (dir, *inner),
+            other => panic!("expected cd-prefix native plan, got {other:?}"),
+        }
+    }
+
+    fn assert_cd_prefix_bash_fallback_unchanged(command: &str) {
+        match plan_shell(command, None) {
+            CommandPlan::External(plan) => {
+                assert_eq!(plan.program, "bash");
+                assert_eq!(
+                    plan.args,
+                    vec!["-c".to_string(), command.trim().to_string()]
+                );
+                assert_eq!(
+                    plan.reason,
+                    "shell command string requires bash semantics; running under bash -c"
+                );
+            }
+            other => panic!("expected bash fallback, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cd_prefix_ls_replans_native() {
+        let tmp = tempdir().unwrap();
+        let command = format!("cd {} && ls -a", tmp.path().display());
+        let (dir, inner) = expect_cd_prefix_native(&command);
+        assert_eq!(dir, tmp.path());
+        assert!(matches!(inner, NativeCommand::Ls(_)));
+    }
+
+    #[test]
+    fn cd_prefix_cat_replans_native() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("file.txt");
+        fs::write(&file, "hello\n").unwrap();
+        let command = format!("cd {} && cat {}", tmp.path().display(), file.display());
+        let (dir, inner) = expect_cd_prefix_native(&command);
+        assert_eq!(dir, tmp.path());
+        assert!(matches!(inner, NativeCommand::Cat(_)));
+    }
+
+    #[test]
+    fn cd_prefix_find_replans_native() {
+        let tmp = tempdir().unwrap();
+        fs::write(tmp.path().join("a.txt"), "one\n").unwrap();
+        let command = format!("cd {} && find . -type f", tmp.path().display());
+        let (dir, inner) = expect_cd_prefix_native(&command);
+        assert_eq!(dir, tmp.path());
+        assert!(matches!(inner, NativeCommand::Find(_)));
+    }
+
+    #[test]
+    fn cd_prefix_grep_replans_native() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "z NEEDLE\na\n").unwrap();
+        let command = format!(
+            "cd {} && grep NEEDLE {}",
+            tmp.path().display(),
+            file.display()
+        );
+        let (dir, inner) = expect_cd_prefix_native(&command);
+        assert_eq!(dir, tmp.path());
+        assert!(matches!(inner, NativeCommand::GrepFile(_)));
+    }
+
+    #[test]
+    fn cd_prefix_sed_replans_native() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("sed.txt");
+        fs::write(&file, "a\nb\nc\nd\ne\nf\n").unwrap();
+        let command = format!(
+            "cd {} && sed -n \"1,5p\" {}",
+            tmp.path().display(),
+            file.display()
+        );
+        let (dir, inner) = expect_cd_prefix_native(&command);
+        assert_eq!(dir, tmp.path());
+        assert!(matches!(inner, NativeCommand::SedPrint(_)));
+    }
+
+    #[test]
+    fn cd_prefix_wc_replans_native() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("wc.txt");
+        fs::write(&file, "one\ntwo\n").unwrap();
+        let command = format!("cd {} && wc -l {}", tmp.path().display(), file.display());
+        let (dir, inner) = expect_cd_prefix_native(&command);
+        assert_eq!(dir, tmp.path());
+        assert!(matches!(inner, NativeCommand::WcLines(_)));
+    }
+
+    #[test]
+    fn cd_prefix_native_plan_carries_resolved_absolute_path() {
+        let tmp = tempdir().unwrap();
+        let command = format!("cd {} && ls -a", tmp.path().display());
+        let CommandPlan::Native(plan) = plan_shell(&command, None) else {
+            panic!("expected cd-prefix native plan");
+        };
+        assert_eq!(plan.original, command);
+        assert!(plan.reason.contains(&tmp.path().display().to_string()));
+        match plan.command {
+            NativeCommand::WithCwd(inner, dir) => {
+                assert_eq!(dir, tmp.path());
+                assert!(matches!(*inner, NativeCommand::Ls(_)));
+            }
+            other => panic!("expected WithCwd, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cd_prefix_resolves_relative_dir_against_current_dir() {
+        let _lock = CD_PREFIX_CWD_LOCK.lock().unwrap();
+        let tmp = tempdir().unwrap();
+        let sub = tmp.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        let original_cwd = env::current_dir().unwrap();
+        let _restore = RestoreCwdOnDrop(original_cwd);
+        env::set_current_dir(tmp.path()).unwrap();
+        // The resolved path is joined onto std::env::current_dir(), which
+        // may canonicalize away symlinks (e.g. macOS's /var -> /private/var)
+        // relative to the tempdir-provided path; compare against the same
+        // current_dir() basis the recognizer itself uses.
+        let expected_sub = env::current_dir().unwrap().join("sub");
+
+        let plan = plan_cd_prefix("cd sub && ls -a", None).expect("expected recognized cd prefix");
+        match plan.command {
+            NativeCommand::WithCwd(inner, dir) => {
+                assert_eq!(dir, expected_sub);
+                assert!(matches!(*inner, NativeCommand::Ls(_)));
+            }
+            other => panic!("expected WithCwd, got {other:?}"),
+        }
+
+        // Distinct from an absolute <dir>, which is used as-is regardless of
+        // the process cwd.
+        let absolute_command = format!("cd {} && ls -a", tmp.path().display());
+        let (dir, _inner) = expect_cd_prefix_native(&absolute_command);
+        assert_eq!(dir, tmp.path());
+    }
+
+    #[test]
+    fn cd_prefix_missing_directory_falls_back_to_bash_unchanged() {
+        let tmp = tempdir().unwrap();
+        let missing = tmp.path().join("does-not-exist");
+        let command = format!("cd {} && ls -a", missing.display());
+        assert_cd_prefix_bash_fallback_unchanged(&command);
+    }
+
+    #[test]
+    fn cd_prefix_non_native_tail_falls_back_to_bash_unchanged() {
+        let tmp = tempdir().unwrap();
+        let command = format!("cd {} && echo $HOME", tmp.path().display());
+        assert_cd_prefix_bash_fallback_unchanged(&command);
+    }
+
+    #[test]
+    fn cd_prefix_glob_in_dir_disqualifies() {
+        assert_cd_prefix_bash_fallback_unchanged("cd /tmp/* && ls");
+    }
+
+    #[test]
+    fn cd_prefix_multiple_ampersand_operators_disqualifies() {
+        assert_cd_prefix_bash_fallback_unchanged("cd /tmp && cd sub && ls");
+    }
+
+    #[test]
+    fn cd_prefix_or_operator_disqualifies() {
+        assert_cd_prefix_bash_fallback_unchanged("cd /tmp || ls");
+    }
+
+    #[test]
+    fn cd_prefix_semicolon_after_cd_disqualifies() {
+        assert_cd_prefix_bash_fallback_unchanged("cd /tmp; ls && cat file");
+    }
+
+    #[test]
+    fn cd_prefix_shell_variable_in_dir_disqualifies() {
+        assert_cd_prefix_bash_fallback_unchanged("cd \"$HOME/work\" && ls");
+    }
+
+    #[test]
+    fn cd_prefix_wrong_head_arity_disqualifies() {
+        assert_cd_prefix_bash_fallback_unchanged("cd /tmp extra && ls");
     }
 }
 // CODEGEN-END
