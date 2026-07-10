@@ -1,12 +1,14 @@
-use super::ty::{Ty, TypeId, TypeVarId};
+use super::ty::{Ty, TypeId, TypeParamDefault, TypeVarId, TypeVarKind};
 use std::collections::HashMap;
 
 /// Type variable info: optional upper bound and type constraints (#242).
 #[derive(Debug, Clone)]
 pub struct TypeVarInfo {
     pub name: String,
+    pub kind: TypeVarKind,
     pub bound: Option<TypeId>,
     pub constraints: Vec<TypeId>,
+    pub default: TypeParamDefault,
 }
 
 /// Interner and registry for all types used during compilation.
@@ -111,11 +113,30 @@ impl TypeContext {
         bound: Option<TypeId>,
         constraints: Vec<TypeId>,
     ) -> TypeVarId {
+        self.new_type_param(
+            name,
+            TypeVarKind::TypeVar,
+            bound,
+            constraints,
+            TypeParamDefault::None,
+        )
+    }
+
+    pub fn new_type_param(
+        &mut self,
+        name: String,
+        kind: TypeVarKind,
+        bound: Option<TypeId>,
+        constraints: Vec<TypeId>,
+        default: TypeParamDefault,
+    ) -> TypeVarId {
         let id = TypeVarId(self.type_vars.len() as u32);
         self.type_vars.push(TypeVarInfo {
             name,
+            kind,
             bound,
             constraints,
+            default,
         });
         id
     }
@@ -125,17 +146,19 @@ impl TypeContext {
     }
 
     /// Fill metadata after a declaration's TypeVars have all been allocated.
-    /// PEP 695 bounds may refer to another parameter in the same declaration,
-    /// so aliases must exist before their bound/constraint expressions resolve.
+    /// Allocation and resolution are separate so lazy forward metadata keeps
+    /// the stable TypeVar identity embedded in previously interned types.
     pub fn set_type_var_metadata(
         &mut self,
         id: TypeVarId,
         bound: Option<TypeId>,
         constraints: Vec<TypeId>,
+        default: TypeParamDefault,
     ) {
         let info = &mut self.type_vars[id.0 as usize];
         info.bound = bound;
         info.constraints = constraints;
+        info.default = default;
     }
 
     /// Whether a type is still parameterized by a TypeVar-like placeholder.
@@ -167,6 +190,60 @@ impl TypeContext {
             | Ty::Any
             | Ty::Literal(_)
             | Ty::Error => false,
+        }
+    }
+
+    /// Collect the TypeVar identities referenced anywhere inside a type.
+    pub fn type_vars_in(&self, id: TypeId) -> Vec<TypeVarId> {
+        let mut vars = Vec::new();
+        self.collect_type_vars(id, &mut vars);
+        vars.sort_unstable_by_key(|var| var.0);
+        vars.dedup();
+        vars
+    }
+
+    fn collect_type_vars(&self, id: TypeId, vars: &mut Vec<TypeVarId>) {
+        match self.get(id) {
+            Ty::TypeVar(var) => vars.push(*var),
+            Ty::List(item) | Ty::Set(item) => self.collect_type_vars(*item, vars),
+            Ty::Dict(key, value) => {
+                self.collect_type_vars(*key, vars);
+                self.collect_type_vars(*value, vars);
+            }
+            Ty::Tuple(items) | Ty::Union(items) => {
+                for item in items {
+                    self.collect_type_vars(*item, vars);
+                }
+            }
+            Ty::Fn { params, ret, .. } => {
+                for param in params {
+                    self.collect_type_vars(*param, vars);
+                }
+                self.collect_type_vars(*ret, vars);
+            }
+            Ty::Class { fields, .. } => {
+                for (_, field) in fields {
+                    self.collect_type_vars(*field, vars);
+                }
+            }
+            Ty::Enum { variants, .. } => {
+                for (_, fields) in variants {
+                    for field in fields {
+                        self.collect_type_vars(*field, vars);
+                    }
+                }
+            }
+            Ty::Never
+            | Ty::None
+            | Ty::Bool
+            | Ty::Int
+            | Ty::Float
+            | Ty::Str
+            | Ty::Any
+            | Ty::Literal(_)
+            | Ty::SelfType
+            | Ty::Infer(_)
+            | Ty::Error => {}
         }
     }
 
@@ -327,8 +404,10 @@ mod tests {
         assert_eq!(id, TypeVarId(0));
         let info = tcx.get_type_var(id);
         assert_eq!(info.name, "T");
+        assert_eq!(info.kind, TypeVarKind::TypeVar);
         assert!(info.bound.is_none());
         assert!(info.constraints.is_empty());
+        assert_eq!(info.default, TypeParamDefault::None);
     }
 
     #[test]
@@ -357,11 +436,32 @@ mod tests {
         let str_ty = tcx.str();
         let id = tcx.new_type_var("T".to_string(), None, Vec::new());
 
-        tcx.set_type_var_metadata(id, Some(int_ty), vec![int_ty, str_ty]);
+        tcx.set_type_var_metadata(
+            id,
+            Some(int_ty),
+            vec![int_ty, str_ty],
+            TypeParamDefault::None,
+        );
 
         let info = tcx.get_type_var(id);
         assert_eq!(info.bound, Some(int_ty));
         assert_eq!(info.constraints, vec![int_ty, str_ty]);
+    }
+
+    #[test]
+    fn test_type_parameter_kind_and_unresolved_default_are_preserved() {
+        let mut tcx = TypeContext::new();
+        let id = tcx.new_type_param(
+            "Ts".to_string(),
+            TypeVarKind::TypeVarTuple,
+            None,
+            Vec::new(),
+            TypeParamDefault::Unresolved,
+        );
+
+        let info = tcx.get_type_var(id);
+        assert_eq!(info.kind, TypeVarKind::TypeVarTuple);
+        assert_eq!(info.default, TypeParamDefault::Unresolved);
     }
 
     #[test]
@@ -376,6 +476,8 @@ mod tests {
         assert!(tcx.contains_type_var(type_var));
         assert!(tcx.contains_type_var(list_type_var));
         assert!(!tcx.contains_type_var(list_int));
+        assert_eq!(tcx.type_vars_in(list_type_var), vec![id]);
+        assert!(tcx.type_vars_in(list_int).is_empty());
     }
 
     #[test]
