@@ -194,15 +194,12 @@ fn unify_for_inference(
     match param_ty {
         Ty::TypeVar(var_id) => {
             // Check this is one of our generic type vars
-            if type_vars.iter().any(|tv| tv.id == var_id) {
+            if let Some(type_var) = type_vars.iter().find(|tv| tv.id == var_id) {
+                let arg = normalize_constrained_candidate(type_var, arg, tcx);
                 if let Some(existing) = subst.get(var_id) {
                     // Already inferred — verify consistency
                     if existing != arg {
-                        let tv_name = type_vars
-                            .iter()
-                            .find(|tv| tv.id == var_id)
-                            .map(|tv| tv.name.as_str())
-                            .unwrap_or("?");
+                        let tv_name = type_var.name.as_str();
                         conflicts.push(format!("conflicting types for type parameter '{tv_name}'"));
                     }
                 } else {
@@ -241,6 +238,30 @@ fn unify_for_inference(
             // Concrete type — no inference needed
         }
     }
+}
+
+fn normalize_constrained_candidate(type_var: &TypeVar, arg: TypeId, tcx: &TypeContext) -> TypeId {
+    if type_var.constraints.is_empty() || matches!(tcx.get(arg), Ty::Any | Ty::Error) {
+        return arg;
+    }
+    if type_var.constraints.contains(&arg) {
+        return arg;
+    }
+
+    let mut matches = type_var
+        .constraints
+        .iter()
+        .copied()
+        .filter(|constraint| tcx.is_subtype(arg, *constraint));
+    let Some(mut best) = matches.next() else {
+        return arg;
+    };
+    for candidate in matches {
+        if tcx.is_subtype(candidate, best) && !tcx.is_subtype(best, candidate) {
+            best = candidate;
+        }
+    }
+    best
 }
 
 /// Check that a substitution satisfies all type variable bounds.
@@ -571,6 +592,43 @@ mod tests {
         let (subst, conflicts) = infer_type_args(&gp, &[list_var], &[int_ty], &tcx);
         assert!(conflicts.is_empty());
         assert!(subst.is_empty()); // nothing inferred
+    }
+
+    #[test]
+    fn test_constrained_inference_promotes_and_prefers_exact_match() {
+        let mut tcx = TypeContext::new();
+        let var_id = TypeVarId(0);
+        let var_ty = tcx.intern(Ty::TypeVar(var_id));
+        let bool_ty = tcx.bool();
+        let int_ty = tcx.int();
+        let float_ty = tcx.float();
+
+        let mut gp = GenericParams::new();
+        gp.add_with_constraints("T", var_id, None, vec![float_ty, int_ty]);
+
+        let (bool_subst, conflicts) = infer_type_args(&gp, &[var_ty], &[bool_ty], &tcx);
+        assert!(conflicts.is_empty());
+        assert_eq!(bool_subst.get(var_id), Some(int_ty));
+
+        let (int_subst, conflicts) = infer_type_args(&gp, &[var_ty], &[int_ty], &tcx);
+        assert!(conflicts.is_empty());
+        assert_eq!(int_subst.get(var_id), Some(int_ty));
+    }
+
+    #[test]
+    fn test_constrained_inference_compares_promoted_candidates() {
+        let mut tcx = TypeContext::new();
+        let var_id = TypeVarId(0);
+        let var_ty = tcx.intern(Ty::TypeVar(var_id));
+        let bool_ty = tcx.bool();
+        let int_ty = tcx.int();
+
+        let mut gp = GenericParams::new();
+        gp.add_with_constraints("T", var_id, None, vec![int_ty, tcx.str()]);
+
+        let (subst, conflicts) = infer_type_args(&gp, &[var_ty, var_ty], &[bool_ty, int_ty], &tcx);
+        assert!(conflicts.is_empty());
+        assert_eq!(subst.get(var_id), Some(int_ty));
     }
 
     #[test]
