@@ -92,3 +92,39 @@ flowchart TD
     pipeline_returns --> lightningcss_parse[apply_lightningcss calls StyleSheet::parse]
     lightningcss_parse --> parse_succeeds([StyleSheet::parse succeeds -- AC1 satisfied])
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+css_layer_statement_form_fix:
+  target: "projects/jet/src/css/directives.rs"
+  function: "process_layer_directives"
+  problem: "the existing scan loop consumes '@layer ' then unconditionally expects the next non-whitespace token to be '{'; when it is not (the bare 'name, name, ...;' order-statement form), the loop falls into its malformed-input fallback (re-emits the literal '@layer ' and continues scanning from the SAME position), leaving the untouched statement form in the returned css string, which then fails lightningcss's StyleSheet::parse with 'CSS parse error: Unexpected token AtKeyword(\"layer\")'"
+  fix_approach: "after locating the layer-name-list token (remaining up to the first '{' or whitespace-delimited stop, matching the existing name_end scan), classify the clause by which terminator appears first: '{' (block form, existing behavior unchanged) or ';' before any '{' (bare statement form). For the statement form, consume through and including the terminating ';' and do NOT copy that consumed span into the css output buffer -- i.e. strip the whole '@layer <name>(, <name>)*;' statement. No layer_name matching against base/components/utilities/unknown is needed for the statement form since it carries no body to route."
+  edge_cases:
+    - "multiple comma-separated names: '@layer theme, base, components, utilities;' -- the terminator classification only needs to find whichever of '{' or ';' occurs first after '@layer '; commas inside the name list do not require special handling since scanning continues past them to the terminator"
+    - "a leading statement form followed later in the same source by block-form '@layer base { ... }' rules -- the fix must not disturb the existing while-loop's re-entry into remaining after the statement is stripped, so subsequent '@layer ' occurrences (block form) still route through the unchanged block-handling branch"
+    - "malformed input that is neither '{' nor ';'-terminated before EOF (existing 'Malformed — keep as-is' fallback) -- preserved unchanged for any input that is not classified as either recognized form, avoiding an infinite loop by keeping the existing re-emit-and-continue behavior for that residual case"
+  non_goals:
+    - "preserving cascade-layer runtime priority order semantics of the stripped statement -- out of scope per WI #1377 Out of Scope; jet's own block-form inlining already does not preserve @layer priority ordering"
+    - "the @import \"tailwindcss\" directory-resolution failure tracked separately as #1375"
+    - "any lightningcss version change"
+regression_test:
+  target: "projects/jet/src/css/directives.rs"
+  location: "#[cfg(test)] mod tests, alongside the existing '── @layer routing ──' test group"
+  test_name: "process_layer_directives_strips_bare_statement_form_alongside_block_form"
+  input: "'@layer theme, base, components, utilities;\n@layer base { h1 { margin: 0; } }'"
+  assertions:
+    - "result.css does not contain the substring '@layer theme, base, components, utilities;' (the bare statement is stripped)"
+    - "result.css does not contain the substring 'AtKeyword' by construction (no unstripped at-rule token reaches the output)"
+    - "result.base_additions and result.css both still contain 'h1' (existing block-form '@layer base { ... }' inlining is unaffected, matching the existing process_layer_directives_extracts_base_rules assertion shape)"
+  parse_proof_test:
+    location: "projects/jet/src/css/mod.rs, alongside apply_lightningcss's existing test coverage (or a directives.rs-adjacent integration point that calls apply_lightningcss directly)"
+    test_name: "apply_lightningcss_accepts_stripped_layer_statement_form_output"
+    input: "the process_layer_directives output for '@layer theme, base, components, utilities;\n@layer base { h1 { margin: 0; } }'"
+    assertion: "apply_lightningcss(...) returns Ok(..), proving AC1: no 'CSS parse error: Unexpected token AtKeyword' is raised"
+verification_commands:
+  - "cargo test -p jet --lib css::directives -- --nocapture"
+  - "cargo test -p jet --lib css:: -- --nocapture"
+```
