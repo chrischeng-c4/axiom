@@ -474,8 +474,8 @@ mod crux_recovery_tests {
     use crate::storage::Engine;
     use crate::types::{
         Analyzer, CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem,
-        IndexRequest, KnnQuery, MatchOp, MatchQuery, QueryNode, RangeQuery, SearchRequest,
-        TermQuery, TermsQuery, VectorBackend, VectorMetric,
+        IndexRequest, KnnQuery, MatchOp, MatchQuery, QueryNode, RangeBound, RangeQuery,
+        SearchRequest, TermQuery, TermsQuery, VectorBackend, VectorMetric,
     };
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
@@ -627,8 +627,8 @@ mod crux_recovery_tests {
             driven(QueryNode::Range(RangeQuery {
                 field: "num".into(),
                 gt: None,
-                gte: Some(2.0),
-                lt: Some(9.0),
+                gte: Some(RangeBound::Number(2.0)),
+                lt: Some(RangeBound::Number(9.0)),
                 lte: None,
             })),
             driven(QueryNode::Term(TermQuery {

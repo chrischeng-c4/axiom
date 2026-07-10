@@ -21,7 +21,7 @@ Public API manifest for `projects/lumen/src/log_entry.rs` generated from AST dur
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `RaftLogEntry` | projects/lumen/src/log_entry.rs | enum | pub | 23 |  |
-| `RaftLogResponse` | projects/lumen/src/log_entry.rs | struct | pub | 58 |  |
+| `RaftLogResponse` | projects/lumen/src/log_entry.rs | struct | pub | 66 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -40,7 +40,7 @@ Public API manifest for `projects/lumen/src/log_entry.rs` generated from AST dur
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{CreateCollectionRequest, FieldSpec, IndexRequest};
+use crate::types::{CreateCollectionRequest, FieldSpec, IndexRequest, ReplaceDocsRequest};
 
 /// One committed mutation against the lumen storage engine.
 ///
@@ -56,6 +56,14 @@ pub enum RaftLogEntry {
     Index {
         collection_id: String,
         req: IndexRequest,
+    },
+    /// Full-replacement batch upsert: each item's `fields` becomes the
+    /// doc's entire indexed state, implicitly deleting any declared schema
+    /// field absent from `fields`. See
+    /// [`crate::storage::Engine::replace_docs`].
+    ReplaceDocs {
+        collection_id: String,
+        req: ReplaceDocsRequest,
     },
     Delete {
         collection_id: String,

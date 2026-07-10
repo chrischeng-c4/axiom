@@ -1,10 +1,16 @@
 // SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-//! TypeScript emitter: read an OpenAPI 3.0/3.1 document and emit TS types, a
-//! typed fetch/axios client, and TanStack Query hooks.
+//! TypeScript emitter: read an OpenAPI 3.0/3.1/3.2 document and emit TS types,
+//! a typed fetch/axios client, and TanStack Query hooks.
 //!
-//! Pipeline: parse → normalize 3.0/3.1 → resolve `$ref`s → emit `types.ts` /
-//! `runtime.ts` / `client.ts` / `hooks.ts` / `index.ts`.
+//! Pipeline: parse → normalize 3.0/3.1/3.2 → resolve `$ref`s → emit `types.ts`
+//! / `runtime.ts` / `client.ts` / `hooks.ts` / `index.ts`.
+//!
+//! OpenAPI 3.2 `query` operations (HTTP QUERY, RFC 10008) emit a client
+//! method that sends `method: "QUERY"` with a JSON body via `fetch`/`axios`
+//! (both accept arbitrary method strings); `ClientConfig.usePostFallback`
+//! (see `client_emit::FETCH_RUNTIME`/`AXIOS_RUNTIME`) flips that call to
+//! `POST` against the operation's documented twin path at request time.
 
 pub mod client_emit;
 pub mod hooks_emit;

@@ -345,6 +345,9 @@ semantic_domain:
           - name: "openapi_yaml_is_valid_with_search_path"
             kind: "function"
             public: false
+          - name: "openapi_json_exposes_batch_search_endpoint_and_schemas"
+            kind: "function"
+            public: false
           - name: "json_schema_emits_component_schemas"
             kind: "function"
             public: false
@@ -357,7 +360,13 @@ semantic_domain:
           - name: "llm_outline_maps_agent_topics"
             kind: "function"
             public: false
+          - name: "llm_outline_mentions_batch_search"
+            kind: "function"
+            public: false
           - name: "llm_workflow_covers_the_integration_model"
+            kind: "function"
+            public: false
+          - name: "llm_workflow_documents_batch_search_endpoint"
             kind: "function"
             public: false
           - name: "llm_integration_recommends_postgres_alloydb_adapter_boundary"
@@ -370,6 +379,18 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "llm_storage_documents_admin_backup_and_scheduled_cronjob"
+            kind: "function"
+            public: false
+          - name: "openapi_json_exposes_docs_replace_endpoints_and_schemas"
+            kind: "function"
+            public: false
+          - name: "llm_workflow_documents_docs_replace_endpoint"
+            kind: "function"
+            public: false
+          - name: "llm_outline_mentions_docs_replace"
+            kind: "function"
+            public: false
+          - name: "openapi_json_declares_3_2_and_describes_query_twins"
             kind: "function"
             public: false
         source_evidence_node:
@@ -602,6 +623,21 @@ semantic_domain:
           - name: "unknown_collection_404"
             kind: "function"
             public: false
+          - name: "zero_timing"
+            kind: "function"
+            public: false
+          - name: "batch_search_returns_per_item_results_in_order_matching_single_search"
+            kind: "function"
+            public: false
+          - name: "batch_search_partial_failure_reports_per_item_error_with_ok_siblings"
+            kind: "function"
+            public: false
+          - name: "batch_search_over_limit_returns_400"
+            kind: "function"
+            public: false
+          - name: "batch_search_honors_per_item_limit_sort_and_cursor_resume"
+            kind: "function"
+            public: false
           - name: "type_mismatch_422"
             kind: "function"
             public: false
@@ -627,6 +663,57 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "openapi_spec_served"
+            kind: "function"
+            public: false
+          - name: "replace_docs_implicit_delete_field_absent_from_replacement"
+            kind: "function"
+            public: false
+          - name: "replace_docs_stale_version_dropped_and_replay_is_idempotent"
+            kind: "function"
+            public: false
+          - name: "replace_doc_single_resource_identical_to_one_item_batch"
+            kind: "function"
+            public: false
+          - name: "replace_docs_partial_failure_reports_per_item_error_with_ok_siblings"
+            kind: "function"
+            public: false
+          - name: "replace_docs_over_limit_returns_400"
+            kind: "function"
+            public: false
+          - name: "read_consistency_peer"
+            kind: "function"
+            public: false
+          - name: "read_consistency_server"
+            kind: "function"
+            public: false
+          - name: "index_one_doc"
+            kind: "function"
+            public: false
+          - name: "search_with_consistency"
+            kind: "function"
+            public: false
+          - name: "bounded_zero_rejects_lagged_follower"
+            kind: "function"
+            public: false
+          - name: "bounded_within_lag_allows_follower"
+            kind: "function"
+            public: false
+          - name: "leader_consistency_fails_clearly_with_no_reachable_leader"
+            kind: "function"
+            public: false
+          - name: "leader_consistency_rejects_follower_when_leader_is_elsewhere"
+            kind: "function"
+            public: false
+          - name: "leader_pod_serves_leader_consistency_and_default_omitted_header"
+            kind: "function"
+            public: false
+          - name: "omitted_header_on_follower_defaults_to_leader_and_is_rejected"
+            kind: "function"
+            public: false
+          - name: "any_consistency_stays_unconstrained_on_lagged_leaderless_follower"
+            kind: "function"
+            public: false
+          - name: "batch_search_enforces_read_consistency_too"
             kind: "function"
             public: false
         source_evidence_node:

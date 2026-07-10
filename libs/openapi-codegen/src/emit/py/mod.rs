@@ -1,11 +1,18 @@
 // SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-//! Python emitter: read an OpenAPI 3.0/3.1 document and emit pydantic v2 models
-//! plus a typed sync/async HTTP/2 client runtime.
+//! Python emitter: read an OpenAPI 3.0/3.1/3.2 document and emit pydantic v2
+//! models plus a typed sync/async HTTP/2 client runtime.
 //!
 //! Pipeline: parse → `models.py` (BaseModel per component schema) +
 //! `h2c_runtime.py` (generated h2c + TLS ALPN h2 runtime) + `client.py`
 //! (one sync and async `Client` method per operation) + `__init__.py`.
+//!
+//! OpenAPI 3.2 `query` operations (HTTP QUERY, RFC 10008) emit a client
+//! method that calls `self._client.request("QUERY", ..., json=...)` — the
+//! generated `h2c_runtime.py`/any httpx-like injected client accepts
+//! arbitrary method strings. `Client(..., use_post_fallback=True)` (also on
+//! `AsyncClient`) flips that call to `POST` against the operation's
+//! documented twin path at request time.
 
 pub mod client_emit;
 pub mod models_emit;
@@ -149,6 +156,31 @@ mod tests {
           "properties": { "query": { "$ref": "#/components/schemas/QueryNode" } },
           "required": ["query"]
         }
+      } }
+    }"##;
+
+    /// OpenAPI 3.2 fixture: a `query` operation (RFC 10008 HTTP QUERY) with a
+    /// sibling `post` twin on the same path — the default POST-twin fallback
+    /// convention (epic #1296).
+    const SPEC_32_QUERY: &str = r##"{
+      "openapi": "3.2.0",
+      "info": { "title": "Mini", "version": "1.0.0" },
+      "paths": {
+        "/pets": {
+          "query": {
+            "operationId": "searchPets",
+            "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object" } } } },
+            "responses": { "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } } } } }
+          },
+          "post": {
+            "operationId": "createPet",
+            "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } } } },
+            "responses": { "201": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } } } } }
+          }
+        }
+      },
+      "components": { "schemas": {
+        "Pet": { "type": "object", "properties": { "id": { "type": "integer" }, "name": { "type": "string" } }, "required": ["id", "name"] }
       } }
     }"##;
 
@@ -600,6 +632,40 @@ must_reject(conn._read_frame)
             Err(err) => panic!("failed to run python3: {err}"),
         };
         assert!(status.success(), "generated Python files failed py_compile");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn generated_32_query_operation_client_compiles_when_python3_available() {
+        let out = generate(SPEC_32_QUERY, &opts()).unwrap();
+        let client = file(&out, "client.py");
+        assert!(client.contains("def search_pets(self, *, body:"));
+        assert!(client.contains("_method = \"QUERY\""));
+        assert!(client.contains("_method = \"POST\""));
+
+        let dir = unique_temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        for generated in &out.files {
+            fs::write(dir.join(&generated.rel_path), &generated.contents).unwrap();
+        }
+
+        let status = match Command::new("python3")
+            .arg("-m")
+            .arg("py_compile")
+            .arg(dir.join("models.py"))
+            .arg(dir.join("h2c_runtime.py"))
+            .arg(dir.join("client.py"))
+            .arg(dir.join("__init__.py"))
+            .status()
+        {
+            Ok(status) => status,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
+            Err(err) => panic!("failed to run python3: {err}"),
+        };
+        assert!(
+            status.success(),
+            "generated OpenAPI 3.2 QUERY-operation Python files failed py_compile"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

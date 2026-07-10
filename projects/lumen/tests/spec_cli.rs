@@ -42,6 +42,99 @@ fn openapi_is_valid_json_with_search_path() {
     );
 }
 
+/// #1271: `lumen spec` publishes the batch search endpoint and its request/
+/// response schemas — the OpenAPI doc is generated straight from the live
+/// router's `ApiDoc`, so this exercises the same source of truth the real
+/// `lumen spec` CLI command serves.
+#[test]
+fn openapi_json_exposes_batch_search_endpoint_and_schemas() {
+    let v: Value = serde_json::from_str(&openapi_json()).expect("openapi is valid JSON");
+    let batch = &v["paths"]["/collections:search"]["post"];
+    assert!(
+        !batch.is_null(),
+        "OpenAPI is missing POST /collections:search: {:?}",
+        v["paths"].as_object().map(|p| p.keys().collect::<Vec<_>>())
+    );
+    assert_eq!(
+        batch["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/BatchSearchRequest",
+        "batch search request body schema"
+    );
+    assert_eq!(
+        batch["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/BatchSearchResponse",
+        "batch search response schema"
+    );
+    for schema in [
+        "BatchSearchRequest",
+        "BatchSearchItem",
+        "BatchSearchResponse",
+        "BatchSearchResult",
+    ] {
+        assert!(
+            !v["components"]["schemas"][schema].is_null(),
+            "OpenAPI components missing schema `{schema}`"
+        );
+    }
+}
+
+/// #1292: `lumen spec` publishes the `docs:replace` batch endpoint, the
+/// single-resource `docs/{external_id}` sugar endpoint, and their request/
+/// response schemas — generated from the same live-router `ApiDoc` source
+/// of truth `openapi_json_exposes_batch_search_endpoint_and_schemas` (#1271)
+/// exercises.
+#[test]
+fn openapi_json_exposes_docs_replace_endpoints_and_schemas() {
+    let v: Value = serde_json::from_str(&openapi_json()).expect("openapi is valid JSON");
+
+    let batch = &v["paths"]["/collections/{collection_id}/docs:replace"]["put"];
+    assert!(
+        !batch.is_null(),
+        "OpenAPI is missing PUT /collections/{{collection_id}}/docs:replace: {:?}",
+        v["paths"].as_object().map(|p| p.keys().collect::<Vec<_>>())
+    );
+    assert_eq!(
+        batch["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ReplaceDocsRequest",
+        "docs:replace request body schema"
+    );
+    assert_eq!(
+        batch["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ReplaceDocsResponse",
+        "docs:replace response schema"
+    );
+
+    let single = &v["paths"]["/collections/{collection_id}/docs/{external_id}"]["put"];
+    assert!(
+        !single.is_null(),
+        "OpenAPI is missing PUT /collections/{{collection_id}}/docs/{{external_id}}: {:?}",
+        v["paths"].as_object().map(|p| p.keys().collect::<Vec<_>>())
+    );
+    assert_eq!(
+        single["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ReplaceDocBody",
+        "single-resource docs/{{external_id}} request body schema"
+    );
+    assert_eq!(
+        single["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ReplaceDocResult",
+        "single-resource docs/{{external_id}} response schema"
+    );
+
+    for schema in [
+        "ReplaceDocsRequest",
+        "ReplaceDocItem",
+        "ReplaceDocsResponse",
+        "ReplaceDocResult",
+        "ReplaceDocBody",
+    ] {
+        assert!(
+            !v["components"]["schemas"][schema].is_null(),
+            "OpenAPI components missing schema `{schema}`"
+        );
+    }
+}
+
 #[test]
 fn openapi_yaml_is_valid_with_search_path() {
     let v: YamlValue = serde_yaml::from_str(&openapi_yaml()).expect("openapi is valid YAML");
@@ -534,6 +627,113 @@ fn llm_workflow_covers_the_integration_model() {
     }
 }
 
+/// #1271: the workflow topic must teach the batch search verb — endpoint,
+/// request/response shape, partial-failure semantics, and the batch limit —
+/// so an agent reading `lumen llm --topic workflow` learns it without a docs
+/// site.
+#[test]
+fn llm_workflow_documents_batch_search_endpoint() {
+    let g = llm_workflow_md();
+    for needle in [
+        "POST /collections:search",
+        "concurrent fan-out",
+        "\"searches\"",
+        "\"results\"",
+        "\"status\": \"ok\"",
+        "\"status\": \"error\"",
+        "collection_not_found",
+        "Partial failure never fails the batch",
+        "Max batch size is 32",
+        "no merged cursor",
+    ] {
+        assert!(
+            g.contains(needle),
+            "workflow missing batch search `{needle}`"
+        );
+    }
+}
+
+/// #1271: the outline must point an agent at the batch search verb from the
+/// workflow topic entry (not invent a dedicated `--topic batch`, which would
+/// duplicate the single search-flavor topic map).
+#[test]
+fn llm_outline_mentions_batch_search() {
+    let outline = llm_outline_md();
+    assert!(
+        outline.contains("collections:search"),
+        "outline should point at batch search: {outline}"
+    );
+}
+
+/// #1297 (epic #1296 R1): the workflow topic must recommend the RFC 10008
+/// `QUERY` method for search — `QUERY /collections/{id}` + `QUERY
+/// /collections` as dual-registered twins of the POST search endpoints —
+/// and always document `POST` as the permanent, always-available fallback,
+/// never a deprecated path.
+#[test]
+fn llm_workflow_documents_query_method_first_with_post_fallback() {
+    let g = llm_workflow_md();
+    for needle in [
+        "QUERY method (RFC 10008)",
+        "QUERY-first, POST-always-available",
+        "QUERY /collections/{id}",
+        "QUERY /collections",
+        "byte-identical response",
+        "is the permanent fallback",
+        "Content-Type: application/json` is mandatory",
+        "Accept-Query: application/json",
+    ] {
+        assert!(g.contains(needle), "workflow missing QUERY `{needle}`");
+    }
+}
+
+/// #1297: the outline must point an agent at QUERY-first search guidance
+/// from the workflow topic entry, mirroring the batch-search outline pointer
+/// (#1271).
+#[test]
+fn llm_outline_mentions_query_first() {
+    let outline = llm_outline_md();
+    assert!(
+        outline.contains("QUERY-first"),
+        "outline should point at QUERY-first search: {outline}"
+    );
+}
+
+/// #1292: the workflow topic must document the docs:replace full-replacement
+/// write surface — implicit field deletion, doc-level LWW `version`, the
+/// `/index`-vs-`docs:replace` division rule, and the single-resource sugar
+/// endpoint — mirroring the batch search topic's coverage pattern (#1271).
+#[test]
+fn llm_workflow_documents_docs_replace_endpoint() {
+    let g = llm_workflow_md();
+    for needle in [
+        "PUT /collections/{id}/docs:replace",
+        "implicitly deleted",
+        "Own the complete row for a doc?",
+        "doc-level",
+        "current_version",
+        "Partial failure never fails the batch",
+        "MAX_BATCH_REPLACE_SIZE",
+        "PUT /collections/{id}/docs/{external_id}",
+    ] {
+        assert!(
+            g.contains(needle),
+            "workflow missing docs:replace `{needle}`"
+        );
+    }
+}
+
+/// #1292: the outline must point an agent at the docs:replace full-replacement
+/// write verb from the workflow topic entry.
+#[test]
+fn llm_outline_mentions_docs_replace() {
+    let outline = llm_outline_md();
+    assert!(
+        outline.contains("docs:replace"),
+        "outline should point at docs:replace: {outline}"
+    );
+}
+
 #[test]
 fn llm_integration_recommends_postgres_alloydb_adapter_boundary() {
     let integration = llm_integration_md();
@@ -640,6 +840,75 @@ fn openapi_is_self_complete_and_uses_port_7373() {
     assert!(
         servers.iter().all(|u| u.contains(":7373")),
         "servers must use the real port :7373, got {servers:?}"
+    );
+}
+
+/// #1298 (epic #1296): the offline `lumen spec` OpenAPI document is stamped
+/// OpenAPI 3.2 and describes the #1297 `QUERY` twins — `QUERY /collections`
+/// and `QUERY /collections/{collection_id}` — each carrying the
+/// `x-post-twin` extension libs/openapi-codegen's IR resolves the POST
+/// fallback path from, alongside the POST twin itself still being
+/// registered.
+#[test]
+fn openapi_json_declares_3_2_and_describes_query_twins() {
+    let v: Value = serde_json::from_str(&openapi_json()).expect("openapi is valid JSON");
+    assert_eq!(
+        v["openapi"], "3.2.0",
+        "OpenAPI document declares 3.2 (RFC 10008 QUERY support)"
+    );
+
+    let collections_query = &v["paths"]["/collections"]["query"];
+    assert!(
+        !collections_query.is_null(),
+        "OpenAPI is missing QUERY /collections: {:?}",
+        v["paths"]["/collections"]
+            .as_object()
+            .map(|p| p.keys().collect::<Vec<_>>())
+    );
+    assert_eq!(
+        collections_query["x-post-twin"], "/collections:search",
+        "QUERY /collections names its POST twin"
+    );
+    assert_eq!(
+        collections_query["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/BatchSearchRequest",
+        "QUERY /collections request body schema matches its POST twin"
+    );
+    assert_eq!(
+        collections_query["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/BatchSearchResponse",
+        "QUERY /collections response schema matches its POST twin"
+    );
+    assert!(
+        !v["paths"]["/collections:search"]["post"].is_null(),
+        "QUERY /collections keeps its POST twin registered"
+    );
+
+    let collection_id_query = &v["paths"]["/collections/{collection_id}"]["query"];
+    assert!(
+        !collection_id_query.is_null(),
+        "OpenAPI is missing QUERY /collections/{{collection_id}}: {:?}",
+        v["paths"]["/collections/{collection_id}"]
+            .as_object()
+            .map(|p| p.keys().collect::<Vec<_>>())
+    );
+    assert_eq!(
+        collection_id_query["x-post-twin"], "/collections/{collection_id}/search",
+        "QUERY /collections/{{collection_id}} names its POST twin"
+    );
+    assert_eq!(
+        collection_id_query["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/SearchRequest",
+        "QUERY /collections/{{collection_id}} request body schema matches its POST twin"
+    );
+    assert_eq!(
+        collection_id_query["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/SearchResponse",
+        "QUERY /collections/{{collection_id}} response schema matches its POST twin"
+    );
+    assert!(
+        !v["paths"]["/collections/{collection_id}/search"]["post"].is_null(),
+        "QUERY /collections/{{collection_id}} keeps its POST twin registered"
     );
 }
 // CODEGEN-END

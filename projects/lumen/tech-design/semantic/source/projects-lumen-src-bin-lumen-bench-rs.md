@@ -34,7 +34,7 @@ use clap::{Parser, Subcommand};
 use lumen::storage::{Engine, MAX_INDEX_ITEMS};
 use lumen::types::{
     CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest, QueryNode,
-    RangeQuery, SearchRequest, SortMissing, SortOrder, SortSpec, TermQuery,
+    RangeBound, RangeQuery, SearchRequest, SortMissing, SortOrder, SortSpec, TermQuery,
 };
 
 const DEFAULT_DOCUMENTS: usize = 20_000;
@@ -203,8 +203,8 @@ fn run_bool_filter(args: &RunArgs) -> Result<BenchReport> {
                         QueryNode::Range(RangeQuery {
                             field: "age".into(),
                             gt: None,
-                            gte: Some(30.0),
-                            lt: Some(40.0),
+                            gte: Some(RangeBound::Number(30.0)),
+                            lt: Some(RangeBound::Number(40.0)),
                             lte: None,
                         }),
                     ]),
@@ -254,7 +254,7 @@ fn sorted_page_request(limit: u32) -> SearchRequest {
         query: QueryNode::Range(RangeQuery {
             field: "age".into(),
             gt: None,
-            gte: Some(0.0),
+            gte: Some(RangeBound::Number(0.0)),
             lt: None,
             lte: None,
         }),

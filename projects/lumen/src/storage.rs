@@ -39,9 +39,10 @@ use crate::types::{
     Analyzer, CacheStats, CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup,
     DuplicatesRequest, DuplicatesResponse, FieldSpec, FieldStats, FieldType, FieldValue,
     HammingQuery, HasChildQuery, IdsQuery, IndexRequest, IndexResponse, KnnQuery, MatchOp,
-    MatchQuery, QueryNode, RangeQuery, RrfQuery, SearchHit, SearchRequest, SearchResponse,
+    MatchQuery, QueryNode, RangeBound, RangeQuery, ReplaceDocItem, ReplaceDocResult,
+    ReplaceDocsRequest, ReplaceDocsResponse, RrfQuery, SearchHit, SearchRequest, SearchResponse,
     SortMissing, SortOrder, SortSpec, StatsResponse, StorageStats, TermQuery, TermsQuery,
-    VectorSpec,
+    VectorSpec, MAX_BATCH_REPLACE_SIZE,
 };
 use crate::vector_index::{open_backend, FlatCpuIndex, HnswCpuIndex, ScalarCodebook, VectorIndex};
 use roaring::RoaringBitmap;
@@ -77,6 +78,8 @@ pub enum DropOutcome {
 pub enum StorageError {
     #[error("collection not found: {0}")]
     CollectionNotFound(String),
+    #[error("invalid collection id `{0}`: `:` is reserved for custom-method routes (e.g. `POST /collections:search`) and cannot appear in a collection id")]
+    InvalidCollectionName(String),
     #[error("unknown field `{field}` in collection `{collection}`")]
     UnknownField { collection: String, field: String },
     #[error("type mismatch on field `{field}`: expected {expected:?}, got {got}")]
@@ -2806,6 +2809,24 @@ struct Collection {
     /// snapshot/seal is a follow-up.
     /// @spec projects/lumen/tech-design/logic/external-version-lww-optional-version-on-indexitem-drop-stale-pe.md
     cell_versions: FastHashMap<u32, FastHashMap<String, u64>>,
+    /// #1292: doc-level last-write-wins for `PUT .../docs:replace`. Sparse
+    /// `doc-id → highest applied doc version`, populated only for docs
+    /// replaced with an explicit `ReplaceDocItem.version`. Unlike
+    /// `cell_versions` (per `(doc, field)`), this is one version per doc:
+    /// a strictly-older versioned replace drops the entire item. In-memory
+    /// only (reconstructed by WAL replay), same as `cell_versions`.
+    doc_versions: FastHashMap<u32, u64>,
+    /// #1293: `docs:replace` no-op suppression side cache. Sparse `doc-id →
+    /// field-name → FxHash content checksum` of the last value actually
+    /// *written* to a `text`/`vector` field via `docs:replace` — the only
+    /// two field types with no cheap forward-value accessor to compare
+    /// against directly (see `Engine::replace_value_unchanged`). Populated
+    /// and read only by the replace path; the `/index` merge path never
+    /// touches it. In-memory only, same as `cell_versions`/`doc_versions` —
+    /// a missing entry after a restart just means the next replace of that
+    /// field always applies (safe: writing is never wrong, only silently
+    /// skipping would be).
+    field_checksums: FastHashMap<u32, FastHashMap<String, u64>>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
@@ -2826,6 +2847,8 @@ impl Collection {
             last_indexed_at: None,
             search_cache: RwLock::new(FastHashMap::default()),
             cell_versions: FastHashMap::default(),
+            doc_versions: FastHashMap::default(),
+            field_checksums: FastHashMap::default(),
         })
     }
 
@@ -2965,11 +2988,19 @@ impl Engine {
     ///   **different** type / analyzer / multi flag is rejected — type
     ///   changes are an offline op (collection version bump + reindex)
     ///   not covered by this surface in v1.
+    ///
+    /// `collection_id` must not contain `:` — that character is reserved for
+    /// custom-method routes such as `POST /collections:search`, so keeping
+    /// it out of collection ids means the `:search` verb syntax can never be
+    /// ambiguous with a collection id.
     pub fn create_collection(
         &self,
         collection_id: &str,
         req: CreateCollectionRequest,
     ) -> Result<CreateCollectionResponse> {
+        if collection_id.contains(':') {
+            return Err(StorageError::InvalidCollectionName(collection_id.to_string()).into());
+        }
         let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
         let schema: BTreeMap<String, FieldSpec> = req
             .fields
@@ -3382,6 +3413,309 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    // -- Replace docs (full-replacement write) -------------------------------
+
+    /// `PUT /collections/{id}/docs:replace`: each item's `fields` becomes
+    /// the doc's entire indexed state, implicitly deleting any declared
+    /// schema field the doc has today but that is absent from `fields`.
+    ///
+    /// Batch-level result stays `Ok` (HTTP 200) unless the batch itself is
+    /// malformed or over [`MAX_BATCH_REPLACE_SIZE`] — a single bad item
+    /// (unknown field, type mismatch, stale version) is reported per-item
+    /// in [`ReplaceDocResult`] and never fails its siblings.
+    /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+    pub fn replace_docs(
+        &self,
+        collection_id: &str,
+        req: ReplaceDocsRequest,
+    ) -> Result<ReplaceDocsResponse> {
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        let coll = state
+            .collections
+            .get_mut(collection_id)
+            .ok_or_else(|| StorageError::CollectionNotFound(collection_id.to_string()))?;
+        Self::replace_docs_collection(&self.metrics, collection_id, coll, req)
+    }
+
+    fn replace_docs_collection(
+        metrics: &Metrics,
+        collection_id: &str,
+        coll: &mut Collection,
+        req: ReplaceDocsRequest,
+    ) -> Result<ReplaceDocsResponse> {
+        if req.docs.len() > MAX_BATCH_REPLACE_SIZE {
+            return Err(StorageError::BulkLimit {
+                got: req.docs.len(),
+                max: MAX_BATCH_REPLACE_SIZE,
+            }
+            .into());
+        }
+        coll.check_live(collection_id)?;
+        if !req.docs.is_empty() {
+            coll.clear_search_cache();
+            coll.clear_text_rank_caches();
+            coll.clear_number_filter_caches();
+        }
+
+        let mut results = Vec::with_capacity(req.docs.len());
+        let mut total_fields_written = 0u64;
+        let mut total_fields_skipped = 0u64;
+        let mut total_bytes = 0u64;
+        let mut any_written = false;
+        for item in req.docs {
+            let (result, bytes) = Self::replace_one_doc(collection_id, coll, item);
+            if let ReplaceDocResult::Ok {
+                fields_written,
+                fields_skipped,
+            } = &result
+            {
+                any_written = true;
+                total_fields_written += *fields_written as u64;
+                total_fields_skipped += *fields_skipped as u64;
+                total_bytes += bytes;
+            }
+            results.push(result);
+        }
+        if any_written {
+            coll.last_indexed_at = Some(std::time::SystemTime::now());
+        }
+        metrics.incr_index(total_fields_written, total_bytes);
+        metrics.incr_replace_skipped(total_fields_skipped);
+        Ok(ReplaceDocsResponse { results })
+    }
+
+    /// Apply one [`ReplaceDocItem`], full-replacement at doc granularity.
+    /// Fields absent from `item.fields` but present on the doc today are
+    /// dropped; fields present in both are compared against the currently
+    /// indexed state (see [`Engine::replace_value_unchanged`]) and, when
+    /// equal, skipped entirely — no `drop_eid`, no `apply_value`, no
+    /// posting-list rewrite or HNSW tombstone/reinsert (#1293); fields new
+    /// to the doc, or whose value changed, are re-applied (drop-then-
+    /// reapply, the same field-granularity replacement `index_collection`
+    /// already uses).
+    ///
+    /// Every field is type-checked against the schema *before* any
+    /// mutation happens, so a per-item error (unknown field, type
+    /// mismatch) leaves the doc's prior state completely untouched —
+    /// unlike `index_collection`'s partial-apply-on-error, docs:replace is
+    /// framed as an atomic full replacement and a partially-applied doc
+    /// would break that guarantee.
+    ///
+    /// Returns the per-item result plus the total bytes actually written
+    /// (0 for a fully-skipped item, `Dropped`, or `Error`), which the
+    /// caller feeds into `Metrics::incr_index` so a byte-identical resend
+    /// leaves `lumen_index_bytes_total` unmoved.
+    fn replace_one_doc(
+        collection_id: &str,
+        coll: &mut Collection,
+        item: ReplaceDocItem,
+    ) -> (ReplaceDocResult, u64) {
+        let (id, new_doc_in_request) = coll
+            .interner
+            .intern_owned_with_status(item.external_id.clone());
+
+        // Doc-level LWW: a strictly-older version arriving later drops the
+        // *entire* item, reported as its own `Dropped` variant (not `Ok`
+        // and not `Error`) so callers can tell "a newer write already won"
+        // apart from both success and failure.
+        if let Some(v) = item.version {
+            if let Some(stored) = coll.doc_versions.get(&id).copied() {
+                if stored >= v {
+                    return (
+                        ReplaceDocResult::Dropped {
+                            current_version: stored,
+                        },
+                        0,
+                    );
+                }
+            }
+        }
+
+        for (field_name, value) in &item.fields {
+            let Some(fi) = coll.fields.get(field_name.as_str()) else {
+                return (
+                    ReplaceDocResult::Error {
+                        code: "unknown_field".to_string(),
+                        message: StorageError::UnknownField {
+                            collection: collection_id.to_string(),
+                            field: field_name.clone(),
+                        }
+                        .to_string(),
+                    },
+                    0,
+                );
+            };
+            if let Err(e) = validate_value(fi, value, field_name) {
+                return (
+                    ReplaceDocResult::Error {
+                        code: "type_mismatch".to_string(),
+                        message: e.to_string(),
+                    },
+                    0,
+                );
+            }
+        }
+
+        let old_fields: BTreeSet<String> = if new_doc_in_request {
+            BTreeSet::new()
+        } else {
+            coll.eid_fields
+                .get(&id)
+                .map(FieldCoverage::to_btree_set)
+                .unwrap_or_default()
+        };
+        let eid = coll.interner.resolve(id).to_string();
+
+        for f in &old_fields {
+            if !item.fields.contains_key(f) {
+                if let Some(fi) = coll.fields.get_mut(f.as_str()) {
+                    fi.drop_eid(id, &eid);
+                }
+                // The field is gone; drop its stale replace-path checksum
+                // (see `replace_value_unchanged`) so it can never be
+                // mistakenly compared against if the field is re-added
+                // later without a fresh write in between.
+                if let Some(sub) = coll.field_checksums.get_mut(&id) {
+                    sub.remove(f);
+                }
+            }
+        }
+
+        let mut fields_written = 0u32;
+        let mut fields_skipped = 0u32;
+        let mut bytes_written = 0u64;
+        for (field_name, value) in &item.fields {
+            let is_delta = old_fields.contains(field_name);
+            if is_delta && Self::replace_value_unchanged(coll, id, field_name, value) {
+                // Server-side no-op suppression (#1293): the incoming value
+                // is byte-identical to what's already indexed — skip the
+                // drop/reapply entirely so unchanged fields never rewrite a
+                // posting list or tombstone+reinsert an HNSW vector.
+                fields_skipped += 1;
+                continue;
+            }
+            let fi = coll
+                .fields
+                .get_mut(field_name.as_str())
+                .expect("field presence validated above");
+            if is_delta {
+                fi.drop_eid(id, &eid);
+            }
+            let bytes = match apply_value(fi, id, &eid, value, field_name) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    return (
+                        ReplaceDocResult::Error {
+                            code: "apply_failed".to_string(),
+                            message: e.to_string(),
+                        },
+                        0,
+                    );
+                }
+            };
+            Self::record_replace_checksum(coll, id, field_name, value);
+            fields_written += 1;
+            bytes_written += bytes;
+        }
+
+        if item.fields.is_empty() {
+            coll.eid_fields.remove(&id);
+            coll.field_checksums.remove(&id);
+        } else {
+            coll.eid_fields.insert(
+                id,
+                FieldCoverage::from_btree_set(item.fields.keys().cloned().collect()),
+            );
+        }
+        if let Some(v) = item.version {
+            coll.doc_versions.insert(id, v);
+        }
+
+        (
+            ReplaceDocResult::Ok {
+                fields_written,
+                fields_skipped,
+            },
+            bytes_written,
+        )
+    }
+
+    /// Read-only per-(doc,field) equality check against the currently
+    /// indexed state — the no-op suppression decision for `docs:replace`
+    /// (#1293). Only called for a field the doc already had (`old_fields`);
+    /// a brand-new field is never "unchanged".
+    ///
+    /// - `keyword`/`number`/`set`/`hash` compare the exact indexed value:
+    ///   each backend already keeps a forward accessor (`keyword_at`,
+    ///   `number_at`, `set_members`, `hash_at`) for predicate/delete use, so
+    ///   equality is a real value compare, no extra storage.
+    /// - `text` has no raw forward store (only tokenized postings — the
+    ///   original string isn't recoverable), and `vector` deliberately
+    ///   avoids a full f32 compare (the point is to skip the expensive
+    ///   HNSW tombstone/reinsert, not pay an equivalent cost checking it).
+    ///   Both instead compare a stored FxHash checksum of the last
+    ///   *replaced* value, kept in `Collection::field_checksums` — a
+    ///   replace-path-only side cache, never persisted and never touched
+    ///   by the `/index` merge path (out of scope; #1293 Scope). A missing
+    ///   checksum (field never replaced before, or last written via
+    ///   `/index`) is always treated as "changed": the safe default is to
+    ///   write, never to silently skip.
+    fn replace_value_unchanged(
+        coll: &Collection,
+        id: u32,
+        field_name: &str,
+        value: &FieldValue,
+    ) -> bool {
+        let Some(fi) = coll.fields.get(field_name) else {
+            return false;
+        };
+        match (fi, value) {
+            (FieldIndex::Keyword(k), FieldValue::String(s)) => {
+                k.keyword_at(id).as_deref() == Some(s.as_str())
+            }
+            (FieldIndex::Number(n), FieldValue::Number(x)) => {
+                SortableF64::new(*x).is_ok_and(|key| n.number_at(id) == Some(key))
+            }
+            (FieldIndex::Set(s), FieldValue::StringList(elems)) => {
+                let want: BTreeSet<String> = elems.iter().cloned().collect();
+                s.set_members(id) == Some(want)
+            }
+            (FieldIndex::Hash(h), FieldValue::String(s)) => parse_hash(s).ok() == h.hash_at(id),
+            (FieldIndex::Text { .. }, FieldValue::String(s)) => coll
+                .field_checksums
+                .get(&id)
+                .and_then(|m| m.get(field_name))
+                .is_some_and(|&cs| cs == checksum_bytes(s.as_bytes())),
+            (FieldIndex::Vector { .. }, FieldValue::Vector(v)) => coll
+                .field_checksums
+                .get(&id)
+                .and_then(|m| m.get(field_name))
+                .is_some_and(|&cs| cs == checksum_f32(v)),
+            _ => false,
+        }
+    }
+
+    /// After actually writing a `text`/`vector` field on the replace path,
+    /// remember its content checksum for the next `replace_value_unchanged`
+    /// comparison (see that function for why only these two types need a
+    /// side cache). No-op for every other field type.
+    fn record_replace_checksum(
+        coll: &mut Collection,
+        id: u32,
+        field_name: &str,
+        value: &FieldValue,
+    ) {
+        let checksum = match (coll.fields.get(field_name), value) {
+            (Some(FieldIndex::Text { .. }), FieldValue::String(s)) => checksum_bytes(s.as_bytes()),
+            (Some(FieldIndex::Vector { .. }), FieldValue::Vector(v)) => checksum_f32(v),
+            _ => return,
+        };
+        coll.field_checksums
+            .entry(id)
+            .or_default()
+            .insert(field_name.to_string(), checksum);
     }
 
     // -- Search -------------------------------------------------------------
@@ -4196,6 +4530,9 @@ impl Engine {
             RaftLogEntry::Index { collection_id, req } => {
                 ApplyOutcome::Indexed(self.index(&collection_id, req)?)
             }
+            RaftLogEntry::ReplaceDocs { collection_id, req } => {
+                ApplyOutcome::Replaced(self.replace_docs(&collection_id, req)?)
+            }
             RaftLogEntry::Delete {
                 collection_id,
                 external_id,
@@ -4229,6 +4566,7 @@ impl Engine {
 pub enum ApplyOutcome {
     Created(CreateCollectionResponse),
     Indexed(IndexResponse),
+    Replaced(ReplaceDocsResponse),
     Deleted,
     Dropped(DropOutcome),
     /// New collection version after add-field / drop-field.
@@ -4417,6 +4755,73 @@ fn value_kind(v: &FieldValue) -> &'static str {
         FieldValue::Number(_) => "number",
         FieldValue::Vector(_) => "f32[]",
         FieldValue::StringList(_) => "string[]",
+    }
+}
+
+/// FxHash content checksum of a `text` field's raw string, used only by
+/// `docs:replace`'s no-op suppression (`Engine::replace_value_unchanged` /
+/// `Engine::record_replace_checksum`) — see those for why `text` compares a
+/// checksum instead of the raw value.
+fn checksum_bytes(bytes: &[u8]) -> u64 {
+    let mut hasher = FxHasher::default();
+    hasher.write(bytes);
+    hasher.finish()
+}
+
+/// FxHash content checksum of a `vector` field's raw `f32` values (hashed
+/// via their bit patterns, not their text form), used only by
+/// `docs:replace`'s no-op suppression — the whole point is avoiding a full
+/// f32 compare (or an HNSW round trip) just to detect "unchanged".
+fn checksum_f32(v: &[f32]) -> u64 {
+    let mut hasher = FxHasher::default();
+    for x in v {
+        hasher.write_u32(x.to_bits());
+    }
+    hasher.finish()
+}
+
+/// Non-mutating type-check mirroring [`apply_value`]'s match arms, used by
+/// `replace_one_doc` to validate every field of a `docs:replace` item
+/// *before* any mutation happens (see `replace_one_doc` for why that
+/// ordering matters). Kept in sync with `apply_value`'s arms by hand: any
+/// new `(FieldIndex, FieldValue)` pairing accepted there must be mirrored
+/// here.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+fn validate_value(fi: &FieldIndex, value: &FieldValue, field_name: &str) -> Result<()> {
+    match (fi, value) {
+        (FieldIndex::Text { .. }, FieldValue::String(_)) => Ok(()),
+        (FieldIndex::Keyword(_), FieldValue::String(_)) => Ok(()),
+        (FieldIndex::Number(_), FieldValue::Number(x)) => {
+            SortableF64::new(*x).map_err(|e| StorageError::InvalidNumber(e.to_string()))?;
+            Ok(())
+        }
+        (FieldIndex::Set(_), FieldValue::StringList(_)) => Ok(()),
+        (FieldIndex::Set(_), FieldValue::String(_)) => Err(StorageError::TypeMismatch {
+            field: field_name.to_string(),
+            expected: FieldType::Set,
+            got: "string (expected array of strings)",
+        }
+        .into()),
+        (FieldIndex::Vector { spec, .. }, FieldValue::Vector(v)) => {
+            if v.len() as u32 != spec.dim {
+                bail!(
+                    "vector field `{field_name}` declared dim={} but got vector of length {}",
+                    spec.dim,
+                    v.len()
+                );
+            }
+            Ok(())
+        }
+        (FieldIndex::Hash(_), FieldValue::String(s)) => {
+            parse_hash(s)?;
+            Ok(())
+        }
+        (fi, v) => Err(StorageError::TypeMismatch {
+            field: field_name.to_string(),
+            expected: fi.field_type(),
+            got: value_kind(v),
+        }
+        .into()),
     }
 }
 
@@ -6003,20 +6408,32 @@ fn eval_range(coll: &Collection, r: &RangeQuery) -> Result<RoaringBitmap> {
             collection: "<>".into(),
             field: r.field.clone(),
         })?;
-    let FieldIndex::Number(n) = fi else {
-        bail!(
-            "range query is only valid on number fields (field `{}`)",
+    match fi {
+        FieldIndex::Number(n) => {
+            // Phase 2h-3: range walk through the unified accessor. Segment OFF: walks
+            // the in-RAM `values.range((low, high))` exactly as before. Segment ON:
+            // binary-searches the on-disk sorted-value index to the lo/hi bounds
+            // (SELECTIVE — no forward scan), subtracts tombstones, and unions the live
+            // tail — byte-identical result set to the in-RAM range walk over the same
+            // data.
+            let (low, high) = range_bounds(r)?;
+            Ok(n.range_postings(low, high))
+        }
+        // #1307: `keyword` range — byte/lexicographic comparison over the same
+        // `BTreeMap<String, RoaringBitmap>` ordering exact `term`/`terms` match
+        // already uses. Not yet segment-accelerated (walks `live_terms()`, the
+        // segment+live-tail composed enumeration `duplicates`/`unique_terms`
+        // already drive from); correct on every corpus, just not the on-disk
+        // binary-search fast path `NumberIndex::range_postings` has.
+        FieldIndex::Keyword(k) => {
+            let (low, high) = keyword_range_bounds(r)?;
+            Ok(keyword_range_postings(k, low, high))
+        }
+        _ => bail!(
+            "range query is only valid on number or keyword fields (field `{}`)",
             r.field
-        );
-    };
-
-    // Phase 2h-3: range walk through the unified accessor. Segment OFF: walks the
-    // in-RAM `values.range((low, high))` exactly as before. Segment ON: binary-
-    // searches the on-disk sorted-value index to the lo/hi bounds (SELECTIVE — no
-    // forward scan), subtracts tombstones, and unions the live tail —
-    // byte-identical result set to the in-RAM range walk over the same data.
-    let (low, high) = range_bounds(r)?;
-    Ok(n.range_postings(low, high))
+        ),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -6047,21 +6464,33 @@ fn is_predicable(node: &QueryNode) -> bool {
     )
 }
 
+/// Extract this bound's numeric value, or a clear error if the caller sent a
+/// string bound against what turned out to be a `number` field (#1307 AC2 —
+/// 400, not a silent misparse or panic).
+fn numeric_bound(field: &str, b: &RangeBound) -> Result<f64> {
+    match b {
+        RangeBound::Number(v) => Ok(*v),
+        RangeBound::Keyword(_) => bail!(
+            "range query on field `{field}` expects a numeric bound (the field is `number`-typed), got a string"
+        ),
+    }
+}
+
 fn range_bounds(
     r: &RangeQuery,
 ) -> Result<(std::ops::Bound<SortableF64>, std::ops::Bound<SortableF64>)> {
     use std::ops::Bound;
-    let low = if let Some(v) = r.gte {
-        Bound::Included(SortableF64::new(v)?)
-    } else if let Some(v) = r.gt {
-        Bound::Excluded(SortableF64::new(v)?)
+    let low = if let Some(v) = &r.gte {
+        Bound::Included(SortableF64::new(numeric_bound(&r.field, v)?)?)
+    } else if let Some(v) = &r.gt {
+        Bound::Excluded(SortableF64::new(numeric_bound(&r.field, v)?)?)
     } else {
         Bound::Unbounded
     };
-    let high = if let Some(v) = r.lte {
-        Bound::Included(SortableF64::new(v)?)
-    } else if let Some(v) = r.lt {
-        Bound::Excluded(SortableF64::new(v)?)
+    let high = if let Some(v) = &r.lte {
+        Bound::Included(SortableF64::new(numeric_bound(&r.field, v)?)?)
+    } else if let Some(v) = &r.lt {
+        Bound::Excluded(SortableF64::new(numeric_bound(&r.field, v)?)?)
     } else {
         Bound::Unbounded
     };
@@ -6071,6 +6500,107 @@ fn range_bounds(
 fn in_range(v: SortableF64, r: &RangeQuery) -> Result<bool> {
     let (lo, hi) = range_bounds(r)?;
     Ok(in_sortable_range(v, &lo, &hi))
+}
+
+/// Extract this bound's string value, or a clear error if the caller sent a
+/// numeric bound against what turned out to be a `keyword` field (#1307 AC2 —
+/// 400, not a silent misparse or panic).
+fn keyword_bound(field: &str, b: &RangeBound) -> Result<String> {
+    match b {
+        RangeBound::Keyword(v) => Ok(v.clone()),
+        RangeBound::Number(_) => bail!(
+            "range query on field `{field}` expects a string bound (the field is `keyword`-typed), got a number"
+        ),
+    }
+}
+
+/// #1307: the `keyword`-field analogue of [`range_bounds`] — same
+/// gt/gte/lt/lte → `Bound` lowering, but over `String` bounds compared
+/// byte/lexicographically (`String`'s `Ord` is a byte-wise UTF-8 comparison),
+/// the ordering exact `term`/`terms` match already relies on via
+/// `KeywordIndex::terms: BTreeMap<String, RoaringBitmap>`.
+fn keyword_range_bounds(
+    r: &RangeQuery,
+) -> Result<(std::ops::Bound<String>, std::ops::Bound<String>)> {
+    use std::ops::Bound;
+    let low = if let Some(v) = &r.gte {
+        Bound::Included(keyword_bound(&r.field, v)?)
+    } else if let Some(v) = &r.gt {
+        Bound::Excluded(keyword_bound(&r.field, v)?)
+    } else {
+        Bound::Unbounded
+    };
+    let high = if let Some(v) = &r.lte {
+        Bound::Included(keyword_bound(&r.field, v)?)
+    } else if let Some(v) = &r.lt {
+        Bound::Excluded(keyword_bound(&r.field, v)?)
+    } else {
+        Bound::Unbounded
+    };
+    Ok((low, high))
+}
+
+/// `true` when a `(low, high)` `String` range is EMPTY by construction — the
+/// `keyword`-bound analogue of [`range_is_empty`]: same inverted /
+/// degenerate-exclusive guard (`BTreeMap::range` panics on the same shapes
+/// for a `String` key as it does for `SortableF64`), just over `String`.
+fn range_is_empty_str(low: &std::ops::Bound<String>, high: &std::ops::Bound<String>) -> bool {
+    use std::ops::Bound::*;
+    let (lo, lo_excl) = match low {
+        Included(b) => (b, false),
+        Excluded(b) => (b, true),
+        Unbounded => return false,
+    };
+    let (hi, hi_excl) = match high {
+        Included(b) => (b, false),
+        Excluded(b) => (b, true),
+        Unbounded => return false,
+    };
+    lo > hi || (lo == hi && (lo_excl || hi_excl))
+}
+
+/// #1307: byte/lexicographic range walk over a `keyword` field's LIVE terms —
+/// segment + live-tail composed via [`KeywordIndex::live_terms`] (the same
+/// unified enumeration `duplicates`/`unique_terms` drive from after a seal
+/// drops the in-RAM `terms` driver), so a sealed collection answers a keyword
+/// range identically to an unsealed one. `BTreeMap<String, _>::range` walks
+/// the SAME byte-order `terms` already keeps for exact `term`/`terms` match —
+/// no new sort machinery.
+fn keyword_range_postings(
+    k: &KeywordIndex,
+    lo: std::ops::Bound<String>,
+    hi: std::ops::Bound<String>,
+) -> RoaringBitmap {
+    if range_is_empty_str(&lo, &hi) {
+        return RoaringBitmap::new();
+    }
+    let terms = k.live_terms();
+    let mut out = RoaringBitmap::new();
+    for (_, posting) in terms.range((lo, hi)) {
+        out |= posting;
+    }
+    out
+}
+
+fn in_keyword_range(v: &str, r: &RangeQuery) -> Result<bool> {
+    let (lo, hi) = keyword_range_bounds(r)?;
+    Ok(in_str_range(v, &lo, &hi))
+}
+
+#[inline]
+fn in_str_range(v: &str, lo: &std::ops::Bound<String>, hi: &std::ops::Bound<String>) -> bool {
+    use std::ops::Bound::*;
+    let lo_ok = match lo {
+        Included(b) => v >= b.as_str(),
+        Excluded(b) => v > b.as_str(),
+        Unbounded => true,
+    };
+    let hi_ok = match hi {
+        Included(b) => v <= b.as_str(),
+        Excluded(b) => v < b.as_str(),
+        Unbounded => true,
+    };
+    lo_ok && hi_ok
 }
 
 #[inline]
@@ -6478,15 +7008,21 @@ fn clause_matches(coll: &Collection, node: &QueryNode, id: u32) -> Result<Option
         }
         QueryNode::Range(r) => {
             let fi = coll.fields.get(&r.field).ok_or_else(|| unknown(&r.field))?;
-            let FieldIndex::Number(n) = fi else {
-                bail!(
-                    "range query is only valid on number fields (field `{}`)",
+            match fi {
+                FieldIndex::Number(n) => match n.number_at(id) {
+                    Some(v) if in_range(v, r)? => Some(1.0),
+                    _ => None,
+                },
+                // #1307: keyword range as a per-doc predicate — same byte/
+                // lexicographic comparison `eval_range`'s materialized path uses.
+                FieldIndex::Keyword(k) => match k.keyword_at(id) {
+                    Some(v) if in_keyword_range(&v, r)? => Some(1.0),
+                    _ => None,
+                },
+                _ => bail!(
+                    "range query is only valid on number or keyword fields (field `{}`)",
                     r.field
-                );
-            };
-            match n.number_at(id) {
-                Some(v) if in_range(v, r)? => Some(1.0),
-                _ => None,
+                ),
             }
         }
         QueryNode::Match(m) => {
@@ -8408,6 +8944,8 @@ impl Collection {
             last_indexed_at: None,
             search_cache: RwLock::new(FastHashMap::default()),
             cell_versions: FastHashMap::default(),
+            doc_versions: FastHashMap::default(),
+            field_checksums: FastHashMap::default(),
         })
     }
 }
@@ -9080,6 +9618,8 @@ impl Collection {
             last_indexed_at: None,
             search_cache: RwLock::new(FastHashMap::default()),
             cell_versions: FastHashMap::default(),
+            doc_versions: FastHashMap::default(),
+            field_checksums: FastHashMap::default(),
         })
     }
 }
@@ -9881,8 +10421,8 @@ mod segment_predicate_diff_tests {
             QueryNode::Range(RangeQuery {
                 field: "age".into(),
                 gt: None,
-                gte: Some(gte),
-                lt: Some(lt),
+                gte: Some(RangeBound::Number(gte)),
+                lt: Some(RangeBound::Number(lt)),
                 lte: None,
             }),
         ])
@@ -9905,8 +10445,8 @@ mod segment_predicate_diff_tests {
             QueryNode::Range(RangeQuery {
                 field: "age".into(),
                 gt: None,
-                gte: Some(gte),
-                lt: Some(lt),
+                gte: Some(RangeBound::Number(gte)),
+                lt: Some(RangeBound::Number(lt)),
                 lte: None,
             }),
         ])
@@ -10943,10 +11483,10 @@ mod segment_number_range_diff_tests {
     fn rangeq(gte: Option<f64>, gt: Option<f64>, lte: Option<f64>, lt: Option<f64>) -> QueryNode {
         QueryNode::Range(RangeQuery {
             field: "price".into(),
-            gte,
-            gt,
-            lte,
-            lt,
+            gte: gte.map(RangeBound::Number),
+            gt: gt.map(RangeBound::Number),
+            lte: lte.map(RangeBound::Number),
+            lt: lt.map(RangeBound::Number),
         })
     }
 
@@ -12634,8 +13174,8 @@ mod segment_text_diff_tests {
             }),
             QueryNode::Range(RangeQuery {
                 field: "price".into(),
-                gte: Some(lo),
-                lte: Some(hi),
+                gte: Some(RangeBound::Number(lo)),
+                lte: Some(RangeBound::Number(hi)),
                 gt: None,
                 lt: None,
             }),
@@ -13968,7 +14508,7 @@ mod tests {
             query: QueryNode::Range(crate::types::RangeQuery {
                 field: "age".into(),
                 gt: None,
-                gte: Some(0.0),
+                gte: Some(RangeBound::Number(0.0)),
                 lt: None,
                 lte: None,
             }),
@@ -14267,6 +14807,23 @@ mod tests {
         assert_eq!(r.fields_count, 4);
     }
 
+    // #1271: `:` is reserved for custom-method routes (`POST
+    // /collections:search`) so it must never be a valid collection id.
+    #[test]
+    fn create_collection_rejects_colon_in_collection_id() {
+        let e = Engine::new();
+        let err = e
+            .create_collection("users:search", build_users_schema())
+            .unwrap_err();
+        let se = err
+            .downcast_ref::<StorageError>()
+            .expect("StorageError variant");
+        assert!(
+            matches!(se, StorageError::InvalidCollectionName(id) if id == "users:search"),
+            "expected InvalidCollectionName, got {se:?}"
+        );
+    }
+
     #[test]
     fn index_and_term_search_keyword() {
         let e = Engine::new();
@@ -14490,8 +15047,8 @@ mod tests {
                 SearchRequest {
                     query: QueryNode::Range(RangeQuery {
                         field: "age".into(),
-                        gte: Some(20.0),
-                        lt: Some(50.0),
+                        gte: Some(RangeBound::Number(20.0)),
+                        lt: Some(RangeBound::Number(50.0)),
                         gt: None,
                         lte: None,
                     }),
@@ -14505,6 +15062,149 @@ mod tests {
             )
             .unwrap();
         assert_eq!(resp.total, 3);
+    }
+
+    /// #1307 AC1: string `gt`/`gte`/`lt`/`lte` bounds on a `keyword` field
+    /// (`email`) filter by byte/lexicographic comparison, matching a
+    /// reference sort of the same values — the ordering ISO-8601
+    /// date/datetime strings rely on for chronological sort.
+    #[test]
+    fn range_query_on_keyword_byte_lexicographic() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        let emails = [
+            "alice@example.com",
+            "bob@example.com",
+            "carol@example.com",
+            "dave@example.com",
+            "erin@example.com",
+        ];
+        let items = emails
+            .iter()
+            .enumerate()
+            .map(|(i, addr)| {
+                item(
+                    &format!("u{i}"),
+                    "email",
+                    FieldValue::String((*addr).into()),
+                )
+            })
+            .collect();
+        e.index(
+            "users",
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        let run = |gte: Option<&str>, lt: Option<&str>| {
+            e.search(
+                "users",
+                SearchRequest {
+                    query: QueryNode::Range(RangeQuery {
+                        field: "email".into(),
+                        gt: None,
+                        gte: gte.map(|s| RangeBound::Keyword(s.into())),
+                        lt: lt.map(|s| RangeBound::Keyword(s.into())),
+                        lte: None,
+                    }),
+                    limit: 10,
+                    cursor: None,
+                    routing_key: None,
+                    sort: None,
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap()
+        };
+
+        // bob..dave (exclusive) → {bob, carol} = 2, matching a reference sort
+        // of the same strings.
+        let resp = run(Some("bob@example.com"), Some("dave@example.com"));
+        assert_eq!(resp.total, 2);
+        let mut hit_ids: Vec<&str> = resp.hits.iter().map(|h| h.external_id.as_str()).collect();
+        hit_ids.sort();
+        assert_eq!(hit_ids, vec!["u1", "u2"]);
+
+        // Unbounded above "carol@example.com" (inclusive) → {carol, dave, erin} = 3.
+        let resp = run(Some("carol@example.com"), None);
+        assert_eq!(resp.total, 3);
+    }
+
+    /// #1307 AC2: a numeric bound against a non-`number` (`keyword`) field, or
+    /// a string bound against a non-`keyword` (`number`) field, returns an
+    /// error (mapped to 400 at the API layer, not a silent misparse or
+    /// panic) rather than a result set.
+    #[test]
+    fn range_query_bound_type_mismatch_rejected() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![
+                    item("u1", "age", FieldValue::Number(30.0)),
+                    item("u1", "email", FieldValue::String("a@example.com".into())),
+                ],
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        // String bound against the `number` field `age`.
+        let err = e
+            .search(
+                "users",
+                SearchRequest {
+                    query: QueryNode::Range(RangeQuery {
+                        field: "age".into(),
+                        gt: None,
+                        gte: Some(RangeBound::Keyword("20".into())),
+                        lt: None,
+                        lte: None,
+                    }),
+                    limit: 10,
+                    cursor: None,
+                    routing_key: None,
+                    sort: None,
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("numeric bound"),
+            "unexpected error: {err}"
+        );
+
+        // Numeric bound against the `keyword` field `email`.
+        let err = e
+            .search(
+                "users",
+                SearchRequest {
+                    query: QueryNode::Range(RangeQuery {
+                        field: "email".into(),
+                        gt: None,
+                        gte: Some(RangeBound::Number(1.0)),
+                        lt: None,
+                        lte: None,
+                    }),
+                    limit: 10,
+                    cursor: None,
+                    routing_key: None,
+                    sort: None,
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("string bound"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -14542,8 +15242,8 @@ mod tests {
             }),
             QueryNode::Range(RangeQuery {
                 field: "age".into(),
-                gte: Some(25.0),
-                lt: Some(40.0),
+                gte: Some(RangeBound::Number(25.0)),
+                lt: Some(RangeBound::Number(40.0)),
                 gt: None,
                 lte: None,
             }),
@@ -14726,8 +15426,8 @@ mod tests {
             }),
             QueryNode::Range(RangeQuery {
                 field: "age".into(),
-                gte: Some(25.0),
-                lt: Some(40.0),
+                gte: Some(RangeBound::Number(25.0)),
+                lt: Some(RangeBound::Number(40.0)),
                 gt: None,
                 lte: None,
             }),
@@ -14820,7 +15520,7 @@ mod tests {
             QueryNode::Range(RangeQuery {
                 field: "age".into(),
                 gte: None,
-                lt: Some(40.0),
+                lt: Some(RangeBound::Number(40.0)),
                 gt: None,
                 lte: None,
             }),
@@ -15788,9 +16488,9 @@ mod tests {
             run(RangeQuery {
                 field: "age".into(),
                 gt: None,
-                gte: Some(2.0),
+                gte: Some(RangeBound::Number(2.0)),
                 lt: None,
-                lte: Some(5.0)
+                lte: Some(RangeBound::Number(5.0))
             }),
             4
         );
@@ -15798,9 +16498,9 @@ mod tests {
         assert_eq!(
             run(RangeQuery {
                 field: "age".into(),
-                gt: Some(2.0),
+                gt: Some(RangeBound::Number(2.0)),
                 gte: None,
-                lt: Some(5.0),
+                lt: Some(RangeBound::Number(5.0)),
                 lte: None
             }),
             2
@@ -15810,8 +16510,8 @@ mod tests {
             run(RangeQuery {
                 field: "age".into(),
                 gt: None,
-                gte: Some(2.0),
-                lt: Some(5.0),
+                gte: Some(RangeBound::Number(2.0)),
+                lt: Some(RangeBound::Number(5.0)),
                 lte: None
             }),
             3
@@ -16109,7 +16809,7 @@ mod triple_path_diff_tests {
 
             // The query battery (built once, reused across paths).
             let q_range = || driven(QueryNode::Range(RangeQuery {
-                field: "num".into(), gt: None, gte: Some(lo as f64), lt: Some(hi as f64), lte: None,
+                field: "num".into(), gt: None, gte: Some(RangeBound::Number(lo as f64)), lt: Some(RangeBound::Number(hi as f64)), lte: None,
             }));
             let q_term = || driven(QueryNode::Term(TermQuery {
                 field: "kw".into(), value: FieldValue::String(kw_pick.to_string()),
@@ -16373,8 +17073,8 @@ mod checkpoint_engine_tests {
             driven(QueryNode::Range(RangeQuery {
                 field: "num".into(),
                 gt: None,
-                gte: Some(2.0),
-                lt: Some(8.0),
+                gte: Some(RangeBound::Number(2.0)),
+                lt: Some(RangeBound::Number(8.0)),
                 lte: None,
             })),
             driven(QueryNode::Term(TermQuery {

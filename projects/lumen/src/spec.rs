@@ -10,18 +10,35 @@
 
 use serde_json::{json, Value};
 
-/// The full OpenAPI 3 document as pretty JSON (every route + schema).
+/// The full OpenAPI 3.2 document as pretty JSON (every route + schema,
+/// including the #1297 `QUERY` twins injected by `crate::api::openapi`).
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn openapi_json() -> String {
-    crate::api::openapi()
-        .to_pretty_json()
-        .expect("OpenApi serializes to JSON")
+    serde_json::to_string_pretty(&openapi_value()).expect("OpenApi value serializes to JSON")
 }
 
-/// The full OpenAPI 3 document as YAML for LLM/agent reading.
+/// The full OpenAPI 3.2 document as YAML for LLM/agent reading.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn openapi_yaml() -> String {
-    serde_yaml::to_string(&crate::api::openapi()).expect("OpenApi serializes to YAML")
+    serde_yaml::to_string(&openapi_value()).expect("OpenApi value serializes to YAML")
+}
+
+/// `crate::api::openapi()` as a JSON [`Value`] stamped as OpenAPI 3.2 (#1298,
+/// epic #1296): utoipa 4.2.3's `OpenApiVersion` enum predates OpenAPI 3.2 and
+/// only knows how to serialize the literal `"3.0.3"`, so the typed
+/// `utoipa::openapi::OpenApi` — and the live `GET /openapi.json` route that
+/// serves it verbatim via `service_http::standard_probe_routes` — keeps
+/// declaring 3.0.3. This offline `lumen spec` surface (and the
+/// `clients/openapi.json` contract file regenerated from it) is not bound by
+/// that typed field, so it stamps the real document version here; the
+/// `query`/`x-post-twin` operations are unaffected either way since they are
+/// injected upstream in `crate::api::openapi`.
+fn openapi_value() -> Value {
+    let mut v = serde_json::to_value(crate::api::openapi()).expect("OpenApi serializes to JSON");
+    if let Value::Object(map) = &mut v {
+        map.insert("openapi".to_string(), Value::String("3.2.0".to_string()));
+    }
+    v
 }
 
 /// Just the component schemas (the request/response data types) as pretty JSON
@@ -121,8 +138,10 @@ pub fn query_shapes() -> Value {
               "request": { "query": { "terms": { "field": "status", "values": ["active", "trial"] } }, "limit": 20 } },
             { "name": "ids", "description": "filter by a set of external_ids (row_id_in); unknown ids skipped",
               "request": { "query": { "ids": { "values": ["row-42", "row-91"] } }, "limit": 20 } },
-            { "name": "range", "description": "numeric range (e.g. 1000 <= price < 5000)",
+            { "name": "range", "description": "numeric range on a `number` field (e.g. 1000 <= price < 5000)",
               "request": { "query": { "range": { "field": "price", "gte": 1000, "lt": 5000 } }, "limit": 20 } },
+            { "name": "range_keyword", "description": "byte/lexicographic range on a `keyword` field — string bounds are valid only against `keyword` fields (rejected with 400 against `number` or `text`), and compare the same way ISO-8601 date/datetime strings sort chronologically",
+              "request": { "query": { "range": { "field": "created_at", "gte": "2026-01-01", "lt": "2026-02-01" } }, "limit": 20 } },
             { "name": "match_bm25", "description": "lexical BM25 ranking over a text field",
               "request": { "query": { "match": { "field": "bio", "text": "rust search engineer" } }, "limit": 20 } },
             { "name": "autocomplete_ngram", "description": "autocomplete/suggest recipe: declare a text field with analyzer=ngram, index the searchable label, then run match on the prefix/substring; lumen returns external_ids, not suggestion payloads",
@@ -172,7 +191,12 @@ pub fn query_shapes() -> Value {
               "request": { "query": { "range": { "field": "price", "gte": 100 } },
                            "sort": [ { "field": "price", "order": "asc" } ], "track_total": false, "limit": 20 } },
             { "name": "duplicates", "description": "find external_ids sharing a value (POST /collections/{id}/duplicates)",
-              "request": { "field": "email", "min_group_size": 2, "limit": 100 } }
+              "request": { "field": "email", "min_group_size": 2, "limit": 100 } },
+            { "name": "index", "description": "index one or more field values (POST /collections/{id}/index); the wire shape is FLAT — {items:[{external_id,field,value}]} — not the nested {id, fields:{...}} shape a caller might assume",
+              "request": { "items": [
+                  { "external_id": "row-42", "field": "email", "value": "person@example.com" },
+                  { "external_id": "row-42", "field": "price", "value": 79 }
+              ] } }
         ]
     })
 }
@@ -186,8 +210,8 @@ pub fn field_catalog() -> Value {
         "schema_endpoint": "PUT /collections/{collection}",
         "field_types": [
             { "type": "text", "purpose": "BM25 lexical ranking; tokenized at index time", "analyzers": ["whitespace_lower", "ngram", "jieba"] },
-            { "type": "keyword", "purpose": "exact term / set membership / enum path; roaring postings" },
-            { "type": "number", "purpose": "numeric range + sort (dates as epoch)" },
+            { "type": "keyword", "purpose": "exact term / set membership / enum path; byte/lexicographic range (e.g. ISO-8601 date/datetime strings) via `range` with string bounds; roaring postings" },
+            { "type": "number", "purpose": "numeric range (via `range` with numeric bounds) + sort (dates as epoch)" },
             { "type": "set", "purpose": "multi-valued keyword membership" },
             { "type": "vector", "purpose": "semantic kNN over a caller-supplied embedding (HNSW)", "metrics": ["cosine", "dot", "l2"] },
             {
@@ -216,7 +240,10 @@ pub fn llm_outline_md() -> String {
 Use the smallest topic that answers the task:
 
 - `lumen llm --topic workflow` — product model, declare→ingest→search→hydrate, query
-  flavor choices, connection, and non-goals.
+  flavor choices, batch search (`POST /collections:search`), full-replacement
+  writes (`PUT /collections/{id}/docs:replace`), QUERY-first search
+  (RFC 10008 `QUERY /collections/{id}` and `QUERY /collections`, POST always
+  available), connection, and non-goals.
 - `lumen llm --topic integration` — recommended Postgres/AlloyDB adapter boundary:
   outbox or CDC, external Pub/Sub retry/DLQ ownership, HTTP writes into lumen,
   and no direct external writes to lumen's internal WAL.
@@ -233,6 +260,13 @@ Use the smallest topic that answers the task:
 - `lumen spec --format openapi-yaml` — OpenAPI YAML for LLM/agent reading.
 - `lumen spec` — OpenAPI JSON, JSON-schema, query-shape, field, analyzer, and
   vector metric catalogs.
+- `lumen connect` — manage a `kubectl port-forward` for the duration of a
+  wrapped command against a k8s-deployed Lumen instance (`--cr`/`--service` +
+  `--namespace`); resolves a bearer token from the deployment's
+  token-registry Secret and tears the port-forward down when the command exits.
+- `lumen query index|search|duplicates|collections list` — one-shot query
+  wrappers against a reachable node (`--url`/`LUMEN_URL`,
+  `--token`/`LUMEN_TOKEN`); request bodies match `lumen spec --shapes`.
 "#
     .to_string()
 }
@@ -434,13 +468,117 @@ hydrate the hits against your own store.
    `examples/consumer_pg_logical.py`. Re-writing `(external_id, field)` fully
    re-indexes that field.
 3. **Search** — `POST /collections/{id}/search` with a query (relevance +
-   filters + sort). You get back ranked `external_id`s + scores.
+   filters + sort). You get back ranked `external_id`s + scores. Prefer the
+   `QUERY /collections/{id}` twin when your stack supports it — see "QUERY
+   method (RFC 10008)" below.
 4. **Hydrate** — look the returned `external_id`s up in YOUR store to get the
    full records. lumen never had them.
 
+## QUERY method (RFC 10008)
+Policy: **QUERY-first, POST-always-available** (epic #1296 R1). `QUERY
+/collections/{id}` and `QUERY /collections` are dual-registered twins of
+`POST /collections/{id}/search` and `POST /collections:search`: same request
+body (`SearchRequest` / `BatchSearchRequest`), same handler, and a
+byte-identical response for identical bodies.
+
+- Prefer `QUERY` when your HTTP client, proxy, and cache layer support it —
+  RFC 10008 QUERY tells intermediaries the request is safe, idempotent, and
+  cacheable, which `POST` cannot express.
+- `POST` is the permanent fallback, not a deprecated path — every QUERY
+  endpoint keeps its POST twin forever, so clients, proxies, and load
+  balancers that can't emit `QUERY` (older HTTP libraries, some
+  intermediaries) stay fully supported.
+- `Content-Type: application/json` is mandatory on `QUERY` requests; a
+  missing or mismatched `Content-Type` returns 415, same as the POST twin.
+- `OPTIONS`/`HEAD` on both targets advertise `Accept-Query: application/json`
+  and list `QUERY` in `Allow`.
+
+## Batch search (multi-collection fan-out)
+`POST /collections:search` is an msearch-style batch of independent
+`(collection, SearchRequest)` items, executed with server-side concurrent
+fan-out — use it instead of N client-side round-trips when a logical action
+searches multiple collections at once (per-tenant/per-type partitioning,
+for example). `collections:search` is one literal path segment (AIP-136
+custom-method syntax), so it never collides with
+`/collections/{collection_id}`; collection ids may not contain `:` for the
+same reason.
+
+```json
+POST /collections:search
+{ "searches": [
+    { "collection": "users",    "query": {"term": {"field": "tags", "value": "rust"}}, "limit": 10 },
+    { "collection": "products", "query": {"match": {"field": "title", "text": "earbuds"}}, "limit": 5 }
+] }
+→ 200 { "results": [
+    { "status": "ok", "response": { "hits": [...], "total": 3, "took_ms": 1 } },
+    { "status": "error", "code": "collection_not_found", "message": "..." }
+] }
+```
+
+- Each item carries a full `SearchRequest` — `limit`, `sort`, `cursor`,
+  `collapse`, `routing_key`, `track_total` may all differ per item, exactly
+  like `POST /collections/{id}/search`.
+- `results` is the same order and length as `searches`.
+- **Partial failure never fails the batch.** One bad item (for example an
+  unknown collection) reports `{"status":"error","code":"collection_not_found",
+  "message":"..."}` for that item while the other items still return
+  `{"status":"ok","response":{...}}`. The batch-level HTTP status stays 200
+  unless the body is malformed or the batch is over the size limit (400).
+- Max batch size is 32 items — this also bounds the concurrent fan-out. An
+  over-limit batch is rejected with 400 before any item runs.
+- Pagination stays per-item: each result's `cursor` continues independently
+  by resubmitting that one item. There is no merged cursor and no
+  cross-collection score merging/ranking — that is explicitly out of scope.
+
+## Full-replacement writes (docs:replace)
+`PUT /collections/{id}/docs:replace` is a batch **full-replacement** upsert:
+each item's `fields` becomes the doc's *entire* indexed state — a declared
+schema field the doc has today but that is absent from `fields` is
+**implicitly deleted**. `docs:replace` is one literal path segment appended
+after `{collection_id}`, so it registers directly in axum next to
+`/collections/{collection_id}/docs/{external_id}` without any capture
+ambiguity.
+
+```json
+PUT /collections/{id}/docs:replace
+{ "docs": [
+    { "external_id": "row-42", "version": 7, "fields": { "title": "New title", "state": "open" } }
+] }
+→ 200 { "results": [
+    { "status": "ok", "fields_written": 2, "fields_skipped": 0 }
+] }
+```
+
+- **Own the complete row for a doc?** Use `docs:replace` — replaying the same
+  request converges to the same state (PUT semantics). **Own only some
+  fields and want to add/update those without touching the rest?** Use
+  `POST /collections/{id}/index` instead; `/index` is a merge, `docs:replace`
+  is a full replacement.
+- `version` is optional **doc-level** last-write-wins over the caller's own
+  source-row version — distinct from `IndexItem.version`'s per-`(external_id,
+  field)` cell versioning. A strictly-older version arriving later drops the
+  *entire* item and is reported as `{"status":"dropped","current_version":...}`,
+  not folded into `ok` or `error`.
+- Each `ok` result carries `fields_written` and `fields_skipped` counters;
+  `fields_skipped` (unchanged-value no-op suppression) is always `0` today.
+- **Partial failure never fails the batch.** One bad item (unknown field,
+  type mismatch) reports `{"status":"error","code":"...","message":"..."}`
+  for that item while its siblings still return `ok`/`dropped`. The
+  batch-level HTTP status stays 200 unless the body is malformed or the
+  batch is over the size limit (400, max 32 items — the same
+  `MAX_BATCH_REPLACE_SIZE` knob family as `collections:search`).
+- `PUT /collections/{id}/docs/{external_id}` is single-resource sugar: body
+  `{"version": ..., "fields": {...}}`, semantically identical to a one-item
+  `docs:replace` batch, unwrapped back into a bare per-item result.
+
 ## Which "find" to use
 - exact value / membership → `keyword` (`term`, `terms`) or `set`
-- numeric / date range → `number` (`range`)
+- numeric range → `number` (`range` with numeric `gt`/`gte`/`lt`/`lte` bounds)
+- string / date / datetime range → `keyword` (`range` with string bounds,
+  compared byte/lexicographically — the same order ISO-8601 date/datetime
+  strings sort chronologically in). String bounds are rejected with 400
+  against a non-`keyword` field (and numeric bounds against a non-`number`
+  field); `text` is explicitly out of scope for range queries
 - full-text relevance → `text` + `match` (BM25). Analyzers: `whitespace_lower`,
   `ngram` (substring/CJK), `jieba` (Chinese)
 - semantic similarity → `vector` + `knn` (you supply the embedding)
@@ -598,6 +736,21 @@ The response is `{ "hits": [ { "external_id", "score" } ], ... }`. Fetch the ful
 records from YOUR store by those `external_id`s — lumen never stored them.
 
 More shapes: `lumen llm --topic recipes`. Full schema: `lumen spec`.
+
+## Agent-friendly one-shot wrappers
+No need to hand-build curl bodies or track a port-forward yourself:
+
+```bash
+lumen connect --namespace prod --cr search -- \
+  lumen query index --collection products --item 'p1:title=wireless earbuds'
+lumen query search --collection products --match 'title=earbuds' --limit 10
+lumen query duplicates --collection products --field email
+lumen query collections list
+```
+
+`lumen connect` manages the `kubectl port-forward` and sets
+`LUMEN_URL`/`LUMEN_TOKEN` for the wrapped command; `lumen query *` assembles
+the exact wire body (same shapes as `lumen spec --shapes`).
 "#
     .to_string()
 }

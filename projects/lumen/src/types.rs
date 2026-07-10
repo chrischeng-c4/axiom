@@ -472,18 +472,38 @@ pub struct KnnQuery {
     pub k: u32,
 }
 
+/// A `RangeQuery` bound value. Wire form is untagged: a JSON number decodes
+/// as `Number`, a JSON string as `Keyword` — one `RangeQuery` node handles
+/// both numeric and keyword ranges, matching the ergonomics clients already
+/// generate against (no sibling `KeywordRangeQuery` type). Validated at
+/// query time against the target field's declared `FieldType`: `Number` is
+/// valid only against `FieldType::Number` fields, `Keyword` only against
+/// `FieldType::Keyword` fields (compared byte/lexicographically — the same
+/// ordering `keyword` already uses for exact `term`/`terms` match, and the
+/// ordering ISO-8601 date/datetime strings rely on for chronological sort).
+/// A mismatched bound/field-type pair is rejected with 400 at query time,
+/// not silently misparsed. `text`/analyzed fields are out of scope for range
+/// queries — comparison is semantically fuzzy after tokenization.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(untagged)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub enum RangeBound {
+    Number(f64),
+    Keyword(String),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
 pub struct RangeQuery {
     pub field: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gt: Option<f64>,
+    pub gt: Option<RangeBound>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gte: Option<f64>,
+    pub gte: Option<RangeBound>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lt: Option<f64>,
+    pub lt: Option<RangeBound>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lte: Option<f64>,
+    pub lte: Option<RangeBound>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -506,6 +526,172 @@ pub struct SearchResponse {
     /// engine answered when `took_ms` rounds to 0.
     #[serde(default)]
     pub took_us: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Batch search
+// ---------------------------------------------------------------------------
+
+/// Maximum number of items accepted in one [`BatchSearchRequest`]. Doubles
+/// as the concurrent fan-out bound for `POST /collections:search`; a
+/// request with more items than this is rejected with 400 before any
+/// per-item work starts.
+pub const MAX_BATCH_SEARCH_SIZE: usize = 32;
+
+/// `POST /collections:search` body — an msearch-style batch of independent
+/// `(collection, SearchRequest)` items executed with server-side
+/// concurrent fan-out. `collections:search` is one literal path segment
+/// (AIP-136 custom-method syntax), so it never collides with
+/// `/collections/{collection_id}`.
+///
+/// Each item carries its own full [`SearchRequest`] — `limit`, `sort`,
+/// `cursor`, `collapse`, `routing_key`, and `track_total` may all differ
+/// per item. There is no cross-collection ranking or merged pagination:
+/// results, and cursors, stay independent per item.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub struct BatchSearchRequest {
+    /// At most [`MAX_BATCH_SEARCH_SIZE`] items; a longer batch is rejected
+    /// with 400 before any item runs.
+    pub searches: Vec<BatchSearchItem>,
+}
+
+/// One item of a [`BatchSearchRequest`]. Flattened on the wire, so an item
+/// looks like `{"collection": "...", "query": {...}, "limit": 20, ...}` —
+/// the same fields `POST /collections/{id}/search` accepts, plus the
+/// target `collection`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub struct BatchSearchItem {
+    pub collection: String,
+    #[serde(flatten)]
+    pub request: SearchRequest,
+}
+
+/// `POST /collections:search` response: one [`BatchSearchResult`] per
+/// request item, in the same order and with the same length as
+/// `searches`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub struct BatchSearchResponse {
+    pub results: Vec<BatchSearchResult>,
+}
+
+/// One batch-item outcome, tagged by `status`. A per-item failure (for
+/// example an unknown collection) never fails the whole batch: the
+/// batch-level HTTP status stays 200 and the failure is reported here as
+/// `{"status":"error","code":"collection_not_found","message":"..."}`
+/// alongside `{"status":"ok","response":{...}}` siblings.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "status", rename_all = "lowercase")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub enum BatchSearchResult {
+    Ok { response: SearchResponse },
+    Error { code: String, message: String },
+}
+
+// ---------------------------------------------------------------------------
+// Replace docs (full-replacement write)
+// ---------------------------------------------------------------------------
+
+/// Maximum number of items accepted in one [`ReplaceDocsRequest`]. Sibling
+/// knob to [`MAX_BATCH_SEARCH_SIZE`]; a request with more items than this
+/// is rejected with 400 before any per-item work starts.
+pub const MAX_BATCH_REPLACE_SIZE: usize = 32;
+
+/// `PUT /collections/{id}/docs:replace` body — a batch of full-replacement
+/// upserts. `docs:replace` is one literal path segment (AIP-136
+/// custom-method syntax) appended after `{collection_id}`, so it never
+/// collides with `/collections/{collection_id}/docs/{external_id}`.
+///
+/// Each item's `fields` becomes the doc's *entire* indexed state for that
+/// collection: declared schema fields the doc has today but that are
+/// absent from `fields` are implicitly deleted. Replaying the same request
+/// converges to the same state (PUT semantics) — this is a full
+/// replacement, not a merge; use `POST /collections/{id}/index` when a
+/// caller owns only some fields of a doc and wants to update those without
+/// touching the rest.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub struct ReplaceDocsRequest {
+    /// At most [`MAX_BATCH_REPLACE_SIZE`] items; a longer batch is rejected
+    /// with 400 before any item runs.
+    pub docs: Vec<ReplaceDocItem>,
+}
+
+/// One item of a [`ReplaceDocsRequest`]: the target doc's full field set.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub struct ReplaceDocItem {
+    pub external_id: String,
+    /// Optional doc-level version for last-write-wins, using the caller's
+    /// source-row version. Unlike [`IndexItem::version`]'s per-`(external_id,
+    /// field)` cell versioning, this is a single version for the whole doc:
+    /// a strictly-older version arriving later drops the *entire* item (all
+    /// fields), reported as [`ReplaceDocResult::Dropped`]. When absent, the
+    /// write applies in arrival order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u64>,
+    /// The doc's complete indexed field set. Declared schema fields absent
+    /// here are implicitly deleted from the doc.
+    pub fields: BTreeMap<String, FieldValue>,
+}
+
+/// `PUT /collections/{id}/docs:replace` response: one [`ReplaceDocResult`]
+/// per request item, in the same order and with the same length as `docs`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub struct ReplaceDocsResponse {
+    pub results: Vec<ReplaceDocResult>,
+}
+
+/// One batch-item outcome, tagged by `status`. A per-item failure (for
+/// example a type-mismatched field value) never fails the whole batch: the
+/// batch-level HTTP status stays 200 and the failure is reported here as
+/// `{"status":"error","code":"...","message":"..."}` alongside `{"status":
+/// "ok",...}` siblings.
+///
+/// Stale-version semantics (chosen over ok-with-no-write): an item whose
+/// `version` is strictly older than the doc's currently stored version is
+/// reported as its own `{"status":"dropped","current_version":...}`
+/// variant rather than folded into `ok` or `error` — that keeps "no write
+/// happened because a newer version already won" distinguishable from both
+/// "wrote successfully" and "this item failed validation".
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "status", rename_all = "lowercase")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub enum ReplaceDocResult {
+    Ok {
+        /// Number of fields written from this item's `fields` map.
+        fields_written: u32,
+        /// Number of fields skipped as unchanged no-ops: the incoming
+        /// value matched the currently indexed state, so no posting-list
+        /// rewrite and no HNSW tombstone/reinsert happened for that field
+        /// (#1293 server-side no-op suppression). `0` when every field
+        /// actually changed, or when this is the doc's first write.
+        fields_skipped: u32,
+    },
+    Dropped {
+        /// The version currently stored for this doc, which won over the
+        /// stale `version` carried by the request item.
+        current_version: u64,
+    },
+    Error {
+        code: String,
+        message: String,
+    },
+}
+
+/// `PUT /collections/{id}/docs/{external_id}` body — single-resource sugar
+/// for one [`ReplaceDocItem`]. `external_id` comes from the path, so this
+/// carries only `version` and `fields`; posting it is semantically
+/// identical to sending a one-item [`ReplaceDocsRequest`] to `docs:replace`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
+pub struct ReplaceDocBody {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u64>,
+    pub fields: BTreeMap<String, FieldValue>,
 }
 
 // ---------------------------------------------------------------------------

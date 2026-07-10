@@ -1,10 +1,17 @@
 // SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-rust-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-//! Rust emitter: read an OpenAPI 3.0/3.1 document and emit serde models plus a
-//! typed `reqwest::blocking` client.
+//! Rust emitter: read an OpenAPI 3.0/3.1/3.2 document and emit serde models
+//! plus a typed `reqwest::blocking` client.
 //!
 //! Pipeline: parse → `models.rs` (serde struct/alias per component schema) +
 //! `client.rs` (one `Client` method per operation) + `mod.rs`.
+//!
+//! OpenAPI 3.2 `query` operations (HTTP QUERY, RFC 10008) emit a client
+//! method that dispatches via
+//! `reqwest::Method::from_bytes(b"QUERY")` — `reqwest::blocking::Client` has
+//! no dedicated `.query()` verb method (that name is the querystring
+//! builder). `Client::with_post_fallback(true)` flips that dispatch to
+//! `POST` against the operation's documented twin path at request time.
 
 pub mod client_emit;
 pub mod models_emit;
@@ -77,6 +84,31 @@ mod tests {
       } }
     }"##;
 
+    /// OpenAPI 3.2 fixture: a `query` operation (RFC 10008 HTTP QUERY) with a
+    /// sibling `post` twin on the same path — the default POST-twin fallback
+    /// convention (epic #1296).
+    const SPEC_32_QUERY: &str = r##"{
+      "openapi": "3.2.0",
+      "info": { "title": "Mini", "version": "1.0.0" },
+      "paths": {
+        "/pets": {
+          "query": {
+            "operationId": "searchPets",
+            "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object" } } } },
+            "responses": { "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } } } } }
+          },
+          "post": {
+            "operationId": "createPet",
+            "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } } } },
+            "responses": { "201": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } } } } }
+          }
+        }
+      },
+      "components": { "schemas": {
+        "Pet": { "type": "object", "properties": { "id": { "type": "integer" }, "name": { "type": "string" } }, "required": ["id", "name"] }
+      } }
+    }"##;
+
     fn opts() -> GenOptions {
         GenOptions {
             lang: Lang::Rust,
@@ -137,6 +169,34 @@ mod tests {
         assert!(client.contains("self.http.get(url)"));
         assert!(client.contains("let _slot = self.acquire_slot()?;"));
         assert!(client.contains("Ok(resp.json()?)"));
+    }
+
+    #[test]
+    fn query_operation_uses_method_from_bytes_with_post_fallback_branch() {
+        let out = generate(SPEC_32_QUERY, &opts()).unwrap();
+        let client = file(&out, "client.rs");
+        assert!(client.contains("use_post_fallback: bool,"));
+        assert!(client.contains(
+            "pub fn with_post_fallback(mut self, use_post_fallback: bool) -> Self {"
+        ));
+        assert!(client.contains("pub fn search_pets(&self, body:"));
+        assert!(client.contains("let mut req = if self.use_post_fallback {"));
+        assert!(client.contains("let twin_url = format!(\"{}/pets\", self.base_url);"));
+        assert!(client.contains("self.http.post(twin_url)"));
+        assert!(client.contains(
+            "self.http.request(reqwest::Method::from_bytes(b\"QUERY\").expect(\"valid HTTP method\"), url)"
+        ));
+    }
+
+    #[test]
+    fn non_query_operation_keeps_direct_verb_dispatch() {
+        let out = generate(SPEC, &opts()).unwrap();
+        let client = file(&out, "client.rs");
+        // `use_post_fallback` is always present on `Client` (shared runtime
+        // surface), but a non-QUERY operation still dispatches directly.
+        assert!(client.contains("use_post_fallback: bool,"));
+        assert!(!client.contains("Method::from_bytes"));
+        assert!(client.contains("self.http.get(url)"));
     }
 
     #[test]

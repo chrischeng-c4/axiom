@@ -21,7 +21,8 @@ use tokio::{
 use crate::{
     storage::Engine,
     types::{
-        FieldValue, QueryNode, RangeQuery, SearchHit, SearchRequest, SearchResponse, TermQuery,
+        FieldValue, QueryNode, RangeBound, RangeQuery, SearchHit, SearchRequest, SearchResponse,
+        TermQuery,
     },
 };
 
@@ -276,8 +277,10 @@ fn handle_fast_frame(engine: &Engine, frame: &[u8]) -> Result<Vec<u8>> {
         FAST_RANGE => {
             let collection_id = take_str(frame, &mut pos)?;
             let field = take_str(frame, &mut pos)?;
-            let gte = take_bound(frame, &mut pos)?;
-            let lt = take_bound(frame, &mut pos)?;
+            // FAST_RANGE is a numeric-only binary fast path (#1307 keyword-range
+            // widening is JSON-API-only); wrap the raw f64 bound into `RangeBound`.
+            let gte = take_bound(frame, &mut pos)?.map(RangeBound::Number);
+            let lt = take_bound(frame, &mut pos)?.map(RangeBound::Number);
             let limit = take_u32(frame, &mut pos)?;
             (
                 collection_id,
@@ -303,8 +306,8 @@ fn handle_fast_frame(engine: &Engine, frame: &[u8]) -> Result<Vec<u8>> {
             let term_field = take_str(frame, &mut pos)?;
             let term_value = take_str(frame, &mut pos)?;
             let range_field = take_str(frame, &mut pos)?;
-            let gte = take_bound(frame, &mut pos)?;
-            let lt = take_bound(frame, &mut pos)?;
+            let gte = take_bound(frame, &mut pos)?.map(RangeBound::Number);
+            let lt = take_bound(frame, &mut pos)?.map(RangeBound::Number);
             let limit = take_u32(frame, &mut pos)?;
             (
                 collection_id,
