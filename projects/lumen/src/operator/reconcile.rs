@@ -24,11 +24,32 @@
 //! background loop spawned alongside it — [`crate::operator::reshard_driver::
 //! spawn_reshard_driver_loop`] (#1319 R2, #1381) — is what actually drives
 //! `workflow.phase` and moves data once a threshold is crossed.
+//!
+//! ## HPA topology-transition handoff (#1385)
+//!
+//! [`render::render`] stops emitting a HorizontalPodAutoscaler once the CR's
+//! shape no longer wants one ([`render::wants_hpa`] — today, `shardCount >
+//! 1`), but `libs/operator`'s shared reconcile contract (`libs/operator::
+//! service`) deliberately does not prune children across a render-shape
+//! change — that handoff is left to the service. A third independently
+//! leader-gated background loop, [`spawn_hpa_handoff_loop`], is lumen's side
+//! of that handoff: every tick it lists every `Lumen` CR and, for any whose
+//! current shape no longer wants an HPA, deletes the previously-rendered one
+//! if it is still there — scoped and idempotent (R2: only an object whose
+//! live name *and* labels match what [`render::hpa_labels`] would have
+//! stamped; a missing HPA, or one that doesn't look lumen-rendered, is a
+//! no-op, not an error). Without this, the stale single-member HPA (clamped
+//! to `minReplicas`/`maxReplicas` == 1 by #1317) keeps scaling the serving
+//! StatefulSet back down to one ready replica, permanently starving
+//! [`crate::operator::reshard_driver`]'s `PrepareSplit` readiness gate
+//! (`readyReplicas >= targetShardCount`) — observed live in #1384's kind
+//! proof, unblocked there only by a manual `kubectl delete hpa`.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
+use kube::api::{Api, ApiResource, DeleteParams, DynamicObject};
 use kube::{Client, ResourceExt};
 use operator::{ManagedService, ReadinessTarget, ReadyFacts};
 use serde_json::json;
@@ -45,6 +66,21 @@ const CLIENT_PORT: u16 = 7373;
 /// Poll interval for the live per-shard storage-usage measurement loop
 /// (#1319 R1).
 const SHARD_USAGE_POLL_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Poll interval for [`spawn_hpa_handoff_loop`] (#1385). Faster than
+/// [`SHARD_USAGE_POLL_INTERVAL`] since a lingering stale HPA actively starves
+/// the reshard driver's `PrepareSplit` gate — the sooner it's pruned, the
+/// sooner that gate can converge.
+const HPA_HANDOFF_POLL_INTERVAL: Duration = Duration::from_secs(15);
+
+/// Leader-election Lease name for [`spawn_hpa_handoff_loop`] (#1385) —
+/// distinct from both `libs/operator`'s own `S::MANAGER`-named apply-loop
+/// Lease and `reshard_driver::DRIVER_LEASE_NAME`, so none of the three
+/// independently leader-gated loops contend on one Lease object (mirrors the
+/// same duplicated `identity`/`lease_namespace` resolution
+/// `reshard_driver::spawn_reshard_driver_loop` already uses for the same
+/// reason).
+const HPA_HANDOFF_LEASE_NAME: &str = "lumen-hpa-handoff";
 
 /// `"<namespace>/<name>" -> "shard_index -> observed bytes"`, refreshed by
 /// [`spawn_shard_usage_loop`] and read by [`status_patch`].
@@ -184,6 +220,188 @@ fn spawn_shard_usage_loop(client: Client) {
     });
 }
 
+/// The `ApiResource` for a live HorizontalPodAutoscaler, matching what
+/// `libs/operator::render::horizontal_pod_autoscaler` renders
+/// (`autoscaling/v2`) and what `libs/operator::controller`'s generic apply
+/// loop server-side-applies it as.
+fn hpa_api_resource() -> ApiResource {
+    ApiResource {
+        group: "autoscaling".to_string(),
+        version: "v2".to_string(),
+        api_version: "autoscaling/v2".to_string(),
+        kind: "HorizontalPodAutoscaler".to_string(),
+        plural: "horizontalpodautoscalers".to_string(),
+    }
+}
+
+/// Seam for [`prune_stale_hpa`]'s only two k8s side effects (#1385) —
+/// abstracted the same way `reshard_driver::ClusterControl` abstracts its
+/// cluster calls, so the handoff decision is testable without a live k8s API
+/// server. [`KubeHpaControl`] is the production implementation; tests supply
+/// an in-memory fake.
+#[async_trait::async_trait]
+trait HpaControl: Send + Sync {
+    /// The live HPA's labels at `(namespace, name)`, or `None` if it does not
+    /// exist. A missing object is the idempotent no-op case (R2), never an
+    /// error.
+    async fn hpa_labels(
+        &self,
+        namespace: &str,
+        name: &str,
+    ) -> anyhow::Result<Option<BTreeMap<String, String>>>;
+
+    /// Delete the HPA at `(namespace, name)`. Only called after
+    /// [`Self::hpa_labels`] has confirmed lumen rendered it. Idempotent: a
+    /// concurrent deletion between the two calls (404 on delete) is treated
+    /// as success, not an error.
+    async fn delete_hpa(&self, namespace: &str, name: &str) -> anyhow::Result<()>;
+}
+
+/// Production [`HpaControl`]: real `kube::Client` calls.
+struct KubeHpaControl {
+    client: Client,
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reconcile-rs.md#source
+#[async_trait::async_trait]
+impl HpaControl for KubeHpaControl {
+    async fn hpa_labels(
+        &self,
+        namespace: &str,
+        name: &str,
+    ) -> anyhow::Result<Option<BTreeMap<String, String>>> {
+        let api: Api<DynamicObject> =
+            Api::namespaced_with(self.client.clone(), namespace, &hpa_api_resource());
+        let obj = api.get_opt(name).await?;
+        Ok(obj.and_then(|o| o.metadata.labels))
+    }
+
+    async fn delete_hpa(&self, namespace: &str, name: &str) -> anyhow::Result<()> {
+        let api: Api<DynamicObject> =
+            Api::namespaced_with(self.client.clone(), namespace, &hpa_api_resource());
+        match api.delete(name, &DeleteParams::default()).await {
+            Ok(_) => Ok(()),
+            // Already gone (raced with another deletion, or a watch-triggered
+            // reconcile fired again before the cache caught up) — idempotent
+            // no-op, matching R2.
+            Err(kube::Error::Api(e)) if e.code == 404 => Ok(()),
+            Err(err) => Err(err.into()),
+        }
+    }
+}
+
+/// One CR's HPA-handoff check (#1385): if `lumen`'s currently-rendered shape
+/// no longer wants an HPA ([`render::wants_hpa`], R1), delete the
+/// previously-rendered one if it is still there and lumen actually rendered
+/// it (R2 — live name *and* labels match [`render::hpa_labels`]; a missing
+/// HPA, or a live one that doesn't look lumen-rendered, is left alone). Logs
+/// the handoff (why the HPA vanished) so an operator reading logs
+/// understands it (R3/AC3). Never panics; a failed cluster call is logged
+/// and retried next tick, same as the other background loops in this file.
+async fn prune_stale_hpa(control: &dyn HpaControl, lumen: &Lumen) {
+    if render::wants_hpa(lumen) {
+        // Current shape still wants one (or keeps wanting one) — nothing to
+        // hand off.
+        return;
+    }
+    let namespace = lumen.namespace().unwrap_or_else(|| "default".to_string());
+    let name = lumen.name_any();
+    let live_labels = match control.hpa_labels(&namespace, &name).await {
+        Ok(labels) => labels,
+        Err(err) => {
+            tracing::warn!(
+                %namespace, %name, error = %err,
+                "HPA handoff: failed to read live HPA, will retry next tick"
+            );
+            return;
+        }
+    };
+    let Some(live_labels) = live_labels else {
+        // R2: no HPA to hand off is a no-op, not an error.
+        return;
+    };
+    let expected_labels = render::hpa_labels(lumen);
+    if live_labels != expected_labels {
+        // R2 scope guard: an object happens to share this CR's name (and
+        // namespace) but its labels don't match what lumen would have
+        // stamped — never touch it, it wasn't rendered by us.
+        tracing::warn!(
+            %namespace, %name,
+            "HPA handoff: found an HPA at this CR's name whose labels don't \
+             match lumen's render — leaving it alone (not operator-rendered)"
+        );
+        return;
+    }
+    match control.delete_hpa(&namespace, &name).await {
+        Ok(()) => {
+            tracing::info!(
+                %namespace, %name,
+                "HPA handoff: deleted the single-member HPA now that this CR's \
+                 rendered shape no longer includes one (shardCount > 1) — the \
+                 stale HPA would otherwise keep clamping the serving \
+                 StatefulSet back to 1 ready replica and starve the reshard \
+                 driver's PrepareSplit readiness gate (#1385)"
+            );
+        }
+        Err(err) => {
+            tracing::warn!(
+                %namespace, %name, error = %err,
+                "HPA handoff: failed to delete stale HPA, will retry next tick"
+            );
+        }
+    }
+}
+
+/// Background loop (#1385): every [`HPA_HANDOFF_POLL_INTERVAL`], while
+/// holding the [`HPA_HANDOFF_LEASE_NAME`] Lease, list every `Lumen` CR
+/// cluster-wide and run [`prune_stale_hpa`] against each. Independently
+/// leader-gated (like [`crate::operator::reshard_driver::
+/// spawn_reshard_driver_loop`]) since deletion is a cluster write, unlike
+/// [`spawn_shard_usage_loop`]'s read-only cache population.
+fn spawn_hpa_handoff_loop(client: Client) {
+    // Mirrors `libs/operator::controller`'s own `identity`/`lease_namespace`
+    // helpers (private to that crate, so duplicated here, same as
+    // `reshard_driver::spawn_reshard_driver_loop` already does) so every
+    // independently-leader-gated loop resolves the same pod identity and
+    // Lease namespace from the same env vars.
+    let identity = std::env::var("POD_NAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| HPA_HANDOFF_LEASE_NAME.to_string());
+    let namespace =
+        std::env::var("POD_NAMESPACE").unwrap_or_else(|_| "lumen-operator-system".to_string());
+    let election = crate::operator::lease::Election::new(identity);
+    crate::operator::lease::spawn(
+        client.clone(),
+        namespace,
+        HPA_HANDOFF_LEASE_NAME.to_string(),
+        election.clone(),
+    );
+    let control = KubeHpaControl {
+        client: client.clone(),
+    };
+    tokio::spawn(async move {
+        let api: kube::Api<Lumen> = kube::Api::all(client);
+        loop {
+            if election
+                .is_leader
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                match api.list(&Default::default()).await {
+                    Ok(list) => {
+                        for lumen in list.items {
+                            prune_stale_hpa(&control, &lumen).await;
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(error = %err, "HPA handoff: list Lumen failed");
+                    }
+                }
+            }
+            tokio::time::sleep(HPA_HANDOFF_POLL_INTERVAL).await;
+        }
+    });
+}
+
 /// lumen's contribution to the shared operator.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reconcile-rs.md#source
 impl ManagedService for Lumen {
@@ -238,20 +456,23 @@ impl ManagedService for Lumen {
 /// `lumen k8s operator run` — run the reconcile controller on the shared
 /// `libs/operator` host (leader-gated; safe at `replicas > 1`), alongside
 /// the live shard-usage measurement loop (#1319 R1; every replica runs it,
-/// not just the leader — see [`spawn_shard_usage_loop`]) and the autonomous
+/// not just the leader — see [`spawn_shard_usage_loop`]), the autonomous
 /// reshard phase driver (#1319 R2, #1381; independently leader-gated — see
-/// [`crate::operator::reshard_driver::spawn_reshard_driver_loop`]).
+/// [`crate::operator::reshard_driver::spawn_reshard_driver_loop`]), and the
+/// HPA topology-transition handoff loop (#1385; independently leader-gated —
+/// see [`spawn_hpa_handoff_loop`]).
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reconcile-rs.md#source
 pub async fn run() -> anyhow::Result<()> {
     match Client::try_default().await {
         Ok(client) => {
             spawn_shard_usage_loop(client.clone());
-            crate::operator::reshard_driver::spawn_reshard_driver_loop(client);
+            crate::operator::reshard_driver::spawn_reshard_driver_loop(client.clone());
+            spawn_hpa_handoff_loop(client);
         }
         Err(err) => {
             tracing::warn!(
                 error = %err,
-                "reshard live-usage measurement + phase-driver loops disabled: could not build a kube client"
+                "reshard live-usage measurement + phase-driver + HPA-handoff loops disabled: could not build a kube client"
             );
         }
     }
@@ -380,6 +601,164 @@ mod tests {
             1,
             "http://search-3.search-headless.acme.svc.cluster.local:7373/metrics".to_string()
         )));
+    }
+
+    // ---- HPA topology-transition handoff (#1385, AC1) ----------------------
+
+    /// In-memory [`HpaControl`]: a `(namespace, name) -> labels` map plus a
+    /// record of every `delete_hpa` call, mirroring
+    /// `reshard_driver::tests::FakeControl`'s role for that module's
+    /// `ClusterControl` seam.
+    #[derive(Default)]
+    struct FakeHpaControl {
+        objects: Mutex<BTreeMap<(String, String), BTreeMap<String, String>>>,
+        deletes: Mutex<Vec<(String, String)>>,
+    }
+
+    impl FakeHpaControl {
+        fn with(ns: &str, name: &str, labels: BTreeMap<String, String>) -> Self {
+            let control = Self::default();
+            control
+                .objects
+                .lock()
+                .unwrap()
+                .insert((ns.to_string(), name.to_string()), labels);
+            control
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HpaControl for FakeHpaControl {
+        async fn hpa_labels(
+            &self,
+            namespace: &str,
+            name: &str,
+        ) -> anyhow::Result<Option<BTreeMap<String, String>>> {
+            Ok(self
+                .objects
+                .lock()
+                .unwrap()
+                .get(&(namespace.to_string(), name.to_string()))
+                .cloned())
+        }
+
+        async fn delete_hpa(&self, namespace: &str, name: &str) -> anyhow::Result<()> {
+            let key = (namespace.to_string(), name.to_string());
+            self.objects.lock().unwrap().remove(&key);
+            self.deletes.lock().unwrap().push(key);
+            Ok(())
+        }
+    }
+
+    fn hpa_test_spec(shard_count: u32, replicas_per_shard: u32) -> crate::operator::crd::LumenSpec {
+        use crate::operator::crd::{LumenSpec, ServingSpec, ShardMapSpec};
+        LumenSpec {
+            image: "lumen:latest".into(),
+            image_pull_policy: None,
+            shard_count,
+            shard_map: ShardMapSpec::default(),
+            replicas_per_shard,
+            voter_count: replicas_per_shard,
+            log_format: Default::default(),
+            log_level: None,
+            auth: Default::default(),
+            tokens_secret: None,
+            tokens_secret_provider_class: None,
+            serving: ServingSpec::default(),
+            reshard_policy: Default::default(),
+            observability: false,
+        }
+    }
+
+    fn hpa_test_lumen(name: &str, ns: &str, shard_count: u32, replicas_per_shard: u32) -> Lumen {
+        let mut lumen = Lumen::new(name, hpa_test_spec(shard_count, replicas_per_shard));
+        lumen.metadata.namespace = Some(ns.to_string());
+        lumen
+    }
+
+    #[tokio::test]
+    async fn prune_stale_hpa_deletes_operator_rendered_hpa_on_multi_shard() {
+        let lumen = hpa_test_lumen("search", "acme", 3, 1);
+        let control = FakeHpaControl::with("acme", "search", render::hpa_labels(&lumen));
+
+        prune_stale_hpa(&control, &lumen).await;
+
+        assert_eq!(
+            control.deletes.lock().unwrap().as_slice(),
+            &[("acme".to_string(), "search".to_string())]
+        );
+        assert!(control
+            .objects
+            .lock()
+            .unwrap()
+            .get(&("acme".to_string(), "search".to_string()))
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn prune_stale_hpa_retains_hpa_on_single_member() {
+        let lumen = hpa_test_lumen("search", "acme", 1, 1);
+        let control = FakeHpaControl::with("acme", "search", render::hpa_labels(&lumen));
+
+        prune_stale_hpa(&control, &lumen).await;
+
+        assert!(control.deletes.lock().unwrap().is_empty());
+        assert!(control
+            .objects
+            .lock()
+            .unwrap()
+            .contains_key(&("acme".to_string(), "search".to_string())));
+    }
+
+    #[tokio::test]
+    async fn prune_stale_hpa_leaves_missing_hpa_as_noop() {
+        let lumen = hpa_test_lumen("search", "acme", 3, 1);
+        let control = FakeHpaControl::default();
+
+        prune_stale_hpa(&control, &lumen).await;
+
+        assert!(control.deletes.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn prune_stale_hpa_leaves_unrelated_hpa_name_untouched() {
+        let lumen = hpa_test_lumen("search", "acme", 3, 1);
+        // A user's own, differently-named HPA lives in the same namespace —
+        // the handoff loop only ever looks up the CR's own name, so it must
+        // never be inspected or deleted.
+        let control = FakeHpaControl::with("acme", "my-other-hpa", render::hpa_labels(&lumen));
+
+        prune_stale_hpa(&control, &lumen).await;
+
+        assert!(control.deletes.lock().unwrap().is_empty());
+        assert!(control
+            .objects
+            .lock()
+            .unwrap()
+            .contains_key(&("acme".to_string(), "my-other-hpa".to_string())));
+    }
+
+    #[tokio::test]
+    async fn prune_stale_hpa_leaves_foreign_labeled_hpa_at_same_name_untouched() {
+        let lumen = hpa_test_lumen("search", "acme", 3, 1);
+        // Same namespace/name as the CR would render, but labels that don't
+        // match lumen's stamp (e.g. a different `managed-by`) — R2's scope
+        // guard, not just a name check.
+        let mut foreign_labels = render::hpa_labels(&lumen);
+        foreign_labels.insert(
+            "app.kubernetes.io/managed-by".to_string(),
+            "some-other-operator".to_string(),
+        );
+        let control = FakeHpaControl::with("acme", "search", foreign_labels);
+
+        prune_stale_hpa(&control, &lumen).await;
+
+        assert!(control.deletes.lock().unwrap().is_empty());
+        assert!(control
+            .objects
+            .lock()
+            .unwrap()
+            .contains_key(&("acme".to_string(), "search".to_string())));
     }
 }
 // CODEGEN-END
