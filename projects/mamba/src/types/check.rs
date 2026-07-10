@@ -168,20 +168,20 @@ pub struct TypeChecker {
     errors: Vec<MambaError>,
     pub diagnostics: Vec<Diagnostic>,
     /// Generic parameter lists for functions/classes (#314).
-    pub(crate) generic_defs: HashMap<String, GenericParams>,
+    pub(crate) generic_defs: HashMap<SymbolId, GenericParams>,
     /// Aliases shadowed by nested PEP 695 type-parameter scopes. Each
     /// `register_type_params` call pushes one frame and cleanup restores it.
     type_param_alias_scopes: Vec<Vec<(String, Option<TypeId>)>>,
     /// Full user-function parameter metadata. `Ty::Fn` deliberately keeps a
     /// compact ABI-facing shape, so keyword-only and variadic annotation checks
     /// live in this checker-only side channel.
-    pub(crate) function_param_sigs: HashMap<String, Vec<FunctionParamSig>>,
+    pub(crate) function_param_sigs: HashMap<SymbolId, Vec<FunctionParamSig>>,
     /// Protocol registry for structural subtyping (#314).
     pub(crate) protocol_registry: ProtocolRegistry,
     /// Class method signatures for protocol conformance checking (#314).
     pub(crate) class_methods: HashMap<String, HashMap<String, super::protocol::MethodSig>>,
     /// Named/kinded method parameters retained for keyword argument matching.
-    pub(crate) class_method_param_sigs: HashMap<String, HashMap<String, Vec<FunctionParamSig>>>,
+    pub(crate) class_method_param_sigs: HashMap<SymbolId, HashMap<String, Vec<FunctionParamSig>>>,
     /// Class method signatures for bare-class unbound calls such as
     /// `Box.get(obj, arg)`. These include the explicit receiver parameter.
     pub(crate) class_unbound_methods: HashMap<String, HashMap<String, super::protocol::MethodSig>>,
@@ -316,12 +316,12 @@ impl TypeChecker {
 
     pub(crate) fn record_function_param_sigs(
         &mut self,
-        name: &str,
+        symbol: SymbolId,
         params: &[Param],
         overload_decorated: bool,
     ) {
         if overload_decorated {
-            self.function_param_sigs.remove(name);
+            self.function_param_sigs.remove(&symbol);
             return;
         }
 
@@ -335,7 +335,7 @@ impl TypeChecker {
                 kw_only: param.kw_only,
             })
             .collect();
-        self.function_param_sigs.insert(name.to_string(), sigs);
+        self.function_param_sigs.insert(symbol, sigs);
     }
 
     pub(crate) fn error(&mut self, span: Span, msg: impl Into<String>) {
@@ -471,7 +471,10 @@ impl TypeChecker {
         name: &str,
         type_params: &[crate::parser::ast::TypeParam],
     ) {
-        let Some(mut gp) = self.generic_defs.get(name).cloned() else {
+        let Some(symbol) = self.symbols.lookup(name) else {
+            return;
+        };
+        let Some(mut gp) = self.generic_defs.get(&symbol).cloned() else {
             return;
         };
         if gp.params.len() != type_params.len() {
@@ -520,10 +523,10 @@ impl TypeChecker {
         }
 
         self.unregister_type_params(type_params);
-        self.generic_defs.insert(name.to_string(), gp);
+        self.generic_defs.insert(symbol, gp);
     }
 
-    fn finalize_generic_metadata_in(&mut self, stmts: &[Spanned<Stmt>]) {
+    pub(crate) fn finalize_generic_metadata_in(&mut self, stmts: &[Spanned<Stmt>]) {
         for stmt in stmts {
             match &stmt.node {
                 Stmt::FnDef {
@@ -596,7 +599,7 @@ impl TypeChecker {
     /// First-pass def/class/enum/alias pre-registration, descending into
     /// compound-statement bodies (try/if/while/for/with): a class defined in
     /// a module-level `try:` is still a module-scope binding.
-    fn preregister_defs(&mut self, stmts: &[Spanned<Stmt>]) {
+    pub(crate) fn preregister_defs(&mut self, stmts: &[Spanned<Stmt>]) {
         for stmt in stmts {
             match &stmt.node {
                 Stmt::FnDef {
@@ -622,7 +625,7 @@ impl TypeChecker {
                     let overload_decorated = decorators
                         .iter()
                         .any(|d| is_typing_overload_decorator(&d.node));
-                    self.record_function_param_sigs(name, params, overload_decorated);
+                    self.record_function_param_sigs(sym, params, overload_decorated);
                     let (param_types, ret, is_variadic) = if overload_decorated {
                         (Vec::new(), self.tcx.any(), true)
                     } else {
@@ -656,7 +659,7 @@ impl TypeChecker {
                     self.set_sym_type(sym.0, fn_ty);
 
                     if !gp.is_empty() {
-                        self.generic_defs.insert(name.clone(), gp);
+                        self.generic_defs.insert(sym, gp);
                     }
                     // Clean up type parameter aliases to prevent leaking
                     self.unregister_type_params(type_params);
@@ -687,11 +690,11 @@ impl TypeChecker {
                     }
 
                     if !gp.is_empty() {
-                        self.generic_defs.insert(name.clone(), gp);
+                        self.generic_defs.insert(sym, gp);
                     }
 
                     // Collect class methods for protocol conformance
-                    self.collect_class_methods(name, body);
+                    self.collect_class_methods(sym, name, body);
 
                     // #1041: record this class's identifier bases (unfiltered,
                     // not just numeric ones) so `class_defines_dunder`
@@ -787,7 +790,7 @@ impl TypeChecker {
                             self.symbols
                                 .define(fn_def.name.clone(), SymbolKind::Function)
                         });
-                        self.record_function_param_sigs(&fn_def.name, &fn_def.params, false);
+                        self.record_function_param_sigs(sym, &fn_def.params, false);
                         let star_pos = fn_def
                             .params
                             .iter()
@@ -1087,7 +1090,7 @@ impl TypeChecker {
                                 let param_name = format!("{}[{}]", name, arg_names.join(", "));
                                 // Substitute type params in fields so Box[int].value = int
                                 let new_fields = if let Some(gp) =
-                                    self.generic_defs.get(name).cloned()
+                                    self.generic_defs.get(&sym).cloned()
                                 {
                                     let mut subst = Substitution::new();
                                     for (tv, concrete) in gp.params.iter().zip(inner.iter()) {
@@ -1505,7 +1508,12 @@ impl TypeChecker {
     }
 
     /// Collect method signatures from a class body for protocol conformance.
-    pub(crate) fn collect_class_methods(&mut self, class_name: &str, body: &[Spanned<Stmt>]) {
+    pub(crate) fn collect_class_methods(
+        &mut self,
+        class_symbol: SymbolId,
+        class_name: &str,
+        body: &[Spanned<Stmt>],
+    ) {
         use super::protocol::MethodSig;
 
         let mut methods = HashMap::new();
@@ -1583,7 +1591,7 @@ impl TypeChecker {
         if !methods.is_empty() {
             self.class_methods.insert(class_name.to_string(), methods);
             self.class_method_param_sigs
-                .insert(class_name.to_string(), method_param_sigs);
+                .insert(class_symbol, method_param_sigs);
         }
         if !unbound_methods.is_empty() {
             self.class_unbound_methods

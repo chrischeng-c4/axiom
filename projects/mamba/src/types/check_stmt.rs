@@ -436,6 +436,8 @@ impl TypeChecker {
                 let _gp = self.register_type_params(type_params);
                 let prev_class = self.current_class.replace(name.clone());
                 self.symbols.push_scope();
+                self.preregister_defs(body);
+                self.finalize_generic_metadata_in(body);
                 for s in body {
                     self.check_stmt(s);
                 }
@@ -640,6 +642,8 @@ impl TypeChecker {
                 .define(param.name.clone(), SymbolKind::Parameter);
             self.set_sym_type(sym.0, ty);
         }
+        self.preregister_defs(body);
+        self.finalize_generic_metadata_in(body);
         // Python scoping rule: any name assigned anywhere in the body is
         // local. Pre-define each such name as Any before walking the body
         // so identifier lookups find the local binding rather than walking
@@ -655,6 +659,13 @@ impl TypeChecker {
                 continue;
             }
             if params.iter().any(|p| &p.name == n) {
+                continue;
+            }
+            if self
+                .symbols
+                .lookup_in_scope(self.symbols.current_scope_idx(), n)
+                .is_some()
+            {
                 continue;
             }
             let sym = self.symbols.define(n.clone(), SymbolKind::Variable);
