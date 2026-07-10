@@ -172,7 +172,6 @@ flowchart TD
     r2[R2 directives suite stays green] --> cargo_test_p_jet_lib_css_directives[cargo test -p jet --lib css::directives]
     ac3[AC3 block form layer inlining not regressed] --> cargo_test_p_jet_lib_css_directives
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
