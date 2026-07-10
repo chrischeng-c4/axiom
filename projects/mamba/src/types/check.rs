@@ -140,6 +140,79 @@ pub(crate) struct FunctionParamSig {
     pub(crate) kw_only: bool,
 }
 
+#[derive(Debug, Clone)]
+struct TypeAliasDef {
+    params: GenericParams,
+    value: Spanned<TypeExpr>,
+    template: Option<TypeId>,
+    resolving: bool,
+}
+
+fn collect_same_scope_stmts<'a>(
+    stmts: &'a [Spanned<Stmt>],
+    collected: &mut Vec<&'a Spanned<Stmt>>,
+) {
+    for stmt in stmts {
+        collected.push(stmt);
+        match &stmt.node {
+            Stmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+            } => {
+                collect_same_scope_stmts(body, collected);
+                for handler in handlers {
+                    collect_same_scope_stmts(&handler.body, collected);
+                }
+                if let Some(body) = else_body {
+                    collect_same_scope_stmts(body, collected);
+                }
+                if let Some(body) = finally_body {
+                    collect_same_scope_stmts(body, collected);
+                }
+            }
+            Stmt::If {
+                body,
+                elif_clauses,
+                else_body,
+                ..
+            } => {
+                collect_same_scope_stmts(body, collected);
+                for (_, body) in elif_clauses {
+                    collect_same_scope_stmts(body, collected);
+                }
+                if let Some(body) = else_body {
+                    collect_same_scope_stmts(body, collected);
+                }
+            }
+            Stmt::While {
+                body, else_body, ..
+            }
+            | Stmt::For {
+                body, else_body, ..
+            }
+            | Stmt::AsyncFor {
+                body, else_body, ..
+            } => {
+                collect_same_scope_stmts(body, collected);
+                if let Some(body) = else_body {
+                    collect_same_scope_stmts(body, collected);
+                }
+            }
+            Stmt::With { body, .. } | Stmt::AsyncWith { body, .. } => {
+                collect_same_scope_stmts(body, collected)
+            }
+            Stmt::Match { arms, .. } => {
+                for arm in arms {
+                    collect_same_scope_stmts(&arm.body, collected);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 pub struct TypeChecker {
     pub tcx: TypeContext,
     pub symbols: SymbolTable,
@@ -169,6 +242,12 @@ pub struct TypeChecker {
     pub diagnostics: Vec<Diagnostic>,
     /// Generic parameter lists for functions/classes (#314).
     pub(crate) generic_defs: HashMap<SymbolId, GenericParams>,
+    /// PEP 695 aliases keyed by their lexical declaration identity.
+    type_alias_defs: HashMap<SymbolId, TypeAliasDef>,
+    /// Source identity for idempotent header scans and duplicate diagnostics.
+    type_alias_declarations: HashMap<SymbolId, Span>,
+    /// Non-zero while a scope's declaration pass is still incomplete.
+    preregister_depth: u32,
     /// Aliases shadowed by nested PEP 695 type-parameter scopes. Each
     /// `register_type_params` call pushes one frame and cleanup restores it.
     type_param_alias_scopes: Vec<Vec<(String, Option<TypeId>)>>,
@@ -283,6 +362,9 @@ impl TypeChecker {
             errors: Vec::new(),
             diagnostics: Vec::new(),
             generic_defs: HashMap::new(),
+            type_alias_defs: HashMap::new(),
+            type_alias_declarations: HashMap::new(),
+            preregister_depth: 0,
             type_param_alias_scopes: Vec::new(),
             resolved_type_exprs: HashMap::new(),
             function_param_sigs: HashMap::new(),
@@ -467,7 +549,7 @@ impl TypeChecker {
         gp
     }
 
-    fn register_type_param_aliases(&mut self, aliases: &[(String, TypeVarId)]) {
+    pub(crate) fn register_type_param_aliases(&mut self, aliases: &[(String, TypeVarId)]) {
         let shadowed = aliases
             .iter()
             .map(|(name, _)| (name.clone(), self.tcx.resolve_alias(name)))
@@ -494,8 +576,13 @@ impl TypeChecker {
 
     /// Remove type parameter aliases to prevent leaking outside scope.
     pub(crate) fn unregister_type_params(&mut self, type_params: &[crate::parser::ast::TypeParam]) {
-        for param in type_params {
-            self.tcx.unregister_alias(&param.name);
+        let names: Vec<_> = type_params.iter().map(|param| param.name.clone()).collect();
+        self.unregister_type_param_aliases(&names);
+    }
+
+    pub(crate) fn unregister_type_param_aliases(&mut self, names: &[String]) {
+        for name in names {
+            self.tcx.unregister_alias(name);
         }
 
         let shadowed = self
@@ -507,6 +594,15 @@ impl TypeChecker {
                 self.tcx.register_alias(name, ty);
             }
         }
+    }
+
+    fn resolve_active_type_param_alias(&self, name: &str) -> Option<TypeId> {
+        self.type_param_alias_scopes
+            .iter()
+            .rev()
+            .any(|scope| scope.iter().any(|(param, _)| param == name))
+            .then(|| self.tcx.resolve_alias(name))
+            .flatten()
     }
 
     /// Re-resolve lazy PEP 695 metadata after the first pass has registered
@@ -527,6 +623,195 @@ impl TypeChecker {
             return;
         };
         self.generic_defs.insert(symbol, gp);
+    }
+
+    fn finalize_type_alias_generic_metadata(
+        &mut self,
+        name: &str,
+        type_params: &[crate::parser::ast::TypeParam],
+    ) {
+        let Some(symbol) = self.lookup_type_alias_symbol(name) else {
+            return;
+        };
+        let Some(gp) = self
+            .type_alias_defs
+            .get(&symbol)
+            .map(|definition| definition.params.clone())
+        else {
+            return;
+        };
+        let Some(gp) = self.finalize_generic_params(gp, type_params) else {
+            return;
+        };
+        self.type_alias_defs
+            .get_mut(&symbol)
+            .expect("type alias definition disappeared")
+            .params = gp;
+        self.resolve_type_alias_template(symbol);
+    }
+
+    fn refresh_function_signature(
+        &mut self,
+        name: &str,
+        params: &[Param],
+        return_ty: Option<&Spanned<TypeExpr>>,
+        decorators: &[Spanned<Expr>],
+    ) {
+        let Some(symbol) = self.symbols.lookup(name) else {
+            return;
+        };
+        let aliases: Vec<_> = self
+            .generic_defs
+            .get(&symbol)
+            .map(|generic_params| {
+                generic_params
+                    .params
+                    .iter()
+                    .map(|param| (param.name.clone(), param.id))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !aliases.is_empty() {
+            self.register_type_param_aliases(&aliases);
+        }
+
+        let overload_decorated = decorators
+            .iter()
+            .any(|decorator| is_typing_overload_decorator(&decorator.node));
+        self.record_function_param_sigs(symbol, params, overload_decorated);
+        let (param_types, ret, variadic) = if overload_decorated {
+            (Vec::new(), self.tcx.any(), true)
+        } else {
+            let star_pos = params
+                .iter()
+                .position(|param| param.kind == crate::parser::ast::ParamKind::Star);
+            let variadic = star_pos.is_some()
+                || params
+                    .iter()
+                    .any(|param| param.kind == crate::parser::ast::ParamKind::DoubleStar);
+            let effective_params = star_pos.map_or(params, |position| &params[..position]);
+            let param_types = effective_params
+                .iter()
+                .filter(|param| param.kind == crate::parser::ast::ParamKind::Regular)
+                .map(|param| self.resolve_type_expr(&param.ty))
+                .collect();
+            let ret = return_ty
+                .map(|return_ty| self.resolve_type_expr(return_ty))
+                .unwrap_or(self.tcx.any());
+            (param_types, ret, variadic)
+        };
+        let function_ty = self.tcx.intern(Ty::Fn {
+            params: param_types,
+            ret,
+            variadic,
+        });
+        self.set_sym_type(symbol.0, function_ty);
+
+        if !aliases.is_empty() {
+            let names: Vec<_> = aliases.into_iter().map(|(name, _)| name).collect();
+            self.unregister_type_param_aliases(&names);
+        }
+    }
+
+    fn finalize_type_alias_metadata_in(&mut self, stmts: &[Spanned<Stmt>]) {
+        let mut statements = Vec::new();
+        collect_same_scope_stmts(stmts, &mut statements);
+        for stmt in statements {
+            if let Stmt::TypeAlias {
+                name, type_params, ..
+            } = &stmt.node
+            {
+                self.finalize_type_alias_generic_metadata(name, type_params);
+            }
+        }
+    }
+
+    pub(crate) fn refresh_function_signatures_in(&mut self, stmts: &[Spanned<Stmt>]) {
+        let mut statements = Vec::new();
+        collect_same_scope_stmts(stmts, &mut statements);
+        for stmt in statements {
+            match &stmt.node {
+                Stmt::FnDef {
+                    name,
+                    params,
+                    return_ty,
+                    decorators,
+                    ..
+                }
+                | Stmt::AsyncFnDef {
+                    name,
+                    params,
+                    return_ty,
+                    decorators,
+                    ..
+                } => self.refresh_function_signature(name, params, return_ty.as_ref(), decorators),
+                _ => {}
+            }
+        }
+    }
+
+    pub(crate) fn rebuild_class_metadata(
+        &mut self,
+        class_symbol: SymbolId,
+        name: &str,
+        body: &[Spanned<Stmt>],
+        is_protocol: bool,
+    ) {
+        let fields = self.collect_class_fields(body);
+        let match_args = self.collect_match_args(body);
+        let Ty::Class { user, .. } = self.tcx.get(self.get_sym_type(class_symbol.0)).clone() else {
+            return;
+        };
+        let class_ty = self.tcx.intern(Ty::Class {
+            name: name.to_string(),
+            user,
+            fields,
+            match_args,
+        });
+        self.set_sym_type(class_symbol.0, class_ty);
+        self.collect_class_methods(class_symbol, name, body);
+        if is_protocol {
+            self.register_protocol(name, body);
+        }
+    }
+
+    fn refresh_class_declaration_metadata(
+        &mut self,
+        name: &str,
+        body: &[Spanned<Stmt>],
+        bases: &[Spanned<Expr>],
+    ) {
+        let Some(class_symbol) = self.symbols.lookup(name) else {
+            return;
+        };
+        let aliases: Vec<_> = self
+            .generic_defs
+            .get(&class_symbol)
+            .map(|generic_params| {
+                generic_params
+                    .params
+                    .iter()
+                    .map(|param| (param.name.clone(), param.id))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !aliases.is_empty() {
+            self.register_type_param_aliases(&aliases);
+        }
+        let previous_class = self.current_class.replace(name.to_string());
+        self.symbols.push_scope();
+        self.preregister_type_alias_headers(body);
+        self.finalize_type_alias_metadata_in(body);
+        let is_protocol = bases
+            .iter()
+            .any(|base| matches!(&base.node, Expr::Ident(name) if name == "Protocol"));
+        self.rebuild_class_metadata(class_symbol, name, body, is_protocol);
+        self.symbols.pop_scope();
+        self.current_class = previous_class;
+        if !aliases.is_empty() {
+            let names: Vec<_> = aliases.into_iter().map(|(name, _)| name).collect();
+            self.unregister_type_param_aliases(&names);
+        }
     }
 
     fn finalize_class_method_generic_metadata(
@@ -671,7 +956,10 @@ impl TypeChecker {
     }
 
     pub(crate) fn finalize_generic_metadata_in(&mut self, stmts: &[Spanned<Stmt>]) {
-        for stmt in stmts {
+        self.finalize_type_alias_metadata_in(stmts);
+        let mut statements = Vec::new();
+        collect_same_scope_stmts(stmts, &mut statements);
+        for stmt in statements {
             match &stmt.node {
                 Stmt::FnDef {
                     name, type_params, ..
@@ -679,13 +967,16 @@ impl TypeChecker {
                 | Stmt::AsyncFnDef {
                     name, type_params, ..
                 } => self.finalize_generic_param_metadata(name, type_params),
+                Stmt::TypeAlias { .. } => {}
                 Stmt::ClassDef {
                     name,
                     type_params,
+                    bases,
                     body,
                     ..
                 } => {
                     self.finalize_generic_param_metadata(name, type_params);
+                    self.refresh_class_declaration_metadata(name, body, bases);
                     if let Some(class_symbol) = self.symbols.lookup(name) {
                         for method in body {
                             match &method.node {
@@ -706,59 +997,148 @@ impl TypeChecker {
                 }
                 _ => {}
             }
-
-            match &stmt.node {
-                Stmt::Try {
-                    body,
-                    handlers,
-                    else_body,
-                    finally_body,
-                } => {
-                    self.finalize_generic_metadata_in(body);
-                    for handler in handlers {
-                        self.finalize_generic_metadata_in(&handler.body);
-                    }
-                    if let Some(body) = else_body {
-                        self.finalize_generic_metadata_in(body);
-                    }
-                    if let Some(body) = finally_body {
-                        self.finalize_generic_metadata_in(body);
-                    }
-                }
-                Stmt::If {
-                    body,
-                    elif_clauses,
-                    else_body,
-                    ..
-                } => {
-                    self.finalize_generic_metadata_in(body);
-                    for (_, body) in elif_clauses {
-                        self.finalize_generic_metadata_in(body);
-                    }
-                    if let Some(body) = else_body {
-                        self.finalize_generic_metadata_in(body);
-                    }
-                }
-                Stmt::While {
-                    body, else_body, ..
-                }
-                | Stmt::For {
-                    body, else_body, ..
-                } => {
-                    self.finalize_generic_metadata_in(body);
-                    if let Some(body) = else_body {
-                        self.finalize_generic_metadata_in(body);
-                    }
-                }
-                Stmt::With { body, .. } => self.finalize_generic_metadata_in(body),
-                _ => {}
-            }
         }
     }
 
     /// Get the TypeId for a SymbolId, if known (#1190).
     pub fn get_symbol_type(&self, sym: crate::resolve::SymbolId) -> Option<crate::types::TypeId> {
         self.sym_types.get(sym.0 as usize).and_then(|t| *t)
+    }
+
+    fn preregister_type_alias_headers(&mut self, stmts: &[Spanned<Stmt>]) {
+        let mut statements = Vec::new();
+        collect_same_scope_stmts(stmts, &mut statements);
+        for stmt in statements {
+            if let Stmt::TypeAlias {
+                name,
+                type_params,
+                value,
+            } = &stmt.node
+            {
+                self.preregister_type_alias_header(name, type_params, value);
+            }
+        }
+    }
+
+    fn preregister_type_alias_header(
+        &mut self,
+        name: &str,
+        type_params: &[crate::parser::ast::TypeParam],
+        value: &Spanned<Expr>,
+    ) {
+        let scope = self.symbols.current_scope_idx();
+        let symbol = self
+            .symbols
+            .lookup_in_scope(scope, name)
+            .unwrap_or_else(|| self.symbols.define(name.to_string(), SymbolKind::Variable));
+        self.set_sym_type(symbol.0, self.tcx.any());
+
+        if let Some(previous) = self.type_alias_declarations.get(&symbol).copied() {
+            if previous != value.span {
+                self.error(
+                    value.span,
+                    format!("type alias '{name}' is already defined in this scope"),
+                );
+            }
+            return;
+        }
+        self.type_alias_declarations.insert(symbol, value.span);
+        let Some(value) = expr_to_type_expr(value) else {
+            return;
+        };
+        let params = self.register_type_params(type_params);
+        self.unregister_type_params(type_params);
+        self.type_alias_defs.insert(
+            symbol,
+            TypeAliasDef {
+                params,
+                value,
+                template: None,
+                resolving: false,
+            },
+        );
+    }
+
+    fn lookup_type_alias_symbol(&self, name: &str) -> Option<SymbolId> {
+        let symbol = self.symbols.lookup(name)?;
+        self.type_alias_defs.contains_key(&symbol).then_some(symbol)
+    }
+
+    fn resolve_type_alias_template(&mut self, symbol: SymbolId) -> TypeId {
+        let Some(definition) = self.type_alias_defs.get(&symbol).cloned() else {
+            return self.tcx.error();
+        };
+        if let Some(template) = definition.template {
+            return template;
+        }
+        if definition.resolving {
+            return self.tcx.any();
+        }
+
+        self.type_alias_defs
+            .get_mut(&symbol)
+            .expect("type alias definition disappeared")
+            .resolving = true;
+        let aliases: Vec<_> = definition
+            .params
+            .params
+            .iter()
+            .map(|param| (param.name.clone(), param.id))
+            .collect();
+        self.register_type_param_aliases(&aliases);
+        let error_mark = self.errors_mark();
+        let template = self.resolve_type_expr(&definition.value);
+        let alias_names: Vec<_> = aliases.into_iter().map(|(name, _)| name).collect();
+        self.unregister_type_param_aliases(&alias_names);
+        if self.preregister_depth > 0 && self.errors.len() != error_mark {
+            self.truncate_errors(error_mark);
+            self.type_alias_defs
+                .get_mut(&symbol)
+                .expect("type alias definition disappeared")
+                .resolving = false;
+            return self.tcx.any();
+        }
+        let definition = self
+            .type_alias_defs
+            .get_mut(&symbol)
+            .expect("type alias definition disappeared");
+        definition.template = Some(template);
+        definition.resolving = false;
+        template
+    }
+
+    fn resolve_type_alias(
+        &mut self,
+        name: &str,
+        symbol: SymbolId,
+        supplied: Option<&[TypeId]>,
+        span: Span,
+    ) -> TypeId {
+        let template = self.resolve_type_alias_template(symbol);
+        let Some(definition) = self.type_alias_defs.get(&symbol).cloned() else {
+            return template;
+        };
+        if definition.params.is_empty() {
+            if supplied.is_some() {
+                self.error(span, format!("type '{name}' is not generic"));
+            }
+            return template;
+        }
+
+        let (subst, _, errors) = if let Some(args) = supplied {
+            bind_explicit_type_args(&definition.params, args, &mut self.tcx)
+        } else {
+            let Some((subst, resolved)) =
+                complete_type_args(&definition.params, Substitution::new(), &mut self.tcx)
+            else {
+                return template;
+            };
+            (subst, resolved, Vec::new())
+        };
+        for error in errors {
+            self.error(span, error);
+        }
+        subst.apply(template, &mut self.tcx)
     }
 
     fn preregister_user_class_alias(&mut self, value: &Spanned<Expr>) -> Option<TypeId> {
@@ -831,6 +1211,8 @@ impl TypeChecker {
     /// compound-statement bodies (try/if/while/for/with): a class defined in
     /// a module-level `try:` is still a module-scope binding.
     pub(crate) fn preregister_defs(&mut self, stmts: &[Spanned<Stmt>]) {
+        self.preregister_depth += 1;
+        self.preregister_type_alias_headers(stmts);
         for stmt in stmts {
             match &stmt.node {
                 Stmt::FnDef {
@@ -905,11 +1287,13 @@ impl TypeChecker {
                 } => {
                     // Register generic type params for the class
                     let gp = self.register_type_params(type_params);
-
-                    let fields = self.collect_class_fields(body);
-                    let match_args = self.collect_match_args(body);
                     let is_typed_dict = bases.iter().any(|b| self.base_is_typed_dict(&b.node));
                     let sym = self.symbols.define(name.clone(), SymbolKind::Class);
+                    self.symbols.push_scope();
+                    let class_metadata_error_mark = self.errors_mark();
+                    self.preregister_type_alias_headers(body);
+                    let fields = self.collect_class_fields(body);
+                    let match_args = self.collect_match_args(body);
                     let mut type_args = Vec::with_capacity(gp.len());
                     for param in &gp.params {
                         type_args.push(self.tcx.intern(Ty::TypeVar(param.id)));
@@ -935,6 +1319,17 @@ impl TypeChecker {
 
                     // Collect class methods for protocol conformance
                     self.collect_class_methods(sym, name, body);
+
+                    let is_protocol = bases
+                        .iter()
+                        .any(|b| matches!(&b.node, Expr::Ident(n) if n == "Protocol"));
+                    if is_protocol {
+                        self.register_protocol(name, body);
+                    }
+                    if self.preregister_depth > 0 {
+                        self.truncate_errors(class_metadata_error_mark);
+                    }
+                    self.symbols.pop_scope();
 
                     // #1041: record this class's identifier bases (unfiltered,
                     // not just numeric ones) so `class_defines_dunder`
@@ -1017,14 +1412,6 @@ impl TypeChecker {
                         self.numeric_derived_classes.insert(name.clone(), root);
                     }
 
-                    // Detect Protocol base class and register
-                    let is_protocol = bases
-                        .iter()
-                        .any(|b| matches!(&b.node, Expr::Ident(n) if n == "Protocol"));
-                    if is_protocol {
-                        self.register_protocol(name, body);
-                    }
-
                     // Clean up type parameter aliases to prevent leaking
                     self.unregister_type_params(type_params);
                 }
@@ -1080,29 +1467,7 @@ impl TypeChecker {
                         self.set_sym_type(sym.0, fn_ty);
                     }
                 }
-                Stmt::TypeAlias {
-                    name,
-                    type_params,
-                    value,
-                } => {
-                    // The alias value is a general expression (PEP 695). For
-                    // compile-time annotation use (`x: Alias`), convert the
-                    // type-shaped subset back into a TypeExpr; non-type-shaped
-                    // values (e.g. lambdas) only exist as runtime
-                    // TypeAliasType objects and are skipped here.
-                    if let Some(te) = expr_to_type_expr(value) {
-                        // Pre-register the alias as Any so a recursive alias
-                        // (`type R = R | None`) resolves instead of erroring.
-                        let any = self.tcx.any();
-                        self.tcx.register_alias(name.clone(), any);
-                        // The alias's own params (`type Pair[T] = list[T]`)
-                        // resolve as TypeVars within the value.
-                        let _gp = self.register_type_params(type_params);
-                        let resolved = self.resolve_type_expr(&te);
-                        self.unregister_type_params(type_params);
-                        self.tcx.register_alias(name.clone(), resolved);
-                    }
-                }
+                Stmt::TypeAlias { .. } => {}
                 // Register imported names as Any in the first pass so that
                 // collect_class_methods / collect_class_fields can resolve
                 // types from third-party or relative imports in class signatures.
@@ -1254,6 +1619,9 @@ impl TypeChecker {
                 }
                 | Stmt::For {
                     body, else_body, ..
+                }
+                | Stmt::AsyncFor {
+                    body, else_body, ..
                 } => {
                     self.preregister_defs(body);
                     if let Some(eb) = else_body {
@@ -1264,18 +1632,26 @@ impl TypeChecker {
                         self.invalidate_conditional_user_class_aliases(else_body);
                     }
                 }
-                Stmt::With { body, .. } => {
+                Stmt::With { body, .. } | Stmt::AsyncWith { body, .. } => {
                     self.preregister_defs(body);
+                }
+                Stmt::Match { arms, .. } => {
+                    for arm in arms {
+                        self.preregister_defs(&arm.body);
+                        self.invalidate_conditional_user_class_aliases(&arm.body);
+                    }
                 }
                 _ => {}
             }
         }
+        self.preregister_depth -= 1;
     }
 
     pub fn check_module(&mut self, module: &Module) -> Vec<MambaError> {
         // First pass: register all top-level function/class/enum/alias names
         self.preregister_defs(&module.stmts);
         self.finalize_generic_metadata_in(&module.stmts);
+        self.refresh_function_signatures_in(&module.stmts);
 
         // Second pass: check bodies
         for stmt in &module.stmts {
@@ -1475,7 +1851,14 @@ impl TypeChecker {
                     }
                 }
                 _ => {
-                    // Check type aliases first (#241)
+                    if let Some(param_ty) = self.resolve_active_type_param_alias(name) {
+                        return param_ty;
+                    }
+                    if let Some(symbol) = self.lookup_type_alias_symbol(name) {
+                        return self.resolve_type_alias(name, symbol, None, ty.span);
+                    }
+                    // Legacy `T = TypeVar(...)` aliases remain name-based, but
+                    // a lexical PEP 695 declaration shadows them.
                     if let Some(alias_ty) = self.tcx.resolve_alias(name) {
                         return alias_ty;
                     }
@@ -1545,8 +1928,10 @@ impl TypeChecker {
                         })
                     }
                     _ => {
+                        if let Some(symbol) = self.lookup_type_alias_symbol(name) {
+                            self.resolve_type_alias(name, symbol, Some(&inner), ty.span)
                         // Support user-defined generic types like Box[int]
-                        if let Some(sym) = self.symbols.lookup(name) {
+                        } else if let Some(sym) = self.symbols.lookup(name) {
                             let base_ty = self.get_sym_type(sym.0);
                             self.specialize_user_class(name, sym, base_ty, Some(&inner), ty.span)
                         } else if let Some(alias_ty) = self.tcx.resolve_alias(name) {
