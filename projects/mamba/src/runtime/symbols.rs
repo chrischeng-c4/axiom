@@ -2386,6 +2386,13 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_coroutine_new_with_body",
+            async_rt::mb_coroutine_new_with_body
+                as fn(super::MbValue, i64, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_await",
             async_rt::mb_await as fn(super::MbValue) -> super::MbValue,
             [I64],
@@ -4491,7 +4498,7 @@ mod tests {
     //   (3) runtime_externs() mirrors runtime_symbols() 1:1 with lib_name=mamba_rt
     //       in the same order — codegen indexes by position elsewhere.
     // Also anchors the coroutine runtime symbols the JIT actually emits calls to
-    // (mb_coroutine_new + mb_coroutine_complete — see hir_to_mir.rs:897 and :856)
+    // (mb_coroutine_new_with_body + mb_coroutine_complete — see hir_to_mir.rs)
     // against the spec-R2 drift found in runtime/async.md tick 155 (spec named
     // nonexistent mb_coroutine_suspend/resume). Note: mb_coroutine_step is called
     // from the Rust-side tokio executor, not from JIT-emitted code, so it lives
@@ -4533,7 +4540,11 @@ mod tests {
                 e.name
             );
         }
-        for expected in ["mb_coroutine_new", "mb_coroutine_complete"] {
+        for expected in [
+            "mb_coroutine_new",
+            "mb_coroutine_new_with_body",
+            "mb_coroutine_complete",
+        ] {
             assert!(
                 seen.contains(expected),
                 "coroutine runtime symbol {} missing",
