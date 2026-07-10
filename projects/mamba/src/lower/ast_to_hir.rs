@@ -3797,6 +3797,9 @@ impl<'a> AstLowerer<'a> {
     /// Handles common annotation types (int, str, float, bool, None, Any, list[T], dict[K,V],
     /// class names). Unknown or complex types fall back to any().
     fn resolve_type_expr_ro(&self, ty: &Spanned<ast::TypeExpr>) -> TypeId {
+        if let Some(resolved) = self.checker.resolved_type_expr(ty.span) {
+            return resolved;
+        }
         use ast::TypeExpr;
         match &ty.node {
             TypeExpr::Named(name) => match name.as_str() {

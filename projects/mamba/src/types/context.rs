@@ -383,6 +383,7 @@ mod tests {
             name: "Nested".to_string(),
             user: Some(crate::types::ty::UserClass {
                 symbol: crate::resolve::SymbolId(10),
+                role: crate::types::ty::UserClassRole::Instance,
                 args: Vec::new(),
             }),
             fields: Vec::new(),
@@ -392,6 +393,7 @@ mod tests {
             name: "Nested".to_string(),
             user: Some(crate::types::ty::UserClass {
                 symbol: crate::resolve::SymbolId(11),
+                role: crate::types::ty::UserClassRole::Instance,
                 args: Vec::new(),
             }),
             fields: Vec::new(),
@@ -399,6 +401,33 @@ mod tests {
         });
 
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn test_user_class_role_is_part_of_nominal_identity() {
+        let mut tcx = TypeContext::new();
+        let object = tcx.intern(Ty::Class {
+            name: "Box".to_string(),
+            user: Some(crate::types::ty::UserClass {
+                symbol: crate::resolve::SymbolId(10),
+                role: crate::types::ty::UserClassRole::Object,
+                args: vec![tcx.int()],
+            }),
+            fields: Vec::new(),
+            match_args: None,
+        });
+        let instance = tcx.intern(Ty::Class {
+            name: "Box".to_string(),
+            user: Some(crate::types::ty::UserClass {
+                symbol: crate::resolve::SymbolId(10),
+                role: crate::types::ty::UserClassRole::Instance,
+                args: vec![tcx.int()],
+            }),
+            fields: Vec::new(),
+            match_args: None,
+        });
+
+        assert_ne!(object, instance);
     }
 
     #[test]

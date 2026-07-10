@@ -178,6 +178,7 @@ impl Substitution {
             } => {
                 let new_user = user.as_ref().map(|user| super::ty::UserClass {
                     symbol: user.symbol,
+                    role: user.role,
                     args: user.args.iter().map(|arg| self.apply(*arg, tcx)).collect(),
                 });
                 let new_fields: Vec<_> = fields
@@ -397,6 +398,7 @@ fn unify_for_inference(
             } = arg_ty
             {
                 if param_user.symbol == arg_user.symbol
+                    && param_user.role == arg_user.role
                     && param_user.args.len() == arg_user.args.len()
                 {
                     for (param_arg, concrete_arg) in param_user.args.iter().zip(&arg_user.args) {
@@ -812,6 +814,7 @@ mod tests {
             name: "Box".to_string(),
             user: Some(crate::types::ty::UserClass {
                 symbol: crate::resolve::SymbolId(42),
+                role: crate::types::ty::UserClassRole::Instance,
                 args: vec![var_ty],
             }),
             fields: vec![("value".to_string(), var_ty)],
@@ -832,6 +835,7 @@ mod tests {
         };
         assert_eq!(name, "Box");
         assert_eq!(user.symbol, crate::resolve::SymbolId(42));
+        assert_eq!(user.role, crate::types::ty::UserClassRole::Instance);
         assert_eq!(user.args, vec![tcx.int()]);
         assert_eq!(fields, &vec![("value".to_string(), tcx.int())]);
     }
