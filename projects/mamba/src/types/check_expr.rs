@@ -425,7 +425,7 @@ impl TypeChecker {
                                 for err in conflicts {
                                     self.error(expr.span, err);
                                 }
-                                let bound_errors = check_bounds(&subst, &gp, &self.tcx);
+                                let bound_errors = check_bounds(&subst, &gp, &mut self.tcx);
                                 for err in bound_errors {
                                     self.error(expr.span, err);
                                 }
@@ -477,7 +477,7 @@ impl TypeChecker {
                                 for err in conflicts {
                                     self.error(expr.span, err);
                                 }
-                                let bound_errors = check_bounds(&subst, &gp, &self.tcx);
+                                let bound_errors = check_bounds(&subst, &gp, &mut self.tcx);
                                 for err in bound_errors {
                                     self.error(expr.span, err);
                                 }

@@ -573,71 +573,204 @@ fn test_generic_function_call_inference() {
 }
 
 #[test]
-fn test_generic_function_bound_from_parser_accepts_subtype_compatible_call() {
+fn pep695_bound_constraint_metadata() {
+    let module = parser::parse(
+        "def bounded[T: float](x: T) -> T:\n\
+         \x20   return x\n\
+         def constrained[U: (int, str)](x: U) -> U:\n\
+         \x20   return x\n",
+        FileId(0),
+    )
+    .expect("parse failed");
+    let mut checker = TypeChecker::new();
+    let errors = checker.check_module(&module);
+    assert!(
+        errors.is_empty(),
+        "metadata declarations should check: {errors:?}"
+    );
+
+    let bounded = &checker.generic_defs["bounded"].params[0];
+    assert_eq!(bounded.bound, Some(checker.tcx.float()));
+    assert!(bounded.constraints.is_empty());
+    let bounded_info = checker.tcx.get_type_var(bounded.id);
+    assert_eq!(bounded_info.bound, bounded.bound);
+    assert_eq!(bounded_info.constraints, bounded.constraints);
+
+    let constrained = &checker.generic_defs["constrained"].params[0];
+    assert_eq!(
+        constrained.constraints,
+        vec![checker.tcx.int(), checker.tcx.str()]
+    );
+    let constrained_info = checker.tcx.get_type_var(constrained.id);
+    assert_eq!(constrained_info.bound, constrained.bound);
+    assert_eq!(constrained_info.constraints, constrained.constraints);
+}
+
+#[test]
+fn pep695_function_bound_constraint_enforcement() {
     let errors = check(
         "def widen[T: float](x: T) -> T:\n\
          \x20   return x\n\
-         ok: float = widen(1)\n",
+         widen(1)\n",
     );
     assert!(
         errors.is_empty(),
-        "bounded generic should accept subtype-compatible calls, got: {errors:?}"
+        "int should satisfy a float bound: {errors:?}"
     );
-}
 
-#[test]
-fn test_generic_function_bound_from_parser_rejects_incompatible_call() {
     let errors = check(
         "def widen[T: float](x: T) -> T:\n\
          \x20   return x\n\
-         widen(\"oops\")\n",
+         widen(\"bad\")\n",
     );
     assert!(
-        errors.iter().any(|e| e.contains("bound violation")),
-        "bounded generic should reject incompatible concrete types, got: {errors:?}"
+        errors.iter().any(|error| error.contains("bound violation")),
+        "str should violate a float bound: {errors:?}"
     );
-}
 
-#[test]
-fn test_generic_function_constraints_from_parser_accept_declared_types() {
     let errors = check(
         "def choose[T: (int, str)](x: T) -> T:\n\
          \x20   return x\n\
-         i: int = choose(1)\n\
-         s: str = choose(\"hi\")\n",
+         choose(1)\n\
+         choose(\"ok\")\n",
     );
     assert!(
         errors.is_empty(),
-        "constrained generic should accept declared constraint types, got: {errors:?}"
+        "declared constrained types should be accepted: {errors:?}"
     );
-}
 
-#[test]
-fn test_generic_function_constraints_from_parser_reject_outside_constraint_set() {
     let errors = check(
         "def choose[T: (int, str)](x: T) -> T:\n\
          \x20   return x\n\
-         choose(3.14)\n",
+         choose(1.5)\n",
     );
     assert!(
         errors
             .iter()
-            .any(|e| e.contains("must be one of the constrained types")),
-        "constrained generic should reject types outside the constraint set, got: {errors:?}"
+            .any(|error| error.contains("constrained types")),
+        "float should violate int/str constraints: {errors:?}"
     );
 }
 
 #[test]
-fn test_unbounded_generic_function_behavior_is_unchanged() {
+fn pep695_class_bound_constraint_enforcement() {
     let errors = check(
-        "def identity[T](x: T) -> T:\n\
-         \x20   return x\n\
-         i: int = identity(1)\n\
-         s: str = identity(\"hi\")\n",
+        "class NumericBox[T: float]:\n\
+         \x20   def __init__(self, value: T) -> None:\n\
+         \x20       pass\n\
+         NumericBox(1)\n\
+         def accepts(box: NumericBox[int]) -> None:\n\
+         \x20   pass\n",
     );
     assert!(
         errors.is_empty(),
-        "unbounded generic functions should retain current behavior, got: {errors:?}"
+        "class construction and specialization should accept a valid bound: {errors:?}"
+    );
+
+    let errors = check(
+        "class NumericBox[T: float]:\n\
+         \x20   def __init__(self, value: T) -> None:\n\
+         \x20       pass\n\
+         NumericBox(\"bad\")\n\
+         def rejects(box: NumericBox[str]) -> None:\n\
+         \x20   pass\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("bound violation")),
+        "class calls and explicit specialization should reject invalid bounds: {errors:?}"
+    );
+
+    let errors = check(
+        "class NumericBox[T: float]:\n\
+         \x20   pass\n\
+         def rejects(box: NumericBox[str]) -> None:\n\
+         \x20   pass\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("bound violation")),
+        "explicit specialization should independently reject an invalid bound: {errors:?}"
+    );
+
+    let errors = check(
+        "class Choice[T: (int, str)]:\n\
+         \x20   def __init__(self, value: T) -> None:\n\
+         \x20       pass\n\
+         Choice(1.5)\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("constrained types")),
+        "class construction should reject a type outside its constraints: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_forward_bound_is_skip_safe() {
+    let module = parser::parse(
+        "def keep[T: Later](value: T) -> T:\n\
+         \x20   return value\n\
+         class Later:\n\
+         \x20   pass\n",
+        FileId(0),
+    )
+    .expect("parse failed");
+    let mut checker = TypeChecker::new();
+    let errors: Vec<_> = checker
+        .check_module(&module)
+        .into_iter()
+        .map(|error| error.to_string())
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "a lazy forward bound must not emit an early unknown-type error: {errors:?}"
+    );
+
+    let later_sym = checker.symbols.lookup("Later").expect("Later registered");
+    let later_ty = checker.get_sym_type(later_sym.0);
+    let keep_param = &checker.generic_defs["keep"].params[0];
+    assert_eq!(keep_param.bound, Some(later_ty));
+    assert_eq!(
+        checker.tcx.get_type_var(keep_param.id).bound,
+        Some(later_ty)
+    );
+
+    let errors = check(
+        "def keep[T: Later](value: T) -> T:\n\
+         \x20   return value\n\
+         class Later:\n\
+         \x20   pass\n\
+         class Other:\n\
+         \x20   pass\n\
+         keep(Later())\n\
+         keep(Other())\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("bound violation")),
+        "a finalized forward bound must reject an unrelated class: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_dependent_bound_uses_call_substitution() {
+    let errors = check(
+        "def pair[U, T: U](left: U, right: T) -> T:\n\
+         \x20   return right\n\
+         pair(1, 2)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "matching dependent bounds should be accepted: {errors:?}"
+    );
+
+    let errors = check(
+        "def pair[U, T: U](left: U, right: T) -> T:\n\
+         \x20   return right\n\
+         pair(1, \"bad\")\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("bound violation")),
+        "a dependent bound must use the inferred U substitution: {errors:?}"
     );
 }
 
