@@ -1,9 +1,112 @@
-use super::check::{NumericRoot, TypeChecker};
+use super::check::{FunctionParamSig, NumericRoot, TypeChecker};
 use super::generic::{check_bounds, infer_type_args};
 use super::{Ty, TypeId};
 use crate::parser::ast::*;
 use crate::resolve::SymbolKind;
 use crate::source::span::{Span, Spanned};
+
+fn bind_explicit_inference_args(
+    args: &[CallArg],
+    checked_arg_types: &[Option<TypeId>],
+    params: &[FunctionParamSig],
+) -> (Vec<TypeId>, Vec<TypeId>) {
+    let positional_params: Vec<_> = params
+        .iter()
+        .enumerate()
+        .filter(|(_, param)| param.kind == ParamKind::Regular && !param.kw_only)
+        .map(|(idx, _)| idx)
+        .collect();
+    let star_param = params
+        .iter()
+        .position(|param| param.kind == ParamKind::Star);
+    let double_star_param = params
+        .iter()
+        .position(|param| param.kind == ParamKind::DoubleStar);
+    let mut matched_params = Vec::new();
+    let mut matched_args = Vec::new();
+    let mut bound_regular_params = Vec::new();
+    let mut positional_idx = 0;
+    let mut dynamic_positionals = false;
+    let mut dynamic_keywords = false;
+
+    for (arg, actual) in args.iter().zip(checked_arg_types) {
+        let param_idx = match arg {
+            CallArg::Positional(_) => {
+                if dynamic_positionals {
+                    continue;
+                }
+                let param_idx = positional_params
+                    .get(positional_idx)
+                    .copied()
+                    .or(star_param);
+                positional_idx += 1;
+                param_idx
+            }
+            CallArg::Keyword { name, .. } => {
+                if dynamic_keywords {
+                    continue;
+                }
+                params
+                    .iter()
+                    .position(|param| {
+                        param.kind == ParamKind::Regular && !param.pos_only && param.name == *name
+                    })
+                    .or(double_star_param)
+            }
+            CallArg::StarArg(_) => {
+                dynamic_positionals = true;
+                continue;
+            }
+            CallArg::DoubleStarArg(_) => {
+                dynamic_keywords = true;
+                continue;
+            }
+        };
+        let (Some(param_idx), Some(actual)) = (param_idx, actual) else {
+            continue;
+        };
+        let param = &params[param_idx];
+        if param.kind == ParamKind::Regular && bound_regular_params.contains(&param_idx) {
+            continue;
+        }
+        if param.kind == ParamKind::Regular {
+            bound_regular_params.push(param_idx);
+        }
+        matched_params.push(param.ty);
+        matched_args.push(*actual);
+    }
+
+    (matched_params, matched_args)
+}
+
+fn bind_compact_positional_inference_args(
+    args: &[CallArg],
+    checked_arg_types: &[Option<TypeId>],
+    params: &[TypeId],
+) -> (Vec<TypeId>, Vec<TypeId>) {
+    let mut matched_params = Vec::new();
+    let mut matched_args = Vec::new();
+    let mut positional_idx = 0;
+    let mut dynamic_positionals = false;
+
+    for (arg, actual) in args.iter().zip(checked_arg_types) {
+        match arg {
+            CallArg::StarArg(_) => {
+                dynamic_positionals = true;
+                continue;
+            }
+            CallArg::Positional(_) if !dynamic_positionals => {}
+            _ => continue,
+        }
+        if let (Some(param), Some(actual)) = (params.get(positional_idx), actual) {
+            matched_params.push(*param);
+            matched_args.push(*actual);
+        }
+        positional_idx += 1;
+    }
+
+    (matched_params, matched_args)
+}
 
 thread_local! {
     /// ① Type-wall PoC: when set, `check_stdlib_call` suppresses CONSTRUCTOR /
@@ -295,7 +398,7 @@ impl TypeChecker {
                                 );
                             }
                         }
-                        let mut arg_types = Vec::new();
+                        let mut checked_arg_types = Vec::with_capacity(args.len());
                         let user_param_sigs = func_name
                             .as_deref()
                             .and_then(|name| self.function_param_sigs.get(name).cloned());
@@ -312,7 +415,7 @@ impl TypeChecker {
                                     } else {
                                         self.check_expr(a)
                                     };
-                                    arg_types.push(at);
+                                    checked_arg_types.push(Some(at));
                                     if matches!(
                                         func_name.as_deref(),
                                         Some("isinstance" | "issubclass")
@@ -385,17 +488,20 @@ impl TypeChecker {
                                 }
                                 CallArg::Keyword { name, value } => {
                                     let at = self.check_expr(value);
+                                    checked_arg_types.push(Some(at));
                                     if let Some(param) = user_param_sigs.as_ref().and_then(|sigs| {
                                         sigs.iter()
                                             .find(|sig| {
                                                 sig.name == *name
                                                     && sig.kind == ParamKind::Regular
+                                                    && !sig.pos_only
                                                     && sig.kw_only
                                             })
                                             .or_else(|| {
                                                 sigs.iter().find(|sig| {
                                                     sig.name == *name
                                                         && sig.kind == ParamKind::Regular
+                                                        && !sig.pos_only
                                                         && !sig.kw_only
                                                 })
                                             })
@@ -414,18 +520,35 @@ impl TypeChecker {
                                 }
                                 CallArg::StarArg(a) | CallArg::DoubleStarArg(a) => {
                                     self.check_expr(a);
+                                    checked_arg_types.push(None);
                                 }
                             }
                         }
+                        let (inference_params, inference_args) = user_param_sigs
+                            .as_deref()
+                            .map(|sigs| {
+                                bind_explicit_inference_args(args, &checked_arg_types, sigs)
+                            })
+                            .unwrap_or_else(|| {
+                                bind_compact_positional_inference_args(
+                                    args,
+                                    &checked_arg_types,
+                                    &params,
+                                )
+                            });
                         // If generic function, infer type args and check bounds
                         if let Some(ref fname) = func_name {
                             if let Some(gp) = self.generic_defs.get(fname).cloned() {
-                                let (subst, conflicts) =
-                                    infer_type_args(&gp, &params, &arg_types, &self.tcx);
+                                let (subst, conflicts) = infer_type_args(
+                                    &gp,
+                                    &inference_params,
+                                    &inference_args,
+                                    &self.tcx,
+                                );
                                 for err in conflicts {
                                     self.error(expr.span, err);
                                 }
-                                let bound_errors = check_bounds(&subst, &gp, &mut self.tcx);
+                                let bound_errors = check_bounds(&subst, &gp, &self.tcx);
                                 for err in bound_errors {
                                     self.error(expr.span, err);
                                 }
@@ -454,30 +577,44 @@ impl TypeChecker {
                         name: ref class_name,
                         ..
                     } => {
+                        let init_params = self
+                            .class_method_param_sigs
+                            .get(class_name)
+                            .and_then(|methods| methods.get("__init__"))
+                            .cloned()
+                            .unwrap_or_default();
+                        let mut checked_arg_types = Vec::with_capacity(args.len());
                         for arg in args {
-                            self.check_call_arg(arg);
+                            match arg {
+                                CallArg::Positional(value) => {
+                                    let actual = self.check_expr(value);
+                                    checked_arg_types.push(Some(actual));
+                                }
+                                CallArg::Keyword { value, .. } => {
+                                    let actual = self.check_expr(value);
+                                    checked_arg_types.push(Some(actual));
+                                }
+                                CallArg::StarArg(value) | CallArg::DoubleStarArg(value) => {
+                                    self.check_expr(value);
+                                    checked_arg_types.push(None);
+                                }
+                            }
                         }
+                        let (inference_params, inference_args) =
+                            bind_explicit_inference_args(args, &checked_arg_types, &init_params);
                         // If generic class, infer type params from constructor args
                         if let Some(gp) = self.generic_defs.get(class_name).cloned() {
-                            let init_methods = self
-                                .class_methods
-                                .get(class_name)
-                                .cloned()
-                                .unwrap_or_default();
-                            if let Some(init_sig) = init_methods.get("__init__") {
-                                let arg_types: Vec<TypeId> = args
-                                    .iter()
-                                    .filter_map(|a| match a {
-                                        CallArg::Positional(e) => Some(self.check_expr(e)),
-                                        _ => None,
-                                    })
-                                    .collect();
-                                let (subst, conflicts) =
-                                    infer_type_args(&gp, &init_sig.params, &arg_types, &self.tcx);
+                            if !init_params.is_empty() {
+                                let (subst, conflicts) = infer_type_args(
+                                    &gp,
+                                    &inference_params,
+                                    &inference_args,
+                                    &self.tcx,
+                                );
                                 for err in conflicts {
                                     self.error(expr.span, err);
                                 }
-                                let bound_errors = check_bounds(&subst, &gp, &mut self.tcx);
+                                let bound_errors = check_bounds(&subst, &gp, &self.tcx);
                                 for err in bound_errors {
                                     self.error(expr.span, err);
                                 }

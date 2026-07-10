@@ -136,6 +136,7 @@ pub(crate) struct FunctionParamSig {
     pub(crate) name: String,
     pub(crate) ty: TypeId,
     pub(crate) kind: ParamKind,
+    pub(crate) pos_only: bool,
     pub(crate) kw_only: bool,
 }
 
@@ -179,6 +180,8 @@ pub struct TypeChecker {
     pub(crate) protocol_registry: ProtocolRegistry,
     /// Class method signatures for protocol conformance checking (#314).
     pub(crate) class_methods: HashMap<String, HashMap<String, super::protocol::MethodSig>>,
+    /// Named/kinded method parameters retained for keyword argument matching.
+    pub(crate) class_method_param_sigs: HashMap<String, HashMap<String, Vec<FunctionParamSig>>>,
     /// Class method signatures for bare-class unbound calls such as
     /// `Box.get(obj, arg)`. These include the explicit receiver parameter.
     pub(crate) class_unbound_methods: HashMap<String, HashMap<String, super::protocol::MethodSig>>,
@@ -272,6 +275,7 @@ impl TypeChecker {
             function_param_sigs: HashMap::new(),
             protocol_registry: ProtocolRegistry::new(),
             class_methods: HashMap::new(),
+            class_method_param_sigs: HashMap::new(),
             class_unbound_methods: HashMap::new(),
             typed_dict_classes: HashSet::new(),
             user_bare_classes: std::collections::HashSet::new(),
@@ -327,6 +331,7 @@ impl TypeChecker {
                 name: param.name.clone(),
                 ty: self.resolve_type_expr(&param.ty),
                 kind: param.kind,
+                pos_only: param.pos_only,
                 kw_only: param.kw_only,
             })
             .collect();
@@ -483,7 +488,12 @@ impl TypeChecker {
         for (param, tv) in type_params.iter().zip(gp.params.iter_mut()) {
             if let Some(expr) = &param.bound {
                 if let Some(bound) = self.resolve_type_param_metadata_expr(expr) {
-                    tv.bound = Some(bound);
+                    if self.tcx.contains_type_var(bound) {
+                        self.error(expr.span, "type parameter bound must be concrete");
+                        tv.bound = None;
+                    } else {
+                        tv.bound = Some(bound);
+                    }
                 }
             }
             if let Some(items) = &param.constraints {
@@ -492,7 +502,17 @@ impl TypeChecker {
                     .map(|expr| self.resolve_type_param_metadata_expr(expr))
                     .collect::<Option<Vec<_>>>()
                 {
-                    tv.constraints = constraints;
+                    if constraints
+                        .iter()
+                        .any(|constraint| self.tcx.contains_type_var(*constraint))
+                    {
+                        if let Some(expr) = items.first() {
+                            self.error(expr.span, "type parameter constraints must be concrete");
+                        }
+                        tv.constraints.clear();
+                    } else {
+                        tv.constraints = constraints;
+                    }
                 }
             }
             self.tcx
@@ -1074,7 +1094,7 @@ impl TypeChecker {
                                         subst.insert(tv.id, *concrete);
                                     }
                                     for error in
-                                        super::generic::check_bounds(&subst, &gp, &mut self.tcx)
+                                        super::generic::check_bounds(&subst, &gp, &self.tcx)
                                     {
                                         self.error(ty.span, error);
                                     }
@@ -1489,6 +1509,7 @@ impl TypeChecker {
         use super::protocol::MethodSig;
 
         let mut methods = HashMap::new();
+        let mut method_param_sigs = HashMap::new();
         let mut unbound_methods = HashMap::new();
         let receiver_ty = self
             .symbols
@@ -1514,11 +1535,18 @@ impl TypeChecker {
                 // Generic methods (`def meth[U](...)`) resolve their own
                 // type params within the signature (PEP 695).
                 let _gp = self.register_type_params(type_params);
-                let param_types: Vec<TypeId> = params
+                let param_sigs: Vec<FunctionParamSig> = params
                     .iter()
                     .filter(|p| p.name != "self")
-                    .map(|p| self.resolve_type_expr(&p.ty))
+                    .map(|p| FunctionParamSig {
+                        name: p.name.clone(),
+                        ty: self.resolve_type_expr(&p.ty),
+                        kind: p.kind,
+                        pos_only: p.pos_only,
+                        kw_only: p.kw_only,
+                    })
                     .collect();
+                let param_types = param_sigs.iter().map(|p| p.ty).collect();
                 let ret = return_ty
                     .as_ref()
                     .map(|t| self.resolve_type_expr(t))
@@ -1540,6 +1568,7 @@ impl TypeChecker {
                         return_type: ret,
                     },
                 );
+                method_param_sigs.insert(name.clone(), param_sigs);
                 if let Some(unbound_param_types) = unbound_param_types {
                     unbound_methods.insert(
                         name.clone(),
@@ -1553,6 +1582,8 @@ impl TypeChecker {
         }
         if !methods.is_empty() {
             self.class_methods.insert(class_name.to_string(), methods);
+            self.class_method_param_sigs
+                .insert(class_name.to_string(), method_param_sigs);
         }
         if !unbound_methods.is_empty() {
             self.class_unbound_methods
