@@ -2314,13 +2314,15 @@ mod tests {
 
     #[test]
     fn test_type_alias_subscript_get_origin_and_args_match_cpython() {
-        let alias = super::super::pep695::mb_pep695_type_alias(
+        let alias = super::super::super::pep695::mb_pep695_type_alias(
             MbValue::from_ptr(MbObject::new_str("Pair".to_string())),
             MbValue::none(),
             MbValue::from_ptr(MbObject::new_tuple(vec![])),
         );
-        let subscripted =
-            super::super::class::mb_obj_getitem(alias, super::super::builtins::make_type_object("int"));
+        let subscripted = super::super::super::class::mb_obj_getitem(
+            alias,
+            super::super::super::builtins::make_type_object("int"),
+        );
 
         let origin = mb_typing_get_origin(subscripted);
         let args = mb_typing_get_args(subscripted);
@@ -2332,7 +2334,7 @@ mod tests {
                     assert_eq!(items.len(), 1);
                     assert_eq!(
                         items[0].to_bits(),
-                        super::super::builtins::make_type_object("int").to_bits()
+                        super::super::super::builtins::make_type_object("int").to_bits()
                     );
                 }
                 _ => panic!("expected args tuple"),
