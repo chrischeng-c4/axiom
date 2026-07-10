@@ -75,22 +75,23 @@
 //! identity and exactly one new pod (ordinal == old `shardCount`) becomes
 //! the new shard — see [`super::crd::LumenSpec::storage_pod_count`].
 //!
-//! ## Known gap: live query routing does not yet consume `spec.shardMap`
+//! ## Live query routing consumes `spec.shardMap` (#1384)
 //!
 //! [`super::render::render`] writes `shardMap.{version,assignments}` into the
-//! serving ConfigMap, but no serving env var maps them onto container env and
-//! `src/bin/lumen.rs`'s `serve()` always builds its `EngineShardSearch` via
-//! `EngineShardSearch::new` (a fresh `VirtualBucketShardMap::balanced` derived
-//! from `shardCount` alone), never `EngineShardSearch::new_with_shard_map`.
-//! This driver still performs a correct, resumable, real data migration
-//! (queries against each shard directly return correct data — proven by this
-//! module's integration harness), but a live cluster's *routing* will not
-//! honor the minimal-move target map computed by
-//! [`crate::routing::VirtualBucketShardMap::split_one_shard`] until that
-//! separate consumption gap is closed (out of scope here — see the #1381
-//! report). [`trigger_rolling_restart`] is still driven at cutover because it
-//! is the correct operator action independent of that gap (a no-op today,
-//! forward-compatible once consumption lands).
+//! serving ConfigMap, `serving_env` maps `SHARD_MAP_VERSION`/
+//! `VIRTUAL_BUCKET_COUNT`/`SHARD_MAP_ASSIGNMENTS` onto container env, and
+//! `src/bin/lumen.rs`'s `serve()` builds its `EngineShardSearch` via
+//! `EngineShardSearch::new_with_shard_map` fed by
+//! `crate::config::shard_map_from_env`, so a pod started after this driver's
+//! cutover routes queries by the minimal-move target map computed by
+//! [`crate::routing::VirtualBucketShardMap::split_one_shard`] rather than the
+//! balanced default. [`trigger_rolling_restart`] is driven in the same
+//! cutover tick that patches `spec.shardMap` so every serving pod picks up
+//! the new map without manual intervention: it patches the serving
+//! StatefulSet's pod-template annotations, which Kubernetes' native
+//! `RollingUpdate` strategy (`serving_statefulset`'s `updateStrategy`) turns
+//! into a rolling recreation of every pod against the already-updated
+//! ConfigMap — no separate watch/poll loop is needed.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

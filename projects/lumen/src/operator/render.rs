@@ -367,9 +367,23 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
         from_cfg("LUMEN_PORT"),
         from_cfg("LUMEN_LOG_FORMAT"),
         from_cfg("LUMEN_AUTH"),
+        // #1384: mirror `serving_configmap`'s shard-map keys onto the
+        // serving container so `lumen::config::shard_map_from_env` (used by
+        // `serve()`'s `EngineShardSearch::new_with_shard_map` wiring) can
+        // actually see the operator/reshard-driver-committed map instead of
+        // always falling back to the balanced default.
+        from_cfg("SHARD_MAP_VERSION"),
+        from_cfg("VIRTUAL_BUCKET_COUNT"),
     ];
     if lumen.spec.log_level.is_some() {
         env.push(from_cfg("LUMEN_LOG_LEVEL"));
+    }
+    // SHARD_MAP_ASSIGNMENTS is only written into the ConfigMap once
+    // assignments are non-empty (see `serving_configmap` below); a
+    // `configMapKeyRef` to an absent key would fail the pod at start, so
+    // this must mirror that same condition exactly.
+    if !lumen.spec.shard_map.assignments.is_empty() {
+        env.push(from_cfg("SHARD_MAP_ASSIGNMENTS"));
     }
     // Strict auth: the registry is mounted from a Secret or CSI-provided projection.
     if token_registry_source(lumen).is_some() {

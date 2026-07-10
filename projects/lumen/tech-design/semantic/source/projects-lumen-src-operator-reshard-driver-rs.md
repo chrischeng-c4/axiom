@@ -21,15 +21,15 @@ Public API manifest for `projects/lumen/src/operator/reshard_driver.rs`.
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `DriveOutcome` | projects/lumen/src/operator/reshard_driver.rs | enum | pub | 289 |  |
-| `KubeClusterControl` | projects/lumen/src/operator/reshard_driver.rs | struct | pub | 171 |  |
-| `compute_target_map` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 378 | compute_target_map(current: &VirtualBucketShardMap) -> Result<VirtualBucketShardMap> |
-| `current_shard_map` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 363 | current_shard_map(lumen: &Lumen) -> Result<VirtualBucketShardMap> |
-| `drive_tick` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 698 | drive_tick(     control: &dyn ClusterControl,     http: &reqwest::Client,     lumen: &Lumen, ) -> DriveOutcome |
-| `new` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 177 | new(client: Client) -> Self |
-| `run_migration_pass` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 477 | run_migration_pass(     control: &dyn ClusterControl,     http: &reqwest::Client,     namespace: &str,     name: &str,     lumen: &Lumen, ) -> Result<usize> |
-| `should_start_split` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 317 | should_start_split(lumen: &Lumen) -> bool |
-| `spawn_reshard_driver_loop` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 735 | spawn_reshard_driver_loop(client: Client) |
+| `DriveOutcome` | projects/lumen/src/operator/reshard_driver.rs | enum | pub | 290 |  |
+| `KubeClusterControl` | projects/lumen/src/operator/reshard_driver.rs | struct | pub | 172 |  |
+| `compute_target_map` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 379 | compute_target_map(current: &VirtualBucketShardMap) -> Result<VirtualBucketShardMap> |
+| `current_shard_map` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 364 | current_shard_map(lumen: &Lumen) -> Result<VirtualBucketShardMap> |
+| `drive_tick` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 699 | drive_tick(     control: &dyn ClusterControl,     http: &reqwest::Client,     lumen: &Lumen, ) -> DriveOutcome |
+| `new` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 178 | new(client: Client) -> Self |
+| `run_migration_pass` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 478 | run_migration_pass(     control: &dyn ClusterControl,     http: &reqwest::Client,     namespace: &str,     name: &str,     lumen: &Lumen, ) -> Result<usize> |
+| `should_start_split` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 318 | should_start_split(lumen: &Lumen) -> bool |
+| `spawn_reshard_driver_loop` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 736 | spawn_reshard_driver_loop(client: Client) |
 
 Not listed above (matching this project's existing mirrors' convention of
 only capturing top-level `pub` structs/enums/consts/modules and inherent-impl
@@ -119,22 +119,23 @@ KubeClusterControl` block.
 //! identity and exactly one new pod (ordinal == old `shardCount`) becomes
 //! the new shard — see [`super::crd::LumenSpec::storage_pod_count`].
 //!
-//! ## Known gap: live query routing does not yet consume `spec.shardMap`
+//! ## Live query routing consumes `spec.shardMap` (#1384)
 //!
 //! [`super::render::render`] writes `shardMap.{version,assignments}` into the
-//! serving ConfigMap, but no serving env var maps them onto container env and
-//! `src/bin/lumen.rs`'s `serve()` always builds its `EngineShardSearch` via
-//! `EngineShardSearch::new` (a fresh `VirtualBucketShardMap::balanced` derived
-//! from `shardCount` alone), never `EngineShardSearch::new_with_shard_map`.
-//! This driver still performs a correct, resumable, real data migration
-//! (queries against each shard directly return correct data — proven by this
-//! module's integration harness), but a live cluster's *routing* will not
-//! honor the minimal-move target map computed by
-//! [`crate::routing::VirtualBucketShardMap::split_one_shard`] until that
-//! separate consumption gap is closed (out of scope here — see the #1381
-//! report). [`trigger_rolling_restart`] is still driven at cutover because it
-//! is the correct operator action independent of that gap (a no-op today,
-//! forward-compatible once consumption lands).
+//! serving ConfigMap, `serving_env` maps `SHARD_MAP_VERSION`/
+//! `VIRTUAL_BUCKET_COUNT`/`SHARD_MAP_ASSIGNMENTS` onto container env, and
+//! `src/bin/lumen.rs`'s `serve()` builds its `EngineShardSearch` via
+//! `EngineShardSearch::new_with_shard_map` fed by
+//! `crate::config::shard_map_from_env`, so a pod started after this driver's
+//! cutover routes queries by the minimal-move target map computed by
+//! [`crate::routing::VirtualBucketShardMap::split_one_shard`] rather than the
+//! balanced default. [`trigger_rolling_restart`] is driven in the same
+//! cutover tick that patches `spec.shardMap` so every serving pod picks up
+//! the new map without manual intervention: it patches the serving
+//! StatefulSet's pod-template annotations, which Kubernetes' native
+//! `RollingUpdate` strategy (`serving_statefulset`'s `updateStrategy`) turns
+//! into a rolling recreation of every pod against the already-updated
+//! ConfigMap — no separate watch/poll loop is needed.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

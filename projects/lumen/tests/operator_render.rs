@@ -221,6 +221,11 @@ fn statefulset_wires_serving_contract_single_member() {
         "LUMEN_WAL",
         "SHARD_COUNT",
         "LUMEN_AUTH",
+        // #1384: serving pods must see the shard map the ConfigMap carries
+        // so `lumen::config::shard_map_from_env` can route by it instead of
+        // always falling back to the balanced default.
+        "SHARD_MAP_VERSION",
+        "VIRTUAL_BUCKET_COUNT",
     ] {
         assert!(
             names.contains(&required.to_string()),
@@ -243,6 +248,11 @@ fn statefulset_wires_serving_contract_single_member() {
     assert!(!names.contains(&"LUMEN_TOKENS".to_string()));
     assert!(!names.contains(&"LUMEN_TOKEN_REGISTRY_FILE".to_string()));
     assert!(!names.contains(&"LUMEN_LOG_LEVEL".to_string()));
+    // #1384 AC4: default spec has no shard-map assignments yet, so the
+    // ConfigMap key is absent (see `configmap_tracks_serving_spec`) and the
+    // container env must not reference it either — a `configMapKeyRef` to a
+    // missing key would fail the pod at start.
+    assert!(!names.contains(&"SHARD_MAP_ASSIGNMENTS".to_string()));
 
     // Durable raft PVC (#812): the WAL survives pod reschedule/eviction/node
     // loss even for a single-member deployer — not just an emptyDir.
@@ -632,6 +642,24 @@ fn shard_map_assignments_are_exposed_to_serving_config() {
     assert_eq!(cm["data"]["SHARD_MAP_VERSION"], "7");
     assert_eq!(cm["data"]["VIRTUAL_BUCKET_COUNT"], "4");
     assert_eq!(cm["data"]["SHARD_MAP_ASSIGNMENTS"], "0,1,1,0");
+
+    // #1384: once assignments are non-empty, the serving container env must
+    // reference SHARD_MAP_ASSIGNMENTS too (not just the ConfigMap), so a pod
+    // started/restarted after this commits actually routes by it via
+    // `lumen::config::shard_map_from_env`.
+    let sts = find(&objs, "StatefulSet", "search");
+    let c = &sts["spec"]["template"]["spec"]["containers"][0];
+    let names = env_names(c);
+    for required in [
+        "SHARD_MAP_VERSION",
+        "VIRTUAL_BUCKET_COUNT",
+        "SHARD_MAP_ASSIGNMENTS",
+    ] {
+        assert!(
+            names.contains(&required.to_string()),
+            "missing env {required}; have {names:?}"
+        );
+    }
 }
 
 #[test]
