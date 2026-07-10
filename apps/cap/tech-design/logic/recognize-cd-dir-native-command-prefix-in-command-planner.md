@@ -267,7 +267,6 @@ flowchart TD
     r4[R4 cd prefix wrong head arity disqualifies] --> cargo_test_p_cap_command_planner_tests_cd_prefix_wrong_head_arity_disqualifies[cargo test -p cap command_planner::tests::cd_prefix_wrong_head_arity_disqualifies]
     r5[R5 existing native commands without cd prefix unaffected] --> cargo_test_p_cap_command_planner[cargo test -p cap command_planner]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
