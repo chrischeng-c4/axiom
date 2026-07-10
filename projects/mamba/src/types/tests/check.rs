@@ -409,6 +409,341 @@ fn test_type_alias_tuple() {
     assert!(errors.is_empty(), "tuple alias should resolve: {errors:?}");
 }
 
+#[test]
+fn pep695_generic_type_alias_substitutes_and_enforces_arity() {
+    let errors = check(
+        "type Pair[T] = tuple[T, T]\n\
+         good: Pair[int] = (1, 2)\n\
+         bad: Pair[int] = (1, \"two\")\n\
+         too_many: Pair[int, str] = (1, 2)\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("type mismatch")),
+        "a specialized alias must substitute its type parameters: {errors:?}"
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("expected 1 type arguments, got 2")),
+        "a generic alias must enforce its declared arity: {errors:?}"
+    );
+
+    let errors = check("type Plain = int\nvalue: Plain[str] = 1\n");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("type 'Plain' is not generic")),
+        "a non-generic alias must reject specialization: {errors:?}"
+    );
+
+    let errors = check("type Duplicate = int\ntype Duplicate = str\n");
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("already defined in this scope"))
+            .count(),
+        1,
+        "same-scope alias redefinition must be explicit, not silently keep the first body: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_generic_type_alias_applies_defaults_and_constraints() {
+    let errors = check(
+        "type Entry[K: (int, str), V = str] = tuple[K, V]\n\
+         good: Entry[int] = (1, \"ok\")\n\
+         bad_default: Entry[int] = (1, 2)\n\
+         bad_constraint: Entry[float] = (1.5, \"no\")\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("type mismatch")),
+        "an omitted alias argument must use its declared default: {errors:?}"
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("constrained types")),
+        "an explicit alias argument must satisfy its constraints: {errors:?}"
+    );
+
+    let errors = check(
+        "type Numbers[T: int] = list[T]\n\
+         invalid: Numbers[str] = [\"no\"]\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("bound violation")),
+        "an explicit alias argument must satisfy its bound: {errors:?}"
+    );
+
+    let errors = check(
+        "type Dependent[T, U = list[T]] = tuple[T, U]\n\
+         valid: Dependent[int] = (1, [2])\n\
+         invalid: Dependent[int] = (1, [\"bad\"])\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        1,
+        "a dependent alias default must substitute earlier parameters: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_type_aliases_are_forward_resolved_and_lexically_scoped() {
+    let errors = check(
+        "type Forward = Later\n\
+         type Later = int\n\
+         top_bad: Forward = \"bad\"\n\
+         def local() -> None:\n\
+         \x20   type Later = str\n\
+         \x20   inner_bad: Later = 1\n\
+         outside_bad: Later = \"bad\"\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        3,
+        "forward aliases and same-named nested aliases must keep lexical identity: {errors:?}"
+    );
+
+    let errors = check(
+        "def local() -> None:\n\
+         \x20   type Hidden = int\n\
+         \x20   value: Hidden = 1\n\
+         leaked: Hidden = 1\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("unknown type: `Hidden`")),
+        "a function-local alias must not leak into its parent scope: {errors:?}"
+    );
+
+    let errors = check(
+        "type T = str\n\
+         type Box[T] = list[T]\n\
+         box_bad: Box[int] = [\"bad\"]\n\
+         outer_bad: T = 1\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        2,
+        "an alias parameter must shadow and then restore an outer alias name: {errors:?}"
+    );
+
+    let errors = check(
+        "from typing import TypeVar\n\
+         T = TypeVar(\"T\")\n\
+         def local() -> None:\n\
+         \x20   type T = str\n\
+         \x20   bad: T = 1\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        1,
+        "a lexical PEP 695 alias must shadow a legacy TypeVar alias: {errors:?}"
+    );
+
+    let errors = check(
+        "type Before[T] = After[T]\n\
+         type After[U] = list[U]\n\
+         good: Before[int] = [1]\n\
+         bad: Before[int] = [\"bad\"]\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        1,
+        "a forward generic alias must preserve and substitute its application: {errors:?}"
+    );
+
+    let errors = check(
+        "type Model = Later\n\
+         class Later:\n\
+         \x20   pass\n\
+         value: Model = Later()\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "a type alias body must remain lazy until later declarations are registered: {errors:?}"
+    );
+
+    let errors = check(
+        "type Model = Later\n\
+         def bad(value: Model) -> str:\n\
+         \x20   return value\n\
+         class Later:\n\
+         \x20   pass\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("return type mismatch"))
+            .count(),
+        1,
+        "an intervening signature must not freeze a forward alias as Any or Error: {errors:?}"
+    );
+
+    let errors = check(
+        "def bad(value: Defaulted) -> str:\n\
+         \x20   return value[0]\n\
+         type Defaulted[T = Later] = list[T]\n\
+         class Later:\n\
+         \x20   pass\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("return type mismatch"))
+            .count(),
+        1,
+        "signature refresh must run after later alias defaults are finalized: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_class_local_aliases_feed_field_and_method_metadata() {
+    let errors = check(
+        "class Container:\n\
+         \x20   type Item = int\n\
+         \x20   value: Item = 0\n\
+         \x20   def keep(self, value: Item) -> Item:\n\
+         \x20       return value\n\
+         def bad_field(value: Container) -> str:\n\
+         \x20   return value.value\n\
+         Container().keep(\"bad\")\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch") || error.contains("expected `int`"))
+            .count(),
+        2,
+        "class-local aliases must resolve before field and method metadata is collected: {errors:?}"
+    );
+
+    let errors = check(
+        "class Holder:\n\
+         \x20   type Item = Later\n\
+         \x20   type Items[T = Later] = list[T]\n\
+         \x20   value: Item = None\n\
+         \x20   values: Items = []\n\
+         class Later:\n\
+         \x20   pass\n\
+         def bad_item(holder: Holder) -> str:\n\
+         \x20   return holder.value\n\
+         def bad_items(holder: Holder) -> list[str]:\n\
+         \x20   return holder.values\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("return type mismatch"))
+            .count(),
+        2,
+        "class metadata must be rebuilt after forward alias bodies and defaults finalize: {errors:?}"
+    );
+
+    let errors = check(
+        "class BeforeAlias:\n\
+         \x20   values: LaterItems = []\n\
+         type LaterItems[T = LaterValue] = list[T]\n\
+         class LaterValue:\n\
+         \x20   pass\n\
+         def bad(holder: BeforeAlias) -> list[str]:\n\
+         \x20   return holder.values\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("return type mismatch"))
+            .count(),
+        1,
+        "all module aliases must finalize before an earlier class is rebuilt: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_alias_headers_cover_async_and_match_bodies() {
+    let errors = check(
+        "async def async_scope(source: Any, manager: Any) -> None:\n\
+         \x20   async for item in source:\n\
+         \x20       type FromFor = int\n\
+         \x20       class Later:\n\
+         \x20           pass\n\
+         \x20   async with manager:\n\
+         \x20       type FromWith = str\n\
+         \x20   type Forward = Later\n\
+         \x20   bad_for: FromFor = \"bad\"\n\
+         \x20   bad_with: FromWith = 1\n\
+         \x20   bad_forward: Forward = \"bad\"\n\
+         def match_scope(value: int) -> None:\n\
+         \x20   match value:\n\
+         \x20       case _:\n\
+         \x20           type FromMatch = bool\n\
+         \x20   bad_match: FromMatch = \"bad\"\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        3,
+        "same-scope async and match bodies must participate in alias preregistration: {errors:?}"
+    );
+    assert!(
+        errors
+            .iter()
+            .all(|error| !error.contains("unknown type: `Later`")),
+        "async-body declaration targets must be registered before aliases finalize: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_desugared_generic_alias_type_reaches_hir() {
+    let mut module = parser::parse(
+        "type Pair[T] = tuple[T, T]\n\
+         def keep(value: Pair[int]) -> Pair[int]:\n\
+         \x20   return value\n",
+        FileId(0),
+    )
+    .expect("parse failed");
+    crate::lower::pep695::desugar_module(&mut module);
+
+    let mut checker = TypeChecker::new();
+    let errors = checker.check_module(&module);
+    assert!(errors.is_empty(), "type check failed: {errors:?}");
+    let keep = checker.symbols.lookup("keep").expect("keep registered");
+    let hir = crate::lower::ast_to_hir::lower_module(&module, &checker).expect("lower failed");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| function.name == keep)
+        .expect("keep lowered");
+
+    for ty in [function.params[0].1, function.return_ty] {
+        let crate::types::Ty::Tuple(items) = checker.tcx.get(ty) else {
+            panic!(
+                "desugared Pair[int] must remain a tuple type, got {:?}",
+                checker.tcx.get(ty)
+            );
+        };
+        assert_eq!(items, &vec![checker.tcx.int(), checker.tcx.int()]);
+    }
+}
+
 // --- #245: Builtin function stubs ---
 
 #[test]
