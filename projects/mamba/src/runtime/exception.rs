@@ -918,10 +918,11 @@ pub fn mb_take_uncaught_traceback() -> Option<String> {
         cell.borrow_mut().take().map(|exc| {
             let mut out = String::from("Traceback (most recent call last):\n");
             out.push_str("  File \"<module>\"\n");
+            let display_type = super::class::class_display_name(&exc.exc_type);
             if exc.message.is_empty() {
-                out.push_str(&format!("{}", exc.exc_type));
+                out.push_str(&display_type);
             } else {
-                out.push_str(&format!("{}: {}", exc.exc_type, exc.message));
+                out.push_str(&format!("{display_type}: {}", exc.message));
             }
             out
         })
@@ -2341,6 +2342,22 @@ mod tests {
         let exc = mb_catch_exception();
         assert!(!exc.is_none());
         assert_eq!(mb_has_exception().as_bool(), Some(false));
+    }
+
+    #[test]
+    fn test_uncaught_traceback_uses_user_class_display_name() {
+        const KEY: &str = "__mamba_user_class__:exception-test:VisibleError@1";
+        super::super::class::mb_class_register_user_named(
+            KEY,
+            "VisibleError",
+            vec![],
+            Default::default(),
+        );
+        set_current_exception(MbException::new(KEY, "boom"));
+
+        let traceback = mb_take_uncaught_traceback().expect("pending exception");
+        assert!(traceback.ends_with("VisibleError: boom"));
+        assert!(!traceback.contains("__mamba_user_class__"));
     }
 
     #[test]

@@ -1,8 +1,8 @@
-use super::check::TypeChecker;
+use super::check::{ClassPatternTarget, TypeChecker};
 use super::generic::{check_bounds, infer_type_args, GenericParams};
 use super::{Ty, TypeId};
 use crate::parser::ast::*;
-use crate::resolve::SymbolKind;
+use crate::resolve::{SymbolId, SymbolKind};
 use crate::source::span::{Span, Spanned};
 
 fn decorator_is_typing_overload(expr: &Expr) -> bool {
@@ -112,15 +112,17 @@ impl TypeChecker {
     /// `(module, cls)` owns a `Method` row. A from-imported *module function*
     /// never owns a `Method` row keyed on its own name, so this never mis-binds a
     /// module fn as an instance class.
-    fn stdlib_method_class(&self, cls: &str) -> Option<String> {
+    fn stdlib_method_class(&self, cls: &str) -> Option<(String, String)> {
         use super::stdlib_sigs::{SigKind, STDLIB_SIGS};
         use super::stdlib_sigs_generated::STDLIB_SIGS_GENERATED;
-        let (module, _qual) = self.import_origins.get(cls)?;
+        let symbol = self.symbols.lookup(cls)?;
+        let (module, qual) = self.import_origins.get(&symbol)?;
+        let class_name = if qual.is_empty() { cls } else { qual };
         let owns_method = |s: &super::stdlib_sigs::StdlibSig| {
-            matches!(s.kind, SigKind::Method) && s.module == module && s.qualifier == cls
+            matches!(s.kind, SigKind::Method) && s.module == module && s.qualifier == class_name
         };
         if STDLIB_SIGS.iter().any(owns_method) || STDLIB_SIGS_GENERATED.iter().any(owns_method) {
-            Some(cls.to_string())
+            Some((module.clone(), class_name.to_string()))
         } else {
             None
         }
@@ -131,7 +133,13 @@ impl TypeChecker {
     /// `object.__new__(Cls)`, `Cls.__new__(Cls, ...)`, and `Cls(...)` where
     /// `Cls` is a from-imported stdlib class with a `Method` signature in the
     /// sig table.
-    fn stdlib_instance_class(&self, value: &Spanned<Expr>) -> Option<String> {
+    fn stdlib_instance_class(&self, value: &Spanned<Expr>) -> Option<(String, String)> {
+        if let Expr::Ident(name) = &value.node {
+            return self
+                .symbols
+                .lookup(name)
+                .and_then(|symbol| self.instance_origins.get(&symbol).cloned());
+        }
         let Expr::Call { func, args } = &value.node else {
             return None;
         };
@@ -164,6 +172,39 @@ impl TypeChecker {
         None
     }
 
+    fn stdlib_import_origin(&self, value: &Spanned<Expr>) -> Option<(String, String)> {
+        let Expr::Ident(name) = &value.node else {
+            return None;
+        };
+        self.symbols
+            .lookup(name)
+            .and_then(|symbol| self.import_origins.get(&symbol).cloned())
+    }
+
+    pub(crate) fn set_binding_origins(
+        &mut self,
+        symbol: SymbolId,
+        import_origin: Option<(String, String)>,
+        instance_origin: Option<(String, String)>,
+        class_ref_origin: Option<&'static str>,
+    ) {
+        if let Some(origin) = import_origin {
+            self.import_origins.insert(symbol, origin);
+        } else {
+            self.import_origins.remove(&symbol);
+        }
+        if let Some(origin) = instance_origin {
+            self.instance_origins.insert(symbol, origin);
+        } else {
+            self.instance_origins.remove(&symbol);
+        }
+        if let Some(origin) = class_ref_origin {
+            self.class_ref_origins.insert(symbol, origin);
+        } else {
+            self.class_ref_origins.remove(&symbol);
+        }
+    }
+
     /// ① Type-wall PoC: walk a statement sequence with one-statement lookahead so
     /// the "expected to raise at runtime" carve-out can fire. When an `ExprStmt`
     /// is immediately followed by a `raise`, the probe call's value-vs-annotation
@@ -194,6 +235,10 @@ impl TypeChecker {
     pub(crate) fn check_stmt(&mut self, stmt: &Spanned<Stmt>) {
         match &stmt.node {
             Stmt::VarDecl { name, ty, value } => {
+                let builtin_class_alias = self.builtin_class_alias_value(value);
+                let import_origin = self.stdlib_import_origin(value);
+                let instance_origin = self.stdlib_instance_class(value);
+                let class_ref_origin = self.native_ctor_class_call(value);
                 let declared_ty = self.resolve_type_expr(ty);
                 let value_ty = self.check_expr(value);
                 if !self.types_compatible(declared_ty, value_ty) {
@@ -215,39 +260,51 @@ impl TypeChecker {
                 }
                 let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
                 self.set_sym_type(sym.0, declared_ty);
+                self.set_builtin_class_alias(sym, builtin_class_alias);
+                self.set_binding_origins(sym, import_origin, instance_origin, class_ref_origin);
             }
             Stmt::Assign { target, value } => {
+                let builtin_class_alias = match &target.node {
+                    Expr::Ident(_) => self.builtin_class_alias_value(value),
+                    _ => None,
+                };
+                let instance_origin = match &target.node {
+                    Expr::Ident(_) => self.stdlib_instance_class(value),
+                    _ => None,
+                };
+                let import_origin = match &target.node {
+                    Expr::Ident(_) => self.stdlib_import_origin(value),
+                    _ => None,
+                };
+                let class_ref_origin = match &target.node {
+                    Expr::Ident(_) => self.native_ctor_class_call(value),
+                    _ => None,
+                };
                 // ① Type-wall PoC: record stdlib-instance provenance so that a
                 // later `obj.method(arg)` can resolve a `Method` signature.
                 // `obj = object.__new__(Cls)` or `obj = Cls(...)` where `Cls` is
                 // a known imported stdlib class binds `obj` -> class qualifier.
-                if let Expr::Ident(var) = &target.node {
-                    if let Some(cls) = self.stdlib_instance_class(value) {
-                        self.instance_origins.insert(var.clone(), cls);
-                    } else {
-                        // Reassignment to something else clears the origin.
-                        self.instance_origins.remove(var);
-                    }
-                    // #1021: `_Queue = queue.Queue` — a bare class-reference
-                    // alias (not a call) to a `NATIVE_CTOR_CLASSES` entry.
-                    // `native_ctor_class_call` matches on the exact same
-                    // `Expr::Attr { object: Ident(base), attr }` shape
-                    // whether it's a call's callee or (as here) an
-                    // assignment's value, so it's reused as-is.
-                    if let Some(class_name) = self.native_ctor_class_call(value) {
-                        self.class_ref_origins.insert(var.clone(), class_name);
-                    } else {
-                        self.class_ref_origins.remove(var);
-                    }
-                }
                 // Implicit variable declaration: bare `x = val` where x is not
                 // yet in scope behaves like Python — declares x with the
                 // inferred type of val.
                 if let Expr::Ident(name) = &target.node {
-                    if self.symbols.lookup(name).is_none() {
+                    let current_scope = self.symbols.current_scope_idx();
+                    if self
+                        .symbols
+                        .lookup_in_scope(current_scope, name)
+                        .is_none()
+                        || self.is_unshadowed_builtin(name)
+                    {
                         let value_ty = self.check_expr(value);
                         let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
                         self.set_sym_type(sym.0, value_ty);
+                        self.set_builtin_class_alias(sym, builtin_class_alias);
+                        self.set_binding_origins(
+                            sym,
+                            import_origin,
+                            instance_origin,
+                            class_ref_origin,
+                        );
                         return;
                     }
                 }
@@ -258,12 +315,18 @@ impl TypeChecker {
                     fn define_unpack_targets(checker: &mut TypeChecker, expr: &Expr) {
                         match expr {
                             Expr::Ident(name) => {
-                                if checker.symbols.lookup(name).is_none() {
-                                    let sym =
-                                        checker.symbols.define(name.clone(), SymbolKind::Variable);
-                                    let any_ty = checker.tcx.any();
-                                    checker.set_sym_type(sym.0, any_ty);
-                                }
+                                let sym = if checker.symbols.lookup(name).is_none()
+                                    || checker.is_unshadowed_builtin(name)
+                                {
+                                    checker.symbols.define(name.clone(), SymbolKind::Variable)
+                                } else {
+                                    checker.symbols.lookup(name).expect("checked above")
+                                };
+                                let any_ty = checker.tcx.any();
+                                checker.set_sym_type(sym.0, any_ty);
+                                checker.set_builtin_class_alias(sym, None);
+                                checker.inferred_local_placeholders.remove(&sym);
+                                checker.set_binding_origins(sym, None, None, None);
                             }
                             Expr::Starred(inner) => define_unpack_targets(checker, &inner.node),
                             Expr::TupleLit(elems) | Expr::UnpackTarget(elems) => {
@@ -281,14 +344,56 @@ impl TypeChecker {
                     self.check_subscript_assignment(object, index, value);
                     return;
                 }
+                if let Expr::Attr { object, attr } = &target.node {
+                    let object_ty = self.check_expr(object);
+                    if let Some(expected_ty) = self.resolve_property_setter_type(object_ty, attr) {
+                        let value_ty = self.check_expr(value);
+                        if !self.types_compatible(expected_ty, value_ty) {
+                            self.error(
+                                value.span,
+                                format!(
+                                    "type mismatch in assignment: expected `{}`, got `{}`",
+                                    self.ty_name(expected_ty),
+                                    self.ty_name(value_ty),
+                                ),
+                            );
+                        }
+                        return;
+                    }
+                }
 
                 let target_ty = self.check_expr(target);
                 let value_ty = self.check_expr(value);
                 if let Expr::Ident(name) = &target.node {
+                    if let Some(symbol) = self.symbols.lookup(name) {
+                        if !matches!(
+                            &self.symbols.get_symbol(symbol).kind,
+                            SymbolKind::Variable | SymbolKind::Parameter
+                        ) {
+                            self.set_builtin_class_alias(symbol, None);
+                            self.set_binding_origins(symbol, None, None, None);
+                            let any_ty = self.tcx.any();
+                            self.set_sym_type(symbol.0, any_ty);
+                            return;
+                        }
+                        self.set_binding_origins(
+                            symbol,
+                            import_origin,
+                            instance_origin,
+                            class_ref_origin,
+                        );
+                        self.set_builtin_class_alias(symbol, builtin_class_alias);
+                        if self.inferred_local_placeholders.remove(&symbol) {
+                            self.set_sym_type(symbol.0, value_ty);
+                            return;
+                        }
+                    }
                     if matches!(
                         self.tcx.get(value_ty),
-                        Ty::Class { user: Some(user), .. }
-                            if user.role == super::ty::UserClassRole::Object
+                        Ty::Class {
+                            role: super::ty::ClassRole::Object,
+                            ..
+                        }
                     ) {
                         if let Some(symbol) = self.symbols.lookup(name) {
                             self.set_sym_type(symbol.0, value_ty);
@@ -342,7 +447,11 @@ impl TypeChecker {
                 let overload_decorated = decorators
                     .iter()
                     .any(|d| decorator_is_typing_overload(&d.node));
+                let declaration_symbol = self
+                    .declaration_symbol(stmt)
+                    .expect("function declarations must be preregistered");
                 self.check_fn_body(
+                    declaration_symbol,
                     name,
                     &gp,
                     params,
@@ -376,13 +485,7 @@ impl TypeChecker {
                         self.check_stmt(s);
                     }
                 }
-                self.invalidate_conditional_user_class_aliases(body);
-                for (_, elif_body) in elif_clauses {
-                    self.invalidate_conditional_user_class_aliases(elif_body);
-                }
-                if let Some(else_body) = else_body {
-                    self.invalidate_conditional_user_class_aliases(else_body);
-                }
+                self.invalidate_conditional_class_object_aliases(std::slice::from_ref(stmt));
             }
             Stmt::While {
                 condition,
@@ -405,10 +508,7 @@ impl TypeChecker {
                         self.check_stmt(s);
                     }
                 }
-                self.invalidate_conditional_user_class_aliases(body);
-                if let Some(else_body) = else_body {
-                    self.invalidate_conditional_user_class_aliases(else_body);
-                }
+                self.invalidate_conditional_class_object_aliases(std::slice::from_ref(stmt));
             }
             Stmt::For {
                 targets,
@@ -467,10 +567,7 @@ impl TypeChecker {
                         self.check_stmt(s);
                     }
                 }
-                self.invalidate_conditional_user_class_aliases(body);
-                if let Some(else_body) = else_body {
-                    self.invalidate_conditional_user_class_aliases(else_body);
-                }
+                self.invalidate_conditional_class_object_aliases(std::slice::from_ref(stmt));
             }
             Stmt::Return(value) => {
                 let val_ty = value
@@ -547,13 +644,22 @@ impl TypeChecker {
                         }
                     }
                 }
+                self.invalidate_conditional_class_object_aliases(std::slice::from_ref(stmt));
             }
             Stmt::ClassDef {
                 name, bases, body, ..
             } => {
-                let class_symbol = self.symbols.lookup(name);
-                let aliases: Vec<_> = class_symbol
-                    .and_then(|symbol| self.generic_defs.get(&symbol))
+                let class_symbol = self
+                    .declaration_symbol(stmt)
+                    .expect("class declarations must be preregistered");
+                self.symbols.bind_symbol_in_scope(
+                    self.symbols.current_scope_idx(),
+                    name.clone(),
+                    class_symbol,
+                );
+                let aliases: Vec<_> = self
+                    .generic_defs
+                    .get(&class_symbol)
                     .map(|generic_params| {
                         generic_params
                             .params
@@ -567,18 +673,19 @@ impl TypeChecker {
                 }
                 let prev_class = self.current_class.replace(name.clone());
                 self.symbols.push_scope();
+                self.class_scope_stack
+                    .push(self.symbols.current_scope_idx());
                 self.preregister_defs(body);
                 self.finalize_generic_metadata_in(body);
                 self.refresh_function_signatures_in(body);
-                if let Some(class_symbol) = class_symbol {
-                    let is_protocol = bases
-                        .iter()
-                        .any(|base| matches!(&base.node, Expr::Ident(name) if name == "Protocol"));
-                    self.rebuild_class_metadata(class_symbol, name, body, is_protocol);
-                }
+                let is_protocol = bases
+                    .iter()
+                    .any(|base| matches!(&base.node, Expr::Ident(name) if name == "Protocol"));
+                self.rebuild_class_metadata(class_symbol, name, body, is_protocol);
                 for s in body {
                     self.check_stmt(s);
                 }
+                self.class_scope_stack.pop();
                 self.symbols.pop_scope();
                 self.current_class = prev_class;
                 if !aliases.is_empty() {
@@ -586,10 +693,49 @@ impl TypeChecker {
                     self.unregister_type_param_aliases(&names);
                 }
             }
-            Stmt::EnumDef { .. } => { /* handled in first pass */ }
+            Stmt::EnumDef { name, variants, .. } => {
+                let variants = variants
+                    .iter()
+                    .map(|variant| {
+                        let fields = variant
+                            .fields
+                            .iter()
+                            .map(|field| self.resolve_type_expr(&field.ty))
+                            .collect();
+                        (variant.name.clone(), fields)
+                    })
+                    .collect();
+                let enum_ty = self.tcx.intern(Ty::Enum {
+                    name: name.clone(),
+                    variants,
+                });
+                let symbol = self
+                    .symbols
+                    .lookup_in_scope(self.symbols.current_scope_idx(), name)
+                    .unwrap_or_else(|| self.symbols.define(name.clone(), SymbolKind::Enum));
+                self.set_builtin_class_alias(symbol, None);
+                self.set_binding_origins(symbol, None, None, None);
+                self.set_sym_type(symbol.0, enum_ty);
+            }
             Stmt::AugAssign { target, value, .. } => {
                 self.check_expr(target);
                 self.check_expr(value);
+                if let Expr::Ident(name) = &target.node {
+                    let any_ty = self.tcx.any();
+                    let symbol = if self.is_unshadowed_builtin(name) {
+                        let symbol = self.symbols.define(name.clone(), SymbolKind::Variable);
+                        self.set_sym_type(symbol.0, any_ty);
+                        Some(symbol)
+                    } else {
+                        self.symbols.lookup(name)
+                    };
+                    if let Some(symbol) = symbol {
+                        self.set_sym_type(symbol.0, any_ty);
+                        self.set_builtin_class_alias(symbol, None);
+                        self.inferred_local_placeholders.remove(&symbol);
+                        self.set_binding_origins(symbol, None, None, None);
+                    }
+                }
             }
             Stmt::Try {
                 body,
@@ -638,16 +784,7 @@ impl TypeChecker {
                         self.check_stmt(s);
                     }
                 }
-                self.invalidate_conditional_user_class_aliases(body);
-                for handler in handlers {
-                    self.invalidate_conditional_user_class_aliases(&handler.body);
-                }
-                if let Some(else_body) = else_body {
-                    self.invalidate_conditional_user_class_aliases(else_body);
-                }
-                if let Some(finally_body) = finally_body {
-                    self.invalidate_conditional_user_class_aliases(finally_body);
-                }
+                self.invalidate_conditional_class_object_aliases(std::slice::from_ref(stmt));
             }
             Stmt::Raise { value, from } => {
                 if let Some(v) = value {
@@ -682,14 +819,66 @@ impl TypeChecker {
             }
             Stmt::Del(expr) => {
                 self.check_expr(expr);
+                if let Expr::Ident(name) = &expr.node {
+                    if self.is_unshadowed_builtin(name) {
+                        return;
+                    }
+                    if let Some(symbol) = self.symbols.lookup(name) {
+                        let any_ty = self.tcx.any();
+                        self.set_sym_type(symbol.0, any_ty);
+                        self.set_builtin_class_alias(symbol, None);
+                        self.inferred_local_placeholders.remove(&symbol);
+                        self.set_binding_origins(symbol, None, None, None);
+                    }
+                }
             }
             Stmt::Global(names) => {
                 use crate::resolve::VariableClass;
+                let current = self.symbols.current_scope_idx();
                 for name in names {
-                    let id = if let Some(existing) = self.symbols.lookup(name) {
-                        existing
+                    let id = if self.function_scope_stack.contains(&current) {
+                        if let Some(existing) = self.symbols.lookup_in_scope(current, name) {
+                            existing
+                        } else {
+                            let module_id = self.symbols.lookup_in_scope(0, name);
+                            let module_ty = module_id
+                                .map(|symbol| self.get_sym_type(symbol.0))
+                                .unwrap_or_else(|| self.tcx.any());
+                            let import_origin = module_id
+                                .and_then(|symbol| self.import_origins.get(&symbol).cloned());
+                            let instance_origin = module_id
+                                .and_then(|symbol| self.instance_origins.get(&symbol).cloned());
+                            let class_ref_origin = module_id.and_then(|symbol| {
+                                self.class_ref_origins.get(&symbol).copied()
+                            });
+                            let builtin_alias = module_id.and_then(|symbol| {
+                                self.builtin_class_aliases.get(&symbol).copied()
+                            });
+                            let proxy = self.symbols.define(name.clone(), SymbolKind::Variable);
+                            self.set_sym_type(proxy.0, module_ty);
+                            self.set_builtin_class_alias(proxy, builtin_alias);
+                            self.set_binding_origins(
+                                proxy,
+                                import_origin,
+                                instance_origin,
+                                class_ref_origin,
+                            );
+                            proxy
+                        }
                     } else {
-                        self.symbols.define(name.clone(), SymbolKind::Variable)
+                        let module_id = self
+                            .symbols
+                            .lookup_in_scope(0, name)
+                            .unwrap_or_else(|| {
+                                self.symbols.define_in_scope(
+                                    0,
+                                    name.clone(),
+                                    SymbolKind::Variable,
+                                )
+                            });
+                        self.symbols
+                            .bind_symbol_in_scope(current, name.clone(), module_id);
+                        module_id
                     };
                     self.symbols.set_var_class(id, VariableClass::Global);
                 }
@@ -701,8 +890,16 @@ impl TypeChecker {
                     let mut scope_idx = self.symbols.parent_scope(current);
                     let mut found = false;
                     while let Some(si) = scope_idx {
+                        if si == 0 {
+                            break;
+                        }
+                        if !self.function_scope_stack.contains(&si) {
+                            scope_idx = self.symbols.parent_scope(si);
+                            continue;
+                        }
                         if let Some(outer_id) = self.symbols.lookup_in_scope(si, name) {
                             self.symbols.set_var_class(outer_id, VariableClass::Cell);
+                            let outer_ty = self.get_sym_type(outer_id.0);
                             let inner_id = if let Some(existing) =
                                 self.symbols.lookup_in_scope(current, name)
                             {
@@ -711,18 +908,42 @@ impl TypeChecker {
                                 self.symbols.define(name.clone(), SymbolKind::Variable)
                             };
                             self.symbols.set_var_class(inner_id, VariableClass::Free);
+                            self.symbols.set_nonlocal_mapping(inner_id, outer_id);
+                            self.set_sym_type(inner_id.0, outer_ty);
+                            self.set_builtin_class_alias(
+                                inner_id,
+                                self.builtin_class_aliases.get(&outer_id).copied(),
+                            );
+                            if let Some(origin) = self.import_origins.get(&outer_id).cloned() {
+                                self.import_origins.insert(inner_id, origin);
+                            }
+                            if let Some(origin) = self.instance_origins.get(&outer_id).cloned() {
+                                self.instance_origins.insert(inner_id, origin);
+                            }
+                            if let Some(origin) = self.class_ref_origins.get(&outer_id).copied() {
+                                self.class_ref_origins.insert(inner_id, origin);
+                            }
                             found = true;
                             break;
                         }
                         scope_idx = self.symbols.parent_scope(si);
                     }
                     if !found {
-                        let id = self.symbols.define(name.clone(), SymbolKind::Variable);
-                        self.symbols.set_var_class(id, VariableClass::Free);
+                        self.error(stmt.span, format!("no binding for nonlocal `{name}` found"));
                     }
                 }
             }
-            Stmt::TypeAlias { .. } => { /* handled in first pass */ }
+            Stmt::TypeAlias { name, .. } => {
+                if let Some(symbol) = self
+                    .symbols
+                    .lookup_in_scope(self.symbols.current_scope_idx(), name)
+                {
+                    let any_ty = self.tcx.any();
+                    self.set_sym_type(symbol.0, any_ty);
+                    self.set_builtin_class_alias(symbol, None);
+                    self.set_binding_origins(symbol, None, None, None);
+                }
+            }
             Stmt::Pass | Stmt::Break | Stmt::Continue => {}
             Stmt::Import {
                 names,
@@ -732,22 +953,35 @@ impl TypeChecker {
                 // Imported names get type Any — external modules are not resolved.
                 // This prevents false "undefined name" errors for third-party imports.
                 let any_ty = self.tcx.any();
+                let dotted = module.join(".");
                 if let Some(import_names) = names {
                     // `from module import X` / `from module import X as Y`
                     for (name, alias) in import_names {
+                        if name == "*" {
+                            continue;
+                        }
                         let effective = alias.as_ref().unwrap_or(name);
                         let sym = self.symbols.define(effective.clone(), SymbolKind::Variable);
                         self.set_sym_type(sym.0, any_ty);
+                        self.set_binding_origins(sym, None, None, None);
+                        self.import_origins
+                            .insert(sym, (dotted.clone(), name.clone()));
                     }
                 } else if let Some(alias) = module_alias {
                     // `import module as alias`
                     let sym = self.symbols.define(alias.clone(), SymbolKind::Variable);
                     self.set_sym_type(sym.0, any_ty);
+                    self.set_binding_origins(sym, None, None, None);
+                    self.import_origins
+                        .insert(sym, (dotted.clone(), String::new()));
                 } else {
                     // `import module` — register the root module name
                     if let Some(root) = module.first() {
                         let sym = self.symbols.define(root.clone(), SymbolKind::Variable);
                         self.set_sym_type(sym.0, any_ty);
+                        self.set_binding_origins(sym, None, None, None);
+                        self.import_origins
+                            .insert(sym, (root.clone(), String::new()));
                     }
                 }
             }
@@ -755,12 +989,14 @@ impl TypeChecker {
                 let declared_ty = self.resolve_type_expr(ty);
                 let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
                 self.set_sym_type(sym.0, declared_ty);
+                self.set_binding_origins(sym, None, None, None);
             }
         }
     }
 
     pub(crate) fn check_fn_body(
         &mut self,
+        declaration_symbol: SymbolId,
         name: &str,
         generic_params: &GenericParams,
         params: &[Param],
@@ -804,9 +1040,40 @@ impl TypeChecker {
                 }
             }
         }
-        self.symbols.push_scope();
-        for param in params {
-            let ty = self.resolve_type_expr(&param.ty);
+        // Defaults are evaluated before the def binds its name, but recursive
+        // references in the body must see the canonical preregistered signature.
+        self.symbols.bind_symbol_in_scope(
+            self.symbols.current_scope_idx(),
+            name.to_string(),
+            declaration_symbol,
+        );
+        // Parameter and return annotations are evaluated while the `def`
+        // statement executes in its enclosing namespace. A method body skips
+        // the class namespace for free-name lookup, but its annotations do not.
+        let body_param_types: Vec<_> = params
+            .iter()
+            .map(|param| self.resolve_type_expr(&param.ty))
+            .collect();
+        let body_return_ty = return_ty
+            .map(|ty| self.resolve_type_expr(ty))
+            .unwrap_or_else(|| self.tcx.any());
+        if let Some(canonical) = self
+            .function_declaration_types
+            .get(&declaration_symbol)
+            .copied()
+        {
+            self.set_builtin_class_alias(declaration_symbol, None);
+            self.set_binding_origins(declaration_symbol, None, None, None);
+            self.set_sym_type(declaration_symbol.0, canonical);
+        }
+        let mut lexical_parent = self.symbols.current_scope_idx();
+        while self.class_scope_stack.contains(&lexical_parent) {
+            lexical_parent = self.symbols.parent_scope(lexical_parent).unwrap_or(0);
+        }
+        self.symbols.push_scope_with_parent(lexical_parent);
+        self.function_scope_stack
+            .push(self.symbols.current_scope_idx());
+        for (param, ty) in params.iter().zip(body_param_types) {
             let sym = self
                 .symbols
                 .define(param.name.clone(), SymbolKind::Parameter);
@@ -825,6 +1092,7 @@ impl TypeChecker {
         crate::resolve::pass::collect_assignment_targets(body, &mut assigned, &mut declared);
         crate::resolve::pass::collect_walrus_targets_in_stmts(body, &mut assigned);
         let any_ty = self.tcx.any();
+        let mut inferred_local_placeholders = Vec::new();
         for n in &assigned {
             if declared.iter().any(|d| d == n) {
                 continue;
@@ -841,20 +1109,27 @@ impl TypeChecker {
             }
             let sym = self.symbols.define(n.clone(), SymbolKind::Variable);
             self.set_sym_type(sym.0, any_ty);
+            self.inferred_local_placeholders.insert(sym);
+            inferred_local_placeholders.push(sym);
         }
-        let ret_ty = match return_ty {
-            Some(t) => self.resolve_type_expr(t),
-            None => {
-                // #240: missing return annotation defaults to Any
-                self.tcx.any()
-            }
-        };
+        self.seed_inferred_local_placeholders(body);
+        let ret_ty = body_return_ty;
         let prev_ret = self.current_return_ty.replace(ret_ty);
         self.check_stmt_seq(body);
         self.current_return_ty = prev_ret;
+        for symbol in inferred_local_placeholders {
+            self.inferred_local_placeholders.remove(&symbol);
+            self.builtin_class_aliases.remove(&symbol);
+        }
+        self.function_scope_stack.pop();
         self.symbols.pop_scope();
-        if self.symbols.lookup(name).is_none() {
-            // Detect *args variadic and only include pre-star positional params in type.
+        // Reassert the declaration at its execution point. A prior assignment
+        // may have conservatively widened the preregistered symbol, but Python's
+        // def statement becomes the active binding when execution reaches it.
+        let sym = declaration_symbol;
+        let fn_ty = if let Some(canonical) = self.function_declaration_types.get(&sym).copied() {
+            canonical
+        } else {
             let (param_types, ret_ty, is_variadic) = if overload_decorated {
                 (Vec::new(), self.tcx.any(), true)
             } else {
@@ -873,14 +1148,15 @@ impl TypeChecker {
                     .collect();
                 (param_types, ret_ty, is_variadic)
             };
-            let fn_ty = self.tcx.intern(Ty::Fn {
+            self.tcx.intern(Ty::Fn {
                 params: param_types,
                 ret: ret_ty,
                 variadic: is_variadic,
-            });
-            let sym = self.symbols.define(name.to_string(), SymbolKind::Function);
-            self.set_sym_type(sym.0, fn_ty);
-        }
+            })
+        };
+        self.set_builtin_class_alias(sym, None);
+        self.set_binding_origins(sym, None, None, None);
+        self.set_sym_type(sym.0, fn_ty);
     }
 
     /// Verify each literal element of a container against its declared element
@@ -1067,64 +1343,29 @@ impl TypeChecker {
             return false;
         };
         // Extract class name from either ClassPattern or Constructor (#827 R4)
-        let class_name = match &pattern.node {
-            Pattern::ClassPattern { cls, .. } => cls.last().map(|s| s.as_str()).unwrap_or(""),
-            Pattern::Constructor { path, .. } => path.last().map(|s| s.as_str()).unwrap_or(""),
+        let class_path = match &pattern.node {
+            Pattern::ClassPattern { cls, .. } => cls.as_slice(),
+            Pattern::Constructor { path, .. } if path.len() == 1 => path.as_slice(),
             _ => return false,
         };
-        if class_name.is_empty() {
+        if class_path.is_empty() {
             return false;
         }
 
-        // Built-in self-subject patterns: narrow to the built-in type directly.
-        let builtin_narrow_ty = match class_name {
-            "int" => Some(self.tcx.int()),
-            "bool" => Some(self.tcx.bool()),
-            "str" => Some(self.tcx.str()),
-            "float" => Some(self.tcx.float()),
-            "list" => Some(self.tcx.any()),
-            "tuple" => Some(self.tcx.any()),
-            "dict" => Some(self.tcx.any()),
-            _ => None,
-        };
-        if let Some(narrow_ty) = builtin_narrow_ty {
-            let sym = self
-                .symbols
-                .define(subject_name.clone(), crate::resolve::SymbolKind::Variable);
-            self.set_sym_type(sym.0, narrow_ty);
-            if let Some(alias) = alias_name {
-                let alias_sym = self
-                    .symbols
-                    .define(alias, crate::resolve::SymbolKind::Variable);
-                self.set_sym_type(alias_sym.0, narrow_ty);
-            }
-            return true;
-        }
-
-        let Some(class_sym) = self.symbols.lookup(class_name) else {
+        let ClassPatternTarget::Instance(class_ty) = self.class_pattern_target(class_path) else {
             return false;
         };
-        let class_ty = self.with_user_class_role(
-            self.get_sym_type(class_sym.0),
-            super::ty::UserClassRole::Instance,
-        );
-        // Only narrow if the looked-up type is actually a class (not error/any)
-        if matches!(self.tcx.get(class_ty), super::Ty::Class { .. }) {
-            // Re-define the subject variable in the current scope with the narrowed type
-            let sym = self
+        let sym = self
+            .symbols
+            .define(subject_name.clone(), crate::resolve::SymbolKind::Variable);
+        self.set_sym_type(sym.0, class_ty);
+        if let Some(alias) = alias_name {
+            let alias_sym = self
                 .symbols
-                .define(subject_name.clone(), crate::resolve::SymbolKind::Variable);
-            self.set_sym_type(sym.0, class_ty);
-            // Also narrow the AS-alias to the same class type (#827)
-            if let Some(alias) = alias_name {
-                let alias_sym = self
-                    .symbols
-                    .define(alias, crate::resolve::SymbolKind::Variable);
-                self.set_sym_type(alias_sym.0, class_ty);
-            }
-            return true;
+                .define(alias, crate::resolve::SymbolKind::Variable);
+            self.set_sym_type(alias_sym.0, class_ty);
         }
-        false
+        true
     }
 
     /// Collect class fields from a class body for type resolution (#246).

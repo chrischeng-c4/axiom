@@ -33,10 +33,12 @@ pub(crate) fn consume_classcell_marker_for_type_new(class_name: &str, value: MbV
         return true;
     };
     if owner != class_name {
+        let owner_display = class_display_name(&owner);
+        let class_display = class_display_name(class_name);
         crate::runtime::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
             MbValue::from_ptr(MbObject::new_str(format!(
-                "__class__ set to {owner}, expected {class_name}"
+                "__class__ set to {owner_display}, expected {class_display}"
             ))),
         );
         return false;
@@ -81,11 +83,12 @@ pub(super) fn validate_classcell_after_metaclass_new(class_name: &str, namespace
     let namespace_owner = classcell_owner_from_namespace(namespace);
     let consumed = CLASSCELL_CONSUMED.with(|consumed| consumed.borrow().contains(class_name));
     if namespace_owner.as_deref() != Some(class_name) && !consumed {
+        let display_name = class_display_name(class_name);
         clear_classcell_state(class_name);
         crate::runtime::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
             MbValue::from_ptr(MbObject::new_str(format!(
-                "__class__ not set defining '{class_name}'"
+                "__class__ not set defining '{display_name}'"
             ))),
         );
         return;

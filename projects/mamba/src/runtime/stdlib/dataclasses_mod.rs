@@ -1439,7 +1439,7 @@ unsafe extern "C" fn dispatch_make_dataclass(args_ptr: *const MbValue, nargs: us
     let Some(name_v) = a.first().copied() else {
         return MbValue::none();
     };
-    let Some(name) = extract_str(name_v) else {
+    let Some(_name) = extract_str(name_v) else {
         return name_v;
     };
     let fields_v = a.get(1).copied().unwrap_or_else(MbValue::none);
@@ -1460,12 +1460,15 @@ unsafe extern "C" fn dispatch_make_dataclass(args_ptr: *const MbValue, nargs: us
     if type_obj.is_none() {
         return type_obj;
     }
+    let Some(registry_key) = super::super::class::resolve_class_name(type_obj) else {
+        return type_obj;
+    };
 
     let field_specs = parse_make_dataclass_fields(fields_v);
     PENDING_FIELDS.with(|reg| {
-        reg.borrow_mut().insert(name.clone(), field_specs);
+        reg.borrow_mut().insert(registry_key.clone(), field_specs);
     });
-    decorate_class(&name, parse_options(kwargs));
+    decorate_class(&registry_key, parse_options(kwargs));
     type_obj
 }
 

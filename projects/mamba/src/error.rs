@@ -23,6 +23,30 @@ pub enum MambaError {
     Other(String),
 }
 
+impl Clone for MambaError {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Syntax { span, message } => Self::Syntax {
+                span: *span,
+                message: message.clone(),
+            },
+            Self::Type { span, message } => Self::Type {
+                span: *span,
+                message: message.clone(),
+            },
+            Self::Name { span, message } => Self::Name {
+                span: *span,
+                message: message.clone(),
+            },
+            Self::Codegen { message } => Self::Codegen {
+                message: message.clone(),
+            },
+            Self::Io(error) => Self::Io(std::io::Error::new(error.kind(), error.to_string())),
+            Self::Other(message) => Self::Other(message.clone()),
+        }
+    }
+}
+
 impl MambaError {
     pub fn syntax(span: Span, message: impl Into<String>) -> Self {
         Self::Syntax {
