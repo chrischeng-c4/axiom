@@ -2,10 +2,10 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = "projects/jet/tech-design"
-generated_at = "2026-07-10T17:46:13.891233+00:00"
-digest = "sha256:a1faf42205706af7a534ec3cc3165d55ea88cdce1ae60881b82a3603a8f340a5"
-source_digest = "sha256:a1faf42205706af7a534ec3cc3165d55ea88cdce1ae60881b82a3603a8f340a5"
-ir_digest = "sha256:fdccc621c34030b47b983a5f85cd7ad1095085a279033006c638d2c9282df390"
+generated_at = "2026-07-10T17:48:48.350423+00:00"
+digest = "sha256:9024123a1af49f17cc69316ab49a4cedf3ac3388e177c837420ab25222384ba0"
+source_digest = "sha256:9024123a1af49f17cc69316ab49a4cedf3ac3388e177c837420ab25222384ba0"
+ir_digest = "sha256:cf4de5be7c1fa651bc073173ee79e377d363d74cdf9c55cfb6b4433a35ef5f84"
 
 [[files]]
 path = "config/jet-transform-resolver-nx-tsconfig-path-aliases-never-wired-into.md"
@@ -21,8 +21,8 @@ section_count = 4
 
 [[files]]
 path = "logic/jet-build-fails-to-resolve-tailwind-css-import-tailwindcss.md"
-digest = "sha256:3135e96b9dfd8c918d7d00d33ec030a241b85b560594917f0ea8064fc685ea1a"
-ir_digest = "sha256:fb28c4d49f7a40268ab83b651a8dec9bee38d767fa1e5a8e6537e1a035907774"
+digest = "sha256:13de5f5957b81aed960a1f7180edd5be13dd22255a8c655d8ed33b6b9c6ebb35"
+ir_digest = "sha256:ad7e8088478025cf09d9ca75d73b696fde36e6af9f4b6ce6792086ab2864900e"
 section_count = 3
 
 [[files]]
