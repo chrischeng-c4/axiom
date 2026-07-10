@@ -174,3 +174,30 @@ flowchart TD
     r2[R2 directives suite stays green] --> cargo_test_p_jet_lib_css_directives[cargo test -p jet --lib css::directives]
     ac3[AC3 block form layer inlining not regressed] --> cargo_test_p_jet_lib_css_directives
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/jet/src/css/directives.rs
+    action: update
+    section: config
+    impl_mode: hand-written
+    reason: "Extend process_layer_directives' '@layer ' scan loop to classify each occurrence by whichever terminator ('{' or ';') appears first after the layer-name-list token: keep the existing block-form handling (find_matching_close_brace, base/components/utilities routing) unchanged, and add a new statement-form branch that consumes through the terminating ';' and drops the whole '@layer <name>(, <name>)*;' clause from the returned css without emitting replacement text -- fixing R1/AC1 while leaving AC3's existing block-form tests green."
+  - path: projects/jet/src/css/directives.rs
+    action: update
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Add process_layer_directives_strips_bare_statement_form_alongside_block_form to the existing '── @layer routing ──' test group: input combines a leading '@layer theme, base, components, utilities;' statement with a block-form '@layer base { h1 { margin: 0; } }' rule; asserts the statement substring is stripped from result.css while result.base_additions/result.css still contain the block-form h1 rule (AC2, R1)."
+  - path: projects/jet/src/css/mod.rs
+    action: update
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Add apply_lightningcss_accepts_stripped_layer_statement_form_output alongside apply_lightningcss's existing test coverage: runs process_layer_directives' output for the combined statement+block-form input through apply_lightningcss and asserts Ok(..), proving the un-stripped-statement 'CSS parse error: Unexpected token AtKeyword(\"layer\")' no longer occurs end-to-end through the real parse step (AC1)."
+  - path: projects/jet/README.md
+    action: update
+    section: config
+    impl_mode: hand-written
+    reason: "Register the 'Fix CSS Layer Statement Form Parse Error' work-root row (WI #1377) under the bundler-production-build capability's work-root table so this TD's capability_refs gap/claim id (fix-css-layer-statement-form-parse-error) resolves; landed as a prep commit ahead of this TD's section authoring so `aw td` content validation could resolve the capability id."
+```
