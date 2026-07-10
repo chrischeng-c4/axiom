@@ -163,7 +163,6 @@ flowchart TD
     r4[R4 bare specifier directory without resolvable entry surfaces clear error] --> cargo_test_p_jet_lib_css_import_resolver_tests_bare_specifier_directory_without_resolvable_entry_surfaces_clear_error[cargo test -p jet --lib css::import_resolver::tests::bare_specifier_directory_without_resolvable_entry_surfaces_clear_error]
     r5[R5 existing css import resolver suite stays green] --> cargo_test_p_jet_lib_css[cargo test -p jet --lib css::]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
