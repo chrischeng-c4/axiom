@@ -121,6 +121,73 @@ assert not module.is_type_rejection("", "error: undefined name at 1..2: missing"
 }
 
 #[test]
+fn strict_type_accounting_requires_authoritative_contract_inventory() {
+    let script = r#"
+import importlib.util
+import pathlib
+import sys
+import tempfile
+
+tool = pathlib.Path("tests/harness/cpython/tools/strict_type_accounting.py")
+sys.path.insert(0, str(tool.parent))
+spec = importlib.util.spec_from_file_location("strict_type_accounting", tool)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+assert module.EXPECTED_PYTHON_VERSION == (3, 12)
+missing = module.verify_generated_signature_snapshot(
+    pathlib.Path("/definitely/missing/typeshed/stdlib")
+)
+assert not missing["current"]
+
+with tempfile.TemporaryDirectory() as tmp:
+    fixture = pathlib.Path(tmp) / "contract.py"
+    fixture.write_text('# subject = "demo.f(value: typed)"\n', encoding="utf-8")
+    sigs = {
+        ("demo", "", "f"): {
+            "params": {"value": "Unknown"},
+            "enforceable": False,
+        }
+    }
+    unwalled, unresolved = module.partition_generated_contract_coverage(
+        [fixture], sigs
+    )
+    assert not unwalled
+    assert unresolved[0]["reason"] == "generated_param_unknown"
+
+    fixture.write_text(
+        '# subject = "demo.f(value: T)"\n'
+        '# TypeVar param must stay unwalled\n',
+        encoding="utf-8",
+    )
+    unwalled, unresolved = module.partition_generated_contract_coverage(
+        [fixture], sigs
+    )
+    assert unwalled[0]["reason"] == "typevar_must_stay_unwalled"
+    assert not unresolved
+
+source = tool.read_text(encoding="utf-8")
+assert "host_python_version == EXPECTED_PYTHON_VERSION" in source
+assert 'and generated_snapshot["current"]' in source
+assert "and not unresolved_generated_contracts" in source
+"#;
+    let output = Command::new("python3.12")
+        .arg("-c")
+        .arg(script)
+        .current_dir(mamba_root())
+        .output()
+        .expect("run strict type authoritative inventory smoke");
+    assert!(
+        output.status.success(),
+        "strict type authoritative inventory smoke failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn replacement_readiness_uses_strict_type_accounting_tool() {
     let text = fs::read_to_string(
         mamba_root().join("tests/harness/cpython/tools/replacement_readiness.py"),
