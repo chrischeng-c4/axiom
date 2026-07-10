@@ -26,7 +26,7 @@ def upper(s: str) -> str:
 
 
 try:
-    result = upper(b"hi")  # type: ignore[arg-type]
+    result = upper(b"hi")
     print("no_typeerror:", repr(result))
 except TypeError as e:
     print("typeerror:", type(e).__name__, str(e)[:60])

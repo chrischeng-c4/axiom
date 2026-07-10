@@ -22,7 +22,7 @@ Mamba: raises TypeError at return time (annotation is a contract).
 
 
 def a() -> int:
-    return "not_an_int"  # type: ignore[return-value]
+    return "not_an_int"
 
 
 try:

@@ -23,7 +23,7 @@ container annotation contract.
 """
 
 try:
-    d: dict[str, int] = {"a": "not_an_int"}  # type: ignore[dict-item]
+    d: dict[str, int] = {"a": "not_an_int"}
     print("no_typeerror:", repr(d))
 except TypeError as e:
     print("typeerror:", type(e).__name__, str(e)[:60])

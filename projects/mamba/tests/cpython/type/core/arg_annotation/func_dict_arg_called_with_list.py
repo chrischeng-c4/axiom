@@ -26,7 +26,7 @@ def keys_of(d: dict) -> int:
 
 
 try:
-    result = keys_of([1, 2, 3])  # type: ignore[arg-type]
+    result = keys_of([1, 2, 3])
     print("no_typeerror:", repr(result))
 except TypeError as e:
     print("typeerror:", type(e).__name__, str(e)[:60])

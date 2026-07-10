@@ -39,29 +39,13 @@ fn line_has_type_ignore(line: &str) -> bool {
     false
 }
 
-fn source_has_strict_type_marker(source: &str) -> bool {
-    source
-        .lines()
-        .any(|l| l.trim_start().starts_with("# mamba-strict-type:"))
-}
-
-fn configure_checker_for_source(checker: &mut TypeChecker, source: &str) {
-    checker.strict_type_fixture = source_has_strict_type_marker(source);
-}
-
 /// PEP 484 `# type: ignore` — drop static type/name errors whose span touches
 /// a source line carrying the comment. A bare comment-only `# type: ignore`
 /// before any code suppresses the whole module (mypy file-level semantics).
-/// Fixtures use this to exercise RUNTIME error behavior the static checker
-/// would otherwise reject at compile time.
+/// Runtime-behavior fixtures can use this when the static checker would
+/// otherwise reject the exercised path at compile time.
 fn filter_type_ignored(errors: Vec<MambaError>, source: &str) -> Vec<MambaError> {
     if errors.is_empty() {
-        return errors;
-    }
-    // Strict-type fixtures (`# mamba-strict-type:`) opt INTO compile-time
-    // enforcement — their `# type: ignore` comments document the CPython
-    // divergence and must not silence the very error being asserted.
-    if source_has_strict_type_marker(source) {
         return errors;
     }
     let mut ignore_lines: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -158,7 +142,6 @@ impl CompilerSession {
 
         // Type check
         let mut checker = TypeChecker::new();
-        configure_checker_for_source(&mut checker, &source);
         let errors = filter_type_ignored(checker.check_module(&module), &source);
         if !errors.is_empty() {
             for err in &errors[1..] {
@@ -199,7 +182,6 @@ impl CompilerSession {
         // Type check — resolve and pre-check all imported dependency modules
         // first so the shared TypeChecker accumulates cross-module type info.
         let mut checker = TypeChecker::new();
-        configure_checker_for_source(&mut checker, &source);
         self.check_dependencies(path, &mut checker);
         let errors = filter_type_ignored(checker.check_module(&module), &source);
         if !errors.is_empty() {
@@ -313,7 +295,6 @@ impl CompilerSession {
         }
 
         let mut checker = TypeChecker::new();
-        configure_checker_for_source(&mut checker, &src);
         checker.allow_runtime_unresolved_names = true;
         // No check_dependencies — stdin source has no associated file path.
         let errors = filter_type_ignored(checker.check_module(&module), &src);
@@ -423,7 +404,6 @@ impl CompilerSession {
         // Type check — resolve and pre-check all imported dependency modules
         // first so the shared TypeChecker accumulates cross-module type info.
         let mut checker = TypeChecker::new();
-        configure_checker_for_source(&mut checker, &source);
         checker.allow_runtime_unresolved_names = true;
         self.check_dependencies(path, &mut checker);
 
@@ -664,6 +644,31 @@ mod tests {
             .add_file("test.py".to_string(), src.to_string());
         let source = session.source_map.get_file(file_id).source.clone();
         crate::parser::parse(&source, file_id).expect("parse should succeed for valid source")
+    }
+
+    #[test]
+    fn type_ignore_semantics_are_independent_of_fixture_markers() {
+        for marker in ["", "# mamba-strict-type: TypeError\n"] {
+            let file = tempfile::NamedTempFile::with_suffix(".py").unwrap();
+            std::fs::write(
+                file.path(),
+                format!("{marker}value: int = \"wrong\"  # type: ignore[assignment]\n"),
+            )
+            .unwrap();
+
+            let mut session = CompilerSession::new(CompilerConfig::default());
+            assert!(
+                session.check(file.path().to_str().unwrap()).is_ok(),
+                "fixture metadata must not change # type: ignore semantics"
+            );
+
+            std::fs::write(file.path(), format!("{marker}value: int = \"wrong\"\n")).unwrap();
+            let mut session = CompilerSession::new(CompilerConfig::default());
+            assert!(
+                session.check(file.path().to_str().unwrap()).is_err(),
+                "fixture metadata must not disable annotation enforcement"
+            );
+        }
     }
 
     // ── check_native_imports: expose filtering (R3) ───────────────────────────

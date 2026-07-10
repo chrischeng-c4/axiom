@@ -22,7 +22,7 @@ def count_items(**items: int) -> int:
 
 
 try:
-    result = count_items(count="3")  # type: ignore[arg-type]
+    result = count_items(count="3")
     print("no_typeerror:", repr(result))
 except TypeError as e:
     print("typeerror:", type(e).__name__, str(e)[:80])
