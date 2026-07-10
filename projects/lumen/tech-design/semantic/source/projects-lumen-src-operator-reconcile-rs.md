@@ -27,7 +27,7 @@ Public API manifest for `projects/lumen/src/operator/reconcile.rs` generated fro
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `run` | projects/lumen/src/operator/reconcile.rs | function | pub | 242 | run() -> anyhow::Result<()> |
+| `run` | projects/lumen/src/operator/reconcile.rs | function | pub | 245 | run() -> anyhow::Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -53,10 +53,11 @@ Public API manifest for `projects/lumen/src/operator/reconcile.rs` generated fro
 //! to the policy-only [`crate::operator::crd::LumenSpec::reshard_status`]).
 //! This keeps the shared `libs/operator` trait untouched.
 //!
-//! Note this only *reports* a crossed `prepareAtPercent` / `urgentAtPercent`
-//! threshold in `status.reshard`; it does not yet drive `workflow.phase` or
-//! move any data (#1319 R2, deferred — see the module-level follow-up note
-//! in `crd.rs`'s `reshard_status_with_usage`).
+//! This loop only *reports* a crossed `prepareAtPercent` / `urgentAtPercent`
+//! threshold in `status.reshard`; a second, independently leader-gated
+//! background loop spawned alongside it — [`crate::operator::reshard_driver::
+//! spawn_reshard_driver_loop`] (#1319 R2, #1381) — is what actually drives
+//! `workflow.phase` and moves data once a threshold is crossed.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
@@ -271,15 +272,20 @@ impl ManagedService for Lumen {
 /// `lumen k8s operator run` — run the reconcile controller on the shared
 /// `libs/operator` host (leader-gated; safe at `replicas > 1`), alongside
 /// the live shard-usage measurement loop (#1319 R1; every replica runs it,
-/// not just the leader — see [`spawn_shard_usage_loop`]).
+/// not just the leader — see [`spawn_shard_usage_loop`]) and the autonomous
+/// reshard phase driver (#1319 R2, #1381; independently leader-gated — see
+/// [`crate::operator::reshard_driver::spawn_reshard_driver_loop`]).
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reconcile-rs.md#source
 pub async fn run() -> anyhow::Result<()> {
     match Client::try_default().await {
-        Ok(client) => spawn_shard_usage_loop(client),
+        Ok(client) => {
+            spawn_shard_usage_loop(client.clone());
+            crate::operator::reshard_driver::spawn_reshard_driver_loop(client);
+        }
         Err(err) => {
             tracing::warn!(
                 error = %err,
-                "reshard live-usage measurement loop disabled: could not build a kube client"
+                "reshard live-usage measurement + phase-driver loops disabled: could not build a kube client"
             );
         }
     }
@@ -425,4 +431,13 @@ changes:
     description: |
       rust-source-unit (td_ast) source for `projects/lumen/src/operator/reconcile.rs` captured during lumen
       standardization onto the per-file codegen ladder.
+  - path: projects/lumen/src/operator/reconcile.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1381: doc-comment-only update noting the new, independently
+      leader-gated `reshard_driver::spawn_reshard_driver_loop` background
+      loop that `run()` now also spawns — the piece that actually drives
+      `workflow.phase` once this loop's threshold reporting crosses.
 ```

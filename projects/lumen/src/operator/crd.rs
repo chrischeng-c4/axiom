@@ -557,13 +557,15 @@ impl LumenSpec {
     /// pod-`/metrics` measurement loop, the function's only caller).
     ///
     /// Reports whether the busiest shard has crossed `prepareAtPercent` /
-    /// `urgentAtPercent` of `maxShardBytes`. It does **not** drive
-    /// `workflow.phase` or move any data — the autonomous split executor
-    /// (#1319 R2: computing a target topology, invoking
-    /// [`crate::reshard::bucket_moves`] / [`crate::reshard::
-    /// snapshot_reshard_batches`], and updating `shardMap.assignments`) is a
-    /// separate, not-yet-implemented follow-up; a crossed threshold is
-    /// reported here, never acted on.
+    /// `urgentAtPercent` of `maxShardBytes`. This function itself does
+    /// **not** drive `workflow.phase` or move any data — it only computes
+    /// the status this tick. The autonomous split executor (#1319 R2, #1381:
+    /// computing a target topology, invoking [`crate::reshard::bucket_moves`]
+    /// / [`crate::reshard::snapshot_reshard_batches`], and updating
+    /// `shardMap.assignments`) is a separate loop
+    /// ([`crate::operator::reshard_driver::should_start_split`] /
+    /// `drive_tick`) that reads the `blockingConditions` this function
+    /// writes and acts on them independently.
     /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
     pub fn reshard_status_with_usage(
         &self,
