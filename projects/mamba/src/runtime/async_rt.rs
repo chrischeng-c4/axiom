@@ -236,114 +236,166 @@ thread_local! {
     static CURRENT_COROUTINE_ID: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
 }
 
+enum CoroutineStepPost {
+    Snapshot,
+    MarkAwaiting,
+}
+
+struct CoroutineStepOutcome {
+    value: MbValue,
+    exhausted: bool,
+    result: Option<MbValue>,
+}
+
+impl CoroutineStepOutcome {
+    fn none() -> Self {
+        Self {
+            value: MbValue::none(),
+            exhausted: true,
+            result: None,
+        }
+    }
+}
+
 pub(crate) fn has_current_coroutine() -> bool {
     CURRENT_COROUTINE_ID.with(|cell| cell.get().is_some())
+}
+
+fn mb_coroutine_step_with_post(
+    coro_handle: MbValue,
+    post: CoroutineStepPost,
+) -> CoroutineStepOutcome {
+    // Safepoint poll at coroutine step (R4)
+    super::gc::gc_safepoint();
+    let Some(id) = coro_handle.as_int().map(|id| id as u64) else {
+        return CoroutineStepOutcome::none();
+    };
+
+    enum StepPlan {
+        Exhausted(MbValue),
+        Invoke {
+            body: unsafe extern "C" fn(i64) -> i64,
+            module_name: String,
+        },
+        Idle,
+        Error,
+    }
+
+    // Prepare the body invocation while holding the registry lock only once.
+    let step_plan = {
+        let mut coros = COROUTINES.write().unwrap();
+        if let Some(coro) = coros.get_mut(&id) {
+            if coro.exhausted {
+                StepPlan::Exhausted(coro.result.unwrap_or_else(MbValue::none))
+            } else if coro.running {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str("coroutine already executing".to_string())),
+                );
+                StepPlan::Error
+            } else if coro.state == 0 || coro.state > 1 {
+                if coro.state == 0 {
+                    coro.state = 1; // Mark as started
+                }
+                coro.running = true;
+                if let Some(body) = coro.body_fn {
+                    StepPlan::Invoke {
+                        body,
+                        module_name: coro.module_name.clone(),
+                    }
+                } else {
+                    // Fail fast: no body function registered (#313 R1)
+                    coro.exhausted = true;
+                    coro.running = false;
+                    coro.result = Some(MbValue::none());
+                    StepPlan::Exhausted(MbValue::none())
+                }
+            } else {
+                StepPlan::Idle
+            }
+        } else {
+            StepPlan::Idle
+        }
+    };
+
+    let mut body_return = None;
+    match step_plan {
+        StepPlan::Exhausted(result) => {
+            return CoroutineStepOutcome {
+                value: result,
+                exhausted: true,
+                result: Some(result),
+            };
+        }
+        StepPlan::Invoke { body, module_name } => {
+            // Call the compiled body function with coroutine handle.
+            let previous = CURRENT_COROUTINE_ID.with(|cell| {
+                let previous = cell.get();
+                cell.set(Some(id));
+                previous
+            });
+            super::closure::push_active_module_name(module_name);
+            struct ModuleGuard;
+            impl Drop for ModuleGuard {
+                fn drop(&mut self) {
+                    crate::runtime::closure::pop_active_module_name();
+                }
+            }
+            let _module_guard = ModuleGuard;
+            let raw_return = unsafe { body(coro_handle.to_bits() as i64) };
+            body_return = Some(MbValue::from_bits(raw_return as u64));
+            CURRENT_COROUTINE_ID.with(|cell| cell.set(previous));
+            if let Some(coro) = COROUTINES.write().unwrap().get_mut(&id) {
+                coro.running = false;
+            }
+            if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
+                super::exception::mb_clear_exception();
+                raise_runtime_error("coroutine raised StopIteration");
+            }
+        }
+        StepPlan::Idle => {}
+        StepPlan::Error => return CoroutineStepOutcome::none(),
+    }
+
+    let (exhausted, result) = match post {
+        CoroutineStepPost::Snapshot => COROUTINES
+            .read()
+            .unwrap()
+            .get(&id)
+            .map(|c| (c.exhausted, c.result))
+            .unwrap_or((true, None)),
+        CoroutineStepPost::MarkAwaiting => {
+            let mut coros = COROUTINES.write().unwrap();
+            coros
+                .get_mut(&id)
+                .map(|coro| {
+                    if coro.exhausted {
+                        (true, coro.result)
+                    } else {
+                        coro.awaiting = true;
+                        (false, None)
+                    }
+                })
+                .unwrap_or((true, None))
+        }
+    };
+
+    CoroutineStepOutcome {
+        value: if exhausted {
+            result.unwrap_or_else(MbValue::none)
+        } else {
+            body_return.unwrap_or_else(MbValue::none)
+        },
+        exhausted,
+        result,
+    }
 }
 
 /// Advance a coroutine to its next suspension point.
 /// If the coroutine has a registered body function and hasn't started yet
 /// (state == 0), calls the body function to execute it (#313 R1).
 pub fn mb_coroutine_step(coro_handle: MbValue) -> MbValue {
-    // Safepoint poll at coroutine step (R4)
-    super::gc::gc_safepoint();
-    if let Some(id) = coro_handle.as_int() {
-        enum StepPlan {
-            Exhausted(MbValue),
-            Invoke {
-                body: unsafe extern "C" fn(i64) -> i64,
-                module_name: String,
-            },
-            Idle,
-        }
-
-        // Prepare the body invocation while holding the registry lock only once.
-        let step_plan = {
-            let mut coros = COROUTINES.write().unwrap();
-            if let Some(coro) = coros.get_mut(&(id as u64)) {
-                if coro.exhausted {
-                    StepPlan::Exhausted(coro.result.unwrap_or_else(MbValue::none))
-                } else if coro.running {
-                    super::exception::mb_raise(
-                        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str(
-                            "coroutine already executing".to_string(),
-                        )),
-                    );
-                    return MbValue::none();
-                } else if coro.state == 0 || coro.state > 1 {
-                    if coro.state == 0 {
-                        coro.state = 1; // Mark as started
-                    }
-                    coro.running = true;
-                    if let Some(body) = coro.body_fn {
-                        StepPlan::Invoke {
-                            body,
-                            module_name: std::mem::take(&mut coro.module_name),
-                        }
-                    } else {
-                        // Fail fast: no body function registered (#313 R1)
-                        coro.exhausted = true;
-                        coro.running = false;
-                        coro.result = Some(MbValue::none());
-                        StepPlan::Exhausted(MbValue::none())
-                    }
-                } else {
-                    StepPlan::Idle
-                }
-            } else {
-                StepPlan::Idle
-            }
-        };
-
-        let mut body_return = None;
-        match step_plan {
-            StepPlan::Exhausted(result) => return result,
-            StepPlan::Invoke { body, module_name } => {
-                // Call the compiled body function with coroutine handle
-                let previous = CURRENT_COROUTINE_ID.with(|cell| {
-                    let previous = cell.get();
-                    cell.set(Some(id as u64));
-                    previous
-                });
-                super::closure::push_active_module_name(module_name.clone());
-                struct ModuleGuard;
-                impl Drop for ModuleGuard {
-                    fn drop(&mut self) {
-                        crate::runtime::closure::pop_active_module_name();
-                    }
-                }
-                let _module_guard = ModuleGuard;
-                let raw_return = unsafe { body(coro_handle.to_bits() as i64) };
-                body_return = Some(MbValue::from_bits(raw_return as u64));
-                CURRENT_COROUTINE_ID.with(|cell| cell.set(previous));
-                if let Some(coro) = COROUTINES.write().unwrap().get_mut(&(id as u64)) {
-                    coro.running = false;
-                    if !coro.exhausted && coro.module_name.is_empty() {
-                        coro.module_name = module_name;
-                    }
-                }
-                if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
-                    super::exception::mb_clear_exception();
-                    raise_runtime_error("coroutine raised StopIteration");
-                }
-            }
-            StepPlan::Idle => {}
-        }
-
-        let (exhausted, result) = COROUTINES
-            .read()
-            .unwrap()
-            .get(&(id as u64))
-            .map(|c| (c.exhausted, c.result))
-            .unwrap_or((true, None));
-        if exhausted {
-            result.unwrap_or_else(MbValue::none)
-        } else {
-            body_return.unwrap_or_else(MbValue::none)
-        }
-    } else {
-        MbValue::none()
-    }
+    mb_coroutine_step_with_post(coro_handle, CoroutineStepPost::Snapshot).value
 }
 
 /// Mark a coroutine as complete with a result.
@@ -425,30 +477,6 @@ fn raise_stop_iteration_value(value: MbValue) -> MbValue {
     );
     super::class::mb_raise_instance(instance);
     MbValue::none()
-}
-
-fn coroutine_post_poll_snapshot(id: u64) -> (bool, Option<MbValue>) {
-    COROUTINES
-        .read()
-        .unwrap()
-        .get(&id)
-        .map(|c| (c.exhausted, c.result))
-        .unwrap_or((true, None))
-}
-
-fn coroutine_post_step_mark_awaiting(id: u64) -> (bool, Option<MbValue>) {
-    let mut coros = COROUTINES.write().unwrap();
-    coros
-        .get_mut(&id)
-        .map(|coro| {
-            if coro.exhausted {
-                (true, coro.result)
-            } else {
-                coro.awaiting = true;
-                (false, None)
-            }
-        })
-        .unwrap_or((true, None))
 }
 
 pub fn is_known_coroutine(coro_handle: MbValue) -> bool {
@@ -740,38 +768,36 @@ pub(crate) fn mb_coroutine_send_for_await(
             }
             super::async_task::AwaitResume::Complete(result) => {
                 mb_coroutine_store_resume_value(coro_handle, result);
-                let step_value = mb_coroutine_step(coro_handle);
+                let step = mb_coroutine_step_with_post(coro_handle, CoroutineStepPost::Snapshot);
                 if super::exception::current_exception_type().is_some() {
                     return CoroutineAwaitPoll::Error;
                 }
-                let (exhausted, result) = coroutine_post_poll_snapshot(id);
-                if exhausted {
-                    let result = result.unwrap_or_else(MbValue::none);
+                if step.exhausted {
+                    let result = step.result.unwrap_or_else(MbValue::none);
                     unsafe {
                         super::rc::retain_if_ptr(result);
                     }
                     return CoroutineAwaitPoll::Complete(result);
                 }
-                return CoroutineAwaitPoll::Yielded(step_value);
+                return CoroutineAwaitPoll::Yielded(step.value);
             }
         }
     }
 
-    let step_value = mb_coroutine_step(coro_handle);
+    let step = mb_coroutine_step_with_post(coro_handle, CoroutineStepPost::MarkAwaiting);
     if super::exception::current_exception_type().is_some() {
         return CoroutineAwaitPoll::Error;
     }
 
-    let (exhausted, result) = coroutine_post_step_mark_awaiting(id);
-    if exhausted {
-        let result = result.unwrap_or_else(MbValue::none);
+    if step.exhausted {
+        let result = step.result.unwrap_or_else(MbValue::none);
         unsafe {
             super::rc::retain_if_ptr(result);
         }
         return CoroutineAwaitPoll::Complete(result);
     }
 
-    CoroutineAwaitPoll::Yielded(step_value)
+    CoroutineAwaitPoll::Yielded(step.value)
 }
 
 pub fn mb_coroutine_send(coro_handle: MbValue, value: MbValue) -> MbValue {
@@ -814,30 +840,28 @@ pub fn mb_coroutine_send(coro_handle: MbValue, value: MbValue) -> MbValue {
             }
             super::async_task::AwaitResume::Complete(result) => {
                 mb_coroutine_store_resume_value(coro_handle, result);
-                let step_value = mb_coroutine_step(coro_handle);
+                let step = mb_coroutine_step_with_post(coro_handle, CoroutineStepPost::Snapshot);
                 if super::exception::current_exception_type().is_some() {
                     return MbValue::none();
                 }
-                let (exhausted, result) = coroutine_post_poll_snapshot(id);
-                if exhausted {
-                    return raise_stop_iteration_value(result.unwrap_or_else(MbValue::none));
+                if step.exhausted {
+                    return raise_stop_iteration_value(step.result.unwrap_or_else(MbValue::none));
                 }
-                return step_value;
+                return step.value;
             }
         }
     }
 
-    let step_value = mb_coroutine_step(coro_handle);
+    let step = mb_coroutine_step_with_post(coro_handle, CoroutineStepPost::MarkAwaiting);
     if super::exception::current_exception_type().is_some() {
         return MbValue::none();
     }
 
-    let (exhausted, result) = coroutine_post_step_mark_awaiting(id);
-    if exhausted {
-        return raise_stop_iteration_value(result.unwrap_or_else(MbValue::none));
+    if step.exhausted {
+        return raise_stop_iteration_value(step.result.unwrap_or_else(MbValue::none));
     }
 
-    step_value
+    step.value
 }
 
 pub fn mb_coroutine_throw(coro_handle: MbValue, exc_type: MbValue, exc_msg: MbValue) -> MbValue {
@@ -869,20 +893,14 @@ pub fn mb_coroutine_throw(coro_handle: MbValue, exc_type: MbValue, exc_msg: MbVa
             }
             super::async_task::AwaitResume::Complete(result) => {
                 mb_coroutine_store_resume_value(coro_handle, result);
-                let step_value = mb_coroutine_step(coro_handle);
+                let step = mb_coroutine_step_with_post(coro_handle, CoroutineStepPost::Snapshot);
                 if super::exception::current_exception_type().is_some() {
                     return MbValue::none();
                 }
-                let (exhausted, result) = COROUTINES
-                    .read()
-                    .unwrap()
-                    .get(&id)
-                    .map(|c| (c.exhausted, c.result))
-                    .unwrap_or((true, None));
-                if exhausted {
-                    return raise_stop_iteration_value(result.unwrap_or_else(MbValue::none));
+                if step.exhausted {
+                    return raise_stop_iteration_value(step.result.unwrap_or_else(MbValue::none));
                 }
-                return step_value;
+                return step.value;
             }
         }
     }
