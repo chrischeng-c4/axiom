@@ -2,10 +2,10 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = "projects/jet/tech-design"
-generated_at = "2026-07-09T15:02:01.282235+00:00"
-digest = "sha256:945b53586fddcb2f56cf5e78dc81fda2928856788f3bb052aa4b377b725befce"
-source_digest = "sha256:945b53586fddcb2f56cf5e78dc81fda2928856788f3bb052aa4b377b725befce"
-ir_digest = "sha256:587016c172e7c6e8db65b2a150f699de453e6dd9b037e331602b0484462a392b"
+generated_at = "2026-07-10T17:46:13.891233+00:00"
+digest = "sha256:a1faf42205706af7a534ec3cc3165d55ea88cdce1ae60881b82a3603a8f340a5"
+source_digest = "sha256:a1faf42205706af7a534ec3cc3165d55ea88cdce1ae60881b82a3603a8f340a5"
+ir_digest = "sha256:fdccc621c34030b47b983a5f85cd7ad1095085a279033006c638d2c9282df390"
 
 [[files]]
 path = "config/jet-transform-resolver-nx-tsconfig-path-aliases-never-wired-into.md"
@@ -20,10 +20,22 @@ ir_digest = "sha256:6a0562d06b9c19b957a38f07144929554002245d274079563f913733e9a8
 section_count = 4
 
 [[files]]
+path = "logic/jet-build-fails-to-resolve-tailwind-css-import-tailwindcss.md"
+digest = "sha256:3135e96b9dfd8c918d7d00d33ec030a241b85b560594917f0ea8064fc685ea1a"
+ir_digest = "sha256:fb28c4d49f7a40268ab83b651a8dec9bee38d767fa1e5a8e6537e1a035907774"
+section_count = 3
+
+[[files]]
 path = "logic/jet-build-lib-dts-object-literal-d-ts-emission-silently-truncate.md"
 digest = "sha256:0db24c5a1a383d0e109b44fcc08092f436fa38b0b45d2bd1e23ff6eb300c0d27"
 ir_digest = "sha256:853dc8b0411cac907bab94a7c340be4802c51b9dc4ee6216f7a9b41df52f0ab0"
 section_count = 3
+
+[[files]]
+path = "logic/jet-css-parser-fails-to-parse-tailwind-css-v4-layer-directives.md"
+digest = "sha256:d29dbc57b22acaae86792dabe7c44436b3fdb9381be876c020b160d0eff33326"
+ir_digest = "sha256:f4918f09bf9f8de0c3c78c8c52641dd61e060bc958fe250b9410065962049225"
+section_count = 4
 
 [[files]]
 path = "logic/jet-docs-site-carries-cclab-era-branding-after-move-to-projects.md"
