@@ -212,21 +212,61 @@ pub fn mb_coroutine_new(name: MbValue, locals: MbValue) -> MbValue {
     MbValue::from_int(id as i64)
 }
 
+fn decode_coroutine_body(fn_ptr: MbValue) -> Option<unsafe extern "C" fn(i64) -> i64> {
+    let addr = fn_ptr
+        .as_func()
+        .or_else(|| fn_ptr.as_int().map(|v| v as usize))?;
+    if addr == 0 {
+        return None;
+    }
+    Some(unsafe { std::mem::transmute(addr) })
+}
+
+/// Create a new coroutine with a pre-sized frame and registered body.
+///
+/// Async lowering hits coroutine construction on every recursive call in perf
+/// pins such as #1184. Accepting the frame size and body pointer directly lets
+/// codegen avoid the empty-list allocation/extraction round-trip and the
+/// follow-up registry write in `mb_coroutine_set_body`.
+pub fn mb_coroutine_new_with_body(name: MbValue, local_count: i64, fn_ptr: MbValue) -> MbValue {
+    let coro_name = extract_str(name).unwrap_or_else(|| "<coroutine>".to_string());
+    let module_name = super::closure::current_active_module_name();
+    let local_count = local_count.max(0) as usize;
+    let locals = if local_count == 0 {
+        Vec::new()
+    } else {
+        vec![MbValue::none(); local_count]
+    };
+
+    let coro = MbCoroutine {
+        name: coro_name,
+        module_name,
+        state: 0,
+        locals,
+        result: None,
+        exhausted: false,
+        running: false,
+        awaiting: false,
+        suspend_requested: false,
+        pending_await: None,
+        pending_await_coro_id: None,
+        resume_value: None,
+        close_raises_ignored_exit: false,
+        body_fn: decode_coroutine_body(fn_ptr),
+    };
+    let id = alloc_coro_id();
+    COROUTINES.write().unwrap().insert(id, coro);
+    MbValue::from_int(id as i64)
+}
+
 /// Set the body function pointer for deferred execution (#313 R1).
 /// Called by the compiled async wrapper after creating the coroutine.
 /// Accepts both TAG_FUNC (MirConst::FuncRef lowering) and raw integer addresses.
 pub fn mb_coroutine_set_body(coro_handle: MbValue, fn_ptr: MbValue) {
     if let Some(id) = coro_handle.as_int() {
-        let addr = fn_ptr
-            .as_func()
-            .or_else(|| fn_ptr.as_int().map(|v| v as usize));
-        if let Some(ptr_val) = addr {
-            if ptr_val != 0 {
-                let body: unsafe extern "C" fn(i64) -> i64 =
-                    unsafe { std::mem::transmute(ptr_val) };
-                if let Some(coro) = COROUTINES.write().unwrap().get_mut(&(id as u64)) {
-                    coro.body_fn = Some(body);
-                }
+        if let Some(body) = decode_coroutine_body(fn_ptr) {
+            if let Some(coro) = COROUTINES.write().unwrap().get_mut(&(id as u64)) {
+                coro.body_fn = Some(body);
             }
         }
     }
@@ -1240,6 +1280,26 @@ mod tests {
             Some("RuntimeError")
         );
         super::super::exception::mb_clear_exception();
+        mb_coroutine_release(coro);
+    }
+
+    #[test]
+    fn test_coroutine_new_with_body_presizes_locals_and_registers_body() {
+        unsafe extern "C" fn body(_: i64) -> i64 {
+            MbValue::none().to_bits() as i64
+        }
+
+        let name = MbValue::from_ptr(MbObject::new_str("await_child".to_string()));
+        let coro = mb_coroutine_new_with_body(name, 2, MbValue::from_func(body as usize));
+
+        let stored = COROUTINES
+            .read()
+            .unwrap()
+            .get(&(coro.as_int().unwrap() as u64))
+            .map(|c| (c.locals.len(), c.body_fn.is_some()))
+            .unwrap();
+        assert_eq!(stored, (2, true));
+
         mb_coroutine_release(coro);
     }
 

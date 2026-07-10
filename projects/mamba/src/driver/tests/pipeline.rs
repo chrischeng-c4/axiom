@@ -1026,12 +1026,12 @@ fn test_async_function_creates_coroutine() {
         non_main.len() >= 2,
         "async function should produce wrapper + body"
     );
-    // Wrapper should call mb_coroutine_new
-    let has_coro_new = non_main.iter().any(|f| {
+    // Wrapper should call the fused constructor that installs its body.
+    let has_coro_new_with_body = non_main.iter().any(|f| {
         f.blocks.iter().any(|b| {
             b.stmts.iter().any(|s| {
                 matches!(s,
-                    MirInst::CallExtern { name, .. } if name == "mb_coroutine_new"
+                    MirInst::CallExtern { name, .. } if name == "mb_coroutine_new_with_body"
                 )
             })
         })
@@ -1046,7 +1046,10 @@ fn test_async_function_creates_coroutine() {
             })
         })
     });
-    assert!(has_coro_new, "wrapper should call mb_coroutine_new");
+    assert!(
+        has_coro_new_with_body,
+        "wrapper should call mb_coroutine_new_with_body"
+    );
     assert!(has_coro_complete, "body should call mb_coroutine_complete");
 }
 
@@ -1124,14 +1127,18 @@ fn test_sync_function_no_coroutine() {
     // Regular (non-async) functions should NOT create coroutines
     let mir = pipeline("def add(a: int, b: int) -> int:\n    return a + b\n");
     let func = mir.bodies.iter().find(|b| b.name.0 != u32::MAX).unwrap();
-    let has_coro_new = func.blocks.iter().any(|b| {
+    let has_coro_constructor = func.blocks.iter().any(|b| {
         b.stmts.iter().any(|s| {
             matches!(s,
-                MirInst::CallExtern { name, .. } if name == "mb_coroutine_new"
+                MirInst::CallExtern { name, .. }
+                    if name == "mb_coroutine_new" || name == "mb_coroutine_new_with_body"
             )
         })
     });
-    assert!(!has_coro_new, "sync function should NOT create coroutines");
+    assert!(
+        !has_coro_constructor,
+        "sync function should NOT create coroutines"
+    );
 }
 
 #[test]
@@ -1188,7 +1195,10 @@ fn test_pipeline_method_call_packs_args() {
         .iter()
         .any(|i| matches!(i, MirInst::CallExtern { name, .. } if name == "mb_call_spread"));
     assert!(has_make_list, "method args should be packed into a list");
-    assert!(has_getattr, "generic method call should resolve the bound method");
+    assert!(
+        has_getattr,
+        "generic method call should resolve the bound method"
+    );
     assert!(
         has_call_spread,
         "generic method call should invoke the bound method via mb_call_spread"
