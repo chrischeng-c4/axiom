@@ -24,8 +24,8 @@ mod generator_attrs;
 mod mappingproxy;
 mod memoryview;
 
-pub(crate) use cells::consume_classcell_marker_for_type_new;
-pub use cells::mb_class_mark_classcell_required;
+pub use cells::{mb_class_bind_classcell, mb_class_mark_classcell_required};
+pub(crate) use cells::record_classcell_value_for_type_new;
 use cells::{
     classcell_marker, classcell_required_for, clear_classcell_state,
     validate_classcell_after_metaclass_new,
@@ -83,6 +83,12 @@ pub struct MbClass {
     pub metaclass: Option<String>,
     /// True after class-definition-time metaclass hooks have been dispatched.
     pub metaclass_finalized: bool,
+    /// Canonical value returned by the metaclass `__new__` hook. This may be a
+    /// different class object, or even a non-type value.
+    pub metaclass_result: Option<MbValue>,
+    /// The staged namespace has not yet crossed the `type.__new__` creation
+    /// boundary, so PEP 487 hooks must not run yet.
+    pub creation_hooks_pending: bool,
     /// Cached __init__ method: (func_addr, is_registered_in_callable_registry).
     /// Resolved at registration time to avoid repeated MRO walks during instance creation.
     pub cached_init: Option<(u64, bool)>,
@@ -104,7 +110,8 @@ pub(crate) struct ThreadClassState {
     dict_suppressed: HashSet<String>,
     kwargs_registry: HashMap<String, HashMap<String, MbValue>>,
     classcell_required: HashSet<String>,
-    classcell_consumed: HashSet<String>,
+    classcell_symbol_ids: HashMap<String, i64>,
+    classcell_values: HashMap<String, MbValue>,
     namedtuple_base_shapes: HashMap<String, NamedTupleBaseShape>,
     runtime_checkable_protocols: HashSet<String>,
     abc_virtual_subclasses: HashSet<(String, String)>,
@@ -144,9 +151,18 @@ thread_local! {
     /// because a method references __class__ or zero-arg super().
     static CLASSCELL_REQUIRED: std::cell::RefCell<HashSet<String>> =
         std::cell::RefCell::new(HashSet::new());
-    /// Classcell markers consumed by type.__new__ for their owning class.
-    static CLASSCELL_CONSUMED: std::cell::RefCell<HashSet<String>> =
-        std::cell::RefCell::new(HashSet::new());
+    /// Active capture-cell symbol for each staged class definition.
+    static CLASSCELL_SYMBOL_IDS: std::cell::RefCell<HashMap<String, i64>> =
+        std::cell::RefCell::new(HashMap::new());
+    /// Actual class objects written by `type.__new__`, keyed by the classcell
+    /// marker's owning staged class.
+    static CLASSCELL_VALUES: std::cell::RefCell<HashMap<String, MbValue>> =
+        std::cell::RefCell::new(HashMap::new());
+    /// Active staged class definitions whose custom metaclass is currently
+    /// running `__new__`. The first matching `type.__new__` reuses the staged
+    /// class object instead of allocating a duplicate class identity.
+    static METACLASS_DEFINITION_STACK: std::cell::RefCell<Vec<MetaclassDefinitionContext>> =
+        std::cell::RefCell::new(Vec::new());
     /// Literal namedtuple base metadata for classes declared as
     /// `class Child(namedtuple("Base", ["x"]))`.
     static NAMEDTUPLE_BASE_SHAPES: std::cell::RefCell<HashMap<String, NamedTupleBaseShape>> =
@@ -179,6 +195,12 @@ thread_local! {
     /// that still carry un-overridden abstract methods.
     static USER_ABC_OWN_ABSTRACT: std::cell::RefCell<HashMap<String, HashSet<String>>> =
         std::cell::RefCell::new(HashMap::new());
+}
+
+struct MetaclassDefinitionContext {
+    staged_class: String,
+    display_name: String,
+    type_new_claimed: bool,
 }
 
 static NEXT_CLASS_RUNTIME_KEY: AtomicU64 = AtomicU64::new(1);
@@ -1355,6 +1377,20 @@ fn class_type_object(name: &str) -> MbValue {
     super::builtins::make_type_object_with_display_name(name, &display_name)
 }
 
+/// Claim the staged class identity for the first matching `type.__new__` call
+/// made while a custom metaclass is constructing that class.
+pub(crate) fn claim_staged_type_new_target(display_name: &str) -> Option<String> {
+    METACLASS_DEFINITION_STACK.with(|stack| {
+        let mut stack = stack.borrow_mut();
+        let context = stack.last_mut()?;
+        if context.type_new_claimed || context.display_name != display_name {
+            return None;
+        }
+        context.type_new_claimed = true;
+        Some(context.staged_class.clone())
+    })
+}
+
 /// Returns true iff `name` is a Python-created class, not a native/builtin
 /// runtime class.
 pub(crate) fn class_is_user_defined(name: &str) -> bool {
@@ -1463,7 +1499,22 @@ pub(crate) fn mb_class_register_user_named(
     USER_CLASSES.with(|classes| {
         classes.borrow_mut().insert(name.to_string());
     });
-    mb_class_register_named(name, display_name, bases, methods);
+    mb_class_register_named_impl(name, display_name, bases, methods, false);
+}
+
+/// Replace the pre-registered class body when `type.__new__` is invoked by a
+/// custom metaclass. Creation hooks remain pending until the complete namespace
+/// has been installed.
+pub(crate) fn mb_class_register_user_named_reusing_staged(
+    name: &str,
+    display_name: &str,
+    bases: Vec<String>,
+    methods: HashMap<String, MbValue>,
+) {
+    USER_CLASSES.with(|classes| {
+        classes.borrow_mut().insert(name.to_string());
+    });
+    mb_class_register_named_impl(name, display_name, bases, methods, false);
 }
 
 pub(crate) fn mb_class_register_named(
@@ -1471,6 +1522,16 @@ pub(crate) fn mb_class_register_named(
     display_name: &str,
     bases: Vec<String>,
     methods: HashMap<String, MbValue>,
+) {
+    mb_class_register_named_impl(name, display_name, bases, methods, true);
+}
+
+fn mb_class_register_named_impl(
+    name: &str,
+    display_name: &str,
+    bases: Vec<String>,
+    methods: HashMap<String, MbValue>,
+    dispatch_init_subclass: bool,
 ) {
     // Register all method addresses as valid callables.
     // R1 P1: Also unwrap classmethod/staticmethod wrappers to register
@@ -1491,8 +1552,6 @@ pub(crate) fn mb_class_register_named(
         }
     });
     let mro = compute_mro(name, &bases);
-    // Clone bases before moving into MbClass so we can iterate for __init_subclass__
-    let bases_for_hook = bases.clone();
     CLASS_REGISTRY.with(|reg| {
         reg.borrow_mut().insert(
             name.to_string(),
@@ -1505,6 +1564,8 @@ pub(crate) fn mb_class_register_named(
                 class_attrs: HashMap::new(),
                 metaclass: None,
                 metaclass_finalized: false,
+                metaclass_result: None,
+                creation_hooks_pending: true,
                 cached_init: None,
             },
         );
@@ -1540,64 +1601,116 @@ pub(crate) fn mb_class_register_named(
         install_abc_mixins(name, &mro);
     }
 
-    // R10: Retrieve class keyword arguments (set by mb_class_set_kwargs before registration).
-    let class_kwargs: HashMap<String, MbValue> =
-        KWARGS_REGISTRY.with(|reg| reg.borrow_mut().remove(name).unwrap_or_default());
-    apply_typeddict_class_kwargs(name, &class_kwargs);
+    if dispatch_init_subclass {
+        dispatch_type_new_creation_hooks(name);
+    }
+}
 
-    // Call __init_subclass__ on each direct base (PEP 487)
-    for base_name in &bases_for_hook {
-        let hook = lookup_method(base_name, "__init_subclass__");
-        if !hook.is_none() {
-            let addr = extract_func_addr(hook);
-            if addr != 0 {
-                let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
-                if is_registered {
-                    let cls_val = class_type_object(name);
-                    let pos_args = MbValue::from_ptr(MbObject::new_list(vec![cls_val]));
-                    let kwargs_dict = if class_kwargs.is_empty() {
-                        MbValue::from_ptr(MbObject::new_dict())
-                    } else {
-                        build_kwargs_dict(&class_kwargs)
-                    };
-                    super::builtins::mb_call_spread_kwargs(hook, pos_args, kwargs_dict);
-                }
-            }
-        } else if !class_kwargs.is_empty()
-            && !class_base_accepts_kwargs_without_init_subclass(base_name)
-        {
-            // R10: If base has no __init_subclass__ and kwargs are non-empty, raise TypeError
-            super::exception::mb_raise(
-                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(
-                    "__init_subclass__() takes no keyword arguments".to_string(),
-                )),
-            );
-            return;
+/// Cross the `type.__new__` boundary for a fully populated class namespace.
+/// PEP 487 requires descriptor `__set_name__` before base `__init_subclass__`.
+pub(crate) fn dispatch_type_new_creation_hooks(name: &str) {
+    let should_dispatch = CLASS_REGISTRY.with(|reg| {
+        let mut reg = reg.borrow_mut();
+        let Some(cls) = reg.get_mut(name) else {
+            return false;
+        };
+        if !cls.creation_hooks_pending {
+            return false;
         }
+        cls.creation_hooks_pending = false;
+        true
+    });
+    if !should_dispatch {
+        return;
     }
 
-    // R12: __set_name__ descriptor protocol (PEP 487).
-    // After class dict is populated, call __set_name__(owner, name) on any attribute
-    // that defines it.
-    let class_attr_names: Vec<String> = CLASS_REGISTRY.with(|reg| {
-        let reg = reg.borrow();
-        if let Some(cls) = reg.get(name) {
-            let mut names: Vec<String> = cls.class_attrs.keys().cloned().collect();
-            names.sort(); // Alphabetical order for determinism
-            names
-        } else {
-            Vec::new()
+    let class_kwargs = take_class_kwargs(name);
+    apply_typeddict_class_kwargs(name, &class_kwargs);
+
+    'creation_hooks: {
+        let class_attr_names: Vec<String> = CLASS_REGISTRY.with(|reg| {
+            let reg = reg.borrow();
+            if let Some(cls) = reg.get(name) {
+                let mut names: Vec<String> = cls.class_attrs.keys().cloned().collect();
+                names.sort(); // Alphabetical order for determinism
+                names
+            } else {
+                Vec::new()
+            }
+        });
+        for attr_name in &class_attr_names {
+            let attr_val = CLASS_REGISTRY.with(|reg| {
+                reg.borrow()
+                    .get(name)
+                    .and_then(|cls| cls.class_attrs.get(attr_name).copied())
+            });
+            if let Some(val) = attr_val {
+                call_set_name_if_present(name, attr_name, val);
+                if super::exception::current_exception_type().is_some() {
+                    break 'creation_hooks;
+                }
+            }
         }
-    });
-    for attr_name in &class_attr_names {
-        let attr_val = CLASS_REGISTRY.with(|reg| {
+
+        let bases = CLASS_REGISTRY.with(|reg| {
             reg.borrow()
                 .get(name)
-                .and_then(|cls| cls.class_attrs.get(attr_name).copied())
+                .map(|cls| cls.bases.clone())
+                .unwrap_or_default()
         });
-        if let Some(val) = attr_val {
-            call_set_name_if_present(name, attr_name, val);
+        for base_name in &bases {
+            let hook = lookup_method(base_name, "__init_subclass__");
+            if !hook.is_none() {
+                let addr = extract_func_addr(hook);
+                if addr != 0 {
+                    let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
+                    if is_registered {
+                        let cls_val = class_type_object(name);
+                        let pos_args = MbValue::from_ptr(MbObject::new_list(vec![cls_val]));
+                        let kwargs_dict = if class_kwargs.is_empty() {
+                            MbValue::from_ptr(MbObject::new_dict())
+                        } else {
+                            build_kwargs_dict(&class_kwargs)
+                        };
+                        super::builtins::mb_call_spread_kwargs(hook, pos_args, kwargs_dict);
+                        if super::exception::current_exception_type().is_some() {
+                            break 'creation_hooks;
+                        }
+                    }
+                }
+            } else if !class_kwargs.is_empty()
+                && !class_base_accepts_kwargs_without_init_subclass(base_name)
+            {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "__init_subclass__() takes no keyword arguments".to_string(),
+                    )),
+                );
+                break 'creation_hooks;
+            }
+        }
+    }
+    release_class_kwargs(class_kwargs);
+}
+
+pub(crate) fn discard_pending_type_new_creation_hooks(name: &str) {
+    CLASS_REGISTRY.with(|reg| {
+        if let Some(cls) = reg.borrow_mut().get_mut(name) {
+            cls.creation_hooks_pending = false;
+        }
+    });
+    release_class_kwargs(take_class_kwargs(name));
+}
+
+fn take_class_kwargs(name: &str) -> HashMap<String, MbValue> {
+    KWARGS_REGISTRY.with(|reg| reg.borrow_mut().remove(name).unwrap_or_default())
+}
+
+fn release_class_kwargs(kwargs: HashMap<String, MbValue>) {
+    for value in kwargs.into_values() {
+        unsafe {
+            super::rc::release_if_ptr(value);
         }
     }
 }
@@ -1827,9 +1940,6 @@ pub fn mb_class_update_bases(name: MbValue, bases_list: MbValue) {
         }
     }
     let mro = compute_mro(&class_name, &bases);
-    let bases_for_hook = bases.clone();
-    let class_kwargs: HashMap<String, MbValue> =
-        KWARGS_REGISTRY.with(|reg| reg.borrow_mut().remove(&class_name).unwrap_or_default());
     CLASS_REGISTRY.with(|reg| {
         if let Some(cls) = reg.borrow_mut().get_mut(&class_name) {
             cls.bases = bases;
@@ -1837,7 +1947,6 @@ pub fn mb_class_update_bases(name: MbValue, bases_list: MbValue) {
             cls.cached_init = None;
         }
     });
-    apply_typeddict_class_kwargs(&class_name, &class_kwargs);
     invalidate_method_cache();
 
     let init_method = lookup_method(&class_name, "__init__");
@@ -1860,35 +1969,6 @@ pub fn mb_class_update_bases(name: MbValue, bases_list: MbValue) {
     });
     install_abc_mixins(&class_name, &mro);
 
-    for base_name in &bases_for_hook {
-        let hook = lookup_method(base_name, "__init_subclass__");
-        if !hook.is_none() {
-            let addr = extract_func_addr(hook);
-            if addr != 0 {
-                let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
-                if is_registered {
-                    let cls_val = class_type_object(&class_name);
-                    let pos_args = MbValue::from_ptr(MbObject::new_list(vec![cls_val]));
-                    let kwargs_dict = if class_kwargs.is_empty() {
-                        MbValue::from_ptr(MbObject::new_dict())
-                    } else {
-                        build_kwargs_dict(&class_kwargs)
-                    };
-                    super::builtins::mb_call_spread_kwargs(hook, pos_args, kwargs_dict);
-                }
-            }
-        } else if !class_kwargs.is_empty()
-            && !class_base_accepts_kwargs_without_init_subclass(base_name)
-        {
-            super::exception::mb_raise(
-                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(
-                    "__init_subclass__() takes no keyword arguments".to_string(),
-                )),
-            );
-            return;
-        }
-    }
 }
 
 /// R10: Store class keyword arguments for __init_subclass__ dispatch.
@@ -1912,7 +1992,11 @@ pub fn mb_class_set_kwargs(class_name: MbValue, keys: MbValue, values: MbValue) 
                                     for (dict_key, dict_val) in map_lock.read().unwrap().iter() {
                                         if let super::dict_ops::DictKey::Str(name) = dict_key {
                                             super::rc::retain_if_ptr(*dict_val);
-                                            kwargs.insert(name.clone(), *dict_val);
+                                            if let Some(previous) =
+                                                kwargs.insert(name.clone(), *dict_val)
+                                            {
+                                                super::rc::release_if_ptr(previous);
+                                            }
                                         }
                                     }
                                 }
@@ -1921,14 +2005,18 @@ pub fn mb_class_set_kwargs(class_name: MbValue, keys: MbValue, values: MbValue) 
                         }
                         // Fix C-prime: KWARGS_REGISTRY takes its own +1.
                         super::rc::retain_if_ptr(*v);
-                        kwargs.insert(key_name, *v);
+                        if let Some(previous) = kwargs.insert(key_name, *v) {
+                            super::rc::release_if_ptr(previous);
+                        }
                     }
                 }
             }
         }
     }
     KWARGS_REGISTRY.with(|reg| {
-        reg.borrow_mut().insert(name, kwargs);
+        if let Some(previous) = reg.borrow_mut().insert(name, kwargs) {
+            release_class_kwargs(previous);
+        }
     });
 }
 
@@ -2263,73 +2351,6 @@ pub fn mb_call_metaclass_prepare(meta_name: &str, name: MbValue, bases: MbValue)
     super::builtins::mb_call_spread(callable, MbValue::from_ptr(MbObject::new_list(args)))
 }
 
-fn sync_class_namespace_from_dict(class_name: &str, namespace: MbValue) {
-    let entries: Vec<(String, MbValue)> = namespace
-        .as_ptr()
-        .and_then(|ptr| unsafe {
-            if let ObjData::Dict(ref lock) = (*ptr).data {
-                Some(
-                    lock.read()
-                        .unwrap()
-                        .iter()
-                        .filter_map(|(key, value)| {
-                            if let super::dict_ops::DictKey::Str(name) = key {
-                                (name != "__classcell__").then_some((name.clone(), *value))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-    if entries.is_empty() {
-        return;
-    }
-    CLASS_REGISTRY.with(|reg| {
-        let mut reg = reg.borrow_mut();
-        let Some(cls) = reg.get_mut(class_name) else {
-            return;
-        };
-        let existing_methods: HashSet<String> = cls.methods.keys().cloned().collect();
-        for (key, value) in entries {
-            let method_like = existing_methods.contains(&key)
-                || super::builtins::resolve_callable_pub(value).is_some();
-            unsafe {
-                super::rc::retain_if_ptr(value);
-            }
-            if method_like {
-                if let Some(old) = cls.methods.insert(key.clone(), value) {
-                    unsafe {
-                        super::rc::release_if_ptr(old);
-                    }
-                }
-                if let Some(old) = cls.class_attrs.remove(&key) {
-                    unsafe {
-                        super::rc::release_if_ptr(old);
-                    }
-                }
-            } else {
-                if let Some(old) = cls.class_attrs.insert(key.clone(), value) {
-                    unsafe {
-                        super::rc::release_if_ptr(old);
-                    }
-                }
-                if let Some(old) = cls.methods.remove(&key) {
-                    unsafe {
-                        super::rc::release_if_ptr(old);
-                    }
-                }
-            }
-        }
-    });
-    invalidate_method_cache();
-    refresh_cached_init(class_name);
-}
-
 fn refresh_cached_init(class_name: &str) {
     let init_method = lookup_method(class_name, "__init__");
     let cached_init = if !init_method.is_none() {
@@ -2353,121 +2374,170 @@ fn refresh_cached_init(class_name: &str) {
 fn call_metaclass_method(meta: &str, method_name: &str, args: Vec<MbValue>) -> MbValue {
     let method = lookup_method(meta, method_name);
     if method.is_none() {
-        return MbValue::none();
+        return match method_name {
+            "__new__" => type_new_unbound(&args),
+            "__init__" => type_init_unbound(&args),
+            _ => MbValue::none(),
+        };
     }
     super::builtins::mb_call_spread(method, MbValue::from_ptr(MbObject::new_list_borrowed(args)))
+}
+
+fn metaclass_result_metaclass(result: MbValue, metaclass: &str) -> Option<String> {
+    let Some(result_class) = resolve_class_name(result) else {
+        return None;
+    };
+    let result_metaclass =
+        class_metaclass_name(&result_class).unwrap_or_else(|| "type".to_string());
+    (result_metaclass == metaclass || class_mro_any(&result_metaclass, |base| base == metaclass))
+        .then_some(result_metaclass)
 }
 
 fn run_metaclass_definition_hooks(
     class_name: &str,
     meta: &str,
     namespace_override: Option<MbValue>,
-) {
+) -> MbValue {
+    let original_class = class_type_object(class_name);
     if meta.is_empty() || meta == "type" {
-        return;
+        if classcell_required_for(class_name) {
+            record_classcell_value_for_type_new(classcell_marker(class_name), original_class);
+        }
+        dispatch_type_new_creation_hooks(class_name);
+        clear_classcell_state(class_name);
+        return original_class;
     }
     let namespace = namespace_override
         .or_else(|| prepared_class_namespace(meta, class_name))
         .unwrap_or_else(|| build_class_namespace_dict(class_name));
     if super::exception::current_exception_type().is_some() {
         clear_classcell_state(class_name);
-        return;
+        discard_pending_type_new_creation_hooks(class_name);
+        return MbValue::none();
     }
     let bases = class_bases_tuple(class_name);
     let display_name = class_display_name(class_name);
     let name_val = MbValue::from_ptr(MbObject::new_str(display_name.clone()));
     let meta_val = make_type_object(meta);
-    call_metaclass_method(meta, "__new__", vec![meta_val, name_val, bases, namespace]);
+    METACLASS_DEFINITION_STACK.with(|stack| {
+        stack.borrow_mut().push(MetaclassDefinitionContext {
+            staged_class: class_name.to_string(),
+            display_name: display_name.clone(),
+            type_new_claimed: false,
+        });
+    });
+    let result = call_metaclass_method(meta, "__new__", vec![meta_val, name_val, bases, namespace]);
+    METACLASS_DEFINITION_STACK.with(|stack| {
+        stack.borrow_mut().pop();
+    });
     if super::exception::current_exception_type().is_some() {
         clear_classcell_state(class_name);
-        return;
+        discard_pending_type_new_creation_hooks(class_name);
+        return MbValue::none();
     }
-    validate_classcell_after_metaclass_new(class_name, namespace);
+    validate_classcell_after_metaclass_new(class_name, namespace, result);
     if super::exception::current_exception_type().is_some() {
-        return;
+        discard_pending_type_new_creation_hooks(class_name);
+        return MbValue::none();
     }
-    sync_class_namespace_from_dict(class_name, namespace);
-
-    let namespace = build_class_namespace_dict(class_name);
-    let bases = class_bases_tuple(class_name);
-    let name_val = MbValue::from_ptr(MbObject::new_str(display_name));
-    let class_val = make_type_object(class_name);
-    call_metaclass_method(
-        meta,
-        "__init__",
-        vec![class_val, name_val, bases, namespace],
-    );
-    sync_class_namespace_from_dict(class_name, namespace);
+    discard_pending_type_new_creation_hooks(class_name);
+    if let Some(result_metaclass) = metaclass_result_metaclass(result, meta) {
+        let bases = class_bases_tuple(class_name);
+        let name_val = MbValue::from_ptr(MbObject::new_str(display_name));
+        call_metaclass_method(
+            &result_metaclass,
+            "__init__",
+            vec![result, name_val, bases, namespace],
+        );
+    }
+    result
 }
 
+fn finalize_class_definition(name: String, namespace: Option<MbValue>) -> MbValue {
+    normalize_runtime_generic_orig_bases(&name);
+    let snapshot = CLASS_REGISTRY.with(|reg| {
+        reg.borrow().get(&name).map(|cls| {
+            (
+                cls.metaclass_finalized,
+                cls.metaclass.clone(),
+                cls.bases.clone(),
+            )
+        })
+    });
+    let Some((already_finalized, explicit_meta, bases)) = snapshot else {
+        return MbValue::none();
+    };
+    if already_finalized {
+        return CLASS_REGISTRY.with(|reg| {
+            reg.borrow()
+                .get(&name)
+                .and_then(|cls| cls.metaclass_result)
+                .unwrap_or_else(|| class_type_object(&name))
+        });
+    }
+    let meta = explicit_meta.or_else(|| inherited_metaclass_for_bases(&bases));
+    CLASS_REGISTRY.with(|reg| {
+        if let Some(cls) = reg.borrow_mut().get_mut(&name) {
+            if cls.metaclass.is_none() {
+                cls.metaclass = meta.clone();
+            }
+            cls.metaclass_finalized = true;
+        }
+    });
+    let result = match meta {
+        Some(meta) => run_metaclass_definition_hooks(&name, &meta, namespace),
+        None => {
+            let class = class_type_object(&name);
+            if classcell_required_for(&name) {
+                record_classcell_value_for_type_new(classcell_marker(&name), class);
+            }
+            dispatch_type_new_creation_hooks(&name);
+            clear_classcell_state(&name);
+            class
+        }
+    };
+    if super::exception::current_exception_type().is_none() {
+        unsafe {
+            super::rc::retain_if_ptr(result);
+        }
+        CLASS_REGISTRY.with(|reg| {
+            if let Some(cls) = reg.borrow_mut().get_mut(&name) {
+                if let Some(previous) = cls.metaclass_result.replace(result) {
+                    unsafe {
+                        super::rc::release_if_ptr(previous);
+                    }
+                }
+            }
+        });
+    }
+    result
+}
+
+/// Value-returning finalizer used by lowering when the metaclass's canonical
+/// `__new__` result must replace the staged class object.
+pub fn mb_class_finalize_definition_value(class_name: MbValue) -> MbValue {
+    let name = match extract_str(class_name) {
+        Some(name) if !name.is_empty() => name,
+        _ => return MbValue::none(),
+    };
+    finalize_class_definition(name, None)
+}
+
+/// Backward-compatible ABI for already-lowered modules that ignored the
+/// finalizer result.
 pub fn mb_class_finalize_definition(class_name: MbValue) {
-    let name = match extract_str(class_name) {
-        Some(name) if !name.is_empty() => name,
-        _ => return,
-    };
-    normalize_runtime_generic_orig_bases(&name);
-    let snapshot = CLASS_REGISTRY.with(|reg| {
-        reg.borrow().get(&name).map(|cls| {
-            (
-                cls.metaclass_finalized,
-                cls.metaclass.clone(),
-                cls.bases.clone(),
-            )
-        })
-    });
-    let Some((already_finalized, explicit_meta, bases)) = snapshot else {
-        return;
-    };
-    if already_finalized {
-        return;
-    }
-    let meta = explicit_meta.or_else(|| inherited_metaclass_for_bases(&bases));
-    CLASS_REGISTRY.with(|reg| {
-        if let Some(cls) = reg.borrow_mut().get_mut(&name) {
-            if cls.metaclass.is_none() {
-                cls.metaclass = meta.clone();
-            }
-            cls.metaclass_finalized = true;
-        }
-    });
-    if let Some(meta) = meta {
-        run_metaclass_definition_hooks(&name, &meta, None);
-    }
+    let _ = mb_class_finalize_definition_value(class_name);
 }
 
-pub fn mb_class_finalize_definition_with_namespace(class_name: MbValue, namespace: MbValue) {
+pub fn mb_class_finalize_definition_with_namespace(
+    class_name: MbValue,
+    namespace: MbValue,
+) -> MbValue {
     let name = match extract_str(class_name) {
         Some(name) if !name.is_empty() => name,
-        _ => return,
+        _ => return MbValue::none(),
     };
-    normalize_runtime_generic_orig_bases(&name);
-    let snapshot = CLASS_REGISTRY.with(|reg| {
-        reg.borrow().get(&name).map(|cls| {
-            (
-                cls.metaclass_finalized,
-                cls.metaclass.clone(),
-                cls.bases.clone(),
-            )
-        })
-    });
-    let Some((already_finalized, explicit_meta, bases)) = snapshot else {
-        return;
-    };
-    if already_finalized {
-        return;
-    }
-    let meta = explicit_meta.or_else(|| inherited_metaclass_for_bases(&bases));
-    CLASS_REGISTRY.with(|reg| {
-        if let Some(cls) = reg.borrow_mut().get_mut(&name) {
-            if cls.metaclass.is_none() {
-                cls.metaclass = meta.clone();
-            }
-            cls.metaclass_finalized = true;
-        }
-    });
-    if let Some(meta) = meta {
-        run_metaclass_definition_hooks(&name, &meta, Some(namespace));
-    }
+    finalize_class_definition(name, Some(namespace))
 }
 
 pub fn mb_class_set_namedtuple_base(
@@ -2595,7 +2665,7 @@ pub fn mb_class_set_class_attr(class_name: MbValue, attr_name: MbValue, value: M
                         super::rc::release_if_ptr(prev);
                     }
                 }
-                call_set_name = true;
+                call_set_name = !cls.creation_hooks_pending;
             }
         } else {
             // No matching class — drop the retain we just took.
@@ -4181,7 +4251,7 @@ pub(crate) fn type_new_unbound(items: &[MbValue]) -> MbValue {
         );
         return MbValue::none();
     };
-    let type_obj = super::builtins::mb_type3(items[1], items[2], items[3]);
+    let type_obj = super::builtins::mb_type3_deferred(items[1], items[2], items[3]);
     if super::exception::current_exception_type().is_some() {
         return type_obj;
     }
@@ -4192,6 +4262,7 @@ pub(crate) fn type_new_unbound(items: &[MbValue]) -> MbValue {
                 MbValue::from_ptr(MbObject::new_str(meta_name)),
             );
         }
+        dispatch_type_new_creation_hooks(&class_name);
         mark_class_metaclass_finalized(&class_name);
     }
     type_obj
@@ -7382,6 +7453,9 @@ fn mb_getattr_impl(
                                 inherited_builtin_unbound_method(&type_name_str, &attr_name)
                             {
                                 return method;
+                            }
+                            if type_name_str == "type" && attr_name == "__init__" {
+                                return make_unbound_method("type", "__init__");
                             }
                             // <type>.__new__ — every type inherits
                             // object.__new__(cls), which allocates a BARE
@@ -13295,6 +13369,7 @@ pub fn mb_super(class_name: MbValue, instance: MbValue) -> MbValue {
 }
 
 const SUPER_MISSING_INIT_METHOD: &str = "__super_missing_init__";
+const SUPER_TYPE_INIT_METHOD: &str = "__super_type_init__";
 
 fn is_base_exception_like(class_name: &str) -> bool {
     class_name == "BaseException"
@@ -13307,6 +13382,20 @@ fn super_missing_init_result(instance_class: &str, super_self: MbValue, args: Mb
         return super::exception::mb_exception_init_instance(super_self, args);
     }
     MbValue::none()
+}
+
+fn super_dispatch_class(instance_class: String, super_class: &str, class_context: bool) -> String {
+    if !class_context {
+        return instance_class;
+    }
+    let Some(metaclass) = class_metaclass_name(&instance_class) else {
+        return instance_class;
+    };
+    if metaclass == super_class || class_mro_any(&metaclass, |base| base == super_class) {
+        metaclass
+    } else {
+        instance_class
+    }
 }
 
 /// Get an attribute from a super proxy — walks MRO starting after the given class.
@@ -13340,6 +13429,8 @@ pub fn mb_super_getattr(proxy: MbValue, attr: MbValue) -> MbValue {
                 } else {
                     return MbValue::none();
                 };
+                let instance_class =
+                    super_dispatch_class(instance_class, &super_class, class_context);
 
                 let val = lookup_method_after(&instance_class, &super_class, &attr_name);
                 if !val.is_none() {
@@ -13406,6 +13497,15 @@ fn super_builtin_native_method(
             .iter()
             .any(|method| *method == method_name)
         {
+            if mro_class == "type" {
+                return match method_name {
+                    "__new__" => Some(make_unbound_method("type", "__new__")),
+                    "__init__" => {
+                        Some(make_bound_native_method(super_self, SUPER_TYPE_INIT_METHOD))
+                    }
+                    _ => None,
+                };
+            }
             continue;
         }
         if method_name == "__new__" {
@@ -20048,6 +20148,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     if name == SUPER_MISSING_INIT_METHOD {
                         return super_missing_init_result(class_name, receiver, args);
                     }
+                    if name == SUPER_TYPE_INIT_METHOD {
+                        let mut items = vec![receiver];
+                        items.extend(super::builtins::extract_items(args));
+                        return type_init_unbound(&items);
+                    }
                     // Super proxy: dispatch through MRO after the current class
                     if class_name == "__super__" {
                         let fields_guard = fields.read().unwrap();
@@ -20061,17 +20166,22 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             .unwrap_or(MbValue::none());
                         drop(fields_guard);
                         // Get the actual class of the instance for MRO
-                        let instance_class = if let Some(self_ptr) = super_self.as_ptr() {
+                        let (instance_class, class_context) = if let Some(self_ptr) =
+                            super_self.as_ptr()
+                        {
                             match &(*self_ptr).data {
                                 ObjData::Instance { class_name, .. } if class_name == "type" => {
-                                    String::new()
+                                    (resolve_class_name(super_self).unwrap_or_default(), true)
                                 }
-                                ObjData::Instance { class_name, .. } => class_name.clone(),
-                                _ => String::new(),
+                                ObjData::Instance { class_name, .. } => (class_name.clone(), false),
+                                ObjData::Str(name) => (name.clone(), true),
+                                _ => (String::new(), false),
                             }
                         } else {
-                            String::new()
+                            (String::new(), false)
                         };
+                        let instance_class =
+                            super_dispatch_class(instance_class, &super_class, class_context);
                         // Metaclass context: `self` is a CLASS (a name string),
                         // so the MRO walked is the metaclass's. The builtin
                         // `type.__call__` tail of that MRO is default instance
@@ -20721,6 +20831,20 @@ fn reset_class_lookup_caches() {
 }
 
 pub(crate) fn snapshot_thread_class_state() -> ThreadClassState {
+    let kwargs_registry = KWARGS_REGISTRY.with(|c| c.borrow().clone());
+    for kwargs in kwargs_registry.values() {
+        for value in kwargs.values() {
+            unsafe {
+                super::rc::retain_if_ptr(*value);
+            }
+        }
+    }
+    let classcell_values = CLASSCELL_VALUES.with(|c| c.borrow().clone());
+    for value in classcell_values.values() {
+        unsafe {
+            super::rc::retain_if_ptr(*value);
+        }
+    }
     ThreadClassState {
         class_registry: CLASS_REGISTRY.with(|c| c.borrow().clone()),
         class_runtime_key_aliases: CLASS_RUNTIME_KEY_ALIASES.with(|c| c.borrow().clone()),
@@ -20728,9 +20852,10 @@ pub(crate) fn snapshot_thread_class_state() -> ThreadClassState {
         callable_registry: CALLABLE_REGISTRY.with(|c| c.borrow().clone()),
         slots_registry: SLOTS_REGISTRY.with(|c| c.borrow().clone()),
         dict_suppressed: DICT_SUPPRESSED.with(|c| c.borrow().clone()),
-        kwargs_registry: KWARGS_REGISTRY.with(|c| c.borrow().clone()),
+        kwargs_registry,
         classcell_required: CLASSCELL_REQUIRED.with(|c| c.borrow().clone()),
-        classcell_consumed: CLASSCELL_CONSUMED.with(|c| c.borrow().clone()),
+        classcell_symbol_ids: CLASSCELL_SYMBOL_IDS.with(|c| c.borrow().clone()),
+        classcell_values,
         namedtuple_base_shapes: NAMEDTUPLE_BASE_SHAPES.with(|c| c.borrow().clone()),
         runtime_checkable_protocols: RUNTIME_CHECKABLE_PROTOCOLS.with(|c| c.borrow().clone()),
         abc_virtual_subclasses: ABC_VIRTUAL_SUBCLASSES.with(|c| c.borrow().clone()),
@@ -20748,7 +20873,8 @@ pub(crate) fn replace_thread_class_state(next: ThreadClassState) -> ThreadClassS
     DICT_SUPPRESSED.with(|c| *c.borrow_mut() = next.dict_suppressed);
     KWARGS_REGISTRY.with(|c| *c.borrow_mut() = next.kwargs_registry);
     CLASSCELL_REQUIRED.with(|c| *c.borrow_mut() = next.classcell_required);
-    CLASSCELL_CONSUMED.with(|c| *c.borrow_mut() = next.classcell_consumed);
+    CLASSCELL_SYMBOL_IDS.with(|c| *c.borrow_mut() = next.classcell_symbol_ids);
+    CLASSCELL_VALUES.with(|c| *c.borrow_mut() = next.classcell_values);
     NAMEDTUPLE_BASE_SHAPES.with(|c| *c.borrow_mut() = next.namedtuple_base_shapes);
     RUNTIME_CHECKABLE_PROTOCOLS.with(|c| *c.borrow_mut() = next.runtime_checkable_protocols);
     ABC_VIRTUAL_SUBCLASSES.with(|c| *c.borrow_mut() = next.abc_virtual_subclasses);
@@ -20770,9 +20896,26 @@ pub(crate) fn cleanup_all_classes() {
     let _ = CALLABLE_REGISTRY.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = SLOTS_REGISTRY.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = DICT_SUPPRESSED.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = KWARGS_REGISTRY.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let pending_kwargs = KWARGS_REGISTRY.with(|c| {
+        c.try_borrow_mut()
+            .map(|mut values| std::mem::take(&mut *values))
+            .unwrap_or_default()
+    });
+    for kwargs in pending_kwargs.into_values() {
+        release_class_kwargs(kwargs);
+    }
     let _ = CLASSCELL_REQUIRED.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
-    let _ = CLASSCELL_CONSUMED.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = CLASSCELL_SYMBOL_IDS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let classcell_values = CLASSCELL_VALUES.with(|c| {
+        c.try_borrow_mut()
+            .map(|mut values| std::mem::take(&mut *values))
+            .unwrap_or_default()
+    });
+    for value in classcell_values.into_values() {
+        unsafe {
+            super::rc::release_if_ptr(value);
+        }
+    }
     let _ = LAST_RAISED_INSTANCE.with(|c| c.try_borrow_mut().map(|mut m| *m = None));
     let _ = ABSTRACT_METHODS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     cleanup_class_docs();
@@ -25424,5 +25567,162 @@ mod tests {
                 "R13: parent slot a must be merged"
             );
         });
+    }
+
+    #[test]
+    fn metaclass_non_type_result_is_canonical_and_skips_init() {
+        static INIT_CALLS: AtomicU64 = AtomicU64::new(0);
+
+        extern "C" fn meta_new(
+            _meta: MbValue,
+            _name: MbValue,
+            _bases: MbValue,
+            _namespace: MbValue,
+        ) -> MbValue {
+            MbValue::from_int(73)
+        }
+
+        extern "C" fn meta_init(
+            _class: MbValue,
+            _name: MbValue,
+            _bases: MbValue,
+            _namespace: MbValue,
+        ) -> MbValue {
+            INIT_CALLS.fetch_add(1, Ordering::SeqCst);
+            MbValue::none()
+        }
+
+        cleanup_all_classes();
+        INIT_CALLS.store(0, Ordering::SeqCst);
+        let mut methods = HashMap::new();
+        for (name, addr) in [
+            ("__new__", meta_new as *const () as usize),
+            ("__init__", meta_init as *const () as usize),
+        ] {
+            CALLABLE_REGISTRY.with(|registry| {
+                registry.borrow_mut().insert(addr as u64);
+            });
+            methods.insert(name.to_string(), MbValue::from_func(addr));
+        }
+        mb_class_register("CanonicalNonTypeMeta", vec!["type".to_string()], methods);
+        mb_class_register_user_named(
+            "CanonicalNonTypeTarget",
+            "CanonicalNonTypeTarget",
+            Vec::new(),
+            HashMap::new(),
+        );
+        mb_class_set_metaclass(
+            MbValue::from_ptr(MbObject::new_str("CanonicalNonTypeTarget".to_string())),
+            make_type_object("CanonicalNonTypeMeta"),
+        );
+
+        let result = mb_class_finalize_definition_value(MbValue::from_ptr(MbObject::new_str(
+            "CanonicalNonTypeTarget".to_string(),
+        )));
+        assert_eq!(result.as_int(), Some(73));
+        assert_eq!(INIT_CALLS.load(Ordering::SeqCst), 0);
+        cleanup_all_classes();
+    }
+
+    #[test]
+    fn metaclass_type_new_reuses_staged_identity_and_initializes_result() {
+        static INIT_RECEIVER: AtomicU64 = AtomicU64::new(0);
+        static INIT_SUBCLASS_CALLS: AtomicU64 = AtomicU64::new(0);
+
+        extern "C" fn meta_new(
+            meta: MbValue,
+            name: MbValue,
+            bases: MbValue,
+            namespace: MbValue,
+        ) -> MbValue {
+            type_new_unbound(&[meta, name, bases, namespace])
+        }
+
+        extern "C" fn meta_init(
+            class: MbValue,
+            _name: MbValue,
+            _bases: MbValue,
+            _namespace: MbValue,
+        ) -> MbValue {
+            INIT_RECEIVER.store(class.to_bits(), Ordering::SeqCst);
+            MbValue::none()
+        }
+
+        extern "C" fn init_subclass(_class: MbValue) -> MbValue {
+            INIT_SUBCLASS_CALLS.fetch_add(1, Ordering::SeqCst);
+            MbValue::none()
+        }
+
+        cleanup_all_classes();
+        INIT_RECEIVER.store(0, Ordering::SeqCst);
+        INIT_SUBCLASS_CALLS.store(0, Ordering::SeqCst);
+        let mut methods = HashMap::new();
+        for (name, addr) in [
+            ("__new__", meta_new as *const () as usize),
+            ("__init__", meta_init as *const () as usize),
+        ] {
+            CALLABLE_REGISTRY.with(|registry| {
+                registry.borrow_mut().insert(addr as u64);
+            });
+            methods.insert(name.to_string(), MbValue::from_func(addr));
+        }
+        mb_class_register("CanonicalTypeMeta", vec!["type".to_string()], methods);
+        let init_subclass_addr = init_subclass as *const () as usize;
+        CALLABLE_REGISTRY.with(|registry| {
+            registry.borrow_mut().insert(init_subclass_addr as u64);
+        });
+        mb_class_register(
+            "CanonicalTypeBase",
+            Vec::new(),
+            HashMap::from([(
+                "__init_subclass__".to_string(),
+                MbValue::from_func(init_subclass_addr),
+            )]),
+        );
+        mb_class_register_user_named(
+            "CanonicalTypeTarget",
+            "CanonicalTypeTarget",
+            vec!["CanonicalTypeBase".to_string()],
+            HashMap::new(),
+        );
+        let staged = class_type_object("CanonicalTypeTarget");
+        mb_class_set_metaclass(
+            MbValue::from_ptr(MbObject::new_str("CanonicalTypeTarget".to_string())),
+            make_type_object("CanonicalTypeMeta"),
+        );
+
+        let result = mb_class_finalize_definition_value(MbValue::from_ptr(MbObject::new_str(
+            "CanonicalTypeTarget".to_string(),
+        )));
+        assert_eq!(result.to_bits(), staged.to_bits());
+        assert_eq!(INIT_RECEIVER.load(Ordering::SeqCst), result.to_bits());
+        assert_eq!(INIT_SUBCLASS_CALLS.load(Ordering::SeqCst), 1);
+        cleanup_all_classes();
+    }
+
+    #[test]
+    fn classcell_validation_compares_the_actual_type_object() {
+        cleanup_all_classes();
+        crate::runtime::exception::mb_clear_exception();
+        let owner = "ClassCellCanonicalOwner";
+        mb_class_mark_classcell_required(MbValue::from_ptr(MbObject::new_str(owner.to_string())));
+        let marker = classcell_marker(owner);
+        let namespace = crate::runtime::dict_ops::mb_dict_new();
+        crate::runtime::dict_ops::mb_dict_setitem(
+            namespace,
+            MbValue::from_ptr(MbObject::new_str("__classcell__".to_string())),
+            marker,
+        );
+        let actual = make_type_object("ClassCellActual");
+        let returned = make_type_object("ClassCellReturned");
+        assert!(record_classcell_value_for_type_new(marker, actual));
+
+        validate_classcell_after_metaclass_new(owner, namespace, returned);
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        crate::runtime::exception::mb_clear_exception();
+        cleanup_all_classes();
     }
 }

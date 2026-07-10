@@ -1600,7 +1600,8 @@ struct HirToMir<'a> {
     /// to their Python name (decorators/finalizers still have to run).
     pending_class_values: HashMap<u32, VReg>,
     /// Class declarations whose methods require an execution-local
-    /// `__class__` cell. Entries live until the class finalizer fills the cell.
+    /// `__class__` cell. Runtime `type.__new__` fills the registered active cell;
+    /// entries live until the finalizer confirms that creation boundary ran.
     pending_class_cell_syms: HashSet<u32>,
     /// Per-body callable values for class methods before descriptor/decorator
     /// wrapping. Frozen-default metadata must target these closure handles.
@@ -3438,6 +3439,10 @@ impl<'a> HirToMir<'a> {
             .map(|registration| (registration.class_sym, registration.bind_sym))
         {
             self.emit_pending_class_registrations(Some(class_sym));
+            self.emit_runtime_class_bases_for(Some(class_sym));
+            self.emit_class_body_stmts_for(Some(class_sym));
+            self.emit_class_attrs_for(Some(class_sym));
+            self.emit_class_finalizers_for(Some(class_sym));
             if let Some(class_obj) = self.pending_class_values.remove(&class_sym.0) {
                 self.bind_runtime_value(bind_sym, class_obj);
             }
@@ -6130,10 +6135,11 @@ impl<'a> HirToMir<'a> {
             });
         }
         if registration.class_cell_required {
+            let symbol_id = self.emit_int_const(registration.class_sym.0 as i64);
             self.current_stmts.push(MirInst::CallExtern {
                 dest: None,
-                name: "mb_class_mark_classcell_required".to_string(),
-                args: vec![name_vreg],
+                name: "mb_class_bind_classcell".to_string(),
+                args: vec![name_vreg, symbol_id],
                 ty: self.tcx.none(),
             });
         }
@@ -6289,18 +6295,16 @@ impl<'a> HirToMir<'a> {
             if cls_sym.map_or(true, |s| self.pending_class_finalizers[i].1 == s) {
                 let (class_name, class_sym) = self.pending_class_finalizers.remove(i);
                 let cls_vreg = self.class_runtime_key_value(class_sym, &class_name);
+                let finalized = self.fresh_vreg();
                 self.current_stmts.push(MirInst::CallExtern {
-                    dest: None,
-                    name: "mb_class_finalize_definition".to_string(),
+                    dest: Some(finalized),
+                    name: "mb_class_finalize_definition_value".to_string(),
                     args: vec![cls_vreg],
-                    ty: self.tcx.none(),
+                    ty: self.tcx.any(),
                 });
                 self.emit_exception_propagate();
-                if self.pending_class_cell_syms.remove(&class_sym.0) {
-                    if let Some(class_obj) = self.pending_class_values.get(&class_sym.0).copied() {
-                        self.emit_capture_cell_set(class_sym, class_obj);
-                    }
-                }
+                self.pending_class_values.insert(class_sym.0, finalized);
+                self.pending_class_cell_syms.remove(&class_sym.0);
             } else {
                 i += 1;
             }
@@ -14443,7 +14447,7 @@ mod tests {
             .flat_map(|body| body.blocks.iter())
             .flat_map(|block| block.stmts.iter())
             .collect();
-        let class_obj_vreg = all_stmts
+        let staged_class_vreg = all_stmts
             .iter()
             .find_map(|stmt| match stmt {
                 MirInst::CallExtern {
@@ -14454,14 +14458,46 @@ mod tests {
                 _ => None,
             })
             .expect("class registration should fetch the runtime type object");
+        let finalized_class_vreg = all_stmts
+            .iter()
+            .find_map(|stmt| match stmt {
+                MirInst::CallExtern {
+                    dest: Some(dest),
+                    name,
+                    ..
+                } if name == "mb_class_finalize_definition_value" => Some(*dest),
+                _ => None,
+            })
+            .expect("class finalization should produce the canonical class statement value");
 
         assert!(all_stmts.iter().any(|stmt| matches!(
             stmt,
-            MirInst::StoreGlobal { name, value } if *name == class_sym && *value == class_obj_vreg
+            MirInst::StoreGlobal { name, value }
+                if *name == class_sym && *value == finalized_class_vreg
         )));
+        assert_ne!(staged_class_vreg, finalized_class_vreg);
+        let classcell_id_vreg = all_stmts
+            .iter()
+            .find_map(|stmt| match stmt {
+                MirInst::CallExtern { name, args, .. }
+                    if name == "mb_class_bind_classcell" && args.len() == 2 =>
+                {
+                    Some(args[1])
+                }
+                _ => None,
+            })
+            .expect("class registration should bind its active __class__ cell");
         assert!(all_stmts.iter().any(|stmt| matches!(
             stmt,
-            MirInst::CallExtern { name, .. } if name == "mb_class_mark_classcell_required"
+            MirInst::LoadConst {
+                dest,
+                value: MirConst::Int(id),
+                ..
+            } if *dest == classcell_id_vreg && *id == class_sym.0 as i64
+        )));
+        assert!(!all_stmts.iter().any(|stmt| matches!(
+            stmt,
+            MirInst::CallExtern { name, .. } if name == "mb_capture_cell_set_id"
         )));
     }
 

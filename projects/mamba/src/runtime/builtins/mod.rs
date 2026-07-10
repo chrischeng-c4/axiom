@@ -145,9 +145,9 @@ pub use truthiness::{
     mb_is_identity, mb_is_none, mb_is_not_identity, mb_is_not_none, mb_is_truthy, mb_not,
 };
 pub(crate) use type_objects::{
-    make_type_object, make_type_object_with_display_name, reject_non_constructible_type_object,
-    set_type_object_attr, type_object_display_name, type_object_registry_key,
-    type_object_repr_name,
+    make_type_object, make_type_object_with_display_name, mb_type3_deferred,
+    reject_non_constructible_type_object, set_type_object_attr, type_object_display_name,
+    type_object_registry_key, type_object_repr_name,
 };
 pub use type_objects::{
     mb_builtin_type_obj, mb_type, mb_type2, mb_type3, mb_type3_kwargs, mb_type_no_args,
