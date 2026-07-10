@@ -840,7 +840,9 @@ of `spec.replicasPerShard`. Every serving pod mounts a durable
 This means a pod reschedule, eviction, or node loss never wipes the WAL —
 including for a `replicasPerShard: 1` deployer who doesn't want or need raft
 consensus. `replicasPerShard` only changes whether the fleet runs raft
-consensus; it never changes whether the WAL is durable.
+consensus; it never changes whether the WAL is durable — but the PVC being
+mounted is not by itself sufficient; see the next section for what actually
+makes the single-member WAL durable.
 
 ## `replicasPerShard: 1` (default) — single member, no raft consensus
 - One StatefulSet member per shard, with the durable `raft` PVC.
@@ -849,6 +851,46 @@ consensus; it never changes whether the WAL is durable.
 - The legacy single-shard HPA path is serving-capacity only. It is not a
   primary/follower data-replica mode, and extra pods do not continuously catch
   up a shared shard from a primary.
+
+## Embedded-mode persistence and crash durability (#1387)
+`LUMEN_WAL=auto` resolves to `Embedded` — an in-process `MemWal` — whenever
+there is no raft cluster context, i.e. exactly the `replicasPerShard: 1`
+regime above. `Embedded` alone is RAM-only: mounting the `raft` PVC is not
+sufficient by itself, because nothing writes to it unless `LUMEN_DATA_DIR` is
+also set. Prior to #1387 the operator never set it, so a pod restart —
+including the reshard cutover's own rolling restart — silently wiped all
+data despite the PVC being durably attached.
+
+The operator now renders, only at `replicasPerShard <= 1`:
+
+```
+LUMEN_DATA_DIR=/var/lib/lumen/data
+LUMEN_PERSISTENCE=segment
+```
+
+`/var/lib/lumen/data` is disjoint from the raft backend's own
+`/var/lib/lumen/raft` subtree (`LUMEN_RAFT_DATA_DIR`'s default) on the same
+`raft` PVC mount, so both can coexist safely across a `replicasPerShard`
+change without colliding. `LUMEN_PERSISTENCE=segment` (rather than the CBOR
+default) activates the local AOF (`src/aof.rs`) alongside the periodic
+segment checkpoint (`src/segment_rdb.rs`): every applied write is appended to
+the AOF and fsynced under the `everysec` policy (at most ~1s of un-fsynced
+tail on a crash — a torn tail that replay discards cleanly, not corruption),
+so crash durability (kill -9 / OOM, not just a clean SIGTERM drain) is bounded
+by roughly a 1-second recovery point, not by `LUMEN_SNAPSHOT_SECS` (default
+300s, the periodic checkpoint interval used only to bound cold-start replay
+and trim the AOF — not the durability window itself). Cold start reopens the
+newest segment checkpoint, replays the AOF tail past it, then tails the
+broker from there — the existing `serve()` bootstrap path, unchanged by this
+render wiring.
+
+### Dev mode: bare `lumen serve` stays in-memory
+Running `lumen serve` directly (outside the operator, with no `LUMEN_DATA_DIR`
+set) is unaffected and keeps today's behavior: `--wal auto` still resolves to
+`Embedded`, and with no data dir configured the engine is purely in-memory —
+any restart loses all data. This is intentional dev-mode behavior, not a bug:
+set `--data-dir`/`LUMEN_DATA_DIR` (and optionally `--persistence=segment`)
+explicitly to get the same durability the operator now wires by default.
 
 ## `replicasPerShard > 1` — raft-HA
 - Fixed replica count `shardCount * replicasPerShard` (raft needs a known,
@@ -1184,4 +1226,20 @@ changes:
       and `llm_quickstart_md` now document the new `lumen connect` /
       `lumen query index|search|duplicates|collections list` CLI surface
       (AC4) with a copy-paste example.
+  - path: projects/lumen/src/spec.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1387: `llm_storage_md()` gains an "Embedded-mode persistence and
+      crash durability" section documenting the operator's new
+      `LUMEN_DATA_DIR=/var/lib/lumen/data` + `LUMEN_PERSISTENCE=segment`
+      rendering at `replicasPerShard <= 1` (the regime `LUMEN_WAL=auto`
+      resolves to the RAM-only `MemWal` `Embedded` backend), the disjoint
+      `/var/lib/lumen/raft` subtree, and the actual `everysec`-fsync AOF
+      crash-durability semantics (~1s RPO, distinct from the
+      `LUMEN_SNAPSHOT_SECS` checkpoint interval) — plus a "Dev mode: bare
+      `lumen serve` stays in-memory" callout so the unaffected non-operator
+      default is explicit, not implied. Corrects the prior "never wipes the
+      WAL" claim, which held only for the raft backend before this fix.
 ```
