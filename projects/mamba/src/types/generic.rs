@@ -1,5 +1,5 @@
 use super::context::TypeContext;
-use super::ty::{Ty, TypeId, TypeVarId};
+use super::ty::{Ty, TypeId, TypeParamDefault, TypeVarId, TypeVarKind};
 /// Generics support for Mamba (#314 R1, R3).
 ///
 /// Implements PEP 695 type parameter syntax and generic type resolution.
@@ -11,10 +11,13 @@ use std::collections::HashMap;
 pub struct TypeVar {
     pub id: TypeVarId,
     pub name: String,
+    pub kind: TypeVarKind,
     /// Upper bound: T: SomeType (T must be subtype of bound)
     pub bound: Option<TypeId>,
     /// Constraints: T(int, str) means T must be exactly one of these
     pub constraints: Vec<TypeId>,
+    /// Resolved PEP 696 default type argument, when statically type-shaped.
+    pub default: TypeParamDefault,
 }
 
 /// A generic parameter list (e.g., `class Box[T]` or `def f[T, U]`).
@@ -39,11 +42,32 @@ impl GenericParams {
         bound: Option<TypeId>,
         constraints: Vec<TypeId>,
     ) {
+        self.add_param(
+            name,
+            id,
+            TypeVarKind::TypeVar,
+            bound,
+            constraints,
+            TypeParamDefault::None,
+        );
+    }
+
+    pub fn add_param(
+        &mut self,
+        name: &str,
+        id: TypeVarId,
+        kind: TypeVarKind,
+        bound: Option<TypeId>,
+        constraints: Vec<TypeId>,
+        default: TypeParamDefault,
+    ) {
         self.params.push(TypeVar {
             id,
             name: name.to_string(),
+            kind,
             bound,
             constraints,
+            default,
         });
     }
 
@@ -150,6 +174,71 @@ impl Substitution {
             _ => ty,
         }
     }
+}
+
+/// Bind explicit type arguments to a declaration's type parameters.
+///
+/// Ordinary TypeVars have fixed arity and may consume trailing defaults.
+/// TypeVarTuple and ParamSpec still require richer pack/parameter-list types;
+/// keep their legacy positional binding without claiming fixed-arity support.
+pub fn bind_explicit_type_args(
+    generic_params: &GenericParams,
+    supplied: &[TypeId],
+    tcx: &mut TypeContext,
+) -> (Substitution, Vec<TypeId>, Vec<String>) {
+    let mut subst = Substitution::new();
+    let mut resolved = supplied.to_vec();
+
+    if generic_params
+        .params
+        .iter()
+        .any(|param| param.kind != TypeVarKind::TypeVar)
+    {
+        for (param, concrete) in generic_params.params.iter().zip(supplied) {
+            subst.insert(param.id, *concrete);
+        }
+        let errors = check_bounds(&subst, generic_params, tcx);
+        return (subst, resolved, errors);
+    }
+
+    let total = generic_params.params.len();
+    let required = generic_params
+        .params
+        .iter()
+        .filter(|param| !param.default.is_present())
+        .count();
+    let mut errors = Vec::new();
+    if supplied.len() < required || supplied.len() > total {
+        let expected = if required == total {
+            total.to_string()
+        } else {
+            format!("between {required} and {total}")
+        };
+        errors.push(format!(
+            "expected {expected} type arguments, got {}",
+            supplied.len()
+        ));
+    }
+
+    for (index, (param, concrete)) in generic_params.params.iter().zip(supplied).enumerate() {
+        let concrete = normalize_constrained_candidate(param, *concrete, tcx);
+        subst.insert(param.id, concrete);
+        resolved[index] = concrete;
+    }
+    resolved.truncate(total);
+
+    for param in generic_params.params.iter().skip(supplied.len()) {
+        let concrete = param
+            .default
+            .resolved()
+            .map(|default| subst.apply(default, tcx))
+            .unwrap_or_else(|| tcx.any());
+        subst.insert(param.id, concrete);
+        resolved.push(concrete);
+    }
+
+    errors.extend(check_bounds(&subst, generic_params, tcx));
+    (subst, resolved, errors)
 }
 
 /// Infer type arguments by unifying generic parameters with concrete arguments.
@@ -375,6 +464,86 @@ mod tests {
         let bound = TypeId(3); // int
         gp.add("T", TypeVarId(0), Some(bound));
         assert_eq!(gp.params[0].bound, Some(bound));
+    }
+
+    #[test]
+    fn test_bind_explicit_type_args_enforces_fixed_arity() {
+        let mut tcx = TypeContext::new();
+        let mut gp = GenericParams::new();
+        gp.add("T", TypeVarId(0), None);
+        gp.add("U", TypeVarId(1), None);
+
+        let int_ty = tcx.int();
+        let str_ty = tcx.str();
+        let bool_ty = tcx.bool();
+        let (_, _, errors) = bind_explicit_type_args(&gp, &[int_ty], &mut tcx);
+        assert_eq!(errors, vec!["expected 2 type arguments, got 1"]);
+
+        let (_, _, errors) = bind_explicit_type_args(&gp, &[int_ty, str_ty, bool_ty], &mut tcx);
+        assert_eq!(errors, vec!["expected 2 type arguments, got 3"]);
+    }
+
+    #[test]
+    fn test_bind_explicit_type_args_applies_trailing_defaults() {
+        let mut tcx = TypeContext::new();
+        let t_id = TypeVarId(0);
+        let u_id = TypeVarId(1);
+        let t_ty = tcx.intern(Ty::TypeVar(t_id));
+        let default_u = tcx.intern(Ty::List(t_ty));
+        let mut gp = GenericParams::new();
+        gp.add_param(
+            "T",
+            t_id,
+            TypeVarKind::TypeVar,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
+        gp.add_param(
+            "U",
+            u_id,
+            TypeVarKind::TypeVar,
+            None,
+            Vec::new(),
+            TypeParamDefault::Resolved(default_u),
+        );
+
+        let str_ty = tcx.str();
+        let (subst, resolved, errors) = bind_explicit_type_args(&gp, &[str_ty], &mut tcx);
+        assert!(errors.is_empty());
+        assert_eq!(resolved.len(), 2);
+        assert_eq!(subst.get(t_id), Some(str_ty));
+        assert_eq!(*tcx.get(subst.get(u_id).unwrap()), Ty::List(str_ty));
+    }
+
+    #[test]
+    fn test_bind_explicit_type_args_keeps_variadics_skip_safe() {
+        let mut tcx = TypeContext::new();
+        let mut gp = GenericParams::new();
+        gp.add_param(
+            "Ts",
+            TypeVarId(0),
+            TypeVarKind::TypeVarTuple,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
+
+        let (_, resolved, errors) = bind_explicit_type_args(&gp, &[tcx.int(), tcx.str()], &mut tcx);
+        assert!(errors.is_empty());
+        assert_eq!(resolved.len(), 2);
+    }
+
+    #[test]
+    fn test_bind_explicit_type_args_promotes_constrained_subtypes() {
+        let mut tcx = TypeContext::new();
+        let mut gp = GenericParams::new();
+        gp.add_with_constraints("T", TypeVarId(0), None, vec![tcx.int(), tcx.str()]);
+
+        let (subst, resolved, errors) = bind_explicit_type_args(&gp, &[tcx.bool()], &mut tcx);
+        assert!(errors.is_empty());
+        assert_eq!(subst.get(TypeVarId(0)), Some(tcx.int()));
+        assert_eq!(resolved, vec![tcx.int()]);
     }
 
     #[test]
@@ -676,8 +845,10 @@ mod tests {
         let tv = super::TypeVar {
             id: TypeVarId(0),
             name: "T".to_string(),
+            kind: TypeVarKind::TypeVar,
             bound: None,
             constraints: vec![int_ty, str_ty],
+            default: TypeParamDefault::None,
         };
         // Manually add to params
         gp.params.push(tv);
@@ -700,8 +871,10 @@ mod tests {
         gp.params.push(super::TypeVar {
             id: TypeVarId(0),
             name: "T".to_string(),
+            kind: TypeVarKind::TypeVar,
             bound: None,
             constraints: vec![int_ty, str_ty],
+            default: TypeParamDefault::None,
         });
 
         let mut subst = Substitution::new();

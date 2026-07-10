@@ -2,6 +2,7 @@
 
 use crate::parser;
 use crate::source::span::FileId;
+use crate::types::ty::{TypeParamDefault, TypeVarKind};
 use crate::types::TypeChecker;
 
 fn check(src: &str) -> Vec<String> {
@@ -1110,6 +1111,155 @@ fn pep695_generic_defaults_are_checked_against_bounds() {
     assert_eq!(
         violations, 1,
         "generic parameter defaults must use upper-bound checking: {errors:?}"
+    );
+
+    let errors = check(
+        "class Invalid[T: (int, str) = bool]:\n\
+         \x20   pass\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("violates its constraints")),
+        "a constrained default must exactly match a declared constraint: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_type_parameter_kind_and_default_state_are_preserved() {
+    let module = parser::parse(
+        "class Defaults[T = int]:\n\
+         \x20   pass\n\
+         class Variadic[*Ts, **P]:\n\
+         \x20   pass\n\
+         class Lazy[T = Missing]:\n\
+         \x20   pass\n",
+        FileId(0),
+    )
+    .expect("parse failed");
+    let mut checker = TypeChecker::new();
+    let errors = checker.check_module(&module);
+    assert!(errors.is_empty(), "metadata should remain lazy: {errors:?}");
+
+    let defaults_symbol = checker.symbols.lookup("Defaults").unwrap();
+    let default_param = &checker.generic_defs[&defaults_symbol].params[0];
+    assert_eq!(default_param.kind, TypeVarKind::TypeVar);
+    assert_eq!(
+        default_param.default,
+        TypeParamDefault::Resolved(checker.tcx.int())
+    );
+
+    let variadic_symbol = checker.symbols.lookup("Variadic").unwrap();
+    let variadic = &checker.generic_defs[&variadic_symbol].params;
+    assert_eq!(variadic[0].kind, TypeVarKind::TypeVarTuple);
+    assert_eq!(variadic[1].kind, TypeVarKind::ParamSpec);
+
+    let lazy_symbol = checker.symbols.lookup("Lazy").unwrap();
+    assert_eq!(
+        checker.generic_defs[&lazy_symbol].params[0].default,
+        TypeParamDefault::Unresolved
+    );
+}
+
+#[test]
+fn pep695_class_specialization_enforces_arity() {
+    let errors = check(
+        "class Pair[T, U]:\n\
+         \x20   pass\n\
+         def too_few(value: Pair[int]) -> None:\n\
+         \x20   pass\n\
+         def too_many(value: Pair[int, str, bool]) -> None:\n\
+         \x20   pass\n",
+    );
+    let arity_errors = errors
+        .iter()
+        .filter(|error| error.contains("expected 2 type arguments"))
+        .count();
+    assert_eq!(
+        arity_errors, 2,
+        "fixed generic classes must reject missing and excess type arguments: {errors:?}"
+    );
+
+    let errors = check(
+        "class Plain:\n\
+         \x20   pass\n\
+         def invalid(value: Plain[int]) -> None:\n\
+         \x20   pass\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("type 'Plain' is not generic")),
+        "non-generic classes must reject specialization: {errors:?}"
+    );
+
+    let errors = check(
+        "def invalid(items: list[int, str], mapping: dict[str]) -> None:\n\
+         \x20   pass\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type argument"))
+            .count(),
+        2,
+        "fixed-arity builtin generics must reject malformed subscriptions: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_class_specialization_applies_defaults() {
+    let errors = check(
+        "class Pair[T, U = list[T]]:\n\
+         \x20   value: U = None\n\
+         def valid(value: Pair[int]) -> list[int]:\n\
+         \x20   return value.value\n\
+         def invalid(value: Pair[int]) -> list[str]:\n\
+         \x20   return value.value\n",
+    );
+    let mismatches = errors
+        .iter()
+        .filter(|error| error.contains("type mismatch"))
+        .count();
+    assert_eq!(
+        mismatches, 1,
+        "trailing defaults must be substituted through earlier arguments: {errors:?}"
+    );
+
+    let errors = check(
+        "class DefaultBox[T = int]:\n\
+         \x20   value: T = None\n\
+         def invalid(value: DefaultBox) -> str:\n\
+         \x20   return value.value\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("type mismatch")),
+        "bare generic annotations must apply declared defaults: {errors:?}"
+    );
+
+    let errors = check(
+        "class Choice[T: (int, str)]:\n\
+         \x20   value: T = None\n\
+         def invalid(value: Choice[bool]) -> bool:\n\
+         \x20   return value.value\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("type mismatch")),
+        "explicit constrained subtypes must promote to their declared constraint: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_default_references_must_point_backward() {
+    let errors = check(
+        "class Invalid[T = U, U = int]:\n\
+         \x20   pass\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("may only reference earlier parameters of the same kind")),
+        "forward type-parameter defaults must be rejected: {errors:?}"
     );
 }
 
