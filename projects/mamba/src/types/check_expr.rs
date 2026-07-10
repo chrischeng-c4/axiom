@@ -1,5 +1,7 @@
-use super::check::{FunctionParamSig, NumericRoot, TypeChecker};
-use super::generic::{check_bounds, infer_type_args};
+use super::check::{expr_to_type_expr, FunctionParamSig, NumericRoot, TypeChecker};
+use super::generic::{
+    bind_explicit_type_args, check_bounds, complete_type_args, infer_type_args, Substitution,
+};
 use super::{Ty, TypeId};
 use crate::parser::ast::*;
 use crate::resolve::SymbolKind;
@@ -311,6 +313,10 @@ impl TypeChecker {
                     .as_deref()
                     .and_then(|name| self.symbols.lookup(name));
                 let method_key = self.user_method_key(func);
+                let unbound_user_method = match &func.node {
+                    Expr::Attr { object, .. } => self.user_class_object(object).is_some(),
+                    _ => false,
+                };
                 // ① Type-wall PoC HOOK: stdlib argument enforcement. ADDITIVE —
                 // runs before the existing `match func_ty` and never changes the
                 // Any-path return. It only *emits* the existing arg-mismatch
@@ -403,7 +409,7 @@ impl TypeChecker {
                             }
                         }
                         let mut checked_arg_types = Vec::with_capacity(args.len());
-                        let user_param_sigs = method_key
+                        let mut user_param_sigs = method_key
                             .as_ref()
                             .and_then(|(class_symbol, method_name)| {
                                 self.class_method_param_sigs
@@ -416,6 +422,31 @@ impl TypeChecker {
                                     self.function_param_sigs.get(&symbol).cloned()
                                 })
                             });
+                        if method_key.is_some() {
+                            if let Some(sigs) = &mut user_param_sigs {
+                                let mut specialized = params.iter();
+                                if unbound_user_method {
+                                    specialized.next();
+                                }
+                                for (sig, specialized) in sigs.iter_mut().zip(specialized) {
+                                    sig.ty = *specialized;
+                                }
+                                if unbound_user_method {
+                                    if let Some(receiver) = params.first() {
+                                        sigs.insert(
+                                            0,
+                                            FunctionParamSig {
+                                                name: "self".to_string(),
+                                                ty: *receiver,
+                                                kind: ParamKind::Regular,
+                                                pos_only: true,
+                                                kw_only: false,
+                                            },
+                                        );
+                                    }
+                                }
+                            }
+                        }
                         let mut param_idx = 0;
                         for arg in args {
                             match arg {
@@ -590,11 +621,9 @@ impl TypeChecker {
                         ret
                     }
                     // #246: calling a class constructor returns instance of that class
-                    Ty::Class {
-                        name: ref class_name,
-                        ..
-                    } => {
-                        let init_params = func_symbol
+                    Ty::Class { user, .. } => {
+                        let class_symbol = user.as_ref().map(|user| user.symbol).or(func_symbol);
+                        let init_params = class_symbol
                             .and_then(|symbol| self.class_method_param_sigs.get(&symbol))
                             .and_then(|methods| methods.get("__init__"))
                             .cloned()
@@ -619,22 +648,58 @@ impl TypeChecker {
                         let (inference_params, inference_args) =
                             bind_explicit_inference_args(args, &checked_arg_types, &init_params);
                         // If generic class, infer type params from constructor args
-                        if let Some(gp) = func_symbol
+                        if let Some(gp) = class_symbol
                             .and_then(|symbol| self.generic_defs.get(&symbol))
                             .cloned()
                         {
-                            if !init_params.is_empty() {
-                                let (subst, conflicts) = infer_type_args(
-                                    &gp,
-                                    &inference_params,
-                                    &inference_args,
-                                    &self.tcx,
-                                );
-                                for err in conflicts {
+                            let is_open = user.as_ref().is_some_and(|user| {
+                                gp.params.len() == user.args.len()
+                                    && gp.params.iter().zip(&user.args).all(|(param, arg)| {
+                                        matches!(self.tcx.get(*arg), Ty::TypeVar(id) if *id == param.id)
+                                    })
+                            });
+                            if !is_open {
+                                if let Some(user) = &user {
+                                    let mut explicit = Substitution::new();
+                                    for (param, arg) in gp.params.iter().zip(&user.args) {
+                                        explicit.insert(param.id, *arg);
+                                    }
+                                    self.check_substituted_constructor_args(
+                                        &inference_params,
+                                        &inference_args,
+                                        &explicit,
+                                        expr.span,
+                                    );
+                                }
+                                return func_ty_id;
+                            }
+                            let (subst, conflicts) = if init_params.is_empty() {
+                                (Substitution::new(), Vec::new())
+                            } else {
+                                infer_type_args(&gp, &inference_params, &inference_args, &self.tcx)
+                            };
+                            for err in conflicts {
+                                self.error(expr.span, err);
+                            }
+                            if let Some((completed, resolved)) =
+                                complete_type_args(&gp, subst.clone(), &mut self.tcx)
+                            {
+                                for err in check_bounds(&completed, &gp, &self.tcx) {
                                     self.error(expr.span, err);
                                 }
-                                let bound_errors = check_bounds(&subst, &gp, &self.tcx);
-                                for err in bound_errors {
+                                self.check_substituted_constructor_args(
+                                    &inference_params,
+                                    &inference_args,
+                                    &completed,
+                                    expr.span,
+                                );
+                                if let Some(symbol) = class_symbol {
+                                    return self.apply_user_class_specialization(
+                                        symbol, func_ty_id, &completed, &resolved,
+                                    );
+                                }
+                            } else {
+                                for err in check_bounds(&subst, &gp, &self.tcx) {
                                     self.error(expr.span, err);
                                 }
                             }
@@ -657,6 +722,7 @@ impl TypeChecker {
                         if let Some(class_name) = self.native_ctor_class_call(func) {
                             return self.tcx.intern(Ty::Class {
                                 name: class_name.to_string(),
+                                user: None,
                                 fields: Vec::new(),
                                 match_args: None,
                             });
@@ -706,24 +772,27 @@ impl TypeChecker {
                 // can assert mamba's stricter contract; ungating it would
                 // reject valid real-world unbound-call idioms.
                 if self.strict_type_fixture {
-                    if let Some(method_ty) = self.resolve_unbound_class_method(object, attr) {
+                    if let Some(method_ty) =
+                        self.resolve_unbound_class_method(object, obj_ty_id, attr)
+                    {
                         return method_ty;
                     }
                 }
-                if let Expr::Ident(name) = &object.node {
-                    if self.symbols.lookup(name).is_some_and(|symbol| {
-                        self.symbols.get_symbol(symbol).kind == SymbolKind::Class
-                    }) {
-                        // The type model still represents a class object and
-                        // its instances with the same Ty::Class variant. Keep
-                        // normal-mode unbound calls dynamic; only instance
-                        // expressions use the method signature below.
-                        return self.tcx.any();
-                    }
+                if self.user_class_object(object).is_some() {
+                    // The type model still represents a class object and its
+                    // instances with the same Ty::Class variant. Keep normal-
+                    // mode unbound calls dynamic; only instance expressions
+                    // use the bound method signature below.
+                    return self.tcx.any();
                 }
                 self.resolve_attr(obj_ty_id, attr, expr.span)
             }
             Expr::Index { object, index } => {
+                if let Some(specialized) =
+                    self.resolve_explicit_user_class_specialization(object, index, expr.span)
+                {
+                    return specialized;
+                }
                 let obj_ty = self.check_expr(object);
                 self.check_expr(index);
                 // Slice index returns the container type itself, not the
@@ -1789,37 +1858,143 @@ impl TypeChecker {
                 let symbol = self.symbols.lookup(name)?;
                 self.get_sym_type(symbol.0)
             }
-            Expr::Call { func, .. } => {
-                let Expr::Ident(name) = &func.node else {
+            Expr::Index { object, .. } => {
+                let Expr::Ident(name) = &object.node else {
                     return None;
+                };
+                let symbol = self.symbols.lookup(name)?;
+                self.get_sym_type(symbol.0)
+            }
+            Expr::Call { func, .. } => {
+                let name = match &func.node {
+                    Expr::Ident(name) => name,
+                    Expr::Index { object, .. } => {
+                        let Expr::Ident(name) = &object.node else {
+                            return None;
+                        };
+                        name
+                    }
+                    _ => return None,
                 };
                 let symbol = self.symbols.lookup(name)?;
                 self.get_sym_type(symbol.0)
             }
             _ => return None,
         };
-        let class_symbol = *self.class_symbols_by_type.get(&object_ty)?;
+        let Ty::Class {
+            user: Some(user), ..
+        } = self.tcx.get(object_ty)
+        else {
+            return None;
+        };
+        let class_symbol = user.symbol;
         Some((class_symbol, attr.clone()))
+    }
+
+    fn resolve_explicit_user_class_specialization(
+        &mut self,
+        object: &Spanned<Expr>,
+        index: &Spanned<Expr>,
+        span: Span,
+    ) -> Option<TypeId> {
+        let Expr::Ident(name) = &object.node else {
+            return None;
+        };
+        let symbol = self.symbols.lookup(name)?;
+        if self.symbols.get_symbol(symbol).kind != SymbolKind::Class {
+            return None;
+        }
+        let base_ty = self.get_sym_type(symbol.0);
+        let Some(generic_params) = self.generic_defs.get(&symbol).cloned() else {
+            self.error(span, format!("type '{name}' is not generic"));
+            return Some(base_ty);
+        };
+        let expressions = match &index.node {
+            Expr::TupleLit(items) => items.as_slice(),
+            _ => std::slice::from_ref(index),
+        };
+        let mut supplied = Vec::with_capacity(expressions.len());
+        for expression in expressions {
+            let type_expr = expr_to_type_expr(expression)?;
+            supplied.push(self.resolve_type_expr(&type_expr));
+        }
+        let (subst, resolved, errors) =
+            bind_explicit_type_args(&generic_params, &supplied, &mut self.tcx);
+        for error in errors {
+            self.error(span, error);
+        }
+        Some(self.apply_user_class_specialization(symbol, base_ty, &subst, &resolved))
+    }
+
+    fn check_substituted_constructor_args(
+        &mut self,
+        params: &[TypeId],
+        args: &[TypeId],
+        subst: &Substitution,
+        span: Span,
+    ) {
+        for (param, actual) in params.iter().zip(args) {
+            let expected = subst.apply(*param, &mut self.tcx);
+            if !self.types_compatible(expected, *actual) {
+                self.error(
+                    span,
+                    format!(
+                        "argument type mismatch: expected `{}`, got `{}`",
+                        self.ty_name(expected),
+                        self.ty_name(*actual),
+                    ),
+                );
+            }
+        }
+    }
+
+    fn user_class_object<'a>(
+        &self,
+        object: &'a Spanned<Expr>,
+    ) -> Option<(&'a str, crate::resolve::SymbolId)> {
+        let name = match &object.node {
+            Expr::Ident(name) => name.as_str(),
+            Expr::Index { object, .. } => {
+                let Expr::Ident(name) = &object.node else {
+                    return None;
+                };
+                name.as_str()
+            }
+            _ => return None,
+        };
+        let symbol = self.symbols.lookup(name)?;
+        (self.symbols.get_symbol(symbol).kind == SymbolKind::Class).then_some((name, symbol))
     }
 
     /// Resolve attribute access (#246).
     fn resolve_unbound_class_method(
         &mut self,
         object: &Spanned<Expr>,
+        object_ty: TypeId,
         attr: &str,
     ) -> Option<TypeId> {
-        let Expr::Ident(class_name) = &object.node else {
-            return None;
+        let (_, symbol) = self.user_class_object(object)?;
+        let mut sig = self.class_unbound_methods.get(&symbol)?.get(attr)?.clone();
+        let user = match self.tcx.get(object_ty) {
+            Ty::Class {
+                user: Some(user), ..
+            } if user.symbol == symbol => Some(user.clone()),
+            _ => None,
         };
-        let sym = self.symbols.lookup(class_name)?;
-        if self.symbols.get_symbol(sym).kind != SymbolKind::Class {
-            return None;
+        if let Some(user) = user {
+            if let Some(params) = self.generic_defs.get(&symbol).cloned() {
+                let mut subst = Substitution::new();
+                for (param, arg) in params.params.iter().zip(&user.args) {
+                    subst.insert(param.id, *arg);
+                }
+                sig.params = sig
+                    .params
+                    .iter()
+                    .map(|param| subst.apply(*param, &mut self.tcx))
+                    .collect();
+                sig.return_type = subst.apply(sig.return_type, &mut self.tcx);
+            }
         }
-        let sig = self
-            .class_unbound_methods
-            .get(class_name)?
-            .get(attr)?
-            .clone();
         Some(self.tcx.intern(Ty::Fn {
             params: sig.params,
             ret: sig.return_type,
@@ -1882,22 +2057,43 @@ impl TypeChecker {
                 }
                 _ => self.tcx.any(),
             },
-            Ty::Class { fields, .. } => {
+            Ty::Class { user, fields, .. } => {
                 for (name, ty) in &fields {
                     if name == attr {
                         return *ty;
                     }
                 }
-                if let Some(method) = self
-                    .class_symbols_by_type
-                    .get(&obj_ty_id)
-                    .and_then(|class_symbol| self.class_methods_by_symbol.get(class_symbol))
+                if let Some(method) = user
+                    .as_ref()
+                    .and_then(|user| self.class_methods_by_symbol.get(&user.symbol))
                     .and_then(|methods| methods.get(attr))
                     .cloned()
                 {
+                    let substitution = user.as_ref().and_then(|user| {
+                        self.generic_defs.get(&user.symbol).map(|params| {
+                            let mut subst = Substitution::new();
+                            for (param, arg) in params.params.iter().zip(&user.args) {
+                                subst.insert(param.id, *arg);
+                            }
+                            subst
+                        })
+                    });
+                    let params = if let Some(subst) = &substitution {
+                        method
+                            .params
+                            .iter()
+                            .map(|param| subst.apply(*param, &mut self.tcx))
+                            .collect()
+                    } else {
+                        method.params
+                    };
+                    let ret = substitution
+                        .as_ref()
+                        .map(|subst| subst.apply(method.return_type, &mut self.tcx))
+                        .unwrap_or(method.return_type);
                     return self.tcx.intern(Ty::Fn {
-                        params: method.params,
-                        ret: method.return_type,
+                        params,
+                        ret,
                         variadic: false,
                     });
                 }

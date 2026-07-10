@@ -271,6 +271,7 @@ impl TypeChecker {
         for name in &exception_names {
             let class_ty = self.tcx.intern(Ty::Class {
                 name: name.to_string(),
+                user: None,
                 fields: vec![],
                 match_args: None,
             });
