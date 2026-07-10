@@ -18,7 +18,9 @@
 //! unlike the raft-wal-only peer/DNS wiring in `raft.rs`) while delegating the
 //! actual math so it can't drift from `raft_host::cluster::ClusterTopology`.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+
+use crate::routing::{VirtualBucketShardMap, DEFAULT_VIRTUAL_BUCKET_COUNT};
 
 #[derive(Debug, Clone)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
@@ -76,9 +78,65 @@ impl ClusterConfig {
     }
 }
 
+/// Live shard-routing map from the same ConfigMap env the operator renders
+/// (`serving_configmap` in `operator/render.rs`): `SHARD_MAP_VERSION` /
+/// `SHARD_MAP_ASSIGNMENTS` / `VIRTUAL_BUCKET_COUNT`. Mirrors
+/// `ShardMapSpec`'s "empty assignments means balanced" contract exactly —
+/// `SHARD_MAP_ASSIGNMENTS` unset (the ConfigMap key is only written once the
+/// operator has committed a real split; see `serving_configmap`) falls back
+/// to today's `bucket % shard_count` balanced default, so a pod started
+/// before any reshard, or with no shard-map env at all (plain `lumen serve`
+/// outside k8s), routes exactly as it always has (#1384 AC4). `shard_count`
+/// is the caller's already-resolved physical shard count (`ClusterConfig::
+/// shard_count` / `ServeArgs::shard_count`), not re-read from env here, so
+/// this stays usable without the full raft `ClusterConfig` (e.g. the
+/// non-raft `--search-shard-segment-dirs` read-shard-fan-in path).
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
+pub fn shard_map_from_env(shard_count: u32) -> Result<VirtualBucketShardMap> {
+    let version = match std::env::var("SHARD_MAP_VERSION") {
+        Ok(raw) => raw
+            .trim()
+            .parse::<u64>()
+            .with_context(|| format!("SHARD_MAP_VERSION={raw:?} is not a valid u64"))?,
+        Err(_) => 0,
+    };
+    let virtual_bucket_count = match std::env::var("VIRTUAL_BUCKET_COUNT") {
+        Ok(raw) => raw
+            .trim()
+            .parse::<u32>()
+            .with_context(|| format!("VIRTUAL_BUCKET_COUNT={raw:?} is not a valid u32"))?,
+        Err(_) => DEFAULT_VIRTUAL_BUCKET_COUNT,
+    };
+    match std::env::var("SHARD_MAP_ASSIGNMENTS") {
+        Ok(raw) if !raw.trim().is_empty() => {
+            let assignments = raw
+                .split(',')
+                .map(|s| {
+                    s.trim().parse::<u32>().with_context(|| {
+                        format!("SHARD_MAP_ASSIGNMENTS entry {s:?} is not a valid u32")
+                    })
+                })
+                .collect::<Result<Vec<u32>>>()?;
+            VirtualBucketShardMap::new(version, assignments, shard_count.max(1))
+        }
+        _ => VirtualBucketShardMap::balanced(version, virtual_bucket_count, shard_count.max(1)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // Every test below that mutates process env (`ClusterConfig::from_env`'s
+    // SHARD_COUNT/REPLICAS_PER_SHARD/VOTER_COUNT/POD_NAME and
+    // `shard_map_from_env`'s SHARD_MAP_VERSION/SHARD_MAP_ASSIGNMENTS/
+    // VIRTUAL_BUCKET_COUNT) shares this one lock — env vars are
+    // process-global, and `cargo test`'s default parallel runner would
+    // otherwise interleave two tests' `set_var`/`remove_var` calls (a
+    // per-function-local `static LOCK` does *not* serialize across
+    // functions; each fn body owns a distinct static).
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn cfg(
         shard_count: u32,
@@ -132,11 +190,7 @@ mod tests {
 
     #[test]
     fn from_env_round_trips() {
-        // env is process-global; share a mutex with the tls tests via
-        // a local one here.
-        use std::sync::Mutex;
-        static LOCK: Mutex<()> = Mutex::new(());
-        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         unsafe {
             std::env::set_var("SHARD_COUNT", "3");
@@ -159,9 +213,7 @@ mod tests {
 
     #[test]
     fn from_env_errors_on_missing_var() {
-        use std::sync::Mutex;
-        static LOCK: Mutex<()> = Mutex::new(());
-        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::remove_var("SHARD_COUNT");
             std::env::remove_var("REPLICAS_PER_SHARD");
@@ -173,9 +225,7 @@ mod tests {
 
     #[test]
     fn from_env_errors_on_non_u32() {
-        use std::sync::Mutex;
-        static LOCK: Mutex<()> = Mutex::new(());
-        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("SHARD_COUNT", "not-a-number");
             std::env::set_var("REPLICAS_PER_SHARD", "3");
@@ -189,6 +239,107 @@ mod tests {
             std::env::remove_var("VOTER_COUNT");
             std::env::remove_var("POD_NAME");
         }
+    }
+
+    // ---- shard_map_from_env (#1384) ------------------------------------
+
+    fn clear_shard_map_env() {
+        unsafe {
+            std::env::remove_var("SHARD_MAP_VERSION");
+            std::env::remove_var("SHARD_MAP_ASSIGNMENTS");
+            std::env::remove_var("VIRTUAL_BUCKET_COUNT");
+        }
+    }
+
+    #[test]
+    fn shard_map_from_env_falls_back_to_balanced_when_unset() {
+        // #1384 AC4: no shard-map env at all (today's default deployment,
+        // and every deployment before the operator ever commits a real
+        // split) must produce byte-identical routing to the pre-#1384
+        // `VirtualBucketShardMap::balanced` construction.
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_shard_map_env();
+
+        let map = shard_map_from_env(4).unwrap();
+        let expected = VirtualBucketShardMap::balanced(0, DEFAULT_VIRTUAL_BUCKET_COUNT, 4).unwrap();
+        assert_eq!(map, expected);
+        assert_eq!(map.version(), 0);
+        assert_eq!(map.virtual_bucket_count(), DEFAULT_VIRTUAL_BUCKET_COUNT);
+        assert_eq!(map.physical_shard_count(), 4);
+    }
+
+    #[test]
+    fn shard_map_from_env_falls_back_to_balanced_when_assignments_blank() {
+        // The ConfigMap key is written unconditionally for
+        // SHARD_MAP_VERSION/VIRTUAL_BUCKET_COUNT but SHARD_MAP_ASSIGNMENTS
+        // is only ever present once assignments are non-empty
+        // (`serving_configmap`) — an empty/whitespace value must not be
+        // parsed as "one bucket assigned to shard \"\"".
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_shard_map_env();
+        unsafe {
+            std::env::set_var("SHARD_MAP_VERSION", "2");
+            std::env::set_var("VIRTUAL_BUCKET_COUNT", "16");
+            std::env::set_var("SHARD_MAP_ASSIGNMENTS", "  ");
+        }
+
+        let map = shard_map_from_env(4).unwrap();
+        assert_eq!(map, VirtualBucketShardMap::balanced(2, 16, 4).unwrap());
+        clear_shard_map_env();
+    }
+
+    #[test]
+    fn shard_map_from_env_honors_explicit_assignments() {
+        // #1384 AC1: an explicit SHARD_MAP_ASSIGNMENTS (the cutover-flipped
+        // map a driver split commits) is what a pod started after it must
+        // route by — not the balanced default.
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_shard_map_env();
+        unsafe {
+            std::env::set_var("SHARD_MAP_VERSION", "1");
+            std::env::set_var("VIRTUAL_BUCKET_COUNT", "8");
+            std::env::set_var("SHARD_MAP_ASSIGNMENTS", "1,1,1,1,0,0,0,0");
+        }
+
+        let map = shard_map_from_env(2).unwrap();
+        assert_eq!(map.version(), 1);
+        assert_eq!(map.virtual_bucket_count(), 8);
+        assert_eq!(map.physical_shard_count(), 2);
+        assert_eq!(map.assignment_for_bucket(0), Some(1));
+        assert_eq!(map.assignment_for_bucket(4), Some(0));
+        assert_ne!(
+            map,
+            VirtualBucketShardMap::balanced(1, 8, 2).unwrap(),
+            "explicit assignments must override the balanced default"
+        );
+        clear_shard_map_env();
+    }
+
+    #[test]
+    fn shard_map_from_env_rejects_out_of_range_assignment() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_shard_map_env();
+        unsafe {
+            std::env::set_var("SHARD_MAP_ASSIGNMENTS", "0,1,2");
+        }
+
+        assert!(
+            shard_map_from_env(2).is_err(),
+            "bucket assigned to shard 2 with only 2 physical shards must error"
+        );
+        clear_shard_map_env();
+    }
+
+    #[test]
+    fn shard_map_from_env_rejects_non_numeric_version() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_shard_map_env();
+        unsafe {
+            std::env::set_var("SHARD_MAP_VERSION", "not-a-number");
+        }
+
+        assert!(shard_map_from_env(2).is_err());
+        clear_shard_map_env();
     }
 }
 // CODEGEN-END

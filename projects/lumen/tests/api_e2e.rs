@@ -216,6 +216,127 @@ async fn index_can_use_injected_sharded_write_backend() {
     assert_eq!(eids, vec![eid1.as_str(), eid0.as_str()]);
 }
 
+// #1384 AC1/AC4: `serve()`'s only production `EngineShardSearch` call site
+// (the `search_shard_segment_dirs` consolidated-read-shard-fan-in mode) now
+// builds via `new_with_shard_map` fed by `lumen::config::shard_map_from_env`
+// instead of the always-balanced `::new`. These two tests prove that wiring
+// end-to-end through the real HTTP router: an explicit SHARD_MAP_ASSIGNMENTS
+// env routes a single-shard query to the shard the map says owns it (not
+// wherever the balanced default would have sent it), and leaving the env
+// unset still reproduces `::new`'s balanced behavior byte-for-byte so
+// existing/default deployments are unaffected.
+//
+// Process env is global, so these two tests (and any other SHARD_MAP_* env
+// user added later) must serialize on this lock.
+static SHARD_MAP_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn clear_shard_map_env() {
+    unsafe {
+        std::env::remove_var("SHARD_MAP_VERSION");
+        std::env::remove_var("SHARD_MAP_ASSIGNMENTS");
+        std::env::remove_var("VIRTUAL_BUCKET_COUNT");
+    }
+}
+
+/// Search for a routing key whose bucket under `map` is `target_bucket`
+/// (mirrors `eid_for_document_shard`'s brute-force approach, but against an
+/// arbitrary caller-supplied map instead of the fixed balanced default).
+fn routing_key_for_bucket(
+    map: &lumen::routing::VirtualBucketShardMap,
+    collection_id: &str,
+    target_bucket: u32,
+) -> String {
+    for i in 0..10_000 {
+        let key = format!("k{i}");
+        if map.route_key(collection_id, &key).bucket == target_bucket {
+            return key;
+        }
+    }
+    panic!("could not find a routing key landing on bucket {target_bucket}");
+}
+
+#[tokio::test]
+async fn search_routes_by_shard_map_from_env_assignments() {
+    let _g = SHARD_MAP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    clear_shard_map_env();
+    // Reversed 2-bucket map: bucket 0 -> shard 1, bucket 1 -> shard 0 (the
+    // opposite of the balanced `bucket % shard_count` default), simulating
+    // the map a completed autonomous split/cutover would have committed.
+    unsafe {
+        std::env::set_var("SHARD_MAP_VERSION", "7");
+        std::env::set_var("VIRTUAL_BUCKET_COUNT", "2");
+        std::env::set_var("SHARD_MAP_ASSIGNMENTS", "1,0");
+    }
+    let shard_map = lumen::config::shard_map_from_env(2).expect("shard map from env");
+    clear_shard_map_env();
+    assert_eq!(shard_map.version(), 7);
+
+    let shard0 = test_search_shard([("shard0_only", "a@x.com", 1)]);
+    let shard1 = test_search_shard([("shard1_only", "a@x.com", 1)]);
+    let state = lumen::api::AppState::open(Arc::new(lumen::storage::Engine::new()))
+        .with_search_backend(Arc::new(EngineShardSearch::new_with_shard_map(
+            vec![shard0, shard1],
+            shard_map.clone(),
+        )));
+    let s = TestServer::new(lumen::api::router(state)).expect("test server");
+
+    let key = routing_key_for_bucket(&shard_map, "users", 0);
+    let resp = s
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "a@x.com" } },
+            "routing_key": key,
+            "limit": 10
+        }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    // bucket 0 is assigned to shard 1 by this map, so only shard1's document
+    // must come back — proving the query honored SHARD_MAP_ASSIGNMENTS
+    // rather than the balanced default (which would have targeted shard 0).
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["hits"][0]["external_id"], "shard1_only");
+}
+
+#[tokio::test]
+async fn search_shard_map_from_env_falls_back_to_balanced_when_unset() {
+    let _g = SHARD_MAP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    clear_shard_map_env();
+    let shard_map = lumen::config::shard_map_from_env(2).expect("shard map from env");
+
+    let shard_a = test_search_shard([("u1", "a@x.com", 40), ("u2", "b@y.com", 30)]);
+    let shard_b = test_search_shard([("u3", "a@x.com", 20)]);
+    // `::new` derives its balanced map straight from `shards.len()`, so
+    // feeding `new_with_shard_map` the env-unset (balanced) map must produce
+    // byte-identical routing to `search_can_use_injected_sharded_backend`'s
+    // `::new(...)`-built backend above.
+    let state = lumen::api::AppState::open(Arc::new(lumen::storage::Engine::new()))
+        .with_search_backend(Arc::new(EngineShardSearch::new_with_shard_map(
+            vec![shard_a, shard_b],
+            shard_map,
+        )));
+    let s = TestServer::new(lumen::api::router(state)).expect("test server");
+
+    let resp = s
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "a@x.com" } },
+            "sort": [{ "field": "age", "order": "asc" }],
+            "limit": 10
+        }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["total"], 2);
+    let eids: Vec<&str> = body["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["external_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(eids, vec!["u3", "u1"]);
+}
+
 fn eid_for_document_shard(collection_id: &str, shard: usize, shard_count: usize) -> String {
     for i in 0..10_000 {
         let eid = format!("u{shard}_{i}");

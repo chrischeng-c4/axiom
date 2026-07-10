@@ -2169,8 +2169,22 @@ async fn serve(args: ServeArgs) -> Result<()> {
     }
     if !args.search_shard_segment_dirs.is_empty() {
         let shards = load_search_shard_segment_roots(&args.search_shard_segment_dirs)?;
-        tracing::info!(shard_count = shards.len(), "search backend=segment-sharded");
-        state = state.with_search_backend(Arc::new(lumen::routing::EngineShardSearch::new(shards)));
+        // #1384: route by the operator/reshard-driver-committed shard map
+        // (SHARD_MAP_VERSION/SHARD_MAP_ASSIGNMENTS/VIRTUAL_BUCKET_COUNT env)
+        // instead of always assuming the balanced default — queries for
+        // buckets moved by a completed autonomous split must land on their
+        // new physical shard.
+        let shard_map = lumen::config::shard_map_from_env(args.shard_count).context(
+            "shard map from env (SHARD_MAP_VERSION/SHARD_MAP_ASSIGNMENTS/VIRTUAL_BUCKET_COUNT)",
+        )?;
+        tracing::info!(
+            shard_count = shards.len(),
+            shard_map_version = shard_map.version(),
+            "search backend=segment-sharded"
+        );
+        state = state.with_search_backend(Arc::new(
+            lumen::routing::EngineShardSearch::new_with_shard_map(shards, shard_map),
+        ));
     }
     #[cfg_attr(not(feature = "raft-wal"), allow(unused_mut))]
     let mut app = lumen::api::router(state);
