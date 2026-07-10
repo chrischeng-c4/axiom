@@ -119,7 +119,7 @@ regression_test:
     - "result.css does not contain the substring 'AtKeyword' by construction (no unstripped at-rule token reaches the output)"
     - "result.base_additions and result.css both still contain 'h1' (existing block-form '@layer base { ... }' inlining is unaffected, matching the existing process_layer_directives_extracts_base_rules assertion shape)"
   parse_proof_test:
-    location: "projects/jet/src/css/mod.rs, alongside apply_lightningcss's existing test coverage (or a directives.rs-adjacent integration point that calls apply_lightningcss directly)"
+    location: "projects/jet/src/css/mod.rs, alongside apply_lightningcss's existing test coverage"
     test_name: "apply_lightningcss_accepts_stripped_layer_statement_form_output"
     input: "the process_layer_directives output for '@layer theme, base, components, utilities;\n@layer base { h1 { margin: 0; } }'"
     assertion: "apply_lightningcss(...) returns Ok(..), proving AC1: no 'CSS parse error: Unexpected token AtKeyword' is raised"
@@ -127,7 +127,6 @@ verification_commands:
   - "cargo test -p jet --lib css::directives -- --nocapture"
   - "cargo test -p jet --lib css:: -- --nocapture"
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
