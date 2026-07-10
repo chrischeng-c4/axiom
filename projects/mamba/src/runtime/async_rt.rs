@@ -436,6 +436,21 @@ fn coroutine_post_poll_snapshot(id: u64) -> (bool, Option<MbValue>) {
         .unwrap_or((true, None))
 }
 
+fn coroutine_post_step_mark_awaiting(id: u64) -> (bool, Option<MbValue>) {
+    let mut coros = COROUTINES.write().unwrap();
+    coros
+        .get_mut(&id)
+        .map(|coro| {
+            if coro.exhausted {
+                (true, coro.result)
+            } else {
+                coro.awaiting = true;
+                (false, None)
+            }
+        })
+        .unwrap_or((true, None))
+}
+
 pub fn is_known_coroutine(coro_handle: MbValue) -> bool {
     let Some(id) = coro_handle.as_int() else {
         return false;
@@ -747,7 +762,7 @@ pub(crate) fn mb_coroutine_send_for_await(
         return CoroutineAwaitPoll::Error;
     }
 
-    let (exhausted, result) = coroutine_post_poll_snapshot(id);
+    let (exhausted, result) = coroutine_post_step_mark_awaiting(id);
     if exhausted {
         let result = result.unwrap_or_else(MbValue::none);
         unsafe {
@@ -756,9 +771,6 @@ pub(crate) fn mb_coroutine_send_for_await(
         return CoroutineAwaitPoll::Complete(result);
     }
 
-    if let Some(coro) = COROUTINES.write().unwrap().get_mut(&id) {
-        coro.awaiting = true;
-    }
     CoroutineAwaitPoll::Yielded(step_value)
 }
 
@@ -820,14 +832,11 @@ pub fn mb_coroutine_send(coro_handle: MbValue, value: MbValue) -> MbValue {
         return MbValue::none();
     }
 
-    let (exhausted, result) = coroutine_post_poll_snapshot(id);
+    let (exhausted, result) = coroutine_post_step_mark_awaiting(id);
     if exhausted {
         return raise_stop_iteration_value(result.unwrap_or_else(MbValue::none));
     }
 
-    if let Some(coro) = COROUTINES.write().unwrap().get_mut(&id) {
-        coro.awaiting = true;
-    }
     step_value
 }
 
@@ -1261,6 +1270,26 @@ mod tests {
         assert_eq!(mb_coroutine_get_state(coro), 17);
 
         mb_coroutine_release(child);
+        mb_coroutine_release(coro);
+    }
+
+    #[test]
+    fn test_coroutine_send_sets_awaiting_on_non_terminal_suspend() {
+        unsafe extern "C" fn suspend_once(coro_bits: i64) -> i64 {
+            let coro = MbValue::from_bits(coro_bits as u64);
+            mb_coroutine_suspend_current(coro);
+            MbValue::none().to_bits() as i64
+        }
+
+        let name = MbValue::from_ptr(MbObject::new_str("await_parent".to_string()));
+        let locals = MbValue::from_ptr(MbObject::new_list(vec![]));
+        let coro = mb_coroutine_new(name, locals);
+        mb_coroutine_set_body(coro, MbValue::from_func(suspend_once as usize));
+
+        let yielded = mb_coroutine_send(coro, MbValue::none());
+        assert!(yielded.is_none());
+        assert_eq!(mb_coroutine_awaited(coro).as_bool(), Some(true));
+
         mb_coroutine_release(coro);
     }
 
