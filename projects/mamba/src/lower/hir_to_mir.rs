@@ -2834,24 +2834,30 @@ impl<'a> HirToMir<'a> {
             })
             .collect();
 
-        // Create coroutine: mb_coroutine_new(name, empty_list)
+        // Create coroutine with pre-sized locals and registered body.
         let name_vreg = self.fresh_vreg();
         self.current_stmts.push(MirInst::LoadConst {
             dest: name_vreg,
             value: MirConst::Str(format!("fn_{}", func.name.0)),
             ty: self.tcx.str(),
         });
-        let locals_vreg = self.fresh_vreg();
-        self.current_stmts.push(MirInst::MakeList {
-            dest: locals_vreg,
-            elements: Vec::new(),
-            ty: self.tcx.any(),
+        let local_count_vreg = self.fresh_vreg();
+        self.current_stmts.push(MirInst::LoadConst {
+            dest: local_count_vreg,
+            value: MirConst::Int(func.params.len() as i64),
+            ty: int_ty,
+        });
+        let body_fn_ptr = self.fresh_vreg();
+        self.current_stmts.push(MirInst::LoadConst {
+            dest: body_fn_ptr,
+            value: MirConst::FuncRef(body_sym),
+            ty: int_ty,
         });
         let coro_handle = self.fresh_vreg();
         self.current_stmts.push(MirInst::CallExtern {
             dest: Some(coro_handle),
-            name: "mb_coroutine_new".to_string(),
-            args: vec![name_vreg, locals_vreg],
+            name: "mb_coroutine_new_with_body".to_string(),
+            args: vec![name_vreg, local_count_vreg, body_fn_ptr],
             ty: int_ty,
         });
 
@@ -2871,19 +2877,6 @@ impl<'a> HirToMir<'a> {
             });
         }
 
-        // Register body function pointer for deferred execution (#313 R1)
-        let body_fn_ptr = self.fresh_vreg();
-        self.current_stmts.push(MirInst::LoadConst {
-            dest: body_fn_ptr,
-            value: MirConst::FuncRef(body_sym),
-            ty: int_ty,
-        });
-        self.current_stmts.push(MirInst::CallExtern {
-            dest: None,
-            name: "mb_coroutine_set_body".to_string(),
-            args: vec![coro_handle, body_fn_ptr],
-            ty: none_ty,
-        });
         if close_raises_ignored_exit {
             let flag_vreg = self.fresh_vreg();
             self.current_stmts.push(MirInst::LoadConst {
@@ -5252,17 +5245,13 @@ impl<'a> HirToMir<'a> {
                     Some(self.emit_closure_for_func(*func_sym, &freevars))
                 };
                 if let Some(filename) = self.src_filename.clone() {
-                    let line = self
-                        .user_func_lines
-                        .get(&func_sym.0)
-                        .copied()
-                        .or_else(|| {
-                            if span.end > 0 {
-                                Some(self.source_line_for_span(span) as u32)
-                            } else {
-                                None
-                            }
-                        });
+                    let line = self.user_func_lines.get(&func_sym.0).copied().or_else(|| {
+                        if span.end > 0 {
+                            Some(self.source_line_for_span(span) as u32)
+                        } else {
+                            None
+                        }
+                    });
                     if let Some(line) = line {
                         let target_vreg = if let Some(closure_vreg) = closure_vreg {
                             closure_vreg
