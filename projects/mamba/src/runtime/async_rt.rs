@@ -590,12 +590,14 @@ pub fn is_coroutine_wrapper(wrapper: MbValue) -> bool {
     coroutine_wrapper_target(wrapper).is_some()
 }
 
-pub(crate) fn mb_coroutine_suspend_current(awaitable: MbValue) {
+pub(crate) fn mb_coroutine_suspend_current_known_target(
+    awaitable: MbValue,
+    await_coro_id: Option<u64>,
+) {
     CURRENT_COROUTINE_ID.with(|cell| {
         let Some(id) = cell.get() else {
             return;
         };
-        let await_coro_id = live_await_target_coroutine_id(awaitable);
         if let Some(coro) = COROUTINES.write().unwrap().get_mut(&id) {
             coro.suspend_requested = true;
             coro.awaiting = true;
@@ -610,6 +612,10 @@ pub(crate) fn mb_coroutine_suspend_current(awaitable: MbValue) {
             coro.pending_await_coro_id = await_coro_id;
         }
     });
+}
+
+pub(crate) fn mb_coroutine_suspend_current(awaitable: MbValue) {
+    mb_coroutine_suspend_current_known_target(awaitable, live_await_target_coroutine_id(awaitable));
 }
 
 pub fn mb_coroutine_should_suspend(coro_handle: MbValue) -> MbValue {
