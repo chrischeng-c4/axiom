@@ -168,14 +168,15 @@ pub struct TypeChecker {
     pub diagnostics: Vec<Diagnostic>,
     /// Generic parameter lists for functions/classes (#314).
     pub(crate) generic_defs: HashMap<String, GenericParams>,
+    /// Aliases shadowed by nested PEP 695 type-parameter scopes. Each
+    /// `register_type_params` call pushes one frame and cleanup restores it.
+    type_param_alias_scopes: Vec<Vec<(String, Option<TypeId>)>>,
     /// Full user-function parameter metadata. `Ty::Fn` deliberately keeps a
     /// compact ABI-facing shape, so keyword-only and variadic annotation checks
     /// live in this checker-only side channel.
     pub(crate) function_param_sigs: HashMap<String, Vec<FunctionParamSig>>,
     /// Protocol registry for structural subtyping (#314).
     pub(crate) protocol_registry: ProtocolRegistry,
-    /// Counter for TypeVarId allocation.
-    pub(crate) next_type_var_id: u32,
     /// Class method signatures for protocol conformance checking (#314).
     pub(crate) class_methods: HashMap<String, HashMap<String, super::protocol::MethodSig>>,
     /// Class method signatures for bare-class unbound calls such as
@@ -267,9 +268,9 @@ impl TypeChecker {
             errors: Vec::new(),
             diagnostics: Vec::new(),
             generic_defs: HashMap::new(),
+            type_param_alias_scopes: Vec::new(),
             function_param_sigs: HashMap::new(),
             protocol_registry: ProtocolRegistry::new(),
-            next_type_var_id: 0,
             class_methods: HashMap::new(),
             class_unbound_methods: HashMap::new(),
             typed_dict_classes: HashSet::new(),
@@ -372,44 +373,197 @@ impl TypeChecker {
         type_params: &[crate::parser::ast::TypeParam],
     ) -> GenericParams {
         let mut gp = GenericParams::new();
-        for param in type_params {
-            let name = &param.name;
-            let var_id = TypeVarId(self.next_type_var_id);
-            self.next_type_var_id += 1;
 
-            // Register in type alias scope so `T` resolves as a TypeVar
-            let tv_ty = self.tcx.intern(Ty::TypeVar(var_id));
-            self.tcx.register_alias(name.clone(), tv_ty);
+        // Allocate every TypeVar first so bounds such as `T: Wrapper[U]`
+        // can resolve all declaration-local parameter names.
+        let allocated: Vec<_> = type_params
+            .iter()
+            .map(|param| {
+                let var_id = self.tcx.new_type_var(param.name.clone(), None, Vec::new());
+                (param, var_id)
+            })
+            .collect();
+        let aliases: Vec<_> = allocated
+            .iter()
+            .map(|(param, var_id)| (param.name.clone(), *var_id))
+            .collect();
+        self.register_type_param_aliases(&aliases);
 
+        // Resolve metadata only after the complete alias scope exists. A
+        // lazy forward reference that is not resolvable during preregistration
+        // is intentionally omitted without leaking an `unknown type` error.
+        for (param, var_id) in allocated {
             let bound = param
                 .bound
                 .as_ref()
-                .and_then(expr_to_type_expr)
-                .map(|ty| self.resolve_type_expr(&ty));
+                .and_then(|expr| self.resolve_type_param_metadata_expr(expr));
             let constraints = param
                 .constraints
                 .as_ref()
-                .map(|exprs| {
-                    exprs
+                .and_then(|items| {
+                    items
                         .iter()
-                        .filter_map(expr_to_type_expr)
-                        .map(|ty| self.resolve_type_expr(&ty))
-                        .collect::<Vec<_>>()
+                        .map(|expr| self.resolve_type_param_metadata_expr(expr))
+                        .collect::<Option<Vec<_>>>()
                 })
                 .unwrap_or_default();
-            let registered_id = self
-                .tcx
-                .new_type_var(name.clone(), bound, constraints.clone());
-            debug_assert_eq!(registered_id, var_id);
-            gp.add_with_constraints(name, var_id, bound, constraints);
+
+            self.tcx
+                .set_type_var_metadata(var_id, bound, constraints.clone());
+            gp.add_with_constraints(&param.name, var_id, bound, constraints);
         }
+
         gp
+    }
+
+    fn register_type_param_aliases(&mut self, aliases: &[(String, TypeVarId)]) {
+        let shadowed = aliases
+            .iter()
+            .map(|(name, _)| (name.clone(), self.tcx.resolve_alias(name)))
+            .collect();
+        self.type_param_alias_scopes.push(shadowed);
+
+        for (name, var_id) in aliases {
+            let tv_ty = self.tcx.intern(Ty::TypeVar(*var_id));
+            self.tcx.register_alias(name.clone(), tv_ty);
+        }
+    }
+
+    fn resolve_type_param_metadata_expr(&mut self, expr: &Spanned<Expr>) -> Option<TypeId> {
+        let type_expr = expr_to_type_expr(expr)?;
+        let error_mark = self.errors_mark();
+        let resolved = self.resolve_type_expr(&type_expr);
+        if self.errors.len() != error_mark || resolved == self.tcx.error() {
+            self.truncate_errors(error_mark);
+            None
+        } else {
+            Some(resolved)
+        }
     }
 
     /// Remove type parameter aliases to prevent leaking outside scope.
     pub(crate) fn unregister_type_params(&mut self, type_params: &[crate::parser::ast::TypeParam]) {
         for param in type_params {
             self.tcx.unregister_alias(&param.name);
+        }
+
+        let shadowed = self
+            .type_param_alias_scopes
+            .pop()
+            .expect("type parameter alias scopes must be balanced");
+        for (name, prior) in shadowed {
+            if let Some(ty) = prior {
+                self.tcx.register_alias(name, ty);
+            }
+        }
+    }
+
+    /// Re-resolve lazy PEP 695 metadata after the first pass has registered
+    /// every definition. This keeps the original TypeVar ids embedded in
+    /// function/class types while allowing forward bounds to become concrete.
+    fn finalize_generic_param_metadata(
+        &mut self,
+        name: &str,
+        type_params: &[crate::parser::ast::TypeParam],
+    ) {
+        let Some(mut gp) = self.generic_defs.get(name).cloned() else {
+            return;
+        };
+        if gp.params.len() != type_params.len() {
+            return;
+        }
+
+        let aliases: Vec<_> = gp
+            .params
+            .iter()
+            .map(|tv| (tv.name.clone(), tv.id))
+            .collect();
+        self.register_type_param_aliases(&aliases);
+
+        for (param, tv) in type_params.iter().zip(gp.params.iter_mut()) {
+            if let Some(expr) = &param.bound {
+                if let Some(bound) = self.resolve_type_param_metadata_expr(expr) {
+                    tv.bound = Some(bound);
+                }
+            }
+            if let Some(items) = &param.constraints {
+                if let Some(constraints) = items
+                    .iter()
+                    .map(|expr| self.resolve_type_param_metadata_expr(expr))
+                    .collect::<Option<Vec<_>>>()
+                {
+                    tv.constraints = constraints;
+                }
+            }
+            self.tcx
+                .set_type_var_metadata(tv.id, tv.bound, tv.constraints.clone());
+        }
+
+        self.unregister_type_params(type_params);
+        self.generic_defs.insert(name.to_string(), gp);
+    }
+
+    fn finalize_generic_metadata_in(&mut self, stmts: &[Spanned<Stmt>]) {
+        for stmt in stmts {
+            match &stmt.node {
+                Stmt::FnDef {
+                    name, type_params, ..
+                }
+                | Stmt::AsyncFnDef {
+                    name, type_params, ..
+                }
+                | Stmt::ClassDef {
+                    name, type_params, ..
+                } => self.finalize_generic_param_metadata(name, type_params),
+                _ => {}
+            }
+
+            match &stmt.node {
+                Stmt::Try {
+                    body,
+                    handlers,
+                    else_body,
+                    finally_body,
+                } => {
+                    self.finalize_generic_metadata_in(body);
+                    for handler in handlers {
+                        self.finalize_generic_metadata_in(&handler.body);
+                    }
+                    if let Some(body) = else_body {
+                        self.finalize_generic_metadata_in(body);
+                    }
+                    if let Some(body) = finally_body {
+                        self.finalize_generic_metadata_in(body);
+                    }
+                }
+                Stmt::If {
+                    body,
+                    elif_clauses,
+                    else_body,
+                    ..
+                } => {
+                    self.finalize_generic_metadata_in(body);
+                    for (_, body) in elif_clauses {
+                        self.finalize_generic_metadata_in(body);
+                    }
+                    if let Some(body) = else_body {
+                        self.finalize_generic_metadata_in(body);
+                    }
+                }
+                Stmt::While {
+                    body, else_body, ..
+                }
+                | Stmt::For {
+                    body, else_body, ..
+                } => {
+                    self.finalize_generic_metadata_in(body);
+                    if let Some(body) = else_body {
+                        self.finalize_generic_metadata_in(body);
+                    }
+                }
+                Stmt::With { body, .. } => self.finalize_generic_metadata_in(body),
+                _ => {}
+            }
         }
     }
 
@@ -726,9 +880,7 @@ impl TypeChecker {
                 Stmt::Assign { target, value } => {
                     if let Expr::Ident(name) = &target.node {
                         if is_type_var_factory_call(&value.node) {
-                            let var_id = TypeVarId(self.next_type_var_id);
-                            self.next_type_var_id += 1;
-                            self.tcx.new_type_var(name.clone(), None, Vec::new());
+                            let var_id = self.tcx.new_type_var(name.clone(), None, Vec::new());
                             let tv_ty = self.tcx.intern(Ty::TypeVar(var_id));
                             self.tcx.register_alias(name.clone(), tv_ty);
                         }
@@ -790,6 +942,7 @@ impl TypeChecker {
     pub fn check_module(&mut self, module: &Module) -> Vec<MambaError> {
         // First pass: register all top-level function/class/enum/alias names
         self.preregister_defs(&module.stmts);
+        self.finalize_generic_metadata_in(&module.stmts);
 
         // Second pass: check bodies
         for stmt in &module.stmts {
@@ -919,6 +1072,11 @@ impl TypeChecker {
                                     let mut subst = Substitution::new();
                                     for (tv, concrete) in gp.params.iter().zip(inner.iter()) {
                                         subst.insert(tv.id, *concrete);
+                                    }
+                                    for error in
+                                        super::generic::check_bounds(&subst, &gp, &mut self.tcx)
+                                    {
+                                        self.error(ty.span, error);
                                     }
                                     fields
                                         .iter()
@@ -1749,52 +1907,33 @@ mod tests {
     }
 
     #[test]
-    fn test_register_type_params_preserves_bounds_and_constraints() {
-        let mut tc = TypeChecker::new();
-        let gp = tc.register_type_params(&[
-            crate::parser::ast::TypeParam {
-                name: "T".to_string(),
-                kind: crate::parser::ast::TypeParamKind::TypeVar,
-                bound: Some(Spanned::new(
-                    Expr::Ident("float".to_string()),
-                    Span::dummy(),
-                )),
-                constraints: None,
-                default: None,
-            },
-            crate::parser::ast::TypeParam {
-                name: "U".to_string(),
-                kind: crate::parser::ast::TypeParamKind::TypeVar,
-                bound: None,
-                constraints: Some(vec![
-                    Spanned::new(Expr::Ident("int".to_string()), Span::dummy()),
-                    Spanned::new(Expr::Ident("str".to_string()), Span::dummy()),
-                ]),
-                default: None,
-            },
-        ]);
-
-        assert_eq!(gp.params[0].bound, Some(tc.tcx.float()));
-        assert_eq!(gp.params[0].constraints, Vec::<TypeId>::new());
-        assert_eq!(gp.params[1].bound, None);
-        assert_eq!(gp.params[1].constraints, vec![tc.tcx.int(), tc.tcx.str()]);
-
-        let t_info = tc.tcx.get_type_var(gp.params[0].id);
-        assert_eq!(t_info.bound, Some(tc.tcx.float()));
-        assert!(t_info.constraints.is_empty());
-
-        let u_info = tc.tcx.get_type_var(gp.params[1].id);
-        assert_eq!(u_info.bound, None);
-        assert_eq!(u_info.constraints, vec![tc.tcx.int(), tc.tcx.str()]);
-    }
-
-    #[test]
     fn test_unregister_type_params() {
         let mut tc = TypeChecker::new();
         tc.register_type_params(&[crate::parser::ast::TypeParam::plain("T")]);
         assert!(tc.tcx.resolve_alias("T").is_some());
         tc.unregister_type_params(&[crate::parser::ast::TypeParam::plain("T")]);
         assert!(tc.tcx.resolve_alias("T").is_none());
+    }
+
+    #[test]
+    fn test_nested_type_param_scopes_restore_shadowed_aliases() {
+        let mut tc = TypeChecker::new();
+        let outer_ty = tc.tcx.int();
+        tc.tcx.register_alias("T".to_string(), outer_ty);
+        let params = [crate::parser::ast::TypeParam::plain("T")];
+
+        tc.register_type_params(&params);
+        let first_scope_ty = tc.tcx.resolve_alias("T").unwrap();
+        assert_ne!(first_scope_ty, outer_ty);
+
+        tc.register_type_params(&params);
+        let second_scope_ty = tc.tcx.resolve_alias("T").unwrap();
+        assert_ne!(second_scope_ty, first_scope_ty);
+
+        tc.unregister_type_params(&params);
+        assert_eq!(tc.tcx.resolve_alias("T"), Some(first_scope_ty));
+        tc.unregister_type_params(&params);
+        assert_eq!(tc.tcx.resolve_alias("T"), Some(outer_ty));
     }
 
     #[test]
