@@ -226,12 +226,34 @@ fn statefulset_wires_serving_contract_single_member() {
         // always falling back to the balanced default.
         "SHARD_MAP_VERSION",
         "VIRTUAL_BUCKET_COUNT",
+        // #1387 AC1: `LUMEN_WAL=auto` resolves to embedded (RAM-only) at
+        // replicasPerShard:1 — without these, the mounted `raft` PVC is
+        // never touched and a pod restart wipes all data.
+        "LUMEN_DATA_DIR",
+        "LUMEN_PERSISTENCE",
     ] {
         assert!(
             names.contains(&required.to_string()),
             "missing env {required}; have {names:?}"
         );
     }
+    // #1387: the exact values that activate the segment store + local AOF
+    // (`everysec`-fsync crash durability) under the durable `raft` PVC mount,
+    // disjoint from the raft backend's own `/var/lib/lumen/raft` subtree.
+    let env = c["env"].as_array().unwrap();
+    let value_of = |name: &str| {
+        env.iter()
+            .find(|e| e["name"] == name)
+            .and_then(|e| e["value"].as_str())
+            .unwrap_or_else(|| panic!("env {name} missing a literal value"))
+            .to_string()
+    };
+    assert_eq!(value_of("LUMEN_DATA_DIR"), "/var/lib/lumen/data");
+    assert_eq!(value_of("LUMEN_PERSISTENCE"), "segment");
+    assert!(
+        !value_of("LUMEN_DATA_DIR").starts_with("/var/lib/lumen/raft"),
+        "embedded data dir must stay disjoint from the raft backend's subtree"
+    );
     // Single member, no raft consensus at replicasPerShard:1 → no raft
     // peer-identity env.
     for absent in [
@@ -753,6 +775,15 @@ fn raft_ha_renders_serving_statefulset() {
         "LUMEN_HEADLESS_SERVICE",
     ] {
         assert!(env.contains(&k.to_string()), "missing {k} in {env:?}");
+    }
+    // #1387 regression: raft mode is already PVC-backed via
+    // `LUMEN_RAFT_DATA_DIR` (out of scope) — the embedded-mode data-dir env
+    // only applies at `replicasPerShard <= 1` and must stay absent here.
+    for absent in ["LUMEN_DATA_DIR", "LUMEN_PERSISTENCE"] {
+        assert!(
+            !env.contains(&absent.to_string()),
+            "unexpected embedded-persistence env {absent} in raft mode; have {env:?}"
+        );
     }
 
     // The raft PVC shape is unchanged by #812 — it was already unconditional

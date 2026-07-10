@@ -462,6 +462,34 @@ fn llm_storage_documents_unconditional_statefulset_pvc() {
     }
 }
 
+/// #1387: the operator now activates PVC-backed embedded persistence at
+/// `replicasPerShard: 1` (`LUMEN_DATA_DIR` + `LUMEN_PERSISTENCE=segment`),
+/// with the disjoint raft subtree, actual crash-durability semantics
+/// (`everysec` AOF fsync, ~1s RPO — not the `LUMEN_SNAPSHOT_SECS` interval),
+/// and the bare-`lumen serve` dev-mode caveat all discoverable offline via
+/// `lumen llm --topic storage`.
+#[test]
+fn llm_storage_documents_embedded_mode_persistence_wiring() {
+    let storage = llm_storage_md();
+    for needle in [
+        "LUMEN_WAL=auto",
+        "MemWal",
+        "LUMEN_DATA_DIR=/var/lib/lumen/data",
+        "LUMEN_PERSISTENCE=segment",
+        "/var/lib/lumen/raft",
+        "everysec",
+        "src/aof.rs",
+        "src/segment_rdb.rs",
+        "~1s",
+        "LUMEN_SNAPSHOT_SECS",
+        "Dev mode: bare `lumen serve` stays in-memory",
+        "--data-dir",
+        "in-memory",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
+    }
+}
+
 #[test]
 fn llm_storage_documents_shard_replica_and_bootstrap_boundaries() {
     let storage = llm_storage_md();

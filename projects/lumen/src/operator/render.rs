@@ -32,6 +32,11 @@ const TOKEN_REGISTRY_VOLUME: &str = "lumen-token-registry";
 const TOKEN_REGISTRY_KEY: &str = "token-registry.json";
 const TOKEN_REGISTRY_MOUNT_DIR: &str = "/var/run/secrets/lumen";
 const TOKEN_REGISTRY_FILE: &str = "/var/run/secrets/lumen/token-registry.json";
+// #1387: embedded-mode persistence subtree, disjoint from the raft backend's
+// `/var/lib/lumen/raft` default (`LUMEN_RAFT_DATA_DIR` in `bin/lumen.rs`) so
+// both can coexist on the one `raft` PVC mount across a `replicasPerShard`
+// change without colliding.
+const EMBEDDED_DATA_DIR: &str = "/var/lib/lumen/data";
 
 /// Resolve the instance name (defaults to `lumen` only when metadata is absent,
 /// which never happens for a real CR).
@@ -439,6 +444,23 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
                 "value": limit.to_string(),
             }));
         }
+    }
+    // #1387: `LUMEN_WAL=auto` above resolves to `Embedded` (`MemWal::new()`,
+    // RAM-only) whenever `resolve_wal_backend` sees no raft cluster context —
+    // exactly the `replicasPerShard <= 1` regime (its raft peer-identity env
+    // is stripped in `serving_statefulset` below). Without `LUMEN_DATA_DIR`
+    // that mode never touches the already-mounted `raft` PVC, so a pod
+    // restart — including the reshard cutover's own rolling restart — wipes
+    // all data despite the volume being durable. `replicasPerShard > 1` pods
+    // run raft (already PVC-backed via `LUMEN_RAFT_DATA_DIR`) and are
+    // unaffected by this block. `--persistence=segment` (not the CBOR
+    // default) is deliberate: it activates the local AOF (`src/aof.rs`)
+    // alongside the periodic segment checkpoint, giving `everysec`-fsync
+    // crash durability (~1s RPO bound) instead of only surviving cleanly
+    // between `LUMEN_SNAPSHOT_SECS` (default 300s) CBOR snapshots.
+    if lumen.spec.replicas_per_shard <= 1 {
+        env.push(json!({ "name": "LUMEN_DATA_DIR", "value": EMBEDDED_DATA_DIR }));
+        env.push(json!({ "name": "LUMEN_PERSISTENCE", "value": "segment" }));
     }
     env
 }
