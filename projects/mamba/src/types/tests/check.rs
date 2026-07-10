@@ -589,14 +589,16 @@ fn pep695_bound_constraint_metadata() {
         "metadata declarations should check: {errors:?}"
     );
 
-    let bounded = &checker.generic_defs["bounded"].params[0];
+    let bounded_symbol = checker.symbols.lookup("bounded").unwrap();
+    let bounded = &checker.generic_defs[&bounded_symbol].params[0];
     assert_eq!(bounded.bound, Some(checker.tcx.float()));
     assert!(bounded.constraints.is_empty());
     let bounded_info = checker.tcx.get_type_var(bounded.id);
     assert_eq!(bounded_info.bound, bounded.bound);
     assert_eq!(bounded_info.constraints, bounded.constraints);
 
-    let constrained = &checker.generic_defs["constrained"].params[0];
+    let constrained_symbol = checker.symbols.lookup("constrained").unwrap();
+    let constrained = &checker.generic_defs[&constrained_symbol].params[0];
     assert_eq!(
         constrained.constraints,
         vec![checker.tcx.int(), checker.tcx.str()]
@@ -728,7 +730,8 @@ fn pep695_forward_bound_is_skip_safe() {
 
     let later_sym = checker.symbols.lookup("Later").expect("Later registered");
     let later_ty = checker.get_sym_type(later_sym.0);
-    let keep_param = &checker.generic_defs["keep"].params[0];
+    let keep_symbol = checker.symbols.lookup("keep").unwrap();
+    let keep_param = &checker.generic_defs[&keep_symbol].params[0];
     assert_eq!(keep_param.bound, Some(later_ty));
     assert_eq!(
         checker.tcx.get_type_var(keep_param.id).bound,
@@ -904,6 +907,71 @@ fn pep695_constructor_arguments_are_checked_once() {
     assert_eq!(
         undefined_count, 1,
         "constructor argument expressions must be checked once: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_nested_function_uses_symbol_identity() {
+    let errors = check(
+        "def pick[T: int](value: T) -> T:\n\
+         \x20   return value\n\
+         def outer() -> None:\n\
+         \x20   def pick[T: str](value: T) -> T:\n\
+         \x20       return value\n\
+         \x20   pick(1)\n\
+         outer()\n\
+         pick(\"bad\")\n",
+    );
+    let violations = errors
+        .iter()
+        .filter(|error| error.contains("bound violation"))
+        .count();
+    assert_eq!(
+        violations, 2,
+        "nested and top-level definitions must keep distinct generic metadata: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_nested_forward_bound_is_finalized_in_lexical_scope() {
+    let errors = check(
+        "def outer() -> None:\n\
+         \x20   def keep[T: Later](value: T) -> T:\n\
+         \x20       return value\n\
+         \x20   class Later:\n\
+         \x20       pass\n\
+         \x20   class Other:\n\
+         \x20       pass\n\
+         \x20   keep(Other())\n\
+         outer()\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("bound violation")),
+        "nested forward bounds must resolve before checking calls: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_nested_class_constructor_uses_symbol_identity() {
+    let errors = check(
+        "class Box[T: int]:\n\
+         \x20   def __init__(self, value: T) -> None:\n\
+         \x20       pass\n\
+         def outer() -> None:\n\
+         \x20   class Box[T: str]:\n\
+         \x20       def __init__(self, value: T) -> None:\n\
+         \x20           pass\n\
+         \x20   Box(1)\n\
+         outer()\n\
+         Box(\"bad\")\n",
+    );
+    let violations = errors
+        .iter()
+        .filter(|error| error.contains("bound violation"))
+        .count();
+    assert_eq!(
+        violations, 2,
+        "nested and top-level classes must keep distinct constructor metadata: {errors:?}"
     );
 }
 

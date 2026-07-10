@@ -307,6 +307,9 @@ impl TypeChecker {
                 } else {
                     None
                 };
+                let func_symbol = func_name
+                    .as_deref()
+                    .and_then(|name| self.symbols.lookup(name));
                 // ① Type-wall PoC HOOK: stdlib argument enforcement. ADDITIVE —
                 // runs before the existing `match func_ty` and never changes the
                 // Any-path return. It only *emits* the existing arg-mismatch
@@ -399,9 +402,8 @@ impl TypeChecker {
                             }
                         }
                         let mut checked_arg_types = Vec::with_capacity(args.len());
-                        let user_param_sigs = func_name
-                            .as_deref()
-                            .and_then(|name| self.function_param_sigs.get(name).cloned());
+                        let user_param_sigs = func_symbol
+                            .and_then(|symbol| self.function_param_sigs.get(&symbol).cloned());
                         let mut param_idx = 0;
                         for arg in args {
                             match arg {
@@ -537,8 +539,8 @@ impl TypeChecker {
                                 )
                             });
                         // If generic function, infer type args and check bounds
-                        if let Some(ref fname) = func_name {
-                            if let Some(gp) = self.generic_defs.get(fname).cloned() {
+                        if let Some(symbol) = func_symbol {
+                            if let Some(gp) = self.generic_defs.get(&symbol).cloned() {
                                 let (subst, conflicts) = infer_type_args(
                                     &gp,
                                     &inference_params,
@@ -577,9 +579,8 @@ impl TypeChecker {
                         name: ref class_name,
                         ..
                     } => {
-                        let init_params = self
-                            .class_method_param_sigs
-                            .get(class_name)
+                        let init_params = func_symbol
+                            .and_then(|symbol| self.class_method_param_sigs.get(&symbol))
                             .and_then(|methods| methods.get("__init__"))
                             .cloned()
                             .unwrap_or_default();
@@ -603,7 +604,10 @@ impl TypeChecker {
                         let (inference_params, inference_args) =
                             bind_explicit_inference_args(args, &checked_arg_types, &init_params);
                         // If generic class, infer type params from constructor args
-                        if let Some(gp) = self.generic_defs.get(class_name).cloned() {
+                        if let Some(gp) = func_symbol
+                            .and_then(|symbol| self.generic_defs.get(&symbol))
+                            .cloned()
+                        {
                             if !init_params.is_empty() {
                                 let (subst, conflicts) = infer_type_args(
                                     &gp,
