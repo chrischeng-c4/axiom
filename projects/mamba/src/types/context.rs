@@ -124,6 +124,20 @@ impl TypeContext {
         &self.type_vars[id.0 as usize]
     }
 
+    /// Fill metadata after a declaration's TypeVars have all been allocated.
+    /// PEP 695 bounds may refer to another parameter in the same declaration,
+    /// so aliases must exist before their bound/constraint expressions resolve.
+    pub fn set_type_var_metadata(
+        &mut self,
+        id: TypeVarId,
+        bound: Option<TypeId>,
+        constraints: Vec<TypeId>,
+    ) {
+        let info = &mut self.type_vars[id.0 as usize];
+        info.bound = bound;
+        info.constraints = constraints;
+    }
+
     // --- Subtype checking ---
 
     /// Check if `sub` is a subtype of `sup` (simplified).
@@ -301,6 +315,20 @@ mod tests {
         let str_ty = tcx.str();
         let id = tcx.new_type_var("T".to_string(), None, vec![int_ty, str_ty]);
         let info = tcx.get_type_var(id);
+        assert_eq!(info.constraints, vec![int_ty, str_ty]);
+    }
+
+    #[test]
+    fn test_set_type_var_metadata_after_allocation() {
+        let mut tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let str_ty = tcx.str();
+        let id = tcx.new_type_var("T".to_string(), None, Vec::new());
+
+        tcx.set_type_var_metadata(id, Some(int_ty), vec![int_ty, str_ty]);
+
+        let info = tcx.get_type_var(id);
+        assert_eq!(info.bound, Some(int_ty));
         assert_eq!(info.constraints, vec![int_ty, str_ty]);
     }
 
