@@ -12130,11 +12130,17 @@ impl<'a> HirToMir<'a> {
         let Some(coro_handle) = self.async_coro_vreg else {
             return;
         };
+        let state_raw = self.fresh_vreg();
+        self.current_stmts.push(MirInst::LoadConst {
+            dest: state_raw,
+            value: MirConst::Int(resume_state as i64),
+            ty: self.tcx.int(),
+        });
         let suspended = self.fresh_vreg();
         self.current_stmts.push(MirInst::CallExtern {
             dest: Some(suspended),
-            name: "mb_coroutine_should_suspend".to_string(),
-            args: vec![coro_handle],
+            name: "mb_coroutine_should_suspend_set_state_i64".to_string(),
+            args: vec![coro_handle, state_raw],
             ty: self.tcx.bool(),
         });
         let return_block = self.fresh_block();
@@ -12145,18 +12151,6 @@ impl<'a> HirToMir<'a> {
             else_block: continue_block,
         });
         self.start_block(return_block);
-        let state_raw = self.fresh_vreg();
-        self.current_stmts.push(MirInst::LoadConst {
-            dest: state_raw,
-            value: MirConst::Int(resume_state as i64),
-            ty: self.tcx.int(),
-        });
-        self.current_stmts.push(MirInst::CallExtern {
-            dest: None,
-            name: "mb_coroutine_set_state_i64".to_string(),
-            args: vec![coro_handle, state_raw],
-            ty: self.tcx.none(),
-        });
         self.finish_block(Terminator::Return(Some(suspend_value)));
         self.start_block(resume_block);
         self.current_stmts.push(MirInst::CallExtern {
