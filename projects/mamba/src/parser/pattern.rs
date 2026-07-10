@@ -480,9 +480,9 @@ impl<'a> Parser<'a> {
         if self.peek_kind() == Some(TokenKind::RParen) {
             self.advance();
             return Ok(Spanned::new(
-                Pattern::Constructor {
-                    path: cls,
-                    fields: Vec::new(),
+                Pattern::ClassPattern {
+                    cls,
+                    patterns: Vec::new(),
                 },
                 self.span_from(start),
             ));
@@ -656,11 +656,11 @@ mod tests {
     #[test]
     fn test_constructor_no_fields() {
         match parse_pattern("Point()") {
-            Pattern::Constructor { path, fields } => {
-                assert_eq!(path, vec!["Point"]);
-                assert!(fields.is_empty());
+            Pattern::ClassPattern { cls, patterns } => {
+                assert_eq!(cls, vec!["Point"]);
+                assert!(patterns.is_empty());
             }
-            other => panic!("expected Constructor, got {other:?}"),
+            other => panic!("expected ClassPattern, got {other:?}"),
         }
     }
 
@@ -686,6 +686,17 @@ mod tests {
                 assert!(fields.is_empty());
             }
             other => panic!("expected Constructor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_dotted_class_pattern_no_args() {
+        match parse_pattern("Shape.Circle()") {
+            Pattern::ClassPattern { cls, patterns } => {
+                assert_eq!(cls, vec!["Shape", "Circle"]);
+                assert!(patterns.is_empty());
+            }
+            other => panic!("expected ClassPattern, got {other:?}"),
         }
     }
 

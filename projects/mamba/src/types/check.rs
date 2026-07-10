@@ -1,8 +1,6 @@
 use super::generic::{bind_explicit_type_args, complete_type_args, GenericParams, Substitution};
 use super::protocol::ProtocolRegistry;
-use super::ty::{
-    AliasInstanceId, TypeParamDefault, TypeVarId, TypeVarKind, UserClass, UserClassRole,
-};
+use super::ty::{AliasInstanceId, ClassRole, TypeParamDefault, TypeVarId, TypeVarKind, UserClass};
 use super::{Ty, TypeContext, TypeId};
 use crate::error::MambaError;
 use crate::parser::ast::*;
@@ -132,6 +130,13 @@ pub(crate) enum NumericRoot {
     Float,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClassPatternTarget {
+    Instance(TypeId),
+    Unknown,
+    Invalid,
+}
+
 const MAX_TYPE_COMPATIBILITY_DEPTH: usize = 128;
 
 /// Type checker: walks the AST, resolves names, and checks types.
@@ -253,6 +258,207 @@ fn collect_same_scope_stmts<'a>(
     }
 }
 
+fn record_binding_event(bindings: &mut HashMap<String, usize>, name: &str) {
+    *bindings.entry(name.to_string()).or_default() += 1;
+}
+
+fn record_target_binding_events(expr: &Expr, bindings: &mut HashMap<String, usize>) {
+    match expr {
+        Expr::Ident(name) => record_binding_event(bindings, name),
+        Expr::TupleLit(items) | Expr::UnpackTarget(items) => {
+            for item in items {
+                record_target_binding_events(&item.node, bindings);
+            }
+        }
+        Expr::Starred(inner) => record_target_binding_events(&inner.node, bindings),
+        _ => {}
+    }
+}
+
+fn record_pattern_binding_events(pattern: &Pattern, bindings: &mut HashMap<String, usize>) {
+    match pattern {
+        Pattern::Binding(name) => record_binding_event(bindings, name),
+        Pattern::Constructor { fields, .. } => {
+            for field in fields {
+                record_binding_event(bindings, field);
+            }
+        }
+        Pattern::Or(patterns) | Pattern::Sequence(patterns) => {
+            for pattern in patterns {
+                record_pattern_binding_events(&pattern.node, bindings);
+            }
+        }
+        Pattern::Mapping { pairs, rest } => {
+            for (_, pattern) in pairs {
+                record_pattern_binding_events(&pattern.node, bindings);
+            }
+            if let Some(rest) = rest {
+                record_binding_event(bindings, rest);
+            }
+        }
+        Pattern::ClassPattern { patterns, .. } => {
+            for (_, pattern) in patterns {
+                record_pattern_binding_events(&pattern.node, bindings);
+            }
+        }
+        Pattern::Star(Some(name)) => record_binding_event(bindings, name),
+        Pattern::As { pattern, name } => {
+            record_pattern_binding_events(&pattern.node, bindings);
+            record_binding_event(bindings, name);
+        }
+        Pattern::Wildcard | Pattern::Literal(_) | Pattern::Star(None) => {}
+    }
+}
+
+fn collect_same_scope_binding_events(
+    stmts: &[Spanned<Stmt>],
+    bindings: &mut HashMap<String, usize>,
+) {
+    for stmt in stmts {
+        match &stmt.node {
+            Stmt::VarDecl { name, .. }
+            | Stmt::BareAnnotation { name, .. }
+            | Stmt::TypeAlias { name, .. }
+            | Stmt::FnDef { name, .. }
+            | Stmt::AsyncFnDef { name, .. }
+            | Stmt::ClassDef { name, .. }
+            | Stmt::EnumDef { name, .. } => record_binding_event(bindings, name),
+            Stmt::Assign { target, .. } | Stmt::AugAssign { target, .. } | Stmt::Del(target) => {
+                record_target_binding_events(&target.node, bindings);
+            }
+            Stmt::If {
+                body,
+                elif_clauses,
+                else_body,
+                ..
+            } => {
+                collect_same_scope_binding_events(body, bindings);
+                for (_, body) in elif_clauses {
+                    collect_same_scope_binding_events(body, bindings);
+                }
+                if let Some(body) = else_body {
+                    collect_same_scope_binding_events(body, bindings);
+                }
+            }
+            Stmt::While {
+                body, else_body, ..
+            } => {
+                collect_same_scope_binding_events(body, bindings);
+                if let Some(body) = else_body {
+                    collect_same_scope_binding_events(body, bindings);
+                }
+            }
+            Stmt::For {
+                targets,
+                body,
+                else_body,
+                ..
+            }
+            | Stmt::AsyncFor {
+                targets,
+                body,
+                else_body,
+                ..
+            } => {
+                for target in targets {
+                    record_binding_event(bindings, target);
+                }
+                collect_same_scope_binding_events(body, bindings);
+                if let Some(body) = else_body {
+                    collect_same_scope_binding_events(body, bindings);
+                }
+            }
+            Stmt::Match { arms, .. } => {
+                for arm in arms {
+                    record_pattern_binding_events(&arm.pattern.node, bindings);
+                    collect_same_scope_binding_events(&arm.body, bindings);
+                }
+            }
+            Stmt::Import {
+                module,
+                names,
+                module_alias,
+            } => {
+                if let Some(names) = names {
+                    for (name, alias) in names {
+                        record_binding_event(bindings, alias.as_ref().unwrap_or(name));
+                    }
+                    if names.is_empty() {
+                        if let Some(name) = module_alias.as_ref().or_else(|| module.first()) {
+                            record_binding_event(bindings, name);
+                        }
+                    }
+                } else if let Some(name) = module_alias.as_ref().or_else(|| module.first()) {
+                    record_binding_event(bindings, name);
+                }
+            }
+            Stmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+            } => {
+                collect_same_scope_binding_events(body, bindings);
+                for handler in handlers {
+                    if let Some(name) = &handler.name {
+                        record_binding_event(bindings, name);
+                    }
+                    collect_same_scope_binding_events(&handler.body, bindings);
+                }
+                if let Some(body) = else_body {
+                    collect_same_scope_binding_events(body, bindings);
+                }
+                if let Some(body) = finally_body {
+                    collect_same_scope_binding_events(body, bindings);
+                }
+            }
+            Stmt::With { items, body } | Stmt::AsyncWith { items, body } => {
+                for item in items {
+                    if let Some(name) = &item.alias {
+                        record_binding_event(bindings, name);
+                    }
+                }
+                collect_same_scope_binding_events(body, bindings);
+            }
+            Stmt::Pass
+            | Stmt::Break
+            | Stmt::Continue
+            | Stmt::Return(_)
+            | Stmt::Raise { .. }
+            | Stmt::Assert { .. }
+            | Stmt::Global(_)
+            | Stmt::Nonlocal(_)
+            | Stmt::ExprStmt(_) => {}
+        }
+    }
+}
+
+pub(crate) fn same_scope_binding_events(stmts: &[Spanned<Stmt>]) -> HashMap<String, usize> {
+    let mut bindings = HashMap::new();
+    collect_same_scope_binding_events(stmts, &mut bindings);
+    let mut walrus_bindings = Vec::new();
+    crate::resolve::pass::collect_walrus_targets_in_stmts(stmts, &mut walrus_bindings);
+    for name in walrus_bindings {
+        record_binding_event(&mut bindings, &name);
+    }
+    bindings
+}
+
+fn direct_assignment_counts(stmts: &[Spanned<Stmt>]) -> HashMap<String, usize> {
+    let mut assignments = HashMap::new();
+    for stmt in stmts {
+        let Stmt::Assign { target, .. } = &stmt.node else {
+            continue;
+        };
+        let Expr::Ident(name) = &target.node else {
+            continue;
+        };
+        *assignments.entry(name.clone()).or_default() += 1;
+    }
+    assignments
+}
+
+#[derive(Clone)]
 pub struct TypeChecker {
     pub tcx: TypeContext,
     pub symbols: SymbolTable,
@@ -288,6 +494,15 @@ pub struct TypeChecker {
     type_alias_declarations: HashMap<SymbolId, Span>,
     /// Non-zero while a scope's declaration pass is still incomplete.
     preregister_depth: u32,
+    /// Binding-event counts for the current preregistration scope. Recursive
+    /// compound bodies reuse this map because they do not introduce a scope.
+    preregister_binding_events: HashMap<String, usize>,
+    /// Bare assignments that occur directly in the current statement sequence.
+    /// When these account for every event of a name, aliases can be replayed in
+    /// source order instead of being collapsed as control-flow-ambiguous.
+    preregister_direct_assignments: HashMap<String, usize>,
+    /// Names whose assignments target an outer scope via global/nonlocal.
+    preregister_declared_bindings: HashSet<String>,
     /// Aliases shadowed by nested PEP 695 type-parameter scopes. Each
     /// `register_type_params` call pushes one frame and cleanup restores it.
     type_param_alias_scopes: Vec<Vec<(String, TypeVarId, Option<TypeId>)>>,
@@ -298,8 +513,25 @@ pub struct TypeChecker {
     /// compact ABI-facing shape, so keyword-only and variadic annotation checks
     /// live in this checker-only side channel.
     pub(crate) function_param_sigs: HashMap<SymbolId, Vec<FunctionParamSig>>,
+    /// Canonical preregistered function types keyed by declaration binding.
+    /// Body checking allocates temporary TypeVars, so declaration reassertion
+    /// must restore this type rather than rebuilding from those fresh ids.
+    pub(crate) function_declaration_types: HashMap<SymbolId, TypeId>,
+    /// Stable symbol identity for each declaration occurrence. Python names are
+    /// rebound in source order, so same-named declarations cannot share the
+    /// symbol that owns their generic, nominal, and signature metadata.
+    pub(crate) declaration_symbols: HashMap<usize, SymbolId>,
+    /// Active function scopes. Class and comprehension scopes also use the
+    /// symbol-table stack, but they are not valid `nonlocal` targets.
+    pub(crate) function_scope_stack: Vec<usize>,
+    /// Active executable class namespaces. Methods skip these when choosing
+    /// their lexical parent, while nested class bodies still use them locally.
+    pub(crate) class_scope_stack: Vec<usize>,
     /// Protocol registry for structural subtyping (#314).
     pub(crate) protocol_registry: ProtocolRegistry,
+    /// Protocol definitions keyed by nominal class identity. The name-keyed
+    /// registry remains as a fallback for non-user/native class types.
+    pub(crate) protocols_by_symbol: HashMap<SymbolId, super::protocol::Protocol>,
     /// Class method signatures for protocol conformance checking (#314).
     pub(crate) class_methods: HashMap<String, HashMap<String, super::protocol::MethodSig>>,
     /// User-class method signatures keyed by the owning class symbol.
@@ -313,10 +545,16 @@ pub struct TypeChecker {
     /// `Box.get(obj, arg)`. These include the explicit receiver parameter.
     pub(crate) class_unbound_methods:
         HashMap<SymbolId, HashMap<String, super::protocol::MethodSig>>,
+    /// Property access contracts keyed by nominal class identity. Getter and
+    /// setter declarations intentionally share a Python name, so the ordinary
+    /// last-definition-wins method map cannot represent both contracts.
+    pub(crate) class_property_getters: HashMap<SymbolId, HashMap<String, TypeId>>,
+    pub(crate) class_property_setters: HashMap<SymbolId, HashMap<String, TypeId>>,
     /// User classes declared with `TypedDict` in their base chain. Runtime
     /// instances of these classes are plain dict values, so a variable annotated
     /// as the TypedDict class accepts dict literals/values.
     pub(crate) typed_dict_classes: HashSet<String>,
+    pub(crate) typed_dict_class_symbols: HashSet<SymbolId>,
     /// User classes that are BARE: no base class (other than `object`) and no
     /// methods. A bare class instance (`class _W: pass` → `_W()`) can satisfy
     /// neither a protocol (it has no dunders) nor a nominal type (it has no
@@ -324,6 +562,7 @@ pub struct TypeChecker {
     /// Classes with any base or any method are NOT recorded here, so they are
     /// always skipped — keeping the bare-class rejection false-positive-clean.
     pub(crate) user_bare_classes: std::collections::HashSet<String>,
+    pub(crate) user_bare_class_symbols: HashSet<SymbolId>,
     /// User classes whose base chain reaches a numeric builtin (#1031),
     /// mapped to which builtin (`int` or `float`) they ultimately derive
     /// from. Lets numeric-only compile checks (unary `-`/`+`/`~`, shifts,
@@ -331,6 +570,7 @@ pub struct TypeChecker {
     /// of genuinely non-numeric classes. See [`NumericRoot`] and
     /// [`TypeChecker::numeric_root`].
     pub(crate) numeric_derived_classes: std::collections::HashMap<String, NumericRoot>,
+    pub(crate) numeric_derived_class_symbols: HashMap<SymbolId, NumericRoot>,
     /// #1041: maps a user class name to the identifier bases it declares
     /// (`class W(V): pass` -> `"W" -> ["V"]`), letting the unary/shift dunder
     /// wall (`check_expr.rs::class_defines_dunder`) walk the inheritance
@@ -353,24 +593,20 @@ pub struct TypeChecker {
     /// poisoning a same-named outer variable's type.
     pub(crate) comprehension_depth: u32,
     /// ① Type-wall PoC: import provenance for stdlib call resolution. Maps a
-    /// bound *name* to its `(dotted-module, qualifier)` origin so a later call
+    /// bound symbol to its `(dotted-module, qualifier)` origin so a later call
     /// site can recover `(module, qualifier, name)` and consult the hardcoded
     /// `stdlib_sigs` table. The bound *symbol type* stays `Any` — this map is a
     /// purely additive side channel that never changes inference.
     ///
-    /// Conventions:
-    /// - `import os` / `import os as o`     -> name -> ("os", "")
-    /// - `from os import strerror`          -> "strerror" -> ("os", "")
-    /// - `from html.parser import HTMLParser` (a class) ->
-    ///       "HTMLParser" -> ("html.parser", "HTMLParser")
-    ///   (qualifier == name marks a class binding so instance vars can adopt it)
-    pub(crate) import_origins: HashMap<String, (String, String)>,
-    /// ① Type-wall PoC: maps a local variable name to the class (qualifier) of
-    /// the stdlib instance it holds, populated when a var is assigned
+    /// Symbol identity prevents a parameter or nested local with the same text
+    /// from inheriting an outer import's contract.
+    pub(crate) import_origins: HashMap<SymbolId, (String, String)>,
+    /// ① Type-wall PoC: snapshots the imported class origin of the stdlib
+    /// instance a local binding holds, populated when a var is assigned
     /// `object.__new__(Cls)` or `Cls(...)` where `Cls` is a known imported
-    /// stdlib class. Lets `obj.method(arg)` resolve to a `Method` signature.
-    pub(crate) instance_origins: HashMap<String, String>,
-    /// #1021: maps a local variable name to the native-class name it aliases
+    /// stdlib class. The snapshot survives later rebinding of `Cls`.
+    pub(crate) instance_origins: HashMap<SymbolId, (String, String)>,
+    /// #1021: maps a local binding to the native-class name it aliases
     /// when the var is assigned a bare *class reference* (not a call) to a
     /// `NATIVE_CTOR_CLASSES` entry — e.g. `_Queue = queue.Queue` (the
     /// perf-tier "hoist convention (#2097)" that binds `module.Cls` locally
@@ -379,11 +615,18 @@ pub struct TypeChecker {
     /// constructor call the same way it recognizes the direct
     /// `queue.Queue()` form. Cleared on any reassignment to something else,
     /// mirroring `instance_origins`'s discipline.
-    pub(crate) class_ref_origins: HashMap<String, &'static str>,
-    /// Original symbol ids for builtin function names registered during
+    pub(crate) class_ref_origins: HashMap<SymbolId, &'static str>,
+    /// Primitive builtin class-object aliases keyed by the active binding.
+    /// Builtin constructors currently use `Ty::Fn`, so this preserves their
+    /// class identity without treating ordinary function aliases as classes.
+    pub(crate) builtin_class_aliases: HashMap<SymbolId, TypeId>,
+    /// Function-local names predeclared as `Any` solely to enforce Python's
+    /// lexical-local lookup rule. Their first direct assignment replaces the
+    /// placeholder with the inferred RHS type.
+    pub(crate) inferred_local_placeholders: HashSet<SymbolId>,
+    /// Original symbol ids for builtin functions and classes registered during
     /// TypeChecker construction. If the current lookup no longer matches this
-    /// id, user code has shadowed the builtin and stdlib signature enforcement
-    /// must not apply to the bare name.
+    /// id, user code has shadowed the builtin.
     pub(crate) builtin_symbols: HashMap<String, SymbolId>,
 }
 
@@ -405,18 +648,31 @@ impl TypeChecker {
             type_alias_defs: HashMap::new(),
             type_alias_declarations: HashMap::new(),
             preregister_depth: 0,
+            preregister_binding_events: HashMap::new(),
+            preregister_direct_assignments: HashMap::new(),
+            preregister_declared_bindings: HashSet::new(),
             type_param_alias_scopes: Vec::new(),
             resolved_type_exprs: HashMap::new(),
             function_param_sigs: HashMap::new(),
+            function_declaration_types: HashMap::new(),
+            declaration_symbols: HashMap::new(),
+            function_scope_stack: Vec::new(),
+            class_scope_stack: Vec::new(),
             protocol_registry: ProtocolRegistry::new(),
+            protocols_by_symbol: HashMap::new(),
             class_methods: HashMap::new(),
             class_methods_by_symbol: HashMap::new(),
             class_method_param_sigs: HashMap::new(),
             class_method_generic_defs: HashMap::new(),
             class_unbound_methods: HashMap::new(),
+            class_property_getters: HashMap::new(),
+            class_property_setters: HashMap::new(),
             typed_dict_classes: HashSet::new(),
+            typed_dict_class_symbols: HashSet::new(),
             user_bare_classes: std::collections::HashSet::new(),
+            user_bare_class_symbols: HashSet::new(),
             numeric_derived_classes: std::collections::HashMap::new(),
+            numeric_derived_class_symbols: HashMap::new(),
             class_bases: HashMap::new(),
             class_base_symbols: HashMap::new(),
             current_match_subject_ty: None,
@@ -424,6 +680,8 @@ impl TypeChecker {
             import_origins: HashMap::new(),
             instance_origins: HashMap::new(),
             class_ref_origins: HashMap::new(),
+            builtin_class_aliases: HashMap::new(),
+            inferred_local_placeholders: HashSet::new(),
             builtin_symbols: HashMap::new(),
         };
         tc.register_builtins();
@@ -438,11 +696,175 @@ impl TypeChecker {
         self.sym_types[idx] = Some(ty);
     }
 
+    fn declaration_key(stmt: &Spanned<Stmt>) -> usize {
+        stmt as *const Spanned<Stmt> as usize
+    }
+
+    pub(crate) fn declaration_symbol(&self, stmt: &Spanned<Stmt>) -> Option<SymbolId> {
+        self.declaration_symbols
+            .get(&Self::declaration_key(stmt))
+            .copied()
+    }
+
+    pub(crate) fn class_base_symbol_named(
+        &self,
+        class_symbol: SymbolId,
+        base_name: &str,
+    ) -> Option<SymbolId> {
+        self.class_base_symbols
+            .get(&class_symbol)?
+            .iter()
+            .copied()
+            .find(|base_symbol| {
+                self.get_symbol_type(*base_symbol).is_some_and(|ty| {
+                    matches!(
+                        self.tcx.get(ty),
+                        Ty::Class { name, .. } if name == base_name
+                    )
+                })
+            })
+    }
+
     pub(crate) fn is_unshadowed_builtin(&self, name: &str) -> bool {
         let Some(builtin_id) = self.builtin_symbols.get(name).copied() else {
             return false;
         };
         self.symbols.lookup(name) == Some(builtin_id)
+    }
+
+    fn builtin_class_pattern_instance(&self, name: &str) -> Option<TypeId> {
+        match name {
+            "bool" => Some(self.tcx.bool()),
+            "float" => Some(self.tcx.float()),
+            "int" => Some(self.tcx.int()),
+            "str" => Some(self.tcx.str()),
+            "bytearray" | "bytes" | "dict" | "frozenset" | "list" | "set" | "tuple" => {
+                Some(self.tcx.any())
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn builtin_class_alias_value(&self, value: &Spanned<Expr>) -> Option<TypeId> {
+        let Expr::Ident(name) = &value.node else {
+            return None;
+        };
+        if self.is_unshadowed_builtin(name) {
+            return self.builtin_class_pattern_instance(name);
+        }
+        let symbol = self.symbols.lookup(name)?;
+        self.builtin_class_aliases.get(&symbol).copied()
+    }
+
+    pub(crate) fn set_builtin_class_alias(
+        &mut self,
+        symbol: SymbolId,
+        instance_ty: Option<TypeId>,
+    ) {
+        if let Some(instance_ty) = instance_ty {
+            self.builtin_class_aliases.insert(symbol, instance_ty);
+        } else {
+            self.builtin_class_aliases.remove(&symbol);
+        }
+    }
+
+    fn shallow_assignment_type(&mut self, value: &Spanned<Expr>) -> Option<TypeId> {
+        match &value.node {
+            Expr::IntLit(_) => Some(self.tcx.int()),
+            Expr::FloatLit(_) => Some(self.tcx.float()),
+            Expr::BoolLit(_) => Some(self.tcx.bool()),
+            Expr::StrLit(_) => Some(self.tcx.str()),
+            Expr::NoneLit => Some(self.tcx.none()),
+            Expr::Ident(name) => {
+                let symbol = self.symbols.lookup(name)?;
+                let ty = self.get_sym_type(symbol.0);
+                (!matches!(self.tcx.get(ty), Ty::Any | Ty::Error)).then_some(ty)
+            }
+            Expr::Call { func, .. } => {
+                if let Some(class_name) = self.native_ctor_class_call(func) {
+                    return Some(self.tcx.intern(Ty::Class {
+                        name: class_name.to_string(),
+                        role: ClassRole::Instance,
+                        user: None,
+                        fields: Vec::new(),
+                        match_args: None,
+                    }));
+                }
+                let callee_ty = match &func.node {
+                    Expr::Ident(name) => {
+                        let symbol = self.symbols.lookup(name)?;
+                        self.get_sym_type(symbol.0)
+                    }
+                    Expr::Index { object, .. } => {
+                        let Expr::Ident(name) = &object.node else {
+                            return None;
+                        };
+                        let symbol = self.symbols.lookup(name)?;
+                        self.get_sym_type(symbol.0)
+                    }
+                    _ => return None,
+                };
+                match self.tcx.get(callee_ty).clone() {
+                    Ty::Class {
+                        role: ClassRole::Object,
+                        ..
+                    } => Some(self.with_class_role(callee_ty, ClassRole::Instance)),
+                    Ty::Fn { ret, .. } if !matches!(self.tcx.get(ret), Ty::Any | Ty::Error) => {
+                        Some(ret)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn seed_inferred_local_placeholders(&mut self, stmts: &[Spanned<Stmt>]) {
+        let binding_events = same_scope_binding_events(stmts);
+
+        let mut statements = Vec::new();
+        collect_same_scope_stmts(stmts, &mut statements);
+        let mut candidates: HashMap<SymbolId, (String, usize, Option<TypeId>, Option<TypeId>)> =
+            HashMap::new();
+        for stmt in statements {
+            let Stmt::Assign { target, value } = &stmt.node else {
+                continue;
+            };
+            let Expr::Ident(name) = &target.node else {
+                continue;
+            };
+            let Some(symbol) = self
+                .symbols
+                .lookup_in_scope(self.symbols.current_scope_idx(), name)
+            else {
+                continue;
+            };
+            if !self.inferred_local_placeholders.contains(&symbol) {
+                continue;
+            }
+            let inferred = self.shallow_assignment_type(value);
+            let builtin_alias = self.builtin_class_alias_value(value);
+            let entry = candidates
+                .entry(symbol)
+                .or_insert_with(|| (name.clone(), 0, None, None));
+            entry.1 += 1;
+            if entry.1 == 1 {
+                entry.2 = inferred;
+                entry.3 = builtin_alias;
+            } else {
+                entry.2 = None;
+                entry.3 = None;
+            }
+        }
+        for (symbol, (name, assignments, inferred, builtin_alias)) in candidates {
+            if assignments != 1 || binding_events.get(&name) != Some(&1) {
+                continue;
+            }
+            if let Some(inferred) = inferred {
+                self.set_sym_type(symbol.0, inferred);
+            }
+            self.set_builtin_class_alias(symbol, builtin_alias);
+        }
     }
 
     pub(crate) fn get_sym_type(&self, sym_idx: u32) -> TypeId {
@@ -664,12 +1086,9 @@ impl TypeChecker {
     /// function/class types while allowing forward bounds to become concrete.
     fn finalize_generic_param_metadata(
         &mut self,
-        name: &str,
+        symbol: SymbolId,
         type_params: &[crate::parser::ast::TypeParam],
     ) {
-        let Some(symbol) = self.symbols.lookup(name) else {
-            return;
-        };
         let Some(gp) = self.generic_defs.get(&symbol).cloned() else {
             return;
         };
@@ -706,14 +1125,11 @@ impl TypeChecker {
 
     fn refresh_function_signature(
         &mut self,
-        name: &str,
+        symbol: SymbolId,
         params: &[Param],
         return_ty: Option<&Spanned<TypeExpr>>,
         decorators: &[Spanned<Expr>],
     ) {
-        let Some(symbol) = self.symbols.lookup(name) else {
-            return;
-        };
         let aliases: Vec<_> = self
             .generic_defs
             .get(&symbol)
@@ -760,6 +1176,8 @@ impl TypeChecker {
             variadic,
         });
         self.set_sym_type(symbol.0, function_ty);
+        self.function_declaration_types
+            .insert(symbol, function_ty);
 
         if !aliases.is_empty() {
             let names: Vec<_> = aliases.into_iter().map(|(name, _)| name).collect();
@@ -798,7 +1216,16 @@ impl TypeChecker {
                     return_ty,
                     decorators,
                     ..
-                } => self.refresh_function_signature(name, params, return_ty.as_ref(), decorators),
+                } => {
+                    if let Some(symbol) = self.declaration_symbol(stmt) {
+                        self.refresh_function_signature(
+                            symbol,
+                            params,
+                            return_ty.as_ref(),
+                            decorators,
+                        );
+                    }
+                }
                 _ => {}
             }
         }
@@ -813,31 +1240,46 @@ impl TypeChecker {
     ) {
         let fields = self.collect_class_fields(body);
         let match_args = self.collect_match_args(body);
-        let Ty::Class { user, .. } = self.tcx.get(self.get_sym_type(class_symbol.0)).clone() else {
-            return;
-        };
+        let type_args = self
+            .generic_defs
+            .get(&class_symbol)
+            .map(|params| {
+                params
+                    .params
+                    .iter()
+                    .map(|param| param.id)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .map(|id| self.tcx.intern(Ty::TypeVar(id)))
+            .collect();
         let class_ty = self.tcx.intern(Ty::Class {
             name: name.to_string(),
-            user,
+            role: ClassRole::Object,
+            user: Some(UserClass {
+                symbol: class_symbol,
+                args: type_args,
+            }),
             fields,
             match_args,
         });
+        self.set_builtin_class_alias(class_symbol, None);
+        self.set_binding_origins(class_symbol, None, None, None);
         self.set_sym_type(class_symbol.0, class_ty);
         self.collect_class_methods(class_symbol, name, body);
         if is_protocol {
-            self.register_protocol(name, body);
+            self.register_protocol(class_symbol, name, body);
         }
     }
 
     fn refresh_class_declaration_metadata(
         &mut self,
+        class_symbol: SymbolId,
         name: &str,
         body: &[Spanned<Stmt>],
         bases: &[Spanned<Expr>],
     ) {
-        let Some(class_symbol) = self.symbols.lookup(name) else {
-            return;
-        };
         let aliases: Vec<_> = self
             .generic_defs
             .get(&class_symbol)
@@ -1020,7 +1462,11 @@ impl TypeChecker {
                 }
                 | Stmt::AsyncFnDef {
                     name, type_params, ..
-                } => self.finalize_generic_param_metadata(name, type_params),
+                } => {
+                    if let Some(symbol) = self.declaration_symbol(stmt) {
+                        self.finalize_generic_param_metadata(symbol, type_params);
+                    }
+                }
                 Stmt::TypeAlias { .. } => {}
                 Stmt::ClassDef {
                     name,
@@ -1029,9 +1475,9 @@ impl TypeChecker {
                     body,
                     ..
                 } => {
-                    self.finalize_generic_param_metadata(name, type_params);
-                    self.refresh_class_declaration_metadata(name, body, bases);
-                    if let Some(class_symbol) = self.symbols.lookup(name) {
+                    if let Some(class_symbol) = self.declaration_symbol(stmt) {
+                        self.finalize_generic_param_metadata(class_symbol, type_params);
+                        self.refresh_class_declaration_metadata(class_symbol, name, body, bases);
                         for method in body {
                             match &method.node {
                                 Stmt::FnDef {
@@ -1311,15 +1757,17 @@ impl TypeChecker {
         self.tcx.get(head).clone()
     }
 
-    fn preregister_user_class_alias(&mut self, value: &Spanned<Expr>) -> Option<TypeId> {
+    fn preregister_class_object_alias(&mut self, value: &Spanned<Expr>) -> Option<TypeId> {
         match &value.node {
             Expr::Ident(source) => {
                 let symbol = self.symbols.lookup(source)?;
                 let ty = self.get_sym_type(symbol.0);
                 matches!(
                     self.tcx.get(ty),
-                    Ty::Class { user: Some(user), .. }
-                        if user.role == UserClassRole::Object
+                    Ty::Class {
+                        role: ClassRole::Object,
+                        ..
+                    }
                 )
                 .then_some(ty)
             }
@@ -1331,8 +1779,11 @@ impl TypeChecker {
                 let source_ty = self.get_sym_type(source_symbol.0);
                 if !matches!(
                     self.tcx.get(source_ty),
-                    Ty::Class { user: Some(user), .. }
-                        if user.role == UserClassRole::Object
+                    Ty::Class {
+                        role: ClassRole::Object,
+                        user: Some(_),
+                        ..
+                    }
                 ) {
                     return None;
                 }
@@ -1344,10 +1795,10 @@ impl TypeChecker {
                 self.diagnostics.truncate(diagnostic_len);
                 match self.tcx.get(resolved) {
                     Ty::Class {
-                        user: Some(user), ..
-                    } if user.role == UserClassRole::Instance => {
-                        Some(self.with_user_class_role(resolved, UserClassRole::Object))
-                    }
+                        role: ClassRole::Instance,
+                        user: Some(_),
+                        ..
+                    } => Some(self.with_class_role(resolved, ClassRole::Object)),
                     _ => None,
                 }
             }
@@ -1355,10 +1806,15 @@ impl TypeChecker {
         }
     }
 
-    pub(crate) fn invalidate_conditional_user_class_aliases(&mut self, stmts: &[Spanned<Stmt>]) {
+    pub(crate) fn invalidate_conditional_class_object_aliases(&mut self, stmts: &[Spanned<Stmt>]) {
         let mut assigned = Vec::new();
         let mut declared = Vec::new();
         crate::resolve::pass::collect_assignment_targets(stmts, &mut assigned, &mut declared);
+        crate::resolve::pass::collect_walrus_targets_in_stmts(stmts, &mut assigned);
+        self.invalidate_conditional_binding_names(assigned);
+    }
+
+    pub(crate) fn invalidate_conditional_binding_names(&mut self, assigned: Vec<String>) {
         for name in assigned {
             let Some(symbol) = self
                 .symbols
@@ -1366,11 +1822,17 @@ impl TypeChecker {
             else {
                 continue;
             };
-            if matches!(
+            let had_origin = self.import_origins.contains_key(&symbol)
+                || self.instance_origins.contains_key(&symbol)
+                || self.class_ref_origins.contains_key(&symbol);
+            self.builtin_class_aliases.remove(&symbol);
+            self.set_binding_origins(symbol, None, None, None);
+            if had_origin
+                || matches!(
                 self.tcx.get(self.get_sym_type(symbol.0)),
-                Ty::Class { user: Some(user), .. }
-                    if user.role == UserClassRole::Object
-            ) {
+                Ty::Class { .. }
+            )
+            {
                 self.set_sym_type(symbol.0, self.tcx.any());
             }
         }
@@ -1381,6 +1843,14 @@ impl TypeChecker {
     /// compound-statement bodies (try/if/while/for/with): a class defined in
     /// a module-level `try:` is still a module-scope binding.
     pub(crate) fn preregister_defs(&mut self, stmts: &[Spanned<Stmt>]) {
+        if self.preregister_depth == 0 {
+            self.preregister_binding_events = same_scope_binding_events(stmts);
+            self.preregister_direct_assignments = direct_assignment_counts(stmts);
+            let mut assigned = Vec::new();
+            let mut declared = Vec::new();
+            crate::resolve::pass::collect_assignment_targets(stmts, &mut assigned, &mut declared);
+            self.preregister_declared_bindings = declared.into_iter().collect();
+        }
         self.preregister_depth += 1;
         self.preregister_type_alias_headers(stmts);
         for stmt in stmts {
@@ -1404,7 +1874,19 @@ impl TypeChecker {
                     // Register generic type params before resolving param/ret types
                     let gp = self.register_type_params(type_params);
 
-                    let sym = self.symbols.define(name.clone(), SymbolKind::Function);
+                    let sym = if let Some(symbol) = self.declaration_symbol(stmt) {
+                        self.symbols.bind_symbol_in_scope(
+                            self.symbols.current_scope_idx(),
+                            name.clone(),
+                            symbol,
+                        );
+                        symbol
+                    } else {
+                        let symbol = self.symbols.define(name.clone(), SymbolKind::Function);
+                        self.declaration_symbols
+                            .insert(Self::declaration_key(stmt), symbol);
+                        symbol
+                    };
                     let overload_decorated = decorators
                         .iter()
                         .any(|d| is_typing_overload_decorator(&d.node));
@@ -1440,6 +1922,7 @@ impl TypeChecker {
                         variadic: is_variadic,
                     });
                     self.set_sym_type(sym.0, fn_ty);
+                    self.function_declaration_types.insert(sym, fn_ty);
 
                     if !gp.is_empty() {
                         self.generic_defs.insert(sym, gp);
@@ -1458,7 +1941,70 @@ impl TypeChecker {
                     // Register generic type params for the class
                     let gp = self.register_type_params(type_params);
                     let is_typed_dict = bases.iter().any(|b| self.base_is_typed_dict(&b.node));
-                    let sym = self.symbols.define(name.clone(), SymbolKind::Class);
+                    let base_symbols: Vec<SymbolId> = bases
+                        .iter()
+                        .filter_map(|base| {
+                            let base_name = match &base.node {
+                                Expr::Ident(base_name) => base_name,
+                                Expr::Index { object, .. } => {
+                                    let Expr::Ident(base_name) = &object.node else {
+                                        return None;
+                                    };
+                                    base_name
+                                }
+                                _ => return None,
+                            };
+                            let binding = self.symbols.lookup(base_name)?;
+                            match self.tcx.get(self.get_sym_type(binding.0)) {
+                                Ty::Class {
+                                    role: ClassRole::Object,
+                                    user: Some(user),
+                                    ..
+                                } => Some(user.symbol),
+                                _ => None,
+                            }
+                        })
+                        .collect();
+                    let numeric_root = bases.iter().find_map(|base| {
+                        let Expr::Ident(base_name) = &base.node else {
+                            return None;
+                        };
+                        match base_name.as_str() {
+                            "int" | "bool" => Some(NumericRoot::Int),
+                            "float" => Some(NumericRoot::Float),
+                            _ => self
+                                .symbols
+                                .lookup(base_name)
+                                .and_then(|symbol| match self.tcx.get(self.get_sym_type(symbol.0)) {
+                                    Ty::Class {
+                                        role: ClassRole::Object,
+                                        user: Some(user),
+                                        ..
+                                    } => self
+                                        .numeric_derived_class_symbols
+                                        .get(&user.symbol)
+                                        .copied(),
+                                    _ => self.numeric_derived_classes.get(base_name).copied(),
+                                }),
+                        }
+                    });
+                    self.typed_dict_classes.remove(name);
+                    self.user_bare_classes.remove(name);
+                    self.numeric_derived_classes.remove(name);
+                    self.class_bases.remove(name);
+                    let sym = if let Some(symbol) = self.declaration_symbol(stmt) {
+                        self.symbols.bind_symbol_in_scope(
+                            self.symbols.current_scope_idx(),
+                            name.clone(),
+                            symbol,
+                        );
+                        symbol
+                    } else {
+                        let symbol = self.symbols.define(name.clone(), SymbolKind::Class);
+                        self.declaration_symbols
+                            .insert(Self::declaration_key(stmt), symbol);
+                        symbol
+                    };
                     self.symbols.push_scope();
                     let class_metadata_error_mark = self.errors_mark();
                     self.preregister_type_alias_headers(body);
@@ -1470,9 +2016,9 @@ impl TypeChecker {
                     }
                     let class_ty = self.tcx.intern(Ty::Class {
                         name: name.clone(),
+                        role: ClassRole::Object,
                         user: Some(UserClass {
                             symbol: sym,
-                            role: UserClassRole::Object,
                             args: type_args,
                         }),
                         fields,
@@ -1481,6 +2027,7 @@ impl TypeChecker {
                     self.set_sym_type(sym.0, class_ty);
                     if is_typed_dict {
                         self.typed_dict_classes.insert(name.clone());
+                        self.typed_dict_class_symbols.insert(sym);
                     }
 
                     if !gp.is_empty() {
@@ -1494,7 +2041,7 @@ impl TypeChecker {
                         .iter()
                         .any(|b| matches!(&b.node, Expr::Ident(n) if n == "Protocol"));
                     if is_protocol {
-                        self.register_protocol(name, body);
+                        self.register_protocol(sym, name, body);
                     }
                     if self.preregister_depth > 0 {
                         self.truncate_errors(class_metadata_error_mark);
@@ -1513,34 +2060,8 @@ impl TypeChecker {
                             _ => None,
                         })
                         .collect();
-                    if !base_names.is_empty() {
-                        self.class_bases.insert(name.clone(), base_names);
-                    }
-                    let base_symbols: Vec<SymbolId> = bases
-                        .iter()
-                        .filter_map(|base| {
-                            let base_name = match &base.node {
-                                Expr::Ident(base_name) => base_name,
-                                Expr::Index { object, .. } => {
-                                    let Expr::Ident(base_name) = &object.node else {
-                                        return None;
-                                    };
-                                    base_name
-                                }
-                                _ => return None,
-                            };
-                            let binding = self.symbols.lookup(base_name)?;
-                            match self.tcx.get(self.get_sym_type(binding.0)) {
-                                Ty::Class {
-                                    user: Some(user), ..
-                                } if user.role == UserClassRole::Object => Some(user.symbol),
-                                _ => None,
-                            }
-                        })
-                        .collect();
-                    if !base_symbols.is_empty() {
-                        self.class_base_symbols.insert(sym, base_symbols);
-                    }
+                    self.class_bases.insert(name.clone(), base_names);
+                    self.class_base_symbols.insert(sym, base_symbols);
 
                     // Record a BARE class (no base other than `object`, no
                     // methods): such an instance can satisfy neither a protocol
@@ -1556,6 +2077,7 @@ impl TypeChecker {
                         decorators.iter().any(|d| is_dataclass_decorator(&d.node));
                     if only_object_base && !has_method && !dataclass_decorated {
                         self.user_bare_classes.insert(name.clone());
+                        self.user_bare_class_symbols.insert(sym);
                     }
 
                     // #1031: record classes whose base chain reaches a
@@ -1568,18 +2090,9 @@ impl TypeChecker {
                     // forward lookup (no explicit recursion) resolves
                     // multi-level chains like `class Q(P): pass` where
                     // `P(int)`.
-                    let numeric_root = bases.iter().find_map(|b| {
-                        let Expr::Ident(n) = &b.node else {
-                            return None;
-                        };
-                        match n.as_str() {
-                            "int" | "bool" => Some(NumericRoot::Int),
-                            "float" => Some(NumericRoot::Float),
-                            _ => self.numeric_derived_classes.get(n).copied(),
-                        }
-                    });
                     if let Some(root) = numeric_root {
                         self.numeric_derived_classes.insert(name.clone(), root);
+                        self.numeric_derived_class_symbols.insert(sym, root);
                     }
 
                     // Clean up type parameter aliases to prevent leaking
@@ -1601,7 +2114,19 @@ impl TypeChecker {
                         name: name.clone(),
                         variants: v,
                     });
-                    let sym = self.symbols.define(name.clone(), SymbolKind::Enum);
+                    let sym = if let Some(symbol) = self.declaration_symbol(stmt) {
+                        self.symbols.bind_symbol_in_scope(
+                            self.symbols.current_scope_idx(),
+                            name.clone(),
+                            symbol,
+                        );
+                        symbol
+                    } else {
+                        let symbol = self.symbols.define(name.clone(), SymbolKind::Enum);
+                        self.declaration_symbols
+                            .insert(Self::declaration_key(stmt), symbol);
+                        symbol
+                    };
                     self.set_sym_type(sym.0, enum_ty);
                 }
                 Stmt::ExprStmt(_) => {
@@ -1635,6 +2160,7 @@ impl TypeChecker {
                             variadic: is_variadic,
                         });
                         self.set_sym_type(sym.0, fn_ty);
+                        self.function_declaration_types.insert(sym, fn_ty);
                     }
                 }
                 Stmt::TypeAlias { .. } => {}
@@ -1647,49 +2173,40 @@ impl TypeChecker {
                     module,
                 } => {
                     let any_ty = self.tcx.any();
-                    // ① Type-wall PoC: record import provenance. The dotted
-                    // module path is the source-of-truth key into stdlib_sigs.
-                    let dotted = module.join(".");
                     if let Some(import_names) = names {
                         for (name, alias) in import_names {
+                            if name == "*" {
+                                continue;
+                            }
                             let effective = alias.as_ref().unwrap_or(name);
-                            if self.symbols.lookup(effective).is_none() {
+                            if self
+                                .symbols
+                                .lookup_in_scope(self.symbols.current_scope_idx(), effective)
+                                .is_none()
+                            {
                                 let sym =
                                     self.symbols.define(effective.clone(), SymbolKind::Variable);
                                 self.set_sym_type(sym.0, any_ty);
                             }
-                            // Provenance: `from MOD import N [as B]`. If `N`
-                            // names a stdlib class we know, record it as a class
-                            // binding (qualifier == N) so instances can adopt
-                            // the qualifier; otherwise it's a module fn/value
-                            // bound directly (qualifier == "").
-                            let qualifier = if Self::is_known_stdlib_class(&dotted, name) {
-                                name.clone()
-                            } else {
-                                String::new()
-                            };
-                            self.import_origins
-                                .insert(effective.clone(), (dotted.clone(), qualifier));
                         }
                     } else if let Some(alias) = module_alias {
-                        if self.symbols.lookup(alias).is_none() {
+                        if self
+                            .symbols
+                            .lookup_in_scope(self.symbols.current_scope_idx(), alias)
+                            .is_none()
+                        {
                             let sym = self.symbols.define(alias.clone(), SymbolKind::Variable);
                             self.set_sym_type(sym.0, any_ty);
                         }
-                        // `import MOD as A` -> A is the module.
-                        self.import_origins
-                            .insert(alias.clone(), (dotted.clone(), String::new()));
                     } else if let Some(root) = module.first() {
-                        if self.symbols.lookup(root).is_none() {
+                        if self
+                            .symbols
+                            .lookup_in_scope(self.symbols.current_scope_idx(), root)
+                            .is_none()
+                        {
                             let sym = self.symbols.define(root.clone(), SymbolKind::Variable);
                             self.set_sym_type(sym.0, any_ty);
                         }
-                        // `import MOD` (possibly dotted) -> the *root* name binds
-                        // to the *root* module. Dotted submodule access through
-                        // the root is a separate runtime quirk; for the PoC we
-                        // only key the directly-bound root module.
-                        self.import_origins
-                            .insert(root.clone(), (root.clone(), String::new()));
                     }
                 }
                 // Classic PEP 484 type-variable definitions:
@@ -1707,10 +2224,49 @@ impl TypeChecker {
                             let tv_ty = self.tcx.intern(Ty::TypeVar(var_id));
                             self.tcx.register_alias(name.clone(), tv_ty);
                         } else {
+                            if self.preregister_declared_bindings.contains(name) {
+                                continue;
+                            }
                             let existing = self
                                 .symbols
                                 .lookup_in_scope(self.symbols.current_scope_idx(), name);
-                            match (existing, self.preregister_user_class_alias(value)) {
+                            let shadows_builtin = existing.is_some_and(|symbol| {
+                                self.builtin_symbols.get(name).copied() == Some(symbol)
+                            });
+                            if shadows_builtin {
+                                continue;
+                            }
+                            if existing.is_some_and(|symbol| {
+                                matches!(
+                                    &self.symbols.get_symbol(symbol).kind,
+                                    SymbolKind::Parameter
+                                )
+                            }) {
+                                continue;
+                            }
+                            let binding_events = self
+                                .preregister_binding_events
+                                .get(name)
+                                .copied()
+                                .unwrap_or_default();
+                            let direct_assignments = self
+                                .preregister_direct_assignments
+                                .get(name)
+                                .copied()
+                                .unwrap_or_default();
+                            let only_direct_assignments = binding_events > 0
+                                && binding_events == direct_assignments;
+                            if binding_events != 1 && !only_direct_assignments {
+                                let symbol = existing.unwrap_or_else(|| {
+                                    self.symbols.define(name.clone(), SymbolKind::Variable)
+                                });
+                                self.builtin_class_aliases.remove(&symbol);
+                                self.set_binding_origins(symbol, None, None, None);
+                                let any_ty = self.tcx.any();
+                                self.set_sym_type(symbol.0, any_ty);
+                                continue;
+                            }
+                            match (existing, self.preregister_class_object_alias(value)) {
                                 (Some(symbol), Some(alias_ty)) => {
                                     self.set_sym_type(symbol.0, alias_ty);
                                 }
@@ -1722,8 +2278,10 @@ impl TypeChecker {
                                 (Some(symbol), None)
                                     if matches!(
                                         self.tcx.get(self.get_sym_type(symbol.0)),
-                                        Ty::Class { user: Some(user), .. }
-                                            if user.role == UserClassRole::Object
+                                        Ty::Class {
+                                            role: ClassRole::Object,
+                                            ..
+                                        }
                                     ) =>
                                 {
                                     self.set_sym_type(symbol.0, self.tcx.any());
@@ -1752,16 +2310,7 @@ impl TypeChecker {
                     if let Some(fb) = finally_body {
                         self.preregister_defs(fb);
                     }
-                    self.invalidate_conditional_user_class_aliases(body);
-                    for handler in handlers {
-                        self.invalidate_conditional_user_class_aliases(&handler.body);
-                    }
-                    if let Some(else_body) = else_body {
-                        self.invalidate_conditional_user_class_aliases(else_body);
-                    }
-                    if let Some(finally_body) = finally_body {
-                        self.invalidate_conditional_user_class_aliases(finally_body);
-                    }
+                    self.invalidate_conditional_class_object_aliases(std::slice::from_ref(stmt));
                 }
                 Stmt::If {
                     body,
@@ -1776,13 +2325,7 @@ impl TypeChecker {
                     if let Some(eb) = else_body {
                         self.preregister_defs(eb);
                     }
-                    self.invalidate_conditional_user_class_aliases(body);
-                    for (_, eb) in elif_clauses {
-                        self.invalidate_conditional_user_class_aliases(eb);
-                    }
-                    if let Some(eb) = else_body {
-                        self.invalidate_conditional_user_class_aliases(eb);
-                    }
+                    self.invalidate_conditional_class_object_aliases(std::slice::from_ref(stmt));
                 }
                 Stmt::While {
                     body, else_body, ..
@@ -1797,10 +2340,7 @@ impl TypeChecker {
                     if let Some(eb) = else_body {
                         self.preregister_defs(eb);
                     }
-                    self.invalidate_conditional_user_class_aliases(body);
-                    if let Some(else_body) = else_body {
-                        self.invalidate_conditional_user_class_aliases(else_body);
-                    }
+                    self.invalidate_conditional_class_object_aliases(std::slice::from_ref(stmt));
                 }
                 Stmt::With { body, .. } | Stmt::AsyncWith { body, .. } => {
                     self.preregister_defs(body);
@@ -1808,16 +2348,25 @@ impl TypeChecker {
                 Stmt::Match { arms, .. } => {
                     for arm in arms {
                         self.preregister_defs(&arm.body);
-                        self.invalidate_conditional_user_class_aliases(&arm.body);
                     }
+                    self.invalidate_conditional_class_object_aliases(std::slice::from_ref(stmt));
                 }
                 _ => {}
             }
         }
         self.preregister_depth -= 1;
+        if self.preregister_depth == 0 {
+            self.preregister_binding_events.clear();
+            self.preregister_direct_assignments.clear();
+            self.preregister_declared_bindings.clear();
+        }
     }
 
     pub fn check_module(&mut self, module: &Module) -> Vec<MambaError> {
+        // Declaration keys are AST addresses and are valid only for this
+        // module object. A persistent REPL checker can otherwise observe an
+        // allocator-reused address as an old declaration identity.
+        self.declaration_symbols.clear();
         // First pass: register all top-level function/class/enum/alias names
         self.preregister_defs(&module.stmts);
         self.finalize_generic_metadata_in(&module.stmts);
@@ -1831,7 +2380,7 @@ impl TypeChecker {
         std::mem::take(&mut self.errors)
     }
 
-    fn specialize_user_class(
+    fn resolve_named_class_annotation(
         &mut self,
         name: &str,
         binding_symbol: SymbolId,
@@ -1845,7 +2394,7 @@ impl TypeChecker {
             base_ty,
             supplied,
             span,
-            UserClassRole::Instance,
+            ClassRole::Instance,
         )
     }
 
@@ -1856,7 +2405,7 @@ impl TypeChecker {
         base_ty: TypeId,
         supplied: Option<&[TypeId]>,
         span: Span,
-        role: UserClassRole,
+        role: ClassRole,
     ) -> TypeId {
         let (symbol, base_user) = match self.tcx.get(base_ty) {
             Ty::Class {
@@ -1869,7 +2418,7 @@ impl TypeChecker {
             if supplied.is_some() {
                 self.error(span, format!("type '{name}' is not generic"));
             }
-            return self.with_user_class_role(base_ty, role);
+            return self.with_class_role(base_ty, role);
         };
 
         let is_open = base_user.as_ref().is_some_and(|user| {
@@ -1882,7 +2431,7 @@ impl TypeChecker {
             if supplied.is_some() {
                 self.error(span, format!("type '{name}' is already specialized"));
             }
-            return self.with_user_class_role(base_ty, role);
+            return self.with_class_role(base_ty, role);
         }
 
         let (subst, resolved_args, errors) = if let Some(args) = supplied {
@@ -1891,7 +2440,7 @@ impl TypeChecker {
             let Some((subst, resolved)) =
                 complete_type_args(&generic_params, Substitution::new(), &mut self.tcx)
             else {
-                return self.with_user_class_role(base_ty, role);
+                return self.with_class_role(base_ty, role);
             };
             (subst, resolved, Vec::new())
         };
@@ -1909,7 +2458,7 @@ impl TypeChecker {
         base_ty: TypeId,
         subst: &Substitution,
         resolved_args: &[TypeId],
-        role: UserClassRole,
+        role: ClassRole,
     ) -> TypeId {
         let Ty::Class {
             name: base_name,
@@ -1928,9 +2477,9 @@ impl TypeChecker {
             .collect();
         let specialized = self.tcx.intern(Ty::Class {
             name: base_name,
+            role,
             user: Some(UserClass {
                 symbol,
-                role,
                 args: resolved_args.to_vec(),
             }),
             fields,
@@ -1939,26 +2488,59 @@ impl TypeChecker {
         specialized
     }
 
-    pub(crate) fn with_user_class_role(&mut self, ty: TypeId, role: UserClassRole) -> TypeId {
+    pub(crate) fn with_class_role(&mut self, ty: TypeId, role: ClassRole) -> TypeId {
         let Ty::Class {
             name,
-            user: Some(mut user),
+            role: current_role,
+            user,
             fields,
             match_args,
         } = self.tcx.get(ty).clone()
         else {
             return ty;
         };
-        if user.role == role {
+        if current_role == role {
             return ty;
         }
-        user.role = role;
         self.tcx.intern(Ty::Class {
             name,
-            user: Some(user),
+            role,
+            user,
             fields,
             match_args,
         })
+    }
+
+    pub(crate) fn class_pattern_target(&mut self, path: &[Name]) -> ClassPatternTarget {
+        let [name] = path else {
+            return ClassPatternTarget::Unknown;
+        };
+        let unshadowed_builtin = self.is_unshadowed_builtin(name);
+        if unshadowed_builtin {
+            if let Some(instance_ty) = self.builtin_class_pattern_instance(name) {
+                return ClassPatternTarget::Instance(instance_ty);
+            }
+        }
+
+        let Some(symbol) = self.symbols.lookup(name) else {
+            return ClassPatternTarget::Unknown;
+        };
+        if let Some(instance_ty) = self.builtin_class_aliases.get(&symbol).copied() {
+            return ClassPatternTarget::Instance(instance_ty);
+        }
+        let ty = self.get_sym_type(symbol.0);
+        match self.tcx.get(ty) {
+            Ty::Class {
+                role: ClassRole::Object,
+                ..
+            } => ClassPatternTarget::Instance(self.with_class_role(ty, ClassRole::Instance)),
+            Ty::Any | Ty::Error => ClassPatternTarget::Unknown,
+            Ty::Fn { .. } if unshadowed_builtin => ClassPatternTarget::Unknown,
+            Ty::Fn { .. } if self.symbols.get_symbol(symbol).kind == SymbolKind::Variable => {
+                ClassPatternTarget::Unknown
+            }
+            _ => ClassPatternTarget::Invalid,
+        }
     }
 
     pub(crate) fn resolve_type_expr(&mut self, ty: &Spanned<TypeExpr>) -> TypeId {
@@ -2051,7 +2633,7 @@ impl TypeChecker {
                     // User-defined type — look up in symbols
                     if let Some(sym) = self.symbols.lookup(name) {
                         let base_ty = self.get_sym_type(sym.0);
-                        self.specialize_user_class(name, sym, base_ty, None, ty.span)
+                        self.resolve_named_class_annotation(name, sym, base_ty, None, ty.span)
                     } else if name.contains('.') {
                         // Dotted reference like `collections.abc.Mapping`
                         // (#1576): external/forward type — treat as Any so
@@ -2119,7 +2701,13 @@ impl TypeChecker {
                         // Support user-defined generic types like Box[int]
                         } else if let Some(sym) = self.symbols.lookup(name) {
                             let base_ty = self.get_sym_type(sym.0);
-                            self.specialize_user_class(name, sym, base_ty, Some(&inner), ty.span)
+                            self.resolve_named_class_annotation(
+                                name,
+                                sym,
+                                base_ty,
+                                Some(&inner),
+                                ty.span,
+                            )
                         } else if let Some(alias_ty) = self.tcx.resolve_alias(name) {
                             alias_ty
                         } else if name.contains('.') {
@@ -2169,18 +2757,6 @@ impl TypeChecker {
     /// ① Type-wall PoC: does the sig table contain a `Method` whose owning class
     /// is `class_name` in `module`? Used at import time to mark a from-imported
     /// class binding so its instances can resolve method sigs.
-    pub(crate) fn is_known_stdlib_class(module: &str, class_name: &str) -> bool {
-        let owns_class = |s: &super::stdlib_sigs::StdlibSig| {
-            matches!(s.kind, super::stdlib_sigs::SigKind::Method)
-                && s.module == module
-                && s.qualifier == class_name
-        };
-        super::stdlib_sigs::STDLIB_SIGS.iter().any(owns_class)
-            || super::stdlib_sigs_generated::STDLIB_SIGS_GENERATED
-                .iter()
-                .any(owns_class)
-    }
-
     /// ① Type-wall PoC: map a [`CoreTy`] to a concrete scalar [`TypeId`], or
     /// `None` when the param is non-scalar / unenforceable. `Bytes` and
     /// `MemoryView`, and `Complex` have no dedicated scalar `Ty` (buffer/complex
@@ -2276,31 +2852,45 @@ impl TypeChecker {
         }
         // SelfType denotes an instance receiver, never the class object.
         if matches!(e, Ty::SelfType) {
-            return !matches!(a, Ty::Class { user: Some(user), .. } if user.role == UserClassRole::Object);
+            return !matches!(
+                a,
+                Ty::Class {
+                    role: ClassRole::Object,
+                    ..
+                }
+            );
         }
         if matches!(a, Ty::SelfType) {
-            return !matches!(e, Ty::Class { user: Some(user), .. } if user.role == UserClassRole::Object);
+            return !matches!(
+                e,
+                Ty::Class {
+                    role: ClassRole::Object,
+                    ..
+                }
+            );
         }
         // User-class compatibility is nominal by declaration symbol. Generic
         // arguments are invariant unless either side is still gradual.
         if let (
             Ty::Class {
                 name: n1,
+                role: role1,
                 user: user1,
                 ..
             },
             Ty::Class {
                 name: n2,
+                role: role2,
                 user: user2,
                 ..
             },
         ) = (e, a)
         {
+            if role1 != role2 {
+                return false;
+            }
             match (user1, user2) {
                 (Some(left), Some(right)) if left.symbol == right.symbol => {
-                    if left.role != right.role {
-                        return false;
-                    }
                     let args_compatible = left.args.len() == right.args.len()
                         && left.args.iter().zip(&right.args).all(|(left, right)| {
                             left == right
@@ -2324,12 +2914,21 @@ impl TypeChecker {
         }
         // PEP 589: class-form TypedDict is a structural schema at type-check
         // time but its runtime values are plain dicts.
-        if let (Ty::Class { name, user, .. }, Ty::Dict(_, _)) = (e, a) {
-            if !user
+        if let (
+            Ty::Class {
+                name,
+                role: ClassRole::Instance,
+                user,
+                ..
+            },
+            Ty::Dict(_, _),
+        ) = (e, a)
+        {
+            let is_typed_dict = user
                 .as_ref()
-                .is_some_and(|user| user.role == UserClassRole::Object)
-                && self.typed_dict_classes.contains(name)
-            {
+                .is_some_and(|user| self.typed_dict_class_symbols.contains(&user.symbol))
+                || (user.is_none() && self.typed_dict_classes.contains(name));
+            if is_typed_dict {
                 return true;
             }
         }
@@ -2337,30 +2936,40 @@ impl TypeChecker {
         // check if actual class structurally satisfies it
         if let Ty::Class {
             name: proto_name,
+            role: expected_role,
             user: expected_user,
             ..
         } = e
         {
-            if !expected_user
+            let protocol = expected_user
                 .as_ref()
-                .is_some_and(|user| user.role == UserClassRole::Object)
-                && self.protocol_registry.get(proto_name).is_some()
-            {
+                .and_then(|user| self.protocols_by_symbol.get(&user.symbol))
+                .or_else(|| {
+                    expected_user
+                        .is_none()
+                        .then(|| self.protocol_registry.get(proto_name))
+                        .flatten()
+                });
+            if *expected_role == ClassRole::Instance && protocol.is_some() {
                 if let Ty::Class {
                     name: class_name,
+                    role: actual_role,
                     user: actual_user,
                     ..
                 } = a
                 {
-                    if actual_user
-                        .as_ref()
-                        .is_some_and(|user| user.role == UserClassRole::Object)
-                    {
+                    if *actual_role == ClassRole::Object {
                         return false;
                     }
-                    let class_methods = self
-                        .class_methods
-                        .get(class_name)
+                    let class_methods = actual_user
+                        .as_ref()
+                        .and_then(|user| self.class_methods_by_symbol.get(&user.symbol))
+                        .or_else(|| {
+                            actual_user
+                                .is_none()
+                                .then(|| self.class_methods.get(class_name))
+                                .flatten()
+                        })
                         .cloned()
                         .unwrap_or_default();
                     let class_attrs: HashMap<String, TypeId> = if let Ty::Class { fields, .. } = a {
@@ -2368,8 +2977,8 @@ impl TypeChecker {
                     } else {
                         HashMap::new()
                     };
-                    return self.protocol_registry.satisfies(
-                        proto_name,
+                    return ProtocolRegistry::satisfies_definition(
+                        protocol.expect("checked above"),
                         &class_methods,
                         &class_attrs,
                         &self.tcx,
@@ -2596,7 +3205,12 @@ impl TypeChecker {
     }
 
     /// Register a Protocol class in the protocol registry.
-    pub(crate) fn register_protocol(&mut self, name: &str, body: &[Spanned<Stmt>]) {
+    pub(crate) fn register_protocol(
+        &mut self,
+        class_symbol: SymbolId,
+        name: &str,
+        body: &[Spanned<Stmt>],
+    ) {
         use super::protocol::{MethodSig, Protocol};
 
         let mut methods = HashMap::new();
@@ -2640,12 +3254,15 @@ impl TypeChecker {
             }
         }
 
-        self.protocol_registry.register(Protocol {
+        let protocol = Protocol {
             name: name.to_string(),
             methods,
             attrs,
             runtime_checkable: false,
-        });
+        };
+        self.protocols_by_symbol
+            .insert(class_symbol, protocol.clone());
+        self.protocol_registry.register(protocol);
     }
 
     /// Collect method signatures from a class body for protocol conformance.
@@ -2660,23 +3277,23 @@ impl TypeChecker {
         let mut methods = HashMap::new();
         let mut method_param_sigs = HashMap::new();
         let mut unbound_methods = HashMap::new();
-        let receiver_ty = self
-            .symbols
-            .lookup(class_name)
-            .map(|sym| self.get_sym_type(sym.0))
-            .unwrap_or_else(|| {
+        let mut property_getters = HashMap::new();
+        let mut property_setters = HashMap::new();
+        self.class_method_generic_defs
+            .retain(|(owner, _), _| *owner != class_symbol);
+        let receiver_ty = self.get_symbol_type(class_symbol).unwrap_or_else(|| {
                 self.tcx.intern(Ty::Class {
                     name: class_name.to_string(),
+                    role: ClassRole::Instance,
                     user: Some(UserClass {
                         symbol: class_symbol,
-                        role: UserClassRole::Instance,
                         args: Vec::new(),
                     }),
                     fields: vec![],
                     match_args: None,
                 })
             });
-        let receiver_ty = self.with_user_class_role(receiver_ty, UserClassRole::Instance);
+        let receiver_ty = self.with_class_role(receiver_ty, ClassRole::Instance);
         for stmt in body {
             if let Stmt::FnDef {
                 decorators,
@@ -2728,6 +3345,25 @@ impl TypeChecker {
                     self.class_method_generic_defs
                         .insert((class_symbol, name.clone()), gp);
                 }
+                let is_property_getter = decorators.iter().any(|decorator| {
+                    matches!(&decorator.node, Expr::Ident(name) if name == "property")
+                        || matches!(&decorator.node, Expr::Attr { attr, .. } if attr == "property")
+                });
+                let is_property_setter = decorators.iter().any(|decorator| {
+                    matches!(&decorator.node, Expr::Attr { attr, .. } if attr == "setter")
+                });
+                if is_property_getter {
+                    property_getters.insert(name.clone(), ret);
+                }
+                if is_property_setter {
+                    property_setters.insert(
+                        name.clone(),
+                        param_sigs
+                            .first()
+                            .map(|param| param.ty)
+                            .unwrap_or_else(|| self.tcx.any()),
+                    );
+                }
                 methods.insert(
                     name.clone(),
                     MethodSig {
@@ -2747,26 +3383,37 @@ impl TypeChecker {
                 }
             }
         }
-        if !methods.is_empty() {
-            self.class_methods_by_symbol
-                .insert(class_symbol, methods.clone());
-            self.class_methods.insert(class_name.to_string(), methods);
-            self.class_method_param_sigs
-                .insert(class_symbol, method_param_sigs);
-        }
-        if !unbound_methods.is_empty() {
-            self.class_unbound_methods
-                .insert(class_symbol, unbound_methods);
-        }
+        self.class_methods_by_symbol
+            .insert(class_symbol, methods.clone());
+        self.class_methods.insert(class_name.to_string(), methods);
+        self.class_method_param_sigs
+            .insert(class_symbol, method_param_sigs);
+        self.class_unbound_methods
+            .insert(class_symbol, unbound_methods);
+        self.class_property_getters
+            .insert(class_symbol, property_getters);
+        self.class_property_setters
+            .insert(class_symbol, property_setters);
     }
 
     fn base_is_typed_dict(&self, expr: &Expr) -> bool {
-        let name = match expr {
-            Expr::Ident(name) => Some(name.as_str()),
-            Expr::Attr { attr, .. } => Some(attr.as_str()),
-            _ => None,
-        };
-        name.is_some_and(|name| name == "TypedDict" || self.typed_dict_classes.contains(name))
+        match expr {
+            Expr::Ident(name) if name == "TypedDict" => true,
+            Expr::Ident(name) => self
+                .symbols
+                .lookup(name)
+                .and_then(|symbol| match self.tcx.get(self.get_sym_type(symbol.0)) {
+                    Ty::Class {
+                        role: ClassRole::Object,
+                        user: Some(user),
+                        ..
+                    } => Some(user.symbol),
+                    _ => None,
+                })
+                .is_some_and(|symbol| self.typed_dict_class_symbols.contains(&symbol)),
+            Expr::Attr { attr, .. } => attr == "TypedDict",
+            _ => false,
+        }
     }
 }
 
@@ -2958,9 +3605,9 @@ mod tests {
         let mut tc = TypeChecker::new();
         let c1 = tc.tcx.intern(Ty::Class {
             name: "Box".to_string(),
+            role: ClassRole::Instance,
             user: Some(UserClass {
                 symbol: SymbolId(100),
-                role: UserClassRole::Instance,
                 args: vec![tc.tcx.any()],
             }),
             fields: vec![],
@@ -2968,9 +3615,9 @@ mod tests {
         });
         let c2 = tc.tcx.intern(Ty::Class {
             name: "Box".to_string(),
+            role: ClassRole::Instance,
             user: Some(UserClass {
                 symbol: SymbolId(100),
-                role: UserClassRole::Instance,
                 args: vec![tc.tcx.int()],
             }),
             fields: vec![],
@@ -2986,9 +3633,9 @@ mod tests {
         let mut tc = TypeChecker::new();
         let c1 = tc.tcx.intern(Ty::Class {
             name: "Box".to_string(),
+            role: ClassRole::Instance,
             user: Some(UserClass {
                 symbol: SymbolId(100),
-                role: UserClassRole::Instance,
                 args: vec![tc.tcx.int()],
             }),
             fields: vec![],
@@ -2996,9 +3643,9 @@ mod tests {
         });
         let c2 = tc.tcx.intern(Ty::Class {
             name: "Box".to_string(),
+            role: ClassRole::Instance,
             user: Some(UserClass {
                 symbol: SymbolId(100),
-                role: UserClassRole::Instance,
                 args: vec![tc.tcx.str()],
             }),
             fields: vec![],
@@ -3013,9 +3660,9 @@ mod tests {
         let mut tc = TypeChecker::new();
         let c1 = tc.tcx.intern(Ty::Class {
             name: "Foo".to_string(),
+            role: ClassRole::Instance,
             user: Some(UserClass {
                 symbol: SymbolId(100),
-                role: UserClassRole::Instance,
                 args: vec![],
             }),
             fields: vec![],
@@ -3023,9 +3670,9 @@ mod tests {
         });
         let c2 = tc.tcx.intern(Ty::Class {
             name: "Bar".to_string(),
+            role: ClassRole::Instance,
             user: Some(UserClass {
                 symbol: SymbolId(101),
-                role: UserClassRole::Instance,
                 args: vec![],
             }),
             fields: vec![],
@@ -3091,6 +3738,7 @@ mod tests {
         let mut tc = TypeChecker::new();
         let class_ty = tc.tcx.intern(Ty::Class {
             name: "MyClass".to_string(),
+            role: ClassRole::Instance,
             user: None,
             fields: vec![],
             match_args: None,

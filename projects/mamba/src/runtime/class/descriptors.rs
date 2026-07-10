@@ -149,7 +149,8 @@ pub(crate) fn member_descriptor_get(desc: MbValue, instance: MbValue) -> MbValue
                 crate::runtime::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
                     MbValue::from_ptr(MbObject::new_str(format!(
-                        "'{class_name}' object has no attribute '{slot_name}'"
+                        "'{}' object has no attribute '{slot_name}'",
+                        class_display_name(class_name)
                     ))),
                 );
                 return MbValue::none();
@@ -209,7 +210,8 @@ pub(crate) fn member_descriptor_delete(desc: MbValue, instance: MbValue) {
                 crate::runtime::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
                     MbValue::from_ptr(MbObject::new_str(format!(
-                        "'{class_name}' object has no attribute '{slot_name}'"
+                        "'{}' object has no attribute '{slot_name}'",
+                        class_display_name(class_name)
                     ))),
                 );
                 return;
@@ -431,6 +433,14 @@ pub fn mb_property_set(prop: MbValue, instance: MbValue, value: MbValue) {
             MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
             MbValue::from_ptr(MbObject::new_str("can't set attribute".to_string())),
         );
+        return;
+    }
+    if !crate::runtime::closure::mb_closure_get_func(setter).is_none() {
+        let args = MbValue::from_ptr(MbObject::new_list_borrowed(vec![instance, value]));
+        let _ = crate::runtime::builtins::mb_call_spread(setter, args);
+        unsafe {
+            crate::runtime::rc::release_if_ptr(args);
+        }
         return;
     }
     // Direct function pointer invocation (TAG_FUNC).

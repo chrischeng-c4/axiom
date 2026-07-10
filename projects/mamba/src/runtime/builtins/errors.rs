@@ -46,10 +46,11 @@ pub(crate) fn value_type_name(val: MbValue) -> String {
                 ObjData::Complex(_, _) => "complex",
                 ObjData::CodeObject { .. } => "code",
                 ObjData::Instance { class_name, .. } => {
-                    return class_name
+                    let display_name = super::super::class::class_display_name(class_name);
+                    return display_name
                         .rsplit('.')
                         .next()
-                        .unwrap_or(class_name)
+                        .unwrap_or(&display_name)
                         .to_string();
                 }
             }

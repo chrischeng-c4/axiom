@@ -44,18 +44,17 @@ impl TypeParamDefault {
     }
 }
 
-/// Whether a user-defined class type denotes the class object or an instance.
+/// Whether a class type denotes the class object or an instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum UserClassRole {
+pub enum ClassRole {
     Object,
     Instance,
 }
 
-/// Nominal identity, role, and concrete arguments for a user-defined class.
+/// Nominal identity and concrete arguments for a user-defined class.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UserClass {
     pub symbol: SymbolId,
-    pub role: UserClassRole,
     pub args: Vec<TypeId>,
 }
 
@@ -92,6 +91,7 @@ pub enum Ty {
     /// `match_args: Some(names)` = explicit (even `Some(vec![])` means no positional matching).
     Class {
         name: String,
+        role: ClassRole,
         user: Option<UserClass>,
         fields: Vec<(String, TypeId)>,
         match_args: Option<Vec<String>>,
@@ -257,6 +257,7 @@ mod tests {
     fn test_ty_class() {
         let c = Ty::Class {
             name: "Foo".to_string(),
+            role: ClassRole::Instance,
             user: None,
             fields: vec![("x".to_string(), TypeId(3))],
             match_args: None,

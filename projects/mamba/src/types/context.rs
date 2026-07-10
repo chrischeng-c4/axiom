@@ -31,7 +31,7 @@ pub enum AliasHeadError {
 }
 
 /// Interner and registry for all types used during compilation.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TypeContext {
     types: Vec<Ty>,
     /// Type alias registry: name → resolved TypeId (#241).
@@ -582,9 +582,9 @@ mod tests {
         let mut tcx = TypeContext::new();
         let first = tcx.intern(Ty::Class {
             name: "Nested".to_string(),
+            role: crate::types::ty::ClassRole::Instance,
             user: Some(crate::types::ty::UserClass {
                 symbol: crate::resolve::SymbolId(10),
-                role: crate::types::ty::UserClassRole::Instance,
                 args: Vec::new(),
             }),
             fields: Vec::new(),
@@ -592,9 +592,9 @@ mod tests {
         });
         let second = tcx.intern(Ty::Class {
             name: "Nested".to_string(),
+            role: crate::types::ty::ClassRole::Instance,
             user: Some(crate::types::ty::UserClass {
                 symbol: crate::resolve::SymbolId(11),
-                role: crate::types::ty::UserClassRole::Instance,
                 args: Vec::new(),
             }),
             fields: Vec::new(),
@@ -605,13 +605,13 @@ mod tests {
     }
 
     #[test]
-    fn test_user_class_role_is_part_of_nominal_identity() {
+    fn test_class_role_is_part_of_identity() {
         let mut tcx = TypeContext::new();
         let object = tcx.intern(Ty::Class {
             name: "Box".to_string(),
+            role: crate::types::ty::ClassRole::Object,
             user: Some(crate::types::ty::UserClass {
                 symbol: crate::resolve::SymbolId(10),
-                role: crate::types::ty::UserClassRole::Object,
                 args: vec![tcx.int()],
             }),
             fields: Vec::new(),
@@ -619,9 +619,9 @@ mod tests {
         });
         let instance = tcx.intern(Ty::Class {
             name: "Box".to_string(),
+            role: crate::types::ty::ClassRole::Instance,
             user: Some(crate::types::ty::UserClass {
                 symbol: crate::resolve::SymbolId(10),
-                role: crate::types::ty::UserClassRole::Instance,
                 args: vec![tcx.int()],
             }),
             fields: Vec::new(),
@@ -629,6 +629,22 @@ mod tests {
         });
 
         assert_ne!(object, instance);
+
+        let native_object = tcx.intern(Ty::Class {
+            name: "ValueError".to_string(),
+            role: crate::types::ty::ClassRole::Object,
+            user: None,
+            fields: Vec::new(),
+            match_args: None,
+        });
+        let native_instance = tcx.intern(Ty::Class {
+            name: "ValueError".to_string(),
+            role: crate::types::ty::ClassRole::Instance,
+            user: None,
+            fields: Vec::new(),
+            match_args: None,
+        });
+        assert_ne!(native_object, native_instance);
     }
 
     #[test]

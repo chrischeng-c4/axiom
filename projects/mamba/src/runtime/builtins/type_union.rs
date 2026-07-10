@@ -1,6 +1,6 @@
 use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
-use super::make_type_object;
+use super::{make_type_object, type_object_registry_key};
 use crate::runtime::class;
 use crate::runtime::pep695;
 use crate::runtime::stdlib::typing_mod;
@@ -68,12 +68,8 @@ fn collect_union_operand(v: MbValue, out: &mut Vec<MbValue>) -> bool {
                     }
                     false
                 }
-                ObjData::Instance { class_name, fields } if class_name == "type" => {
-                    let name = fields
-                        .read()
-                        .ok()
-                        .and_then(|f| f.get("__name__").and_then(|v| type_name_from_value(*v)));
-                    match name {
+                ObjData::Instance { class_name, .. } if class_name == "type" => {
+                    match type_object_registry_key(v) {
                         Some(name) if is_type_name(&name) => {
                             out.push(v);
                             true
@@ -122,13 +118,18 @@ fn dedupe_union_parts(parts: Vec<MbValue>) -> Vec<MbValue> {
     let mut out = Vec::new();
     let mut seen = Vec::<String>::new();
     for part in parts {
-        let key = type_name_from_value(part).unwrap_or_else(|| format!("{:016x}", part.to_bits()));
+        let key = type_identity_from_value(part)
+            .unwrap_or_else(|| format!("{:016x}", part.to_bits()));
         if !seen.iter().any(|s| s == &key) {
             seen.push(key);
             out.push(part);
         }
     }
     out
+}
+
+fn type_identity_from_value(v: MbValue) -> Option<String> {
+    type_object_registry_key(v).or_else(|| type_name_from_value(v))
 }
 
 fn type_name_from_value(v: MbValue) -> Option<String> {
@@ -205,4 +206,33 @@ pub(crate) fn is_type_name(s: &str) -> bool {
             | "slice"
             | "super"
     ) || class::class_is_registered(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_class_type_objects_are_valid_union_operands_by_runtime_identity() {
+        let declaration_key = MbValue::from_ptr(MbObject::new_str("class-decl".to_string()));
+        let runtime_key = class::mb_class_runtime_key(declaration_key);
+        let display_name = MbValue::from_ptr(MbObject::new_str("C".to_string()));
+        let class_obj = super::super::mb_user_type_obj(runtime_key, display_name);
+        let empty_names = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+        let empty_values = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+        class::mb_class_define_multi_named(
+            runtime_key,
+            display_name,
+            MbValue::none(),
+            empty_names,
+            empty_values,
+        );
+
+        let int_obj = make_type_object("int");
+        assert!(matches!(
+            mb_bitor_type_union(class_obj, int_obj),
+            TypeUnionBuild::Value(_)
+        ));
+        crate::runtime::cleanup_all_runtime_state();
+    }
 }
