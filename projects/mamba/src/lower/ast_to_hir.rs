@@ -9359,7 +9359,7 @@ impl<'a> AstLowerer<'a> {
                     }
                     _ => self.lower_expr(index)?,
                 };
-                let ty = match self.checker.tcx.get(obj.ty()) {
+                let ty = match self.checker.tcx.semantic_ty_or_error(obj.ty()) {
                     crate::types::Ty::List(inner) => *inner,
                     crate::types::Ty::Tuple(items) => {
                         if let HirExpr::IntLit(i, _) = &idx {

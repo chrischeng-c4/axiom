@@ -4,7 +4,7 @@ use super::ty::{Ty, TypeId, TypeParamDefault, TypeVarId, TypeVarKind};
 ///
 /// Implements PEP 695 type parameter syntax and generic type resolution.
 /// Tracks type variables, bounds, and constraints for generic classes and functions.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// A type variable with optional bound and constraints.
 #[derive(Debug, Clone)]
@@ -111,6 +111,31 @@ impl Substitution {
         let ty_val = tcx.get(ty).clone();
         match ty_val {
             Ty::TypeVar(var_id) => self.map.get(&var_id).copied().unwrap_or(ty),
+            Ty::AliasRef(alias_id) => {
+                let source = tcx.alias_instance(alias_id).clone();
+                let new_args: Vec<_> = source
+                    .args
+                    .iter()
+                    .map(|arg| self.apply(*arg, tcx))
+                    .collect();
+                if new_args == source.args {
+                    return ty;
+                }
+
+                let (specialized_id, specialized_ty) = tcx.intern_alias_instance(
+                    source.symbol,
+                    source.name,
+                    new_args,
+                    source.display_arg_count,
+                );
+                if let Some(source_target) = source.target {
+                    if tcx.begin_alias_target(specialized_id) {
+                        let specialized_target = self.apply(source_target, tcx);
+                        tcx.set_alias_target(specialized_id, specialized_target);
+                    }
+                }
+                specialized_ty
+            }
             Ty::List(elem) => {
                 let new_elem = self.apply(elem, tcx);
                 if new_elem == elem {
@@ -339,6 +364,35 @@ fn unify_for_inference(
     conflicts: &mut Vec<String>,
     tcx: &TypeContext,
 ) {
+    let mut visiting = HashSet::new();
+    unify_for_inference_inner(param, arg, type_vars, subst, conflicts, tcx, &mut visiting);
+}
+
+fn unify_for_inference_inner(
+    param: TypeId,
+    arg: TypeId,
+    type_vars: &[TypeVar],
+    subst: &mut Substitution,
+    conflicts: &mut Vec<String>,
+    tcx: &TypeContext,
+    visiting: &mut HashSet<(TypeId, TypeId)>,
+) {
+    if !visiting.insert((param, arg)) {
+        return;
+    }
+    unify_for_inference_step(param, arg, type_vars, subst, conflicts, tcx, visiting);
+    visiting.remove(&(param, arg));
+}
+
+fn unify_for_inference_step(
+    param: TypeId,
+    arg: TypeId,
+    type_vars: &[TypeVar],
+    subst: &mut Substitution,
+    conflicts: &mut Vec<String>,
+    tcx: &TypeContext,
+    visiting: &mut HashSet<(TypeId, TypeId)>,
+) {
     let param_ty = tcx.get(param).clone();
     match param_ty {
         Ty::TypeVar(var_id) => {
@@ -360,30 +414,118 @@ fn unify_for_inference(
                 }
             }
         }
+        Ty::AliasRef(param_id) => {
+            let param_instance = tcx.alias_instance(param_id).clone();
+            let Ty::AliasRef(arg_id) = tcx.get(arg) else {
+                if let Some(target) = param_instance.target {
+                    unify_for_inference_inner(
+                        target, arg, type_vars, subst, conflicts, tcx, visiting,
+                    );
+                }
+                return;
+            };
+            let arg_instance = tcx.alias_instance(*arg_id).clone();
+            if param_instance.symbol == arg_instance.symbol
+                && param_instance.args.len() == arg_instance.args.len()
+            {
+                for (param_arg, arg_arg) in param_instance.args.iter().zip(&arg_instance.args) {
+                    unify_for_inference_inner(
+                        *param_arg, *arg_arg, type_vars, subst, conflicts, tcx, visiting,
+                    );
+                }
+            } else if let (Some(param_target), Some(arg_target)) =
+                (param_instance.target, arg_instance.target)
+            {
+                unify_for_inference_inner(
+                    param_target,
+                    arg_target,
+                    type_vars,
+                    subst,
+                    conflicts,
+                    tcx,
+                    visiting,
+                );
+            }
+        }
+        Ty::Union(param_members) => {
+            let arg_ty = tcx.get(arg).clone();
+            if let Ty::Union(arg_members) = arg_ty {
+                let mut used = HashSet::new();
+                let mut param_order: Vec<_> = (0..param_members.len()).collect();
+                param_order
+                    .sort_by_key(|index| matches!(tcx.get(param_members[*index]), Ty::TypeVar(_)));
+                for param_index in param_order {
+                    let param_member = param_members[param_index];
+                    let Some((arg_index, arg_member)) = arg_members
+                        .iter()
+                        .copied()
+                        .enumerate()
+                        .find(|(index, arg_member)| {
+                            !used.contains(index)
+                                && inference_shapes_match(param_member, *arg_member, tcx)
+                        })
+                    else {
+                        continue;
+                    };
+                    used.insert(arg_index);
+                    unify_for_inference_inner(
+                        param_member,
+                        arg_member,
+                        type_vars,
+                        subst,
+                        conflicts,
+                        tcx,
+                        visiting,
+                    );
+                }
+            } else if let Some(param_member) = param_members
+                .iter()
+                .copied()
+                .find(|param_member| inference_shapes_match(*param_member, arg, tcx))
+            {
+                unify_for_inference_inner(
+                    param_member,
+                    arg,
+                    type_vars,
+                    subst,
+                    conflicts,
+                    tcx,
+                    visiting,
+                );
+            }
+        }
         Ty::List(elem_param) => {
             let arg_ty = tcx.get(arg).clone();
             if let Ty::List(elem_arg) = arg_ty {
-                unify_for_inference(elem_param, elem_arg, type_vars, subst, conflicts, tcx);
+                unify_for_inference_inner(
+                    elem_param, elem_arg, type_vars, subst, conflicts, tcx, visiting,
+                );
             }
         }
         Ty::Set(elem_param) => {
             let arg_ty = tcx.get(arg).clone();
             if let Ty::Set(elem_arg) = arg_ty {
-                unify_for_inference(elem_param, elem_arg, type_vars, subst, conflicts, tcx);
+                unify_for_inference_inner(
+                    elem_param, elem_arg, type_vars, subst, conflicts, tcx, visiting,
+                );
             }
         }
         Ty::Dict(k_param, v_param) => {
             let arg_ty = tcx.get(arg).clone();
             if let Ty::Dict(k_arg, v_arg) = arg_ty {
-                unify_for_inference(k_param, k_arg, type_vars, subst, conflicts, tcx);
-                unify_for_inference(v_param, v_arg, type_vars, subst, conflicts, tcx);
+                unify_for_inference_inner(
+                    k_param, k_arg, type_vars, subst, conflicts, tcx, visiting,
+                );
+                unify_for_inference_inner(
+                    v_param, v_arg, type_vars, subst, conflicts, tcx, visiting,
+                );
             }
         }
         Ty::Tuple(params_inner) => {
             let arg_ty = tcx.get(arg).clone();
             if let Ty::Tuple(args_inner) = arg_ty {
                 for (p, a) in params_inner.iter().zip(args_inner.iter()) {
-                    unify_for_inference(*p, *a, type_vars, subst, conflicts, tcx);
+                    unify_for_inference_inner(*p, *a, type_vars, subst, conflicts, tcx, visiting);
                 }
             }
         }
@@ -402,13 +544,14 @@ fn unify_for_inference(
                     && param_user.args.len() == arg_user.args.len()
                 {
                     for (param_arg, concrete_arg) in param_user.args.iter().zip(&arg_user.args) {
-                        unify_for_inference(
+                        unify_for_inference_inner(
                             *param_arg,
                             *concrete_arg,
                             type_vars,
                             subst,
                             conflicts,
                             tcx,
+                            visiting,
                         );
                     }
                 }
@@ -417,6 +560,31 @@ fn unify_for_inference(
         _ => {
             // Concrete type — no inference needed
         }
+    }
+}
+
+fn inference_shapes_match(param: TypeId, arg: TypeId, tcx: &TypeContext) -> bool {
+    if param == arg {
+        return true;
+    }
+    match (tcx.get(param), tcx.get(arg)) {
+        (Ty::TypeVar(_), _) | (Ty::Any | Ty::Error, _) | (_, Ty::Any | Ty::Error) => true,
+        (Ty::AliasRef(_), Ty::AliasRef(_))
+        | (Ty::List(_), Ty::List(_))
+        | (Ty::Set(_), Ty::Set(_))
+        | (Ty::Dict(_, _), Ty::Dict(_, _))
+        | (Ty::Tuple(_), Ty::Tuple(_))
+        | (Ty::Union(_), Ty::Union(_))
+        | (Ty::Fn { .. }, Ty::Fn { .. }) => true,
+        (
+            Ty::Class {
+                user: Some(param), ..
+            },
+            Ty::Class {
+                user: Some(arg), ..
+            },
+        ) => param.symbol == arg.symbol && param.role == arg.role,
+        (left, right) => std::mem::discriminant(left) == std::mem::discriminant(right),
     }
 }
 
@@ -499,6 +667,37 @@ mod tests {
         assert_eq!(subst.apply(var_ty, &mut tcx), int_ty);
         // int → int (unchanged)
         assert_eq!(subst.apply(int_ty, &mut tcx), int_ty);
+    }
+
+    #[test]
+    fn substitution_specializes_recursive_alias_instances() {
+        let mut tcx = TypeContext::new();
+        let var = tcx.new_type_var("T".to_string(), None, Vec::new());
+        let var_ty = tcx.intern(Ty::TypeVar(var));
+        let symbol = crate::resolve::SymbolId(17);
+        let (generic_instance, generic_ref) =
+            tcx.intern_alias_instance(symbol, "Chain".to_string(), vec![var_ty], 1);
+        let generic_target = tcx.intern(Ty::List(generic_ref));
+        tcx.set_alias_target(generic_instance, generic_target);
+
+        let mut subst = Substitution::new();
+        subst.insert(var, tcx.int());
+        let specialized_ref = subst.apply(generic_ref, &mut tcx);
+        let Ty::AliasRef(specialized_instance) = tcx.get(specialized_ref) else {
+            panic!("recursive alias substitution lost its identity");
+        };
+        let specialized_instance = *specialized_instance;
+        assert_eq!(
+            tcx.alias_instance(specialized_instance).args,
+            vec![tcx.int()]
+        );
+        let specialized_target = tcx
+            .alias_target(specialized_instance)
+            .expect("specialized recursive alias target was not backfilled");
+        let Ty::List(nested) = tcx.get(specialized_target) else {
+            panic!("specialized target lost its productive list head");
+        };
+        assert_eq!(*nested, specialized_ref);
     }
 
     #[test]
