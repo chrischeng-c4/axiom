@@ -1789,9 +1789,21 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Void
         ),
         rt_sym!(
+            "mb_class_finalize_definition_value",
+            class::mb_class_finalize_definition_value as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
             "mb_class_mark_classcell_required",
             class::mb_class_mark_classcell_required as fn(super::MbValue),
             [I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_class_bind_classcell",
+            class::mb_class_bind_classcell as fn(super::MbValue, super::MbValue),
+            [I64, I64],
             Void
         ),
         rt_sym!(
