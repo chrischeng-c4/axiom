@@ -28,30 +28,33 @@ Public API manifest for `projects/lumen/src/routing.rs` generated from AST durin
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `DEFAULT_VIRTUAL_BUCKET_COUNT` | projects/lumen/src/routing.rs | constant | pub | 32 |  |
-| `EngineShardSearch` | projects/lumen/src/routing.rs | struct | pub | 188 |  |
-| `EngineShardWrite` | projects/lumen/src/routing.rs | struct | pub | 253 |  |
+| `EngineShardSearch` | projects/lumen/src/routing.rs | struct | pub | 221 |  |
+| `EngineShardWrite` | projects/lumen/src/routing.rs | struct | pub | 286 |  |
 | `SearchShardTarget` | projects/lumen/src/routing.rs | enum | pub | 73 |  |
 | `ShardRoute` | projects/lumen/src/routing.rs | struct | pub | 63 |  |
 | `VirtualBucketShardMap` | projects/lumen/src/routing.rs | struct | pub | 80 |  |
 | `assignment_for_bucket` | projects/lumen/src/routing.rs | function | pub | 142 | assignment_for_bucket(&self, bucket: u32) -> Option<u32> |
 | `balanced` | projects/lumen/src/routing.rs | function | pub | 88 | balanced(version: u64, virtual_bucket_count: u32, physical_shard_count: u32) -> Result<Self> |
 | `document_shard_index` | projects/lumen/src/routing.rs | function | pub | 46 | document_shard_index(collection_id: &str, external_id: &str, shard_count: usize) -> usize |
-| `is_empty` | projects/lumen/src/routing.rs | function | pub | 214 | is_empty(&self) -> bool |
-| `is_empty` | projects/lumen/src/routing.rs | function | pub | 282 | is_empty(&self) -> bool |
-| `len` | projects/lumen/src/routing.rs | function | pub | 210 | len(&self) -> usize |
-| `len` | projects/lumen/src/routing.rs | function | pub | 278 | len(&self) -> usize |
-| `merge_shard_search_responses` | projects/lumen/src/routing.rs | function | pub | 590 | merge_shard_search_responses(     req: &SearchRequest,     responses: impl IntoIterator<Item = SearchResponse>,     took_us: u64,     sort_value: K, ) -> SearchResponse |
-| `new_with_shard_map` | projects/lumen/src/routing.rs | function | pub | 202 | new_with_shard_map(shards: Vec<Arc<Engine>>, shard_map: VirtualBucketShardMap) -> Self |
-| `new` | projects/lumen/src/routing.rs | function | pub | 69 | new(shards: Vec<Arc<Engine>>) -> Self |
-| `new` | projects/lumen/src/routing.rs | function | pub | 112 | new(writers: Vec<Arc<WriteCoordinator>>) -> Self |
+| `is_empty` | projects/lumen/src/routing.rs | function | pub | 247 | is_empty(&self) -> bool |
+| `is_empty` | projects/lumen/src/routing.rs | function | pub | 315 | is_empty(&self) -> bool |
+| `len` | projects/lumen/src/routing.rs | function | pub | 243 | len(&self) -> usize |
+| `len` | projects/lumen/src/routing.rs | function | pub | 311 | len(&self) -> usize |
+| `merge_shard_search_responses` | projects/lumen/src/routing.rs | function | pub | 623 | merge_shard_search_responses(     req: &SearchRequest,     responses: impl IntoIterator<Item = SearchResponse>,     took_us: u64,     sort_value: K, ) -> SearchResponse |
+| `new_with_shard_map` | projects/lumen/src/routing.rs | function | pub | 236 | new_with_shard_map(shards: Vec<Arc<Engine>>, shard_map: VirtualBucketShardMap) -> Self |
+| `new_with_shard_map` | projects/lumen/src/routing.rs | function | pub | 301 | new_with_shard_map(     writers: Vec<Arc<WriteCoordinator>>,     shard_map: VirtualBucketShardMap, ) -> Self |
+| `new` | projects/lumen/src/routing.rs | function | pub | 105 | new(version: u64, assignments: Vec<u32>, physical_shard_count: u32) -> Result<Self> |
+| `new` | projects/lumen/src/routing.rs | function | pub | 228 | new(shards: Vec<Arc<Engine>>) -> Self |
+| `new` | projects/lumen/src/routing.rs | function | pub | 293 | new(writers: Vec<Arc<WriteCoordinator>>) -> Self |
 | `physical_shard_count` | projects/lumen/src/routing.rs | function | pub | 138 | physical_shard_count(&self) -> u32 |
 | `route_document` | projects/lumen/src/routing.rs | function | pub | 146 | route_document(&self, collection_id: &str, routing_key: Option<&str>, external_id: &str) -> ShardRoute |
 | `route_key` | projects/lumen/src/routing.rs | function | pub | 155 | route_key(&self, collection_id: &str, routing_key: &str) -> ShardRoute |
 | `search_target` | projects/lumen/src/routing.rs | function | pub | 167 | search_target(&self, collection_id: &str, routing_key: Option<&str>) -> SearchShardTarget |
-| `search_shards_parallel` | projects/lumen/src/routing.rs | function | pub | 552 | search_shards_parallel(     collection_id: &str,     req: SearchRequest,     shards: &[S],     search: F,     sort_value: K, ) -> Result<SearchResponse> |
-| `shard_host` | projects/lumen/src/routing.rs | function | pub | 182 | shard_host(prefix: &str, shard: u32, headless_service: &str) -> String |
+| `search_shards_parallel` | projects/lumen/src/routing.rs | function | pub | 585 | search_shards_parallel(     collection_id: &str,     req: SearchRequest,     shards: &[S],     search: F,     sort_value: K, ) -> Result<SearchResponse> |
+| `shard_host` | projects/lumen/src/routing.rs | function | pub | 215 | shard_host(prefix: &str, shard: u32, headless_service: &str) -> String |
 | `shard_index` | projects/lumen/src/routing.rs | function | pub | 35 | shard_index(collection_id: &str, shard_count: u32) -> u32 |
 | `single` | projects/lumen/src/routing.rs | function | pub | 126 | single() -> Self |
+| `split_one_shard` | projects/lumen/src/routing.rs | function | pub | 187 | split_one_shard(&self, new_version: u64) -> Result<Self> |
 | `version` | projects/lumen/src/routing.rs | function | pub | 130 | version(&self) -> u64 |
 | `virtual_bucket_count` | projects/lumen/src/routing.rs | function | pub | 134 | virtual_bucket_count(&self) -> u32 |
 
@@ -75,7 +78,7 @@ use std::time::Instant;
 
 use std::sync::Arc;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use futures::future::try_join_all;
 use rayon::prelude::*;
@@ -234,6 +237,39 @@ impl VirtualBucketShardMap {
             Some(key) => SearchShardTarget::One(self.route_key(collection_id, key)),
             None => SearchShardTarget::All,
         }
+    }
+
+    /// Target map for growing this map by exactly one physical shard, moving
+    /// the minimum number of virtual buckets. From each existing shard, the
+    /// lowest-numbered `buckets_on_that_shard / new_physical_shard_count`
+    /// buckets move to the new shard (appended at index
+    /// `physical_shard_count`); no bucket ever moves directly between two
+    /// existing shards. That keeps a single split a bounded, per-source-shard
+    /// migration (one batch stream per old shard into the new shard) rather
+    /// than a full cluster-wide rebalance.
+    /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+    pub fn split_one_shard(&self, new_version: u64) -> Result<Self> {
+        let new_physical_shard_count = self
+            .physical_shard_count
+            .checked_add(1)
+            .context("physical_shard_count overflow computing shard split")?;
+        let new_shard = self.physical_shard_count;
+
+        let mut buckets_by_shard: Vec<Vec<u32>> =
+            vec![Vec::new(); self.physical_shard_count as usize];
+        for (bucket, &shard) in self.assignments.iter().enumerate() {
+            buckets_by_shard[shard as usize].push(bucket as u32);
+        }
+
+        let mut assignments = (*self.assignments).clone();
+        for buckets in &buckets_by_shard {
+            let move_count = buckets.len() / new_physical_shard_count as usize;
+            for &bucket in buckets.iter().take(move_count) {
+                assignments[bucket as usize] = new_shard;
+            }
+        }
+
+        Self::new(new_version, assignments, new_physical_shard_count)
     }
 }
 
@@ -775,6 +811,59 @@ mod tests {
         assert!(
             seen.len() > 1,
             "external_id routing collapsed one collection to one shard"
+        );
+    }
+
+    #[test]
+    fn split_one_shard_moves_only_into_the_new_shard() {
+        // 8 buckets, 2 balanced shards: shard0=[0,2,4,6], shard1=[1,3,5,7].
+        let before = VirtualBucketShardMap::balanced(0, 8, 2).unwrap();
+        let after = before.split_one_shard(1).unwrap();
+
+        assert_eq!(after.version(), 1);
+        assert_eq!(after.virtual_bucket_count(), 8);
+        assert_eq!(after.physical_shard_count(), 3);
+
+        let mut moved = Vec::new();
+        for bucket in 0..8 {
+            let old_shard = before.assignment_for_bucket(bucket).unwrap();
+            let new_shard = after.assignment_for_bucket(bucket).unwrap();
+            if old_shard != new_shard {
+                // Every move must land on the brand-new shard, never on
+                // another pre-existing shard.
+                assert_eq!(new_shard, 2, "bucket {bucket} moved to an old shard");
+                moved.push(bucket);
+            }
+        }
+        // 4 buckets/shard, new_physical_shard_count=3 -> 4/3=1 bucket moves
+        // from each of the 2 old shards = 2 buckets total, the lowest
+        // bucket id on each source shard (0 from shard0, 1 from shard1).
+        assert_eq!(moved, vec![0, 1]);
+    }
+
+    #[test]
+    fn split_one_shard_is_deterministic_and_idempotent_shape() {
+        let map = VirtualBucketShardMap::balanced(3, 97, 5).unwrap();
+        let a = map.split_one_shard(4).unwrap();
+        let b = map.split_one_shard(4).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a.physical_shard_count(), 6);
+        // Every bucket must still resolve to a valid shard index.
+        for bucket in 0..97 {
+            assert!(a.assignment_for_bucket(bucket).unwrap() < 6);
+        }
+    }
+
+    #[test]
+    fn split_one_shard_never_leaves_the_new_shard_empty_when_source_has_buckets() {
+        let map = VirtualBucketShardMap::balanced(0, 64, 4).unwrap();
+        let after = map.split_one_shard(1).unwrap();
+        let new_shard_bucket_count = (0..64)
+            .filter(|&b| after.assignment_for_bucket(b).unwrap() == 4)
+            .count();
+        assert!(
+            new_shard_bucket_count > 0,
+            "split produced an empty new shard"
         );
     }
 

@@ -38,7 +38,7 @@ Public API manifest for `projects/lumen/src/operator/crd.rs` generated from AST 
 | `as_str` | projects/lumen/src/operator/crd.rs | function | pub | 218 | as_str(self) -> &'static str |
 | `progress_percent` | projects/lumen/src/operator/crd.rs | function | pub | 227 | progress_percent(self) -> u8 |
 | `reshard_status` | projects/lumen/src/operator/crd.rs | function | pub | 509 | reshard_status(&self) -> LumenReshardStatus |
-| `reshard_status_with_usage` | projects/lumen/src/operator/crd.rs | function | pub | 568 | reshard_status_with_usage(&self, shard_usage_bytes: &BTreeMap<u32, u64>) -> LumenReshardStatus |
+| `reshard_status_with_usage` | projects/lumen/src/operator/crd.rs | function | pub | 570 | reshard_status_with_usage(&self, shard_usage_bytes: &BTreeMap<u32, u64>) -> LumenReshardStatus |
 | `storage_pod_count` | projects/lumen/src/operator/crd.rs | function | pub | 490 | storage_pod_count(&self) -> i32 |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
@@ -603,13 +603,15 @@ impl LumenSpec {
     /// pod-`/metrics` measurement loop, the function's only caller).
     ///
     /// Reports whether the busiest shard has crossed `prepareAtPercent` /
-    /// `urgentAtPercent` of `maxShardBytes`. It does **not** drive
-    /// `workflow.phase` or move any data — the autonomous split executor
-    /// (#1319 R2: computing a target topology, invoking
-    /// [`crate::reshard::bucket_moves`] / [`crate::reshard::
-    /// snapshot_reshard_batches`], and updating `shardMap.assignments`) is a
-    /// separate, not-yet-implemented follow-up; a crossed threshold is
-    /// reported here, never acted on.
+    /// `urgentAtPercent` of `maxShardBytes`. This function itself does
+    /// **not** drive `workflow.phase` or move any data — it only computes
+    /// the status this tick. The autonomous split executor (#1319 R2, #1381:
+    /// computing a target topology, invoking [`crate::reshard::bucket_moves`]
+    /// / [`crate::reshard::snapshot_reshard_batches`], and updating
+    /// `shardMap.assignments`) is a separate loop
+    /// ([`crate::operator::reshard_driver::should_start_split`] /
+    /// `drive_tick`) that reads the `blockingConditions` this function
+    /// writes and acts on them independently.
     /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
     pub fn reshard_status_with_usage(
         &self,
@@ -712,4 +714,13 @@ changes:
     description: |
       rust-source-unit (td_ast) source for `projects/lumen/src/operator/crd.rs` captured during lumen
       standardization onto the per-file codegen ladder.
+  - path: projects/lumen/src/operator/crd.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1381: doc-comment-only update on `reshard_status_with_usage`
+      pointing at the new `reshard_driver` module (`should_start_split` /
+      `drive_tick`) that now consumes `blockingConditions` and actually
+      drives `workflow.phase`.
 ```
