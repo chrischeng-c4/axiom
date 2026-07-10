@@ -11930,6 +11930,7 @@ impl<'a> HirToMir<'a> {
         }
 
         let int_ty = self.tcx.int();
+        let state_vreg = self.fresh_vreg();
         let mut current = dispatch_block;
         for (idx, (state_id, resume_block)) in dispatches.iter().enumerate() {
             let next = if idx + 1 == dispatches.len() {
@@ -11937,29 +11938,29 @@ impl<'a> HirToMir<'a> {
             } else {
                 self.fresh_block()
             };
-            let state_vreg = self.fresh_vreg();
             let expected = self.fresh_vreg();
             let is_match = self.fresh_vreg();
-            let stmts = vec![
-                MirInst::CallExtern {
+            let mut stmts = Vec::with_capacity(if idx == 0 { 3 } else { 2 });
+            if idx == 0 {
+                stmts.push(MirInst::CallExtern {
                     dest: Some(state_vreg),
                     name: "mb_coroutine_get_state_i64".to_string(),
                     args: vec![coro_handle],
                     ty: int_ty,
-                },
-                MirInst::LoadConst {
-                    dest: expected,
-                    value: MirConst::Int(*state_id as i64),
-                    ty: int_ty,
-                },
-                MirInst::BinOp {
-                    dest: is_match,
-                    op: MirBinOp::Eq,
-                    lhs: state_vreg,
-                    rhs: expected,
-                    ty: self.tcx.bool(),
-                },
-            ];
+                });
+            }
+            stmts.push(MirInst::LoadConst {
+                dest: expected,
+                value: MirConst::Int(*state_id as i64),
+                ty: int_ty,
+            });
+            stmts.push(MirInst::BinOp {
+                dest: is_match,
+                op: MirBinOp::Eq,
+                lhs: state_vreg,
+                rhs: expected,
+                ty: self.tcx.bool(),
+            });
             self.replace_or_push_block(BasicBlock {
                 id: current,
                 stmts,
