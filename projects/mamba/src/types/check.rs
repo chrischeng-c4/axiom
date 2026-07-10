@@ -376,12 +376,32 @@ impl TypeChecker {
             let name = &param.name;
             let var_id = TypeVarId(self.next_type_var_id);
             self.next_type_var_id += 1;
-            self.tcx.new_type_var(name.clone(), None, Vec::new());
-            gp.add(name, var_id, None);
 
             // Register in type alias scope so `T` resolves as a TypeVar
             let tv_ty = self.tcx.intern(Ty::TypeVar(var_id));
             self.tcx.register_alias(name.clone(), tv_ty);
+
+            let bound = param
+                .bound
+                .as_ref()
+                .and_then(expr_to_type_expr)
+                .map(|ty| self.resolve_type_expr(&ty));
+            let constraints = param
+                .constraints
+                .as_ref()
+                .map(|exprs| {
+                    exprs
+                        .iter()
+                        .filter_map(expr_to_type_expr)
+                        .map(|ty| self.resolve_type_expr(&ty))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let registered_id = self
+                .tcx
+                .new_type_var(name.clone(), bound, constraints.clone());
+            debug_assert_eq!(registered_id, var_id);
+            gp.add_with_constraints(name, var_id, bound, constraints);
         }
         gp
     }
@@ -1726,6 +1746,46 @@ mod tests {
         // T and U should be resolvable as type aliases
         assert!(tc.tcx.resolve_alias("T").is_some());
         assert!(tc.tcx.resolve_alias("U").is_some());
+    }
+
+    #[test]
+    fn test_register_type_params_preserves_bounds_and_constraints() {
+        let mut tc = TypeChecker::new();
+        let gp = tc.register_type_params(&[
+            crate::parser::ast::TypeParam {
+                name: "T".to_string(),
+                kind: crate::parser::ast::TypeParamKind::TypeVar,
+                bound: Some(Spanned::new(
+                    Expr::Ident("float".to_string()),
+                    Span::dummy(),
+                )),
+                constraints: None,
+                default: None,
+            },
+            crate::parser::ast::TypeParam {
+                name: "U".to_string(),
+                kind: crate::parser::ast::TypeParamKind::TypeVar,
+                bound: None,
+                constraints: Some(vec![
+                    Spanned::new(Expr::Ident("int".to_string()), Span::dummy()),
+                    Spanned::new(Expr::Ident("str".to_string()), Span::dummy()),
+                ]),
+                default: None,
+            },
+        ]);
+
+        assert_eq!(gp.params[0].bound, Some(tc.tcx.float()));
+        assert_eq!(gp.params[0].constraints, Vec::<TypeId>::new());
+        assert_eq!(gp.params[1].bound, None);
+        assert_eq!(gp.params[1].constraints, vec![tc.tcx.int(), tc.tcx.str()]);
+
+        let t_info = tc.tcx.get_type_var(gp.params[0].id);
+        assert_eq!(t_info.bound, Some(tc.tcx.float()));
+        assert!(t_info.constraints.is_empty());
+
+        let u_info = tc.tcx.get_type_var(gp.params[1].id);
+        assert_eq!(u_info.bound, None);
+        assert_eq!(u_info.constraints, vec![tc.tcx.int(), tc.tcx.str()]);
     }
 
     #[test]

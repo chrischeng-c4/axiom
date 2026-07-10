@@ -29,11 +29,21 @@ impl GenericParams {
     }
 
     pub fn add(&mut self, name: &str, id: TypeVarId, bound: Option<TypeId>) {
+        self.add_with_constraints(name, id, bound, Vec::new());
+    }
+
+    pub fn add_with_constraints(
+        &mut self,
+        name: &str,
+        id: TypeVarId,
+        bound: Option<TypeId>,
+        constraints: Vec<TypeId>,
+    ) {
         self.params.push(TypeVar {
             id,
             name: name.to_string(),
             bound,
-            constraints: Vec::new(),
+            constraints,
         });
     }
 
