@@ -331,6 +331,31 @@ fn mb_coroutine_step_with_post(
         Error,
     }
 
+    fn finalize_coroutine_step(
+        id: u64,
+        post: CoroutineStepPost,
+        clear_running: bool,
+    ) -> (bool, Option<MbValue>) {
+        let mut coros = COROUTINES.write().unwrap();
+        let Some(coro) = coros.get_mut(&id) else {
+            return (true, None);
+        };
+        if clear_running {
+            coro.running = false;
+        }
+        match post {
+            CoroutineStepPost::Snapshot => (coro.exhausted, coro.result),
+            CoroutineStepPost::MarkAwaiting => {
+                if coro.exhausted {
+                    (true, coro.result)
+                } else {
+                    coro.awaiting = true;
+                    (false, None)
+                }
+            }
+        }
+    }
+
     // Prepare the body invocation while holding the registry lock only once.
     let step_plan = {
         let mut coros = COROUTINES.write().unwrap();
@@ -369,6 +394,7 @@ fn mb_coroutine_step_with_post(
     };
 
     let mut body_return = None;
+    let mut clear_running = false;
     match step_plan {
         StepPlan::Exhausted(result) => {
             return CoroutineStepOutcome {
@@ -395,9 +421,7 @@ fn mb_coroutine_step_with_post(
             let raw_return = unsafe { body(coro_handle.to_bits() as i64) };
             body_return = Some(MbValue::from_bits(raw_return as u64));
             CURRENT_COROUTINE_ID.with(|cell| cell.set(previous));
-            if let Some(coro) = COROUTINES.write().unwrap().get_mut(&id) {
-                coro.running = false;
-            }
+            clear_running = true;
             if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
                 super::exception::mb_clear_exception();
                 raise_runtime_error("coroutine raised StopIteration");
@@ -407,28 +431,7 @@ fn mb_coroutine_step_with_post(
         StepPlan::Error => return CoroutineStepOutcome::none(),
     }
 
-    let (exhausted, result) = match post {
-        CoroutineStepPost::Snapshot => COROUTINES
-            .read()
-            .unwrap()
-            .get(&id)
-            .map(|c| (c.exhausted, c.result))
-            .unwrap_or((true, None)),
-        CoroutineStepPost::MarkAwaiting => {
-            let mut coros = COROUTINES.write().unwrap();
-            coros
-                .get_mut(&id)
-                .map(|coro| {
-                    if coro.exhausted {
-                        (true, coro.result)
-                    } else {
-                        coro.awaiting = true;
-                        (false, None)
-                    }
-                })
-                .unwrap_or((true, None))
-        }
-    };
+    let (exhausted, result) = finalize_coroutine_step(id, post, clear_running);
 
     CoroutineStepOutcome {
         value: if exhausted {
