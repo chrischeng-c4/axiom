@@ -29,7 +29,7 @@ class Box:
 
 try:
     # Call the unbound function with a non-Box self.
-    result = Box.get("not_a_box", 3)  # type: ignore[arg-type]
+    result = Box.get("not_a_box", 3)
     print("no_typeerror:", repr(result))
 except TypeError as e:
     print("typeerror:", type(e).__name__, str(e)[:60])

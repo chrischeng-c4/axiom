@@ -22,15 +22,6 @@ fn check_strict(src: &str) -> Vec<String> {
 }
 
 #[allow(dead_code)]
-fn check_strict_type_fixture(src: &str) -> Vec<String> {
-    let module = parser::parse(src, FileId(0)).expect("parse failed");
-    let mut checker = TypeChecker::new();
-    checker.strict_type_fixture = true;
-    let errors = checker.check_module(&module);
-    errors.into_iter().map(|e| e.to_string()).collect()
-}
-
-#[allow(dead_code)]
 fn check_warnings(src: &str) -> Vec<String> {
     let module = parser::parse(src, FileId(0)).expect("parse failed");
     let mut checker = TypeChecker::new();
@@ -143,19 +134,13 @@ fn test_function_extended_arg_annotations_rejected() {
 fn test_unbound_method_receiver_contract_rejected() {
     let errors = check("class Box:\n    def get(self, which: int) -> int:\n        return which\nBox.get(\"not_a_box\", 3)\n");
     assert!(
-        errors.is_empty(),
-        "non-strict code should keep CPython-compatible unbound call semantics, got: {errors:?}"
-    );
-
-    let errors = check_strict_type_fixture("class Box:\n    def get(self, which: int) -> int:\n        return which\nBox.get(\"not_a_box\", 3)\n");
-    assert!(
         errors
             .iter()
             .any(|e| e.contains("expected `Box`, got `str`")),
         "unbound method should reject wrong receiver, got: {errors:?}"
     );
 
-    let errors = check_strict_type_fixture(
+    let errors = check(
         "class Box:\n    def get(self, which: int) -> int:\n        return which\nBox.get(Box(), 3)\n",
     );
     assert!(
@@ -173,38 +158,74 @@ fn test_unbound_method_receiver_contract_rejected() {
 }
 
 #[test]
-fn test_keyword_iskeyword_wall_is_deliberately_fixture_only() {
-    // #888 audit: keyword.iskeyword/issoftkeyword LOOK like a universal type
-    // contract (typeshed says `s: str`), but CPython's real runtime never
-    // raises for a wrong-typed arg -- `keyword.iskeyword(123)` legitimately
-    // returns `False` (ported 1:1 from CPython's own test_keyword.py as
-    // tests/cpython/behavior/std-libs/keyword/iskeyword_non_string_returns_false.py).
-    // Plain (non-strict) source must therefore keep accepting the call...
+fn test_keyword_iskeyword_wall_is_universal() {
     let errors = check("from keyword import iskeyword\niskeyword(12345)\n");
-    assert!(
-        errors.is_empty(),
-        "non-strict code must keep CPython-compatible iskeyword(non-str) semantics, got: {errors:?}"
-    );
-    let errors = check("from keyword import issoftkeyword\nissoftkeyword(12345)\n");
-    assert!(
-        errors.is_empty(),
-        "non-strict code must keep CPython-compatible issoftkeyword(non-str) semantics, got: {errors:?}"
-    );
-
-    // ...while the `type/`-dimension harness fixture (which opts in via
-    // `# mamba-strict-type:`) still gets mamba's stricter hypothetical wall.
-    let errors = check_strict_type_fixture("from keyword import iskeyword\niskeyword(12345)\n");
     assert!(
         errors
             .iter()
             .any(|e| e.contains("expected `str`, got `int`")),
-        "strict-type fixture should still reject a non-str iskeyword arg, got: {errors:?}"
+        "force typing must reject a non-str iskeyword arg, got: {errors:?}"
+    );
+    let errors = check("from keyword import issoftkeyword\nissoftkeyword(12345)\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("expected `str`, got `int`")),
+        "force typing must reject a non-str issoftkeyword arg, got: {errors:?}"
     );
 
     let errors = check("from keyword import iskeyword\niskeyword(\"match\")\n");
     assert!(
         errors.is_empty(),
         "keyword.iskeyword should accept a correctly-typed str arg, got: {errors:?}"
+    );
+
+    let errors = check("from keyword import iskeyword\nresult: str = iskeyword(\"if\")\n");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("expected `str`, got `bool`")),
+        "typeshed return types must participate in ordinary inference: {errors:?}"
+    );
+}
+
+#[test]
+fn textwrap_contract_is_universal() {
+    let errors = check("from textwrap import indent\nindent(1, \"  \")\n");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("expected `str`, got `int`")),
+        "textwrap.indent must reject a non-str text argument: {errors:?}"
+    );
+
+    let errors = check(
+        "from textwrap import indent\nresult: int = indent(\"value\", \"  \")\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("expected `int`, got `str`")),
+        "textwrap.indent must propagate its str return type: {errors:?}"
+    );
+}
+
+#[test]
+fn adjacent_raise_does_not_disable_force_type_enforcement() {
+    let errors = check(
+        "from os import strerror\n\
+         def probe():\n\
+         \x20   try:\n\
+         \x20       strerror(\"bad\")\n\
+         \x20       raise AssertionError(\"expected TypeError\")\n\
+         \x20   except TypeError:\n\
+         \x20       pass\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("expected `int`, got `str`")),
+        "an adjacent raise must not disable the stdlib type contract: {errors:?}"
     );
 }
 
@@ -2183,7 +2204,7 @@ fn pep695_expression_specialization_rejects_non_generic_and_deduplicates_bounds(
 }
 
 #[test]
-fn pep695_parameterized_class_method_access_stays_unbound() {
+fn pep695_parameterized_class_method_access_is_always_typed() {
     let errors = check(
         "class Box[T]:\n\
          \x20   def get(self, fallback: T) -> T:\n\
@@ -2191,11 +2212,11 @@ fn pep695_parameterized_class_method_access_stays_unbound() {
          dynamic: str = Box[int].get()\n",
     );
     assert!(
-        errors.is_empty(),
-        "normal-mode access through a parameterized class object stays dynamic: {errors:?}"
+        !errors.is_empty(),
+        "an unbound parameterized method must require its receiver and arguments: {errors:?}"
     );
 
-    let errors = check_strict_type_fixture(
+    let errors = check(
         "class Box[T]:\n\
          \x20   def get(self, fallback: T) -> T:\n\
          \x20       return fallback\n\
@@ -2205,10 +2226,10 @@ fn pep695_parameterized_class_method_access_stays_unbound() {
         errors
             .iter()
             .any(|error| error.contains("expected `int`, got `str`")),
-        "strict unbound calls must retain the receiver and specialize later parameters: {errors:?}"
+        "unbound calls must retain the receiver and specialize later parameters: {errors:?}"
     );
 
-    let errors = check_strict_type_fixture(
+    let errors = check(
         "class PlainBox:\n\
          \x20   def get(self, fallback: int) -> int:\n\
          \x20       return fallback\n\
@@ -2221,7 +2242,7 @@ fn pep695_parameterized_class_method_access_stays_unbound() {
         "bare unbound keyword calls must align metadata after the receiver: {errors:?}"
     );
 
-    let errors = check_strict_type_fixture(
+    let errors = check(
         "class Box:\n\
          \x20   def get(self, fallback: int) -> int:\n\
          \x20       return fallback\n\
@@ -2412,12 +2433,12 @@ fn user_class_object_aliases_preserve_specialization_and_construction() {
             .iter()
             .filter(|error| error.contains("type mismatch"))
             .count(),
-        5,
+        6,
         "fixed, open, and chained class aliases must preserve object role and type args: {errors:?}"
     );
     assert_eq!(
         errors.len(),
-        5,
+        6,
         "alias preregistration must not leave extra unknown-type diagnostics: {errors:?}"
     );
 
@@ -2453,7 +2474,7 @@ fn user_class_object_aliases_preserve_specialization_and_construction() {
         "function-local class aliases must refine lexical Any placeholders: {errors:?}"
     );
 
-    let errors = check_strict_type_fixture(
+    let errors = check(
         "class Box[T]:\n\
          \x20   def __init__(self, value: T):\n\
          \x20       pass\n\

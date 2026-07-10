@@ -22,7 +22,7 @@ def requires_count(count: int, /) -> int:
 
 
 try:
-    result = requires_count("3")  # type: ignore[arg-type]
+    result = requires_count("3")
     print("no_typeerror:", repr(result))
 except TypeError as e:
     print("typeerror:", type(e).__name__, str(e)[:80])

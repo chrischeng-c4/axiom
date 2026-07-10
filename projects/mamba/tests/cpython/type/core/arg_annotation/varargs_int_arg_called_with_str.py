@@ -22,7 +22,7 @@ def sum_items(*items: int) -> int:
 
 
 try:
-    result = sum_items("3")  # type: ignore[arg-type]
+    result = sum_items("3")
     print("no_typeerror:", repr(result))
 except TypeError as e:
     print("typeerror:", type(e).__name__, str(e)[:80])

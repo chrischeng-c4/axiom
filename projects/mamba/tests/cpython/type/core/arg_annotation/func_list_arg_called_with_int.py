@@ -30,7 +30,7 @@ def take(lst: list) -> int:
 
 
 try:
-    result = take(7)  # type: ignore[arg-type]
+    result = take(7)
     print("no_typeerror:", repr(result))
 except TypeError as e:
     print("typeerror:", type(e).__name__, str(e)[:60])

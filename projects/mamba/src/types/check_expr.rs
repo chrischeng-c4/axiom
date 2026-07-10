@@ -111,53 +111,6 @@ fn bind_compact_positional_inference_args(
     (matched_params, matched_args)
 }
 
-thread_local! {
-    /// ① Type-wall PoC: when set, `check_stdlib_call` suppresses CONSTRUCTOR /
-    /// METHOD argument enforcement for the call it is currently checking.
-    ///
-    /// This is the "expected to raise at runtime" carve-out. The auto-ported
-    /// CPython idiom
-    ///
-    /// ```python
-    /// try:
-    ///     Cls(wrong_arg)            # probe that MUST raise at runtime
-    ///     raise AssertionError(...) # never reached when the probe raises
-    /// except TypeError:
-    ///     pass
-    /// ```
-    ///
-    /// makes the program's CORRECT output depend on `Cls(wrong_arg)` raising at
-    /// RUNTIME (so the trailing `raise` is skipped and the `except` swallows it).
-    /// A compile-time `argument type mismatch` would abort the whole module
-    /// before it runs, turning a behavior PASS into a RED. The ① type-wall
-    /// fixtures never use this idiom — their probe is followed by a `print`, not
-    /// a `raise` — so suppressing on a trailing `raise` keeps every type gain
-    /// while eliminating the behavior false positive. `check_stmt` sets this flag
-    /// (via [`set_stdlib_arg_check_suppressed`] / [`restore_stdlib_arg_check`])
-    /// only while checking an `ExprStmt` whose immediate sibling is a `raise`.
-    static SUPPRESS_STDLIB_ARG_CHECK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// ① Type-wall PoC: is constructor/method/module-fn arg enforcement currently
-/// suppressed for the call being checked? (see [`SUPPRESS_STDLIB_ARG_CHECK`]).
-pub(crate) fn stdlib_arg_check_suppressed() -> bool {
-    SUPPRESS_STDLIB_ARG_CHECK.with(|c| c.get())
-}
-
-/// ① Type-wall PoC: set the suppress flag, returning its previous value so the
-/// caller can restore it. Paired with [`restore_stdlib_arg_check`]. Kept as bare
-/// set/restore (not an RAII closure) so the caller can run `&mut self` methods
-/// inside the suppressed window without a borrow conflict.
-pub(crate) fn set_stdlib_arg_check_suppressed(v: bool) -> bool {
-    SUPPRESS_STDLIB_ARG_CHECK.with(|c| c.replace(v))
-}
-
-/// ① Type-wall PoC: restore the suppress flag to a value previously returned by
-/// [`set_stdlib_arg_check_suppressed`].
-pub(crate) fn restore_stdlib_arg_check(prev: bool) {
-    SUPPRESS_STDLIB_ARG_CHECK.with(|c| c.set(prev));
-}
-
 fn is_pep695_lazy_thunk_arg(
     func_name: Option<&str>,
     positional_index: usize,
@@ -810,28 +763,15 @@ impl TypeChecker {
             }
             Expr::Attr { object, attr } => {
                 let obj_ty_id = self.check_expr(object);
-                // #888: harness-only shim, deliberately fixture-gated (do NOT
-                // ungate). `ClassName.method(x, ...)` is a genuine CPython
-                // pattern where `x` need not be a `ClassName` instance —
-                // unbound-style calls are never receiver-type-checked at
-                // runtime (see `test_unbound_method_receiver_contract_rejected`
-                // in tests/check.rs: `Box.get("not_a_box", 3)` executes fine in
-                // real CPython 3.12). This receiver-type wall exists solely so
-                // `type/` dimension fixtures (e.g.
-                // core/method_resolution/method_self_int_called_with_str.py)
-                // can assert mamba's stricter contract; ungating it would
-                // reject valid real-world unbound-call idioms.
-                if self.strict_type_fixture {
-                    if let Some(method_ty) =
-                        self.resolve_unbound_class_method(object, obj_ty_id, attr)
-                    {
-                        return method_ty;
-                    }
+                if let Some(method_ty) =
+                    self.resolve_unbound_class_method(object, obj_ty_id, attr)
+                {
+                    return method_ty;
                 }
                 if self.user_class_object(object).is_some() {
-                    // ClassRole distinguishes the two meanings carried by
-                    // Ty::Class. Keep normal-mode unbound calls dynamic; only
-                    // Instance expressions use the bound signature below.
+                    // Unknown dynamic class attributes remain callable through
+                    // Any, but declared methods above retain their full
+                    // receiver and parameter contract.
                     return self.tcx.any();
                 }
                 self.resolve_attr(obj_ty_id, attr, expr.span)
@@ -1196,9 +1136,6 @@ impl TypeChecker {
     /// modeled here, only reject values that are provably neither: concrete
     /// scalars and bare user-class instances.
     fn check_dict_operator_call(&mut self, func: &Spanned<Expr>, args: &[CallArg]) {
-        if stdlib_arg_check_suppressed() {
-            return;
-        }
         let Expr::Attr { object, attr } = &func.node else {
             return;
         };
@@ -1364,16 +1301,6 @@ impl TypeChecker {
     /// resolve to a known stdlib signature / its return isn't a modeled
     /// concrete scalar — skip-when-unsure, same as the argument-side wall.
     fn check_stdlib_call(&mut self, func: &Spanned<Expr>, args: &[CallArg]) -> Option<TypeId> {
-        // "Expected to raise at runtime" carve-out: a probe statement whose
-        // immediate sibling is a `raise` (the auto-ported manual-assertRaises
-        // idiom) needs the call to raise at RUNTIME, not be rejected at compile
-        // time — otherwise the whole module aborts and a behavior PASS turns RED.
-        // The ① type-wall fixtures never use this idiom (their probe is followed
-        // by a `print`), so this never costs a type gain. See
-        // `SUPPRESS_STDLIB_ARG_CHECK`.
-        if stdlib_arg_check_suppressed() {
-            return None;
-        }
         // Resolve callee -> a concrete `StdlibSig`. We resolve to the signature
         // directly (rather than a `(module, qualifier, name)` triple) because a
         // bare stdlib name `Cls(...)` may be either a module function OR a class
@@ -1491,32 +1418,7 @@ impl TypeChecker {
         // enforceability below (a zero-arg call like `os.getcwd()` is never
         // `enforceable`, but its `str` return still must flow into inference).
         let ret_ty = self.core_ty_to_type_id(sig.ret);
-        // #888 audit: keyword.iskeyword/issoftkeyword are typeshed-contracted
-        // as `s: str`, which LOOKS like it should be a universal (ungated)
-        // wall. It is deliberately kept fixture-only (`self.strict_type_fixture`)
-        // instead: CPython's REAL `keyword.iskeyword`/`issoftkeyword` never
-        // raise for a wrong-typed arg — a non-str compares unequal to every
-        // kwlist entry and returns `False` — and two behavior/ fixtures
-        // mechanically ported from CPython's own `Lib/test/test_keyword.py`
-        // assert exactly that at runtime:
-        // `behavior/std-libs/keyword/iskeyword_non_string_returns_false.py`
-        // (`keyword.iskeyword(123) is False`, no raise) and
-        // `.../test_iskeyword__test_none_value_is_not_a_keyword.py`. Ungating
-        // this wall (verified empirically) turns the first fixture from PASS
-        // to FAIL because the whole module fails to compile before it can
-        // reach its `assert`. So this stays scoped to `type/`-dimension
-        // fixtures carrying the marker, which intentionally assert mamba's
-        // stricter *hypothetical* contract rather than CPython's actual
-        // runtime behavior.
-        let strict_keyword_wall = self.strict_type_fixture
-            && sig.module == "keyword"
-            && sig.qualifier.is_empty()
-            && matches!(sig.name, "iskeyword" | "issoftkeyword");
-        let strict_textwrap_indent_wall = self.strict_type_fixture
-            && sig.module == "textwrap"
-            && sig.qualifier.is_empty()
-            && sig.name == "indent";
-        if !sig.enforceable && !strict_keyword_wall && !strict_textwrap_indent_wall {
+        if !sig.enforceable {
             return ret_ty;
         }
 
@@ -1548,7 +1450,6 @@ impl TypeChecker {
             if param.star {
                 break; // never enforce past `*args`
             }
-            let strict_textwrap_text_param = strict_textwrap_indent_wall && param.name == "text";
             let classinfo_param = sig.module == "builtins"
                 && sig.qualifier.is_empty()
                 && matches!(sig.name, "isinstance" | "issubclass")
@@ -1572,20 +1473,7 @@ impl TypeChecker {
                 continue;
             }
             let bytes_encoding_source = bytes_encoding_arg_is_positional && param_idx == 0;
-            let strict_textwrap_param = super::stdlib_sigs::ParamSig {
-                name: "text",
-                ty: super::stdlib_sigs::CoreTy::Str,
-                star: false,
-            };
-            self.check_stdlib_scalar_arg(
-                if strict_textwrap_text_param {
-                    &strict_textwrap_param
-                } else {
-                    param
-                },
-                a,
-                bytes_encoding_source,
-            );
+            self.check_stdlib_scalar_arg(param, a, bytes_encoding_source);
             param_idx += 1;
             arg_idx += 1;
         }
@@ -1609,20 +1497,7 @@ impl TypeChecker {
             else {
                 continue;
             };
-            let strict_textwrap_param = super::stdlib_sigs::ParamSig {
-                name: "text",
-                ty: super::stdlib_sigs::CoreTy::Str,
-                star: false,
-            };
-            self.check_stdlib_scalar_arg(
-                if strict_textwrap_indent_wall && param.name == "text" {
-                    &strict_textwrap_param
-                } else {
-                    param
-                },
-                value,
-                false,
-            );
+            self.check_stdlib_scalar_arg(param, value, false);
         }
         ret_ty
     }

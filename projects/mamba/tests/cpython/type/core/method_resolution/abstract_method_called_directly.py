@@ -32,7 +32,7 @@ class Base(ABC):
 
 
 try:
-    inst = Base()  # type: ignore[abstract]
+    inst = Base()
     print("no_typeerror:", type(inst).__name__)
 except TypeError as e:
     print("typeerror:", type(e).__name__, str(e)[:60])

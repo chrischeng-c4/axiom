@@ -22,7 +22,7 @@ container annotation contract.
 """
 
 try:
-    xs: list[int] = [1, "two", 3]  # type: ignore[list-item]
+    xs: list[int] = [1, "two", 3]
     print("no_typeerror:", repr(xs))
 except TypeError as e:
     print("typeerror:", type(e).__name__, str(e)[:60])

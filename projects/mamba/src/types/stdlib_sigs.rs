@@ -5596,38 +5596,29 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: false,
         ret: CoreTy::Unknown,
     },
-    // NEGATIVE: textwrap.dedent(text) — `dedent(123)` is a RUNTIME TypeError
-    // (CPython runs `_whitespace_only_re.sub` over a non-str → "expected string
-    // or bytes-like object"); the dispatcher raises it. Keep the type wall from
-    // rejecting it at compile time.
+    // textwrap's public contract is force-typed consistently even though the
+    // CPython implementation would also reject these values at runtime.
     StdlibSig {
         module: "textwrap",
         qualifier: "",
         name: "dedent",
         kind: SigKind::ModuleFn,
-        params: &[p("text", CoreTy::Unknown)],
-        enforceable: false,
-        ret: CoreTy::Unknown,
+        params: &[p("text", CoreTy::Str)],
+        enforceable: true,
+        ret: CoreTy::Str,
     },
-    // RECONCILED: textwrap.indent(text, prefix, predicate=...) raises
-    // AttributeError at RUNTIME on a non-str text (`text.splitlines(True)`),
-    // so ordinary/errors fixtures must be allowed to reach the dispatcher.
-    // The strict-type fixture
-    // `type/std-libs/textwrap/indent__text_as_str_wrong.py` still intentionally
-    // asserts a compile-time TypeError; `check_expr.rs` gates that stricter wall
-    // behind `self.strict_type_fixture`, analogous to the keyword helpers.
     StdlibSig {
         module: "textwrap",
         qualifier: "",
         name: "indent",
         kind: SigKind::ModuleFn,
         params: &[
-            p("text", CoreTy::Unknown),
+            p("text", CoreTy::Str),
             p("prefix", CoreTy::Str),
             p("predicate", CoreTy::Unknown),
         ],
-        enforceable: false,
-        ret: CoreTy::Unknown,
+        enforceable: true,
+        ret: CoreTy::Str,
     },
     // NEGATIVE: shlex.quote(s) — `quote(42)` is a RUNTIME TypeError (CPython's
     // `_find_unsafe(s)` regex over a non-str → "expected string or bytes-like
@@ -6900,17 +6891,16 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: false,
         ret: CoreTy::Unknown,
     },
-    // keyword.iskeyword/issoftkeyword are force-typed as `s: str` for
-    // strict-type fixtures. Runtime behavior stays CPython-compatible:
-    // non-str values compare unequal to every keyword and return False.
+    // keyword helpers follow their typeshed `str -> bool` contract in every
+    // source file; CPython runtime permissiveness is a declared divergence.
     StdlibSig {
         module: "keyword",
         qualifier: "",
         name: "iskeyword",
         kind: SigKind::ModuleFn,
         params: &[p("s", CoreTy::Str)],
-        enforceable: false,
-        ret: CoreTy::Unknown,
+        enforceable: true,
+        ret: CoreTy::Bool,
     },
     StdlibSig {
         module: "keyword",
@@ -6918,8 +6908,8 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         name: "issoftkeyword",
         kind: SigKind::ModuleFn,
         params: &[p("s", CoreTy::Str)],
-        enforceable: false,
-        ret: CoreTy::Unknown,
+        enforceable: true,
+        ret: CoreTy::Bool,
     },
     // ipaddress network constructors have overload-heavy address parameters,
     // but `strict` is always a bool wall in typeshed.

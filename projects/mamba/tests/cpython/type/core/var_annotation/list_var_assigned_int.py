@@ -21,7 +21,7 @@ Mamba: raises TypeError at assignment time.
 """
 
 try:
-    xs: list = 7  # type: ignore[assignment]
+    xs: list = 7
     print("no_typeerror:", repr(xs))
 except TypeError as e:
     print("typeerror:", type(e).__name__, str(e)[:60])

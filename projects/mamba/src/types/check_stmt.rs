@@ -205,30 +205,11 @@ impl TypeChecker {
         }
     }
 
-    /// ① Type-wall PoC: walk a statement sequence with one-statement lookahead so
-    /// the "expected to raise at runtime" carve-out can fire. When an `ExprStmt`
-    /// is immediately followed by a `raise`, the probe call's value-vs-annotation
-    /// enforcement (constructor/method/module-fn arg check) is SUPPRESSED for that
-    /// statement only — the program's correct behavior depends on the call raising
-    /// at runtime, so a compile-time rejection would abort it (see
-    /// `SUPPRESS_STDLIB_ARG_CHECK` in check_expr.rs). Every other statement is
-    /// checked exactly as before. Used for block bodies that can host the
-    /// auto-ported manual-`assertRaises` idiom (`try`/function/module bodies).
+    /// Check a lexical statement sequence under one consistent type contract.
+    /// Runtime exception probes do not weaken compile-time force typing.
     pub(crate) fn check_stmt_seq(&mut self, body: &[Spanned<Stmt>]) {
-        for (i, s) in body.iter().enumerate() {
-            let next_is_raise = body
-                .get(i + 1)
-                .map(|n| matches!(n.node, Stmt::Raise { .. }))
-                .unwrap_or(false);
-            if next_is_raise && matches!(s.node, Stmt::ExprStmt(_)) {
-                // Suppress value-vs-annotation arg enforcement for THIS probe
-                // statement only, then restore.
-                let prev = super::check_expr::set_stdlib_arg_check_suppressed(true);
-                self.check_stmt(s);
-                super::check_expr::restore_stdlib_arg_check(prev);
-            } else {
-                self.check_stmt(s);
-            }
+        for stmt in body {
+            self.check_stmt(stmt);
         }
     }
 
@@ -747,11 +728,8 @@ impl TypeChecker {
                 // are visible in the enclosing scope after the block — no new scope
                 // is pushed for the block bodies themselves.
                 //
-                // Use the sibling-aware walker: a `try` body is where the
-                // auto-ported manual-`assertRaises` idiom (`probe(); raise ...`)
-                // lives, so a probe immediately followed by a `raise` has its
-                // value-vs-annotation arg enforcement suppressed (it must raise at
-                // runtime, not be rejected at compile time).
+                // The same compile-time contract applies inside exception
+                // probes; a surrounding handler does not weaken force typing.
                 let saved_allow_runtime_unresolved = self.allow_runtime_unresolved_names;
                 if is_pep695_saved_binding_try(stmt.span, body, handlers, else_body, finally_body) {
                     // PEP 695 desugaring probes for a pre-existing type-param

@@ -21,7 +21,7 @@ Mamba: raises TypeError at assignment time.
 """
 
 try:
-    x: int = "abc"  # type: ignore[assignment]
+    x: int = "abc"
     print("no_typeerror:", repr(x))
 except TypeError as e:
     print("typeerror:", type(e).__name__, str(e)[:60])

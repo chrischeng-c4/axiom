@@ -26,7 +26,7 @@ def a(i: int) -> int:
 
 
 try:
-    result = a("a")  # type: ignore[arg-type]
+    result = a("a")
     print("no_typeerror:", repr(result))
 except TypeError as e:
     print("typeerror:", type(e).__name__, str(e)[:60])

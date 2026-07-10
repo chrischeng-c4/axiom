@@ -22,7 +22,7 @@ Mamba: raises TypeError at return time.
 
 
 def get() -> list:
-    return 7  # type: ignore[return-value]
+    return 7
 
 
 try:

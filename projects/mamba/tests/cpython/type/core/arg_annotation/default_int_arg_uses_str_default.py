@@ -17,7 +17,7 @@
 """Mamba rejects an annotated int parameter whose default is a str."""
 
 
-def requires_count(count: int = "3") -> int:  # type: ignore[assignment]
+def requires_count(count: int = "3") -> int:
     return count
 
 
