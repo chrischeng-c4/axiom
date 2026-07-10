@@ -28,11 +28,11 @@ Public API manifest for `projects/lumen/src/api.rs` generated from AST during Sc
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 390 |  |
-| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 1629 |  |
+| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 1634 |  |
 | `AppState` | projects/lumen/src/api.rs | struct | pub | 60 |  |
 | `new` | projects/lumen/src/api.rs | function | pub | 260 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
 | `open` | projects/lumen/src/api.rs | function | pub | 281 | open(engine: Arc<Engine>) -> Self |
-| `openapi` | projects/lumen/src/api.rs | function | pub | 1557 | openapi() -> utoipa::openapi::OpenApi |
+| `openapi` | projects/lumen/src/api.rs | function | pub | 1562 | openapi() -> utoipa::openapi::OpenApi |
 | `router` | projects/lumen/src/api.rs | function | pub | 429 | router(state: AppState) -> Router |
 | `with_cluster` | projects/lumen/src/api.rs | function | pub | 264 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
 | `with_components` | projects/lumen/src/api.rs | function | pub | 239 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<dyn WriteSink>,     ) -> Self |
@@ -626,7 +626,12 @@ fn read_consistency_from(headers: &HeaderMap) -> ReadConsistency {
 /// - [`ReadConsistency::Bounded`] succeeds on the leader (never stale) or
 ///   on a follower/learner whose `replication_lag_ms` is at or under the
 ///   requested bound; a replica over the bound rejects rather than
-///   silently serving a stale read.
+///   silently serving a stale read. In `lumen serve --wal raft`, a
+///   follower/learner's `replication_lag_ms` is the conservative "unknown"
+///   sentinel (`u64::MAX`) — `RaftHost` doesn't expose a peer-timing RPC
+///   today, so `Bounded` on a non-leader replica always rejects rather than
+///   report a fabricated lag figure (see `spawn_cluster_state_poller` in
+///   `src/bin/lumen.rs`, #1349).
 fn enforce_read_consistency(state: &AppState, consistency: ReadConsistency) -> Result<(), ApiErr> {
     let Some(cluster) = state.cluster.as_ref() else {
         return Ok(());
@@ -634,10 +639,10 @@ fn enforce_read_consistency(state: &AppState, consistency: ReadConsistency) -> R
     match consistency {
         ReadConsistency::Any => Ok(()),
         ReadConsistency::Leader => {
-            if cluster.role == RaftRole::Leader {
+            if cluster.role() == RaftRole::Leader {
                 return Ok(());
             }
-            Err(match cluster.group.leader() {
+            Err(match cluster.leader_peer() {
                 Some(leader) => ApiErr::new(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "read_consistency_not_leader",
@@ -658,7 +663,7 @@ fn enforce_read_consistency(state: &AppState, consistency: ReadConsistency) -> R
             })
         }
         ReadConsistency::Bounded(bound_ms) => {
-            if cluster.role == RaftRole::Leader {
+            if cluster.role() == RaftRole::Leader {
                 return Ok(());
             }
             let lag_ms = cluster.replication_lag_ms.load(Ordering::Relaxed);

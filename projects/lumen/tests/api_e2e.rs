@@ -1631,21 +1631,19 @@ fn read_consistency_server(
     peers: Vec<lumen::raft::PeerAddr>,
     lag_ms: u64,
 ) -> TestServer {
-    use std::sync::atomic::AtomicU64;
-
-    let cluster = Arc::new(lumen::raft::ClusterState {
-        pod_name: "lumen-1".to_string(),
-        shard_index: 0,
-        replica_index: 1,
+    let cluster = Arc::new(lumen::raft::ClusterState::from_snapshot(
+        "lumen-1".to_string(),
+        0,
+        1,
         role,
-        group: lumen::raft::RaftGroup {
+        lumen::raft::RaftGroup {
             shard_index: 0,
             peers,
         },
-        applied_index: AtomicU64::new(0),
-        leader_term: AtomicU64::new(1),
-        replication_lag_ms: AtomicU64::new(lag_ms),
-    });
+        0,
+        1,
+        lag_ms,
+    ));
     let state =
         lumen::api::AppState::open(Arc::new(lumen::storage::Engine::new())).with_cluster(cluster);
     TestServer::new(lumen::api::router(state)).expect("test server")
