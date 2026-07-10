@@ -198,6 +198,18 @@ impl TypeChecker {
 
                 let target_ty = self.check_expr(target);
                 let value_ty = self.check_expr(value);
+                if let Expr::Ident(name) = &target.node {
+                    if matches!(
+                        self.tcx.get(value_ty),
+                        Ty::Class { user: Some(user), .. }
+                            if user.role == super::ty::UserClassRole::Object
+                    ) {
+                        if let Some(symbol) = self.symbols.lookup(name) {
+                            self.set_sym_type(symbol.0, value_ty);
+                            return;
+                        }
+                    }
+                }
                 if !self.types_compatible(target_ty, value_ty) {
                     // Python allows rebinding a variable to a different type
                     // (`a = 5; a = "str"`). If the target is a bare identifier,
@@ -278,6 +290,13 @@ impl TypeChecker {
                         self.check_stmt(s);
                     }
                 }
+                self.invalidate_conditional_user_class_aliases(body);
+                for (_, elif_body) in elif_clauses {
+                    self.invalidate_conditional_user_class_aliases(elif_body);
+                }
+                if let Some(else_body) = else_body {
+                    self.invalidate_conditional_user_class_aliases(else_body);
+                }
             }
             Stmt::While {
                 condition,
@@ -299,6 +318,10 @@ impl TypeChecker {
                     for s in eb {
                         self.check_stmt(s);
                     }
+                }
+                self.invalidate_conditional_user_class_aliases(body);
+                if let Some(else_body) = else_body {
+                    self.invalidate_conditional_user_class_aliases(else_body);
                 }
             }
             Stmt::For {
@@ -357,6 +380,10 @@ impl TypeChecker {
                     for s in eb {
                         self.check_stmt(s);
                     }
+                }
+                self.invalidate_conditional_user_class_aliases(body);
+                if let Some(else_body) = else_body {
+                    self.invalidate_conditional_user_class_aliases(else_body);
                 }
             }
             Stmt::Return(value) => {
@@ -496,6 +523,16 @@ impl TypeChecker {
                     for s in fb {
                         self.check_stmt(s);
                     }
+                }
+                self.invalidate_conditional_user_class_aliases(body);
+                for handler in handlers {
+                    self.invalidate_conditional_user_class_aliases(&handler.body);
+                }
+                if let Some(else_body) = else_body {
+                    self.invalidate_conditional_user_class_aliases(else_body);
+                }
+                if let Some(finally_body) = finally_body {
+                    self.invalidate_conditional_user_class_aliases(finally_body);
                 }
             }
             Stmt::Raise { value, from } => {
@@ -952,7 +989,10 @@ impl TypeChecker {
         let Some(class_sym) = self.symbols.lookup(class_name) else {
             return false;
         };
-        let class_ty = self.get_sym_type(class_sym.0);
+        let class_ty = self.with_user_class_role(
+            self.get_sym_type(class_sym.0),
+            super::ty::UserClassRole::Instance,
+        );
         // Only narrow if the looked-up type is actually a class (not error/any)
         if matches!(self.tcx.get(class_ty), super::Ty::Class { .. }) {
             // Re-define the subject variable in the current scope with the narrowed type

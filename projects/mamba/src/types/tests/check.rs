@@ -2,7 +2,7 @@
 
 use crate::parser;
 use crate::source::span::FileId;
-use crate::types::ty::{TypeParamDefault, TypeVarKind};
+use crate::types::ty::{TypeParamDefault, TypeVarKind, UserClassRole};
 use crate::types::TypeChecker;
 
 fn check(src: &str) -> Vec<String> {
@@ -731,12 +731,13 @@ fn pep695_forward_bound_is_skip_safe() {
 
     let later_sym = checker.symbols.lookup("Later").expect("Later registered");
     let later_ty = checker.get_sym_type(later_sym.0);
+    let later_instance = checker.with_user_class_role(later_ty, UserClassRole::Instance);
     let keep_symbol = checker.symbols.lookup("keep").unwrap();
     let keep_param = &checker.generic_defs[&keep_symbol].params[0];
-    assert_eq!(keep_param.bound, Some(later_ty));
+    assert_eq!(keep_param.bound, Some(later_instance));
     assert_eq!(
         checker.tcx.get_type_var(keep_param.id).bound,
-        Some(later_ty)
+        Some(later_instance)
     );
 
     let errors = check(
@@ -1489,6 +1490,270 @@ fn pep695_parameterized_class_method_access_stays_unbound() {
             .any(|error| error.contains("expected `int`, got `str`")),
         "same-named nested classes must not overwrite unbound method metadata: {errors:?}"
     );
+}
+
+#[test]
+fn user_class_objects_are_distinct_from_instances() {
+    let errors = check(
+        "class Box[T]:\n\
+         \x20   value: T = None\n\
+         \x20   def __init__(self, value: T):\n\
+         \x20       self.value = value\n\
+         good: Box[int] = Box[int](1)\n\
+         bad: Box[int] = Box[int]\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        1,
+        "a class object must not satisfy its instance annotation: {errors:?}"
+    );
+
+    let errors = check(
+        "class Plain:\n\
+         \x20   def __init__(self, value: str):\n\
+         \x20       pass\n\
+         Plain(1)\n\
+         Plain()()\n\
+         class Callable:\n\
+         \x20   def __call__(self, value: int) -> int:\n\
+         \x20       return value\n\
+         Callable()(1)\n\
+         class Child(Callable):\n\
+         \x20   pass\n\
+         Child()(1)\n\
+         Alias = Callable\n\
+         class AliasChild(Alias):\n\
+         \x20   pass\n\
+         AliasChild()(1)\n\
+         class GenericCallable[T]:\n\
+         \x20   def __call__(self, value: T) -> T:\n\
+         \x20       return value\n\
+         class GenericChild(GenericCallable[int]):\n\
+         \x20   pass\n\
+         GenericChild()(1)\n\
+         class SameName:\n\
+         \x20   pass\n\
+         def install() -> None:\n\
+         \x20   class SameName:\n\
+         \x20       def __call__(self, value: int) -> int:\n\
+         \x20           return value\n\
+         \x20   SameName()(1)\n\
+         install()\n\
+         SameName()()\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("called value is not a function"))
+            .count(),
+        2,
+        "only nominal classes with own or inherited __call__ remain callable: {errors:?}"
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("expected `str`, got `int`"))
+            .count(),
+        1,
+        "non-generic constructors must enforce __init__ annotations: {errors:?}"
+    );
+}
+
+#[test]
+fn user_class_object_aliases_preserve_specialization_and_construction() {
+    let errors = check(
+        "class Box[T]:\n\
+         \x20   value: T = None\n\
+         Open = Box\n\
+         def keep(value: Open[int]) -> int:\n\
+         \x20   return value.value\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "class aliases must be available while later signatures are preregistered: {errors:?}"
+    );
+
+    let errors = check(
+        "class Box[T]:\n\
+         \x20   value: T = None\n\
+         \x20   def __init__(self, value: T):\n\
+         \x20       self.value = value\n\
+         \x20   def get(self, fallback: T) -> T:\n\
+         \x20       return fallback\n\
+         Fixed = Box[int]\n\
+         Fixed(\"bad\")\n\
+         bad_fixed: str = Fixed(1).value\n\
+         def fixed_annotation(value: Fixed) -> str:\n\
+         \x20   return value.value\n\
+         dynamic: str = Fixed.get()\n\
+         Open = Box\n\
+         Second = Open\n\
+         bad_open: str = Second[int](1).value\n\
+         def from_alias(value: Open[int]) -> str:\n\
+         \x20   return value.value\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        5,
+        "fixed, open, and chained class aliases must preserve object role and type args: {errors:?}"
+    );
+    assert_eq!(
+        errors.len(),
+        5,
+        "alias preregistration must not leave extra unknown-type diagnostics: {errors:?}"
+    );
+
+    let errors = check(
+        "class Box[T]:\n\
+         \x20   pass\n\
+         Fixed = Box[int]\n\
+         def invalid(value: Fixed[str]) -> None:\n\
+         \x20   pass\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type 'Fixed' is already specialized"))
+            .count(),
+        1,
+        "a fixed class alias cannot be specialized again: {errors:?}"
+    );
+
+    let errors = check(
+        "class Box[T]:\n\
+         \x20   value: T = None\n\
+         \x20   def __init__(self, value: T):\n\
+         \x20       self.value = value\n\
+         def local() -> str:\n\
+         \x20   Alias = Box[int]\n\
+         \x20   return Alias(1).value\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("return type mismatch")),
+        "function-local class aliases must refine lexical Any placeholders: {errors:?}"
+    );
+
+    let errors = check_strict_type_fixture(
+        "class Box[T]:\n\
+         \x20   def __init__(self, value: T):\n\
+         \x20       pass\n\
+         \x20   def get(self, fallback: T) -> T:\n\
+         \x20       return fallback\n\
+         Alias = Box[int]\n\
+         Alias.get(Alias(1), fallback=\"bad\")\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("expected `int`, got `str`")),
+        "strict unbound calls through aliases must retain declaration metadata: {errors:?}"
+    );
+}
+
+#[test]
+fn user_class_annotation_role_reaches_hir() {
+    let module = parser::parse(
+        "class Box[T]:\n\
+         \x20   pass\n\
+         def keep(value: Box[int]) -> Box[int]:\n\
+         \x20   return value\n",
+        FileId(0),
+    )
+    .expect("parse failed");
+    let mut checker = TypeChecker::new();
+    let errors = checker.check_module(&module);
+    assert!(errors.is_empty(), "type check failed: {errors:?}");
+    let keep = checker.symbols.lookup("keep").expect("keep registered");
+    let hir = crate::lower::ast_to_hir::lower_module(&module, &checker).expect("lower failed");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| function.name == keep)
+        .expect("keep lowered");
+
+    for ty in [function.params[0].1, function.return_ty] {
+        let crate::types::Ty::Class {
+            user: Some(user), ..
+        } = checker.tcx.get(ty)
+        else {
+            panic!(
+                "expected lowered user class type, got {:?}",
+                checker.tcx.get(ty)
+            );
+        };
+        assert_eq!(user.role, UserClassRole::Instance);
+        assert_eq!(user.args, vec![checker.tcx.int()]);
+    }
+}
+
+#[test]
+fn user_class_alias_preregistration_tracks_rebinding() {
+    let module = parser::parse(
+        "class A:\n\
+         \x20   value: int = 0\n\
+         class B:\n\
+         \x20   value: str = \"b\"\n\
+         Alias = A\n\
+         Alias = B\n\
+         bad: int = Alias().value\n\
+         def take(value: Alias) -> None:\n\
+         \x20   pass\n",
+        FileId(0),
+    )
+    .expect("parse failed");
+    let mut checker = TypeChecker::new();
+    let errors: Vec<_> = checker
+        .check_module(&module)
+        .into_iter()
+        .map(|error| error.to_string())
+        .collect();
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count(),
+        1,
+        "runtime alias calls must use the final sequential binding: {errors:?}"
+    );
+    let take = checker.symbols.lookup("take").expect("take registered");
+    let b = checker.symbols.lookup("B").expect("B registered");
+    let crate::types::Ty::Fn { params, .. } = checker.tcx.get(checker.get_sym_type(take.0)) else {
+        panic!("take must be a function");
+    };
+    let crate::types::Ty::Class {
+        user: Some(user), ..
+    } = checker.tcx.get(params[0])
+    else {
+        panic!("rebound Alias must resolve to B instance");
+    };
+    assert_eq!(user.symbol, b);
+    assert_eq!(user.role, UserClassRole::Instance);
+
+    for source in [
+        "class A:\n    pass\nAlias = A\nAlias = 42\ndef take(value: Alias) -> None:\n    pass\n",
+        "class A:\n    pass\nclass B:\n    pass\nif True:\n    Alias = A\nelse:\n    Alias = B\ndef take(value: Alias) -> None:\n    pass\n",
+    ] {
+        let module = parser::parse(source, FileId(0)).expect("parse failed");
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty(), "ambiguous alias failed: {errors:?}");
+        let take = checker.symbols.lookup("take").expect("take registered");
+        let alias = checker.symbols.lookup("Alias").expect("Alias registered");
+        assert_eq!(checker.get_sym_type(alias.0), checker.tcx.any());
+        let crate::types::Ty::Fn { params, .. } = checker.tcx.get(checker.get_sym_type(take.0))
+        else {
+            panic!("take must be a function");
+        };
+        assert_eq!(params, &vec![checker.tcx.any()]);
+    }
 }
 
 #[test]
@@ -3123,6 +3388,34 @@ fn test_stdlib_isinstance_classinfo_rejected() {
     assert!(
         errors.is_empty(),
         "valid class and tuple classinfo operands must stay accepted, got: {errors:?}"
+    );
+
+    let errors = check(
+        "class MyType:\n\
+         \x20   pass\n\
+         ClassAlias = MyType\n\
+         value = MyType()\n\
+         isinstance(None, ClassAlias)\n\
+         isinstance(None, value)\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("does not satisfy parameter `class_or_tuple`"))
+            .count(),
+        1,
+        "class-object aliases are valid classinfo while instance variables are not: {errors:?}"
+    );
+
+    let errors = check(
+        "class MyType:\n\
+         \x20   pass\n\
+         Alias = MyType\n\
+         object.__subclasshook__(Alias)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "Typed contracts must not mistake class-object aliases for bare instances: {errors:?}"
     );
 }
 
