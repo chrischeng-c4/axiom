@@ -1,5 +1,6 @@
-use super::ty::{Ty, TypeId, TypeParamDefault, TypeVarId, TypeVarKind};
-use std::collections::HashMap;
+use super::ty::{AliasInstanceId, Ty, TypeId, TypeParamDefault, TypeVarId, TypeVarKind};
+use crate::resolve::SymbolId;
+use std::collections::{HashMap, HashSet};
 
 /// Type variable info: optional upper bound and type constraints (#242).
 #[derive(Debug, Clone)]
@@ -11,6 +12,24 @@ pub struct TypeVarInfo {
     pub default: TypeParamDefault,
 }
 
+/// One concrete (or declaration-generic) PEP 695 alias expansion.
+#[derive(Debug, Clone)]
+pub struct AliasInstance {
+    pub symbol: SymbolId,
+    pub name: String,
+    pub args: Vec<TypeId>,
+    pub display_arg_count: usize,
+    pub target: Option<TypeId>,
+    resolving: bool,
+    ty: TypeId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AliasHeadError {
+    Unresolved(AliasInstanceId),
+    Cycle(AliasInstanceId),
+}
+
 /// Interner and registry for all types used during compilation.
 #[derive(Debug)]
 pub struct TypeContext {
@@ -19,6 +38,9 @@ pub struct TypeContext {
     type_aliases: HashMap<String, TypeId>,
     /// Type variable info registry (#242).
     type_vars: Vec<TypeVarInfo>,
+    /// Stable recursive-alias nodes, keyed by lexical declaration + arguments.
+    alias_instances: Vec<AliasInstance>,
+    alias_instance_ids: HashMap<(SymbolId, Vec<TypeId>), AliasInstanceId>,
 }
 
 impl TypeContext {
@@ -27,6 +49,8 @@ impl TypeContext {
             types: Vec::new(),
             type_aliases: HashMap::new(),
             type_vars: Vec::new(),
+            alias_instances: Vec::new(),
+            alias_instance_ids: HashMap::new(),
         };
         // Pre-register primitive types at known positions
         ctx.intern(Ty::Never); // TypeId(0)
@@ -105,6 +129,134 @@ impl TypeContext {
         self.type_aliases.remove(name);
     }
 
+    // --- PEP 695 recursive alias instances ---
+
+    pub fn intern_alias_instance(
+        &mut self,
+        symbol: SymbolId,
+        name: String,
+        args: Vec<TypeId>,
+        display_arg_count: usize,
+    ) -> (AliasInstanceId, TypeId) {
+        debug_assert!(display_arg_count <= args.len());
+        let key = (symbol, args.clone());
+        if let Some(id) = self.alias_instance_ids.get(&key).copied() {
+            debug_assert_eq!(
+                self.alias_instances[id.0 as usize].display_arg_count,
+                display_arg_count
+            );
+            return (id, self.alias_instances[id.0 as usize].ty);
+        }
+
+        let id = AliasInstanceId(self.alias_instances.len() as u32);
+        let ty = self.intern(Ty::AliasRef(id));
+        self.alias_instances.push(AliasInstance {
+            symbol,
+            name,
+            args,
+            display_arg_count,
+            target: None,
+            resolving: false,
+            ty,
+        });
+        self.alias_instance_ids.insert(key, id);
+        (id, ty)
+    }
+
+    pub fn alias_instance(&self, id: AliasInstanceId) -> &AliasInstance {
+        &self.alias_instances[id.0 as usize]
+    }
+
+    pub fn alias_target(&self, id: AliasInstanceId) -> Option<TypeId> {
+        self.alias_instance(id).target
+    }
+
+    pub fn alias_target_is_resolving(&self, id: AliasInstanceId) -> bool {
+        self.alias_instance(id).resolving
+    }
+
+    pub fn begin_alias_target(&mut self, id: AliasInstanceId) -> bool {
+        let instance = &mut self.alias_instances[id.0 as usize];
+        if instance.target.is_some() || instance.resolving {
+            return false;
+        }
+        instance.resolving = true;
+        true
+    }
+
+    pub fn set_alias_target(&mut self, id: AliasInstanceId, target: TypeId) {
+        let instance = &mut self.alias_instances[id.0 as usize];
+        if let Some(existing) = instance.target {
+            debug_assert_eq!(
+                existing, target,
+                "alias target changed after materialization"
+            );
+            instance.resolving = false;
+            return;
+        }
+        instance.target = Some(target);
+        instance.resolving = false;
+    }
+
+    /// Resolve only top-level alias indirections, preserving recursive edges
+    /// nested under a productive constructor such as list or union.
+    pub fn semantic_head_id(&self, ty: TypeId) -> Result<TypeId, AliasHeadError> {
+        let mut current = ty;
+        let mut seen = HashSet::new();
+        loop {
+            let Ty::AliasRef(id) = self.get(current) else {
+                return Ok(current);
+            };
+            if !seen.insert(*id) {
+                return Err(AliasHeadError::Cycle(*id));
+            }
+            current = self
+                .alias_target(*id)
+                .ok_or(AliasHeadError::Unresolved(*id))?;
+        }
+    }
+
+    pub fn semantic_ty_or_error(&self, ty: TypeId) -> &Ty {
+        let head = self.semantic_head_id(ty).unwrap_or_else(|_| self.error());
+        self.get(head)
+    }
+
+    /// Whether `target` reaches the same alias without crossing a structural
+    /// constructor. Alias forwarding and unions are transparent here: neither
+    /// consumes a runtime layer, so `A = int | A` is not contractive.
+    pub fn alias_has_unguarded_cycle(&self, origin: AliasInstanceId, target: TypeId) -> bool {
+        fn visit(
+            tcx: &TypeContext,
+            origin_symbol: SymbolId,
+            current: TypeId,
+            seen: &mut HashSet<AliasInstanceId>,
+        ) -> bool {
+            match tcx.get(current) {
+                Ty::AliasRef(id) => {
+                    if tcx.alias_instance(*id).symbol == origin_symbol {
+                        return true;
+                    }
+                    if !seen.insert(*id) {
+                        return false;
+                    }
+                    let reaches = tcx
+                        .alias_target(*id)
+                        .is_some_and(|target| visit(tcx, origin_symbol, target, seen));
+                    seen.remove(id);
+                    reaches
+                }
+                Ty::Union(items) => items
+                    .iter()
+                    .any(|item| visit(tcx, origin_symbol, *item, seen)),
+                _ => false,
+            }
+        }
+
+        let origin_symbol = self.alias_instance(origin).symbol;
+        let mut seen = HashSet::new();
+        visit(self, origin_symbol, target, &mut seen)
+    }
+
     // --- Type variables (#242) ---
 
     pub fn new_type_var(
@@ -166,6 +318,11 @@ impl TypeContext {
     pub fn contains_type_var(&self, id: TypeId) -> bool {
         match self.get(id) {
             Ty::TypeVar(_) | Ty::SelfType | Ty::Infer(_) => true,
+            Ty::AliasRef(id) => self
+                .alias_instance(*id)
+                .args
+                .iter()
+                .any(|arg| self.contains_type_var(*arg)),
             Ty::List(item) | Ty::Set(item) => self.contains_type_var(*item),
             Ty::Dict(key, value) => self.contains_type_var(*key) || self.contains_type_var(*value),
             Ty::Tuple(items) | Ty::Union(items) => {
@@ -209,6 +366,11 @@ impl TypeContext {
     fn collect_type_vars(&self, id: TypeId, vars: &mut Vec<TypeVarId>) {
         match self.get(id) {
             Ty::TypeVar(var) => vars.push(*var),
+            Ty::AliasRef(id) => {
+                for arg in &self.alias_instance(*id).args {
+                    self.collect_type_vars(*arg, vars);
+                }
+            }
             Ty::List(item) | Ty::Set(item) => self.collect_type_vars(*item, vars),
             Ty::Dict(key, value) => {
                 self.collect_type_vars(*key, vars);
@@ -260,12 +422,47 @@ impl TypeContext {
 
     /// Check if `sub` is a subtype of `sup` (simplified).
     pub fn is_subtype(&self, sub: TypeId, sup: TypeId) -> bool {
+        let mut visiting = HashSet::new();
+        self.is_subtype_inner(sub, sup, &mut visiting)
+    }
+
+    fn is_subtype_inner(
+        &self,
+        sub: TypeId,
+        sup: TypeId,
+        visiting: &mut HashSet<(TypeId, TypeId)>,
+    ) -> bool {
         if sub == sup {
             return true;
         }
 
+        if !visiting.insert((sub, sup)) {
+            return true;
+        }
+        let result = self.is_subtype_step(sub, sup, visiting);
+        visiting.remove(&(sub, sup));
+        result
+    }
+
+    fn is_subtype_step(
+        &self,
+        sub: TypeId,
+        sup: TypeId,
+        visiting: &mut HashSet<(TypeId, TypeId)>,
+    ) -> bool {
         let sub_ty = self.get(sub);
         let sup_ty = self.get(sup);
+
+        if let Ty::AliasRef(id) = sub_ty {
+            return self
+                .alias_target(*id)
+                .is_some_and(|target| self.is_subtype_inner(target, sup, visiting));
+        }
+        if let Ty::AliasRef(id) = sup_ty {
+            return self
+                .alias_target(*id)
+                .is_some_and(|target| self.is_subtype_inner(sub, target, visiting));
+        }
 
         // Any is compatible with everything
         if matches!(sup_ty, Ty::Any) || matches!(sub_ty, Ty::Any) {
@@ -289,12 +486,16 @@ impl TypeContext {
 
         // Union: sub is subtype of Union if sub is subtype of any variant
         if let Ty::Union(variants) = sup_ty {
-            return variants.iter().any(|v| self.is_subtype(sub, *v));
+            return variants
+                .iter()
+                .any(|v| self.is_subtype_inner(sub, *v, visiting));
         }
 
         // Sub union: all variants must be subtypes of sup
         if let Ty::Union(variants) = sub_ty {
-            return variants.iter().all(|v| self.is_subtype(*v, sup));
+            return variants
+                .iter()
+                .all(|v| self.is_subtype_inner(*v, sup, visiting));
         }
 
         false
@@ -541,6 +742,57 @@ mod tests {
         assert!(!tcx.contains_type_var(list_int));
         assert_eq!(tcx.type_vars_in(list_type_var), vec![id]);
         assert!(tcx.type_vars_in(list_int).is_empty());
+    }
+
+    #[test]
+    fn recursive_alias_instances_are_stable_and_backfilled() {
+        let mut tcx = TypeContext::new();
+        let symbol = SymbolId(42);
+        let (instance, alias_ref) =
+            tcx.intern_alias_instance(symbol, "Node".to_string(), Vec::new(), 0);
+        let (same_instance, same_ref) =
+            tcx.intern_alias_instance(symbol, "Node".to_string(), Vec::new(), 0);
+        assert_eq!(instance, same_instance);
+        assert_eq!(alias_ref, same_ref);
+
+        let target = tcx.intern(Ty::List(alias_ref));
+        assert!(!tcx.alias_has_unguarded_cycle(instance, target));
+        tcx.set_alias_target(instance, target);
+        assert_eq!(tcx.semantic_head_id(alias_ref), Ok(target));
+    }
+
+    #[test]
+    fn recursive_alias_head_cycles_are_reported_without_unfolding() {
+        let mut tcx = TypeContext::new();
+        let (instance, alias_ref) =
+            tcx.intern_alias_instance(SymbolId(7), "Loop".to_string(), Vec::new(), 0);
+        assert!(tcx.alias_has_unguarded_cycle(instance, alias_ref));
+        tcx.set_alias_target(instance, alias_ref);
+        assert_eq!(
+            tcx.semantic_head_id(alias_ref),
+            Err(AliasHeadError::Cycle(instance))
+        );
+    }
+
+    #[test]
+    fn recursive_alias_arguments_participate_in_type_var_queries() {
+        let mut tcx = TypeContext::new();
+        let var = tcx.new_type_var("T".to_string(), None, Vec::new());
+        let var_ty = tcx.intern(Ty::TypeVar(var));
+        let (_, alias_ref) =
+            tcx.intern_alias_instance(SymbolId(9), "Chain".to_string(), vec![var_ty], 1);
+        assert!(tcx.contains_type_var(alias_ref));
+        assert_eq!(tcx.type_vars_in(alias_ref), vec![var]);
+    }
+
+    #[test]
+    fn subtype_checks_unfold_alias_heads_cycle_safely() {
+        let mut tcx = TypeContext::new();
+        let (instance, alias_ref) =
+            tcx.intern_alias_instance(SymbolId(11), "Number".to_string(), Vec::new(), 0);
+        tcx.set_alias_target(instance, tcx.int());
+        assert!(tcx.is_subtype(alias_ref, tcx.float()));
+        assert!(!tcx.is_subtype(alias_ref, tcx.str()));
     }
 
     #[test]

@@ -1,6 +1,8 @@
 use super::generic::{bind_explicit_type_args, complete_type_args, GenericParams, Substitution};
 use super::protocol::ProtocolRegistry;
-use super::ty::{TypeParamDefault, TypeVarId, TypeVarKind, UserClass, UserClassRole};
+use super::ty::{
+    AliasInstanceId, TypeParamDefault, TypeVarId, TypeVarKind, UserClass, UserClassRole,
+};
 use super::{Ty, TypeContext, TypeId};
 use crate::error::MambaError;
 use crate::parser::ast::*;
@@ -130,6 +132,8 @@ pub(crate) enum NumericRoot {
     Float,
 }
 
+const MAX_TYPE_COMPATIBILITY_DEPTH: usize = 128;
+
 /// Type checker: walks the AST, resolves names, and checks types.
 #[derive(Debug, Clone)]
 pub(crate) struct FunctionParamSig {
@@ -142,10 +146,46 @@ pub(crate) struct FunctionParamSig {
 
 #[derive(Debug, Clone)]
 struct TypeAliasDef {
+    name: String,
     params: GenericParams,
+    captures: Vec<TypeVarId>,
     value: Spanned<TypeExpr>,
     template: Option<TypeId>,
     resolving: bool,
+}
+
+fn parse_forward_ref_type_expr(source: &str, span: Span) -> Option<Spanned<TypeExpr>> {
+    if source.contains(['\n', '\r']) {
+        return None;
+    }
+    let wrapper = format!("def __mamba_forward_ref(value: {source}) -> None:\n    pass\n");
+    let module = crate::parser::parse(&wrapper, span.file).ok()?;
+    let Stmt::FnDef { params, .. } = &module.stmts.first()?.node else {
+        return None;
+    };
+    let mut ty = params.first()?.ty.clone();
+
+    fn respan(ty: &mut Spanned<TypeExpr>, span: Span) {
+        ty.span = span;
+        match &mut ty.node {
+            TypeExpr::Generic { args, .. } | TypeExpr::Union(args) | TypeExpr::Tuple(args) => {
+                for arg in args {
+                    respan(arg, span);
+                }
+            }
+            TypeExpr::Optional(inner) => respan(inner, span),
+            TypeExpr::Fn { params, ret } => {
+                for param in params {
+                    respan(param, span);
+                }
+                respan(ret, span);
+            }
+            TypeExpr::Named(_) => {}
+        }
+    }
+
+    respan(&mut ty, span);
+    Some(ty)
 }
 
 fn collect_same_scope_stmts<'a>(
@@ -250,7 +290,7 @@ pub struct TypeChecker {
     preregister_depth: u32,
     /// Aliases shadowed by nested PEP 695 type-parameter scopes. Each
     /// `register_type_params` call pushes one frame and cleanup restores it.
-    type_param_alias_scopes: Vec<Vec<(String, Option<TypeId>)>>,
+    type_param_alias_scopes: Vec<Vec<(String, TypeVarId, Option<TypeId>)>>,
     /// Semantic annotation results keyed by source span. Lowering consumes
     /// these instead of independently re-resolving class/generic annotations.
     resolved_type_exprs: HashMap<Span, TypeId>,
@@ -552,7 +592,7 @@ impl TypeChecker {
     pub(crate) fn register_type_param_aliases(&mut self, aliases: &[(String, TypeVarId)]) {
         let shadowed = aliases
             .iter()
-            .map(|(name, _)| (name.clone(), self.tcx.resolve_alias(name)))
+            .map(|(name, id)| (name.clone(), *id, self.tcx.resolve_alias(name)))
             .collect();
         self.type_param_alias_scopes.push(shadowed);
 
@@ -589,18 +629,32 @@ impl TypeChecker {
             .type_param_alias_scopes
             .pop()
             .expect("type parameter alias scopes must be balanced");
-        for (name, prior) in shadowed {
+        for (name, _, prior) in shadowed {
             if let Some(ty) = prior {
                 self.tcx.register_alias(name, ty);
             }
         }
     }
 
+    fn active_type_param_ids(&self) -> Vec<TypeVarId> {
+        let mut names = HashSet::new();
+        let mut ids = Vec::new();
+        for scope in self.type_param_alias_scopes.iter().rev() {
+            for (name, id, _) in scope.iter().rev() {
+                if names.insert(name.as_str()) {
+                    ids.push(*id);
+                }
+            }
+        }
+        ids.reverse();
+        ids
+    }
+
     fn resolve_active_type_param_alias(&self, name: &str) -> Option<TypeId> {
         self.type_param_alias_scopes
             .iter()
             .rev()
-            .any(|scope| scope.iter().any(|(param, _)| param == name))
+            .any(|scope| scope.iter().any(|(param, _, _)| param == name))
             .then(|| self.tcx.resolve_alias(name))
             .flatten()
     }
@@ -1046,12 +1100,20 @@ impl TypeChecker {
         let Some(value) = expr_to_type_expr(value) else {
             return;
         };
+        let mut captures = self.active_type_param_ids();
+        captures.retain(|id| {
+            type_params
+                .iter()
+                .all(|param| param.name != self.tcx.get_type_var(*id).name)
+        });
         let params = self.register_type_params(type_params);
         self.unregister_type_params(type_params);
         self.type_alias_defs.insert(
             symbol,
             TypeAliasDef {
+                name: name.to_string(),
                 params,
+                captures,
                 value,
                 template: None,
                 resolving: false,
@@ -1068,11 +1130,25 @@ impl TypeChecker {
         let Some(definition) = self.type_alias_defs.get(&symbol).cloned() else {
             return self.tcx.error();
         };
+        let declaration_args: Vec<_> = definition
+            .params
+            .params
+            .iter()
+            .map(|param| param.id)
+            .chain(definition.captures.iter().copied())
+            .map(|id| self.tcx.intern(Ty::TypeVar(id)))
+            .collect();
+        let (instance, alias_ref) = self.tcx.intern_alias_instance(
+            symbol,
+            definition.name.clone(),
+            declaration_args,
+            definition.params.len(),
+        );
         if let Some(template) = definition.template {
             return template;
         }
         if definition.resolving {
-            return self.tcx.any();
+            return alias_ref;
         }
 
         self.type_alias_defs
@@ -1087,7 +1163,7 @@ impl TypeChecker {
             .collect();
         self.register_type_param_aliases(&aliases);
         let error_mark = self.errors_mark();
-        let template = self.resolve_type_expr(&definition.value);
+        let mut template = self.resolve_type_expr(&definition.value);
         let alias_names: Vec<_> = aliases.into_iter().map(|(name, _)| name).collect();
         self.unregister_type_param_aliases(&alias_names);
         if self.preregister_depth > 0 && self.errors.len() != error_mark {
@@ -1098,12 +1174,20 @@ impl TypeChecker {
                 .resolving = false;
             return self.tcx.any();
         }
+        if self.tcx.alias_has_unguarded_cycle(instance, template) {
+            self.error(
+                definition.value.span,
+                format!("unproductive recursive type alias '{}'", definition.name),
+            );
+            template = self.tcx.error();
+        }
         let definition = self
             .type_alias_defs
             .get_mut(&symbol)
             .expect("type alias definition disappeared");
         definition.template = Some(template);
         definition.resolving = false;
+        self.tcx.set_alias_target(instance, template);
         template
     }
 
@@ -1118,14 +1202,15 @@ impl TypeChecker {
         let Some(definition) = self.type_alias_defs.get(&symbol).cloned() else {
             return template;
         };
+        let recursive_edge = definition.resolving && definition.template.is_none();
         if definition.params.is_empty() {
             if supplied.is_some() {
                 self.error(span, format!("type '{name}' is not generic"));
             }
-            return template;
+            return self.tcx.semantic_head_id(template).unwrap_or(template);
         }
 
-        let (subst, _, errors) = if let Some(args) = supplied {
+        let (subst, resolved, errors) = if let Some(args) = supplied {
             bind_explicit_type_args(&definition.params, args, &mut self.tcx)
         } else {
             let Some((subst, resolved)) =
@@ -1138,7 +1223,92 @@ impl TypeChecker {
         for error in errors {
             self.error(span, error);
         }
-        subst.apply(template, &mut self.tcx)
+        if recursive_edge {
+            return subst.apply(template, &mut self.tcx);
+        }
+
+        let mut identity_args = resolved;
+        identity_args.extend(
+            definition
+                .captures
+                .iter()
+                .map(|id| self.tcx.intern(Ty::TypeVar(*id))),
+        );
+        let (instance, _) = self.tcx.intern_alias_instance(
+            symbol,
+            name.to_string(),
+            identity_args,
+            definition.params.len(),
+        );
+        let owns_target = self.tcx.begin_alias_target(instance);
+        let specialized = subst.apply(template, &mut self.tcx);
+        if owns_target {
+            self.tcx.set_alias_target(instance, specialized);
+        }
+        self.tcx
+            .semantic_head_id(specialized)
+            .unwrap_or(specialized)
+    }
+
+    fn materialize_alias_instance(&mut self, id: AliasInstanceId) -> Option<TypeId> {
+        if let Some(target) = self.tcx.alias_target(id) {
+            return Some(target);
+        }
+        if self.tcx.alias_target_is_resolving(id) {
+            return None;
+        }
+
+        let instance = self.tcx.alias_instance(id).clone();
+        let definition = self.type_alias_defs.get(&instance.symbol)?.clone();
+        let template = definition.template?;
+        let identity_params: Vec<_> = definition
+            .params
+            .params
+            .iter()
+            .map(|param| param.id)
+            .chain(definition.captures.iter().copied())
+            .collect();
+        if identity_params.len() != instance.args.len() {
+            return None;
+        }
+
+        let mut subst = Substitution::new();
+        for (param, arg) in identity_params.iter().zip(&instance.args) {
+            subst.insert(*param, *arg);
+        }
+        if !self.tcx.begin_alias_target(id) {
+            return self.tcx.alias_target(id);
+        }
+        let target = subst.apply(template, &mut self.tcx);
+        self.tcx.set_alias_target(id, target);
+        Some(target)
+    }
+
+    fn materialize_alias_head(&mut self, ty: TypeId) -> TypeId {
+        let mut current = ty;
+        let mut seen = HashSet::new();
+        loop {
+            let Ty::AliasRef(id) = self.tcx.get(current) else {
+                return current;
+            };
+            let id = *id;
+            if !seen.insert(id) {
+                return self.tcx.error();
+            }
+            let target = self
+                .tcx
+                .alias_target(id)
+                .or_else(|| self.materialize_alias_instance(id));
+            let Some(target) = target else {
+                return self.tcx.error();
+            };
+            current = target;
+        }
+    }
+
+    pub(crate) fn semantic_ty(&mut self, ty: TypeId) -> Ty {
+        let head = self.materialize_alias_head(ty);
+        self.tcx.get(head).clone()
     }
 
     fn preregister_user_class_alias(&mut self, value: &Spanned<Expr>) -> Option<TypeId> {
@@ -1838,7 +2008,23 @@ impl TypeChecker {
                 // `type` as a type expression (e.g. `type[BaseModel]` bare name):
                 // the class-object type is represented as Any for now.
                 "type" | "object" => self.tcx.any(),
-                n if crate::parser::ast::strip_forward_ref_name(n).is_some() => self.tcx.any(),
+                n if crate::parser::ast::strip_forward_ref_name(n).is_some() => {
+                    let forwarded = crate::parser::ast::strip_forward_ref_name(n)
+                        .expect("forward-reference prefix disappeared");
+                    if !self
+                        .type_alias_defs
+                        .values()
+                        .any(|definition| definition.resolving)
+                    {
+                        self.tcx.any()
+                    } else if let Some(forwarded) = parse_forward_ref_type_expr(forwarded, ty.span)
+                    {
+                        self.resolve_type_expr_inner(&forwarded)
+                    } else {
+                        self.error(ty.span, "invalid type expression in forward reference");
+                        self.tcx.error()
+                    }
+                }
                 "Self" => {
                     // #243: resolve Self to current class type
                     if self.current_class.is_some() {
@@ -2038,9 +2224,41 @@ impl TypeChecker {
         )
     }
 
-    pub(crate) fn types_compatible(&self, expected: TypeId, actual: TypeId) -> bool {
+    pub(crate) fn types_compatible(&mut self, expected: TypeId, actual: TypeId) -> bool {
+        let mut visiting = HashSet::new();
+        self.types_compatible_inner(expected, actual, &mut visiting)
+    }
+
+    fn types_compatible_inner(
+        &mut self,
+        expected: TypeId,
+        actual: TypeId,
+        visiting: &mut HashSet<(TypeId, TypeId)>,
+    ) -> bool {
         if expected == actual {
             return true;
+        }
+        if visiting.len() >= MAX_TYPE_COMPATIBILITY_DEPTH {
+            return false;
+        }
+        if !visiting.insert((expected, actual)) {
+            return true;
+        }
+        let compatible = self.types_compatible_step(expected, actual, visiting);
+        visiting.remove(&(expected, actual));
+        compatible
+    }
+
+    fn types_compatible_step(
+        &mut self,
+        expected: TypeId,
+        actual: TypeId,
+        visiting: &mut HashSet<(TypeId, TypeId)>,
+    ) -> bool {
+        let expected_head = self.materialize_alias_head(expected);
+        let actual_head = self.materialize_alias_head(actual);
+        if expected_head != expected || actual_head != actual {
+            return self.types_compatible_inner(expected_head, actual_head, visiting);
         }
         let e = self.tcx.get(expected);
         let a = self.tcx.get(actual);
@@ -2159,14 +2377,30 @@ impl TypeChecker {
                 }
             }
         }
+        // Union-to-union compatibility maps every actual branch to at least
+        // one expected branch. This must run before the one-sided rules so
+        // structurally equivalent recursive aliases compare coinductively.
+        if let (Ty::Union(expected), Ty::Union(actual)) = (e, a) {
+            let expected = expected.clone();
+            let actual = actual.clone();
+            return actual.iter().all(|actual| {
+                expected
+                    .iter()
+                    .any(|expected| self.types_compatible_inner(*expected, *actual, visiting))
+            });
+        }
         // Union compatibility: actual is compatible if it matches any member
         if let Ty::Union(members) = e {
             let members = members.clone();
-            return members.iter().any(|m| self.types_compatible(*m, actual));
+            return members
+                .iter()
+                .any(|m| self.types_compatible_inner(*m, actual, visiting));
         }
         if let Ty::Union(members) = a {
             let members = members.clone();
-            return members.iter().all(|m| self.types_compatible(expected, *m));
+            return members
+                .iter()
+                .all(|m| self.types_compatible_inner(expected, *m, visiting));
         }
         // Recursive collection compatibility: List[X] ≈ List[Y] when X ≈ Y,
         // similarly for Set and Dict. This handles annotations like
@@ -2174,15 +2408,16 @@ impl TypeChecker {
         // concrete types.
         if let (Ty::List(inner_e), Ty::List(inner_a)) = (e, a) {
             let (ie, ia) = (*inner_e, *inner_a);
-            return self.types_compatible(ie, ia);
+            return self.types_compatible_inner(ie, ia, visiting);
         }
         if let (Ty::Set(inner_e), Ty::Set(inner_a)) = (e, a) {
             let (ie, ia) = (*inner_e, *inner_a);
-            return self.types_compatible(ie, ia);
+            return self.types_compatible_inner(ie, ia, visiting);
         }
         if let (Ty::Dict(ke, ve), Ty::Dict(ka, va)) = (e, a) {
             let (ke, ve, ka, va) = (*ke, *ve, *ka, *va);
-            return self.types_compatible(ke, ka) && self.types_compatible(ve, va);
+            return self.types_compatible_inner(ke, ka, visiting)
+                && self.types_compatible_inner(ve, va, visiting);
         }
         // Recursive tuple compatibility, mirroring List/Dict. This removes the
         // param-default false positive on `def f(p: tuple[float, float] = (1, 2))`:
@@ -2204,10 +2439,9 @@ impl TypeChecker {
             // `tuple[T, ...]` (each a 2-element `[T, Any]`), since `Any`
             // elements are universally compatible.
             if es.len() == as_.len() {
-                return es
-                    .iter()
-                    .zip(as_.iter())
-                    .all(|(&elem_e, &elem_a)| self.types_compatible(elem_e, elem_a));
+                return es.iter().zip(as_.iter()).all(|(&elem_e, &elem_a)| {
+                    self.types_compatible_inner(elem_e, elem_a, visiting)
+                });
             }
             // Differing arity: the only compatible shape is a homogeneous
             // `tuple[T, ...]`, parsed as a 2-element tuple whose second element
@@ -2218,13 +2452,13 @@ impl TypeChecker {
                 let elem_e = es[0];
                 return as_
                     .iter()
-                    .all(|&elem_a| self.types_compatible(elem_e, elem_a));
+                    .all(|&elem_a| self.types_compatible_inner(elem_e, elem_a, visiting));
             }
             if as_.len() == 2 && self.tcx.get(as_[1]).is_any() {
                 let elem_a = as_[0];
                 return es
                     .iter()
-                    .all(|&elem_e| self.types_compatible(elem_e, elem_a));
+                    .all(|&elem_e| self.types_compatible_inner(elem_e, elem_a, visiting));
             }
             // Differing arity, neither homogeneous: genuine length mismatch.
             return false;
@@ -2253,8 +2487,8 @@ impl TypeChecker {
             return pe
                 .iter()
                 .zip(pa.iter())
-                .all(|(&te, &ta)| self.types_compatible(ta, te))
-                && self.types_compatible(re, ra);
+                .all(|(&te, &ta)| self.types_compatible_inner(ta, te, visiting))
+                && self.types_compatible_inner(re, ra, visiting);
         }
         // Bool is a subclass of int in Python (#1680) — `isinstance(True, int) is True`.
         // Accept bool wherever int or float is expected, and int wherever float is
@@ -2268,6 +2502,10 @@ impl TypeChecker {
     }
 
     pub(crate) fn ty_name(&self, ty: TypeId) -> String {
+        self.ty_name_inner(ty, &mut HashSet::new())
+    }
+
+    fn ty_name_inner(&self, ty: TypeId, visiting: &mut HashSet<AliasInstanceId>) -> String {
         match self.tcx.get(ty) {
             Ty::Never => "Never".into(),
             Ty::None => "None".into(),
@@ -2276,27 +2514,48 @@ impl TypeChecker {
             Ty::Float => "float".into(),
             Ty::Str => "str".into(),
             Ty::Any => "Any".into(),
-            Ty::List(inner) => format!("list[{}]", self.ty_name(*inner)),
-            Ty::Set(inner) => format!("set[{}]", self.ty_name(*inner)),
-            Ty::Dict(k, v) => format!("dict[{}, {}]", self.ty_name(*k), self.ty_name(*v)),
+            Ty::List(inner) => format!("list[{}]", self.ty_name_inner(*inner, visiting)),
+            Ty::Set(inner) => format!("set[{}]", self.ty_name_inner(*inner, visiting)),
+            Ty::Dict(k, v) => format!(
+                "dict[{}, {}]",
+                self.ty_name_inner(*k, visiting),
+                self.ty_name_inner(*v, visiting)
+            ),
             Ty::Tuple(ts) => {
-                let parts: Vec<_> = ts.iter().map(|t| self.ty_name(*t)).collect();
+                let parts: Vec<_> = ts
+                    .iter()
+                    .map(|t| self.ty_name_inner(*t, visiting))
+                    .collect();
                 format!("tuple[{}]", parts.join(", "))
             }
             Ty::Union(ts) => {
-                let parts: Vec<_> = ts.iter().map(|t| self.ty_name(*t)).collect();
+                let parts: Vec<_> = ts
+                    .iter()
+                    .map(|t| self.ty_name_inner(*t, visiting))
+                    .collect();
                 parts.join(" | ")
             }
             Ty::Fn { params, ret, .. } => {
-                let ps: Vec<_> = params.iter().map(|p| self.ty_name(*p)).collect();
-                format!("({}) -> {}", ps.join(", "), self.ty_name(*ret))
+                let ps: Vec<_> = params
+                    .iter()
+                    .map(|p| self.ty_name_inner(*p, visiting))
+                    .collect();
+                format!(
+                    "({}) -> {}",
+                    ps.join(", "),
+                    self.ty_name_inner(*ret, visiting)
+                )
             }
             Ty::Class {
                 name,
                 user: Some(user),
                 ..
             } if !user.args.is_empty() => {
-                let args: Vec<_> = user.args.iter().map(|arg| self.ty_name(*arg)).collect();
+                let args: Vec<_> = user
+                    .args
+                    .iter()
+                    .map(|arg| self.ty_name_inner(*arg, visiting))
+                    .collect();
                 format!("{name}[{}]", args.join(", "))
             }
             Ty::Class { name, .. } => name.clone(),
@@ -2317,6 +2576,20 @@ impl TypeChecker {
                 format!("Literal[{}]", parts.join(", "))
             }
             Ty::SelfType => "Self".into(),
+            Ty::AliasRef(id) => {
+                let instance = self.tcx.alias_instance(*id);
+                let name = instance.name.clone();
+                let args = instance.args[..instance.display_arg_count].to_vec();
+                if args.is_empty() || !visiting.insert(*id) {
+                    return name;
+                }
+                let args: Vec<_> = args
+                    .iter()
+                    .map(|arg| self.ty_name_inner(*arg, visiting))
+                    .collect();
+                visiting.remove(id);
+                format!("{name}[{}]", args.join(", "))
+            }
             Ty::Infer(_) => "?".into(),
             Ty::Error => "<error>".into(),
         }
@@ -2607,7 +2880,7 @@ mod tests {
 
     #[test]
     fn test_types_compatible_same_type() {
-        let tc = TypeChecker::new();
+        let mut tc = TypeChecker::new();
         assert!(tc.types_compatible(tc.tcx.int(), tc.tcx.int()));
         assert!(tc.types_compatible(tc.tcx.str(), tc.tcx.str()));
         assert!(tc.types_compatible(tc.tcx.none(), tc.tcx.none()));
@@ -2615,7 +2888,7 @@ mod tests {
 
     #[test]
     fn test_types_compatible_error_always_compatible() {
-        let tc = TypeChecker::new();
+        let mut tc = TypeChecker::new();
         assert!(tc.types_compatible(tc.tcx.error(), tc.tcx.int()));
         assert!(tc.types_compatible(tc.tcx.int(), tc.tcx.error()));
         assert!(tc.types_compatible(tc.tcx.error(), tc.tcx.error()));
@@ -2623,7 +2896,7 @@ mod tests {
 
     #[test]
     fn test_types_compatible_any_always_compatible() {
-        let tc = TypeChecker::new();
+        let mut tc = TypeChecker::new();
         assert!(tc.types_compatible(tc.tcx.any(), tc.tcx.int()));
         assert!(tc.types_compatible(tc.tcx.int(), tc.tcx.any()));
         assert!(tc.types_compatible(tc.tcx.any(), tc.tcx.str()));
@@ -2631,7 +2904,7 @@ mod tests {
 
     #[test]
     fn test_types_compatible_different_primitives() {
-        let tc = TypeChecker::new();
+        let mut tc = TypeChecker::new();
         // Mamba strict typing: int and float NOT compatible
         assert!(!tc.types_compatible(tc.tcx.int(), tc.tcx.float()));
         assert!(!tc.types_compatible(tc.tcx.int(), tc.tcx.str()));

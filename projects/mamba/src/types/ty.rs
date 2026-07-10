@@ -8,6 +8,13 @@ pub struct TypeId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TypeVarId(pub u32);
 
+/// Stable identity for one specialized PEP 695 type-alias expansion.
+///
+/// Alias references are indirections used only for recursive back-edges. An
+/// ordinary alias use still resolves to its expanded semantic head.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AliasInstanceId(pub u32);
+
 /// Static kind of a PEP 695 type parameter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TypeVarKind {
@@ -99,6 +106,8 @@ pub enum Ty {
     Literal(Vec<LiteralValue>),
     /// `Self` type in class methods (#243).
     SelfType,
+    /// Recursive edge into a lazily materialized PEP 695 type alias.
+    AliasRef(AliasInstanceId),
     Infer(u32),
     Error,
 }
