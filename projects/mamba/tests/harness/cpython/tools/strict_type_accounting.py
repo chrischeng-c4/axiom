@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -32,10 +33,11 @@ FIXTURES_DIR = MAMBA_DIR / "tests" / "cpython"
 TYPE_DIR = FIXTURES_DIR / "type"
 SOUND_DIR = FIXTURES_DIR / "behavior" / "core"
 GENERATED_SIGS = MAMBA_DIR / "src" / "types" / "stdlib_sigs_generated.rs"
-TYPESHED_STDLIB = MAMBA_DIR / "vendor" / "typeshed" / "stdlib"
+DEFAULT_TYPESHED_STDLIB = MAMBA_DIR / "vendor" / "typeshed" / "stdlib"
 TYPE_DIVERGENCES = TOOLS_DIR.parent / "config" / "type_divergences.txt"
 
 EXIT_NOT_READY = 70
+EXPECTED_PYTHON_VERSION = (3, 12)
 NON_RUNTIME_STUB_TYPE_LIB_PREFIXES = ("_typeshed",)
 NON_STDLIB_BACKPORT_TYPE_LIBS = {"typing_extensions"}
 PLATFORM_SPECIFIC_TYPE_LIBS = {
@@ -326,6 +328,21 @@ def unenforceable_generated_param_reason(
     return None
 
 
+def partition_generated_contract_coverage(
+    paths: list[Path], sigs: dict[tuple[str, str, str], dict[str, Any]]
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Separate valid unconstrained TypeVars from unsupported contract gaps."""
+    unwalled_typevars: list[dict[str, str]] = []
+    unresolved_contracts: list[dict[str, str]] = []
+    for path in paths:
+        reason = unenforceable_generated_param_reason(path, sigs)
+        if reason == "typevar_must_stay_unwalled":
+            unwalled_typevars.append({"path": repo_rel(path), "reason": reason})
+        elif reason is not None:
+            unresolved_contracts.append({"path": repo_rel(path), "reason": reason})
+    return unwalled_typevars, unresolved_contracts
+
+
 def run_mamba(mamba_bin: str, fixture: Path, timeout: int) -> tuple[int | None, str, str]:
     inner = (
         f"ulimit -t {timeout} 2>/dev/null; "
@@ -342,7 +359,7 @@ def is_type_rejection(stdout: str, stderr: str) -> bool:
     return any(marker in blob for marker in TYPE_REJECTION_MARKERS)
 
 
-def parse_generated_signature_counts() -> dict[str, Any]:
+def parse_generated_signature_counts(typeshed_stdlib: Path) -> dict[str, Any]:
     text = GENERATED_SIGS.read_text(encoding="utf-8", errors="replace")
     header = re.search(
         r"rows:\s*(?P<rows>\d+)\s*.*?enforceable \(scalar\):\s*"
@@ -356,7 +373,7 @@ def parse_generated_signature_counts() -> dict[str, Any]:
             "rows": int(header.group("rows")),
             "enforceable": int(header.group("enforceable")),
             "unknown_skipped": int(header.group("unknown")),
-            "vendor_typeshed_available": TYPESHED_STDLIB.exists(),
+            "vendor_typeshed_available": typeshed_stdlib.is_dir(),
         }
     rows = len(re.findall(r"\bStdlibSig\s*\{", text))
     enforceable = len(re.findall(r"enforceable:\s*true", text))
@@ -365,7 +382,44 @@ def parse_generated_signature_counts() -> dict[str, Any]:
         "rows": rows,
         "enforceable": enforceable,
         "unknown_skipped": max(0, rows - enforceable),
-        "vendor_typeshed_available": TYPESHED_STDLIB.exists(),
+        "vendor_typeshed_available": typeshed_stdlib.is_dir(),
+    }
+
+
+def verify_generated_signature_snapshot(typeshed_stdlib: Path) -> dict[str, Any]:
+    if not typeshed_stdlib.is_dir():
+        return {
+            "current": False,
+            "exit_code": None,
+            "problem": f"missing typeshed stdlib directory: {typeshed_stdlib}",
+        }
+
+    command = [
+        sys.executable,
+        str(TOOLS_DIR / "type_wall_gen.py"),
+        "--check-rust",
+        "--typeshed-stdlib",
+        str(typeshed_stdlib),
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {
+            "current": False,
+            "exit_code": None,
+            "problem": str(error),
+        }
+    output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+    return {
+        "current": result.returncode == 0,
+        "exit_code": result.returncode,
+        "problem": None if result.returncode == 0 else output[:500],
     }
 
 
@@ -458,6 +512,12 @@ def validate_divergence(
 
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     mamba_bin = args.mamba_bin or default_mamba_bin()
+    typeshed_stdlib = (
+        args.typeshed_stdlib
+        or os.environ.get("MAMBA_TYPESHED_STDLIB")
+        or DEFAULT_TYPESHED_STDLIB
+    )
+    typeshed_stdlib = Path(typeshed_stdlib).resolve()
     type_fixture_candidates = sorted(TYPE_DIR.rglob("*.py")) if TYPE_DIR.exists() else []
     generated_param_sigs = parse_generated_signature_param_index()
     excluded_non_runtime_stubs = [
@@ -484,23 +544,21 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         if is_version_specific_unavailable_type_fixture(path)
     ]
     type_fixture_wall_candidates = executable_type_fixtures(type_fixture_candidates)
-    excluded_unenforceable_generated_params: list[dict[str, str]] = []
-    for path in type_fixture_wall_candidates:
-        reason = unenforceable_generated_param_reason(path, generated_param_sigs)
-        if reason is not None:
-            excluded_unenforceable_generated_params.append(
-                {"path": repo_rel(path), "reason": reason}
-            )
-    excluded_unenforceable_generated_param_paths = {
-        REPO_ROOT / item["path"] for item in excluded_unenforceable_generated_params
+    excluded_unwalled_typevars, unresolved_generated_contracts = (
+        partition_generated_contract_coverage(
+            type_fixture_wall_candidates, generated_param_sigs
+        )
+    )
+    excluded_unwalled_typevar_paths = {
+        REPO_ROOT / item["path"] for item in excluded_unwalled_typevars
     }
     type_fixtures_all = [
         path
         for path in type_fixture_wall_candidates
-        if path not in excluded_unenforceable_generated_param_paths
+        if path not in excluded_unwalled_typevar_paths
     ]
-    excluded_unenforceable_generated_param_reasons = Counter(
-        item["reason"] for item in excluded_unenforceable_generated_params
+    unresolved_generated_contract_reasons = Counter(
+        item["reason"] for item in unresolved_generated_contracts
     )
     type_fixtures, enforcement_sampled = selected(type_fixtures_all, args.limit)
     sound_fixtures_all = sorted(
@@ -549,11 +607,17 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     invalid_divergences = [item for item in divergence_entries if not item["valid"]]
     missing_owner = [item for item in divergence_entries if not item["owner_refs"]]
 
-    typeshed = parse_generated_signature_counts()
+    typeshed = parse_generated_signature_counts(typeshed_stdlib)
+    generated_snapshot = verify_generated_signature_snapshot(typeshed_stdlib)
+    host_python_version = sys.version_info[:2]
     sampled = enforcement_sampled or sound_sampled
     ready = (
         not sampled
+        and host_python_version == EXPECTED_PYTHON_VERSION
+        and typeshed["vendor_typeshed_available"]
+        and generated_snapshot["current"]
         and typeshed["enforceable"] > 0
+        and not unresolved_generated_contracts
         and enforcement_counts["leaked"] == 0
         and enforcement_counts["ungradable"] == 0
         and enforcement_counts["enforced"] == len(type_fixtures_all)
@@ -565,6 +629,40 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     blockers: list[dict[str, Any]] = []
+    if host_python_version != EXPECTED_PYTHON_VERSION:
+        blockers.append(
+            {
+                "kind": "wrong_accounting_python",
+                "reason": (
+                    f"requires Python {EXPECTED_PYTHON_VERSION[0]}."
+                    f"{EXPECTED_PYTHON_VERSION[1]}, got "
+                    f"{host_python_version[0]}.{host_python_version[1]}"
+                ),
+            }
+        )
+    if not typeshed["vendor_typeshed_available"]:
+        blockers.append(
+            {
+                "kind": "missing_typeshed",
+                "reason": f"typeshed stdlib directory is unavailable: {typeshed_stdlib}",
+            }
+        )
+    elif not generated_snapshot["current"]:
+        blockers.append(
+            {
+                "kind": "stale_generated_signature_snapshot",
+                "reason": generated_snapshot["problem"] or "typeshed snapshot check failed",
+            }
+        )
+    if unresolved_generated_contracts:
+        blockers.append(
+            {
+                "kind": "unsupported_generated_contracts",
+                "count": len(unresolved_generated_contracts),
+                "reasons": dict(sorted(unresolved_generated_contract_reasons.items())),
+                "examples": unresolved_generated_contracts[: args.show],
+            }
+        )
     if sampled:
         blockers.append(
             {
@@ -596,6 +694,8 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "mamba_bin": mamba_bin,
         "typeshed": {
             **typeshed,
+            "stdlib_path": str(typeshed_stdlib),
+            "generated_snapshot": generated_snapshot,
             "type_fixture_wall": len(type_fixtures_all),
             "measured_type_fixtures": len(type_fixtures),
             "excluded_non_runtime_stub_fixtures": len(excluded_non_runtime_stubs),
@@ -616,16 +716,19 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "version_removed_type_libs": VERSION_REMOVED_TYPE_LIBS,
             "version_specific_type_fixture_cases": VERSION_SPECIFIC_TYPE_FIXTURES,
             "version_removed_type_fixture_cases": VERSION_REMOVED_TYPE_FIXTURES,
-            "excluded_unenforceable_generated_param_type_fixtures": len(
-                excluded_unenforceable_generated_params
+            "excluded_unwalled_typevar_fixtures": len(excluded_unwalled_typevars),
+            "excluded_unwalled_typevar_examples": excluded_unwalled_typevars[: args.show],
+            "unresolved_generated_contract_type_fixtures": len(
+                unresolved_generated_contracts
             ),
-            "excluded_unenforceable_generated_param_reasons": dict(
-                sorted(excluded_unenforceable_generated_param_reasons.items())
+            "unresolved_generated_contract_reasons": dict(
+                sorted(unresolved_generated_contract_reasons.items())
             ),
-            "excluded_unenforceable_generated_param_examples": (
-                excluded_unenforceable_generated_params[: args.show]
-            ),
-            "host_python_version": list(sys.version_info[:2]),
+            "unresolved_generated_contract_examples": unresolved_generated_contracts[
+                : args.show
+            ],
+            "host_python_version": list(host_python_version),
+            "required_python_version": list(EXPECTED_PYTHON_VERSION),
         },
         "enforcement": {
             "fixtures": len(type_fixtures_all),
@@ -673,8 +776,10 @@ def print_human(report: dict[str, Any]) -> None:
         f"rows={typeshed['rows']} enforceable={typeshed['enforceable']} "
         f"unknown_skipped={typeshed['unknown_skipped']} "
         f"fixtures={typeshed['type_fixture_wall']} "
-        "excluded_unenforceable_params="
-        f"{typeshed['excluded_unenforceable_generated_param_type_fixtures']}"
+        "unresolved_contracts="
+        f"{typeshed['unresolved_generated_contract_type_fixtures']} "
+        f"unwalled_typevars={typeshed['excluded_unwalled_typevar_fixtures']} "
+        f"snapshot_current={typeshed['generated_snapshot']['current']}"
     )
     enforcement = report["enforcement"]
     print(
@@ -710,6 +815,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=0, help="sample N type/soundness fixtures")
     parser.add_argument("--timeout", type=int, default=10)
     parser.add_argument("--mamba-bin")
+    parser.add_argument(
+        "--typeshed-stdlib",
+        type=Path,
+        help="typeshed stdlib directory (or set MAMBA_TYPESHED_STDLIB)",
+    )
     args = parser.parse_args(argv)
 
     report = build_report(args)

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import os
 import re
 import sys
 from pathlib import Path
@@ -34,7 +35,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from wall_gen_core import PEP723Header  # noqa: E402
 
 MAMBA_DIR = Path(__file__).resolve().parents[4]
-TYPESHED_STDLIB = MAMBA_DIR / "vendor" / "typeshed" / "stdlib"
+DEFAULT_TYPESHED_STDLIB = MAMBA_DIR / "vendor" / "typeshed" / "stdlib"
+TYPESHED_STDLIB = Path(
+    os.environ.get("MAMBA_TYPESHED_STDLIB", DEFAULT_TYPESHED_STDLIB)
+).resolve()
 OUT_DIR = MAMBA_DIR / "tests" / "cpython" / "type"
 # --emit-rust output: the typeshed-derived stdlib signature table consumed by
 # src/types/stdlib_sigs.rs (the ① Type-wall call-site hook).
@@ -1408,6 +1412,8 @@ def emit_rust(check: bool) -> int:
 
 
 def main() -> int:
+    global TYPESHED_STDLIB
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--module", help="only this dotted module")
@@ -1418,7 +1424,21 @@ def main() -> int:
                     help="(re)write src/types/stdlib_sigs_generated.rs")
     ap.add_argument("--check-rust", action="store_true",
                     help="assert stdlib_sigs_generated.rs is byte-for-byte current")
+    ap.add_argument(
+        "--typeshed-stdlib",
+        type=Path,
+        help="typeshed stdlib directory (or set MAMBA_TYPESHED_STDLIB)",
+    )
     args = ap.parse_args()
+
+    if args.typeshed_stdlib is not None:
+        TYPESHED_STDLIB = args.typeshed_stdlib.resolve()
+    if not TYPESHED_STDLIB.is_dir():
+        print(
+            f"missing typeshed stdlib directory: {TYPESHED_STDLIB}",
+            file=sys.stderr,
+        )
+        return 2
 
     # Additive Rust-table modes. Disjoint from fixture generation above.
     if args.check_rust:
