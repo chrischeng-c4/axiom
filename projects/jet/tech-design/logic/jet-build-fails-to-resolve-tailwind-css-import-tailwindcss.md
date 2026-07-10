@@ -1,6 +1,24 @@
 ---
 id: jet-build-fails-to-resolve-tailwind-css-import-tailwindcss
-summary: "placeholder"
+summary: >
+  jet's CSS side-effect import resolver (projects/jet/src/css/import_resolver.rs)
+  resolves bare package specifiers via a node_modules walk-up and then opens the
+  resolved path directly as a file. For Tailwind v4's `@import "tailwindcss";`,
+  that path is the package directory itself (node_modules/tailwindcss), not a
+  file, so the read fails with "Is a directory (os error 21)" -- there is no
+  fallback to the package's package.json exports/style/main map. This TD closes
+  WI #1375: it adds a directory-fallback branch to the CSS import resolver that
+  reuses the existing resolver::package helpers (resolve_exports, get_package_main)
+  plus a new PackageJson.style field, in exports -> style -> main priority order,
+  and adds regression tests covering a directory-only bare-specifier import via a
+  minimal fixture package (no real tailwindcss install required).
+capability_refs:
+  - id: "bundler-production-build"
+    role: primary
+    gap: "fix-css-bare-specifier-import-resolution-for-package-directories"
+    claim: "fix-css-bare-specifier-import-resolution-for-package-directories"
+    coverage: partial
+    rationale: "Pins WI #1375's fix for the CSS import resolver's bare-specifier directory-fallback gap (e.g. @import \"tailwindcss\"; failing with 'Is a directory') under the Bundler And Production Build capability's new Fix CSS Bare-Specifier Import Resolution For Package Directories work root: package.json exports/style/main fallback logic plus a directory-only bare-specifier regression test suite."
 fill_sections: [logic, unit-test, changes]
 ---
 
