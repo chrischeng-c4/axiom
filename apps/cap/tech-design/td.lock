@@ -2,10 +2,10 @@ version = 2
 project = "cap"
 ir_kind = "td"
 td_path = "apps/cap/tech-design"
-generated_at = "2026-07-09T09:31:22.621819+00:00"
-digest = "sha256:caef7607163ea766bf9a93b45dfb5b4799ea777a10ab36bff8230089c2da3d1f"
-source_digest = "sha256:caef7607163ea766bf9a93b45dfb5b4799ea777a10ab36bff8230089c2da3d1f"
-ir_digest = "sha256:ecc33d4d6ffa19e07808ebfde16be8bd3e6bd3c61f273c8158072cf021d74410"
+generated_at = "2026-07-10T09:46:00.714229+00:00"
+digest = "sha256:c1ceb1a841d39c6256172554183079e185af8dd11feb3ca0061a977fb974e154"
+source_digest = "sha256:c1ceb1a841d39c6256172554183079e185af8dd11feb3ca0061a977fb974e154"
+ir_digest = "sha256:4c39dcf94f40708407297498ff33c82393718fe30b5bd7ce65777d8dcaa87a58"
 
 [[files]]
 path = "interfaces/cli/adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std.md"
@@ -54,6 +54,12 @@ path = "logic/external-contracts.md"
 digest = "sha256:bb3b47dbf62669e8ea2fca084f734ef419d79ae01aa4415ecc2f5c50a19d8c9e"
 ir_digest = "sha256:a5501d68818feb287704b915c1f0e582b2fb085d59fc74094cfac71252172368"
 section_count = 10
+
+[[files]]
+path = "logic/recognize-cd-dir-native-command-prefix-in-command-planner.md"
+digest = "sha256:2ba216b6c7374b6373305abcae3cc1a6c45235ba86815c01ab31704fc6b22e1e"
+ir_digest = "sha256:77bdb481192fa6f573dbb80d2f323cf9ed72c7b93b94ebc786e5141ffd483ea2"
+section_count = 3
 
 [[files]]
 path = "semantic/cap-benches.md"
