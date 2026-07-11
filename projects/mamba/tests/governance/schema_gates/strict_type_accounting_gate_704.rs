@@ -1302,7 +1302,7 @@ wall = accounting.executable_type_fixtures(
 unconstrained, unresolved = accounting.partition_generated_contract_coverage(
     wall, sigs
 )
-assert len(wall) == 7415
+assert len(wall) == 7416
 assert len(unconstrained) == 266
 assert len(unresolved) == 143
 assert Counter(item["reason"] for item in unresolved) == {

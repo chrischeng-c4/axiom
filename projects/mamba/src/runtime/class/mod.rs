@@ -2862,7 +2862,7 @@ pub(crate) fn append_missing_method_defaults(
 }
 
 fn method_args_with_receiver_and_defaults(
-    func: MbValue,
+    _func: MbValue,
     receiver: Option<MbValue>,
     args: MbValue,
 ) -> MbValue {
@@ -2870,7 +2870,6 @@ fn method_args_with_receiver_and_defaults(
     if let Some(value) = receiver {
         all_args.push(value);
     }
-    let pos_args_start = all_args.len();
     if let Some(args_ptr) = args.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*args_ptr).data {
@@ -2878,7 +2877,8 @@ fn method_args_with_receiver_and_defaults(
             }
         }
     }
-    append_missing_method_defaults(func, &mut all_args, pos_args_start);
+    // The final `mb_call_spread` bind owns defaults; filling here would apply
+    // bound-method defaults twice.
     MbValue::from_ptr(MbObject::new_list(all_args))
 }
 
@@ -15566,6 +15566,13 @@ fn mb_call0_impl(func: MbValue) -> MbValue {
             super::stdlib::types_mod::mark_coroutine_result(func, result)
         }
     }
+    // Signature metadata is keyed by both raw function values and closure
+    // handles. Route before representation-specific fast paths so every
+    // declared dynamic call shares binding, validation, and ABI adaptation.
+    if super::closure::func_params(func).is_some() {
+        let args_list = MbValue::from_ptr(super::rc::MbObject::new_list(vec![]));
+        return super::builtins::mb_call_spread(func, args_list);
+    }
     // Try TAG_FUNC direct function pointer first
     if let Some(addr) = func.as_func() {
         if addr > 4096 {
@@ -15836,6 +15843,11 @@ fn mb_call1_val_impl(func: MbValue, arg: MbValue) -> MbValue {
         } else {
             super::stdlib::types_mod::mark_coroutine_result(func, result)
         }
+    }
+    // This must precede both TAG_FUNC and integer closure-handle dispatch.
+    if super::closure::func_params(func).is_some() {
+        let args_list = MbValue::from_ptr(super::rc::MbObject::new_list(vec![arg]));
+        return super::builtins::mb_call_spread(func, args_list);
     }
     // functools.partial / functools.wraps dispatch on Instance class_name.
     if let Some(ptr) = func.as_ptr() {
