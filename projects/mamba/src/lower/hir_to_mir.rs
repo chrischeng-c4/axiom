@@ -2014,7 +2014,7 @@ impl<'a> HirToMir<'a> {
             };
             // The strict contract is semantic (aliases have already resolved),
             // while ABI is the representation of this particular lowered entry.
-            let contract = matches!(p.kind, 0 | 1 | 3)
+            let contract = matches!(p.kind, 0 | 1 | 2 | 3 | 4)
                 .then(|| p.declared_ty)
                 .flatten()
                 .and_then(|ty| match self.tcx.semantic_ty_or_error(ty) {
