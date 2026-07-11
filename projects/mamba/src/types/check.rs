@@ -1,6 +1,9 @@
 use super::generic::{bind_explicit_type_args, complete_type_args, GenericParams, Substitution};
 use super::protocol::ProtocolRegistry;
-use super::ty::{AliasInstanceId, ClassRole, TypeParamDefault, TypeVarId, TypeVarKind, UserClass};
+use super::stdlib_typespec::{StrSpecId, TypeParamSpecId, TypeSpecId};
+use super::ty::{
+    AliasInstanceId, ClassRole, ExternalClass, TypeParamDefault, TypeVarId, TypeVarKind, UserClass,
+};
 use super::{Ty, TypeContext, TypeId};
 use crate::error::MambaError;
 use crate::parser::ast::*;
@@ -619,6 +622,15 @@ pub struct TypeChecker {
     /// TypeChecker construction. If the current lookup no longer matches this
     /// id, user code has shadowed the builtin.
     pub(crate) builtin_symbols: HashMap<String, SymbolId>,
+    /// Context-local materialization caches for generated typeshed contracts.
+    /// Generated ids are stable data identities; TypeId/TypeVarId values belong
+    /// to this checker and must never be stored in the generated manifest.
+    pub(crate) stdlib_spec_types: HashMap<TypeSpecId, TypeId>,
+    pub(crate) stdlib_spec_type_params: HashMap<TypeParamSpecId, TypeVarId>,
+    pub(crate) stdlib_spec_type_param_initialized: HashSet<TypeParamSpecId>,
+    pub(crate) stdlib_spec_type_param_initializing: HashSet<TypeParamSpecId>,
+    pub(crate) stdlib_spec_type_param_failed: HashSet<TypeParamSpecId>,
+    pub(crate) stdlib_spec_alias_initializing: HashSet<(StrSpecId, StrSpecId)>,
 }
 
 impl TypeChecker {
@@ -673,6 +685,12 @@ impl TypeChecker {
             builtin_class_aliases: HashMap::new(),
             inferred_local_placeholders: HashSet::new(),
             builtin_symbols: HashMap::new(),
+            stdlib_spec_types: HashMap::new(),
+            stdlib_spec_type_params: HashMap::new(),
+            stdlib_spec_type_param_initialized: HashSet::new(),
+            stdlib_spec_type_param_initializing: HashSet::new(),
+            stdlib_spec_type_param_failed: HashSet::new(),
+            stdlib_spec_alias_initializing: HashSet::new(),
         };
         tc.register_builtins();
         tc
@@ -776,6 +794,7 @@ impl TypeChecker {
                         name: class_name.to_string(),
                         role: ClassRole::Instance,
                         user: None,
+                        external: None,
                         fields: Vec::new(),
                         match_args: None,
                     }));
@@ -1251,6 +1270,7 @@ impl TypeChecker {
                 symbol: class_symbol,
                 args: type_args,
             }),
+            external: None,
             fields,
             match_args,
         });
@@ -2011,6 +2031,7 @@ impl TypeChecker {
                             symbol: sym,
                             args: type_args,
                         }),
+                        external: None,
                         fields,
                         match_args,
                     });
@@ -2472,6 +2493,7 @@ impl TypeChecker {
                 symbol,
                 args: resolved_args.to_vec(),
             }),
+            external: None,
             fields,
             match_args,
         });
@@ -2483,6 +2505,7 @@ impl TypeChecker {
             name,
             role: current_role,
             user,
+            external,
             fields,
             match_args,
         } = self.tcx.get(ty).clone()
@@ -2496,8 +2519,29 @@ impl TypeChecker {
             name,
             role,
             user,
+            external,
             fields,
             match_args,
+        })
+    }
+
+    pub(crate) fn external_class_instance(
+        &mut self,
+        module: &str,
+        name: &str,
+        args: Vec<TypeId>,
+    ) -> TypeId {
+        self.tcx.intern(Ty::Class {
+            name: name.to_string(),
+            role: ClassRole::Instance,
+            user: None,
+            external: Some(ExternalClass {
+                module: module.to_string(),
+                name: name.to_string(),
+                args,
+            }),
+            fields: Vec::new(),
+            match_args: None,
         })
     }
 
@@ -2564,18 +2608,17 @@ impl TypeChecker {
                     self.tcx.intern(Ty::List(a))
                 }
                 "tuple" => self.tcx.intern(Ty::Tuple(vec![])),
-                "set" | "frozenset" => {
+                "set" => {
                     let a = self.tcx.any();
                     self.tcx.intern(Ty::Set(a))
                 }
-                // Other builtin types with no dedicated Ty variant. Without
-                // these arms the call falls through to the symbol-table lookup
-                // of the builtin callable, mistyping `b: bytes = ...` as
-                // `() -> Any` so that `len(b)` / `b[0]` / iteration are
-                // rejected at compile time. Resolve to Any (like set/frozenset)
-                // so the annotated variable supports the full dynamic surface.
+                "frozenset" => self.external_class_instance(
+                    "builtins",
+                    "frozenset",
+                    vec![self.tcx.any()],
+                ),
                 "bytes" | "bytearray" | "memoryview" | "complex" | "range" | "slice" => {
-                    self.tcx.any()
+                    self.external_class_instance("builtins", name, Vec::new())
                 }
                 // `type` as a type expression (e.g. `type[BaseModel]` bare name):
                 // the class-object type is represented as Any for now.
@@ -2660,7 +2703,12 @@ impl TypeChecker {
                     "list" if inner.len() == 1 => self.tcx.intern(Ty::List(inner[0])),
                     "dict" if inner.len() == 2 => self.tcx.intern(Ty::Dict(inner[0], inner[1])),
                     "tuple" => self.tcx.intern(Ty::Tuple(inner)),
-                    "set" | "frozenset" if inner.len() == 1 => self.tcx.intern(Ty::Set(inner[0])),
+                    "set" if inner.len() == 1 => self.tcx.intern(Ty::Set(inner[0])),
+                    "frozenset" if inner.len() == 1 => self.external_class_instance(
+                        "builtins",
+                        "frozenset",
+                        inner,
+                    ),
                     "list" | "set" | "frozenset" => {
                         self.error(
                             ty.span,
@@ -2859,6 +2907,77 @@ impl TypeChecker {
                 }
             );
         }
+        if let Ty::Class {
+            role: ClassRole::Instance,
+            external: Some(external),
+            ..
+        } = e.clone()
+        {
+            if external.module == "builtins"
+                && external.name == "type"
+                && external.args.is_empty()
+                && matches!(
+                    a,
+                    Ty::Class {
+                        role: ClassRole::Object,
+                        ..
+                    }
+                )
+            {
+                return true;
+            }
+            if external.module == "builtins"
+                && external.name == "complex"
+                && matches!(a, Ty::Bool | Ty::Int | Ty::Float)
+            {
+                return true;
+            }
+
+            let collection_item = match a.clone() {
+                Ty::List(item) | Ty::Set(item) => Some(vec![item]),
+                Ty::Tuple(items) => Some(items),
+                Ty::Dict(key, _) => Some(vec![key]),
+                Ty::Str => Some(vec![self.tcx.str()]),
+                Ty::Class {
+                    external: Some(actual),
+                    ..
+                } if actual.module == "builtins"
+                    && matches!(
+                        actual.name.as_str(),
+                        "bytes" | "bytearray" | "range"
+                    ) => Some(vec![self.tcx.int()]),
+                Ty::Class {
+                    external: Some(actual),
+                    ..
+                } if actual.module == "builtins" && actual.name == "frozenset" => {
+                    Some(actual.args)
+                }
+                _ => None,
+            };
+            if matches!(
+                (external.module.as_str(), external.name.as_str()),
+                ("typing", "Iterable" | "Collection" | "Sequence")
+            ) {
+                if let (Some(expected_item), Some(actual_items)) =
+                    (external.args.first().copied(), collection_item)
+                {
+                    return actual_items.into_iter().all(|actual_item| {
+                        self.types_compatible_inner(expected_item, actual_item, visiting)
+                    });
+                }
+            }
+            if matches!(
+                (external.module.as_str(), external.name.as_str()),
+                ("typing", "Mapping" | "MutableMapping")
+            ) {
+                if let (Some(expected_key), Some(expected_value), Ty::Dict(key, value)) =
+                    (external.args.first(), external.args.get(1), a.clone())
+                {
+                    return self.types_compatible_inner(*expected_key, key, visiting)
+                        && self.types_compatible_inner(*expected_value, value, visiting);
+                }
+            }
+        }
         // User-class compatibility is nominal by declaration symbol. Generic
         // arguments are invariant unless either side is still gradual.
         if let (
@@ -2866,18 +2985,58 @@ impl TypeChecker {
                 name: n1,
                 role: role1,
                 user: user1,
+                external: external1,
                 ..
             },
             Ty::Class {
                 name: n2,
                 role: role2,
                 user: user2,
+                external: external2,
                 ..
             },
         ) = (e, a)
         {
             if role1 != role2 {
                 return false;
+            }
+            match (external1, external2) {
+                (Some(left), Some(right)) => {
+                    return left.module == right.module
+                        && left.name == right.name
+                        && (left.args.is_empty()
+                            || right.args.is_empty()
+                            || (left.args.len() == right.args.len()
+                                && left.args.iter().zip(&right.args).all(|(left, right)| {
+                                    left == right
+                                        || matches!(
+                                            self.tcx.get(*left),
+                                            Ty::Any | Ty::TypeVar(_)
+                                        )
+                                        || matches!(
+                                            self.tcx.get(*right),
+                                            Ty::Any | Ty::TypeVar(_)
+                                        )
+                                })));
+                }
+                (Some(left), None)
+                    if left.module == "builtins"
+                        && user2.is_none()
+                        && is_exception_class_name(&left.name)
+                        && is_exception_class_name(n2) =>
+                {
+                    return true;
+                }
+                (None, Some(right))
+                    if right.module == "builtins"
+                        && user1.is_none()
+                        && is_exception_class_name(n1)
+                        && is_exception_class_name(&right.name) =>
+                {
+                    return true;
+                }
+                (Some(_), None) | (None, Some(_)) => return false,
+                (None, None) => {}
             }
             match (user1, user2) {
                 (Some(left), Some(right)) if left.symbol == right.symbol => {
@@ -3146,6 +3305,26 @@ impl TypeChecker {
                 )
             }
             Ty::Class {
+                external: Some(external),
+                ..
+            } => {
+                let name = if external.module == "builtins" {
+                    external.name.clone()
+                } else {
+                    format!("{}.{}", external.module, external.name)
+                };
+                if external.args.is_empty() {
+                    name
+                } else {
+                    let args: Vec<_> = external
+                        .args
+                        .iter()
+                        .map(|arg| self.ty_name_inner(*arg, visiting))
+                        .collect();
+                    format!("{name}[{}]", args.join(", "))
+                }
+            }
+            Ty::Class {
                 name,
                 user: Some(user),
                 ..
@@ -3279,6 +3458,7 @@ impl TypeChecker {
                         symbol: class_symbol,
                         args: Vec::new(),
                     }),
+                    external: None,
                     fields: vec![],
                     match_args: None,
                 })
@@ -3600,6 +3780,7 @@ mod tests {
                 symbol: SymbolId(100),
                 args: vec![tc.tcx.any()],
             }),
+            external: None,
             fields: vec![],
             match_args: None,
         });
@@ -3610,6 +3791,7 @@ mod tests {
                 symbol: SymbolId(100),
                 args: vec![tc.tcx.int()],
             }),
+            external: None,
             fields: vec![],
             match_args: None,
         });
@@ -3628,6 +3810,7 @@ mod tests {
                 symbol: SymbolId(100),
                 args: vec![tc.tcx.int()],
             }),
+            external: None,
             fields: vec![],
             match_args: None,
         });
@@ -3638,6 +3821,7 @@ mod tests {
                 symbol: SymbolId(100),
                 args: vec![tc.tcx.str()],
             }),
+            external: None,
             fields: vec![],
             match_args: None,
         });
@@ -3655,6 +3839,7 @@ mod tests {
                 symbol: SymbolId(100),
                 args: vec![],
             }),
+            external: None,
             fields: vec![],
             match_args: None,
         });
@@ -3665,10 +3850,34 @@ mod tests {
                 symbol: SymbolId(101),
                 args: vec![],
             }),
+            external: None,
             fields: vec![],
             match_args: None,
         });
         assert!(!tc.types_compatible(c1, c2));
+    }
+
+    #[test]
+    fn test_external_class_identity_is_module_qualified() {
+        let mut tc = TypeChecker::new();
+        let external = |tc: &mut TypeChecker, module: &str| {
+            tc.tcx.intern(Ty::Class {
+                name: "Path".to_string(),
+                role: ClassRole::Instance,
+                user: None,
+                external: Some(super::super::ty::ExternalClass {
+                    module: module.to_string(),
+                    name: "Path".to_string(),
+                    args: Vec::new(),
+                }),
+                fields: Vec::new(),
+                match_args: None,
+            })
+        };
+        let pathlib = external(&mut tc, "pathlib");
+        let zipfile = external(&mut tc, "zipfile");
+        assert!(tc.types_compatible(pathlib, pathlib));
+        assert!(!tc.types_compatible(pathlib, zipfile));
     }
 
     #[test]
@@ -3730,6 +3939,7 @@ mod tests {
             name: "MyClass".to_string(),
             role: ClassRole::Instance,
             user: None,
+            external: None,
             fields: vec![],
             match_args: None,
         });

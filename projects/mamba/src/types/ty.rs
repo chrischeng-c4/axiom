@@ -58,6 +58,14 @@ pub struct UserClass {
     pub args: Vec<TypeId>,
 }
 
+/// Module-qualified identity and type arguments for an external class.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternalClass {
+    pub module: String,
+    pub name: String,
+    pub args: Vec<TypeId>,
+}
+
 /// Literal value for `Literal[42]` / `Literal["a", "b"]` types (#243).
 #[derive(Debug, Clone, PartialEq)]
 pub enum LiteralValue {
@@ -93,6 +101,7 @@ pub enum Ty {
         name: String,
         role: ClassRole,
         user: Option<UserClass>,
+        external: Option<ExternalClass>,
         fields: Vec<(String, TypeId)>,
         match_args: Option<Vec<String>>,
     },
@@ -259,6 +268,7 @@ mod tests {
             name: "Foo".to_string(),
             role: ClassRole::Instance,
             user: None,
+            external: None,
             fields: vec![("x".to_string(), TypeId(3))],
             match_args: None,
         };

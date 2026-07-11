@@ -332,9 +332,20 @@ impl TypeContext {
                 params.iter().any(|param| self.contains_type_var(*param))
                     || self.contains_type_var(*ret)
             }
-            Ty::Class { user, fields, .. } => {
+            Ty::Class {
+                user,
+                external,
+                fields,
+                ..
+            } => {
                 user.as_ref()
                     .is_some_and(|user| user.args.iter().any(|arg| self.contains_type_var(*arg)))
+                    || external.as_ref().is_some_and(|external| {
+                        external
+                            .args
+                            .iter()
+                            .any(|arg| self.contains_type_var(*arg))
+                    })
                     || fields
                         .iter()
                         .any(|(_, field)| self.contains_type_var(*field))
@@ -387,9 +398,19 @@ impl TypeContext {
                 }
                 self.collect_type_vars(*ret, vars);
             }
-            Ty::Class { user, fields, .. } => {
+            Ty::Class {
+                user,
+                external,
+                fields,
+                ..
+            } => {
                 if let Some(user) = user {
                     for arg in &user.args {
+                        self.collect_type_vars(*arg, vars);
+                    }
+                }
+                if let Some(external) = external {
+                    for arg in &external.args {
                         self.collect_type_vars(*arg, vars);
                     }
                 }
@@ -587,6 +608,7 @@ mod tests {
                 symbol: crate::resolve::SymbolId(10),
                 args: Vec::new(),
             }),
+            external: None,
             fields: Vec::new(),
             match_args: None,
         });
@@ -597,6 +619,7 @@ mod tests {
                 symbol: crate::resolve::SymbolId(11),
                 args: Vec::new(),
             }),
+            external: None,
             fields: Vec::new(),
             match_args: None,
         });
@@ -614,6 +637,7 @@ mod tests {
                 symbol: crate::resolve::SymbolId(10),
                 args: vec![tcx.int()],
             }),
+            external: None,
             fields: Vec::new(),
             match_args: None,
         });
@@ -624,6 +648,7 @@ mod tests {
                 symbol: crate::resolve::SymbolId(10),
                 args: vec![tcx.int()],
             }),
+            external: None,
             fields: Vec::new(),
             match_args: None,
         });
@@ -634,6 +659,7 @@ mod tests {
             name: "ValueError".to_string(),
             role: crate::types::ty::ClassRole::Object,
             user: None,
+            external: None,
             fields: Vec::new(),
             match_args: None,
         });
@@ -641,6 +667,7 @@ mod tests {
             name: "ValueError".to_string(),
             role: crate::types::ty::ClassRole::Instance,
             user: None,
+            external: None,
             fields: Vec::new(),
             match_args: None,
         });

@@ -29,6 +29,7 @@ pub fn c_type_to_mamba(ct: &CType, tcx: &mut TypeContext) -> TypeId {
                 name: name.clone(),
                 role: ClassRole::Instance,
                 user: None,
+                external: None,
                 fields: vec![],
                 match_args: None,
             })
@@ -47,6 +48,7 @@ pub fn struct_to_class(s: &CStruct, tcx: &mut TypeContext) -> TypeId {
         name: s.name.clone(),
         role: ClassRole::Object,
         user: None,
+        external: None,
         fields,
         match_args: None,
     })
@@ -67,6 +69,7 @@ pub fn enum_to_class(e: &CEnum, tcx: &mut TypeContext) -> TypeId {
         name: e.name.clone(),
         role: ClassRole::Object,
         user: None,
+        external: None,
         fields,
         match_args: None,
     })
