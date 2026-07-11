@@ -1,21 +1,22 @@
-// SPEC-MANAGED: projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-k8s-operator-reconcile
+// SPEC-MANAGED: projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-reshard-durability
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec lumen-claim-k8s-operator-reconcile
-// @capability kubernetes-native-deployment
-// @claim lumen-crd-reconcile-loop-kube-rs-operator
-// @contract k8s-operator-reconcile
+// @ec lumen-claim-dynamic-reshard-durability
+// @capability dynamic-shard-topology
+// @claim reshard-driver-admin-verb-and-cold-start-migration-durability
+// @contract dynamic-reshard-durability
 // @category behavior
 // @required_for_production true
-// @command cargo test -p lumen --features operator --test operator_render -- --nocapture
+// @command cargo test -p lumen --features operator --test reshard_driver_e2e -- --nocapture && cargo test -p lumen --test reshard_admin_e2e -- --nocapture && cargo test -p lumen --lib segment_rdb -- --nocapture
 // AW-EC-END
 
-// Contract: The kube-rs operator render path proves rendering topology conformance: Lumen CRD inputs map to serving resources, including storage-pressure reshard policy, status phases, and fixed storage topology (rendering only — the live reconcile loop, reshard driver, and admin verbs are covered by the dedicated reshard-durability gate).
+// Contract: The checkpointed reshard phase driver (state machine, checkpoint-gated cutover, no-transition guard), the four reshard/backup admin verbs (scoped export, additive apply, source eviction, on-demand checkpoint) including idempotency and auth, and cold-start durability of applied/evicted reshard mutations all pass — keeping the migration-path regression class #1389 fixed under standing gate.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn lumen_claim_k8s_operator_reconcile() {
-    let command = "cargo test -p lumen --features operator --test operator_render -- --nocapture";
-    let id = "lumen-claim-k8s-operator-reconcile";
+fn lumen_claim_dynamic_reshard_durability() {
+    let command =
+        "cargo test -p lumen --features operator --test reshard_driver_e2e -- --nocapture && cargo test -p lumen --test reshard_admin_e2e -- --nocapture && cargo test -p lumen --lib segment_rdb -- --nocapture";
+    let id = "lumen-claim-dynamic-reshard-durability";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

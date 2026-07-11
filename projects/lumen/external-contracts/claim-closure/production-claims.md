@@ -450,7 +450,7 @@ e2e_tests:
     category: behavior
     command: "cargo test -p lumen --features operator --test operator_render -- --nocapture"
     assertions:
-      - "The kube-rs operator render path reconciles Lumen CRD inputs into serving resources, including storage-pressure reshard policy, status phases, and fixed storage topology."
+      - "The kube-rs operator render path proves rendering topology conformance: Lumen CRD inputs map to serving resources, including storage-pressure reshard policy, status phases, and fixed storage topology (rendering only — the live reconcile loop, reshard driver, and admin verbs are covered by the dedicated reshard-durability gate)."
   - id: lumen-claim-k8s-operator-storage-topology-reshard
     capability_id: kubernetes-native-deployment
     claim_id: operator-owned-storage-topology-and-reshard-status
@@ -458,7 +458,7 @@ e2e_tests:
     category: behavior
     command: "cargo test -p lumen --features operator --test operator_render -- --nocapture"
     assertions:
-      - "The operator render gate proves fixed StatefulSet storage topology and reshard status exposure."
+      - "The operator render gate proves rendering topology conformance: fixed StatefulSet storage topology and reshard status exposure (rendering only — reshard driver execution, admin verbs, and migration durability are covered by the dedicated reshard-durability gate)."
   - id: lumen-claim-k8s-stateless-kind
     capability_id: kubernetes-native-deployment
     claim_id: kind-api-recovery-no-relay
@@ -483,7 +483,7 @@ e2e_tests:
     category: behavior
     command: "cargo test -p lumen --features operator --test operator_render -- --nocapture"
     assertions:
-      - "The operator exposes storage-pressure reshard recommendations without changing HPA-owned serving scale."
+      - "The operator render gate proves rendering topology conformance: storage-pressure reshard recommendations compute correctly without changing HPA-owned serving scale (rendering only — reshard driver execution, admin verbs, and migration durability are covered by the dedicated reshard-durability gate)."
   - id: lumen-claim-dynamic-multi-shard-replica-kind
     capability_id: dynamic-shard-topology
     claim_id: multi-shard-replica-kind-e2e
@@ -492,6 +492,14 @@ e2e_tests:
     command: "projects/lumen/scripts/kind-e2e.sh"
     assertions:
       - "The live kind dogfood path covers multi-shard and replicated-shard operator profiles."
+  - id: lumen-claim-dynamic-reshard-durability
+    capability_id: dynamic-shard-topology
+    claim_id: reshard-driver-admin-verb-and-cold-start-migration-durability
+    contract_id: dynamic-reshard-durability
+    category: behavior
+    command: "cargo test -p lumen --features operator --test reshard_driver_e2e -- --nocapture && cargo test -p lumen --test reshard_admin_e2e -- --nocapture && cargo test -p lumen --lib segment_rdb -- --nocapture"
+    assertions:
+      - "The checkpointed reshard phase driver (state machine, checkpoint-gated cutover, no-transition guard), the four reshard/backup admin verbs (scoped export, additive apply, source eviction, on-demand checkpoint) including idempotency and auth, and cold-start durability of applied/evicted reshard mutations all pass — keeping the migration-path regression class #1389 fixed under standing gate."
 
   - id: lumen-claim-topology-empty-pvc-bootstrap-seed
     capability_id: replica-sync-bootstrap
