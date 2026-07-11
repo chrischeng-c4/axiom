@@ -1103,6 +1103,136 @@ fn markdown_fence_closes(line: &str, opener: &str) -> bool {
         && line.trim_start()[marker.len()..].trim().is_empty()
 }
 
+/// Locate every `## H2` + `<!-- type: <section_type> -->` block's line
+/// range in `lines` (a `base_body.split_inclusive('\n')` slice). Each
+/// range is `[start, end)`, where `end` is the next `## ` heading or EOF.
+/// Shared by `merge_spec_section` (replace-in-place, drops duplicates left
+/// by an interrupted retry) and `extract_existing_td_section` (replay
+/// safety — never clobber an already-authored section with a replayed
+/// placeholder payload, #813).
+fn section_type_line_ranges(lines: &[&str], section_type: &str) -> Vec<(usize, usize)> {
+    let mut matches: Vec<(usize, usize)> = Vec::new();
+    for i in 0..lines.len() {
+        if !lines[i].starts_with("## ") {
+            continue;
+        }
+        let Some(next) = lines.get(i + 1) else {
+            continue;
+        };
+        let Some(ann) = parse_annotation(next.trim_end()) else {
+            continue;
+        };
+        if ann.section_type != section_type {
+            continue;
+        }
+        let mut end = lines.len();
+        for j in (i + 1)..lines.len() {
+            if lines[j].starts_with("## ") {
+                end = j;
+                break;
+            }
+        }
+        matches.push((i, end));
+    }
+    matches
+}
+
+/// Extract the full `## Heading\n<!-- type: X ... -->\n...` block text for
+/// `section_type` in `base_body`, if it already exists there (first match —
+/// mirrors `merge_spec_section`'s replace target). Returns `None` when the
+/// section hasn't been authored yet, the normal new-section-apply case.
+fn extract_existing_td_section(base_body: &str, section_type: &str) -> Option<String> {
+    let lines: Vec<&str> = base_body.split_inclusive('\n').collect();
+    let (start, end) = section_type_line_ranges(&lines, section_type)
+        .first()
+        .copied()?;
+    Some(lines[start..end].concat())
+}
+
+/// True when `text` still carries one of the `(fill)` / `(fill: ...)`
+/// placeholder markers `td_section_payload_template`/`td_json_payload_template`
+/// write for an unfilled TD section payload — the same marker convention
+/// `issues.rs::PLACEHOLDER_MARKERS` uses for WI sections (no new format).
+/// Applied both to a candidate section payload (before merge) and to an
+/// already-merged spec section, so replay-safety (#813) and normal-fill
+/// detection share one predicate: a payload this still matches has never
+/// actually been authored, so it must never overwrite spec content that
+/// doesn't also match it.
+fn td_section_content_is_placeholder(text: &str) -> bool {
+    text.contains("(fill)") || text.contains("(fill:")
+}
+
+/// Build the payload JSON to seed from an already-authored spec section's
+/// text, in that section's own payload transport shape (#813). Generic
+/// sections carry a `body` markdown wrapper, so the existing section text
+/// round-trips directly. `unit-test` payloads are structured requirements
+/// data, not rendered markdown — reconstructing that schema from the
+/// rendered mermaid diagram is not a lossless inverse, so seeding falls back
+/// to the section's blank template rather than inventing a schema-mismatched
+/// payload (no new transport format; out of scope per #813).
+fn td_section_payload_seed_from_existing(
+    section: &str,
+    existing_section_text: &str,
+) -> Result<String> {
+    match section {
+        "unit-test" => td_section_payload_template(section),
+        _ => {
+            let body = {
+                let trimmed = existing_section_text.trim_end_matches('\n');
+                format!("{}\n", trimmed)
+            };
+            Ok(serde_json::to_string_pretty(&TdBodySectionPayload {
+                body,
+            })?)
+        }
+    }
+}
+
+/// Outcome of the replay-safety check a section apply must pass before it
+/// is allowed to touch the spec (#813).
+enum SectionApplyGuard {
+    /// Either the section isn't authored yet, or the incoming payload has
+    /// real (non-placeholder) content — normal missing-payload
+    /// initialization or merge may proceed.
+    Proceed,
+    /// The spec already carries real content for this section, but the
+    /// payload is missing or still a placeholder — replaying it would
+    /// clobber authored content. `payload_json` is the payload to (re)seed
+    /// instead of merging.
+    Reseed { payload_json: String },
+}
+
+/// Decide whether a section-apply may proceed normally or must reseed the
+/// payload and stop (#813, the #799 wedge: a replayed `aw td create --apply`
+/// overwrote a completed `## Logic` section with a `(fill)` placeholder).
+/// `base_body` is `None` for a brand-new spec (no file yet); `payload_raw`
+/// is `None` when the payload file is missing. A missing payload is treated
+/// the same as an unedited placeholder payload — both trigger reseed when
+/// the target section is already authored.
+fn section_apply_replay_guard(
+    section: &str,
+    base_body: Option<&str>,
+    payload_raw: Option<&str>,
+) -> Result<SectionApplyGuard> {
+    let existing = base_body.and_then(|body| extract_existing_td_section(body, section));
+    let existing_is_authored = existing
+        .as_deref()
+        .is_some_and(|text| !td_section_content_is_placeholder(text));
+    if !existing_is_authored {
+        return Ok(SectionApplyGuard::Proceed);
+    }
+    let payload_is_placeholder = match payload_raw {
+        None => true,
+        Some(raw) => td_section_content_is_placeholder(raw),
+    };
+    if !payload_is_placeholder {
+        return Ok(SectionApplyGuard::Proceed);
+    }
+    let payload_json =
+        td_section_payload_seed_from_existing(section, existing.as_deref().unwrap_or_default())?;
+    Ok(SectionApplyGuard::Reseed { payload_json })
+}
+
 /// Replace the section matching `section_type` in `base_body` with
 /// `payload_body`. Section match = the `<!-- type: X -->` annotation
 /// line immediately under an `## H2`. If no such section exists in the
@@ -1129,29 +1259,7 @@ fn merge_spec_section(base_body: &str, section_type: &str, payload_body: &str) -
     // Walk base lines to find every `## H\n<!-- type: <section_type> -->`
     // range. Preserve original line terminators via split_inclusive.
     let lines: Vec<&str> = base_body.split_inclusive('\n').collect();
-    let mut matches: Vec<(usize, usize)> = Vec::new();
-    for i in 0..lines.len() {
-        if !lines[i].starts_with("## ") {
-            continue;
-        }
-        let Some(next) = lines.get(i + 1) else {
-            continue;
-        };
-        let Some(ann) = parse_annotation(next.trim_end()) else {
-            continue;
-        };
-        if ann.section_type != section_type {
-            continue;
-        }
-        let mut end = lines.len();
-        for j in (i + 1)..lines.len() {
-            if lines[j].starts_with("## ") {
-                end = j;
-                break;
-            }
-        }
-        matches.push((i, end));
-    }
+    let matches = section_type_line_ranges(&lines, section_type);
 
     let merged = if let Some((first_start, first_end)) = matches.first().copied() {
         // Replace the first matching section with payload_norm and drop any
@@ -3275,17 +3383,54 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
     if let Some(section) = args.section.as_deref() {
         let pass = td_authoring_pass(args.phase.as_deref());
         let payload_path = section_payload_path(&project_root, slug, pass, section);
-        if !std::path::Path::new(&payload_path).exists() {
+        let payload_abs = std::path::Path::new(&payload_path);
+
+        let base_body_opt = if spec_abs.exists() {
+            Some(std::fs::read_to_string(&spec_abs).context("failed to read base spec")?)
+        } else {
+            None
+        };
+        let payload_raw_opt = if payload_abs.exists() {
+            Some(std::fs::read_to_string(payload_abs).context("failed to read section payload")?)
+        } else {
+            None
+        };
+
+        // #813: replay-safety gate. A replayed `aw td create --apply` must
+        // never clobber an already-authored section with a missing or
+        // still-placeholder payload (the #799 wedge: a completed `## Logic`
+        // section got overwritten with `(fill)`). When the guard finds that
+        // case it (re)seeds the payload from the existing section and stops
+        // before writing the spec, instead of merging.
+        if let SectionApplyGuard::Reseed { payload_json } = section_apply_replay_guard(
+            section,
+            base_body_opt.as_deref(),
+            payload_raw_opt.as_deref(),
+        )? {
+            if let Some(parent) = payload_abs.parent() {
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("failed to create payload directory {}", parent.display())
+                })?;
+            }
+            std::fs::write(payload_abs, &payload_json)
+                .context("failed to reseed section payload")?;
+            let msg = format!(
+                "section '{}' already has authored content; the payload was missing or still a \
+                 placeholder, so it was (re)seeded from the existing section at {}. Review/edit \
+                 that file, then rerun this command.",
+                section, payload_path
+            );
+            return td_error(slug, msg);
+        }
+
+        let Some(payload_body_raw) = payload_raw_opt else {
             initialize_td_payload_file(&payload_path, &td_section_payload_template(section)?)?;
             let msg = format!(
                 "section payload was missing; initialized {}. Fill that file, then rerun this command.",
                 payload_path
             );
             return td_error(slug, msg);
-        }
-        let payload_abs = std::path::Path::new(&payload_path);
-        let payload_body_raw =
-            std::fs::read_to_string(payload_abs).context("failed to read section payload")?;
+        };
         // TD section payloads are always JSON. Generic sections carry a
         // `body` field containing the complete section markdown; structured
         // sections such as `unit-test` use a section-specific schema and are
@@ -3296,8 +3441,8 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
                 return td_error(slug, e.to_string());
             }
         };
-        let base_body = if spec_abs.exists() {
-            std::fs::read_to_string(&spec_abs).context("failed to read base spec")?
+        let base_body = if let Some(body) = base_body_opt {
+            body
         } else {
             // First-section call on a brand-new spec: the skeleton (the
             // YAML frontmatter with `id` and `fill_sections`) is written
@@ -5876,6 +6021,180 @@ fill_sections: [schema]
         );
         assert!(merged.contains("new"));
         assert!(!merged.contains("old"));
+    }
+
+    // ── #813: td create replay must never clobber an authored section ──
+
+    fn authored_logic_section() -> &'static str {
+        concat!(
+            "## Logic\n",
+            "<!-- type: logic lang: mermaid -->\n\n",
+            "```mermaid\n",
+            "---\n",
+            "id: real-logic\n",
+            "entry: start\n",
+            "nodes:\n",
+            "  start: { kind: start }\n",
+            "edges: []\n",
+            "---\n",
+            "flowchart TD\n",
+            "```\n",
+        )
+    }
+
+    fn authored_logic_spec() -> String {
+        format!(
+            "---\nid: x\nfill_sections: [logic]\n---\n\n{}",
+            authored_logic_section()
+        )
+    }
+
+    fn placeholder_logic_payload_raw() -> String {
+        // Exactly what `td_section_payload_template("logic")` writes for an
+        // unfilled payload: a `body`-wrapped `(fill)` placeholder.
+        td_section_payload_template("logic").unwrap()
+    }
+
+    #[test]
+    fn td_section_content_is_placeholder_detects_known_markers() {
+        assert!(td_section_content_is_placeholder("(fill)\n"));
+        assert!(td_section_content_is_placeholder(
+            "```mermaid\n(fill)\n```\n"
+        ));
+        assert!(td_section_content_is_placeholder(
+            r#"{"id":"(fill: spec-id)-verification","requirements":{}}"#
+        ));
+        assert!(!td_section_content_is_placeholder(authored_logic_section()));
+    }
+
+    #[test]
+    fn extract_existing_td_section_finds_and_omits_sections() {
+        let spec = authored_logic_spec();
+        let extracted = extract_existing_td_section(&spec, "logic").unwrap();
+        assert!(extracted.contains("id: real-logic"));
+        assert!(extract_existing_td_section(&spec, "unit-test").is_none());
+    }
+
+    // AC(a): replay with a MISSING payload against an already-authored
+    // section must reseed the payload from the existing section and stop —
+    // never write a blank `(fill)` template that would clobber the spec on
+    // the next apply.
+    #[test]
+    fn section_apply_replay_guard_reseeds_from_existing_when_payload_missing() {
+        let spec = authored_logic_spec();
+        let guard = section_apply_replay_guard("logic", Some(&spec), None).unwrap();
+        let SectionApplyGuard::Reseed { payload_json } = guard else {
+            panic!("expected Reseed when payload is missing but section is authored");
+        };
+        assert!(
+            payload_json.contains("id: real-logic"),
+            "seeded payload should carry the existing section content: {payload_json}"
+        );
+        assert!(
+            !payload_json.contains("(fill)"),
+            "seeded payload must not still be the blank placeholder: {payload_json}"
+        );
+    }
+
+    // AC(b): replay with a `(fill)`-only payload against an already-authored
+    // section must reseed from the existing section, not apply the
+    // placeholder — this is the exact #799 wedge (a completed `## Logic`
+    // section got replaced with `(fill)`).
+    #[test]
+    fn section_apply_replay_guard_reseeds_from_existing_when_payload_is_placeholder() {
+        let spec = authored_logic_spec();
+        let raw = placeholder_logic_payload_raw();
+        assert!(td_section_content_is_placeholder(&raw));
+        let guard = section_apply_replay_guard("logic", Some(&spec), Some(&raw)).unwrap();
+        let SectionApplyGuard::Reseed { payload_json } = guard else {
+            panic!("expected Reseed when payload is still a placeholder but section is authored");
+        };
+        assert!(payload_json.contains("id: real-logic"));
+    }
+
+    // AC(c): replay with REAL, different payload content against an
+    // already-authored section is an explicit re-author and must proceed
+    // normally (not be blocked by the replay guard).
+    #[test]
+    fn section_apply_replay_guard_proceeds_for_explicit_reauthor() {
+        let spec = authored_logic_spec();
+        let new_payload = serde_json::to_string(&TdBodySectionPayload {
+            body: concat!(
+                "## Logic\n",
+                "<!-- type: logic lang: mermaid -->\n\n",
+                "```mermaid\n",
+                "---\n",
+                "id: revised-logic\n",
+                "entry: start\n",
+                "nodes:\n",
+                "  start: { kind: start }\n",
+                "  done: { kind: terminal }\n",
+                "edges:\n",
+                "  - from: start\n",
+                "    to: done\n",
+                "---\n",
+                "flowchart TD\n",
+                "```\n",
+            )
+            .to_string(),
+        })
+        .unwrap();
+        let guard = section_apply_replay_guard("logic", Some(&spec), Some(&new_payload)).unwrap();
+        assert!(
+            matches!(guard, SectionApplyGuard::Proceed),
+            "explicit re-author payload must not be blocked"
+        );
+    }
+
+    // Normal new-section behavior (no existing content yet) must be
+    // preserved regardless of payload state.
+    #[test]
+    fn section_apply_replay_guard_proceeds_when_section_not_yet_authored() {
+        let fresh_spec = "---\nid: x\nfill_sections: []\n---\n";
+        let guard = section_apply_replay_guard("logic", Some(fresh_spec), None).unwrap();
+        assert!(matches!(guard, SectionApplyGuard::Proceed));
+
+        let placeholder = placeholder_logic_payload_raw();
+        let guard =
+            section_apply_replay_guard("logic", Some(fresh_spec), Some(&placeholder)).unwrap();
+        assert!(matches!(guard, SectionApplyGuard::Proceed));
+
+        // Brand-new spec (no file yet) — also must proceed (the very-first
+        // section-apply call).
+        let guard = section_apply_replay_guard("logic", None, None).unwrap();
+        assert!(matches!(guard, SectionApplyGuard::Proceed));
+    }
+
+    // unit-test sections use a structured JSON payload schema, not a `body`
+    // markdown wrapper. Seeding must not invent a mismatched schema; it
+    // falls back to the blank template while the guard itself still blocks
+    // the clobber.
+    #[test]
+    fn td_section_payload_seed_from_existing_falls_back_for_structured_sections() {
+        let rendered_unit_test_section = concat!(
+            "## Unit Test\n",
+            "<!-- type: unit-test lang: mermaid -->\n\n",
+            "```mermaid\n",
+            "---\n",
+            "id: x-verification\n",
+            "requirements:\n",
+            "  r1:\n",
+            "    id: R1\n",
+            "    text: \"real requirement\"\n",
+            "    kind: functional\n",
+            "    risk: low\n",
+            "    verify: some_test\n",
+            "---\n",
+            "flowchart TD\n",
+            "    r1[R1 r1] --> some_test[some_test]\n",
+            "```\n",
+        );
+        let seed =
+            td_section_payload_seed_from_existing("unit-test", rendered_unit_test_section).unwrap();
+        // Falls back to the blank structured template (still schema-valid
+        // for a subsequent apply) rather than wrapping rendered markdown in
+        // the mismatched `body` transport shape.
+        assert_eq!(seed, td_section_payload_template("unit-test").unwrap());
     }
 }
 
