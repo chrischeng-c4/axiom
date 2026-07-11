@@ -2650,7 +2650,7 @@ impl TypeChecker {
             );
         }
         let Some((_class_id, class)) =
-            super::stdlib_typespec::class_spec(&external.module, &external.name)
+            super::stdlib_typespec::class_spec_any_name(&external.module, &external.name)
         else {
             return self.external_class_instance(
                 &external.module,

@@ -15,6 +15,6 @@
 //! class-method-edges: 12865
 //! callable-exports: 3717
 //! class-callables: 13194
-//! type-nodes: 7875  type-edges: 12253
+//! type-nodes: 7867  type-edges: 12245
 
 pub const MANIFEST_JSON: &str = include_str!("stdlib_specs_generated.json");
