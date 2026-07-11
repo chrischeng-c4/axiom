@@ -402,6 +402,18 @@ Full principle: **`CONTRIBUTING.md`**. mamba CPython-test mechanics (PEP 723 `[t
 
 ## Testing
 
+### Mamba strict-type fast loop
+
+Follow [`CONTRIBUTING.md`'s test iteration contract](CONTRIBUTING.md#test-iteration-contract).
+For Mamba type work, always select the lib target before filtering:
+`cargo test -q -p mamba --lib <filter>`. Use a fully-qualified test name with
+`--exact` and verify that stdout ran a nonzero test count. Keep only one Cargo
+build active per worktree. After a successful build, direct artifact reruns are
+allowed only while the artifact is newer than every relevant input. Validate in
+layers: exact test, affected type module, fast broad `types::` excluding
+`types::stdlib_sigs::tests::`, then generated signatures, accounting gates,
+full `types::`, and release build at slice completion.
+
 - **Real services over mocks**: Use real Docker/Homebrew services for integration tests. vat ships built-in Rust emulators for the GCP/Firebase surface (Pub/Sub, Firebase Auth, Cloud Tasks, Cloud Scheduler, Cloud Workflows, Cloud Storage) plus a transparent HTTP stub + record/replay proxy (`preset = "http-mock"`) for arbitrary third-party APIs — prefer those over hand-rolled mocks. Reach for a mock only when no real service or emulator exists.
 - **Local services**: `brew services start redis` (Redis), `brew services start nats-server` (NATS). Tests skip gracefully if unavailable.
 - **Skip pattern**: `let Some(x) = connect().await.ok() else { return };`

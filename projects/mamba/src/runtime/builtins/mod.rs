@@ -4813,7 +4813,9 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
                     let mut all_args = Vec::with_capacity(items.len() + 1);
                     all_args.push(self_v);
                     all_args.extend(items);
-                    super::class::append_missing_method_defaults(func_v, &mut all_args, 1);
+                    if super::closure::func_params(func_v).is_none() {
+                        super::class::append_missing_method_defaults(func_v, &mut all_args, 1);
+                    }
                     // Same leak as __bound_native_method__ above (#1091): use
                     // the borrowed constructor + explicit release so this
                     // internal repackaging temp doesn't leak on every bound
@@ -5752,46 +5754,27 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
         // func_params fallback for user JIT functions, which register these flags
         // by symbol-id rather than address.
         let (has_star, has_kwargs) = detect_star_kw(func, Some(raw_addr));
-        // Declared-signature defaults fill: when the call supplies fewer
-        // positional args than the target declares, fill the omitted
-        // trailing ones from FUNC_PARAMS' recorded defaults, or raise
-        // CPython's "missing N required positional argument(s)" TypeError
-        // when a still-unfilled parameter has none (#1007, #1008).
-        // FUNC_PARAMS is keyed on whatever value `func` actually is — the raw
-        // FuncRef for a plain top-level/module function, or the closure
-        // handle for a capturing nested function — so this covers a
-        // cross-module `mod.func(a)` call reached via mb_getattr just as well
-        // as a same-module call. The `closure_arity`/`closure_defaults`
-        // fallback below only recognises an INT closure handle and silently
-        // no-ops for a plain function value, leaving an omitted trailing
-        // default as uninitialized call-register garbage, or letting a
-        // genuinely missing required argument through with no error at all.
-        // Skipped for variadic / native / kwargs functions which manage their
-        // own arg packing below.
         let mut items = items;
-        if !super::module::is_native_func(raw_addr as u64) && !has_star && !has_kwargs {
-            if let Some(params) = super::closure::func_params(func) {
-                let positional: Vec<_> =
-                    params.iter().filter(|p| matches!(p.kind, 0 | 1)).collect();
-                if items.len() < positional.len() {
-                    let tail = &positional[items.len()..];
-                    let missing: Vec<&str> = tail
-                        .iter()
-                        .filter(|p| !p.has_default)
-                        .map(|p| p.name.as_str())
-                        .collect();
-                    if !missing.is_empty() {
-                        raise_type_error(missing_positional_args_message(
-                            &callable_display_name(func),
-                            &missing,
-                        ));
-                        return MbValue::none();
-                    }
-                    for p in tail {
-                        items.push(p.default);
-                    }
-                }
-            } else {
+        // Native extern functions use (args_ptr, nargs) convention (#1132).
+        if super::module::is_native_func(raw_addr as u64) {
+            let f: unsafe extern "C" fn(*const MbValue, usize) -> MbValue =
+                unsafe { std::mem::transmute(raw_addr) };
+            return unsafe { f(items.as_ptr(), items.len()) };
+        }
+        // Signature-bearing user functions have one binding owner. This fills
+        // positional and keyword-only defaults, packs variadics, and produces
+        // the exact JIT entry frame before strict validation.
+        if super::closure::func_params(func).is_some() {
+            let empty_kw: Vec<(String, MbValue)> = Vec::new();
+            let Some(frame) = bind_declared_call_frame(func, &items, &empty_kw) else {
+                return MbValue::none();
+            };
+            if super::exception::current_exception_type().is_some() {
+                return MbValue::none();
+            }
+            items = frame;
+        } else {
+            if !has_star && !has_kwargs {
                 let arity = super::closure::closure_arity(func);
                 if arity > items.len() {
                     let defaults = super::closure::closure_defaults(func);
@@ -5801,42 +5784,6 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
                         items.extend_from_slice(&defaults[take_from..]);
                     }
                 }
-            }
-        }
-        if super::closure::func_has_boxed_params(func)
-            && !super::module::is_native_func(raw_addr as u64)
-            && !has_star
-            && !has_kwargs
-        {
-            if let Some(frame) = bind_declared_call_frame(func, &items, &[]) {
-                if super::exception::current_exception_type().is_some() {
-                    return MbValue::none();
-                }
-                items = frame;
-            }
-        }
-        // Native extern functions use (args_ptr, nargs) convention (#1132).
-        if super::module::is_native_func(raw_addr as u64) {
-            let f: unsafe extern "C" fn(*const MbValue, usize) -> MbValue =
-                unsafe { std::mem::transmute(raw_addr) };
-            return unsafe { f(items.as_ptr(), items.len()) };
-        }
-        // Variadic / **kwargs JIT functions. The entry ABI lists every declared
-        // parameter in order, so it is f(regular_0, .., regular_{R-1},
-        // [args_list], [kwargs_dict]) — a function with leading regular params
-        // receives them as individual arguments BEFORE the packed *args list
-        // (`def full(a, b=2, *args, **kwargs)` → f(a, b, args_list, kwargs_dict)).
-        // Build that frame: regular slots (filling trailing defaults when the
-        // spread is short), *args collects the positional overflow, **kwargs is
-        // an empty dict (a positional spread carries no keywords). Then fall
-        // through to the fixed-arity dispatch.
-        if has_star || has_kwargs {
-            let empty_kw: Vec<(String, MbValue)> = Vec::new();
-            if let Some(frame) = bind_declared_call_frame(func, &items, &empty_kw) {
-                if super::exception::current_exception_type().is_some() {
-                    return MbValue::none();
-                }
-                items = frame;
             } else {
                 let mut frame: Vec<MbValue> = Vec::new();
                 if has_star {
@@ -5847,6 +5794,9 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
                 }
                 items = frame;
             }
+        }
+        if !validate_and_adapt_declared_frame(func, &mut items) {
+            return MbValue::none();
         }
         // SAFETY: the function was compiled with the matching arity.
         // JIT-compiled functions use SystemV/C calling convention and may return
@@ -6042,6 +5992,8 @@ fn bind_declared_call_frame(
     let mut frame: Vec<MbValue> = Vec::with_capacity(params.len());
     let mut pos_idx = 0usize;
     let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut missing_positional: Vec<String> = Vec::new();
+    let mut missing_keyword_only: Vec<String> = Vec::new();
     let fname = callable_display_name(func);
     for p in &params {
         match p.kind {
@@ -6052,6 +6004,7 @@ fn bind_declared_call_frame(
                 } else if p.has_default {
                     frame.push(p.default);
                 } else {
+                    missing_positional.push(p.name.clone());
                     frame.push(MbValue::none());
                 }
             }
@@ -6072,6 +6025,7 @@ fn bind_declared_call_frame(
                 } else if p.has_default {
                     frame.push(p.default);
                 } else {
+                    missing_positional.push(p.name.clone());
                     frame.push(MbValue::none());
                 }
             }
@@ -6091,6 +6045,7 @@ fn bind_declared_call_frame(
                 } else if p.has_default {
                     frame.push(p.default);
                 } else {
+                    missing_keyword_only.push(p.name.clone());
                     frame.push(MbValue::none());
                 }
             }
@@ -6121,6 +6076,24 @@ fn bind_declared_call_frame(
         ));
         return Some(Vec::new());
     }
+    if !missing_positional.is_empty() {
+        let missing: Vec<&str> = missing_positional.iter().map(String::as_str).collect();
+        raise_type_error(missing_positional_args_message(&fname, &missing));
+        return Some(Vec::new());
+    }
+    if !missing_keyword_only.is_empty() {
+        let n = missing_keyword_only.len();
+        let word = if n == 1 { "argument" } else { "arguments" };
+        let names = missing_keyword_only
+            .iter()
+            .map(|name| format!("'{name}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        raise_type_error(format!(
+            "{fname}() missing {n} required keyword-only {word}: {names}"
+        ));
+        return Some(Vec::new());
+    }
     if !has_varkw {
         if let Some((bad, _)) = kw_pairs.iter().find(|(k, _)| !used.contains(k.as_str())) {
             raise_type_error(format!(
@@ -6130,6 +6103,174 @@ fn bind_declared_call_frame(
         }
     }
     Some(frame)
+}
+
+#[derive(Clone, Copy)]
+enum RuntimeScalarContract {
+    Int,
+    Bool,
+    Float,
+    Str,
+    Bytes,
+    None,
+}
+
+fn runtime_scalar_contract(contract: &str) -> Option<RuntimeScalarContract> {
+    match contract {
+        "int" => Some(RuntimeScalarContract::Int),
+        "bool" => Some(RuntimeScalarContract::Bool),
+        "float" => Some(RuntimeScalarContract::Float),
+        "str" => Some(RuntimeScalarContract::Str),
+        "bytes" => Some(RuntimeScalarContract::Bytes),
+        "None" => Some(RuntimeScalarContract::None),
+        _ => None,
+    }
+}
+
+fn strict_int_payload(value: MbValue) -> Option<MbValue> {
+    if value.is_int() {
+        return Some(value);
+    }
+    if let Some(flag) = value.as_bool() {
+        return Some(MbValue::from_int(flag as i64));
+    }
+    if unsafe { super::bigint_ops::extract_bigint(value) }.is_some() {
+        return Some(value);
+    }
+    if let Some(enum_value) = int_enum_like_value(value) {
+        return strict_int_payload(enum_value);
+    }
+    match super::class::builtin_data_payload(value) {
+        Some(("int", payload)) => strict_int_payload(payload),
+        _ => None,
+    }
+}
+
+fn strict_int_i64(value: MbValue) -> Option<i64> {
+    use num_traits::ToPrimitive;
+
+    if let Some(number) = value.as_int() {
+        return Some(number);
+    }
+    if let Some(flag) = value.as_bool() {
+        return Some(flag as i64);
+    }
+    if let Some(number) = unsafe { super::bigint_ops::extract_bigint(value) } {
+        return number.to_i64();
+    }
+    if let Some(enum_value) = int_enum_like_value(value) {
+        return strict_int_i64(enum_value);
+    }
+    match super::class::builtin_data_payload(value) {
+        Some(("int", payload)) => strict_int_i64(payload),
+        _ => None,
+    }
+}
+
+fn strict_float_payload(value: MbValue) -> Option<MbValue> {
+    use num_traits::ToPrimitive;
+
+    if let Some(number) = value.as_float() {
+        return Some(MbValue::from_float(number));
+    }
+    if let Some(number) = value.as_int() {
+        return Some(MbValue::from_float(number as f64));
+    }
+    if let Some(flag) = value.as_bool() {
+        return Some(MbValue::from_float(if flag { 1.0 } else { 0.0 }));
+    }
+    if let Some(number) =
+        unsafe { super::bigint_ops::extract_bigint(value) }.and_then(|number| number.to_f64())
+    {
+        return Some(MbValue::from_float(number));
+    }
+    if let Some(enum_value) = int_enum_like_value(value) {
+        return strict_float_payload(enum_value);
+    }
+    match super::class::builtin_data_payload(value) {
+        Some(("int" | "float", payload)) => strict_float_payload(payload),
+        _ => None,
+    }
+}
+
+fn strict_scalar_value(value: MbValue, contract: RuntimeScalarContract) -> Option<MbValue> {
+    match contract {
+        RuntimeScalarContract::Int => strict_int_payload(value),
+        RuntimeScalarContract::Bool => value.as_bool().map(|_| value),
+        RuntimeScalarContract::Float => strict_float_payload(value),
+        RuntimeScalarContract::Str => {
+            let plain = value
+                .as_ptr()
+                .is_some_and(|ptr| unsafe { matches!(&(*ptr).data, ObjData::Str(_)) });
+            let subclass = matches!(super::class::builtin_data_payload(value), Some(("str", _)));
+            (plain || subclass).then_some(value)
+        }
+        RuntimeScalarContract::Bytes => {
+            let plain = value
+                .as_ptr()
+                .is_some_and(|ptr| unsafe { matches!(&(*ptr).data, ObjData::Bytes(_)) });
+            let subclass = value.as_ptr().is_some_and(|ptr| unsafe {
+                matches!(&(*ptr).data, ObjData::Instance { class_name, .. }
+                    if super::class::check_class_hierarchy(class_name, "bytes"))
+            });
+            (plain || subclass).then_some(value)
+        }
+        RuntimeScalarContract::None => value.is_none().then_some(value),
+    }
+}
+
+fn adapt_value_for_entry_abi(value: MbValue, entry_abi: &str) -> MbValue {
+    match entry_abi {
+        "raw-int" => strict_int_i64(value)
+            .map(|number| MbValue::from_bits(number as u64))
+            .unwrap_or(value),
+        "raw-bool" => value
+            .as_bool()
+            .map(|flag| MbValue::from_bits(flag as u64))
+            .unwrap_or(value),
+        "raw-float" => strict_float_payload(value)
+            .and_then(|number| number.as_float())
+            .map(|number| MbValue::from_bits(number.to_bits()))
+            .unwrap_or(value),
+        "boxed-int" => strict_int_payload(value).unwrap_or(value),
+        "boxed-bool" => value.as_bool().map(|_| value).unwrap_or(value),
+        "boxed-float" => strict_float_payload(value).unwrap_or(value),
+        "boxed" | _ => value,
+    }
+}
+
+/// Enforce the declared scalar wall after Python binding and adapt once to the
+/// actual JIT entry representation. Missing/unknown contracts remain dynamic;
+/// an ABI conversion is best effort and is never an independent rejection.
+fn validate_and_adapt_declared_frame(func: MbValue, items: &mut [MbValue]) -> bool {
+    let Some(params) = super::closure::func_params(func) else {
+        return true;
+    };
+    let fname = callable_display_name(func);
+    for (param, value) in params.iter().zip(items.iter_mut()) {
+        // The packed containers for variadic declarations are not scalar
+        // values. Element/value enforcement is intentionally a later slice.
+        if matches!(param.kind, 2 | 4) {
+            continue;
+        }
+        if let Some(contract) = param
+            .contract
+            .as_deref()
+            .and_then(runtime_scalar_contract)
+        {
+            if strict_scalar_value(*value, contract).is_none() {
+                raise_type_error(format!(
+                    "{fname}() argument '{}' expected {}, got {}",
+                    param.name,
+                    param.annotation.as_deref().unwrap_or("object"),
+                    value_type_name(*value)
+                ));
+                return false;
+            }
+        }
+        *value = adapt_value_for_entry_abi(*value, &param.entry_abi);
+    }
+    true
 }
 
 /// Dispatch a JIT-compiled function by its exact frame arity (SystemV/C ABI),
@@ -6272,11 +6413,16 @@ fn invoke_args_kwargs(func: MbValue, args_list: MbValue, kwargs_dict: MbValue) -
     // passed the kwargs dict as `a` and read garbage for the trailing slots.
     let pos = extract_items(args_list);
     let kw_pairs = kwargs_dict_pairs(kwargs_dict);
-    if let Some(frame) = bind_declared_call_frame(func, &pos, &kw_pairs) {
+    if let Some(mut frame) = bind_declared_call_frame(func, &pos, &kw_pairs) {
         if super::exception::current_exception_type().is_some() {
             return MbValue::none();
         }
-        return dispatch_jit_frame(raw_addr, &frame, is_boxed_ret);
+        if !validate_and_adapt_declared_frame(func, &mut frame) {
+            return MbValue::none();
+        }
+        return super::closure::with_closure_cells(func, || {
+            dispatch_jit_frame(raw_addr, &frame, is_boxed_ret)
+        });
     }
     let mut frame = Vec::new();
     if has_star {
@@ -6285,7 +6431,9 @@ fn invoke_args_kwargs(func: MbValue, args_list: MbValue, kwargs_dict: MbValue) -
     if has_kwargs {
         frame.push(kwargs_dict);
     }
-    dispatch_jit_frame(raw_addr, &frame, is_boxed_ret)
+    super::closure::with_closure_cells(func, || {
+        dispatch_jit_frame(raw_addr, &frame, is_boxed_ret)
+    })
 }
 
 /// Dynamic call with positional args AND keyword args kept structurally
@@ -6530,98 +6678,24 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
         );
     }
 
-    // 4. Regular / keyword-only user target with declared parameters: bind
-    //    keyword args to their named positional slots, filling defaults.
-    if !has_star && !is_native {
-        if let Some(params) = super::closure::func_params(func) {
-            let callable_params: Vec<&super::closure::MbParamInfo> =
-                params.iter().filter(|p| p.kind <= 3).collect();
-            let mut items: Vec<MbValue> = Vec::with_capacity(callable_params.len() + pos.len());
-            let mut used = std::collections::HashSet::new();
-            let mut pos_iter = pos.iter().copied();
-            for p in &callable_params {
-                if p.kind <= 1 {
-                    if let Some(v) = pos_iter.next() {
-                        if kw_pairs.iter().any(|(k, _)| *k == p.name) {
-                            let fname = super::closure::mb_func_get_name(func)
-                                .as_ptr()
-                                .and_then(|fp| unsafe {
-                                    match &(*fp).data {
-                                        ObjData::Str(ref s) => Some(s.clone()),
-                                        _ => None,
-                                    }
-                                })
-                                .unwrap_or_default();
-                            raise_type_error(format!(
-                                "{fname}() got multiple values for argument '{}'",
-                                p.name
-                            ));
-                            return MbValue::none();
-                        }
-                        items.push(v);
-                    } else if let Some((k, v)) = kw_pairs.iter().find(|(k, _)| *k == p.name) {
-                        used.insert(k.clone());
-                        items.push(*v);
-                    } else if p.has_default {
-                        items.push(p.default);
-                    } else {
-                        items.push(MbValue::none());
-                    }
-                } else if let Some((k, v)) = kw_pairs.iter().find(|(k, _)| *k == p.name) {
-                    used.insert(k.clone());
-                    items.push(*v);
-                } else if p.has_default {
-                    items.push(p.default);
-                } else {
-                    items.push(MbValue::none());
-                }
+    // 4. Regular / keyword-only user target: bind once, validate once, then
+    // dispatch the exact entry frame. Re-entering mb_call_spread here would
+    // treat already-bound keyword-only slots as new positional arguments.
+    if !has_star && !is_native && super::closure::func_params(func).is_some() {
+        if let Some(raw_addr) = addr {
+            let Some(mut frame) = bind_declared_call_frame(func, &pos, &kw_pairs) else {
+                return MbValue::none();
+            };
+            if super::exception::current_exception_type().is_some() {
+                return MbValue::none();
             }
-            items.extend(pos_iter);
-            if !has_kw {
-                let declared: std::collections::HashSet<String> = params
-                    .iter()
-                    .filter(|p| p.kind <= 3)
-                    .map(|p| p.name.clone())
-                    .collect();
-                if let Some((bad, _)) = kw_pairs
-                    .iter()
-                    .find(|(k, _)| !used.contains(k) && !declared.contains(k))
-                {
-                    let fname = super::closure::mb_func_get_name(func)
-                        .as_ptr()
-                        .and_then(|fp| unsafe {
-                            match &(*fp).data {
-                                ObjData::Str(ref s) => Some(s.clone()),
-                                _ => None,
-                            }
-                        })
-                        .unwrap_or_default();
-                    raise_type_error(format!(
-                        "{fname}() got an unexpected keyword argument '{bad}'"
-                    ));
-                    return MbValue::none();
-                }
+            if !validate_and_adapt_declared_frame(func, &mut frame) {
+                return MbValue::none();
             }
-            if has_kw {
-                let extra = super::dict_ops::mb_dict_new();
-                for (k, v) in &kw_pairs {
-                    if !used.contains(k) {
-                        unsafe {
-                            super::rc::retain_if_ptr(*v);
-                        }
-                        super::dict_ops::mb_dict_setitem(
-                            extra,
-                            MbValue::from_ptr(MbObject::new_str(k.clone())),
-                            *v,
-                        );
-                    }
-                }
-                items.push(extra);
-                // ABI for (regulars..., **kw): regulars individual + trailing
-                // kwargs dict. Invoke positionally including the dict slot.
-                return mb_call_spread(func, MbValue::from_ptr(MbObject::new_list(items)));
-            }
-            return mb_call_spread(func, MbValue::from_ptr(MbObject::new_list(items)));
+            let is_boxed_ret = super::module::is_boxed_return_func(raw_addr as u64);
+            return super::closure::with_closure_cells(func, || {
+                dispatch_jit_frame(raw_addr, &frame, is_boxed_ret)
+            });
         }
     }
 
@@ -6861,6 +6935,108 @@ mod tests {
             MbValue::none(),
             MbValue::none(),
         ]))
+    }
+
+    fn strict_param_sig(
+        name: &str,
+        kind: i64,
+        annotation: Option<&str>,
+        entry_abi: &str,
+        contract: Option<&str>,
+    ) -> MbValue {
+        let annotation = annotation
+            .map(|value| MbValue::from_ptr(MbObject::new_str(value.to_string())))
+            .unwrap_or_else(MbValue::none);
+        let contract = contract
+            .map(|value| MbValue::from_ptr(MbObject::new_str(value.to_string())))
+            .unwrap_or_else(MbValue::none);
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            MbValue::from_int(kind),
+            MbValue::from_int(0),
+            MbValue::none(),
+            annotation,
+            MbValue::from_ptr(MbObject::new_str(entry_abi.to_string())),
+            contract,
+        ]))
+    }
+
+    #[test]
+    fn test_dynamic_ingress_contract_and_abi_are_independent() {
+        super::super::closure::cleanup_all_closures();
+        let func = MbValue::from_func(991);
+        super::super::closure::mb_func_set_name(
+            func,
+            MbValue::from_ptr(MbObject::new_str("strict_target".to_string())),
+        );
+        let params = MbValue::from_ptr(MbObject::new_list(vec![
+            strict_param_sig("count", 1, Some("int"), "raw-int", Some("int")),
+            strict_param_sig("open", 1, None, "raw-int", None),
+            strict_param_sig("items", 2, Some("int"), "boxed", Some("int")),
+        ]));
+        super::super::closure::mb_func_set_params(func, params);
+
+        let open_value = MbValue::from_ptr(MbObject::new_str("dynamic".to_string()));
+        let variadic = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(2)]));
+        let mut accepted = vec![MbValue::from_bool(true), open_value, variadic];
+        assert!(validate_and_adapt_declared_frame(func, &mut accepted));
+        assert_eq!(accepted[0].to_bits(), 1);
+        assert_eq!(accepted[1].to_bits(), open_value.to_bits());
+        assert_eq!(accepted[2].to_bits(), variadic.to_bits());
+
+        let mut rejected = vec![
+            MbValue::from_ptr(MbObject::new_str("wrong".to_string())),
+            open_value,
+            variadic,
+        ];
+        assert!(!validate_and_adapt_declared_frame(func, &mut rejected));
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        let exception = super::super::exception::mb_get_exception();
+        assert_eq!(
+            super::super::exception::get_exception_message_pub(exception).as_deref(),
+            Some("strict_target() argument 'count' expected int, got str")
+        );
+        super::super::exception::mb_clear_exception();
+        super::super::closure::cleanup_all_closures();
+    }
+
+    #[test]
+    fn test_dynamic_ingress_legacy_metadata_stays_fail_open() {
+        super::super::closure::cleanup_all_closures();
+        let legacy_five = MbValue::from_func(992);
+        let legacy_six = MbValue::from_func(993);
+        super::super::closure::mb_func_set_params(
+            legacy_five,
+            MbValue::from_ptr(MbObject::new_list(vec![param_sig("value", 1)])),
+        );
+        let six = MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str("value".to_string())),
+            MbValue::from_int(1),
+            MbValue::from_int(0),
+            MbValue::none(),
+            MbValue::from_ptr(MbObject::new_str("int".to_string())),
+            MbValue::from_ptr(MbObject::new_str("raw-int".to_string())),
+        ]));
+        super::super::closure::mb_func_set_params(
+            legacy_six,
+            MbValue::from_ptr(MbObject::new_list(vec![six])),
+        );
+
+        let five = super::super::closure::func_params(legacy_five).unwrap();
+        assert_eq!(five[0].entry_abi, "boxed");
+        assert!(five[0].contract.is_none());
+        let six = super::super::closure::func_params(legacy_six).unwrap();
+        assert_eq!(six[0].entry_abi, "raw-int");
+        assert!(six[0].contract.is_none());
+
+        let dynamic = MbValue::from_ptr(MbObject::new_str("dynamic".to_string()));
+        let mut frame = vec![dynamic];
+        assert!(validate_and_adapt_declared_frame(legacy_six, &mut frame));
+        assert_eq!(frame[0].to_bits(), dynamic.to_bits());
+        super::super::closure::cleanup_all_closures();
     }
 
     #[test]

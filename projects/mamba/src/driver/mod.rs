@@ -2904,5 +2904,6 @@ mod pipeline_tests {
     mod perf_comparison;
     mod pipeline;
     mod runtime_bugs_conformance;
+    mod strict_type_dynamic_ingress;
     mod xfail_zero_conformance;
 }

@@ -2952,6 +2952,7 @@ fn collect_ast_bindings_inner(pat: &ast::Pattern, names: &mut std::collections::
 /// (opaque non-literal defaults splice as `None` on value-call routes,
 /// unchanged for methods/nested defs).
 fn func_sig_meta(
+    lowerer: &AstLowerer<'_>,
     params: &[ast::Param],
     return_ty: &Option<Spanned<ast::TypeExpr>>,
     frozen: &[ParamInfo],
@@ -3007,6 +3008,11 @@ fn func_sig_meta(
             default_opaque,
             frozen_default,
             annotation: annotation_repr_opt(&p.ty.node),
+            // Keep the source declaration before the entry ABI is rewritten
+            // for methods, decorators, closures, or default mutation.
+            declared_ty: Some(lowerer.resolve_type_expr_ro(&p.ty)),
+            entry_ty: None,
+            boxed_primitive_entry: false,
         });
     }
     HirFuncSig {
@@ -3014,6 +3020,19 @@ fn func_sig_meta(
         return_annotation: return_ty
             .as_ref()
             .and_then(|t| annotation_repr_opt(&t.node)),
+    }
+}
+
+/// Attach the lowered entry ABI to a separately-built declared signature.
+/// The two vectors have the same source order, including `*args`/`**kwargs`.
+fn attach_entry_types(
+    sig: &mut crate::hir::HirFuncSig,
+    params: &[(SymbolId, TypeId)],
+    boxed_primitive_entry: bool,
+) {
+    for (param, (_, entry_ty)) in sig.params.iter_mut().zip(params.iter()) {
+        param.entry_ty = Some(*entry_ty);
+        param.boxed_primitive_entry = boxed_primitive_entry;
     }
 }
 
@@ -4208,10 +4227,15 @@ impl<'a> AstLowerer<'a> {
                             stmt.span,
                         )
                     };
+                    let mut declared_sig = func_sig_meta(self, params, return_ty, &param_info);
                     self.active_type_params = saved_tps;
                     if let Some(mut func) = lowered {
-                        let declared_sig = func_sig_meta(params, return_ty, &param_info);
                         func.is_generator = contains_yield(body);
+                        attach_entry_types(
+                            &mut declared_sig,
+                            &func.params,
+                            (is_decorated || repeated) && !func.is_generator,
+                        );
                         func.decorators = decorators
                             .iter()
                             .filter_map(|d| self.lower_expr(d))
@@ -4376,9 +4400,9 @@ impl<'a> AstLowerer<'a> {
                             stmt.span,
                         )
                     };
+                    let mut declared_sig = func_sig_meta(self, params, return_ty, &param_info);
                     self.active_type_params = saved_tps;
                     if let Some(mut func) = lowered {
-                        let declared_sig = func_sig_meta(params, return_ty, &param_info);
                         let has_yield = contains_yield(body);
                         // `async def f(): yield` is an async generator — CPython
                         // returns an async-generator object, not a coroutine.
@@ -4400,6 +4424,7 @@ impl<'a> AstLowerer<'a> {
                         } else {
                             func.is_async = true;
                         }
+                        attach_entry_types(&mut declared_sig, &func.params, false);
                         func.decorators = decorators
                             .iter()
                             .filter_map(|d| self.lower_expr(d))
@@ -5027,11 +5052,13 @@ impl<'a> AstLowerer<'a> {
         let star_param_pos = params.iter().position(|p| p.kind == ast::ParamKind::Star);
         let has_star_args = star_param_pos.is_some();
         let has_kwargs = params.iter().any(|p| p.kind == ast::ParamKind::DoubleStar);
+        let mut func_sig = func_sig_meta(self, params, _return_ty, &[]);
+        attach_entry_types(&mut func_sig, &hir_params, false);
         Some(HirFunction {
             name: name_id,
             params: hir_params,
             return_ty: ret_ty,
-            func_sig: Some(func_sig_meta(params, _return_ty, &[])),
+            func_sig: Some(func_sig),
             bind_name: None,
             body: hir_body,
             span,
@@ -5851,8 +5878,9 @@ impl<'a> AstLowerer<'a> {
                             m.captures.push(name_id);
                             m.captures.sort_by_key(|sym| sym.0);
                         }
-                        let declared_method_sig =
-                            func_sig_meta(params, return_ty, &method_param_info);
+                        let mut declared_method_sig =
+                            func_sig_meta(self, params, return_ty, &method_param_info);
+                        attach_entry_types(&mut declared_method_sig, &m.params, false);
                         self.result
                             .func_sigs
                             .insert(m.name.0, declared_method_sig.clone());
@@ -7094,13 +7122,13 @@ impl<'a> AstLowerer<'a> {
                 } else {
                     return_ty
                 };
-                let declared_sig = func_sig_meta(params, return_ty, &[]);
                 // PEP 695: see the module-level FnDef arm — type-param names
                 // must reach the param/return type lowering.
                 let saved_tps = std::mem::replace(
                     &mut self.active_type_params,
                     type_params.iter().map(|p| p.name.clone()).collect(),
                 );
+                let mut declared_sig = func_sig_meta(self, params, return_ty, &[]);
                 let lowered = self.lower_decorated_fn(
                     declaration_sym,
                     name,
@@ -7116,11 +7144,16 @@ impl<'a> AstLowerer<'a> {
                     func.return_ty = any_ty;
                     self.func_return_tys.insert(fn_sym, any_ty);
                     self.func_return_tys.insert(func.name, any_ty);
+                    func.is_generator = contains_yield(body);
+                    attach_entry_types(
+                        &mut declared_sig,
+                        &func.params,
+                        !func.is_generator,
+                    );
                     self.result
                         .func_sigs
                         .insert(func.name.0, declared_sig.clone());
                     func.func_sig = Some(declared_sig.clone());
-                    func.is_generator = contains_yield(body);
                     func.decorators = decorators
                         .iter()
                         .filter_map(|d| self.lower_expr(d))
@@ -7174,7 +7207,7 @@ impl<'a> AstLowerer<'a> {
                     &mut self.active_type_params,
                     type_params.iter().map(|p| p.name.clone()).collect(),
                 );
-                let declared_sig = func_sig_meta(params, return_ty, &[]);
+                let mut declared_sig = func_sig_meta(self, params, return_ty, &[]);
                 let lowered = self.lower_decorated_fn(
                     declaration_sym,
                     name,
@@ -7190,10 +7223,6 @@ impl<'a> AstLowerer<'a> {
                     func.return_ty = any_ty;
                     self.func_return_tys.insert(fn_sym, any_ty);
                     self.func_return_tys.insert(func.name, any_ty);
-                    self.result
-                        .func_sigs
-                        .insert(func.name.0, declared_sig.clone());
-                    func.func_sig = Some(declared_sig.clone());
                     if contains_yield(body) {
                         // Same async-generator routing as the top-level
                         // AsyncFnDef arm: route through the sync generator
@@ -7202,6 +7231,11 @@ impl<'a> AstLowerer<'a> {
                     } else {
                         func.is_async = true;
                     }
+                    attach_entry_types(&mut declared_sig, &func.params, false);
+                    self.result
+                        .func_sigs
+                        .insert(func.name.0, declared_sig.clone());
+                    func.func_sig = Some(declared_sig.clone());
                     func.decorators = decorators
                         .iter()
                         .filter_map(|d| self.lower_expr(d))

@@ -773,6 +773,83 @@ Payload corollary: when a lifecycle section has a schema (e.g. TD `unit-test`),
 its agent payload is JSON data and the artifact's YAML frontmatter + mermaid
 diagram are CLI-rendered projections; prose-only payloads remain Markdown.
 
+## Test iteration contract
+
+> **Policy-only.** Test commands must minimize the compiled target set without
+> weakening the evidence claimed from the result. A fast command is useful only
+> when it runs the intended tests against artifacts built from the current
+> source.
+
+### Cargo target selection and artifact freshness
+
+- A libtest name filter limits test *execution*; it does not limit which Cargo
+  targets are compiled. Select the narrowest target explicitly with `--lib`,
+  `--bin <name>`, or `--test <name>` before adding a test-name filter.
+- `--exact` requires the fully-qualified libtest name. Confirm stdout reports
+  the expected nonzero test count; `0 passed` is not validation evidence.
+- Run one Cargo build for a worktree at a time. If a long compile is still
+  active, poll that process rather than launching the same command again.
+- After one successful build, the emitted libtest executable or project binary
+  may be run directly for repeated checks. It is valid only while every
+  relevant source, manifest, generated input, and test file is no newer than
+  the artifact. Never use a stale binary to prove a new edit.
+- Layer validation from exact test, to affected module, to the fast broad suite,
+  then to generated tables, integration/accounting gates, and release build.
+  Run the expensive aggregate proof once per verified slice, not after every
+  edit.
+
+### Mamba strict-type fast loop
+
+Run Mamba Cargo commands with the rustup stable toolchain. The focused unit-test
+shape is:
+
+```bash
+PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH" \
+  cargo test -q -p mamba --lib \
+  types::context::tests::test_subtype_reflexive -- --exact
+```
+
+Replace the example with the fully-qualified test that owns the changed
+mechanism. Then widen only through the affected type modules:
+
+```bash
+PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH" \
+  cargo test -q -p mamba --lib types::context::tests::
+PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH" \
+  cargo test -q -p mamba --lib types::generic::tests::
+PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH" \
+  cargo test -q -p mamba --lib types::check::tests::
+```
+
+The inner broad gate excludes the generated stdlib-signature tests, which are
+an independent and materially slower validation layer:
+
+```bash
+PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH" \
+  cargo test -q -p mamba --lib types:: -- \
+  --skip types::stdlib_sigs::tests::
+```
+
+At slice completion, run the generated-signature layer, the full type suite,
+and the dedicated accounting target:
+
+```bash
+PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH" \
+  cargo test -q -p mamba --lib types::stdlib_sigs::tests::
+PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH" \
+  cargo test -q -p mamba --lib types::
+PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH" \
+  cargo test -q -p mamba --test schema_gates \
+  'strict_type_accounting_gate_704::' -- --test-threads=16
+```
+
+Once the current libtest executable has been built successfully, direct
+execution is the preferred rerun path for exact/module tests; use the
+executable path Cargo just emitted rather than hard-coding its hash. Likewise,
+run focused static fixtures through the current `target/debug/mamba check`
+binary, with modest process parallelism for a path list. Sampled accounting
+runs are development diagnostics, not a green replacement gate.
+
 ## Project build and release contract
 
 Every project build skill and project `build.sh` must use the same two-mode

@@ -2012,10 +2012,48 @@ impl<'a> HirToMir<'a> {
                 Some(s) => self.emit_str_const(s),
                 None => self.emit_none(),
             };
+            // The strict contract is semantic (aliases have already resolved),
+            // while ABI is the representation of this particular lowered entry.
+            let contract = matches!(p.kind, 0 | 1 | 3)
+                .then(|| p.declared_ty)
+                .flatten()
+                .and_then(|ty| match self.tcx.semantic_ty_or_error(ty) {
+                    crate::types::Ty::Int => Some("int"),
+                    crate::types::Ty::Bool => Some("bool"),
+                    crate::types::Ty::Float => Some("float"),
+                    crate::types::Ty::Str => Some("str"),
+                    crate::types::Ty::None => Some("None"),
+                    crate::types::Ty::Class {
+                        role: crate::types::ty::ClassRole::Instance,
+                        external: Some(ext),
+                        ..
+                    } if ext.module == "builtins" && ext.name == "bytes" => Some("bytes"),
+                    _ => None,
+                })
+                .filter(|_| p.annotation.is_some());
+            let entry_abi = p
+                .entry_ty
+                .map(|ty| match (self.tcx.get(ty), p.boxed_primitive_entry) {
+                    (crate::types::Ty::Int, false) => "raw-int",
+                    (crate::types::Ty::Bool, false) => "raw-bool",
+                    (crate::types::Ty::Float, false) => "raw-float",
+                    (crate::types::Ty::Int, true) => "boxed-int",
+                    (crate::types::Ty::Bool, true) => "boxed-bool",
+                    (crate::types::Ty::Float, true) => "boxed-float",
+                    _ => "boxed",
+                })
+                .unwrap_or("boxed");
+            let abi_vreg = self.emit_str_const(entry_abi);
+            let contract_vreg = match contract {
+                Some(contract) => self.emit_str_const(contract),
+                None => self.emit_none(),
+            };
             let tup_vreg = self.fresh_vreg();
             self.current_stmts.push(MirInst::MakeTuple {
                 dest: tup_vreg,
-                elements: vec![name_vreg, kind_vreg, hd_vreg, def_vreg, anno_vreg],
+                elements: vec![
+                    name_vreg, kind_vreg, hd_vreg, def_vreg, anno_vreg, abi_vreg, contract_vreg,
+                ],
                 ty: any_ty,
             });
             param_vregs.push(tup_vreg);
@@ -2080,6 +2118,8 @@ impl<'a> HirToMir<'a> {
             let has_default_vreg = self.box_operand(has_default_raw, self.tcx.int());
             let default_vreg = self.emit_none();
             let anno_vreg = self.emit_none();
+            let abi_vreg = self.emit_str_const("boxed");
+            let contract_vreg = self.emit_none();
             let tuple_vreg = self.fresh_vreg();
             self.current_stmts.push(MirInst::MakeTuple {
                 dest: tuple_vreg,
@@ -2089,6 +2129,8 @@ impl<'a> HirToMir<'a> {
                     has_default_vreg,
                     default_vreg,
                     anno_vreg,
+                    abi_vreg,
+                    contract_vreg,
                 ],
                 ty: any_ty,
             });
@@ -11626,7 +11668,8 @@ impl<'a> HirToMir<'a> {
                         args: vec![closure_vreg, names_list],
                         ty: self.tcx.none(),
                     });
-                    // FUNC_PARAMS: (name, kind=1, has_default, default, None)
+                    // FUNC_PARAMS: seven fields; lambda declarations have no
+                    // scalar source contract and enter boxed.
                     // per param — defaults reuse the already-evaluated outer
                     // vregs (positionally trailing, Python rule).
                     let n_defaults = defaults.iter().filter(|d| d.is_some()).count();
@@ -11663,10 +11706,15 @@ impl<'a> HirToMir<'a> {
                             self.emit_none()
                         };
                         let anno_vreg = self.emit_none();
+                        let abi_vreg = self.emit_str_const("boxed");
+                        let contract_vreg = self.emit_none();
                         let tup = self.fresh_vreg();
                         self.current_stmts.push(MirInst::MakeTuple {
                             dest: tup,
-                            elements: vec![pn_vreg, kind_vreg, hd_vreg, def_vreg, anno_vreg],
+                            elements: vec![
+                                pn_vreg, kind_vreg, hd_vreg, def_vreg, anno_vreg, abi_vreg,
+                                contract_vreg,
+                            ],
                             ty: any_ty,
                         });
                         param_tup_vregs.push(tup);
