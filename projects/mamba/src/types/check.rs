@@ -1,9 +1,10 @@
+use super::context::AliasIdentity;
 use super::generic::{
     bind_explicit_type_args, bind_explicit_type_args_without_bounds, complete_type_args,
     GenericParams, Substitution,
 };
 use super::protocol::ProtocolRegistry;
-use super::stdlib_typespec::{StrSpecId, TypeParamSpecId, TypeSpecId};
+use super::stdlib_typespec::{TypeParamSpecId, TypeSpecId};
 use super::ty::{
     AliasInstanceId, CallableParam, CallableParamKind, ClassRole, ExternalCallable,
     ExternalCallableAccess, ExternalCallableRuntimeKind, ExternalClass, ExternalValue,
@@ -679,7 +680,11 @@ pub struct TypeChecker {
     pub(crate) stdlib_spec_type_param_initialized: HashSet<TypeParamSpecId>,
     pub(crate) stdlib_spec_type_param_initializing: HashSet<TypeParamSpecId>,
     pub(crate) stdlib_spec_type_param_failed: HashSet<TypeParamSpecId>,
-    pub(crate) stdlib_spec_alias_initializing: HashSet<(StrSpecId, StrSpecId)>,
+    /// One top-level generated TypeSpec materialization is transactional. A
+    /// failed recursive alias must not leave unresolved AliasRefs in the cache
+    /// or targets committed by another member of the failed alias cycle.
+    pub(crate) stdlib_spec_materialization_depth: usize,
+    pub(crate) stdlib_spec_materialization_nodes: Vec<TypeSpecId>,
 }
 
 impl TypeChecker {
@@ -742,7 +747,8 @@ impl TypeChecker {
             stdlib_spec_type_param_initialized: HashSet::new(),
             stdlib_spec_type_param_initializing: HashSet::new(),
             stdlib_spec_type_param_failed: HashSet::new(),
-            stdlib_spec_alias_initializing: HashSet::new(),
+            stdlib_spec_materialization_depth: 0,
+            stdlib_spec_materialization_nodes: Vec::new(),
         };
         tc.register_builtins();
         tc
@@ -1775,7 +1781,7 @@ impl TypeChecker {
             .map(|id| self.tcx.intern(Ty::TypeVar(id)))
             .collect();
         let (instance, alias_ref) = self.tcx.intern_alias_instance(
-            symbol,
+            AliasIdentity::Source(symbol),
             definition.name.clone(),
             declaration_args,
             definition.params.len(),
@@ -1871,7 +1877,7 @@ impl TypeChecker {
                 .map(|id| self.tcx.intern(Ty::TypeVar(*id))),
         );
         let (instance, _) = self.tcx.intern_alias_instance(
-            symbol,
+            AliasIdentity::Source(symbol),
             name.to_string(),
             identity_args,
             definition.params.len(),
@@ -1895,7 +1901,10 @@ impl TypeChecker {
         }
 
         let instance = self.tcx.alias_instance(id).clone();
-        let definition = self.type_alias_defs.get(&instance.symbol)?.clone();
+        let AliasIdentity::Source(symbol) = instance.identity else {
+            return None;
+        };
+        let definition = self.type_alias_defs.get(&symbol)?.clone();
         let template = definition.template?;
         let identity_params: Vec<_> = definition
             .params
