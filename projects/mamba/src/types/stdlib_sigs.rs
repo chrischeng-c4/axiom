@@ -11256,9 +11256,9 @@ mod tests {
     }
 
     /// Regenerable contract (fixture_lint-style): the checked-in
-    /// `stdlib_sigs_generated.rs` must be byte-for-byte reproducible by
-    /// `type_wall_gen.py --emit-rust`. Skips gracefully if `python3.12` or the
-    /// vendored typeshed is unavailable (CI without the harness toolchain).
+    /// `stdlib_sigs_generated.rs` must be byte-for-byte reproducible from the
+    /// pinned typeshed checkout by `type_wall_gen.py --emit-rust`. Skips
+    /// gracefully if `python3.12` or typeshed is unavailable.
     #[test]
     fn generated_table_is_regenerable() {
         use std::path::Path;
@@ -11284,6 +11284,7 @@ mod tests {
         assert!(
             out.status.success(),
             "stdlib_sigs_generated.rs is stale — re-run \
+             `python3.12 tests/harness/cpython/tools/checkout_typeshed.py` then \
              `python3.12 tests/harness/cpython/tools/type_wall_gen.py --emit-rust`.\n\
              stdout: {}\nstderr: {}",
             String::from_utf8_lossy(&out.stdout),

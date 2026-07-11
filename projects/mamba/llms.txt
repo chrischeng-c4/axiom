@@ -71,7 +71,7 @@ Two distinct denominators — do not conflate:
 
 ## Surface coverage (typeshed)
 
-- [src/surface.rs](src/surface.rs): typeshed surface-coverage tool (Phase 1.D) — `mamba surface-report --package <lib>`; compares names registered via `attrs.insert("<name>".to_string(), ...)` in `runtime/stdlib/<lib>_mod.rs` (and `runtime/stdlib/3p/<lib>_mod.rs`) against top-level `def`/`class` lines in `projects/mamba/vendor/typeshed/stdlib/<lib>.pyi` (stdlib) or `projects/mamba/vendor/typeshed/stubs/<lib>/<lib>.pyi` (3p). Emits `implemented/total = N/M (P%)` + missing list. Reference numbers: `os` = 11/77 (14%), `ssl` = 0/25 (0%, not implemented). Typeshed is vendored locally — re-create with `git clone --depth=1 https://github.com/python/typeshed.git projects/mamba/vendor/typeshed` (33 MB, gitignored).
+- [src/surface.rs](src/surface.rs): typeshed surface-coverage tool (Phase 1.D) — `mamba surface-report --package <lib>`; compares names registered via `attrs.insert("<name>".to_string(), ...)` in `runtime/stdlib/<lib>_mod.rs` (and `runtime/stdlib/3p/<lib>_mod.rs`) against top-level `def`/`class` lines in `projects/mamba/vendor/typeshed/stdlib/<lib>.pyi` (stdlib) or `projects/mamba/vendor/typeshed/stubs/<lib>/<lib>.pyi` (3p). Emits `implemented/total = N/M (P%)` + missing list. Reference numbers: `os` = 11/77 (14%), `ssl` = 0/25 (0%, not implemented). Typeshed is pinned by `vendor/typeshed.lock.toml`; create or verify the gitignored checkout with `python3.12 tests/harness/cpython/tools/checkout_typeshed.py`.
 
 ## Conformance runners
 

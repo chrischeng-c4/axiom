@@ -1,5 +1,5 @@
-# Typeshed checkout — vendored by `mamba surface-report` tooling (Phase 1.D).
-# Re-create with: git clone --depth=1 https://github.com/python/typeshed.git projects/mamba/vendor/typeshed
+# Typeshed checkout pinned by vendor/typeshed.lock.toml.
+# Re-create with: python3.12 tests/harness/cpython/tools/checkout_typeshed.py
 vendor/typeshed/
 
 # Artifacts left in cwd by running CPython Lib/test oracle fixtures

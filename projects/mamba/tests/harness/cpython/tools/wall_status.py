@@ -50,6 +50,7 @@ def type_wall_signatures_and_cases() -> tuple[int, int]:
     union contract one case tests). This counts COVERED SIGNATURES, not unique
     files, so collapse doesn't understate coverage.
     """
+    type_wall_gen.verify_typeshed_corpus()
     cands = list(type_wall_gen.candidates({"module", "init", "smethod", "method"}))
     total = len(cands)
     covered = sum(1 for c in cands
