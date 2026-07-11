@@ -10,6 +10,8 @@ only a full run can go green.
 from __future__ import annotations
 
 import argparse
+import ast
+import io
 import importlib.util
 import json
 import os
@@ -17,6 +19,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tokenize
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -25,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import harness_lib
+from type_wall_gen import SENTINEL, WRONG_VALUE
 
 
 TOOLS_DIR = Path(__file__).resolve().parent
@@ -145,6 +149,15 @@ TYPEVAR_STAYS_UNWALLED_MARKER = "TypeVar param must stay unwalled"
 class Divergence:
     path: str
     owner_refs: list[str]
+
+
+@dataclass(frozen=True)
+class FixtureCallShape:
+    access: str
+    positional_count: int
+    keyword_names: tuple[str, ...]
+    target: tuple[str, int | str]
+    subject_param: str
 
 
 def default_mamba_bin() -> str:
@@ -735,26 +748,41 @@ def parse_generated_signature_param_index(
         start, length = callable_row[4]
         branch: dict[str, str] = {}
         branch_reasons: dict[str, str] = {}
+        ordered_params: list[dict[str, Any]] = []
         for param in manifest["params"][start : start + length]:
-            if param[4]:
-                continue
             param_name = strings[param[0]]
             node_id = manifest["type_uses"][param[2]][0]
+            reason = None
             if not binding_supported:
-                branch[param_name] = "unsupported"
-                branch_reasons[param_name] = "structured_binding_unsupported"
+                status = "unsupported"
+                reason = "structured_binding_unsupported"
             elif not generic_metadata_supported:
-                branch[param_name] = "unsupported"
-                branch_reasons[param_name] = "structured_generic_metadata_unsupported"
+                status = "unsupported"
+                reason = "structured_generic_metadata_unsupported"
             else:
                 status = _generated_typespec_status(manifest, node_id)
-                branch[param_name] = status
                 if status == "unsupported":
-                    branch_reasons[param_name] = "structured_param_type_unsupported"
+                    reason = "structured_param_type_unsupported"
+            ordered_params.append(
+                {
+                    "name": param_name,
+                    "kind": param[1],
+                    "has_default": bool(param[3]),
+                    "implicit_receiver": bool(param[4]),
+                    "status": status,
+                    "reason": reason,
+                }
+            )
+            if param[4]:
+                continue
+            branch[param_name] = status
+            if reason is not None:
+                branch_reasons[param_name] = reason
         grouped.setdefault(key, []).append(
             {
                 "params": branch,
                 "reasons": branch_reasons,
+                "ordered_params": ordered_params,
                 "binding_supported": binding_supported,
                 "kind": kind,
             }
@@ -809,6 +837,7 @@ def parse_generated_signature_param_index(
         out[key] = {
             "params": params,
             "param_reasons": param_reasons,
+            "branch_specs": branches,
             "enforceable": "supported" in params.values(),
             "branches": len(branches),
             "manifest_branches": len(manifest_branches),
@@ -839,6 +868,497 @@ def parse_type_fixture_contract(path: Path) -> tuple[str, str, str] | None:
 def parse_type_fixture_subject(path: Path) -> tuple[str, str] | None:
     parsed = parse_type_fixture_contract(path)
     return None if parsed is None else parsed[:2]
+
+
+def _fixture_dotted_name(node: ast.expr) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _fixture_dotted_name(node.value)
+        return f"{base}.{node.attr}" if base else None
+    return None
+
+
+def _fixture_module_binding_events(
+    tree: ast.Module, name: str, before_lineno: int
+) -> list[tuple[str, str | None, str | None]]:
+    events: list[tuple[str, str | None, str | None]] = []
+
+    class BindingVisitor(ast.NodeVisitor):
+        def before(self, node: ast.AST) -> bool:
+            return getattr(node, "lineno", before_lineno) < before_lineno
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if self.before(node) and node.name == name:
+                events.append(("store", None, None))
+            for decorator in node.decorator_list:
+                self.visit(decorator)
+            for default in (*node.args.defaults, *node.args.kw_defaults):
+                if default is not None:
+                    self.visit(default)
+            annotations = [
+                *(arg.annotation for arg in node.args.posonlyargs),
+                *(arg.annotation for arg in node.args.args),
+                *(arg.annotation for arg in node.args.kwonlyargs),
+                node.args.vararg.annotation if node.args.vararg else None,
+                node.args.kwarg.annotation if node.args.kwarg else None,
+                node.returns,
+                *getattr(node, "type_params", []),
+            ]
+            for annotation in annotations:
+                if annotation is not None:
+                    self.visit(annotation)
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            if self.before(node) and node.name == name:
+                events.append(("store", None, None))
+            if self.before(node) and any(
+                isinstance(item, ast.Global) and name in item.names
+                for item in ast.walk(node)
+            ):
+                events.append(("store", None, None))
+            for expression in (
+                *node.decorator_list,
+                *node.bases,
+                *(keyword.value for keyword in node.keywords),
+                *getattr(node, "type_params", []),
+            ):
+                self.visit(expression)
+
+        def visit_Lambda(self, node: ast.Lambda) -> None:
+            for default in (*node.args.defaults, *node.args.kw_defaults):
+                if default is not None:
+                    self.visit(default)
+
+        def visit_ListComp(self, node: ast.ListComp) -> None:
+            self.generic_visit(node)
+
+        visit_SetComp = visit_ListComp
+        visit_DictComp = visit_ListComp
+        visit_GeneratorExp = visit_ListComp
+
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+            if not self.before(node):
+                return
+            module = node.module if node.level == 0 else None
+            for alias in node.names:
+                if alias.name == "*":
+                    events.append(("store", None, None))
+                    continue
+                if (alias.asname or alias.name) == name:
+                    events.append(("import", module, alias.name))
+
+        def visit_Import(self, node: ast.Import) -> None:
+            if not self.before(node):
+                return
+            for alias in node.names:
+                local = alias.asname or alias.name.split(".")[0]
+                if local == name:
+                    events.append(("import", alias.name, None))
+
+        def visit_Name(self, node: ast.Name) -> None:
+            if (
+                self.before(node)
+                and node.id == name
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+            ):
+                events.append(("store", None, None))
+
+        def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+            if self.before(node) and node.name == name:
+                events.append(("store", None, None))
+            self.generic_visit(node)
+
+        def visit_MatchAs(self, node: ast.MatchAs) -> None:
+            if self.before(node) and node.name == name:
+                events.append(("store", None, None))
+            self.generic_visit(node)
+
+        def visit_MatchStar(self, node: ast.MatchStar) -> None:
+            if self.before(node) and node.name == name:
+                events.append(("store", None, None))
+
+        def visit_MatchMapping(self, node: ast.MatchMapping) -> None:
+            if self.before(node) and node.rest == name:
+                events.append(("store", None, None))
+            self.generic_visit(node)
+
+    BindingVisitor().visit(tree)
+    return events
+
+
+def _fixture_binding_matches(
+    tree: ast.Module,
+    local: str,
+    module: str,
+    imported: str,
+    before_lineno: int,
+) -> bool:
+    events = _fixture_module_binding_events(tree, local, before_lineno)
+    if events:
+        direct_imports = []
+        for node in tree.body:
+            if (
+                not isinstance(node, ast.ImportFrom)
+                or node.lineno >= before_lineno
+                or node.level != 0
+                or node.module is None
+            ):
+                continue
+            for alias in node.names:
+                if (alias.asname or alias.name) == local:
+                    direct_imports.append(("import", node.module, alias.name))
+        expected = [("import", module, imported)]
+        return events == expected and direct_imports == expected
+    return (
+        module == "builtins"
+        and local == imported
+    )
+
+
+def _fixture_receiver_identity(node: ast.expr) -> tuple[str, str] | str | None:
+    literal = {
+        ast.List: ("builtins", "list"),
+        ast.Tuple: ("builtins", "tuple"),
+        ast.Dict: ("builtins", "dict"),
+        ast.Set: ("builtins", "set"),
+    }
+    for kind, identity in literal.items():
+        if isinstance(node, kind):
+            return identity
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, bool):
+            return "builtins", "bool"
+        for py_type, name in (
+            (int, "int"),
+            (float, "float"),
+            (complex, "complex"),
+            (str, "str"),
+            (bytes, "bytes"),
+        ):
+            if isinstance(node.value, py_type):
+                return "builtins", name
+        return None
+    if not isinstance(node, ast.Call):
+        return None
+    callee = _fixture_dotted_name(node.func)
+    if callee == "object.__new__":
+        if len(node.args) != 1 or node.keywords:
+            return None
+        return _fixture_dotted_name(node.args[0])
+    if node.args or node.keywords:
+        return None
+    return callee
+
+
+def _fixture_has_inert_sentinel(tree: ast.Module, before_lineno: int) -> bool:
+    classes = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "_W"
+        and node.lineno < before_lineno
+    ]
+    if len(classes) != 1:
+        return False
+    sentinel = classes[0]
+    return (
+        _fixture_module_binding_events(tree, "_W", before_lineno)
+        == [("store", None, None)]
+        and not sentinel.bases
+        and not sentinel.keywords
+        and not sentinel.decorator_list
+        and not getattr(sentinel, "type_params", [])
+        and len(sentinel.body) == 1
+        and isinstance(sentinel.body[0], ast.Pass)
+    )
+
+
+def _fixture_bound_receiver_matches(
+    tree: ast.Module, module: str, qualifier: str, before_lineno: int
+) -> bool:
+    events = _fixture_module_binding_events(tree, "obj", before_lineno)
+    if events != [("store", None, None)]:
+        return False
+    values = []
+    for node in tree.body:
+        if getattr(node, "lineno", before_lineno) >= before_lineno:
+            continue
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "obj"
+            for target in node.targets
+        ):
+            values.append(node.value)
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "obj"
+            and node.value is not None
+        ):
+            values.append(node.value)
+    if len(values) != 1:
+        return False
+    value = values[0]
+    if (
+        isinstance(value, ast.Call)
+        and _fixture_dotted_name(value.func) == "object.__new__"
+        and not _fixture_binding_matches(
+            tree, "object", "builtins", "object", before_lineno
+        )
+    ):
+        return False
+    identity = _fixture_receiver_identity(value)
+    expected = qualifier.split(".")[0]
+    if isinstance(identity, tuple):
+        return identity == (module, expected)
+    if not isinstance(identity, str) or "." in identity:
+        return False
+    return _fixture_binding_matches(
+        tree, identity, module, expected, before_lineno
+    )
+
+
+def parse_type_fixture_call_shape(
+    path: Path, key: tuple[str, str, str]
+) -> FixtureCallShape | None:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    subject_match = TYPE_FIXTURE_SUBJECT_RE.search(text)
+    if subject_match is None:
+        return None
+    subject = subject_match.group("subject")
+    subject_call = TYPE_FIXTURE_SUBJECT_CALL_RE.match(subject)
+    if subject_call is None:
+        return None
+    label = subject_call.group("label").strip()
+    subject_param = subject_call.group("param")
+    try:
+        tree = ast.parse(text)
+        expected = ast.parse(WRONG_VALUE.get(label, SENTINEL), mode="eval").body
+        comments = [
+            token
+            for token in tokenize.generate_tokens(io.StringIO(text).readline)
+            if token.type == tokenize.COMMENT and "<- wrong-typed" in token.string
+        ]
+    except (SyntaxError, tokenize.TokenError):
+        return None
+    if len(comments) != 1:
+        return None
+    marker = comments[0]
+    marker_pattern = (
+        rf"#\s*{re.escape(subject_param)}\s*:\s*{re.escape(label)}"
+        rf"\s*<-\s*wrong-typed\s*"
+    )
+    if re.fullmatch(marker_pattern, marker.string) is None:
+        return None
+    marker_line = marker.start[0]
+    operations = []
+
+    def collect_module_operations(body: list[ast.stmt]) -> None:
+        for node in body:
+            if (
+                isinstance(node, ast.Expr)
+                and isinstance(node.value, ast.Call)
+                and node.lineno <= marker_line <= (node.end_lineno or node.lineno)
+            ):
+                operations.append(node.value)
+            elif isinstance(node, (ast.Try, ast.TryStar)):
+                collect_module_operations(node.body)
+
+    collect_module_operations(tree.body)
+    if len(operations) != 1:
+        return None
+    call = operations[0]
+    has_sentinel_class = any(
+        isinstance(node, ast.ClassDef)
+        and node.name == "_W"
+        and node.lineno < call.lineno
+        for node in tree.body
+    )
+    if (
+        WRONG_VALUE.get(label, SENTINEL) == SENTINEL or has_sentinel_class
+    ) and not _fixture_has_inert_sentinel(tree, call.lineno):
+        return None
+    if any(isinstance(arg, ast.Starred) for arg in call.args):
+        return None
+    if any(keyword.arg is None for keyword in call.keywords):
+        return None
+    keyword_names = tuple(keyword.arg for keyword in call.keywords if keyword.arg)
+    if len(set(keyword_names)) != len(keyword_names):
+        return None
+
+    expected_dump = ast.dump(expected, include_attributes=False)
+    targets: list[tuple[str, int | str]] = []
+    for index, arg in enumerate(call.args):
+        if ast.dump(arg, include_attributes=False) == expected_dump:
+            targets.append(("pos", index))
+    for keyword in call.keywords:
+        if ast.dump(keyword.value, include_attributes=False) == expected_dump:
+            targets.append(("kw", keyword.arg or ""))
+    if len(targets) != 1:
+        return None
+
+    callee = _fixture_dotted_name(call.func)
+    if callee is None:
+        return None
+    module, qualifier, name = key
+    if not qualifier:
+        if not isinstance(call.func, ast.Name) or callee != name:
+            return None
+        if not _fixture_binding_matches(tree, callee, module, name, call.lineno):
+            return None
+        access = "module"
+    elif name in {"__init__", "__new__"} and isinstance(call.func, ast.Name):
+        if call.func.id != qualifier.split(".")[-1]:
+            return None
+        if not _fixture_binding_matches(
+            tree, call.func.id, module, qualifier.split(".")[0], call.lineno
+        ):
+            return None
+        access = "constructor"
+    elif isinstance(call.func, ast.Attribute) and call.func.attr == name:
+        owner = _fixture_dotted_name(call.func.value)
+        if owner is None:
+            return None
+        if owner == "obj":
+            if not _fixture_bound_receiver_matches(
+                tree, module, qualifier, call.lineno
+            ):
+                return None
+            access = "bound"
+        else:
+            owner_parts = owner.split(".")
+            qualifier_parts = qualifier.split(".")
+            local = owner_parts[0]
+            if owner_parts[1:] != qualifier_parts[1:]:
+                return None
+            if not _fixture_binding_matches(
+                tree, local, module, qualifier_parts[0], call.lineno
+            ):
+                return None
+            access = "class"
+    else:
+        return None
+    return FixtureCallShape(
+        access=access,
+        positional_count=len(call.args),
+        keyword_names=keyword_names,
+        target=targets[0],
+        subject_param=subject_param,
+    )
+
+
+def _bind_fixture_branch_target(
+    branch: dict[str, Any], shape: FixtureCallShape
+) -> dict[str, Any] | None:
+    hide_implicit_receiver = shape.access != "module" and not (
+        shape.access == "class" and branch["kind"] == "i"
+    )
+    visible = [
+        param
+        for param in branch["ordered_params"]
+        if not (hide_implicit_receiver and param["implicit_receiver"])
+    ]
+    positional = [
+        index for index, param in enumerate(visible) if param["kind"] in {"p", "r"}
+    ]
+    var_pos = next(
+        (index for index, param in enumerate(visible) if param["kind"] == "v"),
+        None,
+    )
+    var_kw = next(
+        (index for index, param in enumerate(visible) if param["kind"] == "w"),
+        None,
+    )
+    bound: set[int] = set()
+    target_param = None
+    for position in range(shape.positional_count):
+        param_index = positional[position] if position < len(positional) else var_pos
+        if param_index is None:
+            return None
+        param = visible[param_index]
+        if param["kind"] not in {"v", "w"} and param_index in bound:
+            return None
+        bound.add(param_index)
+        if shape.target == ("pos", position):
+            target_param = param
+    for name in shape.keyword_names:
+        param_index = next(
+            (
+                index
+                for index, param in enumerate(visible)
+                if param["kind"] in {"r", "k"} and param["name"] == name
+            ),
+            var_kw,
+        )
+        if param_index is None:
+            return None
+        param = visible[param_index]
+        if param["kind"] not in {"v", "w"} and param_index in bound:
+            return None
+        bound.add(param_index)
+        if shape.target == ("kw", name):
+            target_param = param
+    if any(
+        param["kind"] not in {"v", "w"}
+        and not param["has_default"]
+        and index not in bound
+        for index, param in enumerate(visible)
+    ):
+        return None
+    return target_param
+
+
+def _status_for_fixture_call(
+    signature: dict[str, Any], shape: FixtureCallShape
+) -> tuple[str, str | None] | None:
+    if shape.access == "bound":
+        return None
+    branches = [
+        branch
+        for branch in signature.get("branch_specs", [])
+        if (
+            (shape.access == "module" and branch["kind"] == "m")
+            or (shape.access != "module" and branch["kind"] in {"i", "c", "s"})
+        )
+    ]
+    if not branches:
+        return None
+    if shape.access in {"bound", "class"} and len(
+        {branch["kind"] for branch in branches}
+    ) > 1:
+        return None
+    targets = [
+        target
+        for branch in branches
+        if (target := _bind_fixture_branch_target(branch, shape)) is not None
+    ]
+    if not targets:
+        return None
+    if not all(target["name"] == shape.subject_param for target in targets):
+        return None
+    unsupported = [target for target in targets if target["status"] == "unsupported"]
+    if unsupported:
+        reasons = {target["reason"] for target in unsupported}
+        for reason in (
+            "structured_binding_unsupported",
+            "structured_generic_metadata_unsupported",
+            "structured_param_type_unsupported",
+        ):
+            if reason in reasons:
+                return "unsupported", reason
+        return "unsupported", "structured_param_type_unsupported"
+    if (
+        len(targets) != 1
+        or shape.positional_count + len(shape.keyword_names) != 1
+    ):
+        return None
+    if targets[0]["status"] == "unconstrained":
+        return "unconstrained", None
+    if targets[0]["status"] == "supported":
+        return "supported", None
+    return None
 
 
 def resolve_generated_sig_key(
@@ -889,12 +1409,25 @@ def unenforceable_generated_param_reason(
             else reason
         )
     status = params[param]
+    resolved_reason = None
+    if status == "partial":
+        shape = parse_type_fixture_call_shape(path, key)
+        resolved = (
+            _status_for_fixture_call(sigs[key], shape)
+            if shape is not None
+            else None
+        )
+        if resolved is not None:
+            status, resolved_reason = resolved
     if status == "unconstrained":
         return "contract_unconstrained"
-    reason = sigs[key].get("param_reasons", {}).get(
-        param,
-        "structured_param_partial" if status == "partial" else "structured_param_unsupported",
-    )
+    reason = resolved_reason or sigs[key].get("param_reasons", {}).get(param)
+    if reason is None:
+        reason = (
+            "structured_param_partial"
+            if status == "partial"
+            else "structured_param_unsupported"
+        )
     if has_typevar_marker:
         return f"stale_typevar_unwalled_marker_{reason}"
     if status in {"partial", "unsupported"}:

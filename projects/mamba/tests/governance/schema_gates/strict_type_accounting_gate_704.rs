@@ -382,6 +382,384 @@ fn replacement_readiness_uses_strict_type_accounting_tool() {
 }
 
 #[test]
+fn partial_overload_accounting_binds_the_fixture_call_shape() {
+    let script = r#"
+import collections
+import importlib.util
+import pathlib
+import sys
+import tempfile
+
+tool = pathlib.Path("tests/harness/cpython/tools/strict_type_accounting.py")
+sys.path.insert(0, str(tool.parent))
+spec = importlib.util.spec_from_file_location("strict_type_accounting", tool)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+sigs = module.parse_generated_signature_param_index()
+assert sigs[("builtins", "list", "__getitem__")]["params"] == {
+    "i": "partial",
+    "s": "partial",
+}
+
+cases = [
+    (
+        "builtin-libs/builtins/list____getitem____i_as_SupportsIndex_wrong.py",
+        "bound", ("pos", 0), "structured_param_partial",
+    ),
+    (
+        "builtin-libs/builtins/frozenset____new____iterable_as_Iterable_wrong.py",
+        "class", ("pos", 1), "structured_param_partial",
+    ),
+    (
+        "std-libs/_sqlite3/adapt__alt_as__T_wrong.py",
+        "module", ("pos", 2), "structured_param_partial",
+    ),
+    (
+        "std-libs/contextlib/nullcontext__init__enter_result_as__T_wrong.py",
+        "constructor", ("pos", 0), "contract_unconstrained",
+    ),
+    (
+        "std-libs/asyncio_tasks/gather__coro_or_future1_as__FutureLike_wrong.py",
+        "module", ("pos", 0), "structured_param_partial",
+    ),
+    (
+        "std-libs/_curses/window__chgat__num_as_int_wrong.py",
+        "bound", ("pos", 0), "structured_param_partial",
+    ),
+    (
+        "std-libs/_curses/window__getstr__n_as_int_wrong.py",
+        "bound", ("pos", 0), "structured_param_partial",
+    ),
+]
+for relative, access, target, expected_reason in cases:
+    path = module.TYPE_DIR / relative
+    call, _param = module.parse_type_fixture_subject(path)
+    key = module.resolve_generated_sig_key(call, sigs)
+    assert key is not None
+    shape = module.parse_type_fixture_call_shape(path, key)
+    assert shape is not None
+    assert shape.access == access, (relative, shape)
+    assert shape.target == target, (relative, shape)
+    assert module.unenforceable_generated_param_reason(path, sigs) == expected_reason
+
+paths = module.executable_type_fixtures(sorted(module.TYPE_DIR.rglob("*.py")))
+partial_outcomes = collections.Counter()
+for path in paths:
+    parsed = module.parse_type_fixture_subject(path)
+    if parsed is None:
+        continue
+    call, param = parsed
+    key = module.resolve_generated_sig_key(call, sigs)
+    if key is None or sigs[key]["params"].get(param) != "partial":
+        continue
+    reason = module.unenforceable_generated_param_reason(path, sigs)
+    if reason is None:
+        partial_outcomes["supported"] += 1
+    elif reason == "contract_unconstrained":
+        partial_outcomes["unconstrained"] += 1
+    else:
+        partial_outcomes[reason] += 1
+assert partial_outcomes == {
+    "supported": 8,
+    "unconstrained": 2,
+    "structured_param_partial": 109,
+}
+
+unconstrained, unresolved = module.partition_generated_contract_coverage(paths, sigs)
+reasons = collections.Counter(item["reason"] for item in unresolved)
+assert reasons["structured_param_partial"] == 109
+assert {
+    pathlib.Path(item["path"]).name
+    for item in unresolved
+    if item["reason"] == "structured_param_partial"
+} >= {
+    "slice____new____start_as__T1_wrong.py",
+    "slice____new____start_as_typed_wrong.py",
+    "EnumMeta____call____names_as_typed_wrong.py",
+}
+assert any(
+    item["path"].endswith("nullcontext__init__enter_result_as__T_wrong.py")
+    for item in unconstrained
+)
+
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+    invalid = (
+        (
+            ("demo", "C", "method"),
+            "from demo import C\nreceiver.method(_W())",
+            "value",
+        ),
+        (
+            ("demo", "", "method"),
+            "from demo import method\nmethod(_W(), _W())",
+            "value",
+        ),
+        (
+            ("demo", "", "method"),
+            "from demo import method\nobj.method(_W())",
+            "value",
+        ),
+        (
+            ("demo", "", "method"),
+            "from demo import method\nmethod(_W())",
+            "other",
+        ),
+        (
+            ("demo", "", "method"),
+            "from demo import method\nmethod(*[_W()])",
+            "value",
+        ),
+        (
+            ("demo", "", "method"),
+            "from other import method\nmethod(_W())",
+            "value",
+        ),
+        (
+            ("demo", "C", "method"),
+            "from demo import C\nfrom other import Other\nobj = Other()\nobj.method(_W())",
+            "value",
+        ),
+        (
+            ("demo", "", "method"),
+            "from demo import method\nmethod = replacement\nmethod(_W())",
+            "value",
+        ),
+        (
+            ("demo", "C", "method"),
+            "from demo import C\nC = replacement\nC.method(_W())",
+            "value",
+        ),
+        (
+            ("demo", "C", "method"),
+            "from demo import C as Alias\nAlias.C.method(_W())",
+            "value",
+        ),
+        (
+            ("demo", "", "method"),
+            "def load():\n    from demo import method\nmethod(_W())",
+            "value",
+        ),
+        (
+            ("demo", "", "method"),
+            "if False:\n    from demo import method\nmethod(_W())",
+            "value",
+        ),
+        (
+            ("demo", "", "method"),
+            "from demo import method\ndef load(x=(method := replacement)):\n    pass\nmethod(_W())",
+            "value",
+        ),
+        (
+            ("demo", "", "method"),
+            "from demo import method\ndef load(x: (method := replacement)):\n    pass\nmethod(_W())",
+            "value",
+        ),
+        (
+            ("demo", "", "method"),
+            "from demo import method\nclass Rebind:\n    global method\n    method = replacement\nmethod(_W())",
+            "value",
+        ),
+        (
+            ("demo", "", "method"),
+            "from demo import method\n[(method := replacement) for _ in [0]]\nmethod(_W())",
+            "value",
+        ),
+        (
+            ("demo", "", "method"),
+            "from demo import method\nfrom other import *\nmethod(_W())",
+            "value",
+        ),
+        (
+            ("demo", "", "method"),
+            "from demo import method\ndef call():\n    method(_W())",
+            "value",
+        ),
+        (
+            ("demo", "", "method"),
+            "method(_W())\nfrom demo import method",
+            "value",
+        ),
+        (
+            ("demo", "C", "method"),
+            "from demo import C\nobj = Other.__new__(C)\nobj.method(_W())",
+            "value",
+        ),
+        (
+            ("demo", "C", "method"),
+            "from demo import C\nobj = object.__new__(C, _W())\nobj.method(_W())",
+            "value",
+        ),
+        (
+            ("demo", "C", "method"),
+            "from demo import C\nobj = C(_W())\nobj.method(_W())",
+            "value",
+        ),
+        (
+            ("demo", "C", "method"),
+            "from demo import C\nobj = C()\n(obj := Other())\nobj.method(_W())",
+            "value",
+        ),
+        (
+            ("demo", "C", "method"),
+            "from demo import C\ndef load():\n    obj = C()\nobj.method(_W())",
+            "value",
+        ),
+        (
+            ("demo", "C", "method"),
+            "from demo import C\nobj.method(_W())\nobj = C()",
+            "value",
+        ),
+        (
+            ("demo", "", "method"),
+            "from demo import method\nmethod(_W(), {'value': 0})",
+            "other",
+        ),
+        (
+            ("builtins", "", "len"),
+            "match 1:\n    case len:\n        pass\nlen(_W())",
+            "value",
+        ),
+    )
+    for index, (key, operation, marker_param) in enumerate(invalid):
+        fixture = tmp / f"ambiguous-{index}.py"
+        fixture.write_text(
+            '# subject = "demo.C.method(value: T)"\n'
+            'class _W:\n    pass\n'
+            f'{operation}  # {marker_param}: T <- wrong-typed\n',
+            encoding="utf-8",
+        )
+        assert module.parse_type_fixture_call_shape(fixture, key) is None
+
+    late_import = tmp / "late-import.py"
+    late_import.write_text(
+        '# subject = "demo.method(value: T)"\n'
+        'class _W:\n    pass\n'
+        'method(_W())  # value: T <- wrong-typed\n'
+        'from demo import method\n',
+        encoding="utf-8",
+    )
+    assert module.parse_type_fixture_call_shape(
+        late_import, ("demo", "", "method")
+    ) is None
+
+    late_receiver = tmp / "late-receiver.py"
+    late_receiver.write_text(
+        '# subject = "demo.C.method(value: T)"\n'
+        'class _W:\n    pass\n'
+        'from demo import C\n'
+        'obj.method(_W())  # value: T <- wrong-typed\n'
+        'obj = C()\n',
+        encoding="utf-8",
+    )
+    assert module.parse_type_fixture_call_shape(
+        late_receiver, ("demo", "C", "method")
+    ) is None
+
+    rebound_object = tmp / "rebound-object.py"
+    rebound_object.write_text(
+        '# subject = "demo.C.method(value: T)"\n'
+        'class _W:\n    pass\n'
+        'from demo import C\n'
+        'object = Other\n'
+        'obj = object.__new__(C)\n'
+        'obj.method(_W())  # value: T <- wrong-typed\n',
+        encoding="utf-8",
+    )
+    assert module.parse_type_fixture_call_shape(
+        rebound_object, ("demo", "C", "method")
+    ) is None
+
+    contextual_marker = tmp / "contextual-marker.py"
+    contextual_marker.write_text(
+        '# subject = "demo.method(value: T)"\n'
+        'class _W:\n    pass\n'
+        'from demo import method\n'
+        'method(_W())  # unrelated value: T <- wrong-typed trailing\n',
+        encoding="utf-8",
+    )
+    assert module.parse_type_fixture_call_shape(
+        contextual_marker, ("demo", "", "method")
+    ) is None
+
+    active_sentinel = tmp / "active-sentinel.py"
+    active_sentinel.write_text(
+        '# subject = "demo.method(value: T)"\n'
+        'class _W:\n'
+        '    def __init__(self, required):\n'
+        '        pass\n'
+        'from demo import method\n'
+        'method(_W())  # value: T <- wrong-typed\n',
+        encoding="utf-8",
+    )
+    assert module.parse_type_fixture_call_shape(
+        active_sentinel, ("demo", "", "method")
+    ) is None
+
+    class_alias = tmp / "class-alias.py"
+    class_alias.write_text(
+        '# subject = "demo.C.method(value: T)"\n'
+        'class _W:\n    pass\n'
+        'from demo import C as Alias\n'
+        'Alias.method(_W())  # value: T <- wrong-typed\n',
+        encoding="utf-8",
+    )
+    class_alias_shape = module.parse_type_fixture_call_shape(
+        class_alias, ("demo", "C", "method")
+    )
+    assert class_alias_shape is not None and class_alias_shape.access == "class"
+
+    nested_alias = tmp / "nested-class-alias.py"
+    nested_alias.write_text(
+        '# subject = "demo.Outer.Inner.method(value: T)"\n'
+        'class _W:\n    pass\n'
+        'from demo import Outer as Alias\n'
+        'Alias.Inner.method(_W())  # value: T <- wrong-typed\n',
+        encoding="utf-8",
+    )
+    nested_alias_shape = module.parse_type_fixture_call_shape(
+        nested_alias, ("demo", "Outer.Inner", "method")
+    )
+    assert nested_alias_shape is not None and nested_alias_shape.access == "class"
+
+    keyword = tmp / "keyword.py"
+    keyword.write_text(
+        '# subject = "demo.method(value: T)"\n'
+        'class _W:\n    pass\n'
+        'from demo import method\n'
+        'method(value=_W())  # value: T <- wrong-typed\n',
+        encoding="utf-8",
+    )
+    shape = module.parse_type_fixture_call_shape(keyword, ("demo", "", "method"))
+    assert shape is not None and shape.target == ("kw", "value")
+    param = {
+        "name": "value", "kind": "k", "has_default": False,
+        "implicit_receiver": False, "status": "supported", "reason": None,
+    }
+    branch = {"kind": "m", "ordered_params": [param]}
+    assert module._status_for_fixture_call({"branch_specs": [branch]}, shape) == (
+        "supported", None,
+    )
+    renamed = {**param, "name": "other"}
+    assert module._status_for_fixture_call(
+        {"branch_specs": [{"kind": "m", "ordered_params": [renamed]}]}, shape
+    ) is None
+    assert module._status_for_fixture_call(
+        {"branch_specs": [branch, branch]}, shape
+    ) is None
+    unconstrained = {**param, "status": "unconstrained"}
+    assert module._status_for_fixture_call(
+        {"branch_specs": [branch, {"kind": "m", "ordered_params": [unconstrained]}]},
+        shape,
+    ) is None
+"#;
+    assert_python_script(script, "fixture-specific overload accounting smoke");
+}
+
+#[test]
 fn non_runtime_typeshed_stubs_are_not_executable_type_fixtures() {
     let script = r#"
 import importlib.util
