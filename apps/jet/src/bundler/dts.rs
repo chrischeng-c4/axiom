@@ -2439,8 +2439,7 @@ export const SpAlert = Alert as AlertInterface;
     }
 
     #[test]
-    fn infers_object_assign_computed_key_arrow_property_multiple_members_same_literal_signature()
-    {
+    fn infers_object_assign_computed_key_arrow_property_multiple_members_same_literal_signature() {
         // R2 (#1262): non-regression stress control -- TWO separate
         // Object.assign({}, ...arr.map(cb))-valued arrow properties in the
         // same object literal (`parse` and `second`), each followed by
