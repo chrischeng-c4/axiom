@@ -357,7 +357,6 @@ impl TypeChecker {
                     Some(ret) => ret,
                     None => self.check_stdlib_call(func, args),
                 };
-                self.check_dict_operator_call(func, args);
                 match func_ty {
                     Ty::Fn {
                         params,
@@ -368,45 +367,6 @@ impl TypeChecker {
                             .iter()
                             .any(|a| matches!(a, CallArg::StarArg(_) | CallArg::DoubleStarArg(_)));
                         let has_kwargs = args.iter().any(|a| matches!(a, CallArg::Keyword { .. }));
-                        // #924: a handful of core builtins registered through
-                        // `def_builtin` (a separate mechanism from the
-                        // StdlibSig/`check_stdlib_call` path above) are
-                        // genuinely positional-only in CPython — no
-                        // `**kwargs`, no keyword-visible parameter names at
-                        // the C level. `chr(i=65)` raises `TypeError: chr()
-                        // takes no keyword arguments` even though `65` is
-                        // well-typed for `i`. The general Ty::Fn walk below
-                        // only checks types by param *position*/*name*; it has
-                        // no notion of "positional-only", so a well-typed
-                        // keyword call previously fell through uncaught to the
-                        // runtime dispatch, which packs the kwargs dict into
-                        // the positional slot and raises an unrelated
-                        // dict-shaped TypeError instead. Name-gated (mirrors
-                        // the `index_protocol_ok` name check below) and only
-                        // fires for the *unshadowed* builtin symbol — a
-                        // user-defined `def chr(...):` is unaffected.
-                        const POSITIONAL_ONLY_BUILTINS: &[&str] = &[
-                            "chr",
-                            "ord",
-                            "getattr",
-                            "hasattr",
-                            "setattr",
-                            "format",
-                            "isinstance",
-                            "issubclass",
-                        ];
-                        if has_kwargs {
-                            if let Some(name) = func_name.as_deref() {
-                                if POSITIONAL_ONLY_BUILTINS.contains(&name)
-                                    && self.is_unshadowed_builtin(name)
-                                {
-                                    self.error(
-                                        expr.span,
-                                        format!("{name}() takes no keyword arguments"),
-                                    );
-                                }
-                            }
-                        }
                         let positional_count = args
                             .iter()
                             .filter(|a| matches!(a, CallArg::Positional(_)))
@@ -518,45 +478,11 @@ impl TypeChecker {
                                         if let Some(last) = checked_arg_types.last_mut() {
                                             *last = Some(at);
                                         }
-                                        // chr/hex/oct/bin accept any class
-                                        // defining __index__ (SupportsIndex
-                                        // protocol — CPython calls the dunder
-                                        // at runtime). The wall stays up for
-                                        // scalars without the protocol
-                                        // (chr(1.5) is still rejected here).
-                                        let index_protocol_ok =
-                                            matches!(
-                                                func_name.as_deref(),
-                                                Some("chr" | "hex" | "oct" | "bin")
-                                            ) && matches!(self.tcx.get(expected), Ty::Int)
-                                                && match self.tcx.get(at) {
-                                                    Ty::Class {
-                                                        name,
-                                                        role: ClassRole::Instance,
-                                                        user,
-                                                        ..
-                                                    } => user
-                                                        .as_ref()
-                                                        .and_then(|user| {
-                                                            self.class_methods_by_symbol
-                                                                .get(&user.symbol)
-                                                        })
-                                                        .or_else(|| {
-                                                            user.is_none()
-                                                                .then(|| self.class_methods.get(name))
-                                                                .flatten()
-                                                        })
-                                                        .is_some_and(|methods| {
-                                                            methods.contains_key("__index__")
-                                                        }),
-                                                    _ => false,
-                                                };
                                         let bytes_literal_str_mismatch = matches!(
                                             (self.tcx.get(expected), &a.node),
                                             (Ty::Str, Expr::BytesLit(_))
                                         );
                                         if !structured_stdlib_authoritative
-                                            && !index_protocol_ok
                                             && (bytes_literal_str_mismatch
                                                 || !self.types_compatible(expected, at))
                                         {
@@ -1264,47 +1190,6 @@ impl TypeChecker {
                     self.ty_name(expected),
                     got,
                 ),
-            );
-        }
-    }
-
-    /// Strict dict operator wall for receiver-known `dict[...]` values.
-    ///
-    /// `dict | other` accepts mapping-like values such as `UserDict`, while
-    /// `dict |= other` also accepts iterable key/value pairs. Until protocols are
-    /// modeled here, only reject values that are provably neither: concrete
-    /// scalars and bare user-class instances.
-    fn check_dict_operator_call(&mut self, func: &Spanned<Expr>, args: &[CallArg]) {
-        let Expr::Attr { object, attr } = &func.node else {
-            return;
-        };
-        if !matches!(attr.as_str(), "__ior__" | "__or__" | "__ror__") {
-            return;
-        }
-        let receiver_ty = self.check_expr(object);
-        if !matches!(self.tcx.get(receiver_ty), Ty::Dict(_, _)) {
-            return;
-        }
-        let Some(CallArg::Positional(arg)) = args.first() else {
-            return;
-        };
-        let actual = self.check_expr(arg);
-        let bare_arg = match self.tcx.get(actual) {
-            Ty::Class {
-                name,
-                user: Some(user),
-                ..
-            } if self.user_bare_class_symbols.contains(&user.symbol) => Some(name.clone()),
-            Ty::Class {
-                name, user: None, ..
-            } if self.user_bare_classes.contains(name) => Some(name.clone()),
-            _ => None,
-        };
-        if self.is_concrete_scalar(actual) || bare_arg.is_some() {
-            let got = bare_arg.unwrap_or_else(|| self.ty_name(actual));
-            self.error(
-                arg.span,
-                format!("argument type mismatch: expected `mapping`, got `{got}`"),
             );
         }
     }
