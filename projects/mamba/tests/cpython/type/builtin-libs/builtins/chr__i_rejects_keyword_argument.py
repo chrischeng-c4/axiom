@@ -19,17 +19,11 @@
 with a keyword, `chr(i=65)`, raises `TypeError: chr() takes no keyword
 arguments` even though `65` is a perfectly well-typed `SupportsIndex` value.
 
-This is the #924 gap: `chr`/`ord`/`getattr`/`hasattr`/`setattr`/`format`/
-`isinstance`/`issubclass` are dual-registered through `def_builtin`'s general
-Ty::Fn call-checking mechanism (src/types/check_expr.rs), a separate path from
-`check_stdlib_call`/StdlibSig. That path had no concept of "positional-only" —
-a well-typed keyword call fell through uncaught to the runtime dispatch, which
-packed the kwargs dict into the positional argument slot and raised an
-unrelated `TypeError: 'dict' object cannot be interpreted as an integer`
-instead of CPython's clean message. The companion case
-`chr__i_as_SupportsIndex_wrong.py` covers the pre-existing wrong-TYPE wall;
-this one covers the wrong-CALL-SHAPE wall (#881 landed the equivalent for the
-StdlibSig path; this is its def_builtin/Ty::Fn twin)."""
+The generated TypeSpec contract retains `/` as `ParamSpecKind::PosOnly`, and
+its structured binder is authoritative for call shape even though runtime
+builtin registration also exposes a `Ty::Fn`. The companion case
+`chr__i_as_SupportsIndex_wrong.py` covers the argument type contract; this
+fixture independently locks positional-only binding."""
 
 try:
     chr(i=65)  # chr is positional-only; ANY keyword arg is rejected

@@ -4927,6 +4927,45 @@ fn test_direct_builtin_typed_argument_rejected_unless_shadowed() {
 }
 
 #[test]
+fn generated_builtin_binder_owns_positional_only_calls() {
+    for (name, source) in [
+        ("chr", "chr(i=65)\n"),
+        ("ord", "ord(c=\"a\")\n"),
+        (
+            "getattr",
+            "getattr(object=object(), name=\"missing\", default=None)\n",
+        ),
+        ("hasattr", "hasattr(obj=object(), name=\"missing\")\n"),
+        (
+            "setattr",
+            "setattr(obj=object(), name=\"value\", value=1)\n",
+        ),
+        ("format", "format(value=1, format_spec=\"\")\n"),
+        (
+            "isinstance",
+            "isinstance(obj=1, class_or_tuple=int)\n",
+        ),
+        (
+            "issubclass",
+            "issubclass(cls=int, class_or_tuple=object)\n",
+        ),
+    ] {
+        let errors = check(source);
+        assert_eq!(
+            errors.len(),
+            1,
+            "generated builtins.{name} must be the sole keyword-binding authority: {errors:?}"
+        );
+    }
+
+    let errors = check("def chr(i):\n    return i\nchr(i=65)\n");
+    assert!(
+        errors.is_empty(),
+        "a user-shadowed builtin name must retain ordinary keyword binding: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_bool_bitwise_wrong_scalar_rejected() {
     let errors = check("from builtins import bool\nobj = bool()\nobj.__and__(\"bad\")\n");
     assert!(
@@ -5207,23 +5246,27 @@ fn test_dict_receiver_generic_key_methods() {
 }
 
 #[test]
-fn test_dict_operator_negative_mapping_walls() {
+fn generated_dict_operator_contracts_replace_mapping_wall() {
     let errors = check("obj: dict[str, int] = {}\nobj.__or__(12345)\nobj.__ror__(\"bad\")\n");
+    assert_eq!(
+        errors.len(),
+        2,
+        "each invalid dict union operand must produce one generated diagnostic: {errors:?}"
+    );
     assert!(
-        errors
-            .iter()
-            .filter(|e| e.contains("expected `mapping`"))
-            .count()
-            >= 2,
-        "dict union operators should reject concrete scalar operands, got: {errors:?}"
+        parameter_error_count(&errors, "value") == 2,
+        "generated dict union contracts should reject concrete scalar operands: {errors:?}"
     );
 
     let errors = check("class _W:\n    pass\nobj: dict[str, int] = {}\nobj.__ior__(_W())\n");
+    assert_eq!(
+        errors.len(),
+        1,
+        "an invalid dict update operand must produce one generated diagnostic: {errors:?}"
+    );
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("expected `mapping`, got `_W`")),
-        "dict.__ior__(_W()) should reject a bare non-mapping operand, got: {errors:?}"
+        has_parameter_error(&errors, "value"),
+        "generated dict.__ior__ must reject a bare non-mapping operand: {errors:?}"
     );
 
     let errors = check(
@@ -5239,7 +5282,7 @@ fn test_dict_operator_negative_mapping_walls() {
     );
     assert!(
         errors.is_empty(),
-        "dict operator wall must stay skip-safe for mapping-like, iterable-pair, and dynamic operands, got: {errors:?}"
+        "generated dict contracts must accept mapping-like, iterable-pair, and dynamic operands: {errors:?}"
     );
 }
 
@@ -5807,6 +5850,46 @@ fn typeshed_structured_supports_index_checks_protocol_members() {
         gradual.is_empty(),
         "Any must keep protocol matching indeterminate rather than rejected: {gradual:?}"
     );
+}
+
+#[test]
+fn generated_builtin_supports_index_contracts_replace_name_gates() {
+    let valid = check(
+        "class Good:\n\
+         \x20   def __index__(self) -> int:\n\
+         \x20       return 65\n\
+         char: str = chr(Good())\n\
+         hexadecimal: str = hex(Good())\n\
+         octal: str = oct(Good())\n\
+         binary: str = bin(Good())\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "generated SupportsIndex contracts must accept a complete implementation: {valid:?}"
+    );
+
+    for (label, source) in [
+        (
+            "wrong return",
+            "class Bad:\n    def __index__(self) -> str:\n        return \"bad\"\nchr(Bad())\n",
+        ),
+        ("missing method", "class Missing:\n    pass\nhex(Missing())\n"),
+        (
+            "shadowed builtin",
+            "class Good:\n    def __index__(self) -> int:\n        return 65\ndef chr(value: int) -> str:\n    return \"x\"\nchr(Good())\n",
+        ),
+    ] {
+        let errors = check(source);
+        assert_eq!(
+            errors.len(),
+            1,
+            "{label} must produce one generated diagnostic: {errors:?}"
+        );
+        assert!(
+            errors.iter().any(|error| error.contains("type mismatch")),
+            "{label} must be rejected by the active contract: {errors:?}"
+        );
+    }
 }
 
 #[test]

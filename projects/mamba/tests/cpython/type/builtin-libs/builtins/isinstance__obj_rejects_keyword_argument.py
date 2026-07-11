@@ -20,16 +20,11 @@ in CPython — calling it with keywords, `isinstance(obj=1, class_or_tuple=int)`
 raises `TypeError: isinstance() takes no keyword arguments` even though both
 values are well-typed.
 
-This is the #924 gap: `isinstance`/`issubclass`/`chr`/`ord`/`getattr`/
-`hasattr`/`setattr`/`format` are dual-registered through `def_builtin`'s
-general Ty::Fn call-checking mechanism (src/types/check_expr.rs), a separate
-path from `check_stdlib_call`/StdlibSig. That path had no concept of
-"positional-only" — a well-typed keyword call fell through uncaught to the
-runtime dispatch instead of raising CPython's clean message. The companion
-case `isinstance__class_or_tuple_as__ClassInfo_wrong.py` covers the
-pre-existing wrong-TYPE wall; this one covers the wrong-CALL-SHAPE wall (#881
-landed the equivalent for the StdlibSig path; this is its def_builtin/Ty::Fn
-twin)."""
+The generated TypeSpec contract retains `/` as `ParamSpecKind::PosOnly`, and
+its structured binder is authoritative for call shape even though runtime
+builtin registration also exposes a `Ty::Fn`. The companion case
+`isinstance__class_or_tuple_as__ClassInfo_wrong.py` covers the argument type
+contract; this fixture independently locks positional-only binding."""
 
 try:
     isinstance(obj=1, class_or_tuple=int)  # isinstance is positional-only
