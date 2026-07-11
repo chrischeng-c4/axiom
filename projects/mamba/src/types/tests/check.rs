@@ -3469,7 +3469,7 @@ fn repeated_classes_preserve_numeric_and_index_traits_by_symbol() {
          -OldNumeric(1)\n\
          -Numeric()\n\
          class Indexed:\n\
-         \x20   def __index__(self) -> int:\n\
+         \x20   def __index__(this) -> int:\n\
          \x20       return 1\n\
          OldIndexed = Indexed\n\
          class Indexed:\n\
@@ -3987,9 +3987,9 @@ fn test_stdlib_list_dunder_contracts_rejected() {
     let errors = check(
         "class _W:\n    pass\nobj = []\nobj.__getitem__(_W())\nobj.__delitem__(_W())\nobj.__setitem__(_W(), None)\n",
     );
-    let key_errors = parameter_error_count(&errors, "key");
+    let bare_errors = bare_instance_parameter_error_count(&errors);
     assert_eq!(
-        key_errors, 3,
+        bare_errors, 3,
         "list key dunders should reject bare key operands, got: {errors:?}"
     );
 
@@ -4117,10 +4117,9 @@ fn test_stdlib_slice_new_contracts_rejected() {
     let errors = check(
         "from builtins import slice\nclass _W:\n    pass\nslice.__new__(slice, _W())\nslice.__new__(slice, _W(), None)\nslice.__new__(slice, None, _W())\n",
     );
-    let typed_errors = bare_instance_parameter_error_count(&errors);
-    assert_eq!(
-        typed_errors, 3,
-        "slice.__new__ should reject bare start/stop instances, got: {errors:?}"
+    assert!(
+        errors.is_empty(),
+        "slice payloads are unconstrained and must accept user instances: {errors:?}"
     );
 
     let errors = check(
@@ -4255,7 +4254,7 @@ fn test_stdlib_property_descriptor_contracts_rejected() {
     let typed_errors = bare_instance_parameter_error_count(&errors);
     assert_eq!(
         typed_errors, 5,
-        "property descriptor protocol slots should reject bare user instances, got: {errors:?}"
+        "property callable and owner slots should reject incompatible instances, got: {errors:?}"
     );
 
     let errors = check(
@@ -4296,9 +4295,7 @@ fn test_stdlib_reversed_new_protocol_sequence_rejected() {
         "from builtins import reversed\nclass _W:\n    pass\nreversed.__new__(reversed, _W())\n",
     );
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `sequence`")),
+        has_parameter_error(&errors, "sequence"),
         "reversed.__new__(reversed, _W()) should reject a bare non-sequence instance, got: {errors:?}"
     );
 
@@ -4410,7 +4407,7 @@ fn test_property_zero_arg_is_callable() {
     );
 }
 
-// ── ① Type-wall PoC: stdlib argument enforcement ─────────────────────────────
+// Strict stdlib argument enforcement.
 
 #[test]
 fn test_stdlib_module_fn_wrong_scalar_rejected() {
@@ -4489,6 +4486,12 @@ fn test_stdlib_path_or_fd_wall_keeps_valid_overloads_clean() {
         "listdir(float) should be rejected, got: {errors:?}"
     );
 
+    let errors = check("import os\nos.scandir(1.234)\n");
+    assert!(
+        !errors.is_empty(),
+        "scandir(float) should be rejected through constrained GenericPath: {errors:?}"
+    );
+
     let errors = check("from os import listdir\nclass _W: pass\nlistdir(_W())\n");
     assert!(
         errors.iter().any(|e| e.contains("argument type mismatch")),
@@ -4500,17 +4503,13 @@ fn test_stdlib_path_or_fd_wall_keeps_valid_overloads_clean() {
 fn test_stdlib_fileinput_files_typed_wall_rejected() {
     let errors = check("class _W:\n    pass\nfrom fileinput import input\ninput(_W())\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `files`")),
+        has_parameter_error(&errors, "files"),
         "fileinput.input(_W()) should reject the files arg, got: {errors:?}"
     );
 
     let errors = check("class _W:\n    pass\nfrom fileinput import FileInput\nFileInput(_W())\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `files`")),
+        has_parameter_error(&errors, "files"),
         "fileinput.FileInput(_W()) should reject the files arg, got: {errors:?}"
     );
 
@@ -4639,17 +4638,13 @@ fn test_stdlib_exception_group_typed_method_rejects_bare_instance() {
 fn test_direct_builtin_typed_argument_rejected_unless_shadowed() {
     let errors = check("class _W:\n    pass\naiter(_W())\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `async_iterable`")),
+        has_parameter_error(&errors, "async_iterable"),
         "direct builtin aiter(_W()) should reject a bare instance, got: {errors:?}"
     );
 
     let errors = check("class _W:\n    pass\nanext(_W(), None)\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `i`")),
+        has_parameter_error(&errors, "i"),
         "direct builtin anext(_W(), None) should reject a bare instance, got: {errors:?}"
     );
 
@@ -4683,21 +4678,21 @@ fn test_stdlib_set_operator_bare_instance_rejected() {
     let errors =
         check("from builtins import set\nclass _W:\n    pass\nobj = set()\nobj.__and__(_W())\nobj.__ge__(_W())\nobj.__gt__(_W())\nobj.__iand__(_W())\nobj.__ior__(_W())\nobj.__isub__(_W())\nobj.__ixor__(_W())\nobj.__le__(_W())\nobj.__lt__(_W())\nobj.__or__(_W())\nobj.__sub__(_W())\nobj.__xor__(_W())\n");
     assert!(
-        errors
-            .iter()
-            .filter(|e| e.contains("does not satisfy parameter `value`"))
-            .count()
-            >= 12,
+        parameter_error_count(&errors, "value") >= 12,
         "set operators should reject bare non-AbstractSet operands, got: {errors:?}"
     );
 
     let errors = check(
         "from builtins import set\nclass SetLike:\n    def __contains__(self, item):\n        return False\nobj = set()\nobj.__and__(set())\nobj.__ior__(SetLike())\n",
     );
-    assert!(
-        errors.is_empty(),
-        "set operator wall must stay skip-safe for modeled/dynamic set-like operands, got: {errors:?}"
+    assert_eq!(
+        parameter_error_count(&errors, "value"),
+        1,
+        "AbstractSet is nominal; __contains__ alone must not satisfy it: {errors:?}"
     );
+
+    let errors = check("obj = set()\nobj.__and__(set())\nobj.__ior__(frozenset())\n");
+    assert!(errors.is_empty(), "real set operands must remain valid: {errors:?}");
 }
 
 #[test]
@@ -4705,20 +4700,23 @@ fn test_stdlib_frozenset_operator_bare_instance_rejected() {
     let errors =
         check("from builtins import frozenset\nclass _W:\n    pass\nobj = frozenset()\nobj.__and__(_W())\nobj.__ge__(_W())\nobj.__gt__(_W())\nobj.__le__(_W())\nobj.__lt__(_W())\nobj.__or__(_W())\nobj.__sub__(_W())\nobj.__xor__(_W())\n");
     assert!(
-        errors
-            .iter()
-            .filter(|e| e.contains("does not satisfy parameter `value`"))
-            .count()
-            >= 8,
+        parameter_error_count(&errors, "value") >= 8,
         "frozenset operators should reject bare non-AbstractSet operands, got: {errors:?}"
     );
 
     let errors = check(
         "from builtins import frozenset\nclass SetLike:\n    def __contains__(self, item):\n        return False\nobj = frozenset()\nobj.__and__(frozenset())\nobj.__ge__(SetLike())\n",
     );
+    assert_eq!(
+        parameter_error_count(&errors, "value"),
+        1,
+        "AbstractSet is nominal; __contains__ alone must not satisfy it: {errors:?}"
+    );
+
+    let errors = check("obj = frozenset()\nobj.__and__(set())\nobj.__ge__(frozenset())\n");
     assert!(
         errors.is_empty(),
-        "frozenset operator wall must stay skip-safe for modeled/dynamic set-like operands, got: {errors:?}"
+        "real set/frozenset operands must remain valid: {errors:?}"
     );
 }
 
@@ -4728,9 +4726,7 @@ fn test_stdlib_frozenset_new_iterable_rejected() {
         "from builtins import frozenset\nclass _W:\n    pass\nfrozenset.__new__(frozenset, _W())\n",
     );
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `iterable`")),
+        has_parameter_error(&errors, "iterable"),
         "frozenset.__new__(frozenset, _W()) should reject a bare non-Iterable operand, got: {errors:?}"
     );
 }
@@ -4767,7 +4763,7 @@ fn test_stdlib_bytes_bytearray_constructor_overload_walls() {
     assert!(
         errors
             .iter()
-            .any(|e| e.contains("does not satisfy parameter `source`")),
+            .any(|e| e.contains("argument type mismatch")),
         "bytes(_W()) should reject a bare source instance, got: {errors:?}"
     );
 
@@ -4815,9 +4811,7 @@ fn test_stdlib_bytearray_release_buffer_rejects_scalar() {
 fn test_stdlib_complex_constructor_and_dunder_walls() {
     let errors = check("from builtins import complex\nclass _W:\n    pass\ncomplex(_W())\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `real`")),
+        has_parameter_error(&errors, "real"),
         "complex(_W()) should reject a bare real argument, got: {errors:?}"
     );
 
@@ -4876,9 +4870,7 @@ fn test_stdlib_float_pow_round_walls() {
         "from builtins import float\nclass _W:\n    pass\nobj = float()\nobj.__round__(_W())\n",
     );
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `ndigits`")),
+        has_parameter_error(&errors, "ndigits"),
         "float.__round__(_W()) should reject a bare SupportsIndex miss, got: {errors:?}"
     );
 
@@ -4980,18 +4972,14 @@ fn test_stdlib_classmethod_wrong_bare_instance_rejected() {
         "from builtins import classmethod\nclass _W:\n    pass\nobj = classmethod(lambda cls: None)\nobj.__get__(_W())\n",
     );
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `instance`")),
-        "classmethod.__get__(_W()) should be rejected, got: {errors:?}"
+        errors.is_empty(),
+        "classmethod.__get__ accepts an unconstrained instance operand: {errors:?}"
     );
 
     let errors =
         check("from builtins import classmethod\nclass _W:\n    pass\nclassmethod(_W())\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `f`")),
+        has_parameter_error(&errors, "f"),
         "classmethod(_W()) should be rejected, got: {errors:?}"
     );
 
@@ -5010,18 +4998,14 @@ fn test_stdlib_staticmethod_wrong_bare_instance_rejected() {
         "from builtins import staticmethod\nclass _W:\n    pass\nobj = staticmethod(lambda: None)\nobj.__get__(_W())\n",
     );
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `instance`")),
-        "staticmethod.__get__(_W()) should be rejected, got: {errors:?}"
+        errors.is_empty(),
+        "staticmethod.__get__ accepts an unconstrained instance operand: {errors:?}"
     );
 
     let errors =
         check("from builtins import staticmethod\nclass _W:\n    pass\nstaticmethod(_W())\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `f`")),
+        has_parameter_error(&errors, "f"),
         "staticmethod(_W()) should be rejected, got: {errors:?}"
     );
 
@@ -5085,9 +5069,7 @@ fn test_stdlib_int_pow_value_rejected() {
         "from builtins import int\nclass _W:\n    pass\nobj = int()\nobj.__pow__(_W(), None)\n",
     );
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `value`")),
+        has_parameter_error(&errors, "value"),
         "int.__pow__(_W(), None) should reject a bare value operand, got: {errors:?}"
     );
 
@@ -5103,9 +5085,7 @@ fn test_stdlib_int_pow_value_rejected() {
 fn test_stdlib_filter_wrong_bare_function_rejected() {
     let errors = check("from builtins import filter\nclass _W:\n    pass\nfilter(_W(), [])\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `function`")),
+        has_parameter_error(&errors, "function"),
         "filter(_W(), []) should reject a bare non-callable instance, got: {errors:?}"
     );
 
@@ -5127,17 +5107,13 @@ fn test_stdlib_filter_wrong_bare_function_rejected() {
 fn test_stdlib_isinstance_classinfo_rejected() {
     let errors = check("class _W:\n    pass\nisinstance(None, _W())\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `class_or_tuple`")),
+        has_parameter_error(&errors, "class_or_tuple"),
         "isinstance(None, _W()) should reject a bare classinfo operand, got: {errors:?}"
     );
 
     let errors = check("class _W:\n    pass\nisinstance(None, (int, _W()))\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `class_or_tuple`")),
+        has_parameter_error(&errors, "class_or_tuple"),
         "isinstance(None, (int, _W())) should reject a bare classinfo tuple element, got: {errors:?}"
     );
 
@@ -5154,10 +5130,7 @@ fn test_stdlib_isinstance_classinfo_rejected() {
          isinstance(None, ValueError(\"boom\"))\n",
     );
     assert_eq!(
-        errors
-            .iter()
-            .filter(|error| error.contains("does not satisfy parameter `class_or_tuple`"))
-            .count(),
+        parameter_error_count(&errors, "class_or_tuple"),
         1,
         "builtin class objects are valid classinfo but their instances are not: {errors:?}"
     );
@@ -5171,10 +5144,7 @@ fn test_stdlib_isinstance_classinfo_rejected() {
          isinstance(None, value)\n",
     );
     assert_eq!(
-        errors
-            .iter()
-            .filter(|error| error.contains("does not satisfy parameter `class_or_tuple`"))
-            .count(),
+        parameter_error_count(&errors, "class_or_tuple"),
         1,
         "class-object aliases are valid classinfo while instance variables are not: {errors:?}"
     );
@@ -5192,7 +5162,7 @@ fn test_stdlib_isinstance_classinfo_rejected() {
 }
 
 #[test]
-fn test_stdlib_unenforceable_never_rejected() {
+fn test_stdlib_unknown_and_protocol_contracts_are_distinct() {
     // base64.b64encode(s: ReadableBuffer) -> Unknown: NOT enforceable. Even a
     // blatantly wrong int must NOT be rejected.
     let errors = check("from base64 import b64encode\nb64encode(123)\n");
@@ -5200,11 +5170,11 @@ fn test_stdlib_unenforceable_never_rejected() {
         errors.is_empty(),
         "b64encode(int) must NOT be rejected (ReadableBuffer->Unknown), got: {errors:?}"
     );
-    // math.factorial(x: SupportsIndex) -> Unknown: NOT enforceable.
+    // SupportsIndex is generated structural data, not an Unknown escape hatch.
     let errors = check("from math import factorial\nfactorial(3.0)\n");
     assert!(
-        errors.is_empty(),
-        "factorial(float) must NOT be rejected (SupportsIndex->Unknown), got: {errors:?}"
+        has_parameter_error(&errors, "x"),
+        "factorial(float) must be rejected by SupportsIndex, got: {errors:?}"
     );
 }
 
@@ -5487,6 +5457,148 @@ fn typeshed_generic_module_function_rejects_wrong_result_annotation() {
 }
 
 #[test]
+fn typeshed_structured_supports_index_checks_protocol_members() {
+    let valid = check(
+        "from operator import index\n\
+         class Good:\n\
+         \x20   def __index__(self) -> int:\n\
+         \x20       return 1\n\
+         class Inherited(Good):\n\
+         \x20   pass\n\
+         class Numeric(int):\n\
+         \x20   pass\n\
+         class Root:\n\
+         \x20   def __index__(self) -> str:\n\
+         \x20       return \"bad\"\n\
+         class Left(Root):\n\
+         \x20   pass\n\
+         class Right(Root):\n\
+         \x20   def __index__(self) -> int:\n\
+         \x20       return 1\n\
+         class Diamond(Left, Right):\n\
+         \x20   pass\n\
+         value: int = index(Good())\n\
+         inherited: int = index(Inherited())\n\
+         numeric_subclass: int = index(Numeric(1))\n\
+         diamond: int = index(Diamond())\n\
+         builtin: int = index(1)\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "a complete SupportsIndex implementation and int must be accepted: {valid:?}"
+    );
+
+    let wrong_return = check(
+        "from operator import index\n\
+         class BadReturn:\n\
+         \x20   def __index__(that) -> str:\n\
+         \x20       return \"bad\"\n\
+         index(BadReturn())\n",
+    );
+    assert!(
+        wrong_return
+            .iter()
+            .any(|error| error.contains("argument type mismatch")),
+        "a protocol method with the wrong return type must be rejected: {wrong_return:?}"
+    );
+
+    let missing = check(
+        "from operator import index\n\
+         class Missing:\n\
+         \x20   pass\n\
+         index(Missing())\n",
+    );
+    assert!(
+        missing
+            .iter()
+            .any(|error| error.contains("argument type mismatch")),
+        "a closed class missing __index__ must be rejected: {missing:?}"
+    );
+
+    let gradual = check("from operator import index\nvalue: Any = object()\nindex(value)\n");
+    assert!(
+        gradual.is_empty(),
+        "Any must keep protocol matching indeterminate rather than rejected: {gradual:?}"
+    );
+}
+
+#[test]
+fn typeshed_protocol_keyword_parameter_names_are_enforced() {
+    let valid = check(
+        "from argparse import ArgumentParser, HelpFormatter\n\
+         class Formatter:\n\
+         \x20   def __call__(self, *, prog: str) -> HelpFormatter:\n\
+         \x20       pass\n\
+         ArgumentParser(formatter_class=Formatter())\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "matching keyword-only protocol parameters must be accepted: {valid:?}"
+    );
+
+    let invalid = check(
+        "from argparse import ArgumentParser, HelpFormatter\n\
+         class Formatter:\n\
+         \x20   def __call__(self, *, wrong: str) -> HelpFormatter:\n\
+         \x20       pass\n\
+         ArgumentParser(formatter_class=Formatter())\n",
+    );
+    assert!(
+        invalid
+            .iter()
+            .any(|error| error.contains("argument type mismatch")),
+        "a renamed keyword-only protocol parameter must be rejected: {invalid:?}"
+    );
+}
+
+#[test]
+fn typeshed_indeterminate_contract_does_not_fall_back_to_compact_wall() {
+    let errors = check(
+        "from dataclasses import asdict\n\
+         class W:\n\
+         \x20   __dataclass_fields__ = {}\n\
+         asdict(W())\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "an incomplete generated protocol must stay indeterminate instead of falling back to the compact bare-class heuristic: {errors:?}"
+    );
+}
+
+#[test]
+fn typeshed_structured_projects_builtin_containers_to_abc_contracts() {
+    let valid = check(
+        "from operator import concat\n\
+         from operator import delitem\n\
+         import timeit\n\
+         from distutils.sysconfig import expand_makefile_vars\n\
+         concat([1], [2])\n\
+         delitem([1], 0)\n\
+         timeit.main([\"-n\", \"1\"])\n\
+         expand_makefile_vars(\"$(NAME)\", {\"NAME\": \"mamba\"})\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "list and dict must project to Sequence and Mapping: {valid:?}"
+    );
+
+    for source in [
+        "from operator import concat\nconcat(1, [2])\n",
+        "from operator import delitem\ndelitem((1,), 0)\n",
+        "import timeit\ntimeit.main(1)\n",
+        "from distutils.sysconfig import expand_makefile_vars\nexpand_makefile_vars(\"x\", [])\n",
+    ] {
+        let errors = check(source);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("argument type mismatch")),
+            "a non-container must be rejected by its generated ABC contract: {source:?} => {errors:?}"
+        );
+    }
+}
+
+#[test]
 fn typeshed_structured_binder_enforces_required_extra_and_duplicate_arguments() {
     for (source, needle) in [
         ("from copy import copy\ncopy()\n", "missing required parameter `x`"),
@@ -5536,6 +5648,16 @@ fn typeshed_structured_literal_overloads_match_exact_ast_values() {
             .iter()
             .any(|error| error.contains("argument type mismatch")),
         "a value outside the Literal set must be rejected: {invalid:?}"
+    );
+
+    let gradual = check(
+        "import time\n\
+         def inspect_clock(name):\n\
+         \x20   time.get_clock_info(name)\n",
+    );
+    assert!(
+        gradual.is_empty(),
+        "a dynamic value must keep Literal matching indeterminate: {gradual:?}"
     );
 }
 

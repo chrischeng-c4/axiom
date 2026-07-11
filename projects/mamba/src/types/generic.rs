@@ -603,11 +603,11 @@ fn unify_for_inference_step(
                 role: arg_role,
                 external: Some(arg_external),
                 ..
-            } = arg_ty
+            } = &arg_ty
             {
                 if param_external.module == arg_external.module
                     && param_external.name == arg_external.name
-                    && param_role == arg_role
+                    && param_role == *arg_role
                     && param_external.args.len() == arg_external.args.len()
                 {
                     for (param_arg, concrete_arg) in
@@ -616,6 +616,54 @@ fn unify_for_inference_step(
                         unify_for_inference_inner(
                             *param_arg,
                             *concrete_arg,
+                            type_vars,
+                            subst,
+                            conflicts,
+                            tcx,
+                            visiting,
+                        );
+                    }
+                    return;
+                }
+            }
+            if param_role != super::ty::ClassRole::Instance
+                || param_external.module != "typing"
+            {
+                return;
+            }
+            let projected = match (param_external.name.as_str(), arg_ty) {
+                (
+                    "Iterable" | "Collection" | "Sequence" | "MutableSequence",
+                    Ty::List(item),
+                )
+                | ("Iterable" | "Collection", Ty::Set(item)) => Some(vec![item]),
+                ("Iterable" | "Collection", Ty::Dict(key, _)) => Some(vec![key]),
+                ("Mapping" | "MutableMapping", Ty::Dict(key, value)) => {
+                    Some(vec![key, value])
+                }
+                (
+                    "Iterable" | "Collection" | "Sequence",
+                    Ty::Str,
+                ) => Some(vec![tcx.str()]),
+                (
+                    "Iterable" | "Collection" | "Sequence" | "MutableSequence",
+                    Ty::Class {
+                        external: Some(actual),
+                        ..
+                    },
+                ) if actual.module == "builtins" && actual.name == "bytearray" => {
+                    Some(vec![tcx.int()])
+                }
+                _ => None,
+            };
+            if let Some(projected) = projected {
+                if projected.len() == param_external.args.len() {
+                    for (param_arg, concrete_arg) in
+                        param_external.args.iter().zip(projected)
+                    {
+                        unify_for_inference_inner(
+                            *param_arg,
+                            concrete_arg,
                             type_vars,
                             subst,
                             conflicts,

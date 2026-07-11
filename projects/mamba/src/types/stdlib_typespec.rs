@@ -28,6 +28,10 @@ pub struct SourceSpanSpecId(pub u32);
 #[serde(transparent)]
 pub struct TypeUseSpecId(pub u32);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(transparent)]
+pub struct ClassSpecId(pub u32);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct TableRange(pub u32, pub u32);
 
@@ -136,6 +140,63 @@ pub struct AliasSpec {
     pub target: TypeSpecId,
     pub type_params: TableRange,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum ClassSpecKind {
+    #[serde(rename = "n")]
+    Nominal,
+    #[serde(rename = "p")]
+    Protocol,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(from = "ClassSpecWire")]
+pub struct ClassSpec {
+    pub module: StrSpecId,
+    pub qualifier: StrSpecId,
+    pub name: StrSpecId,
+    pub kind: ClassSpecKind,
+    pub type_params: TableRange,
+    pub bases: TableRange,
+    pub methods: TableRange,
+    pub source: SourceSpanSpecId,
+    pub method_only_complete: bool,
+}
+
+#[derive(Deserialize)]
+struct ClassSpecWire(
+    StrSpecId,
+    StrSpecId,
+    StrSpecId,
+    ClassSpecKind,
+    TableRange,
+    TableRange,
+    TableRange,
+    SourceSpanSpecId,
+    bool,
+);
+
+impl From<ClassSpecWire> for ClassSpec {
+    fn from(value: ClassSpecWire) -> Self {
+        Self {
+            module: value.0,
+            qualifier: value.1,
+            name: value.2,
+            kind: value.3,
+            type_params: value.4,
+            bases: value.5,
+            methods: value.6,
+            source: value.7,
+            method_only_complete: value.8,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+struct ClassExportSpec(StrSpecId, StrSpecId, ClassSpecId);
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+struct CallableExportSpec(StrSpecId, StrSpecId, StrSpecId, StrSpecId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct SourceSpanSpec(
@@ -289,6 +350,11 @@ struct StdlibSpecManifest {
     type_params: Vec<TypeParamSpec>,
     type_param_edges: Vec<TypeParamSpecId>,
     aliases: Vec<AliasSpec>,
+    classes: Vec<ClassSpec>,
+    class_method_edges: Vec<u32>,
+    class_exports: Vec<ClassExportSpec>,
+    callable_exports: Vec<CallableExportSpec>,
+    class_callables: Vec<CallableSpec>,
     source_spans: Vec<SourceSpanSpec>,
     type_uses: Vec<TypeUseSpec>,
     params: Vec<ParamSpec>,
@@ -301,7 +367,7 @@ static MANIFEST: LazyLock<StdlibSpecManifest> = LazyLock::new(|| {
     let manifest: StdlibSpecManifest =
         serde_json::from_str(super::stdlib_specs_generated::MANIFEST_JSON)
             .expect("generated typeshed TypeSpec manifest must be valid");
-    assert_eq!(manifest.schema, 1, "unsupported typeshed TypeSpec schema");
+    assert_eq!(manifest.schema, 2, "unsupported typeshed TypeSpec schema");
     manifest
 });
 
@@ -337,6 +403,33 @@ pub fn alias(module: &str, name: &str) -> Option<&'static AliasSpec> {
     })
 }
 
+pub fn class_by_id(id: ClassSpecId) -> &'static ClassSpec {
+    &MANIFEST.classes[id.0 as usize]
+}
+
+pub fn class_spec(module: &str, name: &str) -> Option<(ClassSpecId, &'static ClassSpec)> {
+    let export = MANIFEST.class_exports.iter().find(|export| {
+        string(export.0) == module && string(export.1) == name
+    })?;
+    Some((export.2, class_by_id(export.2)))
+}
+
+pub fn class_bases(class: &ClassSpec) -> &'static [TypeSpecId] {
+    edges(class.bases)
+}
+
+pub fn class_type_params(class: &ClassSpec) -> &'static [TypeParamSpecId] {
+    type_param_edges(class.type_params)
+}
+
+pub fn class_methods(
+    class: &ClassSpec,
+) -> impl Iterator<Item = &'static CallableSpec> + use<> {
+    MANIFEST.class_method_edges[class.methods.bounds()]
+        .iter()
+        .map(|id| &MANIFEST.class_callables[*id as usize])
+}
+
 pub fn decorators(range: TableRange) -> impl Iterator<Item = &'static str> {
     MANIFEST.decorators[range.bounds()].iter().map(|id| string(*id))
 }
@@ -362,11 +455,33 @@ pub fn overloads<'a>(
     qualifier: &'a str,
     name: &'a str,
 ) -> impl Iterator<Item = &'static CallableSpec> + 'a {
+    let (module, qualifier, name) = if qualifier.is_empty() {
+        MANIFEST
+            .callable_exports
+            .iter()
+            .find(|export| string(export.0) == module && string(export.1) == name)
+            .map(|export| {
+                (
+                    string(export.2).to_string(),
+                    String::new(),
+                    string(export.3).to_string(),
+                )
+            })
+            .unwrap_or_else(|| (module.to_string(), String::new(), name.to_string()))
+    } else if let Some((_id, class)) = class_spec(module, qualifier) {
+        (
+            string(class.module).to_string(),
+            string(class.qualifier).to_string(),
+            name.to_string(),
+        )
+    } else {
+        (module.to_string(), qualifier.to_string(), name.to_string())
+    };
     MANIFEST.callables.iter().filter(move |sig| {
         sig.py312
-            && string(sig.module) == module
-            && string(sig.qualifier) == qualifier
-            && string(sig.name) == name
+            && string(sig.module) == module.as_str()
+            && string(sig.qualifier) == qualifier.as_str()
+            && string(sig.name) == name.as_str()
     })
 }
 
@@ -409,6 +524,54 @@ mod tests {
             assert_eq!(visible.len(), 1);
             assert_eq!(visible[0].kind, ParamSpecKind::PosOnly);
         }
+    }
+
+    #[test]
+    fn generated_manifest_canonicalizes_collections_abc_exports() {
+        for name in ["Iterable", "Sequence", "Mapping"] {
+            let (_, class) = class_spec("collections.abc", name)
+                .unwrap_or_else(|| panic!("collections.abc.{name} class spec"));
+            assert_eq!(string(class.module), "typing");
+            assert_eq!(string(class.qualifier), name);
+        }
+    }
+
+    #[test]
+    fn generated_manifest_canonicalizes_public_callable_exports() {
+        let sig = overloads("operator", "", "index")
+            .next()
+            .expect("operator.index canonical callable");
+        assert_eq!(string(sig.module), "_operator");
+        assert_eq!(string(sig.name), "index");
+    }
+
+    #[test]
+    fn generated_manifest_preserves_complete_supports_index_protocol() {
+        let (_, class) = class_spec("typing", "SupportsIndex").expect("SupportsIndex spec");
+        assert_eq!(class.kind, ClassSpecKind::Protocol);
+        assert!(class.method_only_complete);
+        let methods: Vec<_> = class_methods(class)
+            .filter(|method| method.py312)
+            .collect();
+        assert_eq!(methods.len(), 1);
+        assert_eq!(string(methods[0].name), "__index__");
+    }
+
+    #[test]
+    fn generated_manifest_marks_attribute_protocols_incomplete() {
+        let (_, class) = class_spec("_typeshed", "DataclassInstance")
+            .expect("DataclassInstance spec");
+        assert_eq!(class.kind, ClassSpecKind::Protocol);
+        assert!(!class.method_only_complete);
+    }
+
+    #[test]
+    fn generated_manifest_excludes_future_only_classes_from_py312() {
+        assert!(class_spec("http.server", "_SSLModule").is_none());
+        assert!(MANIFEST.classes.iter().all(|class| {
+            (string(class.module), string(class.qualifier))
+                != ("http.server", "_SSLModule")
+        }));
     }
 
     #[test]
