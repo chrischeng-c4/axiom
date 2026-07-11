@@ -824,8 +824,14 @@ struct ServeArgs {
     raft_port: u16,
     /// Physical storage shard count. Data ownership uses the versioned
     /// virtual-bucket map, not permanent `hash % shardCount` routing.
-    #[arg(long, env = "SHARD_COUNT", default_value_t = 1)]
-    shard_count: u32,
+    /// Deliberately `Option<u32>` with no `default_value_t`: this is the
+    /// only clap-native way to tell "the operator/user actually set
+    /// `--shard-count`/`SHARD_COUNT`" (`Some`) apart from "nobody set it"
+    /// (`None`) — the segment-dirs fan-in path (below) needs that
+    /// distinction to default to the loaded-dir count instead of silently
+    /// assuming 1 (#1398 R4). Non-fan-in call sites treat `None` as 1.
+    #[arg(long, env = "SHARD_COUNT")]
+    shard_count: Option<u32>,
     /// Directory for RDB snapshots (cold-start baseline). When unset,
     /// no snapshots are taken and a node rebuilds from the full log.
     #[arg(long, env = "LUMEN_DATA_DIR")]
@@ -2213,9 +2219,20 @@ async fn serve(args: ServeArgs) -> Result<()> {
         // instead of always assuming the balanced default — queries for
         // buckets moved by a completed autonomous split must land on their
         // new physical shard.
-        let shard_map = lumen::config::shard_map_from_env(args.shard_count).context(
+        //
+        // #1398 R4: the physical shard count that map is built for defaults
+        // to the number of loaded dirs (matching `EngineShardSearch::new`'s
+        // original behavior) unless `--shard-count`/`SHARD_COUNT` was
+        // explicitly set — see `fan_in_shard_count`'s doc comment for why
+        // `args.shard_count` has to be `Option<u32>` to make that
+        // distinction. A mismatch between the resolved count and the
+        // actual loaded-dir count fails startup instead of silently
+        // under-routing.
+        let fan_in_shard_count = lumen::config::fan_in_shard_count(args.shard_count, shards.len());
+        let shard_map = lumen::config::shard_map_from_env(fan_in_shard_count).context(
             "shard map from env (SHARD_MAP_VERSION/SHARD_MAP_ASSIGNMENTS/VIRTUAL_BUCKET_COUNT)",
         )?;
+        lumen::config::check_fan_in_shard_count(&shard_map, shards.len())?;
         tracing::info!(
             shard_count = shards.len(),
             shard_map_version = shard_map.version(),
@@ -2340,7 +2357,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&bind)
         .await
         .with_context(|| format!("bind {bind}"))?;
-    tracing::info!(addr = %bind, shard_count = args.shard_count, "lumen serve listening");
+    tracing::info!(addr = %bind, shard_count = args.shard_count.unwrap_or(1), "lumen serve listening");
 
     let grace = Duration::from_secs(args.grace_secs);
     // Serve HTTP/1.1 + h2c on one port through the shared service HTTP shell,

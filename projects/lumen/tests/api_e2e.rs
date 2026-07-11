@@ -337,6 +337,93 @@ async fn search_shard_map_from_env_falls_back_to_balanced_when_unset() {
     assert_eq!(eids, vec!["u3", "u1"]);
 }
 
+// #1398 R4/AC3: the `--search-shard-segment-dirs` fan-in path used to feed
+// `shard_map_from_env` straight from clap's `default_value_t = 1` when
+// `SHARD_COUNT` wasn't set, so `a,b,c` silently built a 1-shard map and
+// searched only dir `a` on routed queries. `lumen::config::fan_in_shard_count`
+// now derives the default from the loaded-dir count instead, and
+// `check_fan_in_shard_count` fails startup fast on a mismatch. These two
+// tests exercise the same production call sequence `serve()`'s fan-in
+// branch runs (`fan_in_shard_count` -> `shard_map_from_env` ->
+// `check_fan_in_shard_count`), then prove the resulting map actually routes
+// correctly end-to-end through the real HTTP router — `serve()` itself
+// can't be exercised in-process (it binds a real listener), matching this
+// file's existing `search_routes_by_shard_map_from_env_assignments` pattern.
+#[tokio::test]
+async fn search_shard_segment_dirs_routes_across_all_loaded_dirs_without_shard_count() {
+    let _g = SHARD_MAP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    clear_shard_map_env();
+
+    // Simulate `--search-shard-segment-dirs a,b,c` loading 3 segment roots
+    // with no SHARD_COUNT/--shard-count set (`ServeArgs::shard_count` is
+    // `None`).
+    let loaded_dirs = 3usize;
+    let fan_in_shard_count = lumen::config::fan_in_shard_count(None, loaded_dirs);
+    assert_eq!(
+        fan_in_shard_count, 3,
+        "must derive from the loaded-dir count"
+    );
+    let shard_map =
+        lumen::config::shard_map_from_env(fan_in_shard_count).expect("shard map from env");
+    lumen::config::check_fan_in_shard_count(&shard_map, loaded_dirs)
+        .expect("derived count matches loaded dirs");
+    clear_shard_map_env();
+
+    let shard0 = test_search_shard([("shard0_only", "a@x.com", 1)]);
+    let shard1 = test_search_shard([("shard1_only", "a@x.com", 1)]);
+    let shard2 = test_search_shard([("shard2_only", "a@x.com", 1)]);
+    let state = lumen::api::AppState::open(Arc::new(lumen::storage::Engine::new()))
+        .with_search_backend(Arc::new(EngineShardSearch::new_with_shard_map(
+            vec![shard0, shard1, shard2],
+            shard_map.clone(),
+        )));
+    let s = TestServer::new(lumen::api::router(state)).expect("test server");
+
+    for (bucket, expected_eid) in [(0, "shard0_only"), (1, "shard1_only"), (2, "shard2_only")] {
+        let key = routing_key_for_bucket(&shard_map, "users", bucket);
+        let resp = s
+            .post("/collections/users/search")
+            .json(&json!({
+                "query": { "term": { "field": "email", "value": "a@x.com" } },
+                "routing_key": key,
+                "limit": 10
+            }))
+            .await;
+        resp.assert_status_ok();
+        let body: Value = resp.json();
+        assert_eq!(
+            body["total"], 1,
+            "bucket {bucket} should hit exactly one shard"
+        );
+        assert_eq!(body["hits"][0]["external_id"], expected_eid);
+    }
+}
+
+#[test]
+fn search_shard_segment_dirs_mismatched_explicit_shard_count_fails_fast() {
+    let _g = SHARD_MAP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    clear_shard_map_env();
+
+    // An explicit --shard-count/SHARD_COUNT=3 with only 2 dirs actually
+    // loaded must not silently search a subset of shards — startup bails.
+    let loaded_dirs = 2usize;
+    let fan_in_shard_count = lumen::config::fan_in_shard_count(Some(3), loaded_dirs);
+    assert_eq!(fan_in_shard_count, 3, "an explicit count is always honored");
+    let shard_map =
+        lumen::config::shard_map_from_env(fan_in_shard_count).expect("shard map from env");
+    let err = lumen::config::check_fan_in_shard_count(&shard_map, loaded_dirs).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains('3'),
+        "error should name the declared count: {msg}"
+    );
+    assert!(
+        msg.contains('2'),
+        "error should name the loaded-dir count: {msg}"
+    );
+    clear_shard_map_env();
+}
+
 fn eid_for_document_shard(collection_id: &str, shard: usize, shard_count: usize) -> String {
     for i in 0..10_000 {
         let eid = format!("u{shard}_{i}");

@@ -762,6 +762,30 @@ fn llm_outline_mentions_docs_replace() {
     );
 }
 
+/// #1398 R5/AC4: the workflow topic must disclose that `X-Read-Consistency:
+/// bounded(<ms>)` always rejects on a follower today (no real replication
+/// lag measurement yet — a follower reports the "lag unknown" sentinel),
+/// and that the headerless/unrecognized default stays `leader`, so this
+/// text can't silently regress back to promising follower reads "at or
+/// under the bound".
+#[test]
+fn llm_workflow_discloses_bounded_read_consistency_narrowing() {
+    let g = llm_workflow_md();
+    for needle in [
+        "X-Read-Consistency",
+        "leader` — the default",
+        "always rejects today",
+        "lag unknown",
+        "do not rely on it to read from a follower",
+        "standalone deployments (no",
+    ] {
+        assert!(
+            g.to_lowercase().contains(&needle.to_lowercase()),
+            "workflow missing read-consistency disclosure `{needle}`"
+        );
+    }
+}
+
 #[test]
 fn llm_integration_recommends_postgres_alloydb_adapter_boundary() {
     let integration = llm_integration_md();
