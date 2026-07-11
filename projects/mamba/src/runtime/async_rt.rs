@@ -768,51 +768,85 @@ pub(crate) enum CoroutineAwaitPoll {
     Error,
 }
 
-pub(crate) fn mb_coroutine_send_for_await(
-    coro_handle: MbValue,
-    value: MbValue,
-) -> CoroutineAwaitPoll {
-    let Some(id) = coro_handle.as_int().map(|id| id as u64) else {
-        return CoroutineAwaitPoll::Error;
-    };
-    if COMPLETED_COROUTINES.read().unwrap().contains(id) {
-        raise_runtime_error("cannot reuse already awaited coroutine");
-        return CoroutineAwaitPoll::Error;
-    }
-    let Some((state, exhausted, running)) = COROUTINES
+#[derive(Clone, Copy)]
+pub(crate) struct CoroutineAwaitState {
+    pub id: u64,
+    pub state: u32,
+    pub exhausted: bool,
+    pub running: bool,
+    pub awaiting: bool,
+    pub result: Option<MbValue>,
+    pub pending_await: Option<MbValue>,
+    pub pending_await_coro_id: Option<u64>,
+}
+
+fn coroutine_await_state_by_id(id: u64) -> Option<CoroutineAwaitState> {
+    COROUTINES
         .read()
         .unwrap()
         .get(&id)
-        .map(|c| (c.state, c.exhausted, c.running))
-    else {
-        return CoroutineAwaitPoll::Error;
-    };
-    if exhausted {
-        let result = COROUTINES
-            .read()
-            .unwrap()
-            .get(&id)
-            .and_then(|c| c.result)
-            .unwrap_or_else(MbValue::none);
+        .map(|c| CoroutineAwaitState {
+            id,
+            state: c.state,
+            exhausted: c.exhausted,
+            running: c.running,
+            awaiting: c.awaiting,
+            result: c.result,
+            pending_await: c.pending_await,
+            pending_await_coro_id: c.pending_await_coro_id,
+        })
+}
+
+pub(crate) fn coroutine_await_state(coro_handle: MbValue) -> Option<CoroutineAwaitState> {
+    coro_handle
+        .as_int()
+        .map(|id| id as u64)
+        .and_then(coroutine_await_state_by_id)
+}
+
+pub(crate) fn live_await_target_state(coro_like: MbValue) -> Option<CoroutineAwaitState> {
+    if let Some(id) = coro_like.as_int().map(|id| id as u64) {
+        if let Some(state) = coroutine_await_state_by_id(id) {
+            return Some(state);
+        }
+    }
+    let target = coroutine_wrapper_target(coro_like)?;
+    target
+        .as_int()
+        .map(|id| id as u64)
+        .and_then(coroutine_await_state_by_id)
+}
+
+pub(crate) fn mb_coroutine_send_for_await_state(
+    coro_handle: MbValue,
+    snapshot: CoroutineAwaitState,
+    value: MbValue,
+) -> CoroutineAwaitPoll {
+    if snapshot.exhausted {
+        let result = snapshot.result.unwrap_or_else(MbValue::none);
         unsafe {
             super::rc::retain_if_ptr(result);
         }
         return CoroutineAwaitPoll::Complete(result);
     }
-    if running {
+    if snapshot.running {
         super::exception::mb_raise(
             new_str("ValueError"),
             new_str("coroutine already executing"),
         );
         return CoroutineAwaitPoll::Error;
     }
-    if state == 0 && !value.is_none() {
+    if snapshot.state == 0 && !value.is_none() {
         raise_type_error("can't send non-None value to a just-started coroutine");
         return CoroutineAwaitPoll::Error;
     }
 
-    if let Some(resumed) = super::async_task::mb_coroutine_resume_pending_await(coro_handle, value)
-    {
+    if let Some(resumed) = super::async_task::mb_coroutine_resume_pending_await_state(
+        snapshot.id,
+        snapshot.pending_await_coro_id,
+        snapshot.pending_await,
+        value,
+    ) {
         match resumed {
             super::async_task::AwaitResume::Yield(yielded) => {
                 if super::exception::current_exception_type().is_some() {
@@ -852,6 +886,23 @@ pub(crate) fn mb_coroutine_send_for_await(
     }
 
     CoroutineAwaitPoll::Yielded(step.value)
+}
+
+pub(crate) fn mb_coroutine_send_for_await(
+    coro_handle: MbValue,
+    value: MbValue,
+) -> CoroutineAwaitPoll {
+    let Some(id) = coro_handle.as_int().map(|id| id as u64) else {
+        return CoroutineAwaitPoll::Error;
+    };
+    if COMPLETED_COROUTINES.read().unwrap().contains(id) {
+        raise_runtime_error("cannot reuse already awaited coroutine");
+        return CoroutineAwaitPoll::Error;
+    }
+    let Some(snapshot) = coroutine_await_state_by_id(id) else {
+        return CoroutineAwaitPoll::Error;
+    };
+    mb_coroutine_send_for_await_state(coro_handle, snapshot, value)
 }
 
 pub fn mb_coroutine_send(coro_handle: MbValue, value: MbValue) -> MbValue {

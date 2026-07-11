@@ -273,11 +273,12 @@ fn try_resume_live_coroutine_like(
     iterator: MbValue,
     value: MbValue,
 ) -> Option<LiveCoroutineResume> {
-    let coro_id = super::async_rt::live_await_target_coroutine_id(iterator)?;
+    let snapshot = super::async_rt::live_await_target_state(iterator)?;
+    let coro_id = snapshot.id;
     let coro = MbValue::from_int(coro_id as i64);
     Some(LiveCoroutineResume {
         coro_id,
-        resumed: match super::async_rt::mb_coroutine_send_for_await(coro, value) {
+        resumed: match super::async_rt::mb_coroutine_send_for_await_state(coro, snapshot, value) {
             super::async_rt::CoroutineAwaitPoll::Yielded(yielded) => AwaitResume::Yield(yielded),
             super::async_rt::CoroutineAwaitPoll::Complete(result) => {
                 super::async_rt::tombstone_completed_coroutine(coro);
@@ -391,8 +392,12 @@ fn throw_await_iterator(iterator: MbValue, exc_type: MbValue, exc_msg: MbValue) 
 }
 
 fn resume_pending_live_coroutine(coro_id: u64, value: MbValue) -> AwaitResume {
+    let Some(snapshot) = super::async_rt::coroutine_await_state(MbValue::from_int(coro_id as i64))
+    else {
+        return AwaitResume::Yield(MbValue::none());
+    };
     let coro = MbValue::from_int(coro_id as i64);
-    match super::async_rt::mb_coroutine_send_for_await(coro, value) {
+    match super::async_rt::mb_coroutine_send_for_await_state(coro, snapshot, value) {
         super::async_rt::CoroutineAwaitPoll::Yielded(yielded) => AwaitResume::Yield(yielded),
         super::async_rt::CoroutineAwaitPoll::Complete(result) => {
             super::async_rt::tombstone_completed_coroutine(coro);
@@ -402,16 +407,12 @@ fn resume_pending_live_coroutine(coro_id: u64, value: MbValue) -> AwaitResume {
     }
 }
 
-pub(crate) fn mb_coroutine_resume_pending_await(
-    coro_handle: MbValue,
+pub(crate) fn mb_coroutine_resume_pending_await_state(
+    id: u64,
+    pending_coro_id: Option<u64>,
+    pending: Option<MbValue>,
     value: MbValue,
 ) -> Option<AwaitResume> {
-    let id = coro_handle.as_int()? as u64;
-    let (pending_coro_id, pending) = {
-        let coros = COROUTINES.read().unwrap();
-        let coro = coros.get(&id)?;
-        (coro.pending_await_coro_id, coro.pending_await)
-    };
     let resumed = if let Some(pending_coro_id) = pending_coro_id {
         resume_pending_live_coroutine(pending_coro_id, value)
     } else {
@@ -430,6 +431,19 @@ pub(crate) fn mb_coroutine_resume_pending_await(
         }
     }
     Some(resumed)
+}
+
+pub(crate) fn mb_coroutine_resume_pending_await(
+    coro_handle: MbValue,
+    value: MbValue,
+) -> Option<AwaitResume> {
+    let snapshot = super::async_rt::coroutine_await_state(coro_handle)?;
+    mb_coroutine_resume_pending_await_state(
+        snapshot.id,
+        snapshot.pending_await_coro_id,
+        snapshot.pending_await,
+        value,
+    )
 }
 
 pub(crate) fn mb_coroutine_throw_pending_await(
@@ -722,8 +736,8 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
         // not treat it as an unknown coroutine — driving a non-existent
         // coroutine wastes the 100k iteration budget and surfaces as
         // `None` to the caller.
-        let known = COROUTINES.read().unwrap().contains_key(&(id as u64));
-        if !known {
+        let snapshot = super::async_rt::coroutine_await_state(awaitable);
+        if snapshot.is_none() {
             if super::async_rt::is_completed_coroutine(awaitable) {
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
@@ -739,13 +753,8 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
             }
             return raise_non_awaitable(awaitable);
         }
-        let already_awaited = COROUTINES
-            .read()
-            .unwrap()
-            .get(&(id as u64))
-            .map(|c| c.awaiting && !c.exhausted)
-            .unwrap_or(false);
-        if already_awaited {
+        let snapshot = snapshot.unwrap();
+        if snapshot.awaiting && !snapshot.exhausted {
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
                 MbValue::from_ptr(MbObject::new_str(
@@ -755,14 +764,8 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
             return MbValue::none();
         }
         // Fast path: coroutine already complete
-        let (state, exhausted) = COROUTINES
-            .read()
-            .unwrap()
-            .get(&(id as u64))
-            .map(|c| (c.state, c.exhausted))
-            .unwrap_or((0, true));
-        if exhausted {
-            if state != 0 {
+        if snapshot.exhausted {
+            if snapshot.state != 0 {
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
                     MbValue::from_ptr(MbObject::new_str(
@@ -771,12 +774,7 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
                 );
                 return MbValue::none();
             }
-            let result = COROUTINES
-                .read()
-                .unwrap()
-                .get(&(id as u64))
-                .and_then(|c| c.result)
-                .unwrap_or(MbValue::none());
+            let result = snapshot.result.unwrap_or(MbValue::none());
             unsafe {
                 super::rc::retain_if_ptr(result);
             }
