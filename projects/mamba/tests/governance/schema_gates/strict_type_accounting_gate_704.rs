@@ -259,11 +259,11 @@ assert module.is_generated_typespec_inactive_type_fixture(inactive_fixture)
 assert inactive_fixture not in module.executable_type_fixtures([inactive_fixture])
 
 private_fixture = module.TYPE_DIR / "std-libs/_heapq/_heapify_max__heap_as_list_wrong.py"
-assert not module.is_generated_typespec_inactive_type_fixture(private_fixture)
-assert private_fixture in module.executable_type_fixtures([private_fixture])
+assert not private_fixture.exists()
 
 expanded = module.parse_generated_signature_param_index()
 canonical = module.parse_generated_signature_param_index(expand_exports=False)
+assert ("_heapq", "", "_heapify_max") not in expanded
 assert ("ntpath", "", "commonpath") in expanded
 assert ("ntpath", "", "commonpath") not in canonical
 assert ("asyncio", "AbstractEventLoopPolicy", "get_event_loop") in expanded
@@ -471,6 +471,9 @@ assert partial_outcomes == {
 unconstrained, unresolved = module.partition_generated_contract_coverage(paths, sigs)
 reasons = collections.Counter(item["reason"] for item in unresolved)
 assert reasons["structured_param_partial"] == 109
+assert "structured_param_missing" not in reasons
+assert "structured_signature_missing" not in reasons
+assert not any(reason.startswith("stale_typevar_unwalled_marker_") for reason in reasons)
 assert {
     pathlib.Path(item["path"]).name
     for item in unresolved
@@ -571,6 +574,16 @@ with tempfile.TemporaryDirectory() as tmp:
         (
             ("demo", "", "method"),
             "from demo import method\nfrom other import *\nmethod(_W())",
+            "value",
+        ),
+        (
+            ("demo", "", "method"),
+            "from demo import method\nraise TypeError('setup')\nmethod(_W())",
+            "value",
+        ),
+        (
+            ("demo", "", "method"),
+            "from demo import method\ntry:\n    raise TypeError('setup')\n    method(_W())\nexcept TypeError:\n    pass",
             "value",
         ),
         (
@@ -697,6 +710,40 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     assert module.parse_type_fixture_call_shape(
         active_sentinel, ("demo", "", "method")
+    ) is None
+
+    trailing_typeerror = tmp / "trailing-typeerror.py"
+    trailing_typeerror.write_text(
+        '# subject = "demo.method(value: T)"\n'
+        'class _W:\n    pass\n'
+        'from demo import method\n'
+        'try:\n'
+        '    method(_W())  # value: T <- wrong-typed\n'
+        '    raise TypeError("after")\n'
+        'except TypeError:\n'
+        '    print("typeerror:")\n',
+        encoding="utf-8",
+    )
+    assert module.parse_type_fixture_call_shape(
+        trailing_typeerror, ("demo", "", "method")
+    ) is None
+
+    forged_handler = tmp / "forged-handler.py"
+    forged_handler.write_text(
+        '# subject = "demo.method(value: T)"\n'
+        'class _W:\n    pass\n'
+        'from demo import method\n'
+        'try:\n'
+        '    method(_W())  # value: T <- wrong-typed\n'
+        '    print("no_typeerror:")\n'
+        'except Exception as e:\n'
+        '    print("typeerror:", type(e).__name__)\n'
+        'except BaseException as e:\n'
+        '    print("setup_or_other:", type(e).__name__)\n',
+        encoding="utf-8",
+    )
+    assert module.parse_type_fixture_call_shape(
+        forged_handler, ("demo", "", "method")
     ) is None
 
     class_alias = tmp / "class-alias.py"
@@ -1476,6 +1523,18 @@ assert gen_module.is_signature_param_not_wrongable("dataclasses", "", "is_datacl
 assert not gen_module.is_signature_param_not_wrongable("aifc", "Aifc_read", "getmark", "id")
 assert not gen_module.is_signature_param_not_wrongable("argparse", "ArgumentParser", "error", "message")
 assert not gen_module.is_signature_param_not_wrongable("array", "array", "__mul__", "value")
+
+class_body = ast.parse('''
+class Demo:
+    @staticmethod
+    def _static(value: int): ...
+    @classmethod
+    def _class(cls, value: int): ...
+    @staticmethod
+    def visible(value: int): ...
+''').body[0].body
+rows = list(gen_module._walk_class(class_body, "demo", "Demo", {"smethod"}))
+assert [row["func"] for row in rows] == ["visible"]
 "#;
     let output = Command::new("python3.12")
         .arg("-c")
@@ -1489,6 +1548,26 @@ assert not gen_module.is_signature_param_not_wrongable("array", "array", "__mul_
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+
+    let root = mamba_root();
+    let curses = root.join("tests/cpython/type/std-libs/_curses");
+    for method in ["clearok", "idlok", "keypad", "leaveok", "nodelay", "notimeout"] {
+        assert!(
+            curses
+                .join(format!("window__{method}__flag_as_bool_wrong.py"))
+                .exists(),
+            "canonical _curses {method}(flag: bool) fixture is missing"
+        );
+    }
+
+    let copy = fs::read_to_string(
+        root.join(
+            "tests/cpython/type/std-libs/multiprocessing_sharedctypes/copy__obj_as__CT_wrong.py",
+        ),
+    )
+    .expect("read sharedctypes.copy strict fixture");
+    assert!(copy.contains("# mamba-strict-type: TypeError"));
+    assert!(!copy.contains("TypeVar param must stay unwalled"));
 }
 
 #[test]

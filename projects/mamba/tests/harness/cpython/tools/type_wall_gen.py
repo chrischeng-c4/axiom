@@ -295,11 +295,11 @@ def _walk_class(body, mod, cls, kinds, v312=True):
             is_property_deleter = "deleter" in decos
             if is_property_getter or is_property_deleter:
                 continue
+            if m.name.startswith("_") and not (
+                m.name.startswith("__") and m.name.endswith("__")
+            ):
+                continue
             if is_property_setter:
-                if m.name.startswith("_") and not (
-                    m.name.startswith("__") and m.name.endswith("__")
-                ):
-                    continue
                 kind = "property"
             elif m.name == "__init__":
                 kind = "init"
@@ -307,8 +307,6 @@ def _walk_class(body, mod, cls, kinds, v312=True):
                 kind = "smethod"
             elif m.name.startswith("__") and m.name.endswith("__"):
                 kind = "method"          # dunder -> obj.__x__(wrong)
-            elif m.name.startswith("_"):
-                continue                  # single-underscore private
             else:
                 kind = "method"
             if kind in kinds:

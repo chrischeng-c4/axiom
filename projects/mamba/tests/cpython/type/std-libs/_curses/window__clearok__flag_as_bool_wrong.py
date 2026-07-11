@@ -6,25 +6,25 @@
 # bucket = "std-libs"
 # lib = "_curses"
 # dimension = "type"
-# case = "window__nodelay__yes_as_bool_wrong"
-# subject = "_curses.window.nodelay(yes: bool)"
+# case = "window__clearok__flag_as_bool_wrong"
+# subject = "_curses.window.clearok(flag: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed yes"
+# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed flag"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_curses.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed yes
+# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed flag
 # mamba-strict-type: TypeError
-"""Type wall: _curses.window.nodelay(yes: bool); call it with the wrong type.
+"""Type wall: _curses.window.clearok(flag: bool); call it with the wrong type.
 
-typeshed contract: yes is bool. mamba is force-typed, so a wrong-typed
+typeshed contract: flag is bool. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from _curses import window
 obj = object.__new__(window)
 try:
-    obj.nodelay("not_a_bool")  # yes: bool <- wrong-typed
+    obj.clearok("not_a_bool")  # flag: bool <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
