@@ -6248,16 +6248,65 @@ fn validate_and_adapt_declared_frame(func: MbValue, items: &mut [MbValue]) -> bo
     };
     let fname = callable_display_name(func);
     for (param, value) in params.iter().zip(items.iter_mut()) {
-        // The packed containers for variadic declarations are not scalar
-        // values. Element/value enforcement is intentionally a later slice.
-        if matches!(param.kind, 2 | 4) {
-            continue;
-        }
-        if let Some(contract) = param
+        let contract = param
             .contract
             .as_deref()
-            .and_then(runtime_scalar_contract)
-        {
+            .and_then(runtime_scalar_contract);
+        match param.kind {
+            // The packed entry container is ABI state, not the declared
+            // scalar. Validate only its elements, retaining the original list
+            // and element identities for the callee. Variadic containers never
+            // participate in scalar entry-ABI adaptation, even when their
+            // element contract is absent or unsupported.
+            2 => {
+                if let Some(contract) = contract {
+                    let elements = value.as_ptr().and_then(|ptr| unsafe {
+                        match &(*ptr).data {
+                            ObjData::List(lock) => Some(lock.read().unwrap().clone()),
+                            _ => None,
+                        }
+                    });
+                    if let Some(elements) = elements {
+                        if let Some((index, actual)) = elements
+                            .iter()
+                            .enumerate()
+                            .find(|(_, actual)| strict_scalar_value(**actual, contract).is_none())
+                        {
+                            raise_type_error(format!(
+                                "{fname}() variadic argument '{}' at index {index} expected {}, got {}",
+                                param.name,
+                                param.annotation.as_deref().unwrap_or("object"),
+                                value_type_name(*actual)
+                            ));
+                            return false;
+                        }
+                    }
+                }
+                continue;
+            }
+            // Likewise, inspect values in the packed kwargs dict without
+            // rebuilding or unboxing the entry-frame container.
+            4 => {
+                if let Some(contract) = contract {
+                    if let Some((key, actual)) = kwargs_dict_pairs(*value)
+                        .into_iter()
+                        .find(|(_, actual)| strict_scalar_value(*actual, contract).is_none())
+                    {
+                        raise_type_error(format!(
+                            "{fname}() variadic argument '{}' at key '{}' expected {}, got {}",
+                            param.name,
+                            key,
+                            param.annotation.as_deref().unwrap_or("object"),
+                            value_type_name(actual)
+                        ));
+                        return false;
+                    }
+                }
+                continue;
+            }
+            _ => {}
+        }
+        if let Some(contract) = contract {
             if strict_scalar_value(*value, contract).is_none() {
                 raise_type_error(format!(
                     "{fname}() argument '{}' expected {}, got {}",
@@ -6998,6 +7047,72 @@ mod tests {
         assert_eq!(
             super::super::exception::get_exception_message_pub(exception).as_deref(),
             Some("strict_target() argument 'count' expected int, got str")
+        );
+        super::super::exception::mb_clear_exception();
+        super::super::closure::cleanup_all_closures();
+    }
+
+    #[test]
+    fn test_dynamic_variadic_ingress_checks_elements_without_replacing_packs() {
+        super::super::closure::cleanup_all_closures();
+        let func = MbValue::from_func(994);
+        super::super::closure::mb_func_set_name(
+            func,
+            MbValue::from_ptr(MbObject::new_str("variadic_target".to_string())),
+        );
+        let params = MbValue::from_ptr(MbObject::new_list(vec![
+            strict_param_sig("values", 2, Some("int"), "boxed", Some("int")),
+            strict_param_sig("named", 4, Some("int"), "boxed", Some("int")),
+        ]));
+        super::super::closure::mb_func_set_params(func, params);
+
+        let values = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_bool(true),
+            MbValue::from_int(2),
+        ]));
+        let named = super::super::dict_ops::mb_dict_new();
+        super::super::dict_ops::mb_dict_setitem(
+            named,
+            MbValue::from_ptr(MbObject::new_str("count".to_string())),
+            MbValue::from_int(3),
+        );
+        let mut accepted = vec![values, named];
+        assert!(validate_and_adapt_declared_frame(func, &mut accepted));
+        assert_eq!(accepted[0].to_bits(), values.to_bits());
+        assert_eq!(accepted[1].to_bits(), named.to_bits());
+        let accepted_values = extract_items(accepted[0]);
+        assert_eq!(accepted_values[0].to_bits(), MbValue::from_bool(true).to_bits());
+        assert_eq!(accepted_values[1].to_bits(), MbValue::from_int(2).to_bits());
+        let accepted_named = kwargs_dict_pairs(accepted[1]);
+        assert_eq!(accepted_named.len(), 1);
+        assert_eq!(accepted_named[0].0, "count");
+        assert_eq!(accepted_named[0].1.to_bits(), MbValue::from_int(3).to_bits());
+
+        let wrong_values = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(1),
+            MbValue::from_ptr(MbObject::new_str("wrong".to_string())),
+        ]));
+        let mut wrong_frame = vec![wrong_values, named];
+        assert!(!validate_and_adapt_declared_frame(func, &mut wrong_frame));
+        let exception = super::super::exception::mb_get_exception();
+        assert_eq!(
+            super::super::exception::get_exception_message_pub(exception).as_deref(),
+            Some("variadic_target() variadic argument 'values' at index 1 expected int, got str")
+        );
+        super::super::exception::mb_clear_exception();
+
+        let wrong_named = super::super::dict_ops::mb_dict_new();
+        super::super::dict_ops::mb_dict_setitem(
+            wrong_named,
+            MbValue::from_ptr(MbObject::new_str("wrong".to_string())),
+            MbValue::from_ptr(MbObject::new_str("wrong".to_string())),
+        );
+        let mut wrong_frame = vec![values, wrong_named];
+        assert!(!validate_and_adapt_declared_frame(func, &mut wrong_frame));
+        let exception = super::super::exception::mb_get_exception();
+        assert_eq!(
+            super::super::exception::get_exception_message_pub(exception).as_deref(),
+            Some("variadic_target() variadic argument 'named' at key 'wrong' expected int, got str")
         );
         super::super::exception::mb_clear_exception();
         super::super::closure::cleanup_all_closures();
