@@ -1584,6 +1584,7 @@ impl TypeChecker {
             TypeSpecNode::SelfType => self.tcx.intern(Ty::SelfType),
             TypeSpecNode::Ellipsis => self.tcx.any(),
             TypeSpecNode::TypeParam(id) => self.materialize_stdlib_type_param(id)?,
+            TypeSpecNode::ParamSpecArgs(_) | TypeSpecNode::ParamSpecKwargs(_) => return None,
             TypeSpecNode::ForwardRef { target, .. } => {
                 self.materialize_stdlib_type(target)?
             }

@@ -81,6 +81,8 @@ pub enum TypeSpecNode {
         kind: TypeNameKind,
     },
     TypeParam(TypeParamSpecId),
+    ParamSpecArgs(TypeParamSpecId),
+    ParamSpecKwargs(TypeParamSpecId),
     Union(TableRange),
     Apply {
         base: TypeSpecId,
@@ -952,6 +954,44 @@ mod tests {
         assert_eq!(
             (string(*module), string(*name)),
             ("typing_extensions", "Never")
+        );
+    }
+
+    #[test]
+    fn generated_manifest_correlates_paramspec_args_and_kwargs() {
+        let run = overloads("_contextvars", "Context", "run")
+            .next()
+            .expect("Context.run spec");
+        let params = params(run.params);
+        let callable = params
+            .iter()
+            .find(|param| string(param.name) == "callable")
+            .expect("callable parameter");
+        let TypeSpecNode::Apply { args, .. } = node(type_use(callable.ty).0) else {
+            panic!("Context.run callable must retain Callable[P, T]")
+        };
+        let [descriptor, _ret] = edges(*args) else {
+            panic!("Callable[P, T] must retain two arguments")
+        };
+        let TypeSpecNode::TypeParam(param_spec) = node(*descriptor) else {
+            panic!("Callable descriptor must retain ParamSpec identity")
+        };
+
+        let args = params
+            .iter()
+            .find(|param| string(param.name) == "args")
+            .expect("args parameter");
+        let kwargs = params
+            .iter()
+            .find(|param| string(param.name) == "kwargs")
+            .expect("kwargs parameter");
+        assert_eq!(
+            node(type_use(args.ty).0),
+            &TypeSpecNode::ParamSpecArgs(*param_spec)
+        );
+        assert_eq!(
+            node(type_use(kwargs.ty).0),
+            &TypeSpecNode::ParamSpecKwargs(*param_spec)
         );
     }
 
