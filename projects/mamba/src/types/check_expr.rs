@@ -1792,9 +1792,13 @@ impl TypeChecker {
             self.tcx.abandon_alias_target(instance);
             return None;
         };
-        if self.tcx.alias_has_unguarded_cycle(instance, target) {
-            self.tcx.abandon_alias_target(instance);
-            return None;
+        if self.tcx.alias_has_unguarded_cycle(instance, target)
+            || self
+                .tcx
+                .alias_target_has_invalid_generated_edge(instance, target)
+        {
+            self.tcx.reject_alias_target(instance);
+            return Some(alias_ref);
         }
         self.tcx.set_alias_target(instance, target);
         // Ordinary generated aliases retain their expanded head. Only a
@@ -5861,6 +5865,48 @@ mod tests {
                 )
                 .is_none()
         );
+    }
+
+    #[test]
+    fn generated_alias_materialization_rejects_invalid_nested_aliases_immediately() {
+        use crate::types::context::{AliasHeadError, AliasIdentity};
+        use crate::types::stdlib_typespec::StrSpecId;
+
+        let mut checker = TypeChecker::new();
+        let (unresolved, unresolved_ref) = checker.tcx.intern_alias_instance(
+            AliasIdentity::Generated(StrSpecId(u32::MAX), StrSpecId(u32::MAX - 1)),
+            "example.Unresolved".to_string(),
+            Vec::new(),
+            0,
+        );
+        let (rejected, rejected_ref) = checker.tcx.intern_alias_instance(
+            AliasIdentity::Generated(StrSpecId(u32::MAX), StrSpecId(u32::MAX - 2)),
+            "example.Rejected".to_string(),
+            Vec::new(),
+            0,
+        );
+        checker.tcx.reject_alias_target(rejected);
+
+        for (nested, nested_ref) in [(unresolved, unresolved_ref), (rejected, rejected_ref)] {
+            let outer_ref = checker
+                .materialize_stdlib_alias("_typeshed", "GenericPath", vec![nested_ref])
+                .expect("the generated alias must retain an explicit rejected identity");
+            let Ty::AliasRef(outer) = checker.tcx.get(outer_ref) else {
+                panic!("rejected generated alias lost its stable AliasRef")
+            };
+            let outer = *outer;
+            assert!(checker.tcx.alias_target_is_rejected(outer));
+            assert_eq!(checker.tcx.alias_target(outer), Some(checker.tcx.never()));
+            assert!(checker.tcx.deferred_alias_target(outer).is_none());
+            assert_eq!(
+                checker.tcx.semantic_head_id(outer_ref),
+                Err(AliasHeadError::Rejected(outer))
+            );
+            assert_eq!(
+                checker.tcx.alias_target(nested),
+                (nested == rejected).then(|| checker.tcx.never())
+            );
+        }
     }
 
     #[test]
