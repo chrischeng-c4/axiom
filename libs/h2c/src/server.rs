@@ -1,7 +1,7 @@
 // SPEC-MANAGED: libs/h2c/tech-design/semantic/source/libs-h2c-src-server-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Server-side h2c transport (behind the `server` feature): serve **HTTP/1.1
-//! @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
+//! @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 //! and HTTP/2 cleartext (h2c, prior-knowledge) on one socket** via hyper-util's
 //! auto builder, with connection-level graceful shutdown.
 //!
@@ -19,7 +19,7 @@ use hyper_util::server::graceful::GracefulShutdown;
 use tokio::net::TcpListener;
 use tower::ServiceExt;
 
-/// @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
+/// @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ServerOptions {
     pub max_concurrent_streams: u32,
@@ -55,7 +55,7 @@ pub async fn serve_with_options(
     options: ServerOptions,
     shutdown: impl std::future::Future<Output = ()>,
 ) {
-    // @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
+    // @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
     let mut builder = auto::Builder::new(TokioExecutor::new());
     // Lift the per-connection concurrent-stream ceiling: clients open
     // ~ln(concurrency) connections and multiplex many streams over each (see

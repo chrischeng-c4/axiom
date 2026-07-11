@@ -1,7 +1,7 @@
 use tokio::sync::watch;
 
 /// Server admission state.
-/// @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
+/// @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrainState {
     Ready,

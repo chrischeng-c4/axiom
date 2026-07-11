@@ -1,5 +1,5 @@
 //! Shared TCP accept/runtime layer.
-//! @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
+//! @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 //!
 //! Protocol crates should implement [`TcpHandler`] and let this crate own the
 //! listener loop, budget admission, task supervision, and drain behavior. HTTP
@@ -78,7 +78,7 @@ pub struct ConnectionContext {
 }
 
 /// Zero-boxing TCP protocol handler.
-/// @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
+/// @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 ///
 /// A blanket impl for closures keeps call sites terse while avoiding the
 /// boxed-future cost of `async_trait` on every accepted connection.
@@ -101,7 +101,7 @@ where
 }
 
 pub async fn bind(config: &TcpServerConfig) -> std::io::Result<TcpListener> {
-    // @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
+    // @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
     let addr = config.bind.socket_addr();
     let domain = if addr.is_ipv6() {
         Domain::IPV6
@@ -135,7 +135,7 @@ pub async fn serve_arc<H, S>(
     H: TcpHandler,
     S: Future<Output = ()> + Send + 'static,
 {
-    // @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
+    // @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
     let local_addr = listener.local_addr().ok();
     let mut shutdown = std::pin::pin!(shutdown);
     let mut tasks = JoinSet::new();
@@ -224,7 +224,7 @@ mod tests {
 
     #[tokio::test]
     async fn bind_uses_configured_socket_options() {
-        // @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#unit-test
+        // @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#unit-test
         let cfg =
             TcpServerConfig::new(BindConfig::localhost(0)).with_socket_options(TcpSocketOptions {
                 backlog: 128,
@@ -237,7 +237,7 @@ mod tests {
 
     #[tokio::test]
     async fn serve_accepts_closure_handler_without_async_trait_boxing() {
-        // @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#unit-test
+        // @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#unit-test
         let cfg = TcpServerConfig::new(BindConfig::localhost(0));
         let listener = bind(&cfg).await.expect("bind");
         let addr = listener.local_addr().unwrap();
@@ -269,7 +269,7 @@ mod tests {
 
     #[tokio::test]
     async fn connection_budget_releases_after_handler_finishes() {
-        // @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#unit-test
+        // @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#unit-test
         let budget = ConnectionBudget::new(1);
         let cfg =
             TcpServerConfig::new(BindConfig::localhost(0)).with_connection_budget(budget.clone());

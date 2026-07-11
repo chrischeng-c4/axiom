@@ -1,5 +1,5 @@
 //! Shared server substrate for the Axiom runtime.
-//! @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
+//! @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 //!
 //! This crate is intentionally below protocol crates. It owns the generic
 //! lifecycle pieces that a raw TCP proxy, an HTTP dev server, and the
