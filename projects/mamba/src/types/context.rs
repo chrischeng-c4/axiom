@@ -1,4 +1,6 @@
-use super::ty::{AliasInstanceId, Ty, TypeId, TypeParamDefault, TypeVarId, TypeVarKind};
+use super::ty::{
+    AliasInstanceId, ExternalValue, Ty, TypeId, TypeParamDefault, TypeVarId, TypeVarKind,
+};
 use crate::resolve::SymbolId;
 use std::collections::{HashMap, HashSet};
 
@@ -334,6 +336,15 @@ impl TypeContext {
                 params.iter().any(|param| self.contains_type_var(*param))
                     || self.contains_type_var(*ret)
             }
+            Ty::External(ExternalValue::Callable(callable)) => callable
+                .receiver
+                .as_ref()
+                .is_some_and(|receiver| {
+                    receiver
+                        .args
+                        .iter()
+                        .any(|arg| self.contains_type_var(*arg))
+                }),
             Ty::Class {
                 user,
                 external,
@@ -362,6 +373,7 @@ impl TypeContext {
             | Ty::Float
             | Ty::Str
             | Ty::Any
+            | Ty::External(ExternalValue::Module { .. })
             | Ty::Literal(_)
             | Ty::Error => false,
         }
@@ -402,6 +414,13 @@ impl TypeContext {
                 }
                 self.collect_type_vars(*ret, vars);
             }
+            Ty::External(ExternalValue::Callable(callable)) => {
+                if let Some(receiver) = &callable.receiver {
+                    for arg in &receiver.args {
+                        self.collect_type_vars(*arg, vars);
+                    }
+                }
+            }
             Ty::Class {
                 user,
                 external,
@@ -436,6 +455,7 @@ impl TypeContext {
             | Ty::Float
             | Ty::Str
             | Ty::Any
+            | Ty::External(ExternalValue::Module { .. })
             | Ty::Literal(_)
             | Ty::SelfType
             | Ty::Infer(_)

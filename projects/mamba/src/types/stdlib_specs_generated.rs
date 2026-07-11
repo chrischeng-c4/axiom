@@ -4,7 +4,7 @@
 //! schema: 2  branches: 15712  py312: 14137
 //! params: 43370  type-params: 416
 //! aliases: 415
-//! classes: 3077  class-exports: 3630
+//! classes: 3077  class-exports: 3807
 //! class-method-edges: 12866
 //! callable-exports: 3717
 //! class-callables: 13195
