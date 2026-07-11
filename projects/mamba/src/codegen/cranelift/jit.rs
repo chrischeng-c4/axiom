@@ -2554,6 +2554,32 @@ impl CraneliftJitBackend {
             }
         }
 
+        // Inline-only integer unbox: tag=1 boxed ints become raw i64; raw
+        // i64 values and boxed BigInt bits pass through unchanged. This is
+        // used by typed await/result paths that feed CheckedAdd/Sub/Mul,
+        // whose BigInt-aware ABI can consume boxed BigInt bits on overflow
+        // fallback. Do not apply this to mb_unbox_int_if_boxed; that helper
+        // must extract i64-fitting BigInts for comparison and entry-return
+        // semantics.
+        if name == "mb_unbox_inline_int_if_boxed" && args.len() == 1 {
+            if let Some(dest_vreg) = dest {
+                let actual_type = vars.declared_type(args[0]).unwrap_or(cl_types::I64);
+                let av = vars.get(args[0], builder, actual_type);
+                let arg = builder.use_var(av);
+                let bits = if actual_type == cl_types::F64 {
+                    builder.ins().bitcast(cl_types::I64, MemFlags::new(), arg)
+                } else {
+                    arg
+                };
+                let result = Self::unbox_if_inline(builder, bits);
+                let dv = vars.get(*dest_vreg, builder, cl_types::I64);
+                builder.def_var(dv, result);
+                vars.raw_ints.insert(*dest_vreg);
+                vars.native_bools.remove(dest_vreg);
+                return;
+            }
+        }
+
         // #1010: inline the recursion-depth guard's fast path.
         // `mb_recursion_enter` is emitted once at the top of every function
         // body (hir_to_mir's prologue) and, together with the

@@ -8477,6 +8477,29 @@ impl<'a> HirToMir<'a> {
         }
     }
 
+    fn awaited_user_int_return_ty(&self, value: &HirExpr, awaited_ty: TypeId) -> Option<TypeId> {
+        if !matches!(self.tcx.get(awaited_ty), Ty::Any) {
+            return None;
+        }
+        let HirExpr::Call { func, .. } = value else {
+            return None;
+        };
+        let HirExpr::Var(sym, _) = func.as_ref() else {
+            return None;
+        };
+        let ret_ty = *self.user_func_return_tys.get(&sym.0)?;
+        matches!(self.tcx.get(ret_ty), Ty::Int).then_some(ret_ty)
+    }
+
+    fn effective_expr_ty(&self, expr: &HirExpr) -> TypeId {
+        match expr {
+            HirExpr::Await { value, ty } => {
+                self.awaited_user_int_return_ty(value, *ty).unwrap_or(*ty)
+            }
+            _ => expr.ty(),
+        }
+    }
+
     fn lower_expr(&mut self, expr: &HirExpr) -> VReg {
         match expr {
             HirExpr::IntLit(i, ty) => {
@@ -8843,8 +8866,10 @@ impl<'a> HirToMir<'a> {
                 // - Mixed numeric (int+float)
                 // - Python true division (/)
                 // - Non-primitive types (list, tuple, str, dict comparisons/ops)
-                let lt = self.tcx.get(lhs.ty());
-                let rt = self.tcx.get(rhs.ty());
+                let lhs_ty = self.effective_expr_ty(lhs);
+                let rhs_ty = self.effective_expr_ty(rhs);
+                let lt = self.tcx.get(lhs_ty);
+                let rt = self.tcx.get(rhs_ty);
                 let is_mixed_numeric = matches!(
                     (lt, rt),
                     (crate::types::Ty::Int, crate::types::Ty::Float)
@@ -11492,7 +11517,18 @@ impl<'a> HirToMir<'a> {
                 self.async_resume_dispatches
                     .push((resume_state, resume_block));
                 self.emit_async_suspend_check(dest, resume_state, resume_block);
-                dest
+                if let Some(int_ty) = self.awaited_user_int_return_ty(value, *ty) {
+                    let unboxed = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(unboxed),
+                        name: "mb_unbox_inline_int_if_boxed".to_string(),
+                        args: vec![dest],
+                        ty: int_ty,
+                    });
+                    unboxed
+                } else {
+                    dest
+                }
             }
             HirExpr::ListComp {
                 element,
