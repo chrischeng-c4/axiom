@@ -1896,10 +1896,6 @@ class _SpecCorpus:
             if module in {"typing", "typing_extensions"} and name in _SPEC_SPECIALS:
                 symbol_kind = "Special"
             return "Name", (module, name, symbol_kind)
-        if not tail and root in _SPEC_BUILTINS:
-            return "Name", ("builtins", root, "Builtin")
-        if not tail and root in {"None", "Any", "Never", "NoReturn", "Self"}:
-            return "Special", root
         if not tail and (
             (qualifier, root) in info["aliases"] or ("", root) in info["aliases"]
         ):
@@ -1908,6 +1904,14 @@ class _SpecCorpus:
             return "Name", (info["module"], dotted, info["classes"][dotted])
         if not tail and root in info["classes"]:
             return "Name", (info["module"], root, info["classes"][root])
+        if not tail and root in _SPEC_BUILTINS:
+            return "Name", ("builtins", root, "Builtin")
+        if not tail and root in {"None", "Any", "Never", "NoReturn", "Self"}:
+            return "Special", root
+        if not tail:
+            builtin_kind = self.global_symbols.get(("builtins", root))
+            if builtin_kind is not None and builtin_kind != "TypeParam":
+                return "Name", ("builtins", root, builtin_kind)
         if root in _SPEC_SPECIALS:
             return "Name", ("typing", dotted, "Special")
         return "Name", (info["module"], dotted, "Unresolved")
