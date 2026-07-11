@@ -40,6 +40,15 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| MambaError::syntax(Span::dummy(), "expected type expression"))?;
         let start = token.start;
 
+        if token.kind == TokenKind::Star {
+            self.advance();
+            let inner = self.parse_type_atom()?;
+            return Ok(Spanned::new(
+                TypeExpr::Unpack(Box::new(inner)),
+                self.span_from(start),
+            ));
+        }
+
         match &token.kind {
             // Built-in type keywords
             TokenKind::IntType
@@ -165,13 +174,6 @@ impl<'a> Parser<'a> {
                         self.span_from(start),
                     ))
                 }
-            }
-            // TypeVarTuple spread: `*Ts` used in type position (e.g. `tuple[*Ts]`)
-            TokenKind::Star => {
-                self.advance(); // consume *
-                let (s, e) = self.expect_name()?;
-                let name = self.text_at(s, e).to_string();
-                Ok(Spanned::new(TypeExpr::Named(name), self.span_from(start)))
             }
             // Arbitrary non-type annotation expression: `-> 1`, `x: {1: 2}`,
             // `-> [int]`, `-> a + b` (PEP 3107). Python annotations are arbitrary
@@ -393,7 +395,26 @@ mod tests {
         match parse_type("tuple[*Ts,]") {
             TypeExpr::Tuple(args) => {
                 assert_eq!(args.len(), 1);
-                assert!(matches!(&args[0].node, TypeExpr::Named(n) if n == "Ts"));
+                assert!(matches!(
+                    &args[0].node,
+                    TypeExpr::Unpack(inner) if matches!(&inner.node, TypeExpr::Named(n) if n == "Ts")
+                ));
+            }
+            other => panic!("expected Tuple, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_tuple_type_preserves_type_var_tuple_unpack_order() {
+        match parse_type("tuple[Head, *Ts, Tail]") {
+            TypeExpr::Tuple(args) => {
+                assert_eq!(args.len(), 3);
+                assert!(matches!(&args[0].node, TypeExpr::Named(n) if n == "Head"));
+                assert!(matches!(
+                    &args[1].node,
+                    TypeExpr::Unpack(inner) if matches!(&inner.node, TypeExpr::Named(n) if n == "Ts")
+                ));
+                assert!(matches!(&args[2].node, TypeExpr::Named(n) if n == "Tail"));
             }
             other => panic!("expected Tuple, got {other:?}"),
         }

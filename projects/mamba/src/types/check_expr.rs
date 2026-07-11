@@ -2,8 +2,8 @@ use super::check::{
     expr_to_type_expr, ClassPatternTarget, FunctionParamSig, NumericRoot, TypeChecker,
 };
 use super::generic::{
-    check_bounds, complete_callable_type_args, complete_type_args, infer_type_args, GenericParams,
-    Substitution,
+    bind_explicit_type_args_without_bounds, check_bounds, complete_callable_type_args,
+    complete_type_args, infer_type_args, GenericParams, Substitution,
 };
 use super::ty::{
     CallableParam, CallableParamKind, ClassRole, ExternalCallable, ExternalCallableAccess,
@@ -934,14 +934,25 @@ impl TypeChecker {
                             let is_open = user.as_ref().is_some_and(|user| {
                                 gp.params.len() == user.args.len()
                                     && gp.params.iter().zip(&user.args).all(|(param, arg)| {
-                                        matches!(self.tcx.get(*arg), Ty::TypeVar(id) if *id == param.id)
+                                        matches!(
+                                            (param.kind, self.tcx.get(*arg)),
+                                            (TypeVarKind::TypeVarTuple, Ty::Unpack(id))
+                                                | (TypeVarKind::TypeVar, Ty::TypeVar(id))
+                                                | (TypeVarKind::ParamSpec, Ty::TypeVar(id))
+                                                if *id == param.id
+                                        )
                                     })
                             });
                             if !is_open {
                                 if let Some(user) = &user {
-                                    let mut explicit = Substitution::new();
-                                    for (param, arg) in gp.params.iter().zip(&user.args) {
-                                        explicit.insert(param.id, *arg);
+                                    let (explicit, _, errors) =
+                                        bind_explicit_type_args_without_bounds(
+                                            &gp,
+                                            &user.args,
+                                            &mut self.tcx,
+                                        );
+                                    for error in errors {
+                                        self.error(expr.span, error);
                                     }
                                     self.check_substituted_constructor_args(
                                         &inference_params,
@@ -1229,7 +1240,7 @@ impl TypeChecker {
                 let param_types: Vec<TypeId> = params
                     .iter()
                     .map(|p| {
-                        let ty = self.resolve_type_expr(&p.ty);
+                        let ty = self.resolve_param_type_expr(p);
                         let sym = self.symbols.define(p.name.clone(), SymbolKind::Parameter);
                         self.set_sym_type(sym.0, ty);
                         ty
@@ -1714,7 +1725,8 @@ impl TypeChecker {
                 self.tcx.intern(Ty::Dict(self.tcx.any(), self.tcx.any()))
             }
             ("builtins", "tuple") if args.is_empty() => {
-                self.tcx.intern(Ty::Tuple(Vec::new()))
+                let any = self.tcx.any();
+                self.tcx.intern(Ty::Tuple(vec![any, any]))
             }
             ("builtins", "type") if args.is_empty() => {
                 self.tcx.intern(Ty::TypeObject(self.tcx.any()))
@@ -1879,6 +1891,21 @@ impl TypeChecker {
         }
     }
 
+    fn materialize_stdlib_type_var_tuple_unpack(
+        &mut self,
+        inner_spec_id: super::stdlib_typespec::TypeSpecId,
+    ) -> Option<TypeId> {
+        let inner = self.materialize_stdlib_type(inner_spec_id)?;
+        let Ty::TypeVar(var) = self.tcx.get(inner) else {
+            return None;
+        };
+        let var = *var;
+        if self.tcx.get_type_var(var).kind != TypeVarKind::TypeVarTuple {
+            return None;
+        }
+        Some(self.tcx.intern(Ty::Unpack(var)))
+    }
+
     pub(crate) fn materialize_stdlib_type(
         &mut self,
         spec_id: super::stdlib_typespec::TypeSpecId,
@@ -1948,7 +1975,10 @@ impl TypeChecker {
                     .collect::<Option<Vec<_>>>()?;
                 self.tcx.intern(Ty::Tuple(members))
             }
-            TypeSpecNode::ParamList(_) | TypeSpecNode::Unpack(_) => return None,
+            TypeSpecNode::ParamList(_) => return None,
+            TypeSpecNode::Unpack(inner) => {
+                self.materialize_stdlib_type_var_tuple_unpack(inner)?
+            }
             TypeSpecNode::LiteralInt(_)
             | TypeSpecNode::LiteralStr(_)
             | TypeSpecNode::LiteralBool(_) => {
@@ -1969,6 +1999,9 @@ impl TypeChecker {
                 let name = spec::string(*base_name);
                 let args = spec::edges(args);
                 match (module, name) {
+                    ("typing" | "typing_extensions", "Unpack") if args.len() == 1 => {
+                        self.materialize_stdlib_type_var_tuple_unpack(args[0])?
+                    }
                     ("builtins", "list") if args.len() == 1 => {
                         let item = self.materialize_stdlib_type(args[0])?;
                         self.tcx.intern(Ty::List(item))
@@ -4577,9 +4610,10 @@ impl TypeChecker {
         let Some(params) = self.generic_defs.get(&class_symbol).cloned() else {
             return ty;
         };
-        let mut subst = Substitution::new();
-        for (param, arg) in params.params.iter().zip(class_args) {
-            subst.insert(param.id, *arg);
+        let (subst, _, errors) =
+            bind_explicit_type_args_without_bounds(&params, class_args, &mut self.tcx);
+        if !errors.is_empty() {
+            return ty;
         }
         subst.apply(ty, &mut self.tcx)
     }
@@ -4874,9 +4908,10 @@ impl TypeChecker {
         };
         if let Some(user) = user {
             if let Some(params) = self.generic_defs.get(&symbol).cloned() {
-                let mut subst = Substitution::new();
-                for (param, arg) in params.params.iter().zip(&user.args) {
-                    subst.insert(param.id, *arg);
+                let (subst, _, errors) =
+                    bind_explicit_type_args_without_bounds(&params, &user.args, &mut self.tcx);
+                if !errors.is_empty() {
+                    return None;
                 }
                 sig.params = sig
                     .params
@@ -5004,13 +5039,13 @@ impl TypeChecker {
                     .cloned()
                 {
                     let substitution = user.as_ref().and_then(|user| {
-                        self.generic_defs.get(&user.symbol).map(|params| {
-                            let mut subst = Substitution::new();
-                            for (param, arg) in params.params.iter().zip(&user.args) {
-                                subst.insert(param.id, *arg);
-                            }
-                            subst
-                        })
+                        let params = self.generic_defs.get(&user.symbol).cloned()?;
+                        let (subst, _, errors) = bind_explicit_type_args_without_bounds(
+                            &params,
+                            &user.args,
+                            &mut self.tcx,
+                        );
+                        errors.is_empty().then_some(subst)
                     });
                     let mut signature = user.as_ref().and_then(|user| {
                         self.class_method_param_sigs
@@ -5837,7 +5872,7 @@ mod tests {
     use crate::types::check::TypeChecker;
     use crate::types::ty::{
         CallableParam, CallableParamKind, ClassRole, ExternalClass, ParamPack, ParamPackTail,
-        TypeVarId,
+        TypeVarId, TypeVarKind,
     };
     use crate::types::Ty;
 
@@ -5850,6 +5885,48 @@ mod tests {
             func: Box::new(sp(Expr::Ident(name.to_string()))),
             args: Vec::new(),
         })
+    }
+
+    fn generated_param_type_spec(
+        module: &str,
+        qualifier: &str,
+        callable: &str,
+        param_name: &str,
+    ) -> crate::types::stdlib_typespec::TypeSpecId {
+        use crate::types::stdlib_typespec as spec;
+
+        let signature = spec::overloads(module, qualifier, callable)
+            .find(|signature| {
+                spec::params(signature.params)
+                    .iter()
+                    .any(|param| spec::string(param.name) == param_name)
+            })
+            .unwrap_or_else(|| panic!("missing generated {module}.{qualifier}.{callable}"));
+        let param = spec::params(signature.params)
+            .iter()
+            .find(|param| spec::string(param.name) == param_name)
+            .expect("generated callable must retain the requested parameter");
+        spec::type_use(param.ty).0
+    }
+
+    fn generated_unpack_operand(
+        spec_id: crate::types::stdlib_typespec::TypeSpecId,
+        expected_module: &str,
+    ) -> crate::types::stdlib_typespec::TypeSpecId {
+        use crate::types::stdlib_typespec::{self as spec, TypeSpecNode};
+
+        let TypeSpecNode::Apply { base, args } = spec::node(spec_id) else {
+            panic!("generated annotation must retain Unpack as an Apply node")
+        };
+        let TypeSpecNode::Name { module, name, .. } = spec::node(*base) else {
+            panic!("generated Unpack application must retain its named head")
+        };
+        assert_eq!(spec::string(*module), expected_module);
+        assert_eq!(spec::string(*name), "Unpack");
+        let [operand] = spec::edges(*args) else {
+            panic!("generated Unpack must have exactly one operand")
+        };
+        *operand
     }
 
     #[test]
@@ -5865,6 +5942,56 @@ mod tests {
                 )
                 .is_none()
         );
+    }
+
+    #[test]
+    fn generated_type_var_tuple_unpack_apply_is_kind_checked() {
+        use crate::types::stdlib_typespec::{self as spec, TypeSpecNode};
+
+        let pack_apply =
+            generated_param_type_spec("operator", "itemgetter", "__new__", "items");
+        let pack_operand = generated_unpack_operand(pack_apply, "typing_extensions");
+        let mut checker = TypeChecker::new();
+        let pack = checker
+            .materialize_stdlib_type(pack_apply)
+            .expect("typing.Unpack[TypeVarTuple] must materialize");
+        let Ty::Unpack(pack_var) = checker.tcx.get(pack) else {
+            panic!("generated TypeVarTuple unpack must preserve pack identity")
+        };
+        assert_eq!(
+            checker.tcx.get_type_var(*pack_var).kind,
+            TypeVarKind::TypeVarTuple
+        );
+        assert_eq!(
+            checker.materialize_stdlib_type_var_tuple_unpack(pack_operand),
+            Some(pack)
+        );
+
+        let copy = spec::overloads("copy", "", "copy")
+            .next()
+            .expect("generated copy.copy signature");
+        let [copy_param] = spec::params(copy.params) else {
+            panic!("copy.copy must retain one parameter")
+        };
+        let ordinary_type_var = spec::type_use(copy_param.ty).0;
+        assert!(matches!(
+            spec::node(ordinary_type_var),
+            TypeSpecNode::TypeParam(_)
+        ));
+        assert!(checker
+            .materialize_stdlib_type_var_tuple_unpack(ordinary_type_var)
+            .is_none());
+
+        let typed_dict_apply =
+            generated_param_type_spec("ast", "stmt", "__init__", "kwargs");
+        let typed_dict_operand =
+            generated_unpack_operand(typed_dict_apply, "typing_extensions");
+        assert!(checker
+            .materialize_stdlib_type_var_tuple_unpack(typed_dict_operand)
+            .is_none());
+        assert!(checker
+            .materialize_stdlib_type(typed_dict_apply)
+            .is_none());
     }
 
     #[test]
