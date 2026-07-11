@@ -253,7 +253,7 @@ def executable_type_fixtures(paths: list[Path]) -> list[Path]:
 
 def load_generated_typespec_manifest() -> dict[str, Any]:
     manifest = json.loads(GENERATED_SPECS.read_text(encoding="utf-8"))
-    if manifest.get("schema") != 1:
+    if manifest.get("schema") != 2:
         raise ValueError(f"unsupported generated TypeSpec schema: {manifest.get('schema')!r}")
     return manifest
 
@@ -279,6 +279,107 @@ def _generated_alias_target(
         }
         manifest["_alias_target_index"] = index
     return index.get((module, name))
+
+
+def _generated_class_row(
+    manifest: dict[str, Any], module: str, name: str
+) -> list[Any] | None:
+    index = manifest.get("_class_export_index")
+    if index is None:
+        strings = manifest["strings"]
+        index = {
+            (strings[row[0]], strings[row[1]]): row[2]
+            for row in manifest.get("class_exports", [])
+        }
+        manifest["_class_export_index"] = index
+    class_id = index.get((module, name))
+    return None if class_id is None else manifest["classes"][class_id]
+
+
+def _generated_protocol_status(
+    manifest: dict[str, Any], module: str, name: str
+) -> str:
+    cache = manifest.setdefault("_protocol_status_cache", {})
+    key = (module, name)
+    if key in cache:
+        return cache[key]
+    visiting = manifest.setdefault("_protocol_status_visiting", set())
+    if key in visiting:
+        return "supported"
+    visiting.add(key)
+    try:
+        row = _generated_class_row(manifest, module, name)
+        if row is None or row[3] != "p" or not row[8]:
+            status = "unsupported"
+        else:
+            method_start, method_length = row[6]
+            method_ids = manifest["class_method_edges"][
+                method_start : method_start + method_length
+            ]
+            methods = [
+                manifest["class_callables"][method_id]
+                for method_id in method_ids
+                if manifest["class_callables"][method_id][12]
+                and manifest["class_callables"][method_id][3] == "i"
+            ]
+            branches = Counter(
+                manifest["strings"][method[2]] for method in methods
+            )
+            supported = all(count == 1 for count in branches.values())
+            unconstrained = False
+            for method in methods:
+                if not supported or method[5][1] != 0:
+                    supported = False
+                    break
+                param_start, param_length = method[4]
+                params = [
+                    param
+                    for param in manifest["params"][
+                        param_start : param_start + param_length
+                    ]
+                    if not param[4]
+                ]
+                if any(param[1] in {"v", "w"} or param[3] for param in params):
+                    supported = False
+                    break
+                nodes = [manifest["type_uses"][param[2]][0] for param in params]
+                nodes.append(manifest["type_uses"][method[6]][0])
+                statuses = [
+                    _generated_typespec_status(manifest, node) for node in nodes
+                ]
+                if "unsupported" in statuses:
+                    supported = False
+                    break
+                unconstrained |= "unconstrained" in statuses
+            if supported:
+                base_start, base_length = row[5]
+                for node in manifest["edges"][base_start : base_start + base_length]:
+                    node_kind, node_value = _typespec_variant(manifest["nodes"][node])
+                    if node_kind == "Apply":
+                        node_kind, node_value = _typespec_variant(
+                            manifest["nodes"][node_value["base"]]
+                        )
+                    if node_kind == "Name":
+                        strings = manifest["strings"]
+                        marker = (strings[node_value["module"]], strings[node_value["name"]])
+                        if marker in {("typing", "Protocol"), ("typing", "Generic")}:
+                            continue
+                    base_status = _generated_typespec_status(manifest, node)
+                    if base_status == "unsupported":
+                        supported = False
+                        break
+                    unconstrained |= base_status == "unconstrained"
+            status = (
+                "unconstrained"
+                if supported and unconstrained
+                else "supported"
+                if supported
+                else "unsupported"
+            )
+        cache[key] = status
+        return status
+    finally:
+        visiting.remove(key)
 
 
 def _materializable_status(statuses: list[str], *, outer_constraint: bool) -> str:
@@ -345,12 +446,16 @@ def _generated_typespec_status(
             strings = manifest["strings"]
             key = (strings[value["module"]], strings[value["name"]])
             if value["kind"] == "a":
+                if key == ("builtins", "_ClassInfo"):
+                    return "supported"
                 target = _generated_alias_target(manifest, *key)
                 return (
                     _generated_typespec_status(manifest, target, visiting)
                     if target is not None
                     else "unsupported"
                 )
+            if value["kind"] == "p":
+                return _generated_protocol_status(manifest, *key)
             if key in {("builtins", "object"), ("typing", "Any")}:
                 return "unconstrained"
             supported = {
@@ -406,13 +511,19 @@ def _generated_typespec_status(
                 ("typing", "Annotated"), ("typing_extensions", "Annotated"),
                 ("typing", "ClassVar"), ("typing", "Final"),
                 ("typing", "Required"), ("typing", "NotRequired"),
+                ("typing", "TypeGuard"), ("typing", "TypeIs"),
                 ("typing_extensions", "ClassVar"),
                 ("typing_extensions", "Final"),
                 ("typing_extensions", "Required"),
                 ("typing_extensions", "NotRequired"),
                 ("typing_extensions", "ReadOnly"),
+                ("typing_extensions", "TypeGuard"),
+                ("typing_extensions", "TypeIs"),
             }
-            if base_key not in allowed and base["kind"] not in {"b", "n"}:
+            if base["kind"] == "p":
+                if _generated_protocol_status(manifest, *base_key) == "unsupported":
+                    return "unsupported"
+            elif base_key not in allowed and base["kind"] not in {"b", "n"}:
                 return "unsupported"
             start, length = value["args"]
             args = manifest["edges"][start : start + length]
@@ -460,11 +571,14 @@ def _generated_typespec_status(
             if base_key in {
                 ("typing", "ClassVar"), ("typing", "Final"),
                 ("typing", "Required"), ("typing", "NotRequired"),
+                ("typing", "TypeGuard"), ("typing", "TypeIs"),
                 ("typing_extensions", "ClassVar"),
                 ("typing_extensions", "Final"),
                 ("typing_extensions", "Required"),
                 ("typing_extensions", "NotRequired"),
                 ("typing_extensions", "ReadOnly"),
+                ("typing_extensions", "TypeGuard"),
+                ("typing_extensions", "TypeIs"),
             }:
                 return (
                     _generated_typespec_status(manifest, args[0], visiting)

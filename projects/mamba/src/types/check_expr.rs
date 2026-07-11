@@ -17,6 +17,22 @@ enum StdlibSpecCandidate {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StrictRelation {
+    Compatible,
+    Incompatible,
+    Indeterminate,
+}
+
+enum UserProtocolMethod {
+    Found(
+        super::protocol::MethodSig,
+        Option<Vec<FunctionParamSig>>,
+    ),
+    Missing,
+    Indeterminate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StdlibSpecAccess {
     ModuleFn,
     Constructor,
@@ -303,12 +319,14 @@ impl TypeChecker {
                     Expr::Attr { object, .. } => self.user_class_object(object).is_some(),
                     _ => false,
                 };
-                // ① Type-wall PoC HOOK: stdlib argument enforcement. ADDITIVE —
-                // runs before the existing `match func_ty` and never changes the
-                // Any-path return. It only *emits* the existing arg-mismatch
-                // error when a known stdlib signature is genuinely violated by a
-                // concrete-scalar argument. Skip-when-unsure at every branch.
-                let stdlib_ret = match self.check_structured_stdlib_call(func, args) {
+                // A resolved generated TypeSpec contract owns the call even
+                // when its result is indeterminate. The compact scalar table
+                // is only a fallback when no generated candidate exists.
+                let structured_stdlib = self.check_structured_stdlib_call(func, args);
+                let structured_stdlib_handled = structured_stdlib.is_some();
+                let structured_stdlib_authoritative =
+                    structured_stdlib_handled && func_name.is_some();
+                let stdlib_ret = match structured_stdlib {
                     Some(ret) => ret,
                     None => self.check_stdlib_call(func, args),
                 };
@@ -373,7 +391,11 @@ impl TypeChecker {
                         // required-arg fn at this layer; lowering / runtime catches
                         // genuinely-missing required args.
                         let might_have_defaults = positional_count < params.len();
-                        if !has_star && !has_kwargs && !might_have_defaults {
+                        if !structured_stdlib_authoritative
+                            && !has_star
+                            && !has_kwargs
+                            && !might_have_defaults
+                        {
                             if variadic {
                                 // Variadic: only check minimum args
                                 if positional_count < params.len() {
@@ -506,7 +528,8 @@ impl TypeChecker {
                                             (self.tcx.get(expected), &a.node),
                                             (Ty::Str, Expr::BytesLit(_))
                                         );
-                                        if !index_protocol_ok
+                                        if !structured_stdlib_authoritative
+                                            && !index_protocol_ok
                                             && (bytes_literal_str_mismatch
                                                 || !self.types_compatible(expected, at))
                                         {
@@ -1433,6 +1456,9 @@ impl TypeChecker {
     ) -> Option<TypeId> {
         use super::stdlib_typespec::TypeNameKind;
 
+        if kind == TypeNameKind::Alias && (module, name) == ("builtins", "_ClassInfo") {
+            return Some(self.external_class_instance(module, name, args));
+        }
         if kind == TypeNameKind::Alias {
             return self.materialize_stdlib_alias(module, name, args);
         }
@@ -1468,8 +1494,24 @@ impl TypeChecker {
             ("builtins", "type") if args.is_empty() => {
                 self.tcx.intern(Ty::TypeObject(self.tcx.any()))
             }
-            _ if matches!(kind, TypeNameKind::Nominal | TypeNameKind::Builtin) => {
-                self.external_class_instance(module, name, args)
+            _ if matches!(
+                kind,
+                TypeNameKind::Nominal
+                    | TypeNameKind::Protocol
+                    | TypeNameKind::Imported
+                    | TypeNameKind::Builtin
+            ) => {
+                if let Some((_id, class)) = super::stdlib_typespec::class_spec(module, name) {
+                    self.external_class_instance(
+                        super::stdlib_typespec::string(class.module),
+                        super::stdlib_typespec::string(class.qualifier),
+                        args,
+                    )
+                } else if matches!(kind, TypeNameKind::Nominal | TypeNameKind::Builtin) {
+                    self.external_class_instance(module, name, args)
+                } else {
+                    return None;
+                }
             }
             _ => return None,
         };
@@ -1647,6 +1689,14 @@ impl TypeChecker {
                             ret,
                             variadic,
                         })
+                    }
+                    ("typing", "TypeGuard")
+                    | ("typing", "TypeIs")
+                    | ("typing_extensions", "TypeGuard")
+                    | ("typing_extensions", "TypeIs")
+                        if args.len() == 1 =>
+                    {
+                        self.tcx.bool()
                     }
                     ("typing", "Annotated") | ("typing_extensions", "Annotated")
                         if !args.is_empty() =>
@@ -1899,29 +1949,735 @@ impl TypeChecker {
         Some(params)
     }
 
-    fn stdlib_literal_argument_matches(
+    fn known_stdlib_class_projection(
+        &mut self,
+        expected: &super::ty::ExternalClass,
+        expected_ty: TypeId,
+        actual: TypeId,
+    ) -> Option<bool> {
+        let shape = match (expected.module.as_str(), expected.name.as_str()) {
+            ("builtins", "_ClassInfo") => match self.tcx.get(actual).clone() {
+                Ty::TypeObject(_) => Some(true),
+                Ty::Class {
+                    role: ClassRole::Object,
+                    ..
+                } => Some(true),
+                Ty::Tuple(items) => {
+                    let mut unknown = false;
+                    for item in items {
+                        match self.known_stdlib_class_projection(expected, expected_ty, item) {
+                            Some(true) => {}
+                            Some(false) => return Some(false),
+                            None => unknown = true,
+                        }
+                    }
+                    if unknown { None } else { Some(true) }
+                }
+                Ty::Any | Ty::Error | Ty::TypeVar(_) | Ty::Infer(_) => None,
+                _ => Some(false),
+            },
+            ("os", "PathLike") => match self.tcx.get(actual) {
+                Ty::Any | Ty::Error | Ty::TypeVar(_) | Ty::Infer(_) => None,
+                Ty::Class { .. } => None,
+                _ => Some(false),
+            },
+            ("typing", "SupportsIndex") => match self.tcx.get(actual) {
+                Ty::Int | Ty::Bool => Some(true),
+                Ty::Float
+                | Ty::Str
+                | Ty::None
+                | Ty::List(_)
+                | Ty::Set(_)
+                | Ty::Dict(_, _)
+                | Ty::Tuple(_) => Some(false),
+                _ => None,
+            },
+            ("typing", "Iterable" | "Collection") => match self.tcx.get(actual) {
+                Ty::List(_)
+                | Ty::Set(_)
+                | Ty::Dict(_, _)
+                | Ty::Tuple(_)
+                | Ty::Str => Some(true),
+                Ty::Int | Ty::Float | Ty::Bool | Ty::None => Some(false),
+                Ty::Class {
+                    external: Some(actual),
+                    ..
+                } if actual.module == "builtins"
+                    && matches!(
+                        actual.name.as_str(),
+                        "bytes" | "bytearray" | "range" | "frozenset"
+                    ) => Some(true),
+                _ => None,
+            },
+            ("typing", "Sequence") => match self.tcx.get(actual) {
+                Ty::List(_) | Ty::Tuple(_) | Ty::Str => Some(true),
+                Ty::Int | Ty::Float | Ty::Bool | Ty::None | Ty::Set(_) | Ty::Dict(_, _) => {
+                    Some(false)
+                }
+                Ty::Class {
+                    external: Some(actual),
+                    ..
+                } if actual.module == "builtins"
+                    && matches!(actual.name.as_str(), "bytes" | "bytearray" | "range") =>
+                {
+                    Some(true)
+                }
+                _ => None,
+            },
+            ("typing", "MutableSequence") => match self.tcx.get(actual) {
+                Ty::List(_) => Some(true),
+                Ty::Int
+                | Ty::Float
+                | Ty::Bool
+                | Ty::Str
+                | Ty::None
+                | Ty::Set(_)
+                | Ty::Dict(_, _)
+                | Ty::Tuple(_) => Some(false),
+                Ty::Class {
+                    external: Some(actual),
+                    ..
+                } if actual.module == "builtins" && actual.name == "bytearray" => Some(true),
+                Ty::Class {
+                    external: Some(actual),
+                    ..
+                } if actual.module == "builtins"
+                    && matches!(actual.name.as_str(), "bytes" | "range" | "frozenset") =>
+                {
+                    Some(false)
+                }
+                _ => None,
+            },
+            ("typing", "Mapping" | "MutableMapping") => match self.tcx.get(actual) {
+                Ty::Dict(_, _) => Some(true),
+                Ty::Int
+                | Ty::Float
+                | Ty::Bool
+                | Ty::Str
+                | Ty::None
+                | Ty::List(_)
+                | Ty::Set(_)
+                | Ty::Tuple(_) => Some(false),
+                _ => None,
+            },
+            _ => None,
+        }?;
+        if !shape || expected.args.is_empty() {
+            return Some(shape);
+        }
+        Some(self.types_compatible(expected_ty, actual))
+    }
+
+    fn stdlib_protocol_marker(spec_id: super::stdlib_typespec::TypeSpecId) -> bool {
+        use super::stdlib_typespec::{self as spec, TypeSpecNode};
+
+        match spec::node(spec_id) {
+            TypeSpecNode::Name { module, name, .. } => {
+                spec::string(*module) == "typing"
+                    && matches!(spec::string(*name), "Protocol" | "Generic")
+            }
+            TypeSpecNode::Apply { base, .. } => Self::stdlib_protocol_marker(*base),
+            _ => false,
+        }
+    }
+
+    fn user_protocol_method(
+        &self,
+        symbol: SymbolId,
+        name: &str,
+        visiting: &mut std::collections::HashSet<SymbolId>,
+    ) -> UserProtocolMethod {
+        if !visiting.insert(symbol) {
+            return UserProtocolMethod::Indeterminate;
+        }
+        if let Some(method) = self
+            .class_methods_by_symbol
+            .get(&symbol)
+            .and_then(|methods| methods.get(name))
+            .cloned()
+        {
+            let params = self
+                .class_method_param_sigs
+                .get(&symbol)
+                .and_then(|methods| methods.get(name))
+                .cloned();
+            visiting.remove(&symbol);
+            return UserProtocolMethod::Found(method, params);
+        }
+        if self.class_inheritance_open.contains(&symbol) {
+            visiting.remove(&symbol);
+            return UserProtocolMethod::Indeterminate;
+        }
+        let mut found = None;
+        let mut ambiguous = false;
+        for base in self
+            .class_base_symbols
+            .get(&symbol)
+            .into_iter()
+            .flatten()
+        {
+            match self.user_protocol_method(*base, name, visiting) {
+                UserProtocolMethod::Found(method, params) => {
+                    if found.is_some() {
+                        ambiguous = true;
+                    } else {
+                        found = Some((method, params));
+                    }
+                }
+                UserProtocolMethod::Missing => {}
+                UserProtocolMethod::Indeterminate => ambiguous = true,
+            }
+        }
+        visiting.remove(&symbol);
+        if ambiguous {
+            UserProtocolMethod::Indeterminate
+        } else if let Some((method, params)) = found {
+            UserProtocolMethod::Found(method, params)
+        } else {
+            UserProtocolMethod::Missing
+        }
+    }
+
+    fn stdlib_object_declares_method(name: &str) -> bool {
+        use super::stdlib_typespec as spec;
+
+        spec::class_spec("builtins", "object").is_some_and(|(_, class)| {
+            spec::class_methods(class).any(|method| {
+                method.py312
+                    && method.kind == spec::CallableSpecKind::InstanceMethod
+                    && spec::string(method.name) == name
+            })
+        })
+    }
+
+    fn stdlib_protocol_relation(
+        &mut self,
+        class: &super::stdlib_typespec::ClassSpec,
+        expected_external: &super::ty::ExternalClass,
+        actual: TypeId,
+        visiting: &mut std::collections::HashSet<(TypeId, TypeId)>,
+    ) -> StrictRelation {
+        use super::stdlib_typespec::{self as spec, CallableSpecKind, ParamSpecKind};
+
+        let Ty::Class {
+            user: Some(actual_user),
+            ..
+        } = self.tcx.get(actual).clone()
+        else {
+            return StrictRelation::Indeterminate;
+        };
+        let class_params = spec::class_type_params(class);
+        if !expected_external.args.is_empty() && expected_external.args.len() != class_params.len() {
+            return StrictRelation::Indeterminate;
+        }
+        let mut substitution = Substitution::new();
+        for (index, param) in class_params.iter().enumerate() {
+            let Some(param_ty) = self.materialize_stdlib_type_param(*param) else {
+                return StrictRelation::Indeterminate;
+            };
+            let Ty::TypeVar(var) = self.tcx.get(param_ty) else {
+                return StrictRelation::Indeterminate;
+            };
+            let arg = expected_external
+                .args
+                .get(index)
+                .copied()
+                .unwrap_or_else(|| self.tcx.any());
+            substitution.insert(*var, arg);
+        }
+
+        let mut method_names = Vec::new();
+        for method in spec::class_methods(class).filter(|method| {
+            method.py312 && method.kind == CallableSpecKind::InstanceMethod
+        }) {
+            let name = spec::string(method.name);
+            if !method_names.contains(&name) {
+                method_names.push(name);
+            }
+        }
+        let mut saw_indeterminate = false;
+        for name in method_names {
+            let required: Vec<_> = spec::class_methods(class)
+                .filter(|method| {
+                    method.py312
+                        && method.kind == CallableSpecKind::InstanceMethod
+                        && spec::string(method.name) == name
+                })
+                .collect();
+            let (actual_method, actual_params) = match self.user_protocol_method(
+                actual_user.symbol,
+                name,
+                &mut std::collections::HashSet::new(),
+            ) {
+                UserProtocolMethod::Found(method, params) => (method, params),
+                UserProtocolMethod::Indeterminate => {
+                    saw_indeterminate = true;
+                    continue;
+                }
+                UserProtocolMethod::Missing => {
+                    return if Self::stdlib_object_declares_method(name) {
+                        StrictRelation::Indeterminate
+                    } else {
+                        StrictRelation::Incompatible
+                    };
+                }
+            };
+            if required.len() != 1 || required[0].type_params.1 != 0 {
+                saw_indeterminate = true;
+                continue;
+            }
+            let required = required[0];
+            let required_params: Vec<_> = spec::params(required.params)
+                .iter()
+                .filter(|param| !param.implicit_receiver)
+                .collect();
+            if required_params.iter().any(|param| {
+                matches!(param.kind, ParamSpecKind::VarPos | ParamSpecKind::VarKw)
+            }) || required_params.len() != actual_method.params.len()
+            {
+                saw_indeterminate = true;
+                continue;
+            }
+            let Some(actual_params) = actual_params else {
+                saw_indeterminate = true;
+                continue;
+            };
+            if actual_params.len() != required_params.len() {
+                saw_indeterminate = true;
+                continue;
+            }
+            for ((required_param, actual_param), actual_ty) in required_params
+                .iter()
+                .zip(&actual_params)
+                .zip(&actual_method.params)
+            {
+                let kind_compatible = match required_param.kind {
+                    ParamSpecKind::PosOnly => {
+                        (actual_param.kind == ParamKind::Regular && !actual_param.kw_only)
+                            || actual_param.kind == ParamKind::Star
+                    }
+                    ParamSpecKind::PosOrKw => {
+                        actual_param.kind == ParamKind::Regular
+                            && !actual_param.pos_only
+                            && !actual_param.kw_only
+                    }
+                    ParamSpecKind::KwOnly => {
+                        (actual_param.kind == ParamKind::Regular && !actual_param.pos_only)
+                            || actual_param.kind == ParamKind::DoubleStar
+                    }
+                    ParamSpecKind::VarPos | ParamSpecKind::VarKw => false,
+                };
+                let required_name = spec::string(required_param.name);
+                let name_compatible = match required_param.kind {
+                    ParamSpecKind::PosOnly => true,
+                    ParamSpecKind::PosOrKw => actual_param.name == required_name,
+                    ParamSpecKind::KwOnly => {
+                        actual_param.kind == ParamKind::DoubleStar
+                            || actual_param.name == required_name
+                    }
+                    ParamSpecKind::VarPos | ParamSpecKind::VarKw => false,
+                };
+                if !kind_compatible || !name_compatible {
+                    return StrictRelation::Incompatible;
+                }
+                let required_ty = spec::type_use(required_param.ty).0;
+                let Some(required_ty) = self.materialize_stdlib_type(required_ty) else {
+                    saw_indeterminate = true;
+                    continue;
+                };
+                let required_ty = substitution.apply(required_ty, &mut self.tcx);
+                match self.stdlib_type_relation_inner(*actual_ty, required_ty, visiting) {
+                    StrictRelation::Compatible => {}
+                    StrictRelation::Incompatible => return StrictRelation::Incompatible,
+                    StrictRelation::Indeterminate => saw_indeterminate = true,
+                }
+                if required_param.has_default {
+                    saw_indeterminate = true;
+                }
+            }
+            let Some(required_ret) = self.materialize_stdlib_type(spec::type_use(required.ret).0)
+            else {
+                saw_indeterminate = true;
+                continue;
+            };
+            let required_ret = substitution.apply(required_ret, &mut self.tcx);
+            match self.stdlib_type_relation_inner(
+                required_ret,
+                actual_method.return_type,
+                visiting,
+            ) {
+                StrictRelation::Compatible => {}
+                StrictRelation::Incompatible => return StrictRelation::Incompatible,
+                StrictRelation::Indeterminate => saw_indeterminate = true,
+            }
+        }
+
+        for base in spec::class_bases(class) {
+            if Self::stdlib_protocol_marker(*base) {
+                continue;
+            }
+            let Some(base) = self.materialize_stdlib_type(*base) else {
+                saw_indeterminate = true;
+                continue;
+            };
+            let base = substitution.apply(base, &mut self.tcx);
+            match self.stdlib_type_relation_inner(base, actual, visiting) {
+                StrictRelation::Compatible => {}
+                StrictRelation::Incompatible => return StrictRelation::Incompatible,
+                StrictRelation::Indeterminate => saw_indeterminate = true,
+            }
+        }
+        if !class.method_only_complete || saw_indeterminate {
+            StrictRelation::Indeterminate
+        } else {
+            StrictRelation::Compatible
+        }
+    }
+
+    fn stdlib_type_relation(&mut self, expected: TypeId, actual: TypeId) -> StrictRelation {
+        self.stdlib_type_relation_inner(expected, actual, &mut std::collections::HashSet::new())
+    }
+
+    fn stdlib_type_relation_inner(
+        &mut self,
+        expected: TypeId,
+        actual: TypeId,
+        visiting: &mut std::collections::HashSet<(TypeId, TypeId)>,
+    ) -> StrictRelation {
+        use super::stdlib_typespec::{self as spec, ClassSpecKind};
+
+        let expected_node = self.tcx.get(expected).clone();
+        let actual_node = self.tcx.get(actual).clone();
+        if matches!(actual_node, Ty::Any | Ty::Error | Ty::TypeVar(_) | Ty::Infer(_)) {
+            return StrictRelation::Indeterminate;
+        }
+        if let Ty::TypeVar(var) = expected_node {
+            let info = self.tcx.get_type_var(var).clone();
+            if !info.constraints.is_empty() {
+                let mut unknown = false;
+                for constraint in info.constraints {
+                    match self.stdlib_type_relation_inner(constraint, actual, visiting) {
+                        StrictRelation::Compatible => return StrictRelation::Compatible,
+                        StrictRelation::Indeterminate => unknown = true,
+                        StrictRelation::Incompatible => {}
+                    }
+                }
+                return if unknown {
+                    StrictRelation::Indeterminate
+                } else {
+                    StrictRelation::Incompatible
+                };
+            }
+            return match info.bound {
+                Some(bound) => self.stdlib_type_relation_inner(bound, actual, visiting),
+                None => StrictRelation::Indeterminate,
+            };
+        }
+        if matches!(expected_node, Ty::Any | Ty::Error | Ty::Infer(_)) {
+            return StrictRelation::Indeterminate;
+        }
+        if expected == actual {
+            return StrictRelation::Compatible;
+        }
+        if !visiting.insert((expected, actual)) {
+            return StrictRelation::Compatible;
+        }
+        let relation = match (expected_node.clone(), actual_node.clone()) {
+            (Ty::Union(expected), Ty::Union(actual)) => {
+                let mut unknown = false;
+                let compatible = actual.into_iter().all(|actual| {
+                    let mut branch_unknown = false;
+                    let matched = expected.iter().any(|expected| {
+                        match self.stdlib_type_relation_inner(*expected, actual, visiting) {
+                            StrictRelation::Compatible => true,
+                            StrictRelation::Indeterminate => {
+                                branch_unknown = true;
+                                false
+                            }
+                            StrictRelation::Incompatible => false,
+                        }
+                    });
+                    unknown |= !matched && branch_unknown;
+                    matched || branch_unknown
+                });
+                if !compatible {
+                    StrictRelation::Incompatible
+                } else if unknown {
+                    StrictRelation::Indeterminate
+                } else {
+                    StrictRelation::Compatible
+                }
+            }
+            (Ty::Union(expected), _) => {
+                let mut unknown = false;
+                let matched = expected.iter().any(|expected| {
+                    match self.stdlib_type_relation_inner(*expected, actual, visiting) {
+                        StrictRelation::Compatible => true,
+                        StrictRelation::Indeterminate => {
+                            unknown = true;
+                            false
+                        }
+                        StrictRelation::Incompatible => false,
+                    }
+                });
+                if matched {
+                    StrictRelation::Compatible
+                } else if unknown {
+                    StrictRelation::Indeterminate
+                } else {
+                    StrictRelation::Incompatible
+                }
+            }
+            (_, Ty::Union(actual)) => {
+                let mut unknown = false;
+                let mut incompatible = false;
+                for actual in actual {
+                    match self.stdlib_type_relation_inner(expected, actual, visiting) {
+                        StrictRelation::Compatible => {}
+                        StrictRelation::Indeterminate => unknown = true,
+                        StrictRelation::Incompatible => incompatible = true,
+                    }
+                }
+                if incompatible {
+                    StrictRelation::Incompatible
+                } else if unknown {
+                    StrictRelation::Indeterminate
+                } else {
+                    StrictRelation::Compatible
+                }
+            }
+            (
+                Ty::Class {
+                    external: Some(external),
+                    role: ClassRole::Instance,
+                    ..
+                },
+                _,
+            ) => {
+                if let Some(projected) =
+                    self.known_stdlib_class_projection(&external, expected, actual)
+                {
+                    if projected {
+                        StrictRelation::Compatible
+                    } else {
+                        StrictRelation::Incompatible
+                    }
+                } else if let Some((_class_id, class)) =
+                    spec::class_spec(&external.module, &external.name)
+                {
+                    if class.kind == ClassSpecKind::Protocol {
+                        self.stdlib_protocol_relation(class, &external, actual, visiting)
+                    } else if self.types_compatible(expected, actual) {
+                        StrictRelation::Compatible
+                    } else if external.module == "builtins"
+                        && matches!(
+                            &actual_node,
+                            Ty::Never
+                                | Ty::None
+                                | Ty::Bool
+                                | Ty::Int
+                                | Ty::Float
+                                | Ty::Str
+                                | Ty::List(_)
+                                | Ty::Set(_)
+                                | Ty::Dict(_, _)
+                                | Ty::Tuple(_)
+                                | Ty::Fn { .. }
+                                | Ty::TypeObject(_)
+                                | Ty::Enum { .. }
+                                | Ty::Literal(_)
+                        )
+                    {
+                        StrictRelation::Incompatible
+                    } else if matches!(
+                        &actual_node,
+                        Ty::Class {
+                            user: Some(user),
+                            ..
+                        } if !self.class_inheritance_open.contains(&user.symbol)
+                    ) {
+                        StrictRelation::Incompatible
+                    } else {
+                        StrictRelation::Indeterminate
+                    }
+                } else if self.types_compatible(expected, actual) {
+                    StrictRelation::Compatible
+                } else {
+                    StrictRelation::Incompatible
+                }
+            }
+            _ if self.types_compatible(expected, actual) => StrictRelation::Compatible,
+            _ => StrictRelation::Incompatible,
+        };
+        visiting.remove(&(expected, actual));
+        relation
+    }
+
+    fn stdlib_literal_argument_relation(
         &mut self,
         expected: TypeId,
         actual: TypeId,
         value: &Spanned<Expr>,
-    ) -> bool {
+    ) -> StrictRelation {
         match self.tcx.get(expected).clone() {
-            Ty::Literal(values) => values.iter().any(|literal| {
-                matches!(
-                    (literal, &value.node),
-                    (LiteralValue::Int(left), Expr::IntLit(right)) if left == right
-                ) || matches!(
-                    (literal, &value.node),
-                    (LiteralValue::Str(left), Expr::StrLit(right)) if left == right
-                ) || matches!(
-                    (literal, &value.node),
-                    (LiteralValue::Bool(left), Expr::BoolLit(right)) if left == right
-                )
-            }),
-            Ty::Union(members) => members.into_iter().any(|member| {
-                self.stdlib_literal_argument_matches(member, actual, value)
-            }),
-            _ => self.types_compatible(expected, actual),
+            Ty::Literal(values) => match self.tcx.get(actual).clone() {
+                Ty::Any | Ty::Error | Ty::TypeVar(_) | Ty::Infer(_) => {
+                    StrictRelation::Indeterminate
+                }
+                Ty::Never => StrictRelation::Compatible,
+                Ty::Literal(actual_values) => {
+                    if actual_values.iter().all(|value| values.contains(value)) {
+                        StrictRelation::Compatible
+                    } else {
+                        StrictRelation::Incompatible
+                    }
+                }
+                Ty::Union(members) => {
+                    let mut unknown = false;
+                    for member in members {
+                        match self.stdlib_literal_argument_relation(expected, member, value) {
+                            StrictRelation::Compatible => {}
+                            StrictRelation::Indeterminate => unknown = true,
+                            StrictRelation::Incompatible => {
+                                return StrictRelation::Incompatible;
+                            }
+                        }
+                    }
+                    if unknown {
+                        StrictRelation::Indeterminate
+                    } else {
+                        StrictRelation::Compatible
+                    }
+                }
+                _ => {
+                    if values.iter().any(|literal| {
+                        matches!(
+                            (literal, &value.node),
+                            (LiteralValue::Int(left), Expr::IntLit(right)) if left == right
+                        ) || matches!(
+                            (literal, &value.node),
+                            (LiteralValue::Str(left), Expr::StrLit(right)) if left == right
+                        ) || matches!(
+                            (literal, &value.node),
+                            (LiteralValue::Bool(left), Expr::BoolLit(right)) if left == right
+                        )
+                    }) {
+                        StrictRelation::Compatible
+                    } else {
+                        StrictRelation::Incompatible
+                    }
+                }
+            },
+            Ty::Union(members) => {
+                let mut unknown = false;
+                for member in members {
+                    match self.stdlib_literal_argument_relation(member, actual, value) {
+                        StrictRelation::Compatible => return StrictRelation::Compatible,
+                        StrictRelation::Indeterminate => unknown = true,
+                        StrictRelation::Incompatible => {}
+                    }
+                }
+                if unknown {
+                    StrictRelation::Indeterminate
+                } else {
+                    StrictRelation::Incompatible
+                }
+            }
+            _ => self.stdlib_type_relation(expected, actual),
+        }
+    }
+
+    fn stdlib_unmaterialized_argument_relation(
+        &self,
+        expected: super::stdlib_typespec::TypeSpecId,
+        actual: TypeId,
+    ) -> StrictRelation {
+        use super::stdlib_typespec::{self as spec, TypeSpecNode};
+
+        let TypeSpecNode::Apply { base, .. } = spec::node(expected) else {
+            return StrictRelation::Indeterminate;
+        };
+        let TypeSpecNode::Name { module, name, .. } = spec::node(*base) else {
+            return StrictRelation::Indeterminate;
+        };
+        if !matches!(
+            (spec::string(*module), spec::string(*name)),
+            ("typing", "Callable") | ("collections.abc", "Callable")
+        ) {
+            return StrictRelation::Indeterminate;
+        }
+        match self.tcx.get(actual) {
+            Ty::Any | Ty::Error | Ty::TypeVar(_) | Ty::Infer(_) | Ty::AliasRef(_) => {
+                StrictRelation::Indeterminate
+            }
+            Ty::Fn { .. } | Ty::TypeObject(_) => StrictRelation::Indeterminate,
+            Ty::Class {
+                role: ClassRole::Object,
+                ..
+            } => StrictRelation::Indeterminate,
+            Ty::Class {
+                role: ClassRole::Instance,
+                user: Some(user),
+                ..
+            } => {
+                let callable = self.user_protocol_method(
+                        user.symbol,
+                        "__call__",
+                        &mut std::collections::HashSet::new(),
+                    );
+                match callable {
+                    UserProtocolMethod::Found(..) | UserProtocolMethod::Indeterminate => {
+                        StrictRelation::Indeterminate
+                    }
+                    UserProtocolMethod::Missing => StrictRelation::Incompatible,
+                }
+            }
+            Ty::Class { .. } | Ty::Union(_) | Ty::SelfType => StrictRelation::Indeterminate,
+            _ => StrictRelation::Incompatible,
+        }
+    }
+
+    fn stdlib_generic_bounds_relation(
+        &mut self,
+        substitution: &Substitution,
+        params: &GenericParams,
+    ) -> StrictRelation {
+        let mut unknown = false;
+        for param in &params.params {
+            let Some(actual) = substitution.get(param.id) else {
+                unknown = true;
+                continue;
+            };
+            if !param.constraints.is_empty() {
+                let mut matched = false;
+                let mut constraint_unknown = false;
+                for constraint in &param.constraints {
+                    match self.stdlib_type_relation(*constraint, actual) {
+                        StrictRelation::Compatible => matched = true,
+                        StrictRelation::Indeterminate => constraint_unknown = true,
+                        StrictRelation::Incompatible => {}
+                    }
+                }
+                if !matched {
+                    if constraint_unknown {
+                        unknown = true;
+                    } else {
+                        return StrictRelation::Incompatible;
+                    }
+                }
+            }
+            if let Some(bound) = param.bound {
+                match self.stdlib_type_relation(bound, actual) {
+                    StrictRelation::Compatible => {}
+                    StrictRelation::Indeterminate => unknown = true,
+                    StrictRelation::Incompatible => return StrictRelation::Incompatible,
+                }
+            }
+        }
+        if unknown {
+            StrictRelation::Indeterminate
+        } else {
+            StrictRelation::Compatible
         }
     }
 
@@ -2032,6 +2788,19 @@ impl TypeChecker {
             let expected_spec = spec::type_use(visible[param_index].ty).0;
             let expected = self.materialize_stdlib_type(expected_spec);
             indeterminate |= expected.is_none();
+            if expected.is_none()
+                && self.stdlib_unmaterialized_argument_relation(expected_spec, actual)
+                    == StrictRelation::Incompatible
+            {
+                return StdlibSpecCandidate::Rejected(
+                    span,
+                    format!(
+                        "argument type mismatch: expected a callable value, got `{}` for parameter `{name}`",
+                        self.ty_name(actual),
+                    ),
+                    1,
+                );
+            }
             let actual = if let Some(expected) = expected {
                 let value = match &args[arg_index] {
                     CallArg::Positional(value)
@@ -2046,6 +2815,7 @@ impl TypeChecker {
             matched.push((expected, actual, span, name, arg_index));
         }
 
+        let mut relation_substitution = None;
         let completed = if let Some(generic_params) = self.stdlib_spec_generic_params(sig) {
             let inference_pairs: Vec<_> = matched
                 .iter()
@@ -2059,15 +2829,31 @@ impl TypeChecker {
                 let span = matched.first().map(|item| item.2).unwrap_or_default();
                 return StdlibSpecCandidate::Rejected(span, message, 1);
             }
+            relation_substitution = Some(subst.clone());
             match complete_type_args(&generic_params, subst, &mut self.tcx) {
                 Some((completed, _)) => {
-                    if let Some(message) = check_bounds(&completed, &generic_params, &self.tcx)
-                        .into_iter()
-                        .next()
+                    if let Some(message) = check_bounds(
+                        &completed,
+                        &generic_params,
+                        &self.tcx,
+                    )
+                    .into_iter()
+                    .next()
                     {
-                        let span = matched.first().map(|item| item.2).unwrap_or_default();
-                        return StdlibSpecCandidate::Rejected(span, message, 1);
+                        match self.stdlib_generic_bounds_relation(
+                            &completed,
+                            &generic_params,
+                        ) {
+                            StrictRelation::Compatible => {}
+                            StrictRelation::Indeterminate => indeterminate = true,
+                            StrictRelation::Incompatible => {
+                                let span =
+                                    matched.first().map(|item| item.2).unwrap_or_default();
+                                return StdlibSpecCandidate::Rejected(span, message, 1);
+                            }
+                        }
                     }
+                    relation_substitution = Some(completed.clone());
                     Some(completed)
                 }
                 None => {
@@ -2083,8 +2869,8 @@ impl TypeChecker {
             let Some(mut expected) = expected else {
                 continue;
             };
-            if let Some(completed) = &completed {
-                expected = completed.apply(expected, &mut self.tcx);
+            if let Some(substitution) = &relation_substitution {
+                expected = substitution.apply(expected, &mut self.tcx);
             } else if self.tcx.contains_type_var(expected) {
                 indeterminate = true;
                 continue;
@@ -2095,16 +2881,22 @@ impl TypeChecker {
                 | CallArg::Keyword { value, .. }
                 | CallArg::DoubleStarArg(value) => value,
             };
-            if !self.stdlib_literal_argument_matches(expected, actual, value) {
-                return StdlibSpecCandidate::Rejected(
-                    span,
-                    format!(
-                        "argument type mismatch: expected `{}`, got `{}` for parameter `{name}`",
-                        self.ty_name(expected),
-                        self.ty_name(actual),
-                    ),
-                    1,
-                );
+            match self.stdlib_literal_argument_relation(expected, actual, value) {
+                StrictRelation::Compatible => {}
+                StrictRelation::Indeterminate => {
+                    indeterminate = true;
+                }
+                StrictRelation::Incompatible => {
+                    return StdlibSpecCandidate::Rejected(
+                        span,
+                        format!(
+                            "argument type mismatch: expected `{}`, got `{}` for parameter `{name}`",
+                            self.ty_name(expected),
+                            self.ty_name(actual),
+                        ),
+                        1,
+                    );
+                }
             }
         }
         if indeterminate {
@@ -2163,7 +2955,7 @@ impl TypeChecker {
                 }
             }
             if kinds.len() > 1 {
-                return None;
+                return Some(None);
             }
         }
         let checked: Vec<_> = args
@@ -2192,13 +2984,14 @@ impl TypeChecker {
                 | StdlibSpecAccess::ClassMember
                 | StdlibSpecAccess::BoundMember => true,
             };
-            match self.evaluate_stdlib_spec_candidate(
+            let evaluated = self.evaluate_stdlib_spec_candidate(
                 candidate,
                 args,
                 &checked,
                 hide_implicit_receiver,
                 target.access == StdlibSpecAccess::ModuleFn,
-            ) {
+            );
+            match evaluated {
                 StdlibSpecCandidate::Accepted(ret) => accepted.push(ret),
                 StdlibSpecCandidate::Rejected(span, message, priority) => {
                     rejected.push((span, message, priority))
@@ -2208,17 +3001,20 @@ impl TypeChecker {
         }
         if accepted.is_empty() {
             if !indeterminate && rejected.len() == candidates.len() {
-                if let Some((span, message, _)) =
-                    rejected.into_iter().max_by_key(|item| item.2)
+                if let Some((span, message, _)) = rejected.into_iter().max_by(|left, right| {
+                    left.2
+                        .cmp(&right.2)
+                        .then_with(|| right.0.start.cmp(&left.0.start))
+                })
                 {
                     self.error(span, message);
                 }
                 return Some(None);
             }
-            return None;
+            return Some(None);
         }
         if indeterminate {
-            return None;
+            return Some(None);
         }
         if accepted.iter().any(Option::is_none) {
             return Some(None);
@@ -2233,17 +3029,9 @@ impl TypeChecker {
         })
     }
 
-    /// ① Type-wall PoC HOOK. Resolve a call's callee to `(module, qualifier,
-    /// name)` via import/instance provenance, look it up in the hardcoded
-    /// `stdlib_sigs` table, and — only when the signature is enforceable —
-    /// reject a concrete-scalar positional argument that is genuinely disjoint
-    /// from a concrete-scalar param. ADDITIVE: only ever *emits* an error; never
-    /// changes any return type or inference. Skip-when-unsure at every step so
-    /// correct calls (the ② behavior oracle) are never newly rejected.
-    /// Returns the call's inferred return type (#887: `sig.ret` mapped through
-    /// `core_ty_to_type_id`) when resolvable, or `None` when the callee didn't
-    /// resolve to a known stdlib signature / its return isn't a modeled
-    /// concrete scalar — skip-when-unsure, same as the argument-side wall.
+    /// Legacy compact-signature fallback for stdlib calls not handled by the
+    /// generated TypeSpec contract. It rejects only disjoint concrete scalars
+    /// and returns a modeled scalar result when one is available.
     fn check_stdlib_call(&mut self, func: &Spanned<Expr>, args: &[CallArg]) -> Option<TypeId> {
         // Resolve callee -> a concrete `StdlibSig`. We resolve to the signature
         // directly (rather than a `(module, qualifier, name)` triple) because a
