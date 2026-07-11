@@ -197,10 +197,11 @@ assert "and not unresolved_generated_contracts" in source
 }
 
 #[test]
-fn structured_method_accounting_is_not_poisoned_by_property_branches() {
+fn generated_inventory_tracks_properties_exports_and_py312_branches() {
     let script = r#"
 import importlib.util
 import pathlib
+import subprocess
 import sys
 
 tool = pathlib.Path("tests/harness/cpython/tools/strict_type_accounting.py")
@@ -214,19 +215,91 @@ spec.loader.exec_module(module)
 row = module.parse_generated_signature_param_index()[
     ("urllib.request", "Request", "full_url")
 ]
-assert row["manifest_branches"] == 3
+assert row["manifest_branches"] == 2
 assert row["branches"] == 1
-assert "value" not in row["params"]
+assert row["params"]["value"] == "supported"
+
+property_fixture = module.TYPE_DIR / "std-libs/urllib_request/Request__full_url__value_as_str_wrong.py"
+property_text = property_fixture.read_text(encoding="utf-8")
+assert '# subject = "urllib.request.Request.full_url = (value: str)"' in property_text
+assert "obj: Request = Request.__new__(Request)" in property_text
+assert "obj.full_url = 12345" in property_text
+assert property_fixture in module.executable_type_fixtures([property_fixture])
+assert module.unenforceable_generated_param_reason(
+    property_fixture, module.parse_generated_signature_param_index()
+) is None
+
+object_property = module.TYPE_DIR / "builtin-libs/builtins/object____class____type_as_type_wrong.py"
+object_text = object_property.read_text(encoding="utf-8")
+assert "from builtins import object as Object" in object_text
+assert "obj: Object = Object()" in object_text
+abstract_property = module.TYPE_DIR / "std-libs/_ctypes/Array__raw__value_as_ReadableBuffer_wrong.py"
+assert not abstract_property.exists()
+
+inactive_fixture = module.TYPE_DIR / "std-libs/pathlib/Path__copy__target_as_StrPath_wrong.py"
+assert module.is_generated_typespec_inactive_type_fixture(inactive_fixture)
+assert inactive_fixture not in module.executable_type_fixtures([inactive_fixture])
+
+private_fixture = module.TYPE_DIR / "std-libs/_heapq/_heapify_max__heap_as_list_wrong.py"
+assert not module.is_generated_typespec_inactive_type_fixture(private_fixture)
+assert private_fixture in module.executable_type_fixtures([private_fixture])
+
+expanded = module.parse_generated_signature_param_index()
+canonical = module.parse_generated_signature_param_index(expand_exports=False)
+assert ("ntpath", "", "commonpath") in expanded
+assert ("ntpath", "", "commonpath") not in canonical
+assert ("asyncio", "AbstractEventLoopPolicy", "get_event_loop") in expanded
+assert ("asyncio", "AbstractEventLoopPolicy", "get_event_loop") not in canonical
+assert ("threading", "local", "__getattribute__") in expanded
+assert ("threading", "local", "__getattribute__") not in canonical
+counts = module.parse_generated_signature_counts(pathlib.Path("."))
+assert counts["rows"] == len(canonical)
+assert len(expanded) > len(canonical)
+assert counts["unhandled_binding_branches"] == 0
+
+synthetic = {("example", "C", "value"): {"g": True, "t": False}}
+assert module._generated_contract_is_inactive(
+    "example.C.value", "property_set", synthetic
+)
+assert module._generated_contract_is_inactive(
+    "example.C.value", "call", synthetic
+)
+assert not module._generated_contract_is_inactive(
+    "example.C.value", "property_set", {("example", "C", "value"): {"g": True}}
+)
+
+sqlite_property = module.TYPE_DIR / "std-libs/sqlite3/Connection__autocommit__val_as_int_wrong.py"
+sqlite_text = sqlite_property.read_text(encoding="utf-8")
+assert 'obj: Connection = Connection(":memory:")' in sqlite_text
+sqlite_oracle = subprocess.run(
+    ["python3.12", str(sqlite_property)], text=True, capture_output=True, check=False
+)
+assert sqlite_oracle.returncode == 0
+assert "setup_or_other:" not in sqlite_oracle.stdout
+assert sqlite_oracle.stdout.startswith(("typeerror:", "no_typeerror:", "assignment_other:"))
+
+oracle_tool = pathlib.Path("tests/harness/cpython/tools/verify_cpython_oracle.py")
+oracle_spec = importlib.util.spec_from_file_location("verify_cpython_oracle", oracle_tool)
+oracle_module = importlib.util.module_from_spec(oracle_spec)
+assert oracle_spec.loader is not None
+sys.modules[oracle_spec.name] = oracle_module
+oracle_spec.loader.exec_module(oracle_module)
+assert oracle_module.is_generated_typespec_inactive_type_fixture(inactive_fixture)
+oracle_result = oracle_module.run_one(
+    inactive_fixture, "python3.12", 1.0, False, set()
+)
+assert oracle_result.status == "skip"
+assert oracle_result.reason == "inactive-typespec-contract"
 "#;
     let output = Command::new("python3.12")
         .arg("-c")
         .arg(script)
         .current_dir(mamba_root())
         .output()
-        .expect("run mixed property/method accounting smoke");
+        .expect("run generated inventory accounting smoke");
     assert!(
         output.status.success(),
-        "mixed property/method accounting smoke failed\nstdout={}\nstderr={}",
+        "generated inventory accounting smoke failed\nstdout={}\nstderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );

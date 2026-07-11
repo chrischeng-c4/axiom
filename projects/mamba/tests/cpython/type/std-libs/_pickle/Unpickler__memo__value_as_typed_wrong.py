@@ -7,14 +7,16 @@
 # lib = "_pickle"
 # dimension = "type"
 # case = "Unpickler__memo__value_as_typed_wrong"
-# subject = "_pickle.Unpickler.memo(value: typed)"
+# subject = "_pickle.Unpickler.memo = (value: typed)"
 # kind = "semantic"
+# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_pickle.pyi"
 # status = "filled"
 # ///
+# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value
 # mamba-strict-type: TypeError
-"""Type wall: _pickle.Unpickler.memo(value: typed); call it with the wrong type.
+"""Type wall: _pickle.Unpickler.memo = (value: typed); assign the wrong type.
 
 typeshed contract: value is typed. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
@@ -24,11 +26,11 @@ class _W:
 
 
 from _pickle import Unpickler
-obj = object.__new__(Unpickler)
+obj: Unpickler = Unpickler.__new__(Unpickler)
 try:
-    obj.memo(_W())  # value: typed <- wrong-typed
+    obj.memo = _W()  # value: typed <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
 except Exception as e:
-    print("setup_or_other:", type(e).__name__)
+    print("assignment_other:", type(e).__name__)

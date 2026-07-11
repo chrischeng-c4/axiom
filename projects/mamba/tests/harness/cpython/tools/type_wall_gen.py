@@ -142,6 +142,10 @@ NOT_WRONGABLE_SIGNATURE_PARAMS = {
     ("array", "array", "fromlist", "list"),
     ("array", "array", "index", "v"),
     ("array", "array", "remove", "v"),
+    # `_ctypes.Array` is abstract; neither `object.__new__(Array)` nor
+    # `Array.__new__(Array)` can construct the receiver required to exercise
+    # its `raw` setter under the CPython oracle.
+    ("_ctypes", "Array", "raw", "value"),
     # CPython 3.12 exposes no callable ParsingError.filename(value) API. A
     # stale generated fixture here fails the CPython oracle before mamba runs.
     ("configparser", "ParsingError", "filename", "value"),
@@ -152,6 +156,21 @@ NOT_WRONGABLE_SIGNATURE_PARAMS = {
 }
 BUILTINS = "builtins"
 NON_RUNTIME_STUB_MODULE_PREFIXES = ("_typeshed",)
+PROPERTY_RECEIVER_SETUP = {
+    # A direct `object` annotation is dynamic in mamba. Importing it under an
+    # explicit alias preserves the generated nominal identity for this setter.
+    ("builtins", "object", "__class__"): (
+        "from builtins import object as Object\n"
+        "obj: Object = Object()\n"
+    ),
+    # `Connection.__new__(Connection)` produces an uninitialized handle whose
+    # setters fail before consulting their value. Construct a live in-memory
+    # connection so the oracle reaches the `autocommit` contract.
+    ("sqlite3", "Connection", "autocommit"): (
+        "from sqlite3 import Connection\n"
+        "obj: Connection = Connection(\":memory:\")\n"
+    ),
+}
 
 
 def annotation_label(node: ast.expr | None) -> str:
@@ -164,11 +183,13 @@ def annotation_label(node: ast.expr | None) -> str:
     return "typed"
 
 
-def is_not_wrongable(node: ast.expr | None) -> bool:
+def is_not_wrongable(node: ast.expr | None, *, allow_type: bool = False) -> bool:
     """Broad/abstract annotations cannot anchor a wrong-typed runtime case."""
     if node is None:
         return True
     label = annotation_label(node)
+    if allow_type and label == "type":
+        return False
     return label in NOT_WRONGABLE or _typevar_convention(label)
 
 
@@ -199,7 +220,12 @@ def decorator_names(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
     return out
 
 
-def synth_call(fn: ast.FunctionDef | ast.AsyncFunctionDef, drop_first: bool):
+def synth_call(
+    fn: ast.FunctionDef | ast.AsyncFunctionDef,
+    drop_first: bool,
+    *,
+    allow_type: bool = False,
+):
     """Return (param, label, args_list) targeting the first wrongable positional.
 
     Scans all positionals (not just the first) for one with a type contract that
@@ -210,7 +236,14 @@ def synth_call(fn: ast.FunctionDef | ast.AsyncFunctionDef, drop_first: bool):
         pos = pos[1:]
     if not pos:
         return None
-    target = next((i for i, p in enumerate(pos) if not is_not_wrongable(p.annotation)), None)
+    target = next(
+        (
+            i
+            for i, p in enumerate(pos)
+            if not is_not_wrongable(p.annotation, allow_type=allow_type)
+        ),
+        None,
+    )
     if target is None:
         return None
     n_required = len(pos) - len(fn.args.defaults)
@@ -243,7 +276,18 @@ def _walk_class(body, mod, cls, kinds, v312=True):
             decos = decorator_names(m)
             is_static = "staticmethod" in decos
             is_class = "classmethod" in decos
-            if m.name == "__init__":
+            is_property_getter = "property" in decos
+            is_property_setter = "setter" in decos
+            is_property_deleter = "deleter" in decos
+            if is_property_getter or is_property_deleter:
+                continue
+            if is_property_setter:
+                if m.name.startswith("_") and not (
+                    m.name.startswith("__") and m.name.endswith("__")
+                ):
+                    continue
+                kind = "property"
+            elif m.name == "__init__":
                 kind = "init"
             elif is_static or is_class:
                 kind = "smethod"
@@ -254,8 +298,16 @@ def _walk_class(body, mod, cls, kinds, v312=True):
             else:
                 kind = "method"
             if kind in kinds:
-                got = synth_call(m, drop_first=not is_static)
-                if got and not is_signature_param_not_wrongable(mod, cls, m.name, got[0]):
+                got = synth_call(
+                    m,
+                    drop_first=not is_static,
+                    allow_type=kind == "property",
+                )
+                if (
+                    got
+                    and (kind != "property" or len(got[2]) == 1)
+                    and not is_signature_param_not_wrongable(mod, cls, m.name, got[0])
+                ):
                     yield _mk(mod, kind, cls, m.name, got)
         elif isinstance(m, ast.ClassDef):
             if not m.name.startswith("_"):
@@ -325,6 +377,17 @@ def render(c: dict) -> tuple[str, str]:
         subject = f"{mod}.{cls}.{func}({param}: {label})"
         prelude = f"from {mod} import {cls_top}\n"
         call = f"{cls}.{func}({args})"
+    elif kind == "property":
+        case = f"{cls_id}__{func}__{param}_as_{label}_wrong"
+        subject = f"{mod}.{cls}.{func} = ({param}: {label})"
+        prelude = PROPERTY_RECEIVER_SETUP.get(
+            (mod, cls, func),
+            (
+                f"from {mod} import {cls_top}\n"
+                f"obj: {cls} = {cls}.__new__({cls})\n"
+            ),
+        )
+        call = f"obj.{func} = {arglist[0]}"
     else:
         case = f"{cls_id}__{func}__{param}_as_{label}_wrong"
         subject = f"{mod}.{cls}.{func}({param}: {label})"
@@ -339,7 +402,13 @@ def render(c: dict) -> tuple[str, str]:
         mem_carveout="", source=f"vendor/typeshed/stdlib/{src}.pyi", status="filled",
         strict_type="TypeError",
     ).render()
-    text = header + f'''"""Type wall: {subject}; call it with the wrong type.
+    operation = (
+        "assign the wrong type"
+        if kind == "property"
+        else "call it with the wrong type"
+    )
+    other_error = "assignment_other" if kind == "property" else "setup_or_other"
+    text = header + f'''"""Type wall: {subject}; {operation}.
 
 typeshed contract: {param} is {label}. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
@@ -350,7 +419,7 @@ argument MUST raise TypeError (CPython may accept or raise — mamba's to enforc
 except TypeError as e:
     print("typeerror:", type(e).__name__)
 except Exception as e:
-    print("setup_or_other:", type(e).__name__)
+    print("{other_error}:", type(e).__name__)
 '''
     return f"{bucket}/{lib}/{case}.py", text
 
@@ -1337,7 +1406,13 @@ def _spec_method_only_body(body):
     for node in body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             decorators = decorator_names(node)
-            if decorators & {"classmethod", "staticmethod", "property", "setter"}:
+            if decorators & {
+                "classmethod",
+                "staticmethod",
+                "property",
+                "setter",
+                "deleter",
+            }:
                 return False
             if node.name.startswith("_") and not (
                 node.name.startswith("__") and node.name.endswith("__")
@@ -2054,6 +2129,8 @@ def _spec_walk_body(
             names = decorator_names(node)
             if not qualifier:
                 binding = "ModuleFn"
+            elif any(item.endswith(".deleter") for item in decorators):
+                continue
             elif any(item.endswith(".setter") for item in decorators):
                 binding = "PropertySet"
             elif "property" in names:
@@ -2551,7 +2628,7 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--module", help="only this dotted module")
     ap.add_argument("--kind", action="append",
-                    choices=["module", "init", "smethod", "method"])
+                    choices=["module", "init", "smethod", "method", "property"])
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--emit-rust", action="store_true",
                     help="(re)write both generated Rust signature artifacts")
@@ -2579,7 +2656,11 @@ def main() -> int:
     if getattr(args, "emit_rust", False):
         return emit_rust(check=False)
 
-    kinds = set(args.kind) if args.kind else {"module", "init", "smethod", "method"}
+    kinds = (
+        set(args.kind)
+        if args.kind
+        else {"module", "init", "smethod", "method", "property"}
+    )
     rows = list(candidates(kinds))
     if args.module:
         rows = [r for r in rows if r["mod"] == args.module]
