@@ -487,7 +487,7 @@ Gate Inventory:
 
 ID: dynamic-shard-topology
 Type: Service
-Surfaces: CRD/operator: `spec.shardCount`, `spec.replicasPerShard`, `spec.voterCount`, `spec.shardMap`, and reshard policy fields - storage ownership and HA topology.; Routing: versioned virtual-bucket map - `bucket = hash(collection_id, routing_key || external_id) % virtualBucketCount`; Search: scatter/gather when no routing key is supplied, targeted shard search when a routing key is supplied; serving nodes route by the shard map delivered through `SHARD_MAP_VERSION`/`SHARD_MAP_ASSIGNMENTS` env, re-read on rolling restart.; Operator: checkpointed reshard phase driver (`PrepareSplit -> Splitting -> CatchingUp -> Complete`) that turns a crossed reshard-policy threshold into a resumable topology change, ending in a synchronous durability checkpoint and cutover restart with zero human step.
+Surfaces: CRD/operator: `spec.shardCount`, `spec.replicasPerShard`, `spec.voterCount`, `spec.shardMap`, and reshard policy fields - storage ownership and HA topology.; Routing: versioned virtual-bucket map - `bucket = hash(collection_id, routing_key || external_id) % virtualBucketCount`; Search: scatter/gather when no routing key is supplied, targeted shard search when a routing key is supplied — today wired only for the non-k8s `--search-shard-segment-dirs` fan-in serving mode, which reads the shard map delivered through `SHARD_MAP_VERSION`/`SHARD_MAP_ASSIGNMENTS` env, re-read on rolling restart; operator-rendered k8s serving pods run `lumen serve` with no such flag and do not yet route reads or writes across pods by that map (cross-pod query/write routing is separate follow-on work, #1398).; Operator: checkpointed reshard phase driver (`PrepareSplit -> Splitting -> CatchingUp -> Complete`) that turns a crossed reshard-policy threshold into a resumable topology change, ending in a synchronous durability checkpoint and cutover restart with zero human step.
 EC Dimensions: behavior: `cargo test -p lumen --lib routing::tests` - versioned virtual-bucket shard map and bounded reshard batch conformance; behavior: `cargo test -p lumen --features operator --test operator_render` - operator-owned reshard policy, storage topology, status, and shard-map CRD/render conformance (rendering only); behavior: `cargo test -p lumen --features operator --test reshard_driver_e2e && cargo test -p lumen --test reshard_admin_e2e && cargo test -p lumen --lib segment_rdb` - reshard-durability gate: driver state machine and checkpoint-gated cutover, the four reshard/backup admin verbs including idempotency and auth, and cold-start durability of applied/evicted reshard mutations; stability: `projects/lumen/scripts/kind-e2e.sh` - live operator dogfood for shardCount=2 with replicasPerShard=1 and replicasPerShard=3
 Root WI: 1319
 Status: verified
@@ -941,13 +941,20 @@ not the full set — read the full total off the first page.
 POST remains the permanent fallback for clients without QUERY support.
 
 The **`X-Read-Consistency`** request header (`leader` / `bounded(<ms>)` / `any`
-— default and safest is `leader`, missing/unrecognized values also fall back
-to `leader`) is enforced against live cluster state in primary-replica (raft)
-mode: `leader` only succeeds on the pod currently holding leadership,
-`bounded(<ms>)` succeeds on the leader or a follower whose replication lag is
-at or under the bound, and a request that fails the check is rejected rather
-than silently served from a possibly-stale replica. Standalone deployments
-(no raft) ignore the header.
+— default and safest is `leader`; missing/unrecognized values also fall back
+to `leader`, an owner decision kept as-is with no formal release yet to
+force a compatibility bar) is enforced against live cluster state in
+primary-replica (raft) mode: `leader` only succeeds on the pod currently
+holding leadership, and a request that fails the check is rejected rather
+than silently served from a possibly-stale replica. **`bounded(<ms>)`
+succeeds on the leader (never stale) but currently always rejects on a
+follower/learner**: lumen does not yet measure real replication lag between
+peers, so a non-leader replica reports the conservative "lag unknown"
+sentinel and is treated as over any bound rather than risk serving a stale
+read. Real follower lag reporting (and `bounded` actually succeeding on a
+caught-up follower) is future work — until then, `bounded(<ms>)` is
+effectively `leader` with an extra rejection path for followers. Standalone
+deployments (no raft) ignore the header.
 
 ### Batch search (msearch-style, multi-collection)
 

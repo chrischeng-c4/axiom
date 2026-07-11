@@ -123,6 +123,48 @@ pub fn shard_map_from_env(shard_count: u32) -> Result<VirtualBucketShardMap> {
     }
 }
 
+/// Physical shard count the segment-dirs fan-in path
+/// (`lumen serve --search-shard-segment-dirs a,b,c`) should route across.
+///
+/// `explicit` is `ServeArgs::shard_count`, a clap `Option<u32>` with
+/// `env = "SHARD_COUNT"` and **no** `default_value_t` — that shape is
+/// deliberate: it's the only way to tell "the operator/user actually set
+/// `--shard-count`/`SHARD_COUNT`" (`Some`) from "nobody set anything"
+/// (`None`) at the type level, since a `u32` field with a `default_value_t`
+/// can't distinguish an explicit `--shard-count 1`/`SHARD_COUNT=1` from
+/// clap's own default. When `explicit` is `Some`, it is honored as-is
+/// (still fed through `shard_map_from_env` below, so `SHARD_MAP_*` env
+/// overrides still apply on top). When it is `None`, the count defaults to
+/// `loaded_dirs`, restoring `EngineShardSearch::new`'s original
+/// derive-from-loaded-dirs behavior (#1398 R4: the prior call site fed
+/// clap's old `default_value_t = 1` straight into `shard_map_from_env`,
+/// so `a,b,c` with `SHARD_COUNT` unset silently built a 1-shard map and
+/// searched only dir `a` on routed queries).
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
+pub fn fan_in_shard_count(explicit: Option<u32>, loaded_dirs: usize) -> u32 {
+    explicit.unwrap_or(loaded_dirs as u32)
+}
+
+/// Startup guard for the segment-dirs fan-in path: the shard map's declared
+/// `physical_shard_count` must equal the number of loaded
+/// `--search-shard-segment-dirs` roots, or routed queries would silently
+/// reach only a subset of shards (#1398 R4 — e.g. an explicit
+/// `SHARD_COUNT` that doesn't match the actual dir count). Names both
+/// numbers in the error instead of continuing to serve with an
+/// inconsistent map.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
+pub fn check_fan_in_shard_count(map: &VirtualBucketShardMap, loaded_dirs: usize) -> Result<()> {
+    let declared = map.physical_shard_count() as usize;
+    if declared != loaded_dirs {
+        anyhow::bail!(
+            "shard map physical_shard_count ({declared}) does not match the number of \
+             loaded --search-shard-segment-dirs ({loaded_dirs}); set SHARD_COUNT/--shard-count \
+             to {loaded_dirs} or fix the loaded dirs"
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,6 +382,49 @@ mod tests {
 
         assert!(shard_map_from_env(2).is_err());
         clear_shard_map_env();
+    }
+
+    // ---- fan_in_shard_count / check_fan_in_shard_count (#1398 R4) ------
+
+    #[test]
+    fn fan_in_shard_count_derives_from_loaded_dirs_when_unset() {
+        // AC3: `--search-shard-segment-dirs a,b,c` with no SHARD_COUNT must
+        // route across all three dirs, not clap's old default of 1.
+        assert_eq!(fan_in_shard_count(None, 3), 3);
+        assert_eq!(fan_in_shard_count(None, 1), 1);
+    }
+
+    #[test]
+    fn fan_in_shard_count_honors_explicit_value() {
+        // An explicit --shard-count/SHARD_COUNT (including an explicit `1`,
+        // which is indistinguishable from clap's removed default only by
+        // being `Some`) always wins over the loaded-dir count.
+        assert_eq!(fan_in_shard_count(Some(1), 3), 1);
+        assert_eq!(fan_in_shard_count(Some(5), 3), 5);
+    }
+
+    #[test]
+    fn check_fan_in_shard_count_passes_when_counts_match() {
+        let map = VirtualBucketShardMap::balanced(0, 16, 3).unwrap();
+        assert!(check_fan_in_shard_count(&map, 3).is_ok());
+    }
+
+    #[test]
+    fn check_fan_in_shard_count_fails_fast_on_mismatch() {
+        // AC3: a mismatched explicit count (here: a map built for 3 shards
+        // but only 2 dirs actually loaded) must fail startup with a clear
+        // message naming both numbers, not silently under-route.
+        let map = VirtualBucketShardMap::balanced(0, 16, 3).unwrap();
+        let err = check_fan_in_shard_count(&map, 2).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains('3'),
+            "error should name the declared count: {msg}"
+        );
+        assert!(
+            msg.contains('2'),
+            "error should name the loaded-dir count: {msg}"
+        );
     }
 }
 // CODEGEN-END

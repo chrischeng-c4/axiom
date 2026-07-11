@@ -24,11 +24,11 @@ Public API manifest for `projects/lumen/src/spec.rs` generated from AST during S
 | `json_schema_json` | projects/lumen/src/spec.rs | function | pub | 47 | json_schema_json() -> String |
 | `llm_auth_md` | projects/lumen/src/spec.rs | function | pub | 379 | llm_auth_md() -> String |
 | `llm_deployment_md` | projects/lumen/src/spec.rs | function | pub | 277 | llm_deployment_md() -> String |
-| `llm_integration_md` | projects/lumen/src/spec.rs | function | pub | 647 | llm_integration_md() -> String |
+| `llm_integration_md` | projects/lumen/src/spec.rs | function | pub | 665 | llm_integration_md() -> String |
 | `llm_outline_md` | projects/lumen/src/spec.rs | function | pub | 237 | llm_outline_md() -> String |
-| `llm_quickstart_md` | projects/lumen/src/spec.rs | function | pub | 687 | llm_quickstart_md() -> String |
-| `llm_recipes_md` | projects/lumen/src/spec.rs | function | pub | 762 | llm_recipes_md() -> String |
-| `llm_storage_md` | projects/lumen/src/spec.rs | function | pub | 788 | llm_storage_md() -> String |
+| `llm_quickstart_md` | projects/lumen/src/spec.rs | function | pub | 705 | llm_quickstart_md() -> String |
+| `llm_recipes_md` | projects/lumen/src/spec.rs | function | pub | 780 | llm_recipes_md() -> String |
+| `llm_storage_md` | projects/lumen/src/spec.rs | function | pub | 806 | llm_storage_md() -> String |
 | `llm_workflow_md` | projects/lumen/src/spec.rs | function | pub | 453 | llm_workflow_md() -> String |
 | `openapi_json` | projects/lumen/src/spec.rs | function | pub | 16 | openapi_json() -> String |
 | `openapi_yaml` | projects/lumen/src/spec.rs | function | pub | 22 | openapi_yaml() -> String |
@@ -651,6 +651,24 @@ Lumen's current contract.
 | Per-field / per-clause boost | Not supported as an arbitrary query knob. Use separate fields/query legs plus `rrf` and, if needed, final reranking in the caller. |
 | Document TTL / expiry | Caller-owned lifecycle. Delete/reindex expired `external_id`s from the source-of-truth event stream; collection soft-delete grace is not per-document TTL. |
 
+## Read consistency (`X-Read-Consistency`)
+Only meaningful in primary-replica (raft) mode; standalone deployments (no
+raft) ignore this header entirely — there is exactly one authoritative copy
+per shard, so every level trivially holds.
+
+- `leader` — the default, and what a missing or unrecognized header value
+  also falls back to (no formal release exists yet to force a different
+  default). Only the pod currently holding leadership for a shard answers;
+  any other replica rejects with 503 naming the current leader.
+- `any` — unconstrained; the local copy answers regardless of freshness.
+- `bounded(<ms>)` — succeeds on the leader (never stale). **On a
+  follower/learner it always rejects today**: lumen does not yet measure
+  real inter-peer replication lag, so a non-leader replica reports the
+  conservative "lag unknown" sentinel and is treated as over any bound
+  rather than risk serving a stale read. Until real follower lag reporting
+  ships, `bounded(<ms>)` behaves like `leader` with an extra
+  follower-rejection path — do not rely on it to read from a follower.
+
 ## Connection
 HTTP/1.1 or HTTP/2 cleartext on `:7373` — any REST client, no driver. HTTP/1.1
 is the compatibility/smoke path; the performance target is high-QPS, large
@@ -1217,7 +1235,6 @@ they want — the fix here is this guidance, not new API surface.
     out
 }
 // CODEGEN-END
-
 ````
 
 ## Changes
