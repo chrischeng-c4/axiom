@@ -1875,8 +1875,15 @@ class _SpecCorpus:
         root, *tail = dotted.split(".")
         for scope in self._scope_candidates(qualifier):
             key = info["type_params"].get((scope, root))
-            if key is not None and not tail:
-                return "TypeParam", self.type_param_ids[key]
+            if key is None:
+                continue
+            param_id = self.type_param_ids[key]
+            if not tail:
+                return "TypeParam", param_id
+            if self.type_params[param_id]["kind"] == "ParamSpec" and tail == ["args"]:
+                return "ParamSpecArgs", param_id
+            if self.type_params[param_id]["kind"] == "ParamSpec" and tail == ["kwargs"]:
+                return "ParamSpecKwargs", param_id
         if root in info["imports"]:
             module, imported = info["imports"][root]
             if imported:
@@ -1984,6 +1991,8 @@ class _SpecCorpus:
             resolved, value = self._resolve_name(info, qualifier, dotted)
             if resolved == "TypeParam":
                 return self._add_node(("TypeParam", value), dict(kind="TypeParam", id=value))
+            if resolved in {"ParamSpecArgs", "ParamSpecKwargs"}:
+                return self._add_node((resolved, value), dict(kind=resolved, id=value))
             if resolved == "Special":
                 special = {"None": "None", "Any": "Any", "Never": "Never", "NoReturn": "Never", "Self": "SelfType"}[value]
                 return self._add_node((special,), dict(kind=special))
@@ -2102,7 +2111,7 @@ class _SpecCorpus:
             seen.add(node_id)
             node = self.nodes[node_id]
             kind = node["kind"]
-            if kind == "TypeParam":
+            if kind in {"TypeParam", "ParamSpecArgs", "ParamSpecKwargs"}:
                 if node["id"] not in found_set:
                     found_set.add(node["id"])
                     found.append(node["id"])
@@ -2385,8 +2394,8 @@ def render_specs_json(lock: TypeshedLock) -> str:
                 "module": sid(node["module"]), "name": sid(node["name"]),
                 "kind": name_kind[node["name_kind"]],
             }}
-        elif kind == "TypeParam":
-            value = {"TypeParam": node["id"]}
+        elif kind in {"TypeParam", "ParamSpecArgs", "ParamSpecKwargs"}:
+            value = {kind: node["id"]}
         elif kind in {"Union", "Tuple", "ParamList"}:
             value = {kind: list(node["range"])}
         elif kind == "Apply":

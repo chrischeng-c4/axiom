@@ -552,7 +552,10 @@ def _generated_typespec_status(
     visiting.add(node_id)
     try:
         kind, value = _typespec_variant(manifest["nodes"][node_id])
-        if kind in {"Missing", "Unsupported", "LiteralBytes", "Unpack", "ParamList"}:
+        if kind in {
+            "Missing", "Unsupported", "LiteralBytes", "Unpack", "ParamList",
+            "ParamSpecArgs", "ParamSpecKwargs",
+        }:
             return "unsupported"
         if kind == "Any":
             return "unconstrained"
