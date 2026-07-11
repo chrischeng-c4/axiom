@@ -671,6 +671,39 @@ mod tests {
     }
 
     #[test]
+    fn generated_manifest_owns_positional_only_builtin_contracts() {
+        for name in [
+            "chr",
+            "ord",
+            "getattr",
+            "hasattr",
+            "setattr",
+            "format",
+            "isinstance",
+            "issubclass",
+        ] {
+            let branches: Vec<_> = overloads("builtins", "", name).collect();
+            assert!(!branches.is_empty(), "missing builtins.{name} contract");
+            for branch in branches {
+                let regular: Vec<_> = params(branch.params)
+                    .iter()
+                    .filter(|param| {
+                        !param.implicit_receiver
+                            && !matches!(param.kind, ParamSpecKind::VarPos | ParamSpecKind::VarKw)
+                    })
+                    .collect();
+                assert!(!regular.is_empty(), "builtins.{name} has no parameters");
+                assert!(
+                    regular
+                        .iter()
+                        .all(|param| param.kind == ParamSpecKind::PosOnly),
+                    "builtins.{name} must remain positional-only"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn generated_manifest_canonicalizes_collections_abc_exports() {
         for name in ["Iterable", "Sequence", "Mapping"] {
             let (_, class) = class_spec("collections.abc", name)
