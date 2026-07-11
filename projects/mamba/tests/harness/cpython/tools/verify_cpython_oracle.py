@@ -28,6 +28,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+import strict_type_accounting
+
 
 TOOLS_DIR = Path(__file__).resolve().parent
 CPYTHON_DIR = TOOLS_DIR.parents[2] / "cpython"  # tests/cpython (fixtures + .cache)
@@ -176,6 +178,10 @@ def is_version_specific_unavailable_type_fixture(path: Path) -> bool:
     return removed is not None and sys.version_info[:2] >= removed
 
 
+def is_generated_typespec_inactive_type_fixture(path: Path) -> bool:
+    return strict_type_accounting.is_generated_typespec_inactive_type_fixture(path)
+
+
 def has_pipeline_run_directive(text: str) -> bool:
     return any(line.lstrip().startswith("# RUN:") for line in text.splitlines())
 
@@ -295,6 +301,8 @@ def run_one(
         return CaseResult(path, "skip", "optional-stdlib-extension-unavailable")
     if is_version_specific_unavailable_type_fixture(path):
         return CaseResult(path, "skip", "version-specific-type-helper")
+    if is_generated_typespec_inactive_type_fixture(path):
+        return CaseResult(path, "skip", "inactive-typespec-contract")
     if is_bench(path):
         return CaseResult(path, "skip", "bench/perf-baseline-owned")
     if has_pipeline_run_directive(text):
