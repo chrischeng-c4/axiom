@@ -617,8 +617,7 @@ mod tests {
         let mamba_src = manifest_dir.join("src");
         if !typeshed.is_dir() {
             eprintln!(
-                "skipping: {} not present (run `git clone --depth=1 https://github.com/python/typeshed.git {}`)",
-                typeshed.display(),
+                "skipping: {} not present (run `python3.12 tests/harness/cpython/tools/checkout_typeshed.py`)",
                 typeshed.display()
             );
             return;
