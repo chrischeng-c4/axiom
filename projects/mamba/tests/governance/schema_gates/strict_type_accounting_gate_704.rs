@@ -1291,10 +1291,10 @@ expanded = Counter(
     status for row in sigs.values() for status in row["params"].values()
 )
 assert expanded == {
-    "supported": 21328,
-    "unconstrained": 2192,
+    "supported": 21399,
+    "unconstrained": 2238,
     "partial": 1686,
-    "unsupported": 1018,
+    "unsupported": 901,
 }
 wall = accounting.executable_type_fixtures(
     sorted(accounting.TYPE_DIR.rglob("*.py"))
@@ -1304,10 +1304,10 @@ unconstrained, unresolved = accounting.partition_generated_contract_coverage(
 )
 assert len(wall) == 7415
 assert len(unconstrained) == 266
-assert len(unresolved) == 152
+assert len(unresolved) == 143
 assert Counter(item["reason"] for item in unresolved) == {
     "structured_param_partial": 109,
-    "structured_param_type_unsupported": 43,
+    "structured_param_type_unsupported": 34,
 }
 "#;
     assert_python_script(script, "productive recursive alias accounting regression");
