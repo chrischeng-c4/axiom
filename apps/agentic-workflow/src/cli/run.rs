@@ -7,6 +7,7 @@ use crate::cli::capability::{
 };
 #[cfg(test)]
 use crate::cli::issues as wi_cli;
+use crate::issues::types::td_phase;
 use crate::issues::{make_backend, resolve_default_backend, Issue, IssueState, IssueType};
 use crate::models::artifact_quality::{
     infer_artifact_kind_from_hint, ArtifactKind, ArtifactQualityProfile,
@@ -965,7 +966,7 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
             persistence: None,
         }
     } else {
-        let command = format!("aw td create {}", issue_ref(&issue).trim_start_matches('#'));
+        let (command, reason) = wi_change_lifecycle_step(&issue);
         WorkflowEnvelope {
             action: "dispatch".to_string(),
             root,
@@ -982,8 +983,7 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
             next: WorkflowNext {
                 kind: "execute_change".to_string(),
                 command: command.clone(),
-                reason: "atomic change roots enter the WI -> TD -> CB -> TD merge lifecycle"
-                    .to_string(),
+                reason,
                 payload_path: None,
             },
             invoke: WorkflowInvoke { command },
@@ -995,6 +995,47 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
             hitl_question: None,
             persistence: None,
         }
+    }
+}
+
+/// #1268: derive the next lifecycle command for a still-open, non-epic WI
+/// from its tracker-reported `phase:*` label (`issue.phase`, already
+/// normalized on read by the issue backend — see
+/// `crate::issues::types::td_phase::normalize`), instead of unconditionally
+/// dispatching `aw td create`. Mirrors the phase table
+/// `capability::lifecycle_action_for_work_item` uses for `aw capability
+/// run` (issue #916) so both runner surfaces agree on the live linear
+/// lifecycle (`aw wi` -> `aw td create` -> `gen` -> `fill` -> `code-check`,
+/// no merge step per #842-#860): a WI already at `td_created` must route to
+/// `aw td gen`, not back through `aw td create`, which rejects it.
+/// `None`/`td_inited`/unrecognized phases keep the original bounded
+/// new-WI behavior (`aw td create`).
+/// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+fn wi_change_lifecycle_step(issue: &Issue) -> (String, String) {
+    let wi_id = issue_ref(issue).trim_start_matches('#').to_string();
+    let normalized_phase = issue.phase.as_deref().map(td_phase::normalize);
+    match normalized_phase {
+        Some(td_phase::TD_CREATED) => (
+            format!("aw td gen {wi_id}"),
+            "active WI has created TD; continue CB generation".to_string(),
+        ),
+        Some(td_phase::CB_GENNED) | Some("cb_fill_in_progress") => (
+            format!("aw td fill {wi_id}"),
+            "active WI has generated CB output; continue handwrite fill".to_string(),
+        ),
+        Some(td_phase::CB_FILLED) => (
+            format!("aw td code-check {wi_id}"),
+            "active WI has generated and checked implementation output; run terminal code-check"
+                .to_string(),
+        ),
+        Some(td_phase::TD_MERGED) => (
+            format!("aw td code-check {wi_id}"),
+            "active WI's terminal code-check is resumable; retry terminal code-check".to_string(),
+        ),
+        _ => (
+            format!("aw td create {wi_id}"),
+            "atomic change roots enter the WI -> TD -> CB -> code-check lifecycle".to_string(),
+        ),
     }
 }
 
@@ -2560,6 +2601,40 @@ mod tests {
         assert_eq!(e.action, "blocked");
         assert!(e.requires_hitl);
         assert!(e.next.command.contains("aw wi show 188"));
+    }
+
+    // #1268: a still-open, non-epic WI without a loop-state block must route
+    // off its tracker-reported `phase:*` label, not unconditionally dispatch
+    // `aw td create` (which `aw td create` then rejects for any phase past
+    // `td_inited`).
+    #[test]
+    fn wi_change_lifecycle_step_routes_by_phase() {
+        let mut issue = open_issue(IssueType::Enhancement, 937);
+        issue.phase = Some("td_created".to_string());
+        let (command, _reason) = wi_change_lifecycle_step(&issue);
+        assert_eq!(command, "aw td gen 937");
+
+        issue.phase = Some("cb_genned".to_string());
+        let (command, _reason) = wi_change_lifecycle_step(&issue);
+        assert_eq!(command, "aw td fill 937");
+
+        issue.phase = Some("cb_filled".to_string());
+        let (command, _reason) = wi_change_lifecycle_step(&issue);
+        assert_eq!(command, "aw td code-check 937");
+
+        // A retired CRRR phase normalizes (td_phase::normalize, #916) before
+        // routing, same as the capability.rs router.
+        issue.phase = Some("td_reviewed".to_string());
+        let (command, _reason) = wi_change_lifecycle_step(&issue);
+        assert_eq!(command, "aw td gen 937");
+
+        // No phase label at all -- the original bounded new-WI behavior is
+        // preserved: still `aw td create`.
+        issue.phase = None;
+        let (command, reason) = wi_change_lifecycle_step(&issue);
+        assert_eq!(command, "aw td create 937");
+        assert!(reason.contains("WI -> TD -> CB -> code-check"));
+        assert!(!reason.contains("TD merge"));
     }
 
     #[test]

@@ -3604,6 +3604,21 @@ changes:
       `#[cfg(test)]`-gated rather than deleted; the `wi_cli`/`Deserialize`/
       `DefaultHasher`/`Hash`/`Hasher` imports they depend on are
       `#[cfg(test)]`-gated to match. Zero-warning plain `cargo build`.
+      #1268: `wi_envelope`'s non-epic, non-loop-state branch unconditionally
+      dispatched `aw td create <id>` regardless of the WI's actual tracker
+      phase, so `aw wi run` re-emitted `td create` for a WI already past
+      `td_created` — a command `aw td create` then rejects
+      ("expected td_inited"). Added `wi_change_lifecycle_step(&Issue)`,
+      which routes off `issue.phase` (already normalized on read by the
+      issue backend, see `crate::issues::types::td_phase::normalize`)
+      through the same phase table `capability::lifecycle_action_for_work_item`
+      uses for `aw capability run` (#916): `td_created` -> `aw td gen`,
+      `cb_genned` -> `aw td fill`, `cb_filled` / `td_merged` (resumable
+      retry) -> `aw td code-check`; `None`/`td_inited`/unrecognized phases
+      keep the original `aw td create` catch-all. Also corrected the
+      catch-all's reason string, which still said "WI -> TD -> CB -> TD
+      merge lifecycle" after the merge step was removed (#842-#860), to
+      "WI -> TD -> CB -> code-check lifecycle".
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/production.rs"
     action: modify
