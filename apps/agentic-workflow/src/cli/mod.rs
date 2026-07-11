@@ -22,6 +22,7 @@ pub mod ec;
 pub mod fillback;
 pub mod generator;
 pub mod guard;
+pub mod guard_sanction;
 pub mod hook;
 pub mod init;
 pub mod issues;
