@@ -53,6 +53,18 @@ const SCRIPT_MAMBA_TEST_COVERAGE: &str = include_str!(
     "../../templates/cli/mainthread/skills/aw-mamba-test-coverage/scripts/coverage.sh"
 );
 
+// Claude Code Agent (subagent) definitions (issue #1034: init-projector
+// follow-up to #986 — `templates/cli/mainthread/agents/` is the sole source
+// for the aw-* subagent fleet, same model as `aw_skill_entries`).
+// @spec apps/agentic-workflow/tech-design/surface/specs/init-command.md#R18
+const AGENT_AW_DEV: &str = include_str!("../../templates/cli/mainthread/agents/aw-dev.md");
+const AGENT_AW_TD_WRITER: &str =
+    include_str!("../../templates/cli/mainthread/agents/aw-td-writer.md");
+const AGENT_AW_EC_WRITER: &str =
+    include_str!("../../templates/cli/mainthread/agents/aw-ec-writer.md");
+const AGENT_AW_HW_FILLER: &str =
+    include_str!("../../templates/cli/mainthread/agents/aw-hw-filler.md");
+
 // Claude Code settings.json template
 // @spec apps/agentic-workflow/tech-design/surface/specs/init-command.md#R9
 const SETTINGS_JSON_TEMPLATE: &str = include_str!("../../templates/cli/mainthread/settings.json");
@@ -895,9 +907,11 @@ fn install_system_files(project_root: &Path, _sdd_dir: &Path, claude_dir: &Path)
     std::fs::create_dir_all(&agents_skills_dir)?;
     install_agents_skills(&agents_skills_dir)?;
 
-    // Install Claude Code Agent definitions
+    // Install Claude Code Agent definitions (issue #1034: projected from
+    // `templates/cli/mainthread/agents/`, same model as the skill installers
+    // above).
     println!();
-    println!("{}", "🧠 Retiring legacy Claude Code Agents...".cyan());
+    println!("{}", "🧠 Updating Claude Code Agents...".cyan());
     install_agents(claude_dir)?;
 
     // Remove retired Claude Code hook scripts.
@@ -1425,41 +1439,83 @@ fn install_agents_skills(skills_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-// Remove retired Claude Code subagent definition files from `.claude/agents/`.
+// Every `aw-*` subagent's file name (without extension) + templates-sourced
+// `<name>.md` content (issue #1034: init-projector follow-up to #986 —
+// `templates/cli/mainthread/agents/` is the sole source, same pattern as
+// [`aw_skill_entries`]).
+fn aw_agent_entries() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("aw-dev", AGENT_AW_DEV),
+        ("aw-td-writer", AGENT_AW_TD_WRITER),
+        ("aw-ec-writer", AGENT_AW_EC_WRITER),
+        ("aw-hw-filler", AGENT_AW_HW_FILLER),
+    ]
+}
+
+// Legacy/retired subagent definition file names (without extension) pruned
+// from `.claude/agents/` on every asset install (issue #1034: renamed from
+// the previous inline `retired_agents` list in [`install_agents`] to match
+// [`deprecated_skill_names`]'s shape; same entries, same behavior).
+fn deprecated_agent_names() -> Vec<&'static str> {
+    vec![
+        "sdd-change-implementation",
+        "sdd-change-spec",
+        "sdd-reference-context",
+        "sdd-review",
+        "sdd-issue-author",
+        // score-reference-context replaced by score-issue-author
+        "score-reference-context",
+        // score-change-* retired — `score workflow` is gone, see aw td
+        "score-change-implementation",
+        "score-change-spec",
+        "score-review",
+        "score-issue-author",
+        "score-issue-reviewer",
+        "score-issue-reviser",
+        "score-td-author",
+        "score-td-reviewer",
+        "score-td-reviser",
+        "score-cb-handwriter",
+    ]
+}
+
+// Remove every [`deprecated_agent_names`] file still present under
+// `agents_dir`.
+fn prune_deprecated_agents(agents_dir: &Path) -> Result<()> {
+    for deprecated in deprecated_agent_names() {
+        let deprecated_path = agents_dir.join(format!("{deprecated}.md"));
+        if deprecated_path.exists() {
+            std::fs::remove_file(&deprecated_path)?;
+            println!("   {} {} (removed retired)", "✗".red(), deprecated);
+        }
+    }
+    Ok(())
+}
+
+// Write one subagent's `<name>.md` under `agents_dir`.
+fn write_agent_file(agents_dir: &Path, name: &str, content: &str) -> Result<()> {
+    std::fs::write(agents_dir.join(format!("{name}.md")), content)?;
+    println!("   ✓ {}", name);
+    Ok(())
+}
+
+// Install/refresh every `aw-*` subagent definition under `.claude/agents/`
+// from `templates/cli/mainthread/agents/` verbatim (issue #1034: same
+// single-source-of-truth model as [`install_claude_skills`]). Unlike the
+// skill trees, agent definitions are Claude Code-runtime-only — there is no
+// `.agents/agents/` counterpart because Codex has no matching subagent
+// mechanism yet; `templates/` remains the sole source either way, so a
+// future Codex-side projection is additive, not a re-architecture.
 // @spec apps/agentic-workflow/tech-design/surface/specs/init-command.md#R5
 // @spec apps/agentic-workflow/tech-design/surface/specs/init-command.md#R6
+// @spec apps/agentic-workflow/tech-design/surface/specs/init-command.md#R18
 fn install_agents(claude_dir: &Path) -> Result<()> {
     let agents_dir = claude_dir.join("agents");
     std::fs::create_dir_all(&agents_dir)?;
 
-    // Remove legacy/deprecated agent stubs. The current Score workflow is
-    // mainthread-only, so there are no current score-* agent files to install.
-    let retired_agents = &[
-        "sdd-change-implementation.md",
-        "sdd-change-spec.md",
-        "sdd-reference-context.md",
-        "sdd-review.md",
-        "sdd-issue-author.md",
-        // score-reference-context replaced by score-issue-author
-        "score-reference-context.md",
-        // score-change-* retired — `score workflow` is gone, see aw td
-        "score-change-implementation.md",
-        "score-change-spec.md",
-        "score-review.md",
-        "score-issue-author.md",
-        "score-issue-reviewer.md",
-        "score-issue-reviser.md",
-        "score-td-author.md",
-        "score-td-reviewer.md",
-        "score-td-reviser.md",
-        "score-cb-handwriter.md",
-    ];
-    for legacy in retired_agents {
-        let legacy_path = agents_dir.join(legacy);
-        if legacy_path.exists() {
-            std::fs::remove_file(&legacy_path)?;
-            println!("   {} {} (removed retired)", "✗".red(), legacy);
-        }
+    prune_deprecated_agents(&agents_dir)?;
+    for (name, content) in aw_agent_entries() {
+        write_agent_file(&agents_dir, name, content)?;
     }
 
     Ok(())
@@ -2009,6 +2065,10 @@ mod tests {
             target.join(".claude/skills/aw-health/SKILL.md").exists(),
             "aw new should install current projected skills"
         );
+        assert!(
+            target.join(".claude/agents/aw-dev.md").exists(),
+            "aw new should install current projected agents"
+        );
     }
 
     #[test]
@@ -2280,6 +2340,93 @@ auth_method = "cli"
                 skills_dir.join(skill).join("SKILL.md").exists(),
                 "SKILL.md for '{}' should survive re-installation",
                 skill
+            );
+        }
+    }
+
+    // Issue #1034: install_agents installs the current aw-* subagent fleet
+    // from templates/cli/mainthread/agents/.
+    #[test]
+    fn test_install_agents_installs_current_agents() {
+        let tmp = TempDir::new().unwrap();
+        let claude_dir = tmp.path().join(".claude");
+        fs::create_dir_all(&claude_dir).unwrap();
+
+        install_agents(&claude_dir).unwrap();
+
+        let agents_dir = claude_dir.join("agents");
+        for agent in ["aw-dev", "aw-td-writer", "aw-ec-writer", "aw-hw-filler"] {
+            let agent_path = agents_dir.join(format!("{agent}.md"));
+            assert!(agent_path.exists(), "{}.md should be installed", agent);
+            let content = fs::read_to_string(&agent_path).unwrap();
+            assert!(!content.is_empty(), "{}.md should not be empty", agent);
+        }
+    }
+
+    // Issue #1034: install_agents prunes deprecated agent stubs.
+    #[test]
+    fn test_install_agents_prunes_deprecated_agents() {
+        let tmp = TempDir::new().unwrap();
+        let claude_dir = tmp.path().join(".claude");
+        let agents_dir = claude_dir.join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+
+        for legacy in ["sdd-review", "score-td-author", "score-cb-handwriter"] {
+            fs::write(agents_dir.join(format!("{legacy}.md")), "# legacy").unwrap();
+        }
+
+        install_agents(&claude_dir).unwrap();
+
+        for legacy in ["sdd-review", "score-td-author", "score-cb-handwriter"] {
+            assert!(
+                !agents_dir.join(format!("{legacy}.md")).exists(),
+                "legacy agent {} should be pruned",
+                legacy
+            );
+        }
+    }
+
+    // Issue #1034: install_agents is idempotent — repeat installs leave the
+    // templates-sourced content byte-identical.
+    #[test]
+    fn test_install_agents_idempotent() {
+        let tmp = TempDir::new().unwrap();
+        let claude_dir = tmp.path().join(".claude");
+        fs::create_dir_all(&claude_dir).unwrap();
+
+        install_agents(&claude_dir).unwrap();
+        let agents_dir = claude_dir.join("agents");
+        let first_pass: Vec<String> = aw_agent_entries()
+            .into_iter()
+            .map(|(name, _)| fs::read_to_string(agents_dir.join(format!("{name}.md"))).unwrap())
+            .collect();
+
+        install_agents(&claude_dir).unwrap();
+        let second_pass: Vec<String> = aw_agent_entries()
+            .into_iter()
+            .map(|(name, _)| fs::read_to_string(agents_dir.join(format!("{name}.md"))).unwrap())
+            .collect();
+
+        assert_eq!(
+            first_pass, second_pass,
+            "repeat install_agents should be a no-op"
+        );
+    }
+
+    // Issue #1034: AC2 — templates/ carries every aw-* agent; no agent
+    // content exists only in .claude/agents (byte-for-byte match).
+    #[test]
+    fn test_aw_agent_entries_match_templates_source() {
+        for (name, content) in aw_agent_entries() {
+            assert!(
+                content.starts_with("---\nname: "),
+                "{} should carry Claude Code agent frontmatter",
+                name
+            );
+            assert!(
+                content.contains(&format!("name: {name}")),
+                "{} frontmatter name field should match its file name",
+                name
             );
         }
     }
