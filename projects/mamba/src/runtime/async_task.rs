@@ -182,7 +182,7 @@ fn await_iterator(iterator: MbValue) -> MbValue {
     if let Some(live) = try_resume_live_coroutine_like(iterator, MbValue::none()) {
         match live.resumed {
             AwaitResume::Yield(yielded) => {
-                if super::exception::current_exception_type().is_some() {
+                if super::exception::has_current_exception() {
                     return MbValue::none();
                 }
                 super::async_rt::mb_coroutine_suspend_current_known_target(
@@ -198,7 +198,7 @@ fn await_iterator(iterator: MbValue) -> MbValue {
     if super::async_rt::is_known_coroutine(iterator) {
         match resume_await_iterator(iterator, MbValue::none()) {
             AwaitResume::Yield(yielded) => {
-                if super::exception::current_exception_type().is_some() {
+                if super::exception::has_current_exception() {
                     return MbValue::none();
                 }
                 mb_coroutine_suspend_current(iterator);
@@ -211,7 +211,7 @@ fn await_iterator(iterator: MbValue) -> MbValue {
     if super::async_rt::is_coroutine_wrapper(iterator) {
         match resume_await_iterator(iterator, MbValue::none()) {
             AwaitResume::Yield(yielded) => {
-                if super::exception::current_exception_type().is_some() {
+                if super::exception::has_current_exception() {
                     return MbValue::none();
                 }
                 mb_coroutine_suspend_current(iterator);
@@ -223,11 +223,11 @@ fn await_iterator(iterator: MbValue) -> MbValue {
 
     if super::generator::is_known_generator(iterator) {
         let yielded = super::generator::mb_generator_send(iterator, MbValue::none());
-        if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
+        if super::exception::current_exception_is("StopIteration") {
             super::exception::mb_clear_exception();
             return super::generator::mb_generator_stop_value();
         }
-        if super::exception::current_exception_type().is_some() {
+        if super::exception::has_current_exception() {
             return MbValue::none();
         }
         mb_coroutine_suspend_current(iterator);
@@ -235,7 +235,7 @@ fn await_iterator(iterator: MbValue) -> MbValue {
     }
 
     let yielded = super::iter::mb_next_or_stop(iterator);
-    if super::exception::current_exception_type().is_some() {
+    if super::exception::has_current_exception() {
         return MbValue::none();
     }
     if yielded.is_stop_iter_sentinel() {
@@ -247,7 +247,7 @@ fn await_iterator(iterator: MbValue) -> MbValue {
 
 fn await_via_dunder(awaitable: MbValue, method: MbValue) -> MbValue {
     let iterator = super::class::mb_call_method1(method, awaitable);
-    if super::exception::current_exception_type().is_some() {
+    if super::exception::has_current_exception() {
         return MbValue::none();
     }
     if !is_await_iterator(iterator) {
@@ -344,7 +344,7 @@ fn resume_await_iterator(iterator: MbValue, value: MbValue) -> AwaitResume {
     }
     if super::generator::is_known_generator(iterator) {
         let yielded = super::generator::mb_generator_send(iterator, value);
-        if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
+        if super::exception::current_exception_is("StopIteration") {
             super::exception::mb_clear_exception();
             return AwaitResume::Complete(super::generator::mb_generator_stop_value());
         }
@@ -365,24 +365,24 @@ fn throw_await_iterator(iterator: MbValue, exc_type: MbValue, exc_msg: MbValue) 
     }
     if let Some(coro) = super::async_rt::await_target_coroutine(iterator) {
         let yielded = super::async_rt::mb_coroutine_throw(coro, exc_type, exc_msg);
-        if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
+        if super::exception::current_exception_is("StopIteration") {
             let result = stop_iteration_exception_value();
             super::exception::mb_clear_exception();
             super::async_rt::tombstone_completed_coroutine(coro);
             return AwaitResume::Complete(result);
         }
-        if super::exception::current_exception_type().is_some() {
+        if super::exception::has_current_exception() {
             return AwaitResume::Complete(MbValue::none());
         }
         return AwaitResume::Yield(yielded);
     }
     if super::generator::is_known_generator(iterator) {
         let yielded = super::generator::mb_generator_throw(iterator, exc_type, exc_msg);
-        if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
+        if super::exception::current_exception_is("StopIteration") {
             super::exception::mb_clear_exception();
             return AwaitResume::Complete(super::generator::mb_generator_stop_value());
         }
-        if super::exception::current_exception_type().is_some() {
+        if super::exception::has_current_exception() {
             return AwaitResume::Complete(MbValue::none());
         }
         return AwaitResume::Yield(yielded);
@@ -572,10 +572,9 @@ impl EventLoop {
                 mb_coroutine_step(coro_handle);
             }
 
-            let current_exc = super::exception::current_exception_type();
-            if current_exc.as_deref() == Some("StopIteration") {
+            if super::exception::current_exception_is("StopIteration") {
                 super::exception::mb_clear_exception();
-            } else if current_exc.is_some() {
+            } else if super::exception::has_current_exception() {
                 if let Some(coro) = COROUTINES.write().unwrap().get_mut(&coro_id) {
                     coro.exhausted = true;
                 }
@@ -828,7 +827,7 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
             }
             event_loop.tick();
         }
-        if !completed && !timed_out && super::exception::current_exception_type().is_none() {
+        if !completed && !timed_out && !super::exception::has_current_exception() {
             eprintln!("mamba: mb_await: iteration limit reached, coroutine may be incomplete");
         }
 
