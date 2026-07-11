@@ -237,6 +237,16 @@ assert row["manifest_branches"] == 2
 assert row["branches"] == 1
 assert row["params"]["value"] == "supported"
 
+exception_index = module.parse_generated_signature_param_index()
+for key, param in [
+    (("_warnings", "", "warn"), "message"),
+    (("codecs", "", "strict_errors"), "exception"),
+    (("asyncio.streams", "StreamReader", "set_exception"), "exc"),
+    (("traceback", "", "print_exception"), "exc"),
+    (("unittest.case", "TestCase", "assertRaises"), "expected_exception"),
+]:
+    assert exception_index[key]["params"][param] == "supported", (key, param)
+
 property_fixture = module.TYPE_DIR / "std-libs/urllib_request/Request__full_url__value_as_str_wrong.py"
 property_text = property_fixture.read_text(encoding="utf-8")
 assert '# subject = "urllib.request.Request.full_url = (value: str)"' in property_text

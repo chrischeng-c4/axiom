@@ -5953,6 +5953,33 @@ fn typeshed_protocol_class_type_params_are_substituted_in_members() {
 }
 
 #[test]
+fn typeshed_builtin_exception_names_resolve_across_modules() {
+    let valid = check(
+        "import traceback\n\
+         from warnings import warn\n\
+         traceback.print_exception(Exception(\"boom\"))\n\
+         warn(Warning(\"careful\"))\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "builtin exception instances must satisfy cross-module typeshed contracts: {valid:?}"
+    );
+
+    let invalid = check(
+        "import traceback\n\
+         class NotAnException:\n\
+         \x20   pass\n\
+         traceback.print_exception(NotAnException())\n",
+    );
+    assert!(
+        invalid
+            .iter()
+            .any(|error| error.contains("argument type mismatch")),
+        "a nominal user class must not satisfy BaseException: {invalid:?}"
+    );
+}
+
+#[test]
 fn typeshed_indeterminate_contract_does_not_fall_back_to_compact_wall() {
     let errors = check(
         "from dataclasses import asdict\n\

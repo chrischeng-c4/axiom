@@ -854,6 +854,37 @@ mod tests {
     }
 
     #[test]
+    fn generated_manifest_resolves_implicit_builtins_after_local_symbols() {
+        let strict_errors = overloads("codecs", "", "strict_errors")
+            .next()
+            .expect("codecs.strict_errors spec");
+        let [exception] = params(strict_errors.params) else {
+            panic!("codecs.strict_errors must have one parameter")
+        };
+        let TypeSpecNode::Name { module, name, kind } = node(type_use(exception.ty).0)
+        else {
+            panic!("UnicodeError must retain builtin nominal identity")
+        };
+        assert_eq!((string(*module), string(*name)), ("builtins", "UnicodeError"));
+        assert_eq!(*kind, TypeNameKind::Nominal);
+
+        let warning = overloads("sqlite3", "Connection", "Warning")
+            .next()
+            .expect("sqlite3.Connection.Warning property spec");
+        let TypeSpecNode::Apply { args, .. } = node(type_use(warning.ret).0) else {
+            panic!("sqlite3.Connection.Warning must return a type object")
+        };
+        let [warning_type] = edges(*args) else {
+            panic!("sqlite3.Connection.Warning type object must have one argument")
+        };
+        let TypeSpecNode::Name { module, name, kind } = node(*warning_type) else {
+            panic!("sqlite3.Warning must retain local nominal identity")
+        };
+        assert_eq!((string(*module), string(*name)), ("sqlite3", "Warning"));
+        assert_eq!(*kind, TypeNameKind::Nominal);
+    }
+
+    #[test]
     fn generated_manifest_preserves_alias_targets() {
         let root_alias = alias("_typeshed", "OpenTextMode").expect("OpenTextMode alias");
         let TypeSpecNode::Union(members) = node(root_alias.target) else {
