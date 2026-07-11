@@ -2377,7 +2377,11 @@ impl TypeChecker {
                     };
                 }
             };
-            if required.len() != 1 || required[0].type_params.1 != 0 {
+            if required.len() != 1
+                || spec::type_param_edges(required[0].type_params)
+                    .iter()
+                    .any(|param| !class_params.contains(param))
+            {
                 saw_indeterminate = true;
                 continue;
             }
