@@ -181,7 +181,6 @@ pipe-fusion is an explicit, documented out-of-scope boundary for this TD
 `ExternalPlan`-based ripgrep shell-out path used for ranges this native
 matcher declines (e.g. recursive/glob/type-filtered grep), is untouched by
 this TD; nothing here duplicates its flag-mapping table.
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
