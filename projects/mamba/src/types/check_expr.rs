@@ -1417,7 +1417,9 @@ impl TypeChecker {
             ("builtins", "object") | ("typing", "Any") if args.is_empty() => {
                 self.tcx.any()
             }
-            ("typing", "Never" | "NoReturn") if args.is_empty() => self.tcx.never(),
+            ("typing" | "typing_extensions", "Never" | "NoReturn") if args.is_empty() => {
+                self.tcx.never()
+            }
             ("typing", "Self") | ("typing_extensions", "Self") if args.is_empty() => {
                 self.tcx.intern(Ty::SelfType)
             }

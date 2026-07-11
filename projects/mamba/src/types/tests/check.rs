@@ -6006,6 +6006,28 @@ fn typeshed_imported_submodule_names_enforce_nominal_types() {
 }
 
 #[test]
+fn typeshed_typing_extensions_never_defaults_materialize() {
+    let valid = check("from select import select\nselect([], [], [], 0)\n");
+    assert!(
+        valid.is_empty(),
+        "select's defaulted TypeVars must accept valid iterables: {valid:?}"
+    );
+
+    let invalid = check(
+        "from select import select\n\
+         class NotIterable:\n\
+         \x20   pass\n\
+         select(NotIterable(), [], [], 0)\n",
+    );
+    assert!(
+        invalid
+            .iter()
+            .any(|error| error.contains("argument type mismatch")),
+        "select's TypeVar bound must reject a non-iterable: {invalid:?}"
+    );
+}
+
+#[test]
 fn typeshed_indeterminate_contract_does_not_fall_back_to_compact_wall() {
     let errors = check(
         "from dataclasses import asdict\n\
