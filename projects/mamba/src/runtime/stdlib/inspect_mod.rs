@@ -2908,6 +2908,8 @@ pub fn mb_inspect_signature(func: MbValue) -> MbValue {
                     has_default: false,
                     default: MbValue::none(),
                     annotation: None,
+                    entry_abi: "boxed".to_string(),
+                    contract: None,
                 })
                 .collect();
             return signature_from_infos(&infos, None);

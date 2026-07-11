@@ -64,6 +64,16 @@ pub struct HirParamSig {
     pub frozen_default: Option<(SymbolId, TypeId)>,
     /// Textual annotation (`"int"`), None when un-annotated.
     pub annotation: Option<String>,
+    /// Resolved declared type before entry-ABI erasure (for example a method
+    /// parameter is boxed at entry but may still declare an `int` alias).
+    pub declared_ty: Option<TypeId>,
+    /// Actual lowered entry representation.  This is deliberately distinct
+    /// from `declared_ty`: dynamic calls need the former while strict typing
+    /// needs the latter.
+    pub entry_ty: Option<TypeId>,
+    /// Whether a primitive `entry_ty` is received boxed and unboxed by the
+    /// function prologue (the synchronous decorated/nested-function path).
+    pub boxed_primitive_entry: bool,
 }
 
 /// Literal default values representable without evaluating module code.
