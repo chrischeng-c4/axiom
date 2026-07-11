@@ -699,7 +699,7 @@ impl TypeChecker {
                         let fields = variant
                             .fields
                             .iter()
-                            .map(|field| self.resolve_type_expr(&field.ty))
+                            .map(|field| self.resolve_param_type_expr(field))
                             .collect();
                         (variant.name.clone(), fields)
                     })
@@ -1024,7 +1024,7 @@ impl TypeChecker {
                 continue;
             }
             if let Some(default) = &param.default {
-                let declared_ty = self.resolve_type_expr(&param.ty);
+                let declared_ty = self.resolve_param_type_expr(param);
                 let default_ty = self.check_expr(default);
                 if !generic_params.is_empty() {
                     let (subst, conflicts) =
@@ -1060,7 +1060,7 @@ impl TypeChecker {
         // the class namespace for free-name lookup, but its annotations do not.
         let body_param_types: Vec<_> = params
             .iter()
-            .map(|param| self.resolve_type_expr(&param.ty))
+            .map(|param| self.resolve_param_type_expr(param))
             .collect();
         let body_return_ty = return_ty
             .map(|ty| self.resolve_type_expr(ty))
@@ -1152,7 +1152,7 @@ impl TypeChecker {
                 let param_types: Vec<TypeId> = effective_params
                     .iter()
                     .filter(|p| p.kind == crate::parser::ast::ParamKind::Regular)
-                    .map(|p| self.resolve_type_expr(&p.ty))
+                    .map(|p| self.resolve_param_type_expr(p))
                     .collect();
                 (param_types, ret_ty, is_variadic)
             };

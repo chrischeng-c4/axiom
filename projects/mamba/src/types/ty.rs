@@ -159,6 +159,12 @@ pub struct ParamPack {
     pub tail: ParamPackTail,
 }
 
+/// Ordered static members bound to one `TypeVarTuple`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypePack {
+    pub types: Vec<TypeId>,
+}
+
 /// Core type representation for Mamba.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ty {
@@ -174,6 +180,9 @@ pub enum Ty {
     Set(TypeId),
     Dict(TypeId, TypeId),
     Tuple(Vec<TypeId>),
+    /// A static `TypeVarTuple` expansion. This is only valid inside a
+    /// pack-aware container or callable parameter list.
+    Unpack(TypeVarId),
     Union(Vec<TypeId>),
     Fn {
         params: Vec<TypeId>,

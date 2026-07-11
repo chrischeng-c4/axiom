@@ -1964,6 +1964,7 @@ fn exec_eval_annotation_type_expr(
                 Some(value)
             }
         }
+        TypeExpr::Unpack(inner) => exec_eval_annotation_type_expr(ctx, &inner.node),
         TypeExpr::Generic { name, args } => {
             let origin = exec_eval_annotation_type_expr(ctx, &TypeExpr::Named(name.clone()))?;
             let mut items = Vec::with_capacity(args.len());

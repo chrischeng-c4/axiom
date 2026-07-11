@@ -32,22 +32,26 @@ pub struct Diagnostic {
     pub message: String,
 }
 
-/// Check if a class name belongs to the built-in exception hierarchy.
-/// True if `e` is a call to a PEP 484 type-variable factory — `TypeVar`,
+/// Return the parameter kind when `e` calls a PEP 484 type-variable factory — `TypeVar`,
 /// `ParamSpec`, or `TypeVarTuple` — whether referenced bare (`TypeVar("T")`)
 /// or dotted (`typing.TypeVar("T")`). Used to recognise classic
 /// `T = TypeVar("T")` assignments so the bound name resolves as a TypeVar in
 /// later annotations.
-fn is_type_var_factory_call(e: &Expr) -> bool {
+fn type_var_factory_kind(e: &Expr) -> Option<TypeVarKind> {
     let Expr::Call { func, .. } = e else {
-        return false;
+        return None;
     };
     let fname = match &func.node {
         Expr::Ident(n) => n.as_str(),
         Expr::Attr { attr, .. } => attr.as_str(),
-        _ => return false,
+        _ => return None,
     };
-    matches!(fname, "TypeVar" | "ParamSpec" | "TypeVarTuple")
+    match fname {
+        "TypeVar" => Some(TypeVarKind::TypeVar),
+        "ParamSpec" => Some(TypeVarKind::ParamSpec),
+        "TypeVarTuple" => Some(TypeVarKind::TypeVarTuple),
+        _ => None,
+    }
 }
 
 fn is_typing_overload_decorator(expr: &Expr) -> bool {
@@ -208,6 +212,14 @@ struct TypeAliasDef {
     resolving: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TypeExprResolutionContext {
+    Value,
+    PackAware,
+    UnpackOperand,
+    TypedDictKwargs,
+}
+
 fn parse_forward_ref_type_expr(source: &str, span: Span) -> Option<Spanned<TypeExpr>> {
     if source.contains(['\n', '\r']) {
         return None;
@@ -235,6 +247,7 @@ fn parse_forward_ref_type_expr(source: &str, span: Span) -> Option<Spanned<TypeE
                 respan(ret, span);
             }
             TypeExpr::Named(_) => {}
+            TypeExpr::Unpack(inner) => respan(inner, span),
         }
     }
 
@@ -824,7 +837,10 @@ impl TypeChecker {
             "list" => Some(self.tcx.intern(Ty::List(self.tcx.any()))),
             "set" => Some(self.tcx.intern(Ty::Set(self.tcx.any()))),
             "dict" => Some(self.tcx.intern(Ty::Dict(self.tcx.any(), self.tcx.any()))),
-            "tuple" => Some(self.tcx.intern(Ty::Tuple(Vec::new()))),
+            "tuple" => {
+                let any = self.tcx.any();
+                Some(self.tcx.intern(Ty::Tuple(vec![any, any])))
+            }
             "bytearray" | "bytes" | "complex" | "frozenset" | "memoryview" | "range" | "slice"
             | "type" => Some(self.external_class_instance("builtins", name, Vec::new())),
             "object" => Some(self.tcx.any()),
@@ -1067,7 +1083,7 @@ impl TypeChecker {
             .iter()
             .map(|param| FunctionParamSig {
                 name: param.name.clone(),
-                ty: self.resolve_type_expr(&param.ty),
+                ty: self.resolve_param_type_expr(param),
                 kind: param.kind,
                 pos_only: param.pos_only,
                 kw_only: param.kw_only,
@@ -1357,7 +1373,7 @@ impl TypeChecker {
             let param_types = effective_params
                 .iter()
                 .filter(|param| param.kind == crate::parser::ast::ParamKind::Regular)
-                .map(|param| self.resolve_type_expr(&param.ty))
+                .map(|param| self.resolve_param_type_expr(param))
                 .collect();
             let ret = return_ty
                 .map(|return_ty| self.resolve_type_expr(return_ty))
@@ -1442,12 +1458,18 @@ impl TypeChecker {
                 params
                     .params
                     .iter()
-                    .map(|param| param.id)
+                    .map(|param| (param.id, param.kind))
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default()
             .into_iter()
-            .map(|id| self.tcx.intern(Ty::TypeVar(id)))
+            .map(|(id, kind)| {
+                if kind == TypeVarKind::TypeVarTuple {
+                    self.tcx.intern(Ty::Unpack(id))
+                } else {
+                    self.tcx.intern(Ty::TypeVar(id))
+                }
+            })
             .collect();
         let class_ty = self.tcx.intern(Ty::Class {
             name: name.to_string(),
@@ -1772,14 +1794,23 @@ impl TypeChecker {
         let Some(definition) = self.type_alias_defs.get(&symbol).cloned() else {
             return self.tcx.error();
         };
-        let declaration_args: Vec<_> = definition
-            .params
-            .params
-            .iter()
-            .map(|param| param.id)
-            .chain(definition.captures.iter().copied())
-            .map(|id| self.tcx.intern(Ty::TypeVar(id)))
-            .collect();
+        let mut declaration_args = Vec::with_capacity(
+            definition.params.len() + definition.captures.len(),
+        );
+        for param in &definition.params.params {
+            let argument = if param.kind == TypeVarKind::TypeVarTuple {
+                self.tcx.intern(Ty::Unpack(param.id))
+            } else {
+                self.tcx.intern(Ty::TypeVar(param.id))
+            };
+            declaration_args.push(argument);
+        }
+        declaration_args.extend(
+            definition
+                .captures
+                .iter()
+                .map(|id| self.tcx.intern(Ty::TypeVar(*id))),
+        );
         let (instance, alias_ref) = self.tcx.intern_alias_instance(
             AliasIdentity::Source(symbol),
             definition.name.clone(),
@@ -1869,6 +1900,7 @@ impl TypeChecker {
             return subst.apply(template, &mut self.tcx);
         }
 
+        let display_arg_count = resolved.len();
         let mut identity_args = resolved;
         identity_args.extend(
             definition
@@ -1880,7 +1912,7 @@ impl TypeChecker {
             AliasIdentity::Source(symbol),
             name.to_string(),
             identity_args,
-            definition.params.len(),
+            display_arg_count,
         );
         let owns_target = self.tcx.begin_alias_target(instance);
         let specialized = subst.apply(template, &mut self.tcx);
@@ -1912,8 +1944,11 @@ impl TypeChecker {
                 if !self.tcx.begin_alias_target(id) {
                     return self.tcx.alias_target(id);
                 }
-                let substitution =
-                    Substitution::from_bindings(&deferred.substitutions, &deferred.param_packs);
+                let substitution = Substitution::from_bindings(
+                    &deferred.substitutions,
+                    &deferred.param_packs,
+                    &deferred.type_packs,
+                );
                 let target = substitution.apply(template, &mut self.tcx);
                 if self.tcx.alias_has_unguarded_cycle(id, target)
                     || self.tcx.alias_target_has_invalid_generated_edge(id, target)
@@ -1936,19 +1971,25 @@ impl TypeChecker {
         };
         let definition = self.type_alias_defs.get(&symbol)?.clone();
         let template = definition.template?;
-        let identity_params: Vec<_> = definition
-            .params
-            .params
-            .iter()
-            .map(|param| param.id)
-            .chain(definition.captures.iter().copied())
-            .collect();
-        if identity_params.len() != instance.args.len() {
+        if instance.display_arg_count > instance.args.len()
+            || instance.args.len() - instance.display_arg_count != definition.captures.len()
+        {
             return None;
         }
 
-        let mut subst = Substitution::new();
-        for (param, arg) in identity_params.iter().zip(&instance.args) {
+        let (mut subst, _, errors) = bind_explicit_type_args(
+            &definition.params,
+            &instance.args[..instance.display_arg_count],
+            &mut self.tcx,
+        );
+        if !errors.is_empty() {
+            return None;
+        }
+        for (param, arg) in definition
+            .captures
+            .iter()
+            .zip(&instance.args[instance.display_arg_count..])
+        {
             subst.insert(*param, *arg);
         }
         if !self.tcx.begin_alias_target(id) {
@@ -2143,7 +2184,7 @@ impl TypeChecker {
                         let param_types: Vec<TypeId> = effective_params
                             .iter()
                             .filter(|p| p.kind == crate::parser::ast::ParamKind::Regular)
-                            .map(|p| self.resolve_type_expr(&p.ty))
+                            .map(|p| self.resolve_param_type_expr(p))
                             .collect();
                         let ret = return_ty
                             .as_ref()
@@ -2261,7 +2302,11 @@ impl TypeChecker {
                     let match_args = self.collect_match_args(body);
                     let mut type_args = Vec::with_capacity(gp.len());
                     for param in &gp.params {
-                        type_args.push(self.tcx.intern(Ty::TypeVar(param.id)));
+                        type_args.push(if param.kind == TypeVarKind::TypeVarTuple {
+                            self.tcx.intern(Ty::Unpack(param.id))
+                        } else {
+                            self.tcx.intern(Ty::TypeVar(param.id))
+                        });
                     }
                     let class_ty = self.tcx.intern(Ty::Class {
                         name: name.clone(),
@@ -2355,7 +2400,7 @@ impl TypeChecker {
                             let ftypes = v
                                 .fields
                                 .iter()
-                                .map(|f| self.resolve_type_expr(&f.ty))
+                                .map(|f| self.resolve_param_type_expr(f))
                                 .collect();
                             (v.name.clone(), ftypes)
                         })
@@ -2402,7 +2447,7 @@ impl TypeChecker {
                         let param_types: Vec<TypeId> = effective_params
                             .iter()
                             .filter(|p| p.kind == crate::parser::ast::ParamKind::Regular)
-                            .map(|p| self.resolve_type_expr(&p.ty))
+                            .map(|p| self.resolve_param_type_expr(p))
                             .collect();
                         let fn_ty = self.tcx.intern(Ty::Fn {
                             params: param_types,
@@ -2481,8 +2526,14 @@ impl TypeChecker {
                 // annotations type-check the way they do under CPython.
                 Stmt::Assign { target, value } => {
                     if let Expr::Ident(name) = &target.node {
-                        if is_type_var_factory_call(&value.node) {
-                            let var_id = self.tcx.new_type_var(name.clone(), None, Vec::new());
+                        if let Some(kind) = type_var_factory_kind(&value.node) {
+                            let var_id = self.tcx.new_type_param(
+                                name.clone(),
+                                kind,
+                                None,
+                                Vec::new(),
+                                TypeParamDefault::None,
+                            );
                             let tv_ty = self.tcx.intern(Ty::TypeVar(var_id));
                             self.tcx.register_alias(name.clone(), tv_ty);
                         } else {
@@ -2808,9 +2859,15 @@ impl TypeChecker {
 
         let is_open = base_user.as_ref().is_some_and(|user| {
             generic_params.params.len() == user.args.len()
-                && generic_params.params.iter().zip(&user.args).all(
-                    |(param, arg)| matches!(self.tcx.get(*arg), Ty::TypeVar(id) if *id == param.id),
-                )
+                && generic_params.params.iter().zip(&user.args).all(|(param, arg)| {
+                    matches!(
+                        (param.kind, self.tcx.get(*arg)),
+                        (TypeVarKind::TypeVarTuple, Ty::Unpack(id))
+                            | (TypeVarKind::TypeVar, Ty::TypeVar(id))
+                            | (TypeVarKind::ParamSpec, Ty::TypeVar(id))
+                            if *id == param.id
+                    )
+                })
         });
         if !is_open {
             if supplied.is_some() {
@@ -3016,7 +3073,24 @@ impl TypeChecker {
     }
 
     pub(crate) fn resolve_type_expr(&mut self, ty: &Spanned<TypeExpr>) -> TypeId {
-        let resolved = self.resolve_type_expr_inner(ty);
+        self.resolve_type_expr_in_context(ty, TypeExprResolutionContext::Value)
+    }
+
+    pub(crate) fn resolve_param_type_expr(&mut self, param: &Param) -> TypeId {
+        let context = match param.kind {
+            ParamKind::Star => TypeExprResolutionContext::PackAware,
+            ParamKind::DoubleStar => TypeExprResolutionContext::TypedDictKwargs,
+            ParamKind::Regular => TypeExprResolutionContext::Value,
+        };
+        self.resolve_type_expr_in_context(&param.ty, context)
+    }
+
+    fn resolve_type_expr_in_context(
+        &mut self,
+        ty: &Spanned<TypeExpr>,
+        context: TypeExprResolutionContext,
+    ) -> TypeId {
+        let resolved = self.resolve_type_expr_inner(ty, context);
         self.resolved_type_exprs.insert(ty.span, resolved);
         resolved
     }
@@ -3025,7 +3099,11 @@ impl TypeChecker {
         self.resolved_type_exprs.get(&span).copied()
     }
 
-    fn resolve_type_expr_inner(&mut self, ty: &Spanned<TypeExpr>) -> TypeId {
+    fn resolve_type_expr_inner(
+        &mut self,
+        ty: &Spanned<TypeExpr>,
+        context: TypeExprResolutionContext,
+    ) -> TypeId {
         match &ty.node {
             TypeExpr::Named(name) => match name.as_str() {
                 "int" => self.tcx.int(),
@@ -3045,7 +3123,10 @@ impl TypeChecker {
                     let a = self.tcx.any();
                     self.tcx.intern(Ty::List(a))
                 }
-                "tuple" => self.tcx.intern(Ty::Tuple(vec![])),
+                "tuple" => {
+                    let any = self.tcx.any();
+                    self.tcx.intern(Ty::Tuple(vec![any, any]))
+                }
                 "set" => {
                     let a = self.tcx.any();
                     self.tcx.intern(Ty::Set(a))
@@ -3069,7 +3150,7 @@ impl TypeChecker {
                         self.tcx.any()
                     } else if let Some(forwarded) = parse_forward_ref_type_expr(forwarded, ty.span)
                     {
-                        self.resolve_type_expr_inner(&forwarded)
+                        self.resolve_type_expr_inner(&forwarded, context)
                     } else {
                         self.error(ty.span, "invalid type expression in forward reference");
                         self.tcx.error()
@@ -3088,6 +3169,19 @@ impl TypeChecker {
                 }
                 _ => {
                     if let Some(param_ty) = self.resolve_active_type_param_alias(name) {
+                        if let Ty::TypeVar(var) = self.tcx.get(param_ty) {
+                            if self.tcx.get_type_var(*var).kind == TypeVarKind::TypeVarTuple
+                                && context != TypeExprResolutionContext::UnpackOperand
+                            {
+                                self.error(
+                                    ty.span,
+                                    format!(
+                                        "TypeVarTuple '{name}' must be used through an unpack operation"
+                                    ),
+                                );
+                                return self.tcx.error();
+                            }
+                        }
                         return param_ty;
                     }
                     if let Some(symbol) = self.lookup_type_alias_symbol(name) {
@@ -3096,6 +3190,19 @@ impl TypeChecker {
                     // Legacy `T = TypeVar(...)` aliases remain name-based, but
                     // a lexical PEP 695 declaration shadows them.
                     if let Some(alias_ty) = self.tcx.resolve_alias(name) {
+                        if let Ty::TypeVar(var) = self.tcx.get(alias_ty) {
+                            if self.tcx.get_type_var(*var).kind == TypeVarKind::TypeVarTuple
+                                && context != TypeExprResolutionContext::UnpackOperand
+                            {
+                                self.error(
+                                    ty.span,
+                                    format!(
+                                        "TypeVarTuple '{name}' must be used through an unpack operation"
+                                    ),
+                                );
+                                return self.tcx.error();
+                            }
+                        }
                         return alias_ty;
                     }
                     // User-defined type — look up in symbols
@@ -3144,8 +3251,100 @@ impl TypeChecker {
                     }
                 }
             },
+            TypeExpr::Unpack(inner) => {
+                if context != TypeExprResolutionContext::PackAware {
+                    self.error(
+                        ty.span,
+                        "TypeVarTuple unpack is not valid in this type position",
+                    );
+                    return self.tcx.error();
+                }
+                let inner = self.resolve_type_expr_in_context(
+                    inner,
+                    TypeExprResolutionContext::UnpackOperand,
+                );
+                match self.tcx.get(inner) {
+                    Ty::TypeVar(var)
+                        if self.tcx.get_type_var(*var).kind == TypeVarKind::TypeVarTuple =>
+                    {
+                        self.tcx.intern(Ty::Unpack(*var))
+                    }
+                    _ => {
+                        self.error(ty.span, "Unpack requires a TypeVarTuple");
+                        self.tcx.error()
+                    }
+                }
+            }
             TypeExpr::Generic { name, args } => {
-                let inner: Vec<TypeId> = args.iter().map(|a| self.resolve_type_expr(a)).collect();
+                if matches!(
+                    name.as_str(),
+                    "Unpack" | "typing.Unpack" | "typing_extensions.Unpack"
+                ) {
+                    if args.len() != 1 {
+                        self.error(
+                            ty.span,
+                            format!("Unpack expects 1 type argument, got {}", args.len()),
+                        );
+                        return self.tcx.error();
+                    }
+                    if context == TypeExprResolutionContext::TypedDictKwargs {
+                        let inner = self.resolve_type_expr_in_context(
+                            &args[0],
+                            TypeExprResolutionContext::Value,
+                        );
+                        match self.typed_dict_instance_relation(inner) {
+                            Some(true) | None => return self.tcx.any(),
+                            Some(false) => {}
+                        }
+                        self.error(ty.span, "Unpack for **kwargs requires a TypedDict");
+                        return self.tcx.error();
+                    }
+                    if context != TypeExprResolutionContext::PackAware {
+                        self.error(
+                            ty.span,
+                            "TypeVarTuple unpack is not valid in this type position",
+                        );
+                        return self.tcx.error();
+                    }
+                    let inner = self.resolve_type_expr_in_context(
+                        &args[0],
+                        TypeExprResolutionContext::UnpackOperand,
+                    );
+                    return match self.tcx.get(inner) {
+                        Ty::TypeVar(var)
+                            if self.tcx.get_type_var(*var).kind
+                                == TypeVarKind::TypeVarTuple =>
+                        {
+                            self.tcx.intern(Ty::Unpack(*var))
+                        }
+                        _ => {
+                            self.error(ty.span, "Unpack requires a TypeVarTuple");
+                            self.tcx.error()
+                        }
+                    };
+                }
+                let last = args.len().saturating_sub(1);
+                let inner: Vec<TypeId> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(index, arg)| {
+                        let arg_context = match name.as_str() {
+                            "tuple" => TypeExprResolutionContext::PackAware,
+                            "Callable" | "typing.Callable" | "collections.abc.Callable" => {
+                                if index < last {
+                                    TypeExprResolutionContext::PackAware
+                                } else {
+                                    TypeExprResolutionContext::Value
+                                }
+                            }
+                            "list" | "dict" | "set" | "frozenset" | "type" => {
+                                TypeExprResolutionContext::Value
+                            }
+                            _ => TypeExprResolutionContext::PackAware,
+                        };
+                        self.resolve_type_expr_in_context(arg, arg_context)
+                    })
+                    .collect();
                 match name.as_str() {
                     "list" if inner.len() == 1 => self.tcx.intern(Ty::List(inner[0])),
                     "dict" if inner.len() == 2 => self.tcx.intern(Ty::Dict(inner[0], inner[1])),
@@ -3241,18 +3440,39 @@ impl TypeChecker {
                 }
             }
             TypeExpr::Optional(inner) => {
-                let inner_ty = self.resolve_type_expr(inner);
+                let inner_ty = self.resolve_type_expr_in_context(
+                    inner,
+                    TypeExprResolutionContext::Value,
+                );
                 let none_ty = self.tcx.none();
                 self.tcx.intern(Ty::Union(vec![inner_ty, none_ty]))
             }
             TypeExpr::Union(types) => {
-                let inner: Vec<TypeId> = types.iter().map(|t| self.resolve_type_expr(t)).collect();
+                let inner: Vec<TypeId> = types
+                    .iter()
+                    .map(|t| {
+                        self.resolve_type_expr_in_context(
+                            t,
+                            TypeExprResolutionContext::Value,
+                        )
+                    })
+                    .collect();
                 self.tcx.intern(Ty::Union(inner))
             }
             TypeExpr::Fn { params, ret } => {
-                let param_types: Vec<TypeId> =
-                    params.iter().map(|p| self.resolve_type_expr(p)).collect();
-                let ret_ty = self.resolve_type_expr(ret);
+                let param_types: Vec<TypeId> = params
+                    .iter()
+                    .map(|p| {
+                        self.resolve_type_expr_in_context(
+                            p,
+                            TypeExprResolutionContext::PackAware,
+                        )
+                    })
+                    .collect();
+                let ret_ty = self.resolve_type_expr_in_context(
+                    ret,
+                    TypeExprResolutionContext::Value,
+                );
                 self.tcx.intern(Ty::Fn {
                     params: param_types,
                     ret: ret_ty,
@@ -3262,7 +3482,15 @@ impl TypeChecker {
                 })
             }
             TypeExpr::Tuple(types) => {
-                let inner: Vec<TypeId> = types.iter().map(|t| self.resolve_type_expr(t)).collect();
+                let inner: Vec<TypeId> = types
+                    .iter()
+                    .map(|t| {
+                        self.resolve_type_expr_in_context(
+                            t,
+                            TypeExprResolutionContext::PackAware,
+                        )
+                    })
+                    .collect();
                 self.tcx.intern(Ty::Tuple(inner))
             }
         }
@@ -3736,11 +3964,6 @@ impl TypeChecker {
         if let (Ty::Tuple(es), Ty::Tuple(as_)) = (e, a) {
             let es = es.clone();
             let as_ = as_.clone();
-            // Bare `tuple` (no type args) imposes no element constraint — it is
-            // the unparameterized collection, compatible with any tuple value.
-            if es.is_empty() || as_.is_empty() {
-                return true;
-            }
             // Equal arity: treat as fixed-length and compare element-wise. This
             // also subsumes the case where both sides are homogeneous
             // `tuple[T, ...]` (each a 2-element `[T, Any]`), since `Any`
@@ -3886,6 +4109,7 @@ impl TypeChecker {
                     .collect();
                 format!("tuple[{}]", parts.join(", "))
             }
+            Ty::Unpack(id) => format!("*{}", self.tcx.get_type_var(*id).name),
             Ty::Union(ts) => {
                 let parts: Vec<_> = ts
                     .iter()
@@ -4011,7 +4235,7 @@ impl TypeChecker {
                     let param_types: Vec<TypeId> = params
                         .iter()
                         .filter(|p| p.name != "self")
-                        .map(|p| self.resolve_type_expr(&p.ty))
+                        .map(|p| self.resolve_param_type_expr(p))
                         .collect();
                     let ret = return_ty
                         .as_ref()
@@ -4122,7 +4346,7 @@ impl TypeChecker {
                     .iter()
                     .map(|p| FunctionParamSig {
                         name: p.name.clone(),
-                        ty: self.resolve_type_expr(&p.ty),
+                        ty: self.resolve_param_type_expr(p),
                         kind: p.kind,
                         pos_only: p.pos_only,
                         kw_only: p.kw_only,
@@ -4142,8 +4366,12 @@ impl TypeChecker {
                 let unbound_param_types = if decorators.is_empty() && !params.is_empty() {
                     let mut unbound_param_types = Vec::with_capacity(params.len());
                     unbound_param_types.push(receiver_ty);
-                    unbound_param_types
-                        .extend(params.iter().skip(1).map(|p| self.resolve_type_expr(&p.ty)));
+                    unbound_param_types.extend(
+                        params
+                            .iter()
+                            .skip(1)
+                            .map(|p| self.resolve_param_type_expr(p)),
+                    );
                     Some(unbound_param_types)
                 } else {
                     None
@@ -4233,6 +4461,37 @@ impl TypeChecker {
             _ => false,
         }
     }
+
+    fn typed_dict_instance_relation(&self, ty: TypeId) -> Option<bool> {
+        match self.tcx.get(ty) {
+            Ty::Class {
+                name,
+                role: ClassRole::Instance,
+                user,
+                external,
+                ..
+            } => {
+                let is_typed_dict = user
+                    .as_ref()
+                    .is_some_and(|user| self.typed_dict_class_symbols.contains(&user.symbol))
+                    || (user.is_none() && self.typed_dict_classes.contains(name));
+                if is_typed_dict {
+                    Some(true)
+                } else if external.is_some() {
+                    None
+                } else {
+                    Some(false)
+                }
+            }
+            Ty::Any
+            | Ty::Error
+            | Ty::TypeVar(_)
+            | Ty::AliasRef(_)
+            | Ty::Infer(_)
+            | Ty::External(_) => None,
+            _ => Some(false),
+        }
+    }
 }
 
 impl Default for TypeChecker {
@@ -4290,6 +4549,7 @@ pub(crate) fn expr_to_type_expr(expr: &Spanned<Expr>) -> Option<Spanned<TypeExpr
                 .map(expr_to_type_expr)
                 .collect::<Option<Vec<_>>>()?,
         ),
+        Expr::Starred(inner) => TypeExpr::Unpack(Box::new(expr_to_type_expr(inner)?)),
         _ => return None,
     };
     Some(Spanned::new(node, expr.span))
@@ -4298,6 +4558,49 @@ pub(crate) fn expr_to_type_expr(expr: &Spanned<Expr>) -> Option<Spanned<TypeExpr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expr_to_type_expr_preserves_type_var_tuple_unpack_order() {
+        use crate::source::span::FileId;
+
+        let module = crate::parser::parse(
+            "type Shape[*Ts] = tuple[Head, *Ts, Tail]\n",
+            FileId(0),
+        )
+        .expect("type alias must parse");
+        let Stmt::TypeAlias { value, .. } = &module.stmts[0].node else {
+            panic!("expected a PEP 695 type alias");
+        };
+        let converted = expr_to_type_expr(value).expect("alias RHS must be type-shaped");
+        let TypeExpr::Generic { name, args } = &converted.node else {
+            panic!("tuple alias RHS lost its generic shape");
+        };
+        assert_eq!(name, "tuple");
+        assert_eq!(args.len(), 3);
+        assert!(matches!(&args[0].node, TypeExpr::Named(name) if name == "Head"));
+        assert!(matches!(
+            &args[1].node,
+            TypeExpr::Unpack(inner)
+                if matches!(&inner.node, TypeExpr::Named(name) if name == "Ts")
+        ));
+        assert!(matches!(&args[2].node, TypeExpr::Named(name) if name == "Tail"));
+    }
+
+    #[test]
+    fn exact_empty_tuple_is_distinct_from_bare_tuple() {
+        let mut checker = TypeChecker::new();
+        let empty = checker.tcx.intern(Ty::Tuple(Vec::new()));
+        let int = checker.tcx.int();
+        let one = checker.tcx.intern(Ty::Tuple(vec![int]));
+        let any = checker.tcx.any();
+        let bare = checker.tcx.intern(Ty::Tuple(vec![any, any]));
+
+        assert!(checker.types_compatible(empty, empty));
+        assert!(!checker.types_compatible(empty, one));
+        assert!(!checker.types_compatible(one, empty));
+        assert!(checker.types_compatible(bare, empty));
+        assert!(checker.types_compatible(bare, one));
+    }
 
     #[test]
     fn generated_transformed_recursive_alias_backfills_transactionally() {

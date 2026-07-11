@@ -3031,6 +3031,7 @@ fn annotation_repr_opt(ty: &ast::TypeExpr) -> Option<String> {
 fn type_expr_repr(ty: &ast::TypeExpr) -> String {
     match ty {
         ast::TypeExpr::Named(n) => ast::strip_forward_ref_name(n).unwrap_or(n).to_string(),
+        ast::TypeExpr::Unpack(inner) => format!("*{}", type_expr_repr(&inner.node)),
         ast::TypeExpr::Generic { name, args } => {
             let inner: Vec<String> = args.iter().map(|a| type_expr_repr(&a.node)).collect();
             format!("{}[{}]", name, inner.join(", "))

@@ -520,6 +520,8 @@ pub enum UnaryOp {
 pub enum TypeExpr {
     /// Simple type name: `int`, `float`, `MyClass`
     Named(Name),
+    /// Static type-pack expansion: `*Ts` or `Unpack[Ts]`.
+    Unpack(Box<Spanned<TypeExpr>>),
     /// Generic type: `list[int]`, `dict[str, int]`
     Generic {
         name: Name,
