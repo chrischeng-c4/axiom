@@ -926,6 +926,36 @@ mod tests {
     }
 
     #[test]
+    fn generated_manifest_preserves_typing_extensions_never_defaults() {
+        let select = overloads("select", "", "select")
+            .next()
+            .expect("select.select spec");
+        let rlist = params(select.params)
+            .iter()
+            .find(|param| string(param.name) == "rlist")
+            .expect("rlist parameter");
+        let TypeSpecNode::Apply { args, .. } = node(type_use(rlist.ty).0) else {
+            panic!("select.rlist must retain its iterable application")
+        };
+        let [item] = edges(*args) else {
+            panic!("select.rlist iterable must retain one item type")
+        };
+        let TypeSpecNode::TypeParam(param_id) = node(*item) else {
+            panic!("select.rlist item must retain its TypeVar")
+        };
+        let default = type_param(*param_id)
+            .default
+            .expect("select.rlist TypeVar default");
+        let TypeSpecNode::Name { module, name, .. } = node(default) else {
+            panic!("select.rlist TypeVar default must retain Never identity")
+        };
+        assert_eq!(
+            (string(*module), string(*name)),
+            ("typing_extensions", "Never")
+        );
+    }
+
+    #[test]
     fn generated_manifest_preserves_alias_targets() {
         let root_alias = alias("_typeshed", "OpenTextMode").expect("OpenTextMode alias");
         let TypeSpecNode::Union(members) = node(root_alias.target) else {

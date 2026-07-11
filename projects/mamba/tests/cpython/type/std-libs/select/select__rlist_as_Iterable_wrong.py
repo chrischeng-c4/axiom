@@ -26,7 +26,7 @@ class _W:
 
 from select import select
 try:
-    select(_W(), None, None)  # rlist: Iterable <- wrong-typed
+    select(_W(), [], [], 0)  # rlist: Iterable <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
