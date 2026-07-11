@@ -46,22 +46,54 @@
 //!   phase -> `CatchingUp`. `POST /admin/reshard:apply` is an idempotent
 //!   additive merge (#1380), so re-running this same pass after a restart
 //!   (still `Splitting`) is safe and simply re-applies the same batches.
-//! - **CatchingUp**: run the *same* migration pass again — an idempotent
-//!   re-sync that closes the gap for documents written to a moved bucket's
-//!   old shard during the `Splitting` window (writes still land on the old
-//!   shard until the map itself flips) — then evict every moved bucket from
-//!   every old shard ([`crate::reshard`]'s `evict` is also idempotent), then
-//!   [`checkpoint_touched_shards`] (#1389, see below), and only then flip
-//!   `spec.shardMap` to the target map in the same patch that clears
-//!   `workflow.targetShardCount` and resets phase -> `Complete`, followed by
-//!   [`trigger_rolling_restart`]. Calling evict against the **new**,
-//!   already-committed map (not the stale old one) means the driver never
-//!   needs to retain the old map across a restart — the source of the
-//!   classic "lost the old map after cutover" resumability trap.
+//! - **CatchingUp** ([`advance_catching_up`], resequenced by #1396 R1/R2):
+//!   arm a write-pause fence over every still-moving bucket on its current
+//!   (source) owner (R2, see below), run the *same* migration pass again —
+//!   an idempotent re-sync that, under the fence, is guaranteed a converged
+//!   snapshot of every moving bucket — checkpoint **only the new/target
+//!   shard** durably, evict every moved bucket from every old shard
+//!   ([`crate::reshard`]'s `evict` is also idempotent), checkpoint every
+//!   **source** shard durably, then flip `spec.shardMap` to the target map
+//!   in the same patch that clears `workflow.targetShardCount` and resets
+//!   phase -> `Complete`, followed by [`trigger_rolling_restart`], then
+//!   clear the fence (unconditionally, on every exit path). Calling evict
+//!   against the **new**, already-committed map (not the stale old one)
+//!   means the driver never needs to retain the old map across a restart —
+//!   the source of the classic "lost the old map after cutover" resumability
+//!   trap. Checkpointing the target *before* evicting sources — rather than
+//!   checkpointing everything only after both migration and eviction, as
+//!   this driver did before #1396 — is R1: an eviction becoming durable (or
+//!   even being attempted) before the target's copy of the same data is
+//!   durably checkpointed can lose data that exists on no durable shard at
+//!   all if the process crashes in between; see [`advance_catching_up`]'s
+//!   own doc for the full crash-at-every-step analysis.
 //!
 //! A driver-side error at any step ([`DriveOutcome::Blocked`]) leaves the CR
 //! spec untouched; the next tick retries the same phase from the same
 //! persisted fields (R3).
+//!
+//! ## Write-pause fence during the final CatchingUp pass (#1396 R2)
+//!
+//! Even with the `Splitting` + `CatchingUp` double migration pass, a write
+//! that lands on a moved bucket's old (source) shard after the *last*
+//! migration-copy read but before that bucket's eviction is never re-copied
+//! anywhere — eviction then silently drops it. [`advance_catching_up`] closes
+//! this gap with a bounded, status-visible write pause (the mechanism #1381's
+//! R5 review sanctioned: "a bounded final pause of writes to still-moving
+//! buckets is acceptable if needed for convergence, but must be bounded and
+//! reported in status") rather than a repeat-until-converged loop: arming the
+//! fence *before* the tick's migration pass means that single pass is already
+//! a complete snapshot of every fenced bucket, because no write can land on
+//! them while it runs. [`crate::api::WriteFence`] (`POST
+//! /admin/reshard:fence`) is the serving-side seam; a fenced write gets `503
+//! bucket_write_paused` rather than being silently dropped or racing the map
+//! flip. The fence is armed on every **source** shard (the live owners until
+//! this tick's own cutover patch), and cleared — unconditionally, on every
+//! exit path of [`advance_catching_up`], success or `Blocked` — once the
+//! sequence finishes. A driver process that crashes before that explicit
+//! clear cannot wedge writes forever: [`WriteFence::blocks`] enforces
+//! [`WRITE_FENCE_TTL_SECS`] as a deadline on the *serving* pod itself,
+//! independent of the driver's liveness.
 //!
 //! ## Migration durability (#1389)
 //!
@@ -94,17 +126,24 @@
 //! (stage-then-rename), so one checkpoint call captures every migration
 //! mutation made so far, not just the most recent one.
 //!
-//! [`checkpoint_touched_shards`] calls `POST /admin/checkpoint` on
-//! `0..target.physical_shard_count()` — every old shard (`evict_old_shards`'s
-//! target set) plus the new shard (`run_migration_pass`'s only `apply`
-//! destination) — and is invoked from [`advance_catching_up`] AFTER
-//! migration + eviction but BEFORE the `shardMap` cutover patch and
-//! [`trigger_rolling_restart`]. A checkpoint failure on any shard reports
+//! [`checkpoint_shards`] calls `POST /admin/checkpoint` on an explicit shard
+//! set; [`advance_catching_up_fenced`] calls it twice per tick — once for
+//! just the new/target shard immediately after migration and before any
+//! source eviction is attempted (#1396 R1), and again for every source shard
+//! (`0..current.physical_shard_count()`, `evict_old_shards`'s target set)
+//! after eviction and before the `shardMap` cutover patch and
+//! [`trigger_rolling_restart`]. A checkpoint failure on either call reports
 //! [`DriveOutcome::Blocked`] and leaves `spec` at `CatchingUp` untouched
 //! (R3): the next tick re-runs the whole idempotent
-//! migration+evict+checkpoint sequence, consistent with #1381's
+//! migrate/checkpoint/evict/checkpoint sequence, consistent with #1381's
 //! spec-is-the-checkpoint semantics — cutover never fires on a shard whose
-//! migration mutations are not yet durable.
+//! migration mutations are not yet durable, and eviction is never even
+//! attempted before the target's copy of the same data is durable.
+//! `checkpoint_shard` (#1396 R3) also now requires the response body to
+//! report `persisted == true`; a `200 {"persisted": false}` — the vacuous
+//! "no durable store configured" response `admin_checkpoint` returns for
+//! [`crate::api::NoopCheckpoint`] deployments — is treated as a failed
+//! checkpoint, not a satisfied durability gate.
 //!
 //! ## Scope rail: single-member only
 //!
@@ -173,6 +212,16 @@ const DRIVER_LEASE_NAME: &str = "lumen-reshard-driver";
 /// already documents (checkpoint after every batch, not after one full-shard
 /// copy).
 const MAX_EXTERNAL_IDS_PER_BATCH: usize = 2000;
+
+/// TTL for the write-pause fence [`advance_catching_up`] arms over still-moving
+/// buckets during its final migration pass (#1396 R2) — generous relative to
+/// one tick's HTTP round trips (a scoped-backup fetch + apply batches across
+/// however many source shards a split touches, then evict + checkpoint) while
+/// still bounded; the fence is a crash-safety backstop the *serving* pod
+/// enforces independent of the driver's own liveness, see
+/// [`crate::api::WriteFence`]. Re-armed fresh every tick that needs one, so a
+/// healthy, slow-but-progressing driver never races its own TTL.
+const WRITE_FENCE_TTL_SECS: u64 = 120;
 
 /// Everything [`drive_tick`] needs from a live cluster, abstracted so the
 /// state machine is testable without a real k8s API server. [`KubeClusterControl`]
@@ -385,6 +434,23 @@ pub fn should_start_split(lumen: &Lumen) -> bool {
     let Some(status) = lumen.status.as_ref() else {
         return false;
     };
+    // #1396 R5: re-derive freshness here rather than trusting the status
+    // subresource's own `blockingConditions` alone. `reshard_status_with_usage`
+    // (crd.rs) already refuses to report a *threshold* condition against a
+    // stale usage measurement (it reports `usageStalePostCutover` instead —
+    // see the #1386 tests below), but that only protects the write path: a
+    // status write from an in-flight scrape can still be the one currently
+    // stored when a *later* `spec.shardMap` cutover lands (a second,
+    // independent split racing this one, or an operator restart reordering
+    // writes), leaving a `prepareThresholdCrossed`/`urgentThresholdCrossed`
+    // condition on disk that was computed against a map version the CR has
+    // already moved past. Requiring the status's `usageMeasuredAtMapVersion`
+    // to equal the CR's *current* `spec.shardMap.version` at the moment this
+    // trigger decision is made closes that race without needing the status
+    // writer and this reader to be perfectly ordered.
+    if status.reshard.usage_measured_at_map_version != Some(lumen.spec.shard_map.version) {
+        return false;
+    }
     status
         .reshard
         .blocking_conditions
@@ -474,6 +540,68 @@ async fn apply_reshard_batch(
     Ok(())
 }
 
+/// `POST /admin/reshard:fence` (#1396 R2) against one shard: `buckets`
+/// non-empty arms a bounded write pause over those virtual buckets;
+/// `buckets` empty clears any currently-armed pause. See
+/// [`crate::api::WriteFence`].
+async fn reshard_fence_call(
+    http: &reqwest::Client,
+    base_url: &str,
+    token: Option<&str>,
+    virtual_bucket_count: u32,
+    buckets: &BTreeSet<u32>,
+    ttl_secs: u64,
+) -> Result<()> {
+    let mut req = http
+        .post(format!("{base_url}/admin/reshard:fence"))
+        .json(&json!({
+            "virtual_bucket_count": virtual_bucket_count,
+            "buckets": buckets,
+            "ttl_secs": ttl_secs,
+        }));
+    if let Some(token) = token {
+        req = req.bearer_auth(token);
+    }
+    let resp = req
+        .send()
+        .await
+        .with_context(|| format!("POST {base_url}/admin/reshard:fence"))?;
+    if !resp.status().is_success() {
+        bail!("{base_url}/admin/reshard:fence returned {}", resp.status());
+    }
+    Ok(())
+}
+
+/// Arm (non-empty `buckets`) or clear (empty `buckets`) the write-pause
+/// fence on every shard `current` owns — the live map's current owners,
+/// where writes to a still-moving bucket land until this tick's own cutover
+/// patch flips `spec.shardMap`.
+async fn set_write_fence(
+    control: &dyn ClusterControl,
+    http: &reqwest::Client,
+    namespace: &str,
+    name: &str,
+    lumen: &Lumen,
+    current: &VirtualBucketShardMap,
+    buckets: &BTreeSet<u32>,
+    ttl_secs: u64,
+) -> Result<()> {
+    let token = control.admin_token(namespace, lumen).await?;
+    for shard in 0..current.physical_shard_count() {
+        let url = control.shard_base_url(namespace, name, shard);
+        reshard_fence_call(
+            http,
+            &url,
+            token.as_deref(),
+            current.virtual_bucket_count(),
+            buckets,
+            ttl_secs,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 async fn evict_shard(
     http: &reqwest::Client,
     base_url: &str,
@@ -504,10 +632,24 @@ async fn evict_shard(
     Ok(())
 }
 
-/// `POST /admin/checkpoint` (#1389 R1/R2) against one shard: force its
-/// migration mutations (`:apply`/`:evict`, which bypass `WriteCoordinator`/
-/// the AOF) into the same durability domain ordinary writes reach, and wait
-/// for the response before this shard is considered safe to restart.
+/// `POST /admin/checkpoint` (#1389 R1/R2; durability gate hardened by #1396
+/// R3) against one shard: force its migration mutations (`:apply`/`:evict`,
+/// which bypass `WriteCoordinator`/the AOF) into the same durability domain
+/// ordinary writes reach, and wait for the response before this shard is
+/// considered safe to restart.
+///
+/// A 200 response alone is not proof of durability: [`crate::api`]'s
+/// `admin_checkpoint` handler returns `200 {"persisted": false}` — not an
+/// error status — when the shard has no durable store configured (the
+/// vacuous, RAM-only [`crate::api::NoopCheckpoint`] sink; see that type's
+/// docs), which is exactly the "checkpoint looked like it worked but nothing
+/// was actually made durable" gap #1396's review confirmed (a bare
+/// `is_success()` check treated that response as a satisfied gate). This
+/// function now parses the body and requires `persisted == true`; anything
+/// else — `false`, or a body this shard's response doesn't even carry the
+/// key for — is treated as a failed checkpoint, surfacing as
+/// [`DriveOutcome::Blocked`] naming the shard rather than a cutover that
+/// proceeds over undurable data.
 async fn checkpoint_shard(
     http: &reqwest::Client,
     base_url: &str,
@@ -524,29 +666,47 @@ async fn checkpoint_shard(
     if !resp.status().is_success() {
         bail!("{base_url}/admin/checkpoint returned {}", resp.status());
     }
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .with_context(|| format!("decode {base_url}/admin/checkpoint response"))?;
+    let persisted = body
+        .get("persisted")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !persisted {
+        bail!(
+            "{base_url}/admin/checkpoint did not report persisted=true (shard has no durable \
+             checkpoint sink configured, or the checkpoint failed) — cutover cannot proceed \
+             over undurable migration mutations on this shard"
+        );
+    }
     Ok(())
 }
 
-/// #1389 R3: checkpoint every shard `target` touches — every old shard
-/// (`evict_old_shards` runs against all of `0..current.physical_shard_count()`)
-/// plus the new shard (`run_migration_pass`'s only `apply` destination) — which
-/// is exactly `0..target.physical_shard_count()` (this driver only ever grows
-/// by one shard per split). Called from [`advance_catching_up`] AFTER
-/// migration + eviction and BEFORE the `shardMap` cutover patch / rolling
-/// restart, so a failure here leaves the workflow in `CatchingUp` — resumable,
-/// never mid-cutover with undurable data — and the next tick retries the same
-/// (idempotent) migration + eviction + checkpoint sequence.
+/// #1389 R3, generalized by #1396 R1 into an explicit shard set: checkpoint
+/// exactly `shards`. [`advance_catching_up`] now calls this twice per tick —
+/// once for just the target/new shard immediately after migration and
+/// *before* any source eviction is attempted, and again for every source
+/// shard after eviction — rather than once for `0..target.physical_shard_
+/// count()` after both migration and eviction had already run (the ordering
+/// #1396's review found: an eviction becoming durable, or even being
+/// attempted, before the target's copy of the same data was durably
+/// checkpointed, could lose data on a crash between the two). A failure here
+/// leaves the workflow in `CatchingUp` — resumable, never mid-cutover with
+/// undurable data — and the next tick retries the same idempotent
+/// migration/checkpoint/eviction/checkpoint sequence.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-async fn checkpoint_touched_shards(
+async fn checkpoint_shards(
     control: &dyn ClusterControl,
     http: &reqwest::Client,
     namespace: &str,
     name: &str,
     lumen: &Lumen,
-    target: &VirtualBucketShardMap,
+    shards: impl Iterator<Item = u32>,
 ) -> Result<()> {
     let token = control.admin_token(namespace, lumen).await?;
-    for shard in 0..target.physical_shard_count() {
+    for shard in shards {
         let url = control.shard_base_url(namespace, name, shard);
         checkpoint_shard(http, &url, token.as_deref()).await?;
     }
@@ -729,6 +889,42 @@ async fn advance_splitting(
     }
 }
 
+/// #1396 R1/R2: durably ordered cutover. Old order was migrate -> evict ->
+/// checkpoint-everything -> cutover, which could make a source shard's
+/// eviction durable (or even attempt it) before the target shard's copy of
+/// the same data was durably checkpointed — a crash between eviction and
+/// that too-late checkpoint could lose data that, at that instant, existed
+/// on no durable shard at all (#1387's exact failure shape, reintroduced by
+/// evicting ahead of a per-shard-ordered checkpoint). New order: migrate ->
+/// checkpoint target only -> evict sources -> checkpoint sources -> cutover.
+/// Crash-safety at every boundary (moved data is durable on at least one
+/// shard at every point once migration completes):
+/// - Crash after migrate, before the target checkpoint: sources still hold
+///   their data (not yet evicted); retry re-migrates (idempotent, #1380)
+///   and the target checkpoint eventually succeeds.
+/// - Crash after the target checkpoint, before eviction: the target already
+///   durably holds the moved data; retry replays migrate (no-op) and the
+///   target checkpoint (no-op re-confirm), then proceeds to evict.
+/// - Crash after eviction (RAM-only until its own checkpoint), before the
+///   source checkpoint: even if the pod restart the driver is about to
+///   trigger loses the in-RAM eviction, a retry is still safe — the target
+///   already durably has the moved data from the earlier target checkpoint,
+///   so a retried migrate is a no-op, a retried evict is idempotent, and the
+///   source checkpoint retries until it succeeds. Eviction is never durable
+///   nor attempted before the target's copy is durable, so this crash can
+///   never lose data.
+/// - Crash after the source checkpoint, before the cutover patch: both
+///   sides are durable; retry replays every step as a no-op until the
+///   cutover patch finally lands.
+///
+/// R2: the whole sequence below runs under a write-pause fence (`POST
+/// /admin/reshard:fence`) armed over every still-moving bucket on its
+/// current (source) owners, so this tick's migration pass is guaranteed a
+/// converged snapshot of those buckets — closing the gap where a write
+/// lands on a source shard after the last migration-copy read but before
+/// that bucket's eviction and is silently dropped. The fence is cleared on
+/// every exit path (success or `Blocked`); see [`crate::api::WriteFence`]
+/// for why a crashed driver can never leave it armed permanently.
 async fn advance_catching_up(
     control: &dyn ClusterControl,
     http: &reqwest::Client,
@@ -736,10 +932,6 @@ async fn advance_catching_up(
     name: &str,
     lumen: &Lumen,
 ) -> DriveOutcome {
-    if let Err(err) = run_migration_pass(control, http, namespace, name, lumen).await {
-        return DriveOutcome::Blocked(err.to_string());
-    }
-
     let current = match current_shard_map(lumen) {
         Ok(m) => m,
         Err(err) => return DriveOutcome::Blocked(err.to_string()),
@@ -748,22 +940,111 @@ async fn advance_catching_up(
         Ok(m) => m,
         Err(err) => return DriveOutcome::Blocked(err.to_string()),
     };
+    let moves = match bucket_moves(&current, &target) {
+        Ok(m) => m,
+        Err(err) => return DriveOutcome::Blocked(err.to_string()),
+    };
+    let moving_buckets: BTreeSet<u32> = moves.iter().map(|m| m.bucket).collect();
 
-    if let Err(err) =
-        evict_old_shards(control, http, namespace, name, lumen, &current, &target).await
+    if !moving_buckets.is_empty() {
+        if let Err(err) = set_write_fence(
+            control,
+            http,
+            namespace,
+            name,
+            lumen,
+            &current,
+            &moving_buckets,
+            WRITE_FENCE_TTL_SECS,
+        )
+        .await
+        {
+            return DriveOutcome::Blocked(err.to_string());
+        }
+    }
+
+    let outcome =
+        advance_catching_up_fenced(control, http, namespace, name, lumen, &current, &target).await;
+
+    if !moving_buckets.is_empty() {
+        // Always clear, on every exit path: the fence must never outlive
+        // this tick. If this clear itself fails (or the process dies before
+        // reaching it), WRITE_FENCE_TTL_SECS still bounds how long writes to
+        // these buckets stay paused — the serving pod enforces that
+        // deadline on its own, independent of the driver ever coming back.
+        if let Err(err) = set_write_fence(
+            control,
+            http,
+            namespace,
+            name,
+            lumen,
+            &current,
+            &BTreeSet::new(),
+            0,
+        )
+        .await
+        {
+            tracing::warn!(
+                error = %err,
+                "reshard driver: failed to clear write fence after CatchingUp tick; \
+                 bounded by WRITE_FENCE_TTL_SECS"
+            );
+        }
+    }
+
+    outcome
+}
+
+/// The migrate/checkpoint/evict/checkpoint/cutover sequence proper, run
+/// under [`advance_catching_up`]'s write fence. Split out so the fence's
+/// arm/clear bracket is unconditional (always runs, regardless of which
+/// step below fails) without duplicating the sequence itself.
+async fn advance_catching_up_fenced(
+    control: &dyn ClusterControl,
+    http: &reqwest::Client,
+    namespace: &str,
+    name: &str,
+    lumen: &Lumen,
+    current: &VirtualBucketShardMap,
+    target: &VirtualBucketShardMap,
+) -> DriveOutcome {
+    if let Err(err) = run_migration_pass(control, http, namespace, name, lumen).await {
+        return DriveOutcome::Blocked(err.to_string());
+    }
+
+    // R1: the target/new shard's copy of the just-migrated data must be
+    // durable BEFORE any source eviction is even attempted.
+    let new_shard = target.physical_shard_count().saturating_sub(1);
+    if let Err(err) = checkpoint_shards(
+        control,
+        http,
+        namespace,
+        name,
+        lumen,
+        std::iter::once(new_shard),
+    )
+    .await
     {
         return DriveOutcome::Blocked(err.to_string());
     }
 
-    // #1389 R1/R2/R3: every touched shard's migration mutations must be
-    // durable BEFORE the cutover patch/restart below — otherwise the restart
-    // this same tick is about to trigger destroys the data it just migrated
-    // (target shards) or resurrects the data it just evicted (source
-    // shards), exactly as observed live in #1387's blocked AC3. A failure
-    // here leaves the CR spec untouched (still `CatchingUp`), so the next
-    // tick retries the whole idempotent migration+evict+checkpoint sequence.
-    if let Err(err) =
-        checkpoint_touched_shards(control, http, namespace, name, lumen, &target).await
+    if let Err(err) = evict_old_shards(control, http, namespace, name, lumen, current, target).await
+    {
+        return DriveOutcome::Blocked(err.to_string());
+    }
+
+    // R1: sources' eviction must itself be durable before cutover, same
+    // rationale #1389 already established — a crash-then-restart must never
+    // resurrect data this shard no longer owns.
+    if let Err(err) = checkpoint_shards(
+        control,
+        http,
+        namespace,
+        name,
+        lumen,
+        0..current.physical_shard_count(),
+    )
+    .await
     {
         return DriveOutcome::Blocked(err.to_string());
     }
@@ -773,7 +1054,7 @@ async fn advance_catching_up(
             "shardMap": {
                 "version": target.version(),
                 "virtualBucketCount": target.virtual_bucket_count(),
-                "assignments": map_assignments(&target),
+                "assignments": map_assignments(target),
             },
             "reshardPolicy": {
                 "workflow": {
@@ -939,6 +1220,13 @@ mod tests {
         LumenStatus {
             reshard: LumenReshardStatus {
                 blocking_conditions: vec![condition.to_string()],
+                // R5's freshness gate requires this to match the CR's
+                // current `spec.shard_map.version`; every fixture built with
+                // `spec()` hardcodes `shard_map.version: 0`, so `Some(0)`
+                // here models a status write that was actually fresh at the
+                // scenario's map version, not a value that happens to fail
+                // the new check by fixture omission.
+                usage_measured_at_map_version: Some(0),
                 ..Default::default()
             },
             ..Default::default()
@@ -997,6 +1285,48 @@ mod tests {
         s.reshard_policy.max_shards = Some(4);
         let lumen = lumen_with(s, Some(status_with_blocking("urgentThresholdCrossed")));
         assert!(!should_start_split(&lumen));
+    }
+
+    // ---- #1396 AC5: should_start_split re-derives freshness itself -----
+
+    #[test]
+    fn should_start_split_false_on_stale_status_map_version() {
+        // A `blockingConditions` entry alone is not enough: if the status
+        // subresource's `usageMeasuredAtMapVersion` predates the CR's
+        // *current* `spec.shardMap.version` (a lagging/stale status write —
+        // e.g. an in-flight scrape landing after a later cutover), the
+        // trigger must refuse to fire even though the string condition is
+        // present, regardless of what produced that stale status.
+        let mut s = spec(2, 1, Some(1_000_000));
+        s.shard_map.version = 1; // CR has already moved to map version 1.
+        let status = LumenStatus {
+            reshard: LumenReshardStatus {
+                blocking_conditions: vec!["urgentThresholdCrossed".to_string()],
+                usage_measured_at_map_version: Some(0), // stale: still map 0.
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let lumen = lumen_with(s, Some(status));
+        assert!(!should_start_split(&lumen));
+    }
+
+    #[test]
+    fn should_start_split_true_on_fresh_status_map_version() {
+        // Same shape, but the status was measured at the CR's current map
+        // version: a legitimate trigger and must still fire.
+        let mut s = spec(2, 1, Some(1_000_000));
+        s.shard_map.version = 1;
+        let status = LumenStatus {
+            reshard: LumenReshardStatus {
+                blocking_conditions: vec!["urgentThresholdCrossed".to_string()],
+                usage_measured_at_map_version: Some(1), // fresh: matches map 1.
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let lumen = lumen_with(s, Some(status));
+        assert!(should_start_split(&lumen));
     }
 
     #[test]
@@ -1123,6 +1453,63 @@ mod tests {
 
     fn http_client() -> reqwest::Client {
         reqwest::Client::new()
+    }
+
+    // ---- #1396 AC3: checkpoint_shard requires persisted == true --------
+
+    #[tokio::test]
+    async fn checkpoint_shard_blocked_when_response_reports_persisted_false() {
+        // A 200 with `persisted: false` is the exact shape `admin_checkpoint`
+        // returns when the shard has no durable checkpoint sink configured
+        // (the vacuous NoopCheckpoint case) — this must never be treated as
+        // a satisfied durability gate.
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/admin/checkpoint"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(json!({ "persisted": false })),
+            )
+            .mount(&server)
+            .await;
+        let result = checkpoint_shard(&http_client(), &server.uri(), None).await;
+        assert!(
+            result.is_err(),
+            "persisted: false must not satisfy the checkpoint gate"
+        );
+    }
+
+    #[tokio::test]
+    async fn checkpoint_shard_blocked_when_response_omits_persisted_key() {
+        // A malformed/older response with no `persisted` key at all must
+        // fail closed (defaults to not-durable), not be treated as success.
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/admin/checkpoint"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({})))
+            .mount(&server)
+            .await;
+        let result = checkpoint_shard(&http_client(), &server.uri(), None).await;
+        assert!(
+            result.is_err(),
+            "a response missing the persisted key must fail closed"
+        );
+    }
+
+    #[tokio::test]
+    async fn checkpoint_shard_ok_when_response_reports_persisted_true() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/admin/checkpoint"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(json!({ "persisted": true })),
+            )
+            .mount(&server)
+            .await;
+        let result = checkpoint_shard(&http_client(), &server.uri(), None).await;
+        assert!(
+            result.is_ok(),
+            "persisted: true must satisfy the checkpoint gate: {result:?}"
+        );
     }
 
     #[tokio::test]

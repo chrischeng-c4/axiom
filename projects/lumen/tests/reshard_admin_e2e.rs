@@ -1,10 +1,11 @@
 // SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
-//! Reshard admin verbs end-to-end (#1380, #1389): bucket-scoped export
-//! (`POST /admin/backup:scoped`), additive batch-apply
+//! Reshard admin verbs end-to-end (#1380, #1389, #1396): bucket-scoped
+//! export (`POST /admin/backup:scoped`), additive batch-apply
 //! (`POST /admin/reshard:apply`), source-side eviction
-//! (`POST /admin/reshard:evict`), and on-demand durability checkpoint
-//! (`POST /admin/checkpoint`).
+//! (`POST /admin/reshard:evict`), on-demand durability checkpoint
+//! (`POST /admin/checkpoint`), and the bounded write-pause fence
+//! (`POST /admin/reshard:fence`, #1396 R2).
 
 use std::sync::Arc;
 
@@ -367,6 +368,7 @@ async fn reshard_admin_verbs_require_admin_auth() {
         "assignments": [0, 1, 0, 1],
         "physical_shard_count": 2
     });
+    let fence_body = json!({ "virtual_bucket_count": 4, "buckets": [0], "ttl_secs": 5 });
 
     // No bearer token at all -> 401.
     s.post("/admin/backup:scoped")
@@ -382,6 +384,10 @@ async fn reshard_admin_verbs_require_admin_auth() {
         .await
         .assert_status_unauthorized();
     s.post("/admin/checkpoint")
+        .await
+        .assert_status_unauthorized();
+    s.post("/admin/reshard:fence")
+        .json(&fence_body)
         .await
         .assert_status_unauthorized();
 
@@ -405,6 +411,11 @@ async fn reshard_admin_verbs_require_admin_auth() {
         .add_header("authorization", "Bearer tok-r")
         .await
         .assert_status_forbidden();
+    s.post("/admin/reshard:fence")
+        .add_header("authorization", "Bearer tok-r")
+        .json(&fence_body)
+        .await
+        .assert_status_forbidden();
 }
 
 /// AC4 (openapi half): all four verbs show up in the generated OpenAPI
@@ -421,6 +432,7 @@ async fn reshard_admin_verbs_appear_in_openapi_spec() {
         "/admin/reshard:apply",
         "/admin/reshard:evict",
         "/admin/checkpoint",
+        "/admin/reshard:fence",
     ] {
         assert!(
             paths.contains_key(path),
@@ -446,5 +458,115 @@ async fn admin_checkpoint_without_durable_store_is_vacuously_satisfied() {
     resp.assert_status_ok();
     let body: serde_json::Value = resp.json();
     assert_eq!(body["persisted"], json!(false));
+}
+
+// ---- #1396 R2/AC2: POST /admin/reshard:fence write pause -----------------
+
+/// Arming the fence for a bucket blocks writes routed to that bucket (503
+/// `bucket_write_paused`), while writes to a different, non-fenced bucket
+/// keep succeeding — the fence is per-bucket, not a whole-shard write lock.
+#[tokio::test]
+async fn reshard_fence_blocks_only_the_fenced_bucket() {
+    let s = server();
+    create_users_collection(&s).await;
+
+    // Find one id that routes to bucket 0 and one that routes elsewhere.
+    let fenced_id = (0..)
+        .map(|i| format!("f-{i:03}"))
+        .find(|id| bucket_of("u", id) == 0)
+        .unwrap();
+    let other_id = (0..)
+        .map(|i| format!("o-{i:03}"))
+        .find(|id| bucket_of("u", id) != 0)
+        .unwrap();
+
+    s.post("/admin/reshard:fence")
+        .json(&json!({ "virtual_bucket_count": VIRTUAL_BUCKET_COUNT, "buckets": [0], "ttl_secs": 30 }))
+        .await
+        .assert_status_ok();
+
+    // Fenced bucket: writes rejected.
+    let resp = s
+        .post("/collections/u/index")
+        .json(&json!({
+            "items": [{ "external_id": fenced_id, "field": "email", "value": format!("{fenced_id}@x.com") }]
+        }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    let body: serde_json::Value = resp.json();
+    assert_eq!(body["error"], json!("bucket_write_paused"));
+    assert!(!has_doc(&s, &fenced_id).await);
+
+    // Non-fenced bucket: writes still succeed.
+    index_user(&s, &other_id).await;
+    assert!(has_doc(&s, &other_id).await);
+}
+
+/// Explicitly clearing the fence (`buckets: []`) immediately unblocks
+/// writes to the previously-fenced bucket — the driver's normal
+/// end-of-tick cleanup path.
+#[tokio::test]
+async fn reshard_fence_explicit_clear_unblocks_writes() {
+    let s = server();
+    create_users_collection(&s).await;
+    let fenced_id = (0..)
+        .map(|i| format!("c-{i:03}"))
+        .find(|id| bucket_of("u", id) == 0)
+        .unwrap();
+
+    s.post("/admin/reshard:fence")
+        .json(&json!({ "virtual_bucket_count": VIRTUAL_BUCKET_COUNT, "buckets": [0], "ttl_secs": 30 }))
+        .await
+        .assert_status_ok();
+    s.post("/collections/u/index")
+        .json(&json!({
+            "items": [{ "external_id": fenced_id, "field": "email", "value": format!("{fenced_id}@x.com") }]
+        }))
+        .await
+        .assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+
+    // Explicit clear: empty bucket set.
+    s.post("/admin/reshard:fence")
+        .json(
+            &json!({ "virtual_bucket_count": VIRTUAL_BUCKET_COUNT, "buckets": [], "ttl_secs": 30 }),
+        )
+        .await
+        .assert_status_ok();
+
+    index_user(&s, &fenced_id).await;
+    assert!(has_doc(&s, &fenced_id).await);
+}
+
+/// A crashed driver that never explicitly clears the fence cannot wedge
+/// writes forever: the fence self-expires once its TTL deadline passes,
+/// enforced by the serving pod itself, independent of the driver process's
+/// liveness.
+#[tokio::test]
+async fn reshard_fence_auto_expires_after_ttl() {
+    let s = server();
+    create_users_collection(&s).await;
+    let fenced_id = (0..)
+        .map(|i| format!("t-{i:03}"))
+        .find(|id| bucket_of("u", id) == 0)
+        .unwrap();
+
+    s.post("/admin/reshard:fence")
+        .json(
+            &json!({ "virtual_bucket_count": VIRTUAL_BUCKET_COUNT, "buckets": [0], "ttl_secs": 1 }),
+        )
+        .await
+        .assert_status_ok();
+    s.post("/collections/u/index")
+        .json(&json!({
+            "items": [{ "external_id": fenced_id, "field": "email", "value": format!("{fenced_id}@x.com") }]
+        }))
+        .await
+        .assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+
+    tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
+
+    // No explicit clear was ever sent; the deadline alone unblocks it.
+    index_user(&s, &fenced_id).await;
+    assert!(has_doc(&s, &fenced_id).await);
 }
 // CODEGEN-END

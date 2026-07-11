@@ -27,19 +27,20 @@ Public API manifest for `projects/lumen/src/api.rs` generated from AST during Sc
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 455 |  |
-| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 1900 |  |
-| `AppState` | projects/lumen/src/api.rs | struct | pub | 63 |  |
-| `new` | projects/lumen/src/api.rs | function | pub | 313 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
-| `open` | projects/lumen/src/api.rs | function | pub | 342 | open(engine: Arc<Engine>) -> Self |
-| `openapi` | projects/lumen/src/api.rs | function | pub | 1828 | openapi() -> utoipa::openapi::OpenApi |
-| `router` | projects/lumen/src/api.rs | function | pub | 494 | router(state: AppState) -> Router |
-| `with_checkpoint` | projects/lumen/src/api.rs | function | pub | 335 | with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self |
-| `with_cluster` | projects/lumen/src/api.rs | function | pub | 317 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
-| `with_components` | projects/lumen/src/api.rs | function | pub | 291 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<dyn WriteSink>,     ) -> Self |
-| `with_search_backend` | projects/lumen/src/api.rs | function | pub | 322 | with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self |
-| `with_wal` | projects/lumen/src/api.rs | function | pub | 283 | with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self |
-| `with_write_backend` | projects/lumen/src/api.rs | function | pub | 327 | with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self |
+| `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 532 |  |
+| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 2093 |  |
+| `AppState` | projects/lumen/src/api.rs | struct | pub | 64 |  |
+| `WriteFence` | projects/lumen/src/api.rs | struct | pub | 166 | #1396 R2: bounded write pause on still-moving virtual buckets during a reshard's final `CatchingUp` pass. Armed/cleared via `POST /admin/reshard:fence`; self-expires on its TTL deadline so a crashed driver can never leave a permanent fence. |
+| `new` | projects/lumen/src/api.rs | function | pub | 389 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
+| `open` | projects/lumen/src/api.rs | function | pub | 418 | open(engine: Arc<Engine>) -> Self |
+| `openapi` | projects/lumen/src/api.rs | function | pub | 2021 | openapi() -> utoipa::openapi::OpenApi |
+| `router` | projects/lumen/src/api.rs | function | pub | 571 | router(state: AppState) -> Router |
+| `with_checkpoint` | projects/lumen/src/api.rs | function | pub | 411 | with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self |
+| `with_cluster` | projects/lumen/src/api.rs | function | pub | 393 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
+| `with_components` | projects/lumen/src/api.rs | function | pub | 366 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<dyn WriteSink>,     ) -> Self |
+| `with_search_backend` | projects/lumen/src/api.rs | function | pub | 398 | with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self |
+| `with_wal` | projects/lumen/src/api.rs | function | pub | 358 | with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self |
+| `with_write_backend` | projects/lumen/src/api.rs | function | pub | 403 | with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self |
 
 ## Source
 <!-- type: rust-source-unit lang: rust -->
@@ -60,7 +61,8 @@ Public API manifest for `projects/lumen/src/api.rs` generated from AST during Sc
 
 use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -127,6 +129,11 @@ pub struct AppState {
     /// segment-checkpoint implementation when segment persistence is
     /// configured. See [`CheckpointSink`].
     pub checkpoint: Arc<dyn CheckpointSink>,
+    /// Bounded write pause on still-moving virtual buckets during a
+    /// reshard's final `CatchingUp` pass (#1396 R2). Defaults to unarmed
+    /// (every write passes through unchanged); the reshard driver arms it
+    /// via `POST /admin/reshard:fence`. See [`WriteFence`].
+    pub write_fence: WriteFence,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
@@ -175,6 +182,75 @@ struct NoopCheckpoint;
 impl CheckpointSink for NoopCheckpoint {
     async fn checkpoint_now(&self) -> Result<bool> {
         Ok(false)
+    }
+}
+
+/// A bounded, status-visible write pause on a set of still-moving virtual
+/// buckets (#1396 R2), the mechanism #1381's R5 review sanctioned: "a
+/// bounded final pause of writes to still-moving buckets is acceptable if
+/// needed for convergence, but must be bounded and reported in status."
+///
+/// Closes the copy-to-evict gap in the reshard driver's `CatchingUp` pass:
+/// without a pause, a write landing on a source shard's moving bucket after
+/// the last migration-copy read but before that bucket's eviction is never
+/// re-copied to the target and is silently dropped by eviction. The driver
+/// arms a fence over exactly the buckets its final migration pass is about
+/// to copy (`POST /admin/reshard:fence`) immediately before that pass, so
+/// the single pass taken under the fence is already a complete/converged
+/// snapshot of those buckets — no repeat-until-converged loop is needed —
+/// and clears the fence (an empty-`buckets` call to the same verb) on every
+/// exit path of that tick, success or `Blocked`.
+///
+/// Crash safety: a driver process that dies between arming and clearing
+/// cannot leave a bucket permanently unwritable. [`WriteFence::blocks`]
+/// checks `deadline` on every call and treats an expired fence as unarmed —
+/// this check runs on the *serving pod*, independent of whether the driver
+/// process that armed it is still alive, so expiry is enforced even if the
+/// driver never comes back. The reshard driver re-arms a fresh deadline
+/// every tick it needs one, so a healthy, slow-but-progressing driver never
+/// races its own TTL; see `reshard_driver::WRITE_FENCE_TTL`.
+#[derive(Clone, Default)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+pub struct WriteFence {
+    state: Arc<Mutex<Option<FenceState>>>,
+}
+
+struct FenceState {
+    virtual_bucket_count: u32,
+    buckets: BTreeSet<u32>,
+    deadline: Instant,
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl WriteFence {
+    /// Arm the fence over `buckets` (computed against `virtual_bucket_count`)
+    /// until `ttl` from now, replacing any prior armed state.
+    fn arm(&self, virtual_bucket_count: u32, buckets: BTreeSet<u32>, ttl: Duration) {
+        let mut guard = self.state.lock().unwrap();
+        *guard = Some(FenceState {
+            virtual_bucket_count,
+            buckets,
+            deadline: Instant::now() + ttl,
+        });
+    }
+
+    /// Explicitly disarm, independent of `deadline`.
+    fn clear(&self) {
+        *self.state.lock().unwrap() = None;
+    }
+
+    /// `Some(bucket)` when `collection_id`/`external_id` route to a
+    /// currently-fenced bucket; `None` (unblocked) once armed but past
+    /// `deadline`, or never armed at all.
+    fn blocks(&self, collection_id: &str, external_id: &str) -> Option<u32> {
+        let guard = self.state.lock().unwrap();
+        let fence = guard.as_ref()?;
+        if Instant::now() >= fence.deadline {
+            return None;
+        }
+        let map = VirtualBucketShardMap::balanced(0, fence.virtual_bucket_count, 1).ok()?;
+        let bucket = map.route_document(collection_id, None, external_id).bucket;
+        fence.buckets.contains(&bucket).then_some(bucket)
     }
 }
 
@@ -352,6 +428,7 @@ impl AppState {
             cluster: None,
             writer,
             checkpoint: Arc::new(NoopCheckpoint),
+            write_fence: WriteFence::default(),
         }
     }
 
@@ -433,6 +510,7 @@ impl AppState {
         backup_scoped,
         reshard_apply,
         reshard_evict,
+        reshard_fence,
         admin_checkpoint,
     ),
     components(schemas(
@@ -604,6 +682,7 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/restore", post(restore))
         .route("/admin/reshard:apply", post(reshard_apply))
         .route("/admin/reshard:evict", post(reshard_evict))
+        .route("/admin/reshard:fence", post(reshard_fence))
         .route("/admin/checkpoint", post(admin_checkpoint))
         .layer(from_fn_with_state(auth_state, auth_middleware))
         // Bound request bodies: a bulk index is ~MBs (the item cap is the real
@@ -751,6 +830,32 @@ fn enforce_read_consistency(state: &AppState, consistency: ReadConsistency) -> R
             }
         }
     }
+}
+
+/// Reject a write whose `(collection_id, external_id)` routes to a
+/// currently-fenced virtual bucket (#1396 R2). Checked in [`index`],
+/// [`replace_docs`], and [`replace_doc`] — the write paths a reshard's final
+/// migration pass must observe a converged snapshot of. `delete_external_id`
+/// is deliberately not fenced: a delete landing on the source shard during
+/// the pause is still safe to lose (the document either already migrated, in
+/// which case deleting the stale source copy is redundant with eviction, or
+/// it did not, in which case it is present on exactly one shard either way)
+/// — see the module's #1396 R2 write-fence doc on [`WriteFence`].
+fn enforce_write_fence(
+    state: &AppState,
+    collection_id: &str,
+    external_id: &str,
+) -> Result<(), ApiErr> {
+    if let Some(bucket) = state.write_fence.blocks(collection_id, external_id) {
+        return Err(ApiErr::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "bucket_write_paused",
+            format!(
+                "virtual bucket {bucket} is paused for an in-progress reshard cutover; retry shortly"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -944,6 +1049,9 @@ async fn index(
     Json(req): Json<IndexRequest>,
 ) -> Result<Json<IndexResponse>, ApiErr> {
     auth.ensure(&collection_id, Role::Write)?;
+    for item in &req.items {
+        enforce_write_fence(&state, &collection_id, &item.external_id)?;
+    }
     let resp = state
         .write_backend
         .index(collection_id.clone(), req)
@@ -1029,6 +1137,9 @@ async fn replace_docs(
             ),
         ));
     }
+    for doc in &req.docs {
+        enforce_write_fence(&state, &collection_id, &doc.external_id)?;
+    }
     let resp = state
         .write_backend
         .replace_docs(collection_id.clone(), req)
@@ -1064,6 +1175,7 @@ async fn replace_doc(
     Json(body): Json<ReplaceDocBody>,
 ) -> Result<Json<ReplaceDocResult>, ApiErr> {
     auth.ensure(&collection_id, Role::Write)?;
+    enforce_write_fence(&state, &collection_id, &external_id)?;
     let req = ReplaceDocsRequest {
         docs: vec![ReplaceDocItem {
             external_id,
@@ -1867,6 +1979,88 @@ async fn admin_checkpoint(
     Ok(Json(serde_json::json!({ "persisted": persisted })))
 }
 
+fn default_fence_ttl_secs() -> u64 {
+    300
+}
+
+#[derive(Debug, Deserialize)]
+struct ReshardFenceRequest {
+    /// Same `virtual_bucket_count` the caller's map uses, matching
+    /// [`ScopedBackupRequest`]'s convention.
+    virtual_bucket_count: u32,
+    /// Buckets to pause writes on. An empty set explicitly clears any
+    /// currently-armed fence, independent of its deadline.
+    buckets: BTreeSet<u32>,
+    /// How long the pause stays armed if never explicitly cleared (a
+    /// crashed-driver backstop; see [`WriteFence`]'s doc). Defaults to 300s —
+    /// generous relative to one driver tick (`DRIVER_POLL_INTERVAL`, 20s in
+    /// `reshard_driver.rs`) plus a full migration-pass HTTP round trip, while
+    /// still bounded well under any operator-visible SLO.
+    #[serde(default = "default_fence_ttl_secs")]
+    ttl_secs: u64,
+}
+
+/// `POST /admin/reshard:fence`: arm or clear a bounded write pause on a set
+/// of virtual buckets (#1396 R2). The reshard driver's cutover
+/// (`operator::reshard_driver::advance_catching_up`) arms this over exactly
+/// the buckets its final `CatchingUp` migration pass is about to copy,
+/// immediately before that pass, and clears it (`buckets: []`) once the
+/// pass/evict/checkpoint/cutover sequence finishes — on success or on
+/// `Blocked`. A write to a fenced bucket is rejected with `503
+/// bucket_write_paused` rather than silently dropped or applied against a
+/// map that is about to change; see [`WriteFence`] for the crash-safety
+/// (TTL) argument.
+#[utoipa::path(
+    post,
+    path = "/admin/reshard:fence",
+    tag = "Admin",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Fence armed or cleared", body = serde_json::Value),
+        (status = 400, description = "Invalid virtual_bucket_count", body = ApiError)
+    )
+)]
+async fn reshard_fence(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Json(req): Json<ReshardFenceRequest>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    auth.ensure("*", Role::Admin)?;
+    if req.virtual_bucket_count == 0 {
+        return Err(ApiErr::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_virtual_bucket_count",
+            "virtual_bucket_count must be > 0",
+        ));
+    }
+    if req.buckets.is_empty() {
+        state.write_fence.clear();
+        tracing::info!(
+            target: "lumen.audit",
+            event = "reshard_fence_cleared",
+            subject = auth.subject().unwrap_or("anonymous"),
+        );
+    } else {
+        state.write_fence.arm(
+            req.virtual_bucket_count,
+            req.buckets.clone(),
+            Duration::from_secs(req.ttl_secs),
+        );
+        tracing::info!(
+            target: "lumen.audit",
+            event = "reshard_fence_armed",
+            subject = auth.subject().unwrap_or("anonymous"),
+            virtual_bucket_count = req.virtual_bucket_count,
+            buckets = req.buckets.len(),
+            ttl_secs = req.ttl_secs,
+        );
+    }
+    Ok(Json(serde_json::json!({
+        "armed": !req.buckets.is_empty(),
+        "buckets": req.buckets,
+    })))
+}
+
 // ---------------------------------------------------------------------------
 // OpenAPI
 // ---------------------------------------------------------------------------
@@ -2042,4 +2236,20 @@ changes:
     description: |
       rust-source-unit (td_ast) source for `projects/lumen/src/api.rs` captured during lumen
       standardization onto the per-file codegen ladder.
+  - path: projects/lumen/src/api.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1396 R2: add a bounded write-pause seam for the reshard driver's
+      final `CatchingUp` pass. New `WriteFence` type (armed/cleared via a
+      new `POST /admin/reshard:fence` admin route, `ReshardFenceRequest`)
+      tracks a set of paused virtual buckets behind a TTL deadline enforced
+      by this serving pod itself, independent of the driver process's
+      liveness — a crashed driver that never explicitly clears the fence
+      cannot wedge writes forever. A new `enforce_write_fence` helper is
+      checked in `index`, `replace_docs`, and `replace_doc` (not
+      `delete_external_id`, which is safe to race either way); a write to a
+      fenced bucket is rejected `503 bucket_write_paused`. `AppState` gained
+      a `write_fence: WriteFence` field (defaulted in `with_components`).
 ```
