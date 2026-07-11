@@ -1323,7 +1323,65 @@ def _spec_type_alias_annotation(node):
     return bool(name and name.split(".")[-1] == "TypeAlias")
 
 
-def _spec_scan_scope(info, body, qualifier=""):
+def _spec_string_items(node):
+    if not isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return None
+    values = []
+    for item in node.elts:
+        if not isinstance(item, ast.Constant) or not isinstance(item.value, str):
+            return None
+        values.append(item.value)
+    return values
+
+
+def _spec_method_only_body(body):
+    """Whether every class-body member is losslessly represented as a method."""
+    for node in body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            decorators = decorator_names(node)
+            if decorators & {"classmethod", "staticmethod", "property", "setter"}:
+                return False
+            if node.name.startswith("_") and not (
+                node.name.startswith("__") and node.name.endswith("__")
+            ):
+                return False
+            continue
+        if isinstance(node, ast.Pass):
+            continue
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            if node.value.value is Ellipsis or isinstance(node.value.value, str):
+                continue
+        if isinstance(node, ast.Assign):
+            if (
+                len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == "__slots__"
+            ):
+                continue
+        if isinstance(node, ast.If):
+            result = _eval_version_test(node.test)
+            if result is None:
+                return False
+            active = node.body if result else node.orelse
+            if not _spec_method_only_body(active):
+                return False
+            continue
+        # Attributed and otherwise unmodelled members make the structural
+        # inventory open. They may still be inspected, but never used to prove
+        # protocol acceptance.
+        return False
+    return True
+
+
+def _spec_scan_scope(info, body, qualifier="", v312=True):
+    """Collect the class/type namespace visible under Python 3.12.
+
+    Callable rows retain all guarded branches with an explicit ``py312`` bit,
+    but classes and exports have no per-row availability field. Their namespace
+    must therefore exclude statically inactive declarations at collection time.
+    """
+    if not v312:
+        return
     for node in body:
         if isinstance(node, ast.Import) and not qualifier:
             for item in node.names:
@@ -1335,8 +1393,12 @@ def _spec_scan_scope(info, body, qualifier=""):
             )
             for item in node.names:
                 if item.name == "*":
+                    info["star_imports"].append(origin)
                     continue
-                info["imports"][item.asname or item.name] = (origin, item.name)
+                local = item.asname or item.name
+                info["imports"][local] = (origin, item.name)
+                if item.asname == item.name:
+                    info["explicit_reexports"].add(local)
         elif isinstance(node, ast.ClassDef):
             class_qualifier = f"{qualifier}.{node.name}" if qualifier else node.name
             bases = {
@@ -1346,7 +1408,18 @@ def _spec_scan_scope(info, body, qualifier=""):
             kind = "Protocol" if any(base and base.split(".")[-1] == "Protocol" for base in bases) else "Nominal"
             info["classes"][class_qualifier] = kind
             info["classes"].setdefault(node.name, kind)
-            _spec_scan_scope(info, node.body, class_qualifier)
+            info["class_decls"].append(
+                dict(
+                    module=info["module"],
+                    qualifier=class_qualifier,
+                    name=node.name,
+                    kind=kind,
+                    bases=list(node.bases),
+                    method_only_complete=_spec_method_only_body(node.body),
+                    node=node,
+                )
+            )
+            _spec_scan_scope(info, node.body, class_qualifier, v312)
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
             target = None
             value = node.value
@@ -1355,6 +1428,11 @@ def _spec_scan_scope(info, body, qualifier=""):
             elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
                 target = node.target.id
             if target is None:
+                continue
+            if not qualifier and target == "__all__":
+                values = _spec_string_items(value)
+                if values is not None:
+                    info["all_names"] = set(values)
                 continue
             ctor = _spec_type_param_call(value, info)
             if ctor:
@@ -1375,6 +1453,13 @@ def _spec_scan_scope(info, body, qualifier=""):
                         value=value,
                     )
                 )
+        elif isinstance(node, ast.AugAssign) and not qualifier:
+            if isinstance(node.target, ast.Name) and node.target.id == "__all__":
+                values = _spec_string_items(node.value)
+                if values is not None:
+                    if info["all_names"] is None:
+                        info["all_names"] = set()
+                    info["all_names"].update(values)
         elif hasattr(ast, "TypeAlias") and isinstance(node, ast.TypeAlias):
             if not isinstance(node.name, ast.Name) or node.type_params:
                 continue
@@ -1391,8 +1476,70 @@ def _spec_scan_scope(info, body, qualifier=""):
                 )
             )
         elif isinstance(node, ast.If):
-            _spec_scan_scope(info, node.body, qualifier)
-            _spec_scan_scope(info, node.orelse, qualifier)
+            for branch, branch_v312 in _branch_v312(node, v312):
+                _spec_scan_scope(info, branch, qualifier, branch_v312)
+
+
+def _spec_resolve_exports(infos, local):
+    """Resolve public symbols through explicit and star re-exports."""
+    info_by_module = {info["module"]: info for info in infos}
+    resolved = dict(local)
+    for _ in range(len(infos) + 1):
+        candidates = {key: {target} for key, target in local.items()}
+        for info in infos:
+            allowed = info["all_names"]
+            for name, (origin, imported) in info["imports"].items():
+                if not imported or (
+                    name not in info["explicit_reexports"]
+                    and (allowed is None or name not in allowed)
+                ):
+                    continue
+                target = resolved.get((origin, imported))
+                if target is not None:
+                    candidates.setdefault((info["module"], name), set()).add(target)
+            for origin in info["star_imports"]:
+                source = info_by_module.get(origin)
+                source_all = source["all_names"] if source is not None else None
+                for (module, name), target in resolved.items():
+                    if module != origin:
+                        continue
+                    if source_all is not None:
+                        if name not in source_all:
+                            continue
+                    elif name.startswith("_"):
+                        continue
+                    if allowed is not None and name not in allowed:
+                        continue
+                    candidates.setdefault((info["module"], name), set()).add(target)
+        updated = {
+            key: next(iter(targets))
+            for key, targets in candidates.items()
+            if len(targets) == 1
+        }
+        if updated == resolved:
+            return resolved
+        resolved = updated
+    return resolved
+
+
+def _spec_resolve_class_exports(infos):
+    local = {}
+    for info in infos:
+        for decl in info["class_decls"]:
+            if "." not in decl["qualifier"]:
+                local[(info["module"], decl["name"])] = (
+                    info["module"], decl["qualifier"]
+                )
+    return _spec_resolve_exports(infos, local)
+
+
+def _spec_resolve_callable_exports(infos, callables):
+    local = {
+        (row["module"], row["name"]): (row["module"], row["name"])
+        for row in callables
+        if not row["qualifier"] and row["kind"] == "ModuleFn"
+    }
+    return _spec_resolve_exports(infos, local)
 
 
 def _spec_parse_modules():
@@ -1412,7 +1559,11 @@ def _spec_parse_modules():
             tree=tree,
             is_package=pyi.name == "__init__.pyi",
             imports={},
+            star_imports=[],
+            explicit_reexports=set(),
+            all_names=None,
             classes={},
+            class_decls=[],
             aliases=set(),
             alias_decls=[],
             type_param_decls=[],
@@ -1438,6 +1589,14 @@ class _SpecCorpus:
         self.type_param_edges = []
         self.aliases = []
         self.alias_targets = {}
+        self.classes = []
+        self.class_ids = {}
+        self.class_method_edges = []
+        self.class_export_targets = _spec_resolve_class_exports(infos)
+        self.class_exports = []
+        self.callable_exports = []
+        self.class_only_callables = []
+        self.class_callables = []
         self.decorators = []
         self.guards = []
         self.callables = []
@@ -1455,6 +1614,23 @@ class _SpecCorpus:
             for qualifier, name in info["aliases"]:
                 if not qualifier:
                     self.global_symbols[(info["module"], name)] = "Alias"
+        class_decls = {}
+        for info in infos:
+            for decl in info["class_decls"]:
+                key = (decl["module"], decl["qualifier"])
+                previous = class_decls.get(key)
+                if previous is None:
+                    class_decls[key] = (dict(decl), info)
+                else:
+                    previous[0]["method_only_complete"] = False
+                    if decl["kind"] == "Protocol":
+                        previous[0]["kind"] = "Protocol"
+        for key in sorted(class_decls):
+            self.class_ids[key] = len(self.classes)
+            self.classes.append(None)
+        self.class_kinds = {
+            key: decl["kind"] for key, (decl, _info) in class_decls.items()
+        }
         decls = sorted(
             (
                 (decl, info)
@@ -1498,6 +1674,15 @@ class _SpecCorpus:
                 type_params=(start, len(referenced)),
             )
             self.aliases.append(row)
+        for key in sorted(class_decls):
+            decl, info = class_decls[key]
+            self._fill_class(self.class_ids[key], decl, info)
+        for (module, name), target in sorted(self.class_export_targets.items()):
+            class_id = self.class_ids.get(target)
+            if class_id is not None:
+                self.class_exports.append(
+                    dict(module=module, name=name, class_id=class_id)
+                )
 
     def _add_node(self, key, row):
         found = self.node_ids.get(key)
@@ -1564,11 +1749,29 @@ class _SpecCorpus:
                 return "TypeParam", self.type_param_ids[key]
         if root in info["imports"]:
             module, imported = info["imports"][root]
-            pieces = ([imported] if imported else []) + tail
-            name = ".".join(piece for piece in pieces if piece)
+            if imported:
+                pieces = [imported] + tail
+                name = ".".join(piece for piece in pieces if piece)
+            elif root == module.split(".")[0]:
+                absolute = dotted
+                candidates = [
+                    candidate
+                    for candidate in self.info_by_module
+                    if absolute.startswith(candidate + ".")
+                ]
+                if candidates:
+                    module = max(candidates, key=len)
+                    name = absolute[len(module) + 1:]
+                else:
+                    name = ".".join(tail)
+            else:
+                name = ".".join(tail)
             if not name:
                 name = root
             symbol_kind = self.global_symbols.get((module, name), "Imported")
+            target = self.class_export_targets.get((module, name))
+            if target is not None:
+                symbol_kind = self.class_kinds[target]
             if symbol_kind == "TypeParam":
                 imported_info = self.info_by_module.get(module)
                 if imported_info:
@@ -1587,6 +1790,8 @@ class _SpecCorpus:
             (qualifier, root) in info["aliases"] or ("", root) in info["aliases"]
         ):
             return "Name", (info["module"], root, "Alias")
+        if dotted in info["classes"]:
+            return "Name", (info["module"], dotted, info["classes"][dotted])
         if not tail and root in info["classes"]:
             return "Name", (info["module"], root, info["classes"][root])
         if root in _SPEC_SPECIALS:
@@ -1625,6 +1830,20 @@ class _SpecCorpus:
                     ("ForwardRef", expression, target),
                     dict(kind="ForwardRef", expression=expression, target=target),
                 )
+        if (
+            literal_context
+            and isinstance(node, ast.UnaryOp)
+            and isinstance(node.op, (ast.USub, ast.UAdd))
+            and isinstance(node.operand, ast.Constant)
+            and isinstance(node.operand.value, int)
+            and not isinstance(node.operand.value, bool)
+        ):
+            value = node.operand.value
+            if isinstance(node.op, ast.USub):
+                value = -value
+            return self._add_node(
+                ("LiteralInt", value), dict(kind="LiteralInt", value=value)
+            )
         dotted = _spec_dotted_name(node)
         if dotted:
             resolved, value = self._resolve_name(info, qualifier, dotted)
@@ -1719,9 +1938,29 @@ class _SpecCorpus:
             default=self.intern(default_node, info, decl["qualifier"]) if default_node else None,
         )
 
-    def referenced_type_params(self, roots):
-        found = set()
+    def _fill_class(self, class_id, decl, info):
+        bases = [self.intern(base, info, decl["qualifier"]) for base in decl["bases"]]
+        base_start, base_len = self._add_edges(bases)
+        referenced = self.ordered_referenced_type_params(bases)
+        type_param_start = len(self.type_param_edges)
+        self.type_param_edges.extend(referenced)
+        self.classes[class_id] = dict(
+            module=decl["module"],
+            qualifier=decl["qualifier"],
+            name=decl["name"],
+            kind=decl["kind"],
+            type_params=(type_param_start, len(referenced)),
+            bases=(base_start, base_len),
+            methods=(0, 0),
+            source=self.intern_span(_spec_span(decl["node"], info["source"])),
+            method_only_complete=decl["method_only_complete"],
+        )
+
+    def ordered_referenced_type_params(self, roots):
+        found = []
+        found_set = set()
         seen = set()
+
         def visit(node_id):
             if node_id in seen:
                 return
@@ -1729,9 +1968,12 @@ class _SpecCorpus:
             node = self.nodes[node_id]
             kind = node["kind"]
             if kind == "TypeParam":
-                found.add(node["id"])
+                if node["id"] not in found_set:
+                    found_set.add(node["id"])
+                    found.append(node["id"])
             elif kind in {"Union", "Tuple", "ParamList"}:
-                for child in self.edges[node["range"][0]:sum(node["range"])]:
+                start, length = node["range"]
+                for child in self.edges[start:start + length]:
                     visit(child)
             elif kind == "Apply":
                 visit(node["base"])
@@ -1746,9 +1988,13 @@ class _SpecCorpus:
                 target = self.alias_targets.get((node["module"], node["name"]))
                 if target is not None:
                     visit(target)
+
         for root in roots:
             visit(root)
-        return sorted(found)
+        return found
+
+    def referenced_type_params(self, roots):
+        return sorted(self.ordered_referenced_type_params(roots))
 
 
 def _spec_full_params(fn):
@@ -1767,7 +2013,9 @@ def _spec_full_params(fn):
     return out
 
 
-def _spec_walk_body(corpus, info, body, qualifier="", guards=()):
+def _spec_walk_body(
+    corpus, info, body, qualifier="", guards=(), class_inventory=False
+):
     for node in body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if qualifier:
@@ -1818,7 +2066,8 @@ def _spec_walk_body(corpus, info, body, qualifier="", guards=()):
                 ret, _spec_span(node.returns or node, info["source"])
             )
             source_span = corpus.intern_span(_spec_span(node, info["source"]))
-            corpus.callables.append(dict(
+            target = corpus.class_only_callables if class_inventory else corpus.callables
+            target.append(dict(
                 module=info["module"], qualifier=qualifier, name=node.name,
                 kind=binding, params=(param_start, len(corpus.params) - param_start),
                 type_params=(type_param_start, len(referenced)),
@@ -1826,20 +2075,39 @@ def _spec_walk_body(corpus, info, body, qualifier="", guards=()):
                 decorators=(decorator_start, len(decorators)),
                 guards=(guard_start, len(guards)), source=source_span,
                 is_async=isinstance(node, ast.AsyncFunctionDef),
-                py312=all(item["py312"] for item in guards), order=len(corpus.callables),
+                py312=all(item["py312"] for item in guards), order=len(target),
             ))
         elif isinstance(node, ast.ClassDef):
-            if node.name.startswith("_"):
-                continue
             nested = f"{qualifier}.{node.name}" if qualifier else node.name
-            _spec_walk_body(corpus, info, node.body, nested, guards)
+            _spec_walk_body(
+                corpus,
+                info,
+                node.body,
+                nested,
+                guards,
+                class_inventory or node.name.startswith("_"),
+            )
         elif isinstance(node, ast.If):
             expression = ast.unparse(node.test)
             result = _eval_version_test(node.test)
             body_guard = dict(expression=expression, polarity=True, py312=result is not False)
             else_guard = dict(expression=expression, polarity=False, py312=result is not True)
-            _spec_walk_body(corpus, info, node.body, qualifier, guards + (body_guard,))
-            _spec_walk_body(corpus, info, node.orelse, qualifier, guards + (else_guard,))
+            _spec_walk_body(
+                corpus,
+                info,
+                node.body,
+                qualifier,
+                guards + (body_guard,),
+                class_inventory,
+            )
+            _spec_walk_body(
+                corpus,
+                info,
+                node.orelse,
+                qualifier,
+                guards + (else_guard,),
+                class_inventory,
+            )
 
 
 def build_spec_corpus():
@@ -1847,20 +2115,47 @@ def build_spec_corpus():
     corpus = _SpecCorpus(infos)
     for info in infos:
         _spec_walk_body(corpus, info, info["tree"].body)
-    ordered = sorted(
-        corpus.callables,
-        key=lambda row: (row["module"], row["qualifier"], row["name"], row["kind"], row["order"]),
+    def order_callables(rows):
+        ordered = sorted(
+            rows,
+            key=lambda row: (
+                row["module"], row["qualifier"], row["name"],
+                row["kind"], row["order"],
+            ),
+        )
+        current = None
+        branch = 0
+        for row in ordered:
+            key = (row["module"], row["qualifier"], row["name"], row["kind"])
+            if key != current:
+                current = key
+                branch = 0
+            row["branch"] = branch
+            branch += 1
+        return ordered
+
+    corpus.callables = order_callables(corpus.callables)
+    corpus.class_callables = order_callables(
+        [dict(row) for row in corpus.callables if row["qualifier"]]
+        + corpus.class_only_callables
     )
-    current = None
-    branch = 0
-    for row in ordered:
-        key = (row["module"], row["qualifier"], row["name"], row["kind"])
-        if key != current:
-            current = key
-            branch = 0
-        row["branch"] = branch
-        branch += 1
-    corpus.callables = ordered
+    corpus.callable_exports = [
+        dict(module=module, name=name, target_module=target[0], target_name=target[1])
+        for (module, name), target in sorted(
+            _spec_resolve_callable_exports(corpus.infos, corpus.callables).items()
+        )
+    ]
+    for class_row in corpus.classes:
+        method_ids = [
+            index
+            for index, callable_row in enumerate(corpus.class_callables)
+            if callable_row["module"] == class_row["module"]
+            and callable_row["qualifier"] == class_row["qualifier"]
+            and callable_row["kind"] != "ModuleFn"
+        ]
+        start = len(corpus.class_method_edges)
+        corpus.class_method_edges.extend(method_ids)
+        class_row["methods"] = (start, len(method_ids))
     return corpus
 
 
@@ -1939,6 +2234,7 @@ def render_specs_json() -> str:
     }
     type_param_kind = {"TypeVar": "t", "TypeVarTuple": "v", "ParamSpec": "p"}
     variance = {"Invariant": "i", "Covariant": "c", "Contravariant": "d", "Infer": "f"}
+    class_kind = {"Nominal": "n", "Protocol": "p"}
 
     nodes = []
     for node in corpus.nodes:
@@ -1989,6 +2285,26 @@ def render_specs_json() -> str:
         }
         for row in corpus.aliases
     ]
+    classes = [
+        [
+            sid(row["module"]), sid(row["qualifier"]), sid(row["name"]),
+            class_kind[row["kind"]], list(row["type_params"]),
+            list(row["bases"]), list(row["methods"]), row["source"],
+            row["method_only_complete"],
+        ]
+        for row in corpus.classes
+    ]
+    class_exports = [
+        [sid(row["module"]), sid(row["name"]), row["class_id"]]
+        for row in corpus.class_exports
+    ]
+    callable_exports = [
+        [
+            sid(row["module"]), sid(row["name"]),
+            sid(row["target_module"]), sid(row["target_name"]),
+        ]
+        for row in corpus.callable_exports
+    ]
     source_file_ids = [sid(path) for path in corpus.source_files]
     source_spans = [
         [source_file_ids[file_id], line, column, end_line, end_column]
@@ -2011,20 +2327,34 @@ def render_specs_json() -> str:
         ]
         for row in corpus.callables
     ]
+    class_callables = [
+        [
+            sid(row["module"]), sid(row["qualifier"]), sid(row["name"]),
+            callable_kind[row["kind"]], list(row["params"]), list(row["type_params"]),
+            row["ret"], list(row["decorators"]), list(row["guards"]), row["source"],
+            row["is_async"], row["branch"], row["py312"],
+        ]
+        for row in corpus.class_callables
+    ]
     manifest = {
-        "schema": 1,
+        "schema": 2,
         "strings": strings,
         "nodes": nodes,
         "edges": corpus.edges,
         "type_params": type_params,
         "type_param_edges": corpus.type_param_edges,
         "aliases": aliases,
+        "classes": classes,
+        "class_method_edges": corpus.class_method_edges,
+        "class_exports": class_exports,
+        "callable_exports": callable_exports,
         "source_spans": source_spans,
         "type_uses": [list(row) for row in corpus.type_uses],
         "params": params,
         "decorators": [sid(value) for value in corpus.decorators],
         "guards": guards,
         "callables": callables,
+        "class_callables": class_callables,
     }
     return json.dumps(manifest, ensure_ascii=True, separators=(",", ":"), sort_keys=True) + "\n"
 
@@ -2039,6 +2369,10 @@ def render_specs_rust(specs_json: str) -> str:
         f"//! schema: {manifest['schema']}  branches: {len(manifest['callables'])}  py312: {py312}\n"
         f"//! params: {len(manifest['params'])}  type-params: {len(manifest['type_params'])}\n"
         f"//! aliases: {len(manifest['aliases'])}\n"
+        f"//! classes: {len(manifest['classes'])}  class-exports: {len(manifest['class_exports'])}\n"
+        f"//! class-method-edges: {len(manifest['class_method_edges'])}\n"
+        f"//! callable-exports: {len(manifest['callable_exports'])}\n"
+        f"//! class-callables: {len(manifest['class_callables'])}\n"
         f"//! type-nodes: {len(manifest['nodes'])}  type-edges: {len(manifest['edges'])}\n\n"
         "pub const MANIFEST_JSON: &str = include_str!(\"stdlib_specs_generated.json\");\n"
     )

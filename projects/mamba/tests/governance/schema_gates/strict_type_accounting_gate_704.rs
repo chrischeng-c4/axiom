@@ -233,6 +233,42 @@ assert "value" not in row["params"]
 }
 
 #[test]
+fn protocol_accounting_requires_complete_single_branch_members() {
+    let script = r#"
+import importlib.util
+import pathlib
+import sys
+
+tool = pathlib.Path("tests/harness/cpython/tools/strict_type_accounting.py")
+sys.path.insert(0, str(tool.parent))
+spec = importlib.util.spec_from_file_location("strict_type_accounting", tool)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+manifest = module.load_generated_typespec_manifest()
+assert module._generated_protocol_status(manifest, "typing", "SupportsIndex") == "supported"
+assert module._generated_protocol_status(manifest, "typing", "SupportsRound") == "unsupported"
+assert module._generated_protocol_status(manifest, "_typeshed", "DataclassInstance") == "unsupported"
+assert module._generated_protocol_status(manifest, "_typeshed", "SupportsFlush") == "unconstrained"
+assert module._generated_protocol_status(manifest, "http.server", "_SSLModule") == "unsupported"
+"#;
+    let output = Command::new("python3.12")
+        .arg("-c")
+        .arg(script)
+        .current_dir(mamba_root())
+        .output()
+        .expect("run protocol accounting smoke");
+    assert!(
+        output.status.success(),
+        "protocol accounting smoke failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn replacement_readiness_uses_strict_type_accounting_tool() {
     let text = fs::read_to_string(
         mamba_root().join("tests/harness/cpython/tools/replacement_readiness.py"),
@@ -1020,15 +1056,19 @@ fn generated_typeshed_denominator_header_is_present() {
     let root = mamba_root().join("src/types");
     let wrapper = fs::read_to_string(root.join("stdlib_specs_generated.rs"))
         .expect("read generated structured stdlib wrapper");
-    assert!(wrapper.contains("schema: 1"));
+    assert!(wrapper.contains("schema: 2"));
     assert!(wrapper.contains("branches:"));
     assert!(wrapper.contains("type-nodes:"));
+    assert!(wrapper.contains("class-callables:"));
+    assert!(wrapper.contains("callable-exports:"));
     assert!(wrapper.contains("include_str!(\"stdlib_specs_generated.json\")"));
 
     let manifest = fs::read_to_string(root.join("stdlib_specs_generated.json"))
         .expect("read generated structured stdlib manifest");
-    assert!(manifest.contains("\"schema\":1"));
+    assert!(manifest.contains("\"schema\":2"));
     assert!(manifest.contains("\"callables\":"));
+    assert!(manifest.contains("\"class_callables\":"));
+    assert!(manifest.contains("\"class_exports\":"));
+    assert!(manifest.contains("\"callable_exports\":"));
     assert!(manifest.contains("\"nodes\":"));
-    assert!(manifest.contains("\"Unsupported\":"));
 }
