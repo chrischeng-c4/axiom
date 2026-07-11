@@ -428,7 +428,10 @@ fn class_spec_canonical(module: &str, qualifier: &str) -> Option<(ClassSpecId, &
         .map(|(index, class)| (ClassSpecId(index as u32), class))
 }
 
-fn class_spec_any_name(module: &str, name: &str) -> Option<(ClassSpecId, &'static ClassSpec)> {
+pub(crate) fn class_spec_any_name(
+    module: &str,
+    name: &str,
+) -> Option<(ClassSpecId, &'static ClassSpec)> {
     class_spec(module, name).or_else(|| class_spec_canonical(module, name))
 }
 
@@ -925,6 +928,56 @@ mod tests {
             ("importlib.metadata", "DistributionFinder.Context")
         );
         assert_eq!(*kind, TypeNameKind::Nominal);
+    }
+
+    #[test]
+    fn generated_manifest_keeps_proven_imported_aliases_and_nested_classes_bounded() {
+        for (module, name) in [
+            ("_socket", "_Address"),
+            ("wsgiref.types", "WSGIApplication"),
+            ("wsgiref.types", "WSGIEnvironment"),
+        ] {
+            let alias = alias(module, name)
+                .unwrap_or_else(|| panic!("{module}.{name} must retain its canonical alias"));
+            assert!(
+                !matches!(node(alias.target), TypeSpecNode::Missing | TypeSpecNode::Unsupported(_)),
+                "{module}.{name} must retain a materializable alias target"
+            );
+        }
+
+        // Nested generated classes are materializable only after the checker has
+        // retained the exact external identity; they are not public exports.
+        assert!(class_spec("importlib.metadata", "DistributionFinder.Context").is_none());
+        let (_, context) = class_spec_any_name("importlib.metadata", "DistributionFinder.Context")
+            .expect("DistributionFinder.Context canonical class");
+        assert_eq!(string(context.module), "importlib.metadata");
+        assert_eq!(string(context.qualifier), "DistributionFinder.Context");
+        assert!(class_spec_any_name("importlib.metadata", "unproven.Imported").is_none());
+
+        let find_distributions = overloads(
+            "_frozen_importlib_external",
+            "PathFinder",
+            "find_distributions",
+        )
+        .next()
+        .expect("PathFinder.find_distributions spec");
+        let imported_context = params(find_distributions.params)
+            .iter()
+            .find(|param| string(param.name) == "context")
+            .expect("context parameter");
+        let TypeSpecNode::Name { module, name, kind } =
+            node(type_use(imported_context.ty).0)
+        else {
+            panic!("imported nested class must retain its canonical identity")
+        };
+        assert_eq!(
+            (string(*module), string(*name), *kind),
+            (
+                "importlib.metadata",
+                "DistributionFinder.Context",
+                TypeNameKind::Nominal,
+            )
+        );
     }
 
     #[test]

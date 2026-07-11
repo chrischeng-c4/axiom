@@ -916,6 +916,130 @@ with tempfile.TemporaryDirectory() as tmp:
 }
 
 #[test]
+fn imported_alias_accounting_stays_limited_to_proven_generated_identities() {
+    let script = r#"
+import importlib.util
+import pathlib
+import sys
+from collections import Counter
+
+gen_tool = pathlib.Path("tests/harness/cpython/tools/type_wall_gen.py")
+sys.path.insert(0, str(gen_tool.parent))
+gen_spec = importlib.util.spec_from_file_location("type_wall_gen", gen_tool)
+gen = importlib.util.module_from_spec(gen_spec)
+assert gen_spec.loader is not None
+sys.modules[gen_spec.name] = gen
+gen_spec.loader.exec_module(gen)
+
+def info(
+    module,
+    *,
+    alias=(),
+    classes=(),
+    class_aliases=(),
+    imports=None,
+    explicit=(),
+    stars=(),
+):
+    return {
+        "module": module,
+        "alias_decls": list(alias),
+        "class_decls": list(classes),
+        "class_aliases": list(class_aliases),
+        "imports": {} if imports is None else imports,
+        "explicit_reexports": set(explicit),
+        "star_imports": list(stars),
+        "all_names": None,
+    }
+
+source = info("source", alias=[{"qualifier": "", "name": "Canonical"}])
+reexport = info(
+    "reexport",
+    imports={"Alias": ("source", "Canonical")},
+    explicit={"Alias"},
+)
+assert gen._spec_resolve_alias_exports([source, reexport])[("reexport", "Alias")] == (
+    "source", "Canonical"
+)
+
+other = info("other", alias=[{"qualifier": "", "name": "Alias"}])
+ambiguous = info(
+    "ambiguous",
+    imports={"Alias": ("source", "Canonical")},
+    explicit={"Alias"},
+    stars=("other",),
+)
+assert ("ambiguous", "Alias") not in gen._spec_resolve_alias_exports(
+    [source, other, ambiguous]
+)
+
+collision = info(
+    "collision",
+    classes=[{"qualifier": "Alias", "name": "Alias"}],
+    imports={"Alias": ("source", "Canonical")},
+    explicit={"Alias"},
+    stars=("other",),
+)
+collision_infos = [source, other, collision]
+alias_candidates = gen._spec_alias_export_candidates(collision_infos)
+class_candidates = gen._spec_class_export_candidates(collision_infos)
+assert len(alias_candidates[("collision", "Alias")]) == 2
+assert class_candidates[("collision", "Alias")] == {("collision", "Alias")}
+assert ("collision", "Alias") not in gen._spec_unique_exports(
+    class_candidates,
+    alias_candidates,
+)
+assert gen._spec_resolve_imported_identity(
+    "collision",
+    "Alias",
+    {},
+    {("collision", "Alias"): "Nominal"},
+    class_candidates,
+    alias_candidates,
+) == ("collision", "Alias", "Imported")
+
+accounting_tool = pathlib.Path("tests/harness/cpython/tools/strict_type_accounting.py")
+accounting_spec = importlib.util.spec_from_file_location("strict_type_accounting", accounting_tool)
+accounting = importlib.util.module_from_spec(accounting_spec)
+assert accounting_spec.loader is not None
+sys.modules[accounting_spec.name] = accounting
+accounting_spec.loader.exec_module(accounting)
+
+relative_paths = [
+    "std-libs/_frozen_importlib_external/PathFinder__find_distributions__context_as_Context_wrong.py",
+    "std-libs/ssl/SSLSocket__connect__addr_as__Address_wrong.py",
+    "std-libs/ssl/SSLSocket__connect_ex__addr_as__Address_wrong.py",
+    "std-libs/wsgiref_handlers/BaseHandler__error_output__environ_as_WSGIEnvironment_wrong.py",
+    "std-libs/wsgiref_handlers/BaseHandler__run__application_as_WSGIApplication_wrong.py",
+    "std-libs/wsgiref_simple_server/WSGIServer__set_app__application_as_typed_wrong.py",
+    "std-libs/wsgiref_simple_server/demo_app__environ_as_WSGIEnvironment_wrong.py",
+    "std-libs/wsgiref_util/application_uri__environ_as_WSGIEnvironment_wrong.py",
+    "std-libs/wsgiref_util/guess_scheme__environ_as_WSGIEnvironment_wrong.py",
+    "std-libs/wsgiref_util/request_uri__environ_as_WSGIEnvironment_wrong.py",
+    "std-libs/wsgiref_util/setup_testing_defaults__environ_as_WSGIEnvironment_wrong.py",
+    "std-libs/wsgiref_util/shift_path_info__environ_as_WSGIEnvironment_wrong.py",
+    "std-libs/wsgiref_validate/validator__application_as_WSGIApplication_wrong.py",
+]
+paths = [accounting.TYPE_DIR / path for path in relative_paths]
+assert len(paths) == 13
+assert all(path.is_file() for path in paths), paths
+sigs = accounting.parse_generated_signature_param_index()
+assert all(accounting.unenforceable_generated_param_reason(path, sigs) is None for path in paths)
+
+wall = accounting.executable_type_fixtures(sorted(accounting.TYPE_DIR.rglob("*.py")))
+unconstrained, unresolved = accounting.partition_generated_contract_coverage(wall, sigs)
+assert len(wall) == 7415
+assert len(unconstrained) == 266
+assert len(unresolved) == 165
+assert Counter(item["reason"] for item in unresolved) == {
+    "structured_param_partial": 109,
+    "structured_param_type_unsupported": 56,
+}
+"#;
+    assert_python_script(script, "proven imported alias accounting regression");
+}
+
+#[test]
 fn non_runtime_typeshed_stubs_are_not_executable_type_fixtures() {
     let script = r#"
 import importlib.util
