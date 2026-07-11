@@ -413,6 +413,12 @@ def _generated_protocol_status(
             status = "unsupported"
         else:
             method_start, method_length = row[6]
+            type_param_start, type_param_length = row[4]
+            class_type_params = set(
+                manifest["type_param_edges"][
+                    type_param_start : type_param_start + type_param_length
+                ]
+            )
             method_ids = manifest["class_method_edges"][
                 method_start : method_start + method_length
             ]
@@ -428,7 +434,13 @@ def _generated_protocol_status(
             supported = all(count == 1 for count in branches.values())
             unconstrained = False
             for method in methods:
-                if not supported or method[5][1] != 0:
+                method_param_start, method_param_length = method[5]
+                method_type_params = set(
+                    manifest["type_param_edges"][
+                        method_param_start : method_param_start + method_param_length
+                    ]
+                )
+                if not supported or not method_type_params <= class_type_params:
                     supported = False
                     break
                 param_start, param_length = method[4]
