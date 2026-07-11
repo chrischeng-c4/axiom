@@ -200,6 +200,11 @@ pub fn mb_list_new() -> MbValue {
     MbValue::from_ptr(MbObject::new_list(Vec::new()))
 }
 
+/// Create a new empty list that intentionally skips GC tracking.
+pub fn mb_list_new_untracked() -> MbValue {
+    MbValue::from_ptr(MbObject::new_list_untracked(Vec::new()))
+}
+
 /// Create a new list with pre-allocated capacity.
 ///
 /// Used by list comprehension codegen when the iteration count is known
@@ -208,6 +213,12 @@ pub fn mb_list_new() -> MbValue {
 pub fn mb_list_new_with_capacity(cap: MbValue) -> MbValue {
     let n = cap.as_int().unwrap_or(0).max(0) as usize;
     MbValue::from_ptr(MbObject::new_list(Vec::with_capacity(n)))
+}
+
+/// Create a new list with pre-allocated capacity that skips GC tracking.
+pub fn mb_list_new_with_capacity_untracked(cap: MbValue) -> MbValue {
+    let n = cap.as_int().unwrap_or(0).max(0) as usize;
+    MbValue::from_ptr(MbObject::new_list_untracked(Vec::with_capacity(n)))
 }
 
 /// Create a list from elements (used by list literals).
@@ -239,9 +250,19 @@ pub fn mb_list_new_1(a: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a]))
 }
 
+pub fn mb_list_new_1_untracked(a: MbValue) -> MbValue {
+    retain_owned_args!(a);
+    MbValue::from_ptr(MbObject::new_list_inline_untracked(smallvec![a]))
+}
+
 pub fn mb_list_new_2(a: MbValue, b: MbValue) -> MbValue {
     retain_owned_args!(a, b);
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b]))
+}
+
+pub fn mb_list_new_2_untracked(a: MbValue, b: MbValue) -> MbValue {
+    retain_owned_args!(a, b);
+    MbValue::from_ptr(MbObject::new_list_inline_untracked(smallvec![a, b]))
 }
 
 pub fn mb_list_new_3(a: MbValue, b: MbValue, c: MbValue) -> MbValue {
@@ -249,14 +270,37 @@ pub fn mb_list_new_3(a: MbValue, b: MbValue, c: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b, c]))
 }
 
+pub fn mb_list_new_3_untracked(a: MbValue, b: MbValue, c: MbValue) -> MbValue {
+    retain_owned_args!(a, b, c);
+    MbValue::from_ptr(MbObject::new_list_inline_untracked(smallvec![a, b, c]))
+}
+
 pub fn mb_list_new_4(a: MbValue, b: MbValue, c: MbValue, d: MbValue) -> MbValue {
     retain_owned_args!(a, b, c, d);
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b, c, d]))
 }
 
+pub fn mb_list_new_4_untracked(a: MbValue, b: MbValue, c: MbValue, d: MbValue) -> MbValue {
+    retain_owned_args!(a, b, c, d);
+    MbValue::from_ptr(MbObject::new_list_inline_untracked(smallvec![a, b, c, d]))
+}
+
 pub fn mb_list_new_5(a: MbValue, b: MbValue, c: MbValue, d: MbValue, e: MbValue) -> MbValue {
     retain_owned_args!(a, b, c, d, e);
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b, c, d, e]))
+}
+
+pub fn mb_list_new_5_untracked(
+    a: MbValue,
+    b: MbValue,
+    c: MbValue,
+    d: MbValue,
+    e: MbValue,
+) -> MbValue {
+    retain_owned_args!(a, b, c, d, e);
+    MbValue::from_ptr(MbObject::new_list_inline_untracked(smallvec![
+        a, b, c, d, e
+    ]))
 }
 
 pub fn mb_list_new_6(
@@ -269,6 +313,20 @@ pub fn mb_list_new_6(
 ) -> MbValue {
     retain_owned_args!(a, b, c, d, e, f);
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b, c, d, e, f]))
+}
+
+pub fn mb_list_new_6_untracked(
+    a: MbValue,
+    b: MbValue,
+    c: MbValue,
+    d: MbValue,
+    e: MbValue,
+    f: MbValue,
+) -> MbValue {
+    retain_owned_args!(a, b, c, d, e, f);
+    MbValue::from_ptr(MbObject::new_list_inline_untracked(smallvec![
+        a, b, c, d, e, f
+    ]))
 }
 
 pub fn mb_list_new_7(
@@ -284,6 +342,21 @@ pub fn mb_list_new_7(
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b, c, d, e, f, g]))
 }
 
+pub fn mb_list_new_7_untracked(
+    a: MbValue,
+    b: MbValue,
+    c: MbValue,
+    d: MbValue,
+    e: MbValue,
+    f: MbValue,
+    g: MbValue,
+) -> MbValue {
+    retain_owned_args!(a, b, c, d, e, f, g);
+    MbValue::from_ptr(MbObject::new_list_inline_untracked(smallvec![
+        a, b, c, d, e, f, g
+    ]))
+}
+
 pub fn mb_list_new_8(
     a: MbValue,
     b: MbValue,
@@ -296,6 +369,22 @@ pub fn mb_list_new_8(
 ) -> MbValue {
     retain_owned_args!(a, b, c, d, e, f, g, h);
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b, c, d, e, f, g, h]))
+}
+
+pub fn mb_list_new_8_untracked(
+    a: MbValue,
+    b: MbValue,
+    c: MbValue,
+    d: MbValue,
+    e: MbValue,
+    f: MbValue,
+    g: MbValue,
+    h: MbValue,
+) -> MbValue {
+    retain_owned_args!(a, b, c, d, e, f, g, h);
+    MbValue::from_ptr(MbObject::new_list_inline_untracked(smallvec![
+        a, b, c, d, e, f, g, h
+    ]))
 }
 
 /// Past 8 args we spill onto the stack on AArch64 SysV, but a single
@@ -316,6 +405,23 @@ pub fn mb_list_new_9(
     MbValue::from_ptr(MbObject::new_list(vec![a, b, c, d, e, f, g, h, i]))
 }
 
+pub fn mb_list_new_9_untracked(
+    a: MbValue,
+    b: MbValue,
+    c: MbValue,
+    d: MbValue,
+    e: MbValue,
+    f: MbValue,
+    g: MbValue,
+    h: MbValue,
+    i: MbValue,
+) -> MbValue {
+    retain_owned_args!(a, b, c, d, e, f, g, h, i);
+    MbValue::from_ptr(MbObject::new_list_untracked(vec![
+        a, b, c, d, e, f, g, h, i,
+    ]))
+}
+
 pub fn mb_list_new_10(
     a: MbValue,
     b: MbValue,
@@ -330,6 +436,24 @@ pub fn mb_list_new_10(
 ) -> MbValue {
     retain_owned_args!(a, b, c, d, e, f, g, h, i, j);
     MbValue::from_ptr(MbObject::new_list(vec![a, b, c, d, e, f, g, h, i, j]))
+}
+
+pub fn mb_list_new_10_untracked(
+    a: MbValue,
+    b: MbValue,
+    c: MbValue,
+    d: MbValue,
+    e: MbValue,
+    f: MbValue,
+    g: MbValue,
+    h: MbValue,
+    i: MbValue,
+    j: MbValue,
+) -> MbValue {
+    retain_owned_args!(a, b, c, d, e, f, g, h, i, j);
+    MbValue::from_ptr(MbObject::new_list_untracked(vec![
+        a, b, c, d, e, f, g, h, i, j,
+    ]))
 }
 
 /// list(iterable) — convert an iterable MbValue to a list.
