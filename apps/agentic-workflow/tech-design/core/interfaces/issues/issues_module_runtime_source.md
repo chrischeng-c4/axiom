@@ -21,17 +21,18 @@ Public API manifest for `apps/agentic-workflow/src/issues/mod.rs` generated from
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
+| `AW_FIXTURE_LOCAL_BACKEND_ENV` | apps/agentic-workflow/src/issues/mod.rs | const | pub | 81 | AW_FIXTURE_LOCAL_BACKEND_ENV: &str |
 | `backend` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 25 |  |
 | `backends` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 26 |  |
-| `github_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 238 | github_backend() -> GitHubBackend |
+| `github_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 261 | github_backend() -> GitHubBackend |
 | `labels` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 27 |  |
-| `local_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 184 | local_backend(project_root: &Path) -> LocalBackend |
+| `local_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 207 | local_backend(project_root: &Path) -> LocalBackend |
 | `make_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 57 | make_backend(     kind: &str,     project_root: &Path,     repo: Option<String>,     host: Option<String>, ) -> Result<Box<dyn IssueBackend>> |
 | `next_id` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 28 |  |
 | `push_through` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 29 |  |
-| `remote_read_cache_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 207 | remote_read_cache_backend(     kind: &str,     repo: Option<&str>,     host: Option<&str>, ) -> LocalBackend |
-| `remote_read_cache_dir` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 192 | remote_read_cache_dir(kind: &str, repo: Option<&str>, host: Option<&str>) -> PathBuf |
-| `resolve_default_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 87 | resolve_default_backend(     project_root: &Path, ) -> Result<(String, Option<String>, Option<String>)> |
+| `remote_read_cache_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 230 | remote_read_cache_backend(     kind: &str,     repo: Option<&str>,     host: Option<&str>, ) -> LocalBackend |
+| `remote_read_cache_dir` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 215 | remote_read_cache_dir(kind: &str, repo: Option<&str>, host: Option<&str>) -> PathBuf |
+| `resolve_default_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 105 | resolve_default_backend(     project_root: &Path, ) -> Result<(String, Option<String>, Option<String>)> |
 | `slug` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 30 |  |
 | `types` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 31 |  |
 ## Source
