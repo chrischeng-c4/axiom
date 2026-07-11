@@ -30,6 +30,7 @@ Public API manifest for `apps/agentic-workflow/src/cli/mod.rs` generated from AS
 | `check_alignment` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 16 |  |
 | `commands` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 17 |  |
 | `doc_mirror` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 18 |  |
+| `drift` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 20 |  |
 | `ec` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 19 |  |
 | `fillback` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 20 |  |
 | `find_project_root` | apps/agentic-workflow/src/cli/mod.rs | function | pub | 76 | find_project_root() -> anyhow::Result<std::path::PathBuf> |
@@ -85,6 +86,7 @@ pub mod check_alignment;
 pub mod commands;
 pub mod conf;
 pub mod doc_mirror;
+pub mod drift;
 pub mod ec;
 pub mod fillback;
 pub mod generator;
@@ -348,4 +350,12 @@ changes:
       Issue #984 (init-projector slice 1/3): registers the new `doc_mirror`
       module — the one shared whitelist definition consumed by both `aw
       init`'s AGENTS.md projection and `root_doc_mirror_test`.
+  - path: apps/agentic-workflow/src/cli/mod.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1309: registers the new `drift` module (stale
+      installed-binary-vs-checkout-source version-skew warning invoked from
+      `commands::run_command`).
 ```
