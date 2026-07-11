@@ -10,6 +10,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
+use crate::cli::guard_sanction::{self, SanctionReason};
 use crate::services::path_scope::{self, AllowedScope};
 use crate::services::project_registry::{self, ProjectConfigRow};
 
@@ -90,15 +91,26 @@ struct GuardHookChange {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum GuardDecision {
     Allow,
-    Deny { reason: String },
+    /// A target that falls inside the guarded scope but is currently
+    /// sanctioned for direct edit by a TD `impl_mode: hand-written` declaration
+    /// at an eligible WI phase (#1428/#1429). `path` is the repo-root-relative
+    /// target that was sanctioned; `reason` names the sanctioning WI/TD/phase
+    /// for the allow envelope.
+    AllowSanctioned {
+        path: String,
+        reason: SanctionReason,
+    },
+    Deny {
+        reason: String,
+    },
 }
 
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#source
-pub fn run(args: GuardArgs) -> Result<()> {
+pub async fn run(args: GuardArgs) -> Result<()> {
     match args.command {
         GuardCommand::On(args) => run_on(args),
         GuardCommand::Off(args) => run_off(args),
-        GuardCommand::Pretool(args) => run_pretool(args),
+        GuardCommand::Pretool(args) => run_pretool(args).await,
     }
 }
 
@@ -118,7 +130,7 @@ fn run_off(args: GuardToggleArgs) -> Result<()> {
     Ok(())
 }
 
-fn run_pretool(args: GuardPretoolArgs) -> Result<()> {
+async fn run_pretool(args: GuardPretoolArgs) -> Result<()> {
     let mut input = String::new();
     std::io::stdin()
         .read_to_string(&mut input)
@@ -138,8 +150,23 @@ fn run_pretool(args: GuardPretoolArgs) -> Result<()> {
             return Ok(());
         }
     };
-    match decide_pretool_payload(&root, &args.project, args.agent, &payload) {
+    match decide_pretool_payload(&root, &args.project, args.agent, &payload).await {
         Ok(GuardDecision::Allow) => {}
+        Ok(GuardDecision::AllowSanctioned { path, reason }) => {
+            println!(
+                "{}",
+                json!({
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "allow",
+                        "permissionDecisionReason": format!(
+                            "AW guard allows direct hand-written edit at `{}` — sanctioned by WI #{} (TD `{}`, phase `{}`).",
+                            path, reason.wi_id, reason.td_path, reason.phase
+                        ),
+                    }
+                })
+            );
+        }
         Ok(GuardDecision::Deny { reason }) => {
             println!(
                 "{}",
@@ -443,7 +470,7 @@ fn is_aw_guard_handler(hook: &Value, agent: Option<&str>, project: Option<&str>)
     true
 }
 
-fn decide_pretool_payload(
+async fn decide_pretool_payload(
     root: &Path,
     requested_project: &str,
     agent: GuardAgent,
@@ -451,20 +478,52 @@ fn decide_pretool_payload(
 ) -> Result<GuardDecision> {
     let scope = GuardScope::for_project(root, requested_project)?;
     let targets = extract_target_paths(payload, agent);
+    let mut sanctioned_allow: Option<(String, SanctionReason)> = None;
     for target in targets {
         let Some(rel) = target_to_repo_rel(root, &target) else {
             continue;
         };
         if scope.contains(&rel) {
-            return Ok(GuardDecision::Deny {
-                reason: format!(
-                    "AW guard blocks direct edit/create for project `{}` at `{}`. Use the AW CLI lifecycle, or explicitly run `aw guard off --project {}` before a manual bypass.",
-                    scope.project, rel, scope.project
-                ),
-            });
+            match sanction_reason_for(root, &scope, &rel).await {
+                Some(reason) => {
+                    sanctioned_allow.get_or_insert((rel, reason));
+                    continue;
+                }
+                None => {
+                    return Ok(GuardDecision::Deny {
+                        reason: format!(
+                            "AW guard blocks direct edit/create for project `{}` at `{}`. Use the AW CLI lifecycle, or explicitly run `aw guard off --project {}` before a manual bypass.",
+                            scope.project, rel, scope.project
+                        ),
+                    });
+                }
+            }
         }
     }
+    if let Some((path, reason)) = sanctioned_allow {
+        return Ok(GuardDecision::AllowSanctioned { path, reason });
+    }
     Ok(GuardDecision::Allow)
+}
+
+/// Consult the #1428 sanctioned-path resolver for a target already known to
+/// fall inside `scope`'s guarded prefixes: `repo_rel` is repo-root-relative
+/// (matches `target_to_repo_rel`'s output); the resolver keys sanctioned
+/// paths project-root-relative (see `guard_sanction`'s module doc), so this
+/// strips `scope`'s project-root prefix first. `None` on any resolver miss
+/// (unsanctioned path, resolver error, or a target outside the project root
+/// proper such as a `td_path`/`cap_path`/workspace-glob match) — callers
+/// fail closed on `None`, matching #1428 AC3 (deterministic, no panics).
+async fn sanction_reason_for(
+    root: &Path,
+    scope: &GuardScope,
+    repo_rel: &str,
+) -> Option<SanctionReason> {
+    let project_rel = scope.strip_project_prefix(repo_rel)?;
+    guard_sanction::is_sanctioned(root, &scope.project, Path::new(&project_rel))
+        .await
+        .ok()
+        .flatten()
 }
 
 fn extract_target_paths(payload: &Value, agent: GuardAgent) -> Vec<PathBuf> {
@@ -527,6 +586,10 @@ struct GuardScope {
     prefixes: Vec<String>,
     globset: GlobSet,
     legacy_scope: Option<AllowedScope>,
+    /// The project's repo-root-relative source directory (`row.path`,
+    /// trailing slash trimmed) — the base the #1428 resolver's sanctioned
+    /// paths are relative to. See `strip_project_prefix`.
+    project_root_rel: String,
 }
 
 impl GuardScope {
@@ -535,6 +598,7 @@ impl GuardScope {
         let mut prefixes = guard_prefixes_from_row(&row);
         prefixes.sort();
         prefixes.dedup();
+        let project_root_rel = row.path.trim_end_matches('/').to_string();
 
         let legacy_scope = path_scope::load_scope(root)?
             .and_then(|cfg| path_scope::project_by_name(&cfg, &row.name).cloned())
@@ -549,6 +613,7 @@ impl GuardScope {
             prefixes,
             globset,
             legacy_scope,
+            project_root_rel,
         })
     }
 
@@ -565,6 +630,17 @@ impl GuardScope {
             .as_ref()
             .map(|scope| scope.contains(rel))
             .unwrap_or(false)
+    }
+
+    /// Strip this project's root prefix from a repo-root-relative path,
+    /// returning the project-root-relative remainder the #1428 resolver
+    /// keys sanctioned paths by. `None` when `repo_rel` is not strictly
+    /// inside the project root (e.g. it matched via `td_path`, `cap_path`,
+    /// or a legacy workspace glob instead) — those are never TD-sanctioned
+    /// hand-write targets.
+    fn strip_project_prefix(&self, repo_rel: &str) -> Option<String> {
+        let prefix = format!("{}/", self.project_root_rel);
+        repo_rel.strip_prefix(&prefix).map(|s| s.to_string())
     }
 }
 
@@ -649,6 +725,7 @@ mod tests {
     // does not stop these tests from racing a concurrently-running
     // cwd-mutating test in another module (e.g. `cli/mod.rs`, `cli/cb.rs`).
     use crate::cli::shell_env::CWD_LOCK;
+    use crate::issues::types::td_phase;
 
     fn write_project_config(root: &Path) {
         fs::create_dir_all(root.join(".aw")).unwrap();
@@ -705,8 +782,8 @@ paths = ["libs/demo/**"]
         assert!(!claude.contains("aw guard pretool"));
     }
 
-    #[test]
-    fn pretool_denies_claude_write_inside_project_path() {
+    #[tokio::test]
+    async fn pretool_denies_claude_write_inside_project_path() {
         let _guard = CWD_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -723,15 +800,16 @@ paths = ["libs/demo/**"]
                 "content": "fn main() {}",
             },
         });
-        let decision =
-            decide_pretool_payload(tmp.path(), "demo", GuardAgent::Claude, &payload).unwrap();
+        let decision = decide_pretool_payload(tmp.path(), "demo", GuardAgent::Claude, &payload)
+            .await
+            .unwrap();
         std::env::set_current_dir(previous).unwrap();
 
         assert!(matches!(decision, GuardDecision::Deny { .. }));
     }
 
-    #[test]
-    fn pretool_allows_claude_write_outside_project_path() {
+    #[tokio::test]
+    async fn pretool_allows_claude_write_outside_project_path() {
         let _guard = CWD_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -748,15 +826,16 @@ paths = ["libs/demo/**"]
                 "content": "fn main() {}",
             },
         });
-        let decision =
-            decide_pretool_payload(tmp.path(), "demo", GuardAgent::Claude, &payload).unwrap();
+        let decision = decide_pretool_payload(tmp.path(), "demo", GuardAgent::Claude, &payload)
+            .await
+            .unwrap();
         std::env::set_current_dir(previous).unwrap();
 
         assert_eq!(decision, GuardDecision::Allow);
     }
 
-    #[test]
-    fn pretool_denies_codex_apply_patch_inside_project_path() {
+    #[tokio::test]
+    async fn pretool_denies_codex_apply_patch_inside_project_path() {
         let _guard = CWD_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -772,15 +851,16 @@ paths = ["libs/demo/**"]
                 "command": "*** Begin Patch\n*** Add File: projects/demo/src/new.rs\n+pub fn demo() {}\n*** End Patch\n",
             },
         });
-        let decision =
-            decide_pretool_payload(tmp.path(), "demo", GuardAgent::Codex, &payload).unwrap();
+        let decision = decide_pretool_payload(tmp.path(), "demo", GuardAgent::Codex, &payload)
+            .await
+            .unwrap();
         std::env::set_current_dir(previous).unwrap();
 
         assert!(matches!(decision, GuardDecision::Deny { .. }));
     }
 
-    #[test]
-    fn pretool_ignores_bash_payload_without_direct_edit_target() {
+    #[tokio::test]
+    async fn pretool_ignores_bash_payload_without_direct_edit_target() {
         let tmp = TempDir::new().unwrap();
         write_project_config(tmp.path());
         let payload = json!({
@@ -789,8 +869,9 @@ paths = ["libs/demo/**"]
                 "command": "sed -i '' 's/a/b/' projects/demo/src/lib.rs",
             },
         });
-        let decision =
-            decide_pretool_payload(tmp.path(), "demo", GuardAgent::All, &payload).unwrap();
+        let decision = decide_pretool_payload(tmp.path(), "demo", GuardAgent::All, &payload)
+            .await
+            .unwrap();
 
         assert_eq!(decision, GuardDecision::Allow);
     }
@@ -807,6 +888,272 @@ paths = ["libs/demo/**"]
                 "projects/demo/src/main.rs".to_string()
             ]
         );
+    }
+
+    // -----------------------------------------------------------------
+    // #1429: pretool consults the #1428 sanctioned-path resolver.
+    //
+    // Uses the `github` read-through cache (`crate::issues::
+    // remote_read_cache_backend`) rather than the `local`-fixture escape
+    // hatch (`AW_FIXTURE_LOCAL_BACKEND`): that flag is a process-global env
+    // var guarded elsewhere (`issues::mod::resolve_tests`) and touching it
+    // here would race concurrently-running tests in that module under
+    // `cargo test --lib`. The read-through cache dir is scoped by a unique
+    // per-test repo name instead, so no shared mutable state is touched.
+    // -----------------------------------------------------------------
+
+    const HAND_WRITTEN_TD: &str = "\
+# TD
+
+## Changes
+```yaml
+changes:
+  - path: src/bundler/dts.rs
+    section: source
+    impl_mode: hand-written
+```
+";
+
+    /// Unique-per-test repo name for the read-through cache, so parallel
+    /// test runs (and other concurrently-running `aw` processes on this
+    /// machine) never collide on `/tmp/aw/issues/<host>-<repo>/<kind>`.
+    fn unique_test_repo(case: &str) -> String {
+        format!("aw-guard-pretool-test/{case}-{}", uuid::Uuid::new_v4())
+    }
+
+    fn write_project_config_with_github_backend(root: &Path, repo: &str) {
+        fs::create_dir_all(root.join(".aw")).unwrap();
+        fs::write(
+            root.join("aw.toml"),
+            format!(
+                "[[projects]]\n\
+                 name = \"demo\"\n\
+                 path = \"projects/demo\"\n\
+                 td_path = \"projects/demo/tech-design\"\n\
+                 cap_path = \"projects/demo/CAPABILITIES.md\"\n\n\
+                 [agentic_workflow.issue_platform]\n\
+                 type = \"github\"\n\
+                 repo = \"{repo}\"\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    fn write_project_td(root: &Path, rel: &str, content: &str) {
+        let path = root.join("projects/demo").join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+
+    fn sanctioned_wi_issue(
+        github_id: u64,
+        phase: &str,
+        state: crate::issues::IssueState,
+    ) -> crate::issues::Issue {
+        crate::issues::Issue {
+            issue_type: crate::issues::IssueType::Enhancement,
+            title: format!("wi {github_id}"),
+            state,
+            id: None,
+            github_id: Some(github_id),
+            gitlab_id: None,
+            url: None,
+            author: None,
+            labels: Vec::new(),
+            created_at: None,
+            updated_at: None,
+            slug: github_id.to_string(),
+            body: String::new(),
+            related: Vec::new(),
+            implements: vec!["tech-design/dts.md".to_string()],
+            phase: Some(phase.to_string()),
+            branch: None,
+            target_branch: None,
+            git_workflow: None,
+            change_id: None,
+            iteration: None,
+            current_task_id: None,
+            impl_spec_phase: None,
+            task_revisions: None,
+            revision_counts: None,
+            last_action: None,
+            session_id: None,
+            validation_errors: Vec::new(),
+            review_count: None,
+            flagged_sections: None,
+            fill_retry_count: None,
+            ship_status: None,
+            ship_commit: None,
+            regen_verified_at: None,
+        }
+    }
+
+    /// Cleans up the shared `/tmp/aw/issues/<host>-<repo>` cache dir on
+    /// drop, so these tests don't leak fixture state onto the real machine.
+    struct CacheCleanup(PathBuf);
+    impl Drop for CacheCleanup {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(self.0.parent().unwrap_or(&self.0));
+        }
+    }
+
+    async fn seed_cached_issue(repo: &str, issue: &crate::issues::Issue) -> CacheCleanup {
+        use crate::issues::IssueBackend;
+        let cache_dir = crate::issues::remote_read_cache_dir("github", Some(repo), None);
+        let cleanup = CacheCleanup(cache_dir);
+        let cache = crate::issues::remote_read_cache_backend("github", Some(repo), None);
+        cache.write(issue).await.unwrap();
+        cleanup
+    }
+
+    /// (a) The #1269 repro shape: a declared hand-written path, WI at
+    /// `cb_genned` → allowed, with the envelope-worthy decision naming the
+    /// sanctioning WI id, TD path, and phase.
+    #[tokio::test]
+    async fn pretool_allows_sanctioned_handwrite_path_and_names_wi_td_phase() {
+        let _guard = CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let tmp = TempDir::new().unwrap();
+        let repo = unique_test_repo("allow");
+        write_project_config_with_github_backend(tmp.path(), &repo);
+        write_project_td(tmp.path(), "tech-design/dts.md", HAND_WRITTEN_TD);
+        fs::create_dir_all(tmp.path().join("projects/demo/src/bundler")).unwrap();
+        let _cleanup = seed_cached_issue(
+            &repo,
+            &sanctioned_wi_issue(937, td_phase::CB_GENNED, crate::issues::IssueState::Open),
+        )
+        .await;
+
+        let previous = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let payload = json!({
+            "tool_name": "Write",
+            "tool_input": {
+                "file_path": tmp.path().join("projects/demo/src/bundler/dts.rs").to_string_lossy(),
+                "content": "fn demo() {}",
+            },
+        });
+        let decision = decide_pretool_payload(tmp.path(), "demo", GuardAgent::Claude, &payload)
+            .await
+            .unwrap();
+        std::env::set_current_dir(previous).unwrap();
+
+        match decision {
+            GuardDecision::AllowSanctioned { path, reason } => {
+                assert_eq!(path, "projects/demo/src/bundler/dts.rs");
+                assert_eq!(reason.wi_id, "937");
+                assert_eq!(reason.td_path, "tech-design/dts.md");
+                assert_eq!(reason.phase, td_phase::CB_GENNED);
+            }
+            other => panic!("expected AllowSanctioned, got {other:?}"),
+        }
+    }
+
+    /// (b) An undeclared sibling path in the same project, same session, is
+    /// still denied byte-for-byte (same reason-string shape as the
+    /// pre-#1429 unconditional deny).
+    #[tokio::test]
+    async fn pretool_denies_undeclared_sibling_path_in_same_session() {
+        let _guard = CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let tmp = TempDir::new().unwrap();
+        let repo = unique_test_repo("sibling-deny");
+        write_project_config_with_github_backend(tmp.path(), &repo);
+        write_project_td(tmp.path(), "tech-design/dts.md", HAND_WRITTEN_TD);
+        fs::create_dir_all(tmp.path().join("projects/demo/src/bundler")).unwrap();
+        let _cleanup = seed_cached_issue(
+            &repo,
+            &sanctioned_wi_issue(937, td_phase::CB_GENNED, crate::issues::IssueState::Open),
+        )
+        .await;
+
+        let previous = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        // Sibling file in the same project, not declared hand-written in
+        // the TD's `## Changes` block.
+        let payload = json!({
+            "tool_name": "Write",
+            "tool_input": {
+                "file_path": tmp.path().join("projects/demo/src/bundler/sibling.rs").to_string_lossy(),
+                "content": "fn sibling() {}",
+            },
+        });
+        let decision = decide_pretool_payload(tmp.path(), "demo", GuardAgent::Claude, &payload)
+            .await
+            .unwrap();
+        std::env::set_current_dir(previous).unwrap();
+
+        assert!(matches!(decision, GuardDecision::Deny { .. }));
+    }
+
+    /// (c) Once the WI has advanced past code-check (closed / terminal),
+    /// the previously sanctioned path is denied again.
+    #[tokio::test]
+    async fn pretool_denies_sanctioned_path_after_wi_closes_past_code_check() {
+        let _guard = CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let tmp = TempDir::new().unwrap();
+        let repo = unique_test_repo("post-terminal-deny");
+        write_project_config_with_github_backend(tmp.path(), &repo);
+        write_project_td(tmp.path(), "tech-design/dts.md", HAND_WRITTEN_TD);
+        fs::create_dir_all(tmp.path().join("projects/demo/src/bundler")).unwrap();
+        // WI closed (terminal, past code-check) — no longer eligible.
+        let _cleanup = seed_cached_issue(
+            &repo,
+            &sanctioned_wi_issue(937, td_phase::TD_MERGED, crate::issues::IssueState::Closed),
+        )
+        .await;
+
+        let previous = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let payload = json!({
+            "tool_name": "Write",
+            "tool_input": {
+                "file_path": tmp.path().join("projects/demo/src/bundler/dts.rs").to_string_lossy(),
+                "content": "fn demo() {}",
+            },
+        });
+        let decision = decide_pretool_payload(tmp.path(), "demo", GuardAgent::Claude, &payload)
+            .await
+            .unwrap();
+        std::env::set_current_dir(previous).unwrap();
+
+        assert!(matches!(decision, GuardDecision::Deny { .. }));
+    }
+
+    /// (d) Resolver error / empty cache (no `aw wi`/`aw td` traffic ever
+    /// touched this project's read-through cache) → deny, fail-closed, no
+    /// panic.
+    #[tokio::test]
+    async fn pretool_denies_on_empty_resolver_cache_fail_closed_no_panic() {
+        let _guard = CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let tmp = TempDir::new().unwrap();
+        let repo = unique_test_repo("empty-cache-deny");
+        write_project_config_with_github_backend(tmp.path(), &repo);
+        write_project_td(tmp.path(), "tech-design/dts.md", HAND_WRITTEN_TD);
+        fs::create_dir_all(tmp.path().join("projects/demo/src/bundler")).unwrap();
+        // No issue ever written to the read-through cache for `repo`.
+
+        let previous = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let payload = json!({
+            "tool_name": "Write",
+            "tool_input": {
+                "file_path": tmp.path().join("projects/demo/src/bundler/dts.rs").to_string_lossy(),
+                "content": "fn demo() {}",
+            },
+        });
+        let decision = decide_pretool_payload(tmp.path(), "demo", GuardAgent::Claude, &payload)
+            .await
+            .unwrap();
+        std::env::set_current_dir(previous).unwrap();
+
+        assert!(matches!(decision, GuardDecision::Deny { .. }));
     }
 }
 // CODEGEN-END

@@ -123,7 +123,7 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
             generator::run(args).await?;
         }
         Commands::Guard(args) => {
-            guard::run(args)?;
+            guard::run(args).await?;
         }
         Commands::View(args) => {
             view::run(args).await?;
@@ -202,4 +202,12 @@ changes:
       that warns on stderr (never stdout) at most once per hour when the
       running binary's build version is behind the axiom checkout's
       declared source version. Never fails the command.
+  - path: apps/agentic-workflow/src/cli/commands.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1429: `guard::run` became async (`aw guard pretool` now consults
+      the #1428 sanctioned-path resolver before its deny decision), so the
+      `Commands::Guard` dispatch arm awaits it: `guard::run(args).await?;`.
 ```

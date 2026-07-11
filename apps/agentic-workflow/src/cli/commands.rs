@@ -92,7 +92,7 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
             generator::run(args).await?;
         }
         Commands::Guard(args) => {
-            guard::run(args)?;
+            guard::run(args).await?;
         }
         Commands::View(args) => {
             view::run(args).await?;
