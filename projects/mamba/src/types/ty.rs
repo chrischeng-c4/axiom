@@ -127,6 +127,38 @@ pub enum LiteralValue {
     Bool(bool),
 }
 
+/// Python callable parameter category retained by the semantic type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallableParamKind {
+    PosOnly,
+    PosOrKw,
+    VarPos,
+    KwOnly,
+    VarKw,
+}
+
+/// One parameter in a concrete Python callable signature.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallableParam {
+    pub name: Option<String>,
+    pub ty: TypeId,
+    pub kind: CallableParamKind,
+    pub has_default: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamPackTail {
+    Closed,
+    Ellipsis,
+    ParamSpec(TypeVarId),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParamPack {
+    pub params: Vec<CallableParam>,
+    pub tail: ParamPackTail,
+}
+
 /// Core type representation for Mamba.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ty {
@@ -147,6 +179,9 @@ pub enum Ty {
         params: Vec<TypeId>,
         ret: TypeId,
         variadic: bool,
+        /// Full semantic call shape when it is known. The compact `params`
+        /// vector remains the ABI-facing positional prefix.
+        signature: Option<Vec<CallableParam>>,
         /// Correlated PEP 612 parameter-list tail for Callable[P, R] and
         /// Callable[Concatenate[prefix..., P], R].
         param_spec: Option<TypeVarId>,
@@ -301,6 +336,7 @@ mod tests {
             params: vec![TypeId(3)],
             ret: TypeId(5),
             variadic: false,
+            signature: None,
             param_spec: None,
         };
         assert!(!f.is_numeric());
@@ -310,6 +346,7 @@ mod tests {
                 params: vec![TypeId(3)],
                 ret: TypeId(5),
                 variadic: false,
+                signature: None,
                 param_spec: None,
             }
         );
@@ -319,6 +356,7 @@ mod tests {
                 params: vec![TypeId(3)],
                 ret: TypeId(3),
                 variadic: false,
+                signature: None,
                 param_spec: None,
             }
         );
