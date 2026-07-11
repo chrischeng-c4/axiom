@@ -2,10 +2,10 @@ version = 2
 project = "cap"
 ir_kind = "td"
 td_path = "apps/cap/tech-design"
-generated_at = "2026-07-10T09:46:00.714229+00:00"
-digest = "sha256:c1ceb1a841d39c6256172554183079e185af8dd11feb3ca0061a977fb974e154"
-source_digest = "sha256:c1ceb1a841d39c6256172554183079e185af8dd11feb3ca0061a977fb974e154"
-ir_digest = "sha256:4c39dcf94f40708407297498ff33c82393718fe30b5bd7ce65777d8dcaa87a58"
+generated_at = "2026-07-11T04:18:06.766655+00:00"
+digest = "sha256:3e727a50c6dd2e30c3b6403e1f3c17a996a01236e0b172f8540f6b07beb39dde"
+source_digest = "sha256:3e727a50c6dd2e30c3b6403e1f3c17a996a01236e0b172f8540f6b07beb39dde"
+ir_digest = "sha256:7df222df6fc07bab88558c09750c5e5b653094a91ff97a6a145d1e10d5247e10"
 
 [[files]]
 path = "interfaces/cli/adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std.md"
@@ -47,6 +47,12 @@ section_count = 3
 path = "logic/expand-high-volume-native-command-coverage.md"
 digest = "sha256:39a6803bd45ad7a455d6c45eac41c6f8a8575288b5babf3366f7892fb2cacd30"
 ir_digest = "sha256:132535355334884a9a0e7e7c345593edafa90e17178ad7ab28f3b30006d5b91c"
+section_count = 3
+
+[[files]]
+path = "logic/extend-native-grep-flag-support-and-recognize-rg-as-native-plann.md"
+digest = "sha256:53bf34abf4c4acdf375ddb55c69fd78cf61501c4e4f364fb2f420f49b690af80"
+ir_digest = "sha256:004113536aa967d8915106e3d01ddc721039d8c3ca88d30195425c6e9145fb2c"
 section_count = 3
 
 [[files]]
