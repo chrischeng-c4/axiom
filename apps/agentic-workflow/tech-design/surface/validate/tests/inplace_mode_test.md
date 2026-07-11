@@ -157,11 +157,17 @@ fn inplace_td_init_switches_branch_no_worktree_dir() {
         r#"
 [agentic_workflow.workspace]
 mode = "in_place"
+
+[[projects]]
+name = "agentic-workflow"
+path = "."
 "#,
     )
     .unwrap();
 
-    // Open issue with state: open + the labels needed for `derive_spec_dir`.
+    // Open issue with state: open + a recognized project label so
+    // `default_spec_path_for_issue_in_project` (#1403) can resolve it
+    // through the aw.toml project row above.
     let slug = "demo-inplace";
     let issue_body = format!(
         "---\n\
@@ -260,6 +266,10 @@ fn td_create_on_project_branch_stays_on_current_branch() {
         r#"
 [agentic_workflow.workspace]
 mode = "in_place"
+
+[[projects]]
+name = "agentic-workflow"
+path = "."
 "#,
     )
     .unwrap();
@@ -344,7 +354,11 @@ fn td_create_numeric_id_uses_tracker_id_branch_with_legacy_cache_file() {
     bootstrap_repo(&git, root);
 
     std::fs::create_dir_all(root.join(".aw/tech-design")).unwrap();
-    std::fs::write(root.join("aw.toml"), "").unwrap();
+    std::fs::write(
+        root.join("aw.toml"),
+        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n",
+    )
+    .unwrap();
 
     let legacy_slug = "bug-slug-round-trip-broken-local-cache-slug-d";
     let issue_body = format!(
@@ -721,7 +735,6 @@ fn wi_validate_accepts_apply_dirty_issue_file_on_issue_branch() {
 }
 
 // CODEGEN-END
-
 ````
 
 ## Changes

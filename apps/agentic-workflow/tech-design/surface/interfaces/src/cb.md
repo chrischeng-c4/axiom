@@ -4923,11 +4923,17 @@ fn resolve_slug_spec_paths(
         }
     }
     if rels.is_empty() {
-        rels.push(crate::cli::td::default_spec_path_for_issue_in_project(
-            project_root,
-            issue,
-            &issue.slug,
-        ));
+        // #1403: the tier-3 default derivation now hard-errors on an
+        // unrecognized/unresolvable project label instead of falling back to
+        // a legacy `.aw/tech-design` path. That failure is not this gate's
+        // to raise — per the doc comment above, an empty result here is
+        // itself a legitimate "nothing to scope against" outcome, so an
+        // unresolvable default is just another way to arrive at empty.
+        if let Ok(derived) =
+            crate::cli::td::default_spec_path_for_issue_in_project(project_root, issue, &issue.slug)
+        {
+            rels.push(derived);
+        }
     }
     rels.into_iter().map(|r| project_root.join(r)).collect()
 }
