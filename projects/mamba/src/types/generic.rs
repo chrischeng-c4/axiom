@@ -217,7 +217,9 @@ impl Substitution {
                     new_args,
                     source.display_arg_count,
                 );
-                if let Some(source_target) = source.target {
+                if tcx.alias_target_is_rejected(alias_id) {
+                    tcx.reject_alias_target(specialized_id);
+                } else if let Some(source_target) = source.target {
                     if tcx.begin_alias_target(specialized_id) {
                         let specialized_target =
                             self.apply_inner(source_target, tcx, visiting_param_packs);
@@ -297,8 +299,7 @@ impl Substitution {
                 param_spec,
             } => {
                 let bound_var = param_spec.filter(|var| {
-                    self.param_packs.contains_key(var)
-                        && visiting_param_packs.insert(*var)
+                    self.param_packs.contains_key(var) && visiting_param_packs.insert(*var)
                 });
                 let new_params: Vec<TypeId> = params
                     .iter()
@@ -318,9 +319,7 @@ impl Substitution {
                 });
                 let bound_pack = bound_var
                     .and_then(|var| self.param_packs.get(&var))
-                    .map(|pack| {
-                        self.apply_param_pack_inner(pack, tcx, visiting_param_packs)
-                    });
+                    .map(|pack| self.apply_param_pack_inner(pack, tcx, visiting_param_packs));
                 let (new_params, new_signature, new_variadic, new_param_spec) =
                     if let Some(pack) = bound_pack {
                         let mut full_signature = new_signature.unwrap_or_else(|| {
@@ -460,9 +459,9 @@ impl Substitution {
                 if new_callable == *callable {
                     ty
                 } else {
-                    tcx.intern(Ty::External(
-                        super::ty::ExternalValue::Callable(new_callable),
-                    ))
+                    tcx.intern(Ty::External(super::ty::ExternalValue::Callable(
+                        new_callable,
+                    )))
                 }
             }
             // Primitive types are unchanged
@@ -688,10 +687,7 @@ fn callable_prefix_definitely_incompatible(
                 | Ty::Infer(_)
                 | Ty::AliasRef(_)
                 | Ty::External(_)
-                | Ty::Class {
-                    user: Some(_),
-                    ..
-                }
+                | Ty::Class { user: Some(_), .. }
         )
     };
     !indeterminate(tcx.get(expected)) && !indeterminate(tcx.get(actual_parameter))
@@ -902,19 +898,13 @@ fn unify_for_inference_step(
             else {
                 return;
             };
-            unify_for_inference_inner(
-                ret, arg_ret, type_vars, subst, conflicts, tcx, visiting,
-            );
+            unify_for_inference_inner(ret, arg_ret, type_vars, subst, conflicts, tcx, visiting);
             let expected = callable_param_pack(params, variadic, signature, param_spec);
             if expected.tail == ParamPackTail::Ellipsis {
                 return;
             }
-            let actual = callable_param_pack(
-                arg_params,
-                arg_variadic,
-                arg_signature,
-                arg_param_spec,
-            );
+            let actual =
+                callable_param_pack(arg_params, arg_variadic, arg_signature, arg_param_spec);
             let captures_tail = matches!(expected.tail, ParamPackTail::ParamSpec(_));
             let residual_start = if captures_tail {
                 let mut actual_index = 0usize;
@@ -970,9 +960,7 @@ fn unify_for_inference_step(
                 if actual.params.len() < expected.params.len() {
                     return;
                 }
-                for (expected_param, actual_param) in
-                    expected.params.iter().zip(&actual.params)
-                {
+                for (expected_param, actual_param) in expected.params.iter().zip(&actual.params) {
                     unify_for_inference_inner(
                         expected_param.ty,
                         actual_param.ty,
@@ -1076,25 +1064,15 @@ fn unify_for_inference_step(
                     return;
                 }
             }
-            if param_role != super::ty::ClassRole::Instance
-                || param_external.module != "typing"
-            {
+            if param_role != super::ty::ClassRole::Instance || param_external.module != "typing" {
                 return;
             }
             let projected = match (param_external.name.as_str(), arg_ty) {
-                (
-                    "Iterable" | "Collection" | "Sequence" | "MutableSequence",
-                    Ty::List(item),
-                )
+                ("Iterable" | "Collection" | "Sequence" | "MutableSequence", Ty::List(item))
                 | ("Iterable" | "Collection", Ty::Set(item)) => Some(vec![item]),
                 ("Iterable" | "Collection", Ty::Dict(key, _)) => Some(vec![key]),
-                ("Mapping" | "MutableMapping", Ty::Dict(key, value)) => {
-                    Some(vec![key, value])
-                }
-                (
-                    "Iterable" | "Collection" | "Sequence",
-                    Ty::Str,
-                ) => Some(vec![tcx.str()]),
+                ("Mapping" | "MutableMapping", Ty::Dict(key, value)) => Some(vec![key, value]),
+                ("Iterable" | "Collection" | "Sequence", Ty::Str) => Some(vec![tcx.str()]),
                 (
                     "Iterable" | "Collection" | "Sequence" | "MutableSequence",
                     Ty::Class {
@@ -1108,9 +1086,7 @@ fn unify_for_inference_step(
             };
             if let Some(projected) = projected {
                 if projected.len() == param_external.args.len() {
-                    for (param_arg, concrete_arg) in
-                        param_external.args.iter().zip(projected)
-                    {
+                    for (param_arg, concrete_arg) in param_external.args.iter().zip(projected) {
                         unify_for_inference_inner(
                             *param_arg,
                             concrete_arg,
@@ -1261,13 +1237,12 @@ mod tests {
         let var = tcx.new_type_var("T".to_string(), None, Vec::new());
         let var_ty = tcx.intern(Ty::TypeVar(var));
         let symbol = crate::resolve::SymbolId(17);
-        let (generic_instance, generic_ref) =
-            tcx.intern_alias_instance(
-                crate::types::context::AliasIdentity::Source(symbol),
-                "Chain".to_string(),
-                vec![var_ty],
-                1,
-            );
+        let (generic_instance, generic_ref) = tcx.intern_alias_instance(
+            crate::types::context::AliasIdentity::Source(symbol),
+            "Chain".to_string(),
+            vec![var_ty],
+            1,
+        );
         let generic_target = tcx.intern(Ty::List(generic_ref));
         tcx.set_alias_target(generic_instance, generic_target);
 
@@ -1343,10 +1318,7 @@ mod tests {
             vec![(var, tcx.int()), (other, tcx.str())]
         );
         assert_eq!(deferred.param_packs, vec![(param_spec, pack.clone())]);
-        let rebuilt = Substitution::from_bindings(
-            &deferred.substitutions,
-            &deferred.param_packs,
-        );
+        let rebuilt = Substitution::from_bindings(&deferred.substitutions, &deferred.param_packs);
         assert_eq!(rebuilt.get(var), Some(tcx.int()));
         assert_eq!(rebuilt.get(other), Some(tcx.str()));
         assert_eq!(rebuilt.get_param_pack(param_spec), Some(&pack));
@@ -1381,6 +1353,40 @@ mod tests {
         assert_eq!(tcx.alias_target(*specialized), Some(tcx.never()));
         assert!(tcx.alias_target_is_rejected(*specialized));
         assert!(tcx.deferred_alias_target(*specialized).is_none());
+    }
+
+    #[test]
+    fn substitution_preserves_rejected_generated_alias_identity() {
+        let mut tcx = TypeContext::new();
+        let var = tcx.new_type_var("T".to_string(), None, Vec::new());
+        let var_ty = tcx.intern(Ty::TypeVar(var));
+        let (template, template_ref) = tcx.intern_alias_instance(
+            crate::types::context::AliasIdentity::Generated(
+                crate::types::stdlib_typespec::StrSpecId(9),
+                crate::types::stdlib_typespec::StrSpecId(10),
+            ),
+            "example.Rejected".to_string(),
+            vec![var_ty],
+            1,
+        );
+        tcx.reject_alias_target(template);
+
+        let mut subst = Substitution::new();
+        subst.insert(var, tcx.int());
+        let specialized_ref = subst.apply(template_ref, &mut tcx);
+        let Ty::AliasRef(specialized) = tcx.get(specialized_ref) else {
+            panic!("rejected specialization lost its alias identity");
+        };
+        assert_eq!(tcx.alias_target(*specialized), Some(tcx.never()));
+        assert!(tcx.alias_target_is_rejected(*specialized));
+        assert!(tcx.deferred_alias_target(*specialized).is_none());
+        assert_eq!(
+            tcx.semantic_head_id(specialized_ref),
+            Err(crate::types::context::AliasHeadError::Rejected(
+                *specialized
+            ))
+        );
+        assert!(!tcx.is_subtype(specialized_ref, specialized_ref));
     }
 
     #[test]
@@ -1684,8 +1690,7 @@ mod tests {
             TypeParamDefault::None,
         );
 
-        let (_, conflicts) =
-            infer_type_args(&params, &[expected, expected], &[one, two], &tcx);
+        let (_, conflicts) = infer_type_args(&params, &[expected, expected], &[one, two], &tcx);
         assert_eq!(conflicts.len(), 1);
         assert!(conflicts[0].contains("conflicting callable parameter packs"));
     }
