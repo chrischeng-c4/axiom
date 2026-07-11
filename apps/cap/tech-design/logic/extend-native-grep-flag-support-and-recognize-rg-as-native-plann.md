@@ -401,7 +401,6 @@ flowchart TD
     r6[R6 cd prefix suite unaffected by grep rg changes] --> cargo_test_p_cap_command_planner_tests_cd_prefix_grep_replans_native[cargo test -p cap command_planner::tests::cd_prefix_grep_replans_native]
     r6[R6 full command planner suite unaffected] --> cargo_test_p_cap_command_planner[cargo test -p cap command_planner]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
