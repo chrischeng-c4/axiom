@@ -542,6 +542,96 @@ def _generated_type_param_status(
     return "supported"
 
 
+def _typespec_contains_parameter_pack(
+    manifest: dict[str, Any], node_id: int, visiting: set[int] | None = None
+) -> bool:
+    visiting = set() if visiting is None else visiting
+    if node_id in visiting:
+        return False
+    visiting.add(node_id)
+    try:
+        kind, value = _typespec_variant(manifest["nodes"][node_id])
+        if kind == "TypeParam":
+            return manifest["type_params"][value]["kind"] != "t"
+        if kind in {"ParamSpecArgs", "ParamSpecKwargs", "Unpack", "ParamList"}:
+            return True
+        if kind == "ForwardRef":
+            return _typespec_contains_parameter_pack(
+                manifest, value["target"], visiting
+            )
+        if kind in {"Union", "Tuple"}:
+            start, length = value
+            return any(
+                _typespec_contains_parameter_pack(manifest, item, visiting)
+                for item in manifest["edges"][start : start + length]
+            )
+        if kind == "Apply":
+            start, length = value["args"]
+            return any(
+                _typespec_contains_parameter_pack(manifest, item, visiting)
+                for item in manifest["edges"][start : start + length]
+            )
+        return False
+    finally:
+        visiting.remove(node_id)
+
+
+def _callable_paramspec_shape(
+    manifest: dict[str, Any], node_id: int
+) -> tuple[list[int], int] | None:
+    kind, value = _typespec_variant(manifest["nodes"][node_id])
+    if kind != "Apply":
+        return None
+    base_kind, base = _typespec_variant(manifest["nodes"][value["base"]])
+    if base_kind != "Name":
+        return None
+    strings = manifest["strings"]
+    if (strings[base["module"]], strings[base["name"]]) not in {
+        ("typing", "Callable"),
+        ("collections.abc", "Callable"),
+    }:
+        return None
+    start, length = value["args"]
+    args = manifest["edges"][start : start + length]
+    if len(args) != 2:
+        return None
+    param_kind, param_value = _typespec_variant(manifest["nodes"][args[0]])
+    if param_kind == "TypeParam":
+        return (
+            ([], param_value)
+            if manifest["type_params"][param_value]["kind"] == "p"
+            else None
+        )
+    if param_kind != "Apply":
+        return None
+    concat_base_kind, concat_base = _typespec_variant(
+        manifest["nodes"][param_value["base"]]
+    )
+    concat_key = (
+        (strings[concat_base["module"]], strings[concat_base["name"]])
+        if concat_base_kind == "Name"
+        else None
+    )
+    concat_start, concat_length = param_value["args"]
+    concat_args = manifest["edges"][
+        concat_start : concat_start + concat_length
+    ]
+    if concat_key not in {
+        ("typing", "Concatenate"),
+        ("typing_extensions", "Concatenate"),
+    } or len(concat_args) < 2:
+        return None
+    tail_kind, tail_value = _typespec_variant(manifest["nodes"][concat_args[-1]])
+    prefix = concat_args[:-1]
+    if (
+        tail_kind != "TypeParam"
+        or manifest["type_params"][tail_value]["kind"] != "p"
+        or any(_typespec_contains_parameter_pack(manifest, item) for item in prefix)
+    ):
+        return None
+    return prefix, tail_value
+
+
 def _generated_typespec_status(
     manifest: dict[str, Any], node_id: int, visiting: set[int] | None = None
 ) -> str:
@@ -684,8 +774,19 @@ def _generated_typespec_status(
                     ]
                 elif param_kind == "Ellipsis":
                     param_statuses = []
-                else:
+                elif (shape := _callable_paramspec_shape(manifest, node_id)) is None:
                     return "unsupported"
+                else:
+                    prefix, param_id = shape
+                    param_statuses = [
+                        _generated_typespec_status(manifest, item, visiting)
+                        for item in prefix
+                    ]
+                    param_statuses.append(
+                        _generated_type_param_status(manifest, param_id, visiting)
+                    )
+                    if "unsupported" in param_statuses:
+                        return "unsupported"
                 statuses = param_statuses + [
                     _generated_typespec_status(manifest, args[1], visiting)
                 ]
@@ -743,18 +844,41 @@ def parse_generated_signature_param_index(
         kind = callable_row[3]
         binding_supported = kind in {"m", "i", "c", "s", "t"}
         start, length = callable_row[4]
+        callable_params = manifest["params"][start : start + length]
+        captured_param_specs = {
+            shape[1]
+            for param in callable_params
+            if (
+                shape := _callable_paramspec_shape(
+                    manifest, manifest["type_uses"][param[2]][0]
+                )
+            )
+            is not None
+        }
         branch: dict[str, str] = {}
         branch_reasons: dict[str, str] = {}
         ordered_params: list[dict[str, Any]] = []
-        for param in manifest["params"][start : start + length]:
+        for param in callable_params:
             param_name = strings[param[0]]
             node_id = manifest["type_uses"][param[2]][0]
+            node_kind, node_value = _typespec_variant(manifest["nodes"][node_id])
             reason = None
             if not binding_supported:
                 status = "unsupported"
                 reason = "structured_binding_unsupported"
             else:
-                status = _generated_typespec_status(manifest, node_id)
+                component_kind = {
+                    "ParamSpecArgs": "v",
+                    "ParamSpecKwargs": "w",
+                }.get(node_kind)
+                status = (
+                    "supported"
+                    if component_kind is not None
+                    and param[1] == component_kind
+                    and node_value in captured_param_specs
+                    and manifest["type_params"][node_value]["kind"] == "p"
+                    else _generated_typespec_status(manifest, node_id)
+                )
                 if status == "unsupported":
                     reason = "structured_param_type_unsupported"
             ordered_params.append(

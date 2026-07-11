@@ -2,11 +2,13 @@ use super::check::{
     expr_to_type_expr, ClassPatternTarget, FunctionParamSig, NumericRoot, TypeChecker,
 };
 use super::generic::{
-    check_bounds, complete_type_args, infer_type_args, GenericParams, Substitution,
+    check_bounds, complete_callable_type_args, complete_type_args, infer_type_args, GenericParams,
+    Substitution,
 };
 use super::ty::{
-    ClassRole, ExternalCallable, ExternalCallableAccess, ExternalCallableRuntimeKind, ExternalClass,
-    ExternalValue, LiteralValue, TypeParamDefault, TypeVarKind,
+    CallableParam, CallableParamKind, ClassRole, ExternalCallable, ExternalCallableAccess,
+    ExternalCallableRuntimeKind, ExternalClass, ExternalValue, LiteralValue, ParamPack,
+    ParamPackTail, TypeParamDefault, TypeVarId, TypeVarKind,
 };
 use super::{Ty, TypeId};
 use crate::parser::ast::*;
@@ -25,6 +27,11 @@ enum StrictRelation {
     Compatible,
     Incompatible,
     Indeterminate,
+}
+
+enum ParamPackCallBinding {
+    Matched(Vec<(TypeId, TypeId, Span, String, usize)>, bool),
+    Rejected(Span, String),
 }
 
 enum UserProtocolMethod {
@@ -51,6 +58,17 @@ struct ResolvedStdlibSpecCall {
     name: String,
     access: StdlibSpecAccess,
     receiver: Option<ExternalClass>,
+}
+
+fn intrinsic_function_param_sigs(
+    signature: Option<Vec<CallableParam>>,
+) -> Option<Vec<FunctionParamSig>> {
+    signature.map(|params| {
+        params
+            .into_iter()
+            .map(FunctionParamSig::from_callable_param)
+            .collect()
+    })
 }
 
 fn bind_explicit_inference_args(
@@ -125,6 +143,123 @@ fn bind_explicit_inference_args(
     }
 
     (matched_params, matched_args)
+}
+
+fn bind_forwarded_param_pack(
+    pack: &ParamPack,
+    forwarded: &[(usize, TypeId, Span)],
+    args: &[CallArg],
+) -> ParamPackCallBinding {
+    let positional: Vec<_> = pack
+        .params
+        .iter()
+        .enumerate()
+        .filter(|(_, param)| {
+            matches!(
+                param.kind,
+                CallableParamKind::PosOnly | CallableParamKind::PosOrKw
+            )
+        })
+        .map(|(index, _)| index)
+        .collect();
+    let var_pos = pack
+        .params
+        .iter()
+        .position(|param| param.kind == CallableParamKind::VarPos);
+    let var_kw = pack
+        .params
+        .iter()
+        .position(|param| param.kind == CallableParamKind::VarKw);
+    let mut bound = std::collections::HashSet::new();
+    let mut positional_index = 0usize;
+    let mut matched = Vec::with_capacity(forwarded.len());
+
+    for &(arg_index, actual, span) in forwarded {
+        let param_index = match &args[arg_index] {
+            CallArg::Positional(_) => {
+                let selected = positional.get(positional_index).copied().or(var_pos);
+                positional_index += 1;
+                selected
+            }
+            CallArg::Keyword { name, .. } => {
+                let selected = pack.params.iter().position(|param| {
+                    matches!(
+                        param.kind,
+                        CallableParamKind::PosOrKw | CallableParamKind::KwOnly
+                    ) && param.name.as_deref() == Some(name.as_str())
+                });
+                if selected.is_none()
+                    && var_kw.is_none()
+                    && pack.params.iter().any(|param| {
+                        matches!(
+                            param.kind,
+                            CallableParamKind::PosOrKw | CallableParamKind::KwOnly
+                        ) && param.name.is_none()
+                    })
+                {
+                    return ParamPackCallBinding::Matched(matched, true);
+                }
+                selected.or(var_kw)
+            }
+            CallArg::StarArg(_) | CallArg::DoubleStarArg(_) => {
+                return ParamPackCallBinding::Matched(matched, true);
+            }
+        };
+        let Some(param_index) = param_index else {
+            return if pack.tail == ParamPackTail::Closed {
+                ParamPackCallBinding::Rejected(
+                    span,
+                    "forwarded call has an argument that the callback does not accept"
+                        .to_string(),
+                )
+            } else {
+                ParamPackCallBinding::Matched(matched, true)
+            };
+        };
+        let param = &pack.params[param_index];
+        if !matches!(
+            param.kind,
+            CallableParamKind::VarPos | CallableParamKind::VarKw
+        ) && !bound.insert(param_index)
+        {
+            return ParamPackCallBinding::Rejected(
+                span,
+                format!(
+                    "multiple values for callback parameter `{}`",
+                    param.name.as_deref().unwrap_or("<unknown>")
+                ),
+            );
+        }
+        matched.push((
+            param.ty,
+            actual,
+            span,
+            param
+                .name
+                .clone()
+                .unwrap_or_else(|| "<callback parameter>".to_string()),
+            arg_index,
+        ));
+    }
+
+    for (param_index, param) in pack.params.iter().enumerate() {
+        if matches!(
+            param.kind,
+            CallableParamKind::VarPos | CallableParamKind::VarKw
+        ) || param.has_default
+            || bound.contains(&param_index)
+        {
+            continue;
+        }
+        return ParamPackCallBinding::Rejected(
+            Span::default(),
+            format!(
+                "missing required callback parameter `{}`",
+                param.name.as_deref().unwrap_or("<unknown>")
+            ),
+        );
+    }
+    ParamPackCallBinding::Matched(matched, pack.tail != ParamPackTail::Closed)
 }
 
 fn bind_compact_positional_inference_args(
@@ -362,6 +497,7 @@ impl TypeChecker {
                         params,
                         ret,
                         variadic,
+                        signature,
                         ..
                     } => {
                         let has_star = args
@@ -372,12 +508,11 @@ impl TypeChecker {
                             .iter()
                             .filter(|a| matches!(a, CallArg::Positional(_)))
                             .count();
-                        // Skip arity check when spread args, kwargs, or fewer-than-max
-                        // positional args are present (defaults fill the gap at lowering).
-                        // Includes the zero-arg case (#1600): defaults aren't surfaced
-                        // through `Ty::Fn`, so an all-default fn looks identical to a
-                        // required-arg fn at this layer; lowering / runtime catches
-                        // genuinely-missing required args.
+                        // Keep this compact arity fast path conservative when spread
+                        // args, kwargs, or fewer-than-max positional args are present.
+                        // The intrinsic callable signature below owns exact default,
+                        // keyword, and parameter-kind binding; lowering remains the
+                        // fallback for callables that do not carry one.
                         let might_have_defaults = positional_count < params.len();
                         if !structured_stdlib_authoritative
                             && !has_star
@@ -408,7 +543,9 @@ impl TypeChecker {
                             }
                         }
                         let mut checked_arg_types = Vec::with_capacity(args.len());
-                        let mut user_param_sigs = method_key
+                        let has_intrinsic_signature = signature.is_some();
+                        let intrinsic_param_sigs = intrinsic_function_param_sigs(signature);
+                        let mut user_param_sigs = intrinsic_param_sigs.or_else(|| method_key
                             .as_ref()
                             .and_then(|(class_symbol, method_name)| {
                                 self.class_method_param_sigs
@@ -420,8 +557,8 @@ impl TypeChecker {
                                 func_symbol.and_then(|symbol| {
                                     self.function_param_sigs.get(&symbol).cloned()
                                 })
-                            });
-                        if method_key.is_some() {
+                            }));
+                        if method_key.is_some() && !has_intrinsic_signature {
                             if let Some(sigs) = &mut user_param_sigs {
                                 let mut specialized = params.iter();
                                 if unbound_user_method {
@@ -440,6 +577,7 @@ impl TypeChecker {
                                                 kind: ParamKind::Regular,
                                                 pos_only: true,
                                                 kw_only: false,
+                                                has_default: false,
                                             },
                                         );
                                     }
@@ -980,10 +1118,24 @@ impl TypeChecker {
                     .collect();
                 let ret = self.check_expr(body);
                 self.symbols.pop_scope();
+                let signature = params
+                    .iter()
+                    .zip(&param_types)
+                    .map(|(param, ty)| FunctionParamSig {
+                        name: param.name.clone(),
+                        ty: *ty,
+                        kind: param.kind,
+                        pos_only: param.pos_only,
+                        kw_only: param.kw_only,
+                        has_default: param.default.is_some(),
+                    }
+                    .into_callable_param())
+                    .collect();
                 self.tcx.intern(Ty::Fn {
                     params: param_types,
                     ret,
                     variadic: false,
+                    signature: Some(signature),
                     param_spec: None,
                 })
             }
@@ -1517,7 +1669,19 @@ impl TypeChecker {
         if spec::type_param(*param_id).kind != TypeParamSpecKind::ParamSpec {
             return None;
         }
-        let ty = self.materialize_stdlib_type_param(*param_id)?;
+        self.materialize_stdlib_param_spec_id(*param_id)
+    }
+
+    fn materialize_stdlib_param_spec_id(
+        &mut self,
+        param_id: super::stdlib_typespec::TypeParamSpecId,
+    ) -> Option<super::ty::TypeVarId> {
+        use super::stdlib_typespec::{self as spec, TypeParamSpecKind};
+
+        if spec::type_param(param_id).kind != TypeParamSpecKind::ParamSpec {
+            return None;
+        }
+        let ty = self.materialize_stdlib_type_param(param_id)?;
         let Ty::TypeVar(var) = self.tcx.get(ty) else {
             return None;
         };
@@ -1692,6 +1856,7 @@ impl TypeChecker {
                             params,
                             ret,
                             variadic,
+                            signature: None,
                             param_spec,
                         })
                     }
@@ -2566,6 +2731,7 @@ impl TypeChecker {
             ret: expected_ret,
             variadic: expected_variadic,
             param_spec: expected_param_spec,
+            ..
         } = self.tcx.get(expected).clone()
         else {
             return StrictRelation::Indeterminate;
@@ -2575,6 +2741,7 @@ impl TypeChecker {
             ret: actual_ret,
             variadic: actual_variadic,
             param_spec: actual_param_spec,
+            ..
         } = self.tcx.get(actual).clone()
         else {
             return match self.tcx.get(actual).clone() {
@@ -3145,9 +3312,44 @@ impl TypeChecker {
             );
         }
         let mut matched = Vec::with_capacity(bound_args.len());
+        let mut forwarded_param_args: std::collections::HashMap<
+            TypeVarId,
+            Vec<(usize, TypeId, Span)>,
+        > = std::collections::HashMap::new();
         let mut indeterminate = false;
+        for param in &visible {
+            let expected_spec = spec::type_use(param.ty).0;
+            let component = match spec::node(expected_spec).clone() {
+                spec::TypeSpecNode::ParamSpecArgs(param)
+                | spec::TypeSpecNode::ParamSpecKwargs(param) => Some(param),
+                _ => None,
+            };
+            if let Some(component) = component {
+                if let Some(var) = self.materialize_stdlib_param_spec_id(component) {
+                    forwarded_param_args.entry(var).or_default();
+                } else {
+                    indeterminate = true;
+                }
+            }
+        }
         for (param_index, actual, span, name, arg_index) in bound_args {
             let expected_spec = spec::type_use(visible[param_index].ty).0;
+            let param_spec_component = match spec::node(expected_spec).clone() {
+                spec::TypeSpecNode::ParamSpecArgs(param)
+                | spec::TypeSpecNode::ParamSpecKwargs(param) => Some(param),
+                _ => None,
+            };
+            if let Some(param) = param_spec_component {
+                if let Some(var) = self.materialize_stdlib_param_spec_id(param) {
+                    forwarded_param_args
+                        .entry(var)
+                        .or_default()
+                        .push((arg_index, actual, span));
+                } else {
+                    indeterminate = true;
+                }
+                continue;
+            }
             let expected = self.materialize_stdlib_type(expected_spec);
             indeterminate |= expected.is_none();
             if expected.is_none()
@@ -3231,9 +3433,28 @@ impl TypeChecker {
                     indeterminate = true;
                 }
             }
+            for (var, forwarded) in &forwarded_param_args {
+                let Some(pack) = subst.get_param_pack(*var).cloned() else {
+                    indeterminate = true;
+                    continue;
+                };
+                match bind_forwarded_param_pack(&pack, forwarded, args) {
+                    ParamPackCallBinding::Matched(bound, binding_indeterminate) => {
+                        matched.extend(bound.into_iter().map(
+                            |(expected, actual, span, name, arg_index)| {
+                                (Some(expected), actual, span, name, arg_index)
+                            },
+                        ));
+                        indeterminate |= binding_indeterminate;
+                    }
+                    ParamPackCallBinding::Rejected(span, message) => {
+                        return StdlibSpecCandidate::Rejected(span, message, 0);
+                    }
+                }
+            }
             relation_substitution = Some(subst.clone());
-            match complete_type_args(&generic_params, subst, &mut self.tcx) {
-                Some((completed, _)) => {
+            match complete_callable_type_args(&generic_params, subst, &mut self.tcx) {
+                Some(completed) => {
                     if let Some(message) = check_bounds(
                         &completed,
                         &generic_params,
@@ -4427,6 +4648,17 @@ impl TypeChecker {
     ) -> Option<TypeId> {
         let (_, symbol) = self.user_class_object(object)?;
         let mut sig = self.class_unbound_methods.get(&symbol)?.get(attr)?.clone();
+        let mut signature = self
+            .class_unbound_method_param_sigs
+            .get(&symbol)
+            .and_then(|methods| methods.get(attr))
+            .cloned()
+            .map(|params| {
+                params
+                    .into_iter()
+                    .map(FunctionParamSig::into_callable_param)
+                    .collect::<Vec<_>>()
+            });
         let user = match self.tcx.get(object_ty) {
             Ty::Class {
                 role: ClassRole::Object,
@@ -4447,12 +4679,18 @@ impl TypeChecker {
                     .map(|param| subst.apply(*param, &mut self.tcx))
                     .collect();
                 sig.return_type = subst.apply(sig.return_type, &mut self.tcx);
+                if let Some(signature) = &mut signature {
+                    for param in signature {
+                        param.ty = subst.apply(param.ty, &mut self.tcx);
+                    }
+                }
             }
         }
         Some(self.tcx.intern(Ty::Fn {
             params: sig.params,
             ret: sig.return_type,
             variadic: false,
+            signature,
             param_spec: None,
         }))
     }
@@ -4465,18 +4703,21 @@ impl TypeChecker {
                     params: vec![elem],
                     ret: self.tcx.none(),
                     variadic: false,
+                    signature: None,
                     param_spec: None,
                 }),
                 "count" => self.tcx.intern(Ty::Fn {
                     params: vec![elem],
                     ret: self.tcx.int(),
                     variadic: false,
+                    signature: None,
                     param_spec: None,
                 }),
                 "index" => self.tcx.intern(Ty::Fn {
                     params: vec![elem, self.tcx.int(), self.tcx.int()],
                     ret: self.tcx.int(),
                     variadic: false,
+                    signature: None,
                     param_spec: None,
                 }),
                 _ => self
@@ -4488,6 +4729,7 @@ impl TypeChecker {
                     params: vec![elem],
                     ret: self.tcx.none(),
                     variadic: false,
+                    signature: None,
                     param_spec: None,
                 }),
                 _ => self
@@ -4499,18 +4741,21 @@ impl TypeChecker {
                     params: vec![key],
                     ret: self.tcx.none(),
                     variadic: false,
+                    signature: None,
                     param_spec: None,
                 }),
                 "__getitem__" => self.tcx.intern(Ty::Fn {
                     params: vec![key],
                     ret: value,
                     variadic: false,
+                    signature: None,
                     param_spec: None,
                 }),
                 "__setitem__" => self.tcx.intern(Ty::Fn {
                     params: vec![key, value],
                     ret: self.tcx.none(),
                     variadic: false,
+                    signature: None,
                     param_spec: None,
                 }),
                 "get" | "pop" => {
@@ -4519,6 +4764,7 @@ impl TypeChecker {
                         params: vec![key, any],
                         ret: any,
                         variadic: false,
+                        signature: None,
                         param_spec: None,
                     })
                 }
@@ -4561,6 +4807,18 @@ impl TypeChecker {
                             subst
                         })
                     });
+                    let mut signature = user.as_ref().and_then(|user| {
+                        self.class_method_param_sigs
+                            .get(&user.symbol)
+                            .and_then(|methods| methods.get(attr))
+                            .cloned()
+                            .map(|params| {
+                                params
+                                    .into_iter()
+                                    .map(FunctionParamSig::into_callable_param)
+                                    .collect::<Vec<_>>()
+                            })
+                    });
                     let params = if let Some(subst) = &substitution {
                         method
                             .params
@@ -4574,10 +4832,16 @@ impl TypeChecker {
                         .as_ref()
                         .map(|subst| subst.apply(method.return_type, &mut self.tcx))
                         .unwrap_or(method.return_type);
+                    if let (Some(subst), Some(signature)) = (&substitution, &mut signature) {
+                        for param in signature {
+                            param.ty = subst.apply(param.ty, &mut self.tcx);
+                        }
+                    }
                     return self.tcx.intern(Ty::Fn {
                         params,
                         ret,
                         variadic: false,
+                        signature,
                         param_spec: None,
                     });
                 }
@@ -5359,10 +5623,15 @@ fn collect_bindings_inner(pat: &Pattern, names: &mut std::collections::BTreeSet<
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        bind_forwarded_param_pack, intrinsic_function_param_sigs, ParamPackCallBinding,
+    };
     use crate::parser::ast::*;
     use crate::source::span::{Span, Spanned};
     use crate::types::check::TypeChecker;
-    use crate::types::ty::ClassRole;
+    use crate::types::ty::{
+        CallableParam, CallableParamKind, ClassRole, ParamPack, ParamPackTail, TypeVarId,
+    };
     use crate::types::Ty;
 
     fn sp<T>(node: T) -> Spanned<T> {
@@ -5374,6 +5643,48 @@ mod tests {
             func: Box::new(sp(Expr::Ident(name.to_string()))),
             args: Vec::new(),
         })
+    }
+
+    #[test]
+    fn unnamed_intrinsic_callable_param_does_not_drop_signature() {
+        let mut checker = TypeChecker::new();
+        let params = intrinsic_function_param_sigs(Some(vec![CallableParam {
+            name: None,
+            ty: checker.tcx.int(),
+            kind: CallableParamKind::PosOnly,
+            has_default: false,
+        }]))
+        .expect("an unnamed intrinsic parameter must keep the signature authoritative");
+        assert_eq!(params.len(), 1);
+        assert!(params[0].name.is_empty());
+        assert!(params[0].pos_only);
+    }
+
+    #[test]
+    fn open_param_pack_keeps_known_forwarded_matches() {
+        let mut checker = TypeChecker::new();
+        let expected = checker.tcx.int();
+        let actual = checker.tcx.str();
+        let args = vec![CallArg::Positional(sp(Expr::StrLit("bad".to_string())))];
+        let pack = ParamPack {
+            params: vec![CallableParam {
+                name: Some("value".to_string()),
+                ty: expected,
+                kind: CallableParamKind::PosOrKw,
+                has_default: false,
+            }],
+            tail: ParamPackTail::ParamSpec(TypeVarId(90)),
+        };
+
+        let ParamPackCallBinding::Matched(matched, indeterminate) =
+            bind_forwarded_param_pack(&pack, &[(0, actual, Span::dummy())], &args)
+        else {
+            panic!("an open pack must retain its known prefix")
+        };
+        assert!(indeterminate);
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].0, expected);
+        assert_eq!(matched[0].1, actual);
     }
 
     // --- Literal types (via check_expr, which is pub(crate)) ---

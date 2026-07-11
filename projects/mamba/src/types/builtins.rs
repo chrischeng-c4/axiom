@@ -187,6 +187,7 @@ impl TypeChecker {
             params: params.to_vec(),
             ret,
             variadic: false,
+            signature: None,
             param_spec: None,
         });
         let sym = self.symbols.define(name.to_string(), SymbolKind::Function);
@@ -199,6 +200,7 @@ impl TypeChecker {
             params: params.to_vec(),
             ret,
             variadic: true,
+            signature: None,
             param_spec: None,
         });
         let sym = self.symbols.define(name.to_string(), SymbolKind::Function);

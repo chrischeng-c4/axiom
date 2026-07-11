@@ -335,10 +335,16 @@ impl TypeContext {
             Ty::Fn {
                 params,
                 ret,
+                signature,
                 param_spec,
                 ..
             } => {
                 params.iter().any(|param| self.contains_type_var(*param))
+                    || signature.as_ref().is_some_and(|params| {
+                        params
+                            .iter()
+                            .any(|param| self.contains_type_var(param.ty))
+                    })
                     || self.contains_type_var(*ret)
                     || param_spec.is_some()
             }
@@ -417,11 +423,17 @@ impl TypeContext {
             Ty::Fn {
                 params,
                 ret,
+                signature,
                 param_spec,
                 ..
             } => {
                 for param in params {
                     self.collect_type_vars(*param, vars);
+                }
+                if let Some(params) = signature {
+                    for param in params {
+                        self.collect_type_vars(param.ty, vars);
+                    }
                 }
                 if let Some(param_spec) = param_spec {
                     vars.push(*param_spec);

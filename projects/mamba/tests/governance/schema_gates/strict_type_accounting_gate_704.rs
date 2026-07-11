@@ -217,6 +217,7 @@ assert "and not unresolved_generated_contracts" in source
 #[test]
 fn generated_inventory_tracks_properties_exports_and_py312_branches() {
     let script = r#"
+import copy
 import importlib.util
 import pathlib
 import subprocess
@@ -267,8 +268,74 @@ for key, param in [
     (("curses", "", "wrapper"), "func"),
 ]:
     row = generic_index[key]
-    assert row["params"][param] == "unsupported", (key, param, row)
-    assert row["param_reasons"][param] == "structured_param_type_unsupported"
+    assert row["params"][param] == "supported", (key, param, row)
+    assert param not in row["param_reasons"]
+
+for key, params in [
+    (("_contextvars", "Context", "run"), {"args", "kwargs"}),
+    (("curses", "", "wrapper"), {"arg", "kwds"}),
+]:
+    row = generic_index[key]
+    assert all(row["params"][param] == "supported" for param in params), row
+
+for key in [
+    ("builtins", "staticmethod", "__call__"),
+    ("functools", "_Wrapped", "__call__"),
+]:
+    row = generic_index[key]
+    for param in ("args", "kwargs"):
+        assert row["params"][param] == "unsupported", (key, param, row)
+        assert row["param_reasons"][param] == "structured_param_type_unsupported"
+
+manifest = module.load_generated_typespec_manifest()
+strings = manifest["strings"]
+def param_node(key, name):
+    row = next(
+        row for row in module._generated_callable_rows(
+            manifest, include_class_inventory=True
+        )
+        if tuple(strings[row[index]] for index in range(3)) == key
+    )
+    start, length = row[4]
+    param = next(
+        param for param in manifest["params"][start : start + length]
+        if strings[param[0]] == name
+    )
+    return manifest["type_uses"][param[2]][0]
+
+context_args = param_node(("_contextvars", "Context", "run"), "args")
+context_callable = param_node(("_contextvars", "Context", "run"), "callable")
+assert module._generated_typespec_status(manifest, context_args) == "unsupported"
+assert module._callable_paramspec_shape(manifest, context_callable) is not None
+
+curses_callable = param_node(("curses", "", "wrapper"), "func")
+callable_value = manifest["nodes"][curses_callable]["Apply"]
+callable_start, _ = callable_value["args"]
+concat_node, return_node = manifest["edges"][callable_start : callable_start + 2]
+concat_value = manifest["nodes"][concat_node]["Apply"]
+concat_start, concat_length = concat_value["args"]
+param_spec_node = manifest["edges"][concat_start + concat_length - 1]
+
+def malformed_callable(concat_args):
+    malformed = copy.deepcopy(manifest)
+    concat_start = len(malformed["edges"])
+    malformed["edges"].extend(concat_args)
+    bad_concat = len(malformed["nodes"])
+    malformed["nodes"].append({
+        "Apply": {"base": concat_value["base"], "args": [concat_start, len(concat_args)]}
+    })
+    callable_start = len(malformed["edges"])
+    malformed["edges"].extend([bad_concat, return_node])
+    bad_callable = len(malformed["nodes"])
+    malformed["nodes"].append({
+        "Apply": {"base": callable_value["base"], "args": [callable_start, 2]}
+    })
+    return malformed, bad_callable
+
+for concat_args in ([param_spec_node], [param_spec_node, param_spec_node]):
+    malformed, bad_callable = malformed_callable(concat_args)
+    assert module._callable_paramspec_shape(malformed, bad_callable) is None
+    assert module._generated_typespec_status(malformed, bad_callable) == "unsupported"
 
 property_fixture = module.TYPE_DIR / "std-libs/urllib_request/Request__full_url__value_as_str_wrong.py"
 property_text = property_fixture.read_text(encoding="utf-8")

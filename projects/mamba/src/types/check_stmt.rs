@@ -1160,6 +1160,7 @@ impl TypeChecker {
                 params: param_types,
                 ret: ret_ty,
                 variadic: is_variadic,
+                signature: self.function_callable_signature(sym),
                 param_spec: None,
             })
         };
