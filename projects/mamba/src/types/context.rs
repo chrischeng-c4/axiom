@@ -323,7 +323,9 @@ impl TypeContext {
                 .args
                 .iter()
                 .any(|arg| self.contains_type_var(*arg)),
-            Ty::List(item) | Ty::Set(item) => self.contains_type_var(*item),
+            Ty::List(item) | Ty::Set(item) | Ty::TypeObject(item) => {
+                self.contains_type_var(*item)
+            }
             Ty::Dict(key, value) => self.contains_type_var(*key) || self.contains_type_var(*value),
             Ty::Tuple(items) | Ty::Union(items) => {
                 items.iter().any(|item| self.contains_type_var(*item))
@@ -382,7 +384,9 @@ impl TypeContext {
                     self.collect_type_vars(*arg, vars);
                 }
             }
-            Ty::List(item) | Ty::Set(item) => self.collect_type_vars(*item, vars),
+            Ty::List(item) | Ty::Set(item) | Ty::TypeObject(item) => {
+                self.collect_type_vars(*item, vars)
+            }
             Ty::Dict(key, value) => {
                 self.collect_type_vars(*key, vars);
                 self.collect_type_vars(*value, vars);
@@ -493,6 +497,10 @@ impl TypeContext {
         // Never is subtype of everything
         if matches!(sub_ty, Ty::Never) {
             return true;
+        }
+
+        if let (Ty::TypeObject(sub_instance), Ty::TypeObject(sup_instance)) = (sub_ty, sup_ty) {
+            return self.is_subtype_inner(*sub_instance, *sup_instance, visiting);
         }
 
         // int is subtype of float (numeric widening)

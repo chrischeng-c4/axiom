@@ -152,6 +152,14 @@ impl Substitution {
                     tcx.intern(Ty::Set(new_elem))
                 }
             }
+            Ty::TypeObject(instance) => {
+                let new_instance = self.apply(instance, tcx);
+                if new_instance == instance {
+                    ty
+                } else {
+                    tcx.intern(Ty::TypeObject(new_instance))
+                }
+            }
             Ty::Dict(k, v) => {
                 let new_k = self.apply(k, tcx);
                 let new_v = self.apply(v, tcx);
@@ -522,6 +530,20 @@ fn unify_for_inference_step(
                 );
             }
         }
+        Ty::TypeObject(instance_param) => {
+            let arg_ty = tcx.get(arg).clone();
+            if let Ty::TypeObject(instance_arg) = arg_ty {
+                unify_for_inference_inner(
+                    instance_param,
+                    instance_arg,
+                    type_vars,
+                    subst,
+                    conflicts,
+                    tcx,
+                    visiting,
+                );
+            }
+        }
         Ty::Dict(k_param, v_param) => {
             let arg_ty = tcx.get(arg).clone();
             if let Ty::Dict(k_arg, v_arg) = arg_ty {
@@ -619,6 +641,7 @@ fn inference_shapes_match(param: TypeId, arg: TypeId, tcx: &TypeContext) -> bool
         (Ty::AliasRef(_), Ty::AliasRef(_))
         | (Ty::List(_), Ty::List(_))
         | (Ty::Set(_), Ty::Set(_))
+        | (Ty::TypeObject(_), Ty::TypeObject(_))
         | (Ty::Dict(_, _), Ty::Dict(_, _))
         | (Ty::Tuple(_), Ty::Tuple(_))
         | (Ty::Union(_), Ty::Union(_))
