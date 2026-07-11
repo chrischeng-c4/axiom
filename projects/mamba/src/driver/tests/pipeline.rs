@@ -1475,6 +1475,76 @@ fn test_async_resume_dispatch_reads_state_once() {
 }
 
 #[test]
+fn test_async_int_await_add_lowers_to_checked_add() {
+    let mir = pipeline(
+        "async def fibonacci(n: int) -> int:\n    if n <= 1:\n        return n\n    return await fibonacci(n - 1) + await fibonacci(n - 2)\n",
+    );
+    let body = mir
+        .bodies
+        .iter()
+        .find(|body| {
+            let await_calls = body
+                .blocks
+                .iter()
+                .flat_map(|block| block.stmts.iter())
+                .filter(|stmt| {
+                    matches!(
+                        stmt,
+                        MirInst::CallExtern { name, .. } if name == "mb_await"
+                    )
+                })
+                .count();
+            let resume_loads = body
+                .blocks
+                .iter()
+                .flat_map(|block| block.stmts.iter())
+                .filter(|stmt| {
+                    matches!(
+                        stmt,
+                        MirInst::CallExtern { name, .. } if name == "mb_coroutine_take_resume_value"
+                    )
+                })
+                .count();
+            await_calls == 2 && resume_loads == 2
+        })
+        .expect("async fibonacci body should be synthesized");
+    let has_unbox = body.blocks.iter().any(|block| {
+        block.stmts.iter().any(|stmt| {
+            matches!(
+                stmt,
+                MirInst::CallExtern { name, .. } if name == "mb_unbox_inline_int_if_boxed"
+            )
+        })
+    });
+    let has_checked_add = body.blocks.iter().any(|block| {
+        block
+            .stmts
+            .iter()
+            .any(|stmt| matches!(stmt, MirInst::CheckedAdd { .. }))
+    });
+    let has_dispatch_add = body.blocks.iter().any(|block| {
+        block.stmts.iter().any(|stmt| {
+            matches!(
+                stmt,
+                MirInst::CallExtern { name, .. } if name == "mb_dispatch_binop"
+            )
+        })
+    });
+    assert!(
+        has_unbox,
+        "awaited int results should be unboxed before arithmetic"
+    );
+    assert!(
+        has_checked_add,
+        "awaited int add should lower to CheckedAdd"
+    );
+    assert!(
+        !has_dispatch_add,
+        "awaited int add should not stay on mb_dispatch_binop"
+    );
+}
+
+#[test]
 fn test_nested_async_function_captures_outer_local() {
     let mir = pipeline(
         "async def outer():\n    xs = []\n    async def inner():\n        xs.append(1)\n    await inner()\n",
