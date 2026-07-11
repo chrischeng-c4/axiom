@@ -1569,12 +1569,18 @@ def _spec_scan_scope(info, body, qualifier="", v312=True):
                 _spec_scan_scope(info, branch, qualifier, branch_v312)
 
 
-def _spec_resolve_exports(infos, local):
-    """Resolve public symbols through explicit and star re-exports."""
+def _spec_export_candidates(infos, local):
+    """Propagate every public export candidate, including ambiguous ones."""
     info_by_module = {info["module"]: info for info in infos}
-    resolved = dict(local)
+    resolved = {
+        key: set(targets) if isinstance(targets, set) else {targets}
+        for key, targets in local.items()
+    }
     for _ in range(len(infos) + 1):
-        candidates = {key: {target} for key, target in local.items()}
+        candidates = {
+            key: set(targets) if isinstance(targets, set) else {targets}
+            for key, targets in local.items()
+        }
         for info in infos:
             allowed = info["all_names"]
             for name, (origin, imported) in info["imports"].items():
@@ -1583,13 +1589,13 @@ def _spec_resolve_exports(infos, local):
                     and (allowed is None or name not in allowed)
                 ):
                     continue
-                target = resolved.get((origin, imported))
-                if target is not None:
-                    candidates.setdefault((info["module"], name), set()).add(target)
+                targets = resolved.get((origin, imported))
+                if targets:
+                    candidates.setdefault((info["module"], name), set()).update(targets)
             for origin in info["star_imports"]:
                 source = info_by_module.get(origin)
                 source_all = source["all_names"] if source is not None else None
-                for (module, name), target in resolved.items():
+                for (module, name), targets in resolved.items():
                     if module != origin:
                         continue
                     if source_all is not None:
@@ -1599,29 +1605,38 @@ def _spec_resolve_exports(infos, local):
                         continue
                     if allowed is not None and name not in allowed:
                         continue
-                    candidates.setdefault((info["module"], name), set()).add(target)
-        updated = {
-            key: next(iter(targets))
-            for key, targets in candidates.items()
-            if len(targets) == 1
-        }
-        if updated == resolved:
+                    candidates.setdefault((info["module"], name), set()).update(targets)
+        if candidates == resolved:
             return resolved
-        resolved = updated
+        resolved = candidates
     return resolved
 
 
-def _spec_resolve_class_exports(infos):
+def _spec_unique_exports(candidates, conflicting_candidates=None):
+    conflicting_candidates = conflicting_candidates or {}
+    return {
+        key: next(iter(targets))
+        for key, targets in candidates.items()
+        if len(targets) == 1 and not conflicting_candidates.get(key)
+    }
+
+
+def _spec_resolve_exports(infos, local):
+    """Resolve unique public symbols through explicit and star re-exports."""
+    return _spec_unique_exports(_spec_export_candidates(infos, local))
+
+
+def _spec_class_export_candidates(infos):
     local = {}
     for info in infos:
         for decl in info["class_decls"]:
             if "." not in decl["qualifier"]:
-                local[(info["module"], decl["name"])] = (
+                local.setdefault((info["module"], decl["name"]), set()).add((
                     info["module"], decl["qualifier"]
-                )
-    resolved = _spec_resolve_exports(infos, local)
+                ))
+    resolved = _spec_export_candidates(infos, local)
     for _ in range(len(infos) + 1):
-        expanded = dict(local)
+        expanded = {key: set(targets) for key, targets in local.items()}
         for info in infos:
             for name, alias_target in info["class_aliases"]:
                 parts = alias_target.split(".")
@@ -1635,15 +1650,58 @@ def _spec_resolve_class_exports(infos):
                     if not target_parts:
                         continue
                     key = (origin, ".".join(target_parts))
-                target = resolved.get(key)
-                if target is not None:
-                    expanded[(info["module"], name)] = target
-        updated = _spec_resolve_exports(infos, expanded)
+                targets = resolved.get(key)
+                if targets:
+                    expanded.setdefault((info["module"], name), set()).update(targets)
+        updated = _spec_export_candidates(infos, expanded)
         if updated == resolved:
             return resolved
         local = expanded
         resolved = updated
     return resolved
+
+
+def _spec_resolve_class_exports(infos):
+    return _spec_unique_exports(_spec_class_export_candidates(infos))
+
+
+def _spec_alias_export_candidates(infos):
+    local = {}
+    for info in infos:
+        for decl in info["alias_decls"]:
+            if not decl["qualifier"]:
+                local.setdefault((info["module"], decl["name"]), set()).add((
+                    info["module"], decl["name"]
+                ))
+    return _spec_export_candidates(infos, local)
+
+
+def _spec_resolve_alias_exports(infos):
+    """Resolve unique top-level aliases through explicit and star re-exports."""
+    return _spec_unique_exports(_spec_alias_export_candidates(infos))
+
+
+def _spec_resolve_imported_identity(
+    module,
+    name,
+    global_symbols,
+    class_kinds,
+    class_candidates,
+    alias_candidates,
+):
+    key = (module, name)
+    aliases = set(alias_candidates.get(key, set()))
+    classes = set(class_candidates.get(key, set()))
+    if key in class_kinds:
+        classes.add(key)
+    if len(aliases) == 1 and not classes:
+        alias_module, alias_name = next(iter(aliases))
+        return alias_module, alias_name, "Alias"
+    if len(classes) == 1 and not aliases:
+        return module, name, class_kinds[next(iter(classes))]
+    if aliases or classes:
+        return module, name, "Imported"
+    return module, name, global_symbols.get(key, "Imported")
 
 
 def _spec_resolve_callable_exports(infos, callables):
@@ -1706,7 +1764,12 @@ class _SpecCorpus:
         self.classes = []
         self.class_ids = {}
         self.class_method_edges = []
-        self.class_export_targets = _spec_resolve_class_exports(infos)
+        self.class_export_candidates = _spec_class_export_candidates(infos)
+        self.alias_export_candidates = _spec_alias_export_candidates(infos)
+        self.class_export_targets = _spec_unique_exports(
+            self.class_export_candidates,
+            self.alias_export_candidates,
+        )
         self.class_exports = []
         self.callable_exports = []
         self.class_only_callables = []
@@ -1906,10 +1969,14 @@ class _SpecCorpus:
             if not name:
                 name = root
             module, name = self._canonical_imported_name(module, name)
-            symbol_kind = self.global_symbols.get((module, name), "Imported")
-            target = self.class_export_targets.get((module, name))
-            if target is not None:
-                symbol_kind = self.class_kinds[target]
+            module, name, symbol_kind = _spec_resolve_imported_identity(
+                module,
+                name,
+                self.global_symbols,
+                self.class_kinds,
+                self.class_export_candidates,
+                self.alias_export_candidates,
+            )
             if symbol_kind == "TypeParam":
                 imported_info = self.info_by_module.get(module)
                 if imported_info:
