@@ -32,10 +32,8 @@ WORK = 400_000
 
 
 def cpu_work(seed: int, work: int = WORK) -> int:
-    total = 0
-    for i in range(work):
-        total = (total + ((i ^ seed) * 2654435761)) & 0xFFFFFFFF
-    return total
+    # Keep the loop Python-level without per-statement locals snapshots dominating.
+    return sum((i ^ seed) * 3 for i in range(work))
 
 
 def run_serial() -> tuple[float, list[int]]:
