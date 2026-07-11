@@ -38,6 +38,21 @@ fn run_python_script(script: &str) -> std::process::Output {
         .expect("run python script")
 }
 
+fn assert_python_script(script: &str, label: &str) {
+    let output = Command::new("python3.12")
+        .arg("-c")
+        .arg(script)
+        .current_dir(mamba_root())
+        .output()
+        .unwrap_or_else(|error| panic!("run {label}: {error}"));
+    assert!(
+        output.status.success(),
+        "{label} failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn mamba_bin() -> PathBuf {
     let project_local = mamba_root().join("target/debug/mamba");
     if project_local.exists() {
@@ -62,7 +77,10 @@ fn strict_type_tools_are_python_parseable() {
         root.join("tests/harness/cpython/tools/strict_type_accounting.py"),
         root.join("tests/harness/cpython/tools/replacement_readiness.py"),
         root.join("tests/harness/cpython/tools/fixture_lint.py"),
+        root.join("tests/harness/cpython/tools/checkout_typeshed.py"),
+        root.join("tests/harness/cpython/tools/typeshed_lock.py"),
         root.join("tests/harness/cpython/tools/type_wall_gen.py"),
+        root.join("tests/harness/cpython/tools/wall_status.py"),
         root.join("tests/harness/cpython/tools/type_enforce_matrix.py"),
         root.join("tests/harness/cpython/tools/verify_cpython_oracle.py"),
     ]);
@@ -1144,4 +1162,254 @@ fn generated_typeshed_denominator_header_is_present() {
     assert!(manifest.contains("\"class_exports\":"));
     assert!(manifest.contains("\"callable_exports\":"));
     assert!(manifest.contains("\"nodes\":"));
+}
+
+#[test]
+fn typeshed_input_lock_matches_generated_provenance() {
+    let script = r#"
+import json
+import pathlib
+import tomllib
+
+root = pathlib.Path(".")
+lock = tomllib.loads(
+    (root / "vendor/typeshed.lock.toml").read_text(encoding="utf-8")
+)
+manifest = json.loads(
+    (root / "src/types/stdlib_specs_generated.json").read_text(encoding="utf-8")
+)
+expected = {
+    "repository": lock["repository"],
+    "revision": lock["revision"],
+    "stdlib_pyi_count": lock["stdlib_pyi_count"],
+    "stdlib_pyi_sha256": lock["stdlib_pyi_sha256"],
+}
+assert manifest["schema"] == 2
+assert manifest["provenance"]["typeshed"] == expected
+
+header_fields = {
+    "typeshed-repository": expected["repository"],
+    "typeshed-revision": expected["revision"],
+    "typeshed-stdlib-pyi-count": expected["stdlib_pyi_count"],
+    "typeshed-stdlib-pyi-sha256": expected["stdlib_pyi_sha256"],
+}
+for relative in (
+    "src/types/stdlib_sigs_generated.rs",
+    "src/types/stdlib_specs_generated.rs",
+):
+    text = (root / relative).read_text(encoding="utf-8")
+    for name, value in header_fields.items():
+        assert f"//! {name}: {value}" in text, (relative, name, value)
+    assert "tests/harness/cpython/tools/checkout_typeshed.py" in text
+"#;
+    assert_python_script(script, "typeshed generated provenance smoke");
+}
+
+#[test]
+fn typeshed_input_digest_is_stable_and_detects_drift() {
+    let script = r##"
+import pathlib
+import sys
+import tempfile
+
+tools = pathlib.Path("tests/harness/cpython/tools").resolve()
+sys.path.insert(0, str(tools))
+import type_wall_gen
+import wall_status
+from typeshed_lock import (
+    TypeshedLock,
+    TypeshedLockError,
+    load_typeshed_lock,
+    stdlib_pyi_fingerprint,
+    verify_typeshed_stdlib,
+)
+
+FIRST = b"def a() -> int: ...\n"
+SECOND = b"class B: ...\n"
+GOLDEN = "51df42981c4b4beec44587cf9614d55110e0c73f4f09d15dae073839dcf8b31f"
+
+def write_corpus(root, reverse=False):
+    rows = [(pathlib.Path("a.pyi"), FIRST), (pathlib.Path("nested/b.pyi"), SECOND)]
+    if reverse:
+        rows.reverse()
+    for relative, content in rows:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+
+def expect_lock_error(call):
+    try:
+        call()
+    except TypeshedLockError:
+        return
+    raise AssertionError("expected TypeshedLockError")
+
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+    first = tmp / "first"
+    second = tmp / "second"
+    write_corpus(first)
+    write_corpus(second, reverse=True)
+    first_fingerprint = stdlib_pyi_fingerprint(first)
+    second_fingerprint = stdlib_pyi_fingerprint(second)
+    assert first_fingerprint == second_fingerprint == (2, GOLDEN)
+
+    lock = TypeshedLock(1, "https://example.invalid/typeshed.git", "a" * 40, 2, GOLDEN)
+    verify_typeshed_stdlib(first, lock=lock)
+
+    (first / "a.pyi").write_bytes(FIRST + b"# drift\n")
+    expect_lock_error(lambda: verify_typeshed_stdlib(first, lock=lock))
+    (first / "a.pyi").write_bytes(FIRST)
+    (first / "extra.pyi").write_text("x: int\n", encoding="utf-8")
+    expect_lock_error(lambda: verify_typeshed_stdlib(first, lock=lock))
+    (first / "extra.pyi").unlink()
+    (first / "nested/b.pyi").unlink()
+    expect_lock_error(lambda: verify_typeshed_stdlib(first, lock=lock))
+
+    malformed = [
+        'schema = 2\nrepository = "https://example.invalid/typeshed.git"\nrevision = "' + "a" * 40 + '"\nstdlib_pyi_count = 2\nstdlib_pyi_sha256 = "' + GOLDEN + '"\n',
+        'schema = 1\nrepository = "https://example.invalid/typeshed.git"\nrevision = "abc"\nstdlib_pyi_count = 2\nstdlib_pyi_sha256 = "' + GOLDEN + '"\n',
+        'schema = 1\nrepository = "https://example.invalid/typeshed.git"\nrevision = "' + "a" * 40 + '"\nstdlib_pyi_count = 0\nstdlib_pyi_sha256 = "' + GOLDEN + '"\n',
+        'schema = 1\nrepository = "https://example.invalid/typeshed.git"\nrevision = "' + "a" * 40 + '"\nstdlib_pyi_count = 2\nstdlib_pyi_sha256 = "abc"\n',
+        'schema = 1\nrepository = "https://example.invalid/typeshed.git"\nrevision = "' + "A" * 40 + '"\nstdlib_pyi_count = 2\nstdlib_pyi_sha256 = "' + GOLDEN + '"\n',
+        'schema = 1\nrepository = "https://example.invalid/typeshed.git"\nrevision = "' + "a" * 40 + '"\nstdlib_pyi_count = 2\nstdlib_pyi_sha256 = "' + GOLDEN + '"\nextra = true\n',
+    ]
+    for index, text in enumerate(malformed):
+        path = tmp / f"bad-{index}.toml"
+        path.write_text(text, encoding="utf-8")
+        expect_lock_error(lambda path=path: load_typeshed_lock(path))
+
+    drifted = tmp / "drifted"
+    write_corpus(drifted)
+    old = type_wall_gen.TYPESHED_STDLIB
+    old_argv = sys.argv
+    type_wall_gen.TYPESHED_STDLIB = drifted
+    try:
+        expect_lock_error(type_wall_gen.verify_typeshed_corpus)
+        sys.argv = ["type_wall_gen.py", "--dry-run"]
+        assert type_wall_gen.main() == 2
+        expect_lock_error(wall_status.type_wall_signatures_and_cases)
+    finally:
+        sys.argv = old_argv
+        type_wall_gen.TYPESHED_STDLIB = old
+"##;
+    assert_python_script(script, "typeshed fingerprint governance smoke");
+}
+
+#[test]
+fn typeshed_checkout_is_exact_and_non_destructive() {
+    let script = r#"
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
+
+tools = pathlib.Path("tests/harness/cpython/tools").resolve()
+sys.path.insert(0, str(tools))
+from checkout_typeshed import checkout_typeshed
+from typeshed_lock import (
+    TypeshedLock,
+    TypeshedLockError,
+    stdlib_pyi_fingerprint,
+    verify_typeshed_stdlib,
+)
+
+def git(*args, cwd=None):
+    result = subprocess.run(
+        ["git", *args], cwd=cwd, check=True, text=True, capture_output=True
+    )
+    return result.stdout.strip()
+
+def expect_lock_error(call):
+    try:
+        call()
+    except TypeshedLockError:
+        return
+    raise AssertionError("expected TypeshedLockError")
+
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+    source = tmp / "source"
+    source.mkdir()
+    git("init", "--quiet", cwd=source)
+    git("config", "user.name", "Mamba Test", cwd=source)
+    git("config", "user.email", "mamba-test@example.invalid", cwd=source)
+    (source / "stdlib").mkdir()
+    (source / "stdlib/a.pyi").write_text("def a() -> int: ...\n", encoding="utf-8")
+    (source / "stubs/demo").mkdir(parents=True)
+    stub = source / "stubs/demo/demo.pyi"
+    stub.write_text("VERSION: int\n", encoding="utf-8")
+    git("add", ".", cwd=source)
+    git("commit", "--quiet", "-m", "pinned", cwd=source)
+    pinned_revision = git("rev-parse", "HEAD", cwd=source)
+    count, digest = stdlib_pyi_fingerprint(source / "stdlib")
+
+    stub.write_text("VERSION: str\n", encoding="utf-8")
+    git("add", ".", cwd=source)
+    git("commit", "--quiet", "-m", "moving head", cwd=source)
+    moving_revision = git("rev-parse", "HEAD", cwd=source)
+    assert moving_revision != pinned_revision
+
+    lock = TypeshedLock(1, str(source), pinned_revision, count, digest)
+    target = tmp / "target"
+    checkout_typeshed(target, lock)
+    assert git("rev-parse", "HEAD", cwd=target) == pinned_revision
+    assert git("rev-parse", "--abbrev-ref", "HEAD", cwd=target) == "HEAD"
+    assert git("remote", "get-url", "origin", cwd=target) == str(source)
+    assert (target / "stubs/demo/demo.pyi").read_text(encoding="utf-8") == "VERSION: int\n"
+    checkout_typeshed(target, lock)
+
+    wrong_origin = str(tmp / "other-origin")
+    git("remote", "set-url", "origin", wrong_origin, cwd=target)
+    expect_lock_error(lambda: checkout_typeshed(target, lock))
+    assert git("config", "--get", "remote.origin.url", cwd=target) == wrong_origin
+    git("remote", "set-url", "origin", str(source), cwd=target)
+
+    wrong = tmp / "wrong-revision"
+    git("clone", "--quiet", str(source), str(wrong))
+    assert git("rev-parse", "HEAD", cwd=wrong) == moving_revision
+    expect_lock_error(lambda: checkout_typeshed(wrong, lock))
+    assert git("rev-parse", "HEAD", cwd=wrong) == moving_revision
+
+    dirty_stub = target / "stubs/demo/demo.pyi"
+    dirty_stub.write_text("LOCAL: bool\n", encoding="utf-8")
+    expect_lock_error(lambda: checkout_typeshed(target, lock))
+    assert dirty_stub.read_text(encoding="utf-8") == "LOCAL: bool\n"
+
+    non_git = tmp / "non-git"
+    shutil.copytree(source / "stdlib", non_git / "stdlib")
+    marker = non_git / "keep.txt"
+    marker.write_text("preserve\n", encoding="utf-8")
+    verify_typeshed_stdlib(non_git / "stdlib", lock=lock)
+    expect_lock_error(lambda: checkout_typeshed(non_git, lock))
+    assert marker.read_text(encoding="utf-8") == "preserve\n"
+"#;
+    assert_python_script(script, "typeshed checkout governance smoke");
+}
+
+#[test]
+fn typeshed_acquisition_instructions_are_lock_aware() {
+    let root = mamba_root();
+    let helper = "tests/harness/cpython/tools/checkout_typeshed.py";
+    let forbidden = "git clone --depth=1 https://github.com/python/typeshed.git";
+    for relative in [
+        ".gitignore",
+        "llms.txt",
+        "src/surface.rs",
+        "src/types/stdlib_sigs.rs",
+        "src/types/stdlib_sigs_generated.rs",
+        "src/types/stdlib_specs_generated.rs",
+    ] {
+        let text = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|error| panic!("read {relative}: {error}"));
+        assert!(
+            !text.contains(forbidden),
+            "{relative} must not instruct agents to clone moving typeshed HEAD"
+        );
+        assert!(
+            text.contains(helper),
+            "{relative} must route typeshed acquisition through {helper}"
+        );
+    }
 }
