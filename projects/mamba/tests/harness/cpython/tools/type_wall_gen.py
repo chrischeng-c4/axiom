@@ -1855,6 +1855,22 @@ class _SpecCorpus:
         if qualifier:
             yield ""
 
+    def _canonical_imported_name(self, module, name):
+        pieces = name.split(".")
+        if len(pieces) < 2:
+            return module, name
+        head = pieces[0]
+        if (
+            (module, head) in self.global_symbols
+            or (module, head) in self.class_export_targets
+        ):
+            return module, name
+        for end in range(len(pieces) - 1, 0, -1):
+            candidate = ".".join([module, *pieces[:end]])
+            if candidate in self.info_by_module:
+                return candidate, ".".join(pieces[end:])
+        return module, name
+
     def _resolve_name(self, info, qualifier, dotted):
         root, *tail = dotted.split(".")
         for scope in self._scope_candidates(qualifier):
@@ -1882,6 +1898,7 @@ class _SpecCorpus:
                 name = ".".join(tail)
             if not name:
                 name = root
+            module, name = self._canonical_imported_name(module, name)
             symbol_kind = self.global_symbols.get((module, name), "Imported")
             target = self.class_export_targets.get((module, name))
             if target is not None:

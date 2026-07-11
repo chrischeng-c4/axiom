@@ -885,6 +885,47 @@ mod tests {
     }
 
     #[test]
+    fn generated_manifest_canonicalizes_imported_submodule_qualifiers() {
+        let init = overloads(
+            "asyncio.subprocess",
+            "SubprocessStreamProtocol",
+            "__init__",
+        )
+        .next()
+        .expect("SubprocessStreamProtocol.__init__ spec");
+        let loop_param = params(init.params)
+            .iter()
+            .find(|param| string(param.name) == "loop")
+            .expect("loop parameter");
+        let TypeSpecNode::Name { module, name, kind } = node(type_use(loop_param.ty).0)
+        else {
+            panic!("event loop must retain nominal imported identity")
+        };
+        assert_eq!(
+            (string(*module), string(*name)),
+            ("asyncio.events", "AbstractEventLoop")
+        );
+        assert_eq!(*kind, TypeNameKind::Nominal);
+
+        let discover = overloads("importlib.metadata", "Distribution", "discover")
+            .next()
+            .expect("Distribution.discover spec");
+        let context = params(discover.params)
+            .iter()
+            .find(|param| string(param.name) == "context")
+            .expect("context parameter");
+        let TypeSpecNode::Name { module, name, kind } = node(type_use(context.ty).0)
+        else {
+            panic!("nested class must retain its local identity")
+        };
+        assert_eq!(
+            (string(*module), string(*name)),
+            ("importlib.metadata", "DistributionFinder.Context")
+        );
+        assert_eq!(*kind, TypeNameKind::Nominal);
+    }
+
+    #[test]
     fn generated_manifest_preserves_alias_targets() {
         let root_alias = alias("_typeshed", "OpenTextMode").expect("OpenTextMode alias");
         let TypeSpecNode::Union(members) = node(root_alias.target) else {

@@ -5980,6 +5980,32 @@ fn typeshed_builtin_exception_names_resolve_across_modules() {
 }
 
 #[test]
+fn typeshed_imported_submodule_names_enforce_nominal_types() {
+    let valid = check(
+        "from asyncio.events import AbstractEventLoop\n\
+         from asyncio.subprocess import SubprocessStreamProtocol\n\
+         SubprocessStreamProtocol(1, AbstractEventLoop())\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "the canonical imported class identity must remain accepted: {valid:?}"
+    );
+
+    let invalid = check(
+        "from asyncio.subprocess import SubprocessStreamProtocol\n\
+         class NotAnEventLoop:\n\
+         \x20   pass\n\
+         SubprocessStreamProtocol(1, NotAnEventLoop())\n",
+    );
+    assert!(
+        invalid
+            .iter()
+            .any(|error| error.contains("argument type mismatch")),
+        "an unrelated nominal class must not satisfy AbstractEventLoop: {invalid:?}"
+    );
+}
+
+#[test]
 fn typeshed_indeterminate_contract_does_not_fall_back_to_compact_wall() {
     let errors = check(
         "from dataclasses import asdict\n\
