@@ -452,6 +452,14 @@ fn evaluate_mem_gate(cpython_rss_bytes: u64, mamba_rss_bytes: u64) -> MemGateEva
     }
 }
 
+fn join_gate_failures(failures: &[String]) -> Option<String> {
+    if failures.is_empty() {
+        None
+    } else {
+        Some(failures.join("\n"))
+    }
+}
+
 fn run_pin(toml_path: &Path) -> datatest_stable::Result<()> {
     let raw = std::fs::read_to_string(toml_path)?;
     let pin: Pin = toml::from_str(&raw)?;
@@ -552,6 +560,7 @@ fn run_pin(toml_path: &Path) -> datatest_stable::Result<()> {
     } else {
         format!("median-of-{samples}")
     };
+    let mut gate_failures = Vec::new();
 
     // OPTIONAL peak-RSS gate. A pin without `mem_floor` behaves exactly as
     // before (no assertion). When present, assert mem_ratio = cpython_rss /
@@ -577,21 +586,22 @@ fn run_pin(toml_path: &Path) -> datatest_stable::Result<()> {
                     mb_b,
                     cpy_b
                 );
-                assert!(
-                    evaluation.adjusted_ratio >= mem_floor,
-                    "#{} {} mem gate FAIL: fixed-floor-adjusted cpython/mamba workload-RSS ratio = \
-                     {:.2}x below floor of {:.2}x after applying {} B fixed runtime RSS allowance \
-                     (raw ratio {:.2}x; effective mamba workload RSS {} B; mamba total {} B vs cpython {} B)",
-                    pin.issue,
-                    pin.lib,
-                    evaluation.adjusted_ratio,
-                    mem_floor,
-                    MAMBA_FIXED_RUNTIME_RSS_FLOOR_BYTES,
-                    evaluation.raw_ratio,
-                    evaluation.effective_mamba_rss_bytes,
-                    mb_b,
-                    cpy_b,
-                );
+                if evaluation.adjusted_ratio < mem_floor {
+                    gate_failures.push(format!(
+                        "#{} {} mem gate FAIL: fixed-floor-adjusted cpython/mamba workload-RSS ratio = \
+                         {:.2}x below floor of {:.2}x after applying {} B fixed runtime RSS allowance \
+                         (raw ratio {:.2}x; effective mamba workload RSS {} B; mamba total {} B vs cpython {} B)",
+                        pin.issue,
+                        pin.lib,
+                        evaluation.adjusted_ratio,
+                        mem_floor,
+                        MAMBA_FIXED_RUNTIME_RSS_FLOOR_BYTES,
+                        evaluation.raw_ratio,
+                        evaluation.effective_mamba_rss_bytes,
+                        mb_b,
+                        cpy_b,
+                    ));
+                }
             }
             _ => {
                 eprintln!(
@@ -614,17 +624,13 @@ fn run_pin(toml_path: &Path) -> datatest_stable::Result<()> {
                  (mamba {} ns vs cpython {} ns)",
                 pin.issue, pin.lib, cpu_ratio, mb_cpu, cpy_cpu
             );
-            assert!(
-                cpu_ratio <= pin.floor,
-                "#{} {} CPU gate FAIL: ratio = {:.2}x exceeds floor of {:.2}x \
-                 (mamba {} ns vs cpython {} ns) [{mode}]",
-                pin.issue,
-                pin.lib,
-                cpu_ratio,
-                pin.floor,
-                mb_cpu,
-                cpy_cpu,
-            );
+            if cpu_ratio > pin.floor {
+                gate_failures.push(format!(
+                    "#{} {} CPU gate FAIL: ratio = {:.2}x exceeds floor of {:.2}x \
+                     (mamba {} ns vs cpython {} ns) [{mode}]",
+                    pin.issue, pin.lib, cpu_ratio, pin.floor, mb_cpu, cpy_cpu,
+                ));
+            }
         }
         _ => {
             eprintln!(
@@ -633,6 +639,9 @@ fn run_pin(toml_path: &Path) -> datatest_stable::Result<()> {
                 pin.issue, pin.lib, cpy.cpu_time_ns, mb.cpu_time_ns
             );
         }
+    }
+    if let Some(message) = join_gate_failures(&gate_failures) {
+        panic!("{message}");
     }
     Ok(())
 }
