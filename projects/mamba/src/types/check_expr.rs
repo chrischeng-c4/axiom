@@ -465,6 +465,10 @@ impl TypeChecker {
                                         );
                                     }
                                     if let Some(&expected) = params.get(param_idx) {
+                                        let at = self.refine_class_object_actual(expected, at, a);
+                                        if let Some(last) = checked_arg_types.last_mut() {
+                                            *last = Some(at);
+                                        }
                                         // chr/hex/oct/bin accept any class
                                         // defining __index__ (SupportsIndex
                                         // protocol — CPython calls the dunder
@@ -558,6 +562,14 @@ impl TypeChecker {
                                                     .find(|sig| sig.kind == ParamKind::DoubleStar)
                                             })
                                     }) {
+                                        let at = self.refine_class_object_actual(
+                                            param.ty,
+                                            at,
+                                            value,
+                                        );
+                                        if let Some(last) = checked_arg_types.last_mut() {
+                                            *last = Some(at);
+                                        }
                                         self.check_user_fn_argument_type(
                                             value.span,
                                             param.ty,
@@ -622,6 +634,12 @@ impl TypeChecker {
                             return applied;
                         }
                         ret
+                    }
+                    Ty::TypeObject(instance) => {
+                        for arg in args {
+                            self.check_call_arg(arg);
+                        }
+                        instance
                     }
                     // #246: calling a class constructor returns instance of that class
                     Ty::Class { role, user, .. } => {
@@ -1139,6 +1157,11 @@ impl TypeChecker {
         actual: TypeId,
         actual_expr: &Expr,
     ) {
+        let actual = self.refine_class_object_actual(
+            expected,
+            actual,
+            &Spanned::new(actual_expr.clone(), span),
+        );
         let bytes_literal_str_mismatch = matches!(
             (self.tcx.get(expected), actual_expr),
             (Ty::Str, Expr::BytesLit(_))
@@ -1442,6 +1465,9 @@ impl TypeChecker {
             ("builtins", "tuple") if args.is_empty() => {
                 self.tcx.intern(Ty::Tuple(Vec::new()))
             }
+            ("builtins", "type") if args.is_empty() => {
+                self.tcx.intern(Ty::TypeObject(self.tcx.any()))
+            }
             _ if matches!(kind, TypeNameKind::Nominal | TypeNameKind::Builtin) => {
                 self.external_class_instance(module, name, args)
             }
@@ -1575,6 +1601,10 @@ impl TypeChecker {
                             .map(|item| self.materialize_stdlib_type(*item))
                             .collect::<Option<Vec<_>>>()?;
                         self.tcx.intern(Ty::Tuple(items))
+                    }
+                    ("builtins", "type") if args.len() == 1 => {
+                        let instance = self.materialize_stdlib_type(args[0])?;
+                        self.tcx.intern(Ty::TypeObject(instance))
                     }
                     ("typing", "Optional") if args.len() == 1 => {
                         let item = self.materialize_stdlib_type(args[0])?;
@@ -2002,6 +2032,17 @@ impl TypeChecker {
             let expected_spec = spec::type_use(visible[param_index].ty).0;
             let expected = self.materialize_stdlib_type(expected_spec);
             indeterminate |= expected.is_none();
+            let actual = if let Some(expected) = expected {
+                let value = match &args[arg_index] {
+                    CallArg::Positional(value)
+                    | CallArg::StarArg(value)
+                    | CallArg::Keyword { value, .. }
+                    | CallArg::DoubleStarArg(value) => value,
+                };
+                self.refine_class_object_actual(expected, actual, value)
+            } else {
+                actual
+            };
             matched.push((expected, actual, span, name, arg_index));
         }
 
