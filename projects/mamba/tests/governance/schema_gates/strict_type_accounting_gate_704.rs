@@ -29,6 +29,32 @@ fn py_compile(paths: &[PathBuf]) {
     );
 }
 
+fn run_python_script(script: &str) -> std::process::Output {
+    Command::new("python3.12")
+        .arg("-c")
+        .arg(script)
+        .current_dir(mamba_root())
+        .output()
+        .expect("run python script")
+}
+
+fn mamba_bin() -> PathBuf {
+    let project_local = mamba_root().join("target/debug/mamba");
+    if project_local.exists() {
+        return project_local;
+    }
+    mamba_root().join("../../target/debug/mamba")
+}
+
+fn run_mamba_fixture(fixture_rel: &str) -> std::process::Output {
+    Command::new(mamba_bin())
+        .arg("run")
+        .arg(fixture_rel)
+        .current_dir(mamba_root())
+        .output()
+        .expect("run mamba fixture")
+}
+
 #[test]
 fn strict_type_tools_are_python_parseable() {
     let root = mamba_root();
@@ -264,6 +290,76 @@ for strict_fixture, oracle_fixture in [
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn imported_identity_type_fixtures_remain_in_strict_type_accounting_wall() {
+    let script = r#"
+import importlib.util
+import pathlib
+import sys
+
+tool = pathlib.Path("tests/harness/cpython/tools/strict_type_accounting.py")
+sys.path.insert(0, str(tool.parent))
+spec = importlib.util.spec_from_file_location("strict_type_accounting", tool)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+sigs = module.parse_generated_signature_param_index()
+fixtures = [
+    "tests/cpython/type/std-libs/importlib_metadata/DistributionFinder__find_distributions__context_as_Context_wrong.py",
+    "tests/cpython/type/std-libs/_frozen_importlib_external/PathFinder__find_distributions__context_as_Context_wrong.py",
+    "tests/cpython/type/std-libs/ssl/SSLSocket__connect__addr_as__Address_wrong.py",
+    "tests/cpython/type/std-libs/ssl/SSLSocket__connect_ex__addr_as__Address_wrong.py",
+    "tests/cpython/type/std-libs/wsgiref_handlers/BaseHandler__run__application_as_WSGIApplication_wrong.py",
+    "tests/cpython/type/std-libs/wsgiref_util/application_uri__environ_as_WSGIEnvironment_wrong.py",
+    "tests/cpython/type/std-libs/wsgiref_validate/validator__application_as_WSGIApplication_wrong.py",
+]
+for fixture in fixtures:
+    path = pathlib.Path(fixture)
+    subject = module.parse_type_fixture_subject(path)
+    assert subject is not None, fixture
+    key = module.resolve_generated_sig_key(subject[0], sigs)
+    assert key is not None, fixture
+    assert module.unenforceable_generated_param_reason(path, sigs) is None, fixture
+"#;
+    let output = run_python_script(script);
+    assert!(
+        output.status.success(),
+        "imported identity accounting smoke failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn imported_identity_type_fixtures_still_reject_at_check_time() {
+    let fixtures = [
+        "tests/cpython/type/std-libs/importlib_metadata/DistributionFinder__find_distributions__context_as_Context_wrong.py",
+        "tests/cpython/type/std-libs/_frozen_importlib_external/PathFinder__find_distributions__context_as_Context_wrong.py",
+        "tests/cpython/type/std-libs/ssl/SSLSocket__connect__addr_as__Address_wrong.py",
+        "tests/cpython/type/std-libs/ssl/SSLSocket__connect_ex__addr_as__Address_wrong.py",
+        "tests/cpython/type/std-libs/wsgiref_handlers/BaseHandler__run__application_as_WSGIApplication_wrong.py",
+        "tests/cpython/type/std-libs/wsgiref_validate/validator__application_as_WSGIApplication_wrong.py",
+    ];
+    for fixture in fixtures {
+        let output = run_mamba_fixture(fixture);
+        assert!(
+            !output.status.success(),
+            "fixture should reject at check time: {fixture}\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("type error") || stderr.contains("type mismatch"),
+            "fixture should fail with a type rejection: {fixture}\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            stderr
+        );
+    }
 }
 
 #[test]
