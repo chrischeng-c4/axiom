@@ -209,7 +209,11 @@ headers, the CPython oracle, and the perf-baseline flow.
 > anything. The production data plane is durable-only: no service-archetype
 > adopter may acknowledge accepted state changes from an in-memory-only path, and
 > every stateful service must pair local/raft durability with scheduled off-node
-> snapshots to object storage.
+> snapshots to object storage. Durable-only applies to the mutation path as a
+> whole, not only the primary write path: an admin or migration verb that
+> writes state outside the normal request path must either route through it
+> or be explicitly checkpointed and awaited before any dependent
+> orchestration step (restart, cutover, failover) proceeds.
 
 Reference instantiations: **`keep`** (KV / claim-check store), **`relay`**
 (broker), **`lumen`** (search / dedup index), and **`loom`** (workflow
@@ -384,6 +388,23 @@ Kubernetes output is split by lifecycle layer:
 an independent namespace such as `<svc>-system`; `operator run` is the controller
 process/container entrypoint. `instance` renders the app-namespace custom
 resource that an application team applies next to the app it integrates with.
+
+When a reconcile's rendered shape stops including a resource it rendered
+previously — a conditional HPA, a per-mode Service, or any other
+conditionally-rendered child — the service operator must explicitly delete
+that child. The shared `libs/operator` reconcile loop renders desired state;
+it does not garbage-collect a resource that an earlier render produced and
+the current render no longer wants. The deletion must be idempotent, scoped
+to the names/labels the operator itself stamps (never a foreign or
+unrelated resource), and logged.
+
+A mounted PVC is not durability. Rendering a `PersistentVolumeClaim`
+template only makes storage available; the operator's rendered defaults
+must also activate the service's own durable-persistence path (data-dir /
+persistence env or equivalent) so the service actually writes to that
+storage. The deploy baseline for a stateful service includes a
+pod-delete-and-recreate proof that data written before the deletion is
+still present after the pod is recreated.
 
 ### Deploy tenancy — dedicated first, shared only when justified
 
@@ -574,6 +595,12 @@ ecosystem). The leader owns writes; followers tail it over h2c. Node identity
 and the peer set come from the Kubernetes **downward API** on a StatefulSet —
 nothing is hand-configured per replica. Gate consensus behind a Cargo feature
 only when a single-node mode is a legitimate deployment (e.g. `keep`).
+
+A stateful sharded service scales storage and compute along two independent,
+autonomous axes: storage ownership grows through disk-usage-driven shard
+splits, compute capacity grows through CPU-driven replica/HPA scaling, and
+neither axis has a human gate. HPA owns compute scaling only — it never
+changes shard ownership or storage topology.
 
 ### EC gates — `vat`-driven, evidence under `external-contracts/`
 
