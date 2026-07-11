@@ -2,7 +2,25 @@ use std::{
     ffi::OsString,
     path::{Path, PathBuf},
     process::Command,
+    sync::Mutex,
 };
+
+/// Process-wide lock for every call site (production or test) that must
+/// temporarily mutate the process's current working directory via
+/// `std::env::set_current_dir`.
+///
+/// `current_dir`/`set_current_dir` are OS-process-global, not per-thread,
+/// and `cargo test` runs `#[test]` functions across multiple threads by
+/// default. Before issue #1401 this crate had THREE independent
+/// `Mutex<()>` cwd guards (`cli/mod.rs`, `cli/guard.rs`, `cli/cb.rs`'s
+/// `CwdGuard`) that each looked locally safe but did not serialize
+/// against each other: a test in one module could still interleave its
+/// `set_current_dir` with a concurrently-running test in another module,
+/// corrupting both tests' relative-path resolution. Every cwd-mutating
+/// call site in this crate must acquire THIS lock instead of a
+/// module-local one so the whole process ever has one owner of cwd at a
+/// time.
+pub(crate) static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 /// Apply the local agent shell defaults needed for deterministic Rust gates.
 pub(crate) fn apply_default_shell_env(command: &mut Command) {
