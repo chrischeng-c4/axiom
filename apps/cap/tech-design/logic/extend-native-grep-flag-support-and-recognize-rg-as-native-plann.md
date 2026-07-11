@@ -402,3 +402,124 @@ flowchart TD
     r6[R6 cd prefix suite unaffected by grep rg changes] --> cargo_test_p_cap_command_planner_tests_cd_prefix_grep_replans_native[cargo test -p cap command_planner::tests::cd_prefix_grep_replans_native]
     r6[R6 full command planner suite unaffected] --> cargo_test_p_cap_command_planner[cargo test -p cap command_planner]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/cap/src/command_planner.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Extend `GrepFilePlan` (~line 1846) from `{ pattern: String, file: String
+      }` to `{ patterns: Vec<String>, file: String, ignore_case: bool, invert:
+      bool, line_numbers: bool, count: bool, files_with_matches: bool,
+      only_matching: bool, context_before: usize, context_after: usize }`
+      (`patterns` replaces the single `pattern` field and is OR-combined at
+      match time; the two other fields carry the flag state). Update the 2
+      existing `GrepFilePlan` construction sites inside `plan_grep_file`
+      (~line 9370) so the two pre-existing zero-flag branches (`[pattern]`
+      stdin and `[pattern, file]`) construct the extended struct with a
+      single-element `patterns` vec and all boolean/usize fields at their
+      false/0 defaults, preserving their exact existing reason strings and
+      match behavior byte-for-byte (no regression). Add a third branch (or a
+      sibling helper `plan_grep_file` delegates to) that only activates when
+      neither existing branch matches: tokenize `args` into flag tokens
+      (leading `-`) and non-flag tokens; accept combinable short flags `-n`
+      `-i` `-v` `-c` `-l` `-o` (may cluster, e.g. `-ni`); accept `-A`/`-B`/`-C`
+      only as a standalone token followed by a numeric token, or an
+      attached-digit token (`-A3`), rejecting any cluster that fuses a context
+      flag with another short flag (`-A3n` disqualifies); accept repeatable
+      `-e PATTERN` collected into `patterns` (OR-combined); when no `-e` token
+      is present, exactly one remaining non-flag token ahead of an optional
+      file token is the bare pattern. Every pattern must independently pass
+      the existing `is_plain_literal_pattern` (~line 16871) — no regex-dialect
+      expansion. At most one non-flag/non-pattern token may remain as the file
+      argument; if present it must satisfy `Path::new(file).is_file()` (same
+      check the existing `[pattern, file]` branch uses, naturally excluding
+      directories). Any flag/shape outside this vocabulary (`-r`/`-R`,
+      `--glob`/`-g`, `--type`, `--include`, `-u`, `-p`, `--json`, `-U`, more
+      than one file, or a rejected combined-context form) returns `None`.
+
+  - path: apps/cap/src/command_planner.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      Add a new `"rg" => ...` arm in `plan_native`'s dispatch match (sibling
+      to the existing `"grep" => plan_grep_file(&command[1..], label,
+      original)` at ~line 2433) that calls a new
+      `normalize_rg_args(args: &[String]) -> Option<Vec<String>>` helper before
+      delegating into the same flag-parsing path added above. The normalizer
+      consumes a small cosmetic allowlist harmlessly — `--no-heading`,
+      `--heading`, `--color=<mode>` (any value) — without adding them to the
+      returned argv, then passes the remaining tokens through unchanged (rg's
+      `-n -i -v -c -l -o -A -B -C -e` already mean the same thing as grep's
+      per ripgrep's own grep-compatibility design, so no separate flag-mapping
+      table is needed). Any rg-specific flag outside the shared vocabulary and
+      this cosmetic allowlist returns `None` from the normalizer, disqualifying
+      the whole rg invocation to the bash fallback. Separately, add one
+      normalization step at the point `plan_shell` (~line 2213) first computes
+      the pipe-segment word list via `split_simple_shell_words(original)`
+      (before the existing `words.iter().any(|word| word == "|")` check calls
+      `plan_pipe_words`): if the leading segment's first word is `rg` and the
+      remainder of that segment is exactly the already-accepted zero-flag
+      shape (`[pattern]` or `[pattern, file]`, no leading `-` on either token,
+      `is_plain_literal_pattern(pattern)`), rewrite that first word from `rg`
+      to the literal `grep` token in the assembled word list, so the existing
+      `cmd == "grep"`-keyed pipe-fusion match-arm family
+      (`plan_head_grep_producer_mode` and siblings, ~3378-4600+ and more)
+      fuses it unmodified with zero duplicated match arms. Any other shape —
+      a non-grep/rg segment, or a flag-bearing `rg`/`grep` segment
+      participating in a pipe — is left untouched (explicit, documented
+      out-of-scope boundary; falls back to whatever the existing
+      pipe-fusion/bash-fallback logic already does). `plan_grep_replacement`
+      (~line 9483) is not touched by either change.
+
+  - path: apps/cap/src/command_planner.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: >
+      Update `run_grep_file` (~line 14199) and its helpers
+      `collect_grep_file_plain_lines`/`collect_grep_plain_lines_reader`
+      (~line 14151-14197) to honor the new `GrepFilePlan` fields while
+      preserving exact current output bytes for the zero-flag case: multi-
+      pattern OR matching over `patterns`; case-insensitive compare when
+      `ignore_case`; invert selection when `invert`; count-only numeric output
+      when `count`; file-name-only output when `files_with_matches`;
+      only-matched-substring output when `only_matching`; prefixed line
+      numbers when `line_numbers`; and `context_before`/`context_after` line
+      windows around each match (grep/rg `-A`/`-B`/`-C` semantics). Add
+      `command_planner::tests` cases for: `-n`, `-i`, `-v`, `-c`, `-l`, `-o`
+      individually; `-A 2` (standalone+numeric) and `-B2` (attached-digit) and
+      `-C 1`; `-A3n` (combined-context-with-other-short rejected, falls back);
+      repeated `-e pat1 -e pat2` OR matching; combined short-flag cluster
+      `-ni`; the rg-alias translations for `rg -n`, `rg -c`, `rg -A 3`, `rg
+      --no-heading -n`, and `rg -n -e pat1 -e pat2`; an unsupported rg-only
+      flag (e.g. `--json`) falling back; regression coverage that a directory
+      file arg, `--glob`/`-g`/`--type`/`--include`, a PCRE-only pattern (`+`,
+      `(`, `|`), `-r`/`-R`, `-u`/`-p`/`--json`/`-U`, and more than one file
+      argument all cleanly fall back to bash unchanged; regression coverage
+      that existing zero-flag grep pipe-fusion is unaffected and that a bare
+      zero-flag `rg <pattern> [file]` pipe segment is translated and fused
+      identically; regression coverage that a flag-bearing `rg` inside a pipe
+      falls back to bash unchanged (documented deferral); and a full
+      `cargo test -p cap command_planner` run proving the #1378 cd-prefix
+      suite and the rest of the existing suite are unaffected.
+
+  - path: apps/cap/README.md
+    action: modify
+    section: overview
+    impl_mode: hand-written
+    description: >
+      Update the Command Lease Throttling capability's "Command planner grep
+      flag/rg alias native recognition" work-root row (added ahead of this
+      TD's authoring to register the `command-planner-grep-flag-rg-alias-
+      native-recognition` gap/claim id) from `planned`/`planned` to
+      `implemented`/`verified` once `cargo test -p cap command_planner`
+      covers the new flag-aware grep/rg native path, mirroring the #1378
+      precedent's README-edit shape.
+```
