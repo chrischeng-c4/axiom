@@ -23,7 +23,7 @@ use crate::types::{Ty, TypeContext, TypeId};
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
-    types as cl_types, AbiParam, Function, InstBuilder, MemFlags, Signature,
+    types as cl_types, AbiParam, Function, InstBuilder, MemFlags, Signature, Value,
 };
 use cranelift_codegen::isa::CallConv;
 use cranelift_codegen::settings::{self, Configurable};
@@ -618,6 +618,11 @@ struct VarAlloc {
     /// touches locals that are definitely assigned on every path to the
     /// terminator, avoiding large branch-local release sets at SSA merges.
     live_filter: Option<HashSet<VReg>>,
+    /// Per-function scratch for inline recursion helpers in the JIT backend.
+    /// When `mb_recursion_enter` fetches this function body's TLS depth-cell
+    /// pointer in the entry prologue, `mb_recursion_leave` can reuse the same
+    /// SSA value instead of re-emitting `mb_recursion_depth_ptr`.
+    recursion_depth_ptr: Option<Value>,
 }
 
 impl VarAlloc {
@@ -629,6 +634,7 @@ impl VarAlloc {
             native_bools: HashSet::new(),
             raw_ints: HashSet::new(),
             live_filter: None,
+            recursion_depth_ptr: None,
         }
     }
 
@@ -2383,7 +2389,10 @@ mod tests {
 
         let must_assign = compute_must_assign(&body);
         let join = must_assign.get(&3).expect("join block present");
-        assert!(join.contains(&VReg(0)), "entry local should survive to join");
+        assert!(
+            join.contains(&VReg(0)),
+            "entry local should survive to join"
+        );
         assert!(
             !join.contains(&VReg(1)),
             "then-branch local must not be definitely assigned at join"
@@ -2396,7 +2405,9 @@ mod tests {
 
     #[test]
     fn test_return_release_sweep_cap_blocks_pathological_bodies() {
-        assert!(should_emit_return_release_sweep(MAX_RETURN_RELEASE_SWEEP_VREGS));
+        assert!(should_emit_return_release_sweep(
+            MAX_RETURN_RELEASE_SWEEP_VREGS
+        ));
         assert!(!should_emit_return_release_sweep(
             MAX_RETURN_RELEASE_SWEEP_VREGS + 1
         ));
