@@ -104,11 +104,12 @@ pub fn find_project_root() -> anyhow::Result<std::path::PathBuf> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use std::sync::Mutex;
 
     // find_project_root() reads process-global CWD; serialize tests that
-    // mutate it so parallel cargo test runs don't race.
-    static CWD_LOCK: Mutex<()> = Mutex::new(());
+    // mutate it against the crate-wide `shell_env::CWD_LOCK` (issue #1401)
+    // so parallel cargo test runs don't race against cwd mutations in
+    // OTHER modules (e.g. `cli/guard.rs`, `cli/cb.rs`), not just this one.
+    use crate::cli::shell_env::CWD_LOCK;
 
     fn git_available() -> bool {
         std::process::Command::new("git")
@@ -151,7 +152,9 @@ mod tests {
         if !git_available() {
             return;
         }
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let prev = std::env::current_dir().unwrap();
 
         let tmp = tempfile::TempDir::new().unwrap();
@@ -193,7 +196,9 @@ mod tests {
         if !git_available() {
             return;
         }
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let prev = std::env::current_dir().unwrap();
 
         let tmp = tempfile::TempDir::new().unwrap();
@@ -217,7 +222,9 @@ mod tests {
 
     #[test]
     fn find_project_root_non_git_tempdir_walks_up() {
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let prev = std::env::current_dir().unwrap();
 
         let tmp = tempfile::TempDir::new().unwrap();

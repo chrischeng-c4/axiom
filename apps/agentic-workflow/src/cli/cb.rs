@@ -5512,13 +5512,12 @@ pub(crate) fn repo_relative_code_path(project_root: &std::path::Path, code_path:
 
 // Guards the process-wide cwd while `ensure_claim_issue` drives
 // `crate::cli::issues::run` — that entry point resolves its project root
-// from `std::env::current_dir()`, not a parameter. Mirrors
-// `standardize.rs`'s own `CwdGuard` (issue #919); duplicated here rather
-// than reused because that struct is file-private to `standardize.rs` and
-// this module already owns its own cwd-guarding convention, matching the
-// existing per-module `CWD_LOCK` pattern in `cli/mod.rs` and
-// `cli/guard.rs`. Restores the previous cwd on drop, including on
-// error/panic unwind.
+// from `std::env::current_dir()`, not a parameter. Serializes through the
+// crate-wide `shell_env::CWD_LOCK`, not a module-local mutex (issue
+// #1401): cwd is process-global, so a lock scoped to just this module
+// cannot stop this guard from racing a concurrently-running cwd mutation
+// in `cli/mod.rs` or `cli/guard.rs` tests. Restores the previous cwd on
+// drop, including on error/panic unwind.
 struct CwdGuard {
     prev: std::path::PathBuf,
     _lock: std::sync::MutexGuard<'static, ()>,
@@ -5526,8 +5525,9 @@ struct CwdGuard {
 
 impl CwdGuard {
     fn enter(dir: &std::path::Path) -> Result<Self> {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let lock = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let lock = crate::cli::shell_env::CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let prev = std::env::current_dir().context("failed to read current directory")?;
         std::env::set_current_dir(dir)
             .with_context(|| format!("failed to switch cwd to {}", dir.display()))?;

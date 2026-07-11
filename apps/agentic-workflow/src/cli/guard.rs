@@ -642,10 +642,13 @@ fn lexical_normalize(path: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use std::fs;
-    use std::sync::Mutex;
     use tempfile::TempDir;
 
-    static CWD_LOCK: Mutex<()> = Mutex::new(());
+    // Serialize against the crate-wide `shell_env::CWD_LOCK` (issue #1401),
+    // not a module-local mutex: cwd is process-global, so a local lock here
+    // does not stop these tests from racing a concurrently-running
+    // cwd-mutating test in another module (e.g. `cli/mod.rs`, `cli/cb.rs`).
+    use crate::cli::shell_env::CWD_LOCK;
 
     fn write_project_config(root: &Path) {
         fs::create_dir_all(root.join(".aw")).unwrap();
@@ -704,7 +707,9 @@ paths = ["libs/demo/**"]
 
     #[test]
     fn pretool_denies_claude_write_inside_project_path() {
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let tmp = TempDir::new().unwrap();
         write_project_config(tmp.path());
         fs::create_dir_all(tmp.path().join("projects/demo/src")).unwrap();
@@ -727,7 +732,9 @@ paths = ["libs/demo/**"]
 
     #[test]
     fn pretool_allows_claude_write_outside_project_path() {
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let tmp = TempDir::new().unwrap();
         write_project_config(tmp.path());
         fs::create_dir_all(tmp.path().join("projects/other/src")).unwrap();
@@ -750,7 +757,9 @@ paths = ["libs/demo/**"]
 
     #[test]
     fn pretool_denies_codex_apply_patch_inside_project_path() {
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let tmp = TempDir::new().unwrap();
         write_project_config(tmp.path());
         fs::create_dir_all(tmp.path().join("projects/demo/src")).unwrap();
