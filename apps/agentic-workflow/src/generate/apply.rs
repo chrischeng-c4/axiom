@@ -262,15 +262,27 @@ fn run_apply_inner(
         );
     }
 
-    // Neither legacy Changes metadata nor codebase refs produced a target. New
-    // TDs should stay free of implementation manifests; missing inference is a
-    // generator policy gap that must be handled by automation or HITL.
+    // Neither legacy Changes metadata nor codebase refs produced a target.
+    // Inference (`infer_change_entries_from_existing_spec_refs`) can only
+    // discover files that ALREADY carry a matching `@spec`/CODEGEN
+    // reference — it has no way to invent a path for a file that has never
+    // existed (e.g. the first source file of a brand-new lib). That case is
+    // not a missing-policy generator gap; it is a missing-manifest one, and
+    // the remediation is concrete and actionable: name the new target
+    // path(s) explicitly. Say so instead of leaving the TD author to guess
+    // between HANDWRITE adoption and a generator-gap escalation (#1242).
     if change_entries.is_empty() {
         return Err(crate::generate::GenerateError::InvalidValue(format!(
-            "No target files inferred for spec '{}'. TD-to-codebase requires existing \
-             @spec/CODEGEN refs or a deterministic generator output policy. This is a \
-             generator gap/HANDWRITE gap/HITL error, not a request for new TD authors to \
-             write legacy changes.",
+            "No target files inferred for spec '{}'. Inference only finds files that \
+             already carry a matching @spec/CODEGEN reference; it cannot invent a path \
+             for a file that does not exist yet (for example, the first source file of a \
+             new lib). If this TD introduces new target files, add an explicit \
+             '## Changes' section naming the concrete new path(s) (action: create, \
+             section: <section-id>) so the target is authoritative, then rerun this \
+             command — apply will create the file (and parent directories) from that \
+             entry. If every target already exists and still isn't found, this is a \
+             generator gap/HANDWRITE gap/HITL error, not a request to add changes for \
+             files that should already be inferrable.",
             spec_path.display()
         )));
     }
@@ -4270,7 +4282,62 @@ properties:
 
         assert!(message.contains("No target files inferred"));
         assert!(message.contains("generator gap"));
-        assert!(message.contains("not a request for new TD authors"));
+        assert!(message.contains("## Changes"));
+        assert!(message.contains("action: create"));
+    }
+
+    /// #1242: a TD introducing a brand-new lib (no existing target file
+    /// anywhere carries an `@spec` ref to it yet) cannot be inferred — that
+    /// is inherent to "scan the codebase for existing refs" inference, not
+    /// a bug. An explicit `## Changes` entry naming the new path is the
+    /// authoritative, supported way to bootstrap it: apply creates the file
+    /// (and parent directories) even though the target — and its crate
+    /// directory — never previously existed.
+    #[test]
+    fn changes_section_creates_target_for_not_yet_existing_lib() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("apps/agentic-workflow/tech-design/logic/newlib.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: newlib
+fill_sections: [logic]
+---
+
+## Changes
+<!-- type: changes -->
+
+```yaml
+changes:
+  - path: libs/newlib/src/lib.rs
+    action: create
+    section: logic
+```
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+flowchart TD
+  start([newlib]) --> done[done]
+```
+"#,
+        )
+        .unwrap();
+
+        let report = run_apply(&spec_path, root, false).expect("apply should create the target");
+        let target = root.join("libs/newlib/src/lib.rs");
+        assert!(
+            target.exists(),
+            "expected libs/newlib/src/lib.rs to be created"
+        );
+        assert_eq!(report.files_created(), 1);
+        let content = std::fs::read_to_string(&target).unwrap();
+        assert!(
+            content.contains("SPEC-REF: apps/agentic-workflow/tech-design/logic/newlib.md#logic")
+        );
     }
 
     /// End-to-end: spec with `x-mamba-binding` + `x-constructor` drives a clean
