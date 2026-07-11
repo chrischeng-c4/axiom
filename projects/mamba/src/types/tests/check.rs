@@ -6320,6 +6320,98 @@ fn typeshed_callable_paramspec_identity_materializes_without_widening() {
 }
 
 #[test]
+fn typeshed_productive_recursive_aliases_keep_stable_generated_identity() {
+    use crate::types::stdlib_typespec as spec;
+
+    let mut checker = TypeChecker::new();
+    let dump = spec::overloads("marshal", "", "dump")
+        .next()
+        .expect("marshal.dump spec");
+    let value = spec::params(dump.params)
+        .iter()
+        .find(|param| spec::string(param.name) == "value")
+        .expect("marshal.dump value parameter");
+    let first = checker
+        .materialize_stdlib_type(spec::type_use(value.ty).0)
+        .expect("productive generated alias must materialize");
+    let second = checker
+        .materialize_stdlib_type(spec::type_use(value.ty).0)
+        .expect("generated alias cache must retain its placeholder");
+    assert_eq!(first, second, "recursive alias identity must be stable");
+
+    assert!(
+        matches!(checker.tcx.get(first), Ty::Union(_)),
+        "the recursive target must remain semantic rather than widening to Any"
+    );
+
+    let Ty::Union(members) = checker.tcx.get(first) else {
+        unreachable!("the marshal alias target was asserted to be a union");
+    };
+    let recursive_edge = members.iter().find_map(|member| {
+        let Ty::Tuple(items) = checker.tcx.get(*member) else {
+            return None;
+        };
+        items.iter().find_map(|item| match checker.tcx.get(*item) {
+            Ty::AliasRef(id) => Some(*id),
+            _ => None,
+        })
+    });
+    let recursive_edge = recursive_edge.expect("tuple branch must retain an AliasRef back-edge");
+    assert!(matches!(
+        checker.tcx.alias_instance(recursive_edge).identity,
+        crate::types::context::AliasIdentity::Generated(_, _)
+    ));
+    assert_eq!(checker.tcx.alias_target(recursive_edge), Some(first));
+}
+
+#[test]
+fn typeshed_productive_recursive_aliases_enforce_representative_calls() {
+    let valid = check(
+        "import marshal\n\
+         import sys\n\
+         from xml.etree.ElementTree import Element\n\
+         from xmlrpc.client import Marshaller, dumps as xmlrpc_dumps\n\
+         def trace(frame, event, arg):\n\
+         \x20   return None\n\
+         marshal.dumps((1, 'nested'))\n\
+         sys.settrace(trace)\n\
+         Element('tag')\n\
+         marshaller = object.__new__(Marshaller)\n\
+         marshaller.dumps((1, 'nested'))\n\
+         xmlrpc_dumps((1, 'nested'))\n",
+    );
+    assert!(valid.is_empty(), "valid recursive contracts must pass: {valid:?}");
+
+    let invalid = check(
+        "import marshal\n\
+         import sys\n\
+         from xml.etree.ElementTree import Element\n\
+         from xmlrpc.client import Marshaller, dumps as xmlrpc_dumps\n\
+         class _W:\n\
+         \x20   pass\n\
+         bad = _W()\n\
+         marshal.dumps(bad)\n\
+         sys.settrace(bad)\n\
+         Element(bad)\n\
+         marshaller = object.__new__(Marshaller)\n\
+         marshaller.dumps(bad)\n\
+         xmlrpc_dumps(bad)\n",
+    );
+    for parameter in ["value", "function", "values", "params"] {
+        assert!(
+            has_parameter_error(&invalid, parameter),
+            "recursive contract must reject `{parameter}`: {invalid:?}"
+        );
+    }
+    assert!(
+        invalid
+            .iter()
+            .any(|error| error.contains("Type parameter '_Tag' bound violation")),
+        "recursive _Tag bound must reject the invalid constructor call: {invalid:?}"
+    );
+}
+
+#[test]
 fn typeshed_unbound_paramspec_rejects_only_definite_noncallables() {
     let valid = check(
         "from _contextvars import Context\n\

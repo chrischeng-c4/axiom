@@ -1753,18 +1753,30 @@ impl TypeChecker {
         use super::stdlib_typespec as spec;
 
         let alias = spec::alias(module, name)?.clone();
-        let key = (alias.module, alias.name);
-        if !self.stdlib_spec_alias_initializing.insert(key) {
+        let type_params = spec::type_param_edges(alias.type_params);
+        if !args.is_empty() && args.len() != type_params.len() {
             return None;
+        }
+        let identity = super::context::AliasIdentity::Generated(alias.module, alias.name);
+        let (instance, alias_ref) = self.tcx.intern_alias_instance(
+            identity,
+            format!("{}.{}", spec::string(alias.module), spec::string(alias.name)),
+            args.clone(),
+            args.len(),
+        );
+        if self.tcx.alias_target(instance).is_some() {
+            return Some(self.tcx.semantic_head_id(alias_ref).unwrap_or(alias_ref));
+        }
+        if self.tcx.alias_target_is_resolving(instance) {
+            return Some(alias_ref);
+        }
+        if !self.tcx.begin_alias_target(instance) {
+            return Some(alias_ref);
         }
         let materialized = (|| {
             let target = self.materialize_stdlib_type(alias.target)?;
-            let type_params = spec::type_param_edges(alias.type_params);
             if args.is_empty() {
                 return Some(target);
-            }
-            if args.len() != type_params.len() {
-                return None;
             }
             let mut substitution = Substitution::new();
             for (param, arg) in type_params.iter().zip(args) {
@@ -1776,8 +1788,18 @@ impl TypeChecker {
             }
             Some(substitution.apply(target, &mut self.tcx))
         })();
-        self.stdlib_spec_alias_initializing.remove(&key);
-        materialized
+        let Some(target) = materialized else {
+            self.tcx.abandon_alias_target(instance);
+            return None;
+        };
+        if self.tcx.alias_has_unguarded_cycle(instance, target) {
+            self.tcx.abandon_alias_target(instance);
+            return None;
+        }
+        self.tcx.set_alias_target(instance, target);
+        // Ordinary generated aliases retain their expanded head. Only a
+        // recursive re-entry above observes the stable AliasRef placeholder.
+        Some(self.tcx.semantic_head_id(alias_ref).unwrap_or(alias_ref))
     }
 
     fn materialize_stdlib_param_spec(
@@ -1854,6 +1876,34 @@ impl TypeChecker {
     }
 
     pub(crate) fn materialize_stdlib_type(
+        &mut self,
+        spec_id: super::stdlib_typespec::TypeSpecId,
+    ) -> Option<TypeId> {
+        let root = self.stdlib_spec_materialization_depth == 0;
+        let alias_checkpoint = root.then(|| self.tcx.begin_alias_target_transaction());
+        if root {
+            debug_assert!(self.stdlib_spec_materialization_nodes.is_empty());
+        }
+        self.stdlib_spec_materialization_depth += 1;
+        let materialized = self.materialize_stdlib_type_inner(spec_id);
+        self.stdlib_spec_materialization_depth -= 1;
+
+        if root {
+            let nodes = std::mem::take(&mut self.stdlib_spec_materialization_nodes);
+            self.tcx.finish_alias_target_transaction(
+                alias_checkpoint.expect("root materialization must own an alias checkpoint"),
+                materialized.is_some(),
+            );
+            if materialized.is_none() {
+                for node in nodes {
+                    self.stdlib_spec_types.remove(&node);
+                }
+            }
+        }
+        materialized
+    }
+
+    fn materialize_stdlib_type_inner(
         &mut self,
         spec_id: super::stdlib_typespec::TypeSpecId,
     ) -> Option<TypeId> {
@@ -2016,7 +2066,9 @@ impl TypeChecker {
                 }
             }
         };
-        self.stdlib_spec_types.insert(spec_id, ty);
+        if self.stdlib_spec_types.insert(spec_id, ty).is_none() {
+            self.stdlib_spec_materialization_nodes.push(spec_id);
+        }
         Some(ty)
     }
 

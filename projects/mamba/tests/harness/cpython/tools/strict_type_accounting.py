@@ -379,19 +379,26 @@ def _typespec_variant(node: Any) -> tuple[str, Any]:
     return "Unsupported", None
 
 
-def _generated_alias_target(
+def _generated_alias_decl(
     manifest: dict[str, Any], module: str, name: str
-) -> int | None:
-    index = manifest.get("_alias_target_index")
+) -> dict[str, Any] | None:
+    index = manifest.get("_alias_decl_index")
     if index is None:
         strings = manifest["strings"]
         index = {
-            (strings[row["module"]], strings[row["name"]]): row["target"]
+            (strings[row["module"]], strings[row["name"]]): row
             for row in manifest.get("aliases", [])
             if not strings[row["qualifier"]]
         }
-        manifest["_alias_target_index"] = index
+        manifest["_alias_decl_index"] = index
     return index.get((module, name))
+
+
+def _generated_alias_target(
+    manifest: dict[str, Any], module: str, name: str
+) -> int | None:
+    decl = _generated_alias_decl(manifest, module, name)
+    return None if decl is None else decl["target"]
 
 
 def _generated_class_row(
@@ -516,7 +523,12 @@ def _materializable_status(statuses: list[str], *, outer_constraint: bool) -> st
 
 
 def _generated_type_param_status(
-    manifest: dict[str, Any], decl_id: int, visiting: set[int]
+    manifest: dict[str, Any],
+    decl_id: int,
+    visiting: set[int],
+    *,
+    alias_frames: dict[tuple[str, str], bool],
+    substitutions: dict[int, int],
 ) -> str:
     decl = manifest["type_params"][decl_id]
     start, length = decl["constraints"]
@@ -525,11 +537,23 @@ def _generated_type_param_status(
     default = decl.get("default")
     constraint_nodes = ([] if bound is None else [bound]) + constraints
     constraint_statuses = [
-        _generated_typespec_status(manifest, item, visiting)
+        _generated_typespec_status(
+            manifest,
+            item,
+            visiting,
+            alias_frames=alias_frames,
+            substitutions=substitutions,
+        )
         for item in constraint_nodes
     ]
     if default is not None:
-        default_status = _generated_typespec_status(manifest, default, visiting)
+        default_status = _generated_typespec_status(
+            manifest,
+            default,
+            visiting,
+            alias_frames=alias_frames,
+            substitutions=substitutions,
+        )
         if default_status == "unsupported":
             return "unsupported"
     if "unsupported" in constraint_statuses:
@@ -629,16 +653,99 @@ def _callable_paramspec_shape(
     return prefix, tail_value
 
 
+def _generated_typespec_guards_alias(
+    manifest: dict[str, Any], kind: str, value: Any
+) -> bool:
+    if kind == "Tuple":
+        return True
+    if kind != "Apply":
+        return False
+    base_kind, base = _typespec_variant(manifest["nodes"][value["base"]])
+    if base_kind != "Name" or base["kind"] == "a":
+        return False
+    strings = manifest["strings"]
+    base_key = (strings[base["module"]], strings[base["name"]])
+    return base_key not in {
+        ("typing", "Optional"), ("typing", "Union"),
+        ("typing", "Annotated"), ("typing_extensions", "Annotated"),
+        ("typing", "ClassVar"), ("typing", "Final"),
+        ("typing", "Required"), ("typing", "NotRequired"),
+        ("typing_extensions", "ClassVar"),
+        ("typing_extensions", "Final"),
+        ("typing_extensions", "Required"),
+        ("typing_extensions", "NotRequired"),
+        ("typing_extensions", "ReadOnly"),
+    }
+
+
 def _generated_typespec_status(
-    manifest: dict[str, Any], node_id: int, visiting: set[int] | None = None
+    manifest: dict[str, Any],
+    node_id: int,
+    visiting: set[int] | None = None,
+    *,
+    alias_frames: dict[tuple[str, str], bool] | None = None,
+    substitutions: dict[int, int] | None = None,
+    allow_active_alias_ref: bool = False,
 ) -> str:
-    """Return supported, unconstrained, or unsupported for one TypeSpec node."""
+    """Return checker-parity materialization status for one TypeSpec node."""
     visiting = set() if visiting is None else visiting
+    alias_frames = {} if alias_frames is None else alias_frames
+    substitutions = {} if substitutions is None else substitutions
+    kind, value = _typespec_variant(manifest["nodes"][node_id])
+    strings = manifest["strings"]
+
+    alias_key = None
+    alias_args: list[int] = []
+    if kind == "Name" and value["kind"] == "a":
+        alias_key = (strings[value["module"]], strings[value["name"]])
+    elif kind == "Apply":
+        base_kind, base = _typespec_variant(manifest["nodes"][value["base"]])
+        if base_kind == "Name" and base["kind"] == "a":
+            alias_key = (strings[base["module"]], strings[base["name"]])
+            start, length = value["args"]
+            alias_args = manifest["edges"][start : start + length]
+
+    if alias_key in alias_frames:
+        if alias_args:
+            decl = _generated_alias_decl(manifest, *alias_key)
+            if decl is None:
+                return "unsupported"
+            _, param_length = decl["type_params"]
+            if len(alias_args) != param_length:
+                return "unsupported"
+        arg_statuses = [
+            _generated_typespec_status(
+                manifest,
+                item,
+                visiting,
+                alias_frames=alias_frames,
+                substitutions=substitutions,
+                allow_active_alias_ref=True,
+            )
+            for item in alias_args
+        ]
+        cycle_status = (
+            "supported"
+            if allow_active_alias_ref or alias_frames[alias_key]
+            else "unsupported"
+        )
+        return _materializable_status(
+            [cycle_status, *arg_statuses], outer_constraint=False
+        )
+
     if node_id in visiting:
-        return "unsupported"
+        return (
+            "supported"
+            if allow_active_alias_ref
+            or any(alias_frames.values())
+            or (
+                bool(alias_frames)
+                and _generated_typespec_guards_alias(manifest, kind, value)
+            )
+            else "unsupported"
+        )
     visiting.add(node_id)
     try:
-        kind, value = _typespec_variant(manifest["nodes"][node_id])
         if kind in {
             "Missing", "Unsupported", "LiteralBytes", "Unpack", "ParamList",
             "ParamSpecArgs", "ParamSpecKwargs",
@@ -654,20 +761,47 @@ def _generated_typespec_status(
         if kind == "Ellipsis":
             return "unconstrained"
         if kind == "ForwardRef":
-            return _generated_typespec_status(manifest, value["target"], visiting)
+            return _generated_typespec_status(
+                manifest,
+                value["target"],
+                visiting,
+                alias_frames=alias_frames,
+                substitutions=substitutions,
+                allow_active_alias_ref=allow_active_alias_ref,
+            )
         if kind == "TypeParam":
-            return _generated_type_param_status(manifest, value, visiting)
+            if value in substitutions and substitutions[value] != node_id:
+                return _generated_typespec_status(
+                    manifest,
+                    substitutions[value],
+                    visiting,
+                    alias_frames=alias_frames,
+                    substitutions=substitutions,
+                    allow_active_alias_ref=allow_active_alias_ref,
+                )
+            return _generated_type_param_status(
+                manifest,
+                value,
+                visiting,
+                alias_frames=alias_frames,
+                substitutions=substitutions,
+            )
         if kind == "Name":
-            strings = manifest["strings"]
             key = (strings[value["module"]], strings[value["name"]])
             if value["kind"] == "a":
                 if key == ("builtins", "_ClassInfo"):
                     return "supported"
-                target = _generated_alias_target(manifest, *key)
-                return (
-                    _generated_typespec_status(manifest, target, visiting)
-                    if target is not None
-                    else "unsupported"
+                decl = _generated_alias_decl(manifest, *key)
+                if decl is None:
+                    return "unsupported"
+                nested_frames = dict(alias_frames)
+                nested_frames[key] = False
+                return _generated_typespec_status(
+                    manifest,
+                    decl["target"],
+                    visiting,
+                    alias_frames=nested_frames,
+                    substitutions=substitutions,
                 )
             if value["kind"] == "p":
                 return _generated_protocol_status(manifest, *key)
@@ -692,8 +826,20 @@ def _generated_typespec_status(
             )
         if kind in {"Union", "Tuple"}:
             start, length = value
+            child_frames = (
+                {key: True for key in alias_frames}
+                if kind == "Tuple"
+                else alias_frames
+            )
             statuses = [
-                _generated_typespec_status(manifest, item, visiting)
+                _generated_typespec_status(
+                    manifest,
+                    item,
+                    visiting,
+                    alias_frames=child_frames,
+                    substitutions=substitutions,
+                    allow_active_alias_ref=allow_active_alias_ref,
+                )
                 for item in manifest["edges"][start : start + length]
             ]
             return _materializable_status(
@@ -703,18 +849,42 @@ def _generated_typespec_status(
             base_kind, base = _typespec_variant(manifest["nodes"][value["base"]])
             if base_kind != "Name":
                 return "unsupported"
-            strings = manifest["strings"]
             base_key = (strings[base["module"]], strings[base["name"]])
             if base["kind"] == "a":
-                target = _generated_alias_target(manifest, *base_key)
-                if target is None:
+                decl = _generated_alias_decl(manifest, *base_key)
+                if decl is None:
                     return "unsupported"
-                target_status = _generated_typespec_status(manifest, target, visiting)
-                start, length = value["args"]
-                arg_statuses = [
-                    _generated_typespec_status(manifest, item, visiting)
-                    for item in manifest["edges"][start : start + length]
+                param_start, param_length = decl["type_params"]
+                type_params = manifest["type_param_edges"][
+                    param_start : param_start + param_length
                 ]
+                if alias_args and len(alias_args) != len(type_params):
+                    return "unsupported"
+                arg_statuses = [
+                    _generated_typespec_status(
+                        manifest,
+                        item,
+                        visiting,
+                        alias_frames=alias_frames,
+                        substitutions=substitutions,
+                        allow_active_alias_ref=True,
+                    )
+                    for item in alias_args
+                ]
+                if "unsupported" in arg_statuses:
+                    return "unsupported"
+                nested_frames = dict(alias_frames)
+                nested_frames[base_key] = False
+                nested_substitutions = dict(substitutions)
+                if alias_args:
+                    nested_substitutions.update(zip(type_params, alias_args))
+                target_status = _generated_typespec_status(
+                    manifest,
+                    decl["target"],
+                    visiting,
+                    alias_frames=nested_frames,
+                    substitutions=nested_substitutions,
+                )
                 return _materializable_status(
                     [target_status, *arg_statuses], outer_constraint=False
                 )
@@ -760,11 +930,19 @@ def _generated_typespec_status(
             }:
                 if len(args) != 2:
                     return "unsupported"
+                callable_frames = {key: True for key in alias_frames}
                 param_kind, param_value = _typespec_variant(manifest["nodes"][args[0]])
                 if param_kind == "ParamList":
                     param_start, param_length = param_value
                     param_statuses = [
-                        _generated_typespec_status(manifest, item, visiting)
+                        _generated_typespec_status(
+                            manifest,
+                            item,
+                            visiting,
+                            alias_frames=callable_frames,
+                            substitutions=substitutions,
+                            allow_active_alias_ref=allow_active_alias_ref,
+                        )
                         for item in manifest["edges"][
                             param_start : param_start + param_length
                         ]
@@ -776,50 +954,102 @@ def _generated_typespec_status(
                 else:
                     prefix, param_id = shape
                     param_statuses = [
-                        _generated_typespec_status(manifest, item, visiting)
+                        _generated_typespec_status(
+                            manifest,
+                            item,
+                            visiting,
+                            alias_frames=callable_frames,
+                            substitutions=substitutions,
+                            allow_active_alias_ref=allow_active_alias_ref,
+                        )
                         for item in prefix
                     ]
                     param_statuses.append(
-                        _generated_type_param_status(manifest, param_id, visiting)
+                        _generated_type_param_status(
+                            manifest,
+                            param_id,
+                            visiting,
+                            alias_frames=callable_frames,
+                            substitutions=substitutions,
+                        )
                     )
                     if "unsupported" in param_statuses:
                         return "unsupported"
                 statuses = param_statuses + [
-                    _generated_typespec_status(manifest, args[1], visiting)
+                    _generated_typespec_status(
+                        manifest,
+                        args[1],
+                        visiting,
+                        alias_frames=callable_frames,
+                        substitutions=substitutions,
+                        allow_active_alias_ref=allow_active_alias_ref,
+                    )
                 ]
                 return _materializable_status(statuses, outer_constraint=True)
             if base_key in {
                 ("typing", "Annotated"), ("typing_extensions", "Annotated"),
             }:
                 return (
-                    _generated_typespec_status(manifest, args[0], visiting)
+                    _generated_typespec_status(
+                        manifest,
+                        args[0],
+                        visiting,
+                        alias_frames=alias_frames,
+                        substitutions=substitutions,
+                        allow_active_alias_ref=allow_active_alias_ref,
+                    )
                     if args
                     else "unsupported"
                 )
             if base_key in {
+                ("typing", "TypeGuard"), ("typing", "TypeIs"),
+                ("typing_extensions", "TypeGuard"),
+                ("typing_extensions", "TypeIs"),
+            }:
+                return "supported" if len(args) == 1 else "unsupported"
+            if base_key in {
                 ("typing", "ClassVar"), ("typing", "Final"),
                 ("typing", "Required"), ("typing", "NotRequired"),
-                ("typing", "TypeGuard"), ("typing", "TypeIs"),
                 ("typing_extensions", "ClassVar"),
                 ("typing_extensions", "Final"),
                 ("typing_extensions", "Required"),
                 ("typing_extensions", "NotRequired"),
                 ("typing_extensions", "ReadOnly"),
-                ("typing_extensions", "TypeGuard"),
-                ("typing_extensions", "TypeIs"),
             }:
                 return (
-                    _generated_typespec_status(manifest, args[0], visiting)
+                    _generated_typespec_status(
+                        manifest,
+                        args[0],
+                        visiting,
+                        alias_frames=alias_frames,
+                        substitutions=substitutions,
+                        allow_active_alias_ref=allow_active_alias_ref,
+                    )
                     if len(args) == 1
                     else "unsupported"
                 )
+            outer_constraint = base_key not in {
+                ("typing", "Optional"), ("typing", "Union"),
+            }
+            child_frames = (
+                {key: True for key in alias_frames}
+                if outer_constraint
+                else alias_frames
+            )
             statuses = [
-                _generated_typespec_status(manifest, item, visiting) for item in args
+                _generated_typespec_status(
+                    manifest,
+                    item,
+                    visiting,
+                    alias_frames=child_frames,
+                    substitutions=substitutions,
+                    allow_active_alias_ref=allow_active_alias_ref,
+                )
+                for item in args
             ]
             return _materializable_status(
                 statuses,
-                outer_constraint=base_key
-                not in {("typing", "Optional"), ("typing", "Union")},
+                outer_constraint=outer_constraint,
             )
         return "unsupported"
     finally:
