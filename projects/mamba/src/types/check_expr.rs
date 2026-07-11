@@ -1682,6 +1682,9 @@ impl TypeChecker {
         if kind == TypeNameKind::Alias {
             return self.materialize_stdlib_alias(module, name, args);
         }
+        if kind == TypeNameKind::Imported {
+            return None;
+        }
         let ty = match (module, name) {
             ("builtins", "bool") if args.is_empty() => self.tcx.bool(),
             ("builtins", "int") if args.is_empty() => self.tcx.int(),
@@ -1720,10 +1723,11 @@ impl TypeChecker {
                 kind,
                 TypeNameKind::Nominal
                     | TypeNameKind::Protocol
-                    | TypeNameKind::Imported
                     | TypeNameKind::Builtin
             ) => {
-                if let Some((_id, class)) = super::stdlib_typespec::class_spec(module, name) {
+                if let Some((_id, class)) =
+                    super::stdlib_typespec::class_spec_any_name(module, name)
+                {
                     self.external_class_instance(
                         super::stdlib_typespec::string(class.module),
                         super::stdlib_typespec::string(class.qualifier),
@@ -3120,7 +3124,7 @@ impl TypeChecker {
                         StrictRelation::Incompatible
                     }
                 } else if let Some((_class_id, class)) =
-                    spec::class_spec(&external.module, &external.name)
+                    spec::class_spec_any_name(&external.module, &external.name)
                 {
                     if class.kind == ClassSpecKind::Protocol {
                         self.stdlib_protocol_relation(class, &external, actual, visiting)
@@ -5790,6 +5794,21 @@ mod tests {
             func: Box::new(sp(Expr::Ident(name.to_string()))),
             args: Vec::new(),
         })
+    }
+
+    #[test]
+    fn unproven_imported_stdlib_names_do_not_materialize_as_public_classes() {
+        let mut checker = TypeChecker::new();
+        assert!(
+            checker
+                .materialize_stdlib_named_type(
+                    "collections.abc",
+                    "Callable",
+                    crate::types::stdlib_typespec::TypeNameKind::Imported,
+                    Vec::new(),
+                )
+                .is_none()
+        );
     }
 
     #[test]

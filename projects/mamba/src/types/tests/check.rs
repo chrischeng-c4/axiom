@@ -6165,6 +6165,78 @@ fn typeshed_imported_submodule_names_enforce_nominal_types() {
 }
 
 #[test]
+fn typeshed_imported_aliases_and_nested_classes_enforce_canonical_types() {
+    use crate::types::stdlib_typespec as spec;
+
+    let mut checker = TypeChecker::new();
+    let find_distributions = spec::overloads(
+        "_frozen_importlib_external",
+        "PathFinder",
+        "find_distributions",
+    )
+    .next()
+    .expect("PathFinder.find_distributions spec");
+    let context = spec::params(find_distributions.params)
+        .iter()
+        .find(|param| spec::string(param.name) == "context")
+        .expect("context parameter");
+    let context_ty = checker
+        .materialize_stdlib_type(spec::type_use(context.ty).0)
+        .expect("canonical nested class must materialize");
+    let Ty::Class {
+        external: Some(context),
+        ..
+    } = checker.tcx.get(context_ty)
+    else {
+        panic!("canonical nested class must retain an external identity")
+    };
+    assert_eq!(
+        (context.module.as_str(), context.name.as_str()),
+        ("importlib.metadata", "DistributionFinder.Context")
+    );
+    let valid = check(
+        "from _frozen_importlib_external import PathFinder\n\
+         from importlib.metadata import DistributionFinder\n\
+         from ssl import SSLSocket\n\
+         from wsgiref.handlers import BaseHandler\n\
+         from wsgiref.util import setup_testing_defaults\n\
+         PathFinder.find_distributions(DistributionFinder.Context())\n\
+         socket = object.__new__(SSLSocket)\n\
+         socket.connect((\"localhost\", 443))\n\
+         setup_testing_defaults({})\n\
+         def app(environ, start_response):\n\
+         \x20   return []\n\
+         handler = object.__new__(BaseHandler)\n\
+         handler.run(app)\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "canonical nested classes and imported aliases must accept representative values: {valid:?}"
+    );
+
+    let invalid = check(
+        "class _W:\n\
+         \x20   pass\n\
+         from _frozen_importlib_external import PathFinder\n\
+         from ssl import SSLSocket\n\
+         from wsgiref.handlers import BaseHandler\n\
+         from wsgiref.util import setup_testing_defaults\n\
+         PathFinder.find_distributions(_W())\n\
+         socket = object.__new__(SSLSocket)\n\
+         socket.connect(_W())\n\
+         setup_testing_defaults(_W())\n\
+         handler = object.__new__(BaseHandler)\n\
+         handler.run(_W())\n",
+    );
+    for parameter in ["context", "addr", "environ", "application"] {
+        assert!(
+            has_parameter_error(&invalid, parameter),
+            "canonical imported type must reject `_W` for `{parameter}`: {invalid:?}"
+        );
+    }
+}
+
+#[test]
 fn typeshed_typing_extensions_never_defaults_materialize() {
     let valid = check("from select import select\nselect([], [], [], 0)\n");
     assert!(
