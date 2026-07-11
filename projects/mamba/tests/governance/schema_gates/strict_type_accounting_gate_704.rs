@@ -424,7 +424,7 @@ assert oracle_result.reason == "inactive-typespec-contract"
 }
 
 #[test]
-fn protocol_accounting_requires_complete_single_branch_members() {
+fn protocol_accounting_requires_complete_enforceable_members() {
     let script = r#"
 import importlib.util
 import pathlib
@@ -446,14 +446,18 @@ assert module._generated_protocol_status(manifest, "_typeshed", "SupportsRead") 
 assert module._generated_protocol_status(manifest, "_typeshed", "SupportsWrite") == "unconstrained"
 # A callable-level TypeVar that is not owned by the protocol stays unsupported.
 assert module._generated_protocol_status(manifest, "_typeshed", "IdentityFunction") == "unsupported"
-assert module._generated_protocol_status(manifest, "typing", "SupportsRound") == "unsupported"
+assert module._generated_protocol_status(manifest, "typing", "SupportsRound") == "unconstrained"
+assert module._generated_protocol_status(manifest, "getopt", "_SliceableT") == "supported"
 assert module._generated_protocol_status(manifest, "_typeshed", "DataclassInstance") == "unsupported"
 assert module._generated_protocol_status(manifest, "_typeshed", "SupportsFlush") == "unconstrained"
 assert module._generated_protocol_status(manifest, "http.server", "_SSLModule") == "unsupported"
+assert module._generated_protocol_status(manifest, "xmlrpc.server", "_DispatchArityN") == "unsupported"
 
 sigs = module.parse_generated_signature_param_index()
 fixture = module.TYPE_DIR / "std-libs/_curses/getwin__file_as_SupportsRead_wrong.py"
 assert module.unenforceable_generated_param_reason(fixture, sigs) is None
+overload_fixture = module.TYPE_DIR / "std-libs/getopt/getopt__args_as__SliceableT_wrong.py"
+assert module.unenforceable_generated_param_reason(overload_fixture, sigs) is None
 "#;
     let output = Command::new("python3.12")
         .arg("-c")
