@@ -244,6 +244,7 @@ for key, param in [
     (("asyncio.streams", "StreamReader", "set_exception"), "exc"),
     (("traceback", "", "print_exception"), "exc"),
     (("unittest.case", "TestCase", "assertRaises"), "expected_exception"),
+    (("asyncio.subprocess", "SubprocessStreamProtocol", "__init__"), "loop"),
 ]:
     assert exception_index[key]["params"][param] == "supported", (key, param)
 
