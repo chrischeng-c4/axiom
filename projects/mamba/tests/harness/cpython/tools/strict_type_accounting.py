@@ -20,6 +20,7 @@ import sys
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -127,6 +128,9 @@ NON_TYPE_REJECTION_MARKERS = (
 TYPE_FIXTURE_SUBJECT_RE = re.compile(r'#\s*subject\s*=\s*"(?P<subject>[^"]+)"')
 TYPE_FIXTURE_SUBJECT_CALL_RE = re.compile(
     r"^(?P<call>.+)\((?P<param>[^():,\s]+):\s*(?P<label>[^()]*)\)$"
+)
+TYPE_FIXTURE_SUBJECT_PROPERTY_SET_RE = re.compile(
+    r"^(?P<call>.+)\s*=\s*\((?P<param>[^():,\s]+):\s*(?P<label>[^()]*)\)$"
 )
 GENERATED_SIG_BLOCK_RE = re.compile(r"StdlibSig\s*\{\n(?P<body>.*?)\n    \},", re.S)
 GENERATED_SIG_FIELD_RE = re.compile(r'\b(?P<field>module|qualifier|name):\s*"(?P<value>[^"]*)"')
@@ -237,6 +241,19 @@ def is_version_specific_unavailable_type_fixture(path: Path) -> bool:
     return removed is not None and sys.version_info[:2] >= removed
 
 
+def is_generated_typespec_inactive_type_fixture(path: Path) -> bool:
+    if not any(
+        (TYPE_DIR / bucket) in path.parents
+        for bucket in ("builtin-libs", "std-libs")
+    ):
+        return False
+    parsed = parse_type_fixture_contract(path)
+    if parsed is None:
+        return False
+    branches = generated_callable_branch_index()
+    return _generated_contract_is_inactive(parsed[0], parsed[2], branches)
+
+
 def is_excluded_type_fixture(path: Path) -> bool:
     return (
         is_non_runtime_stub_type_fixture(path)
@@ -244,6 +261,7 @@ def is_excluded_type_fixture(path: Path) -> bool:
         or is_platform_specific_unavailable_type_fixture(path)
         or is_optional_stdlib_extension_unavailable_type_fixture(path)
         or is_version_specific_unavailable_type_fixture(path)
+        or is_generated_typespec_inactive_type_fixture(path)
     )
 
 
@@ -256,6 +274,88 @@ def load_generated_typespec_manifest() -> dict[str, Any]:
     if manifest.get("schema") != 2:
         raise ValueError(f"unsupported generated TypeSpec schema: {manifest.get('schema')!r}")
     return manifest
+
+
+def _expand_generated_callable_exports(
+    manifest: dict[str, Any], index: dict[tuple[str, str, str], Any]
+) -> None:
+    strings = manifest["strings"]
+    for export in manifest.get("callable_exports", []):
+        alias = (strings[export[0]], "", strings[export[1]])
+        target = (strings[export[2]], "", strings[export[3]])
+        if target in index:
+            index[alias] = index[target]
+
+    methods_by_owner: dict[tuple[str, str], list[tuple[str, Any]]] = {}
+    for (module, qualifier, name), value in list(index.items()):
+        if qualifier:
+            methods_by_owner.setdefault((module, qualifier), []).append((name, value))
+    for export in manifest.get("class_exports", []):
+        class_row = manifest["classes"][export[2]]
+        owner = (strings[class_row[0]], strings[class_row[1]])
+        for name, value in methods_by_owner.get(owner, []):
+            index[(strings[export[0]], strings[export[1]], name)] = value
+
+
+def _generated_callable_rows(
+    manifest: dict[str, Any], *, include_class_inventory: bool
+) -> list[list[Any]]:
+    rows = list(manifest["callables"])
+    if not include_class_inventory:
+        return rows
+    strings = manifest["strings"]
+    public_keys = {
+        tuple(strings[row[index]] for index in range(3)) for row in rows
+    }
+    rows.extend(
+        row
+        for row in manifest.get("class_callables", [])
+        if tuple(strings[row[index]] for index in range(3)) not in public_keys
+    )
+    return rows
+
+
+@cache
+def generated_callable_branch_index() -> dict[tuple[str, str, str], dict[str, bool]]:
+    manifest = load_generated_typespec_manifest()
+    strings = manifest["strings"]
+    states: dict[tuple[str, str, str], dict[str, list[bool]]] = {}
+    for row in _generated_callable_rows(manifest, include_class_inventory=True):
+        key = tuple(strings[row[i]] for i in range(3))
+        states.setdefault(key, {}).setdefault(row[3], []).append(bool(row[12]))
+    _expand_generated_callable_exports(manifest, states)
+    return {
+        key: {
+            kind: any(kind_branches)
+            for kind, kind_branches in branches.items()
+        }
+        for key, branches in states.items()
+    }
+
+
+def _generated_contract_is_inactive(
+    call: str,
+    binding: str,
+    branches: dict[tuple[str, str, str], dict[str, bool]],
+) -> bool:
+    key = resolve_generated_sig_key(call, branches)
+    if key is None:
+        return False
+    required_kinds = (
+        {"t"} if binding == "property_set" else {"m", "i", "c", "s"}
+    )
+    if binding == "call" and not required_kinds.intersection(branches[key]):
+        # Older generated setter fixtures used call-shaped subjects. If the
+        # manifest has no callable branch for this key, follow its setter
+        # activity instead of letting an active getter decide availability.
+        if "t" in branches[key]:
+            required_kinds = {"t"}
+    activity = [
+        active
+        for kind, active in branches[key].items()
+        if kind in required_kinds
+    ]
+    return bool(activity) and not any(activity)
 
 
 def _typespec_variant(node: Any) -> tuple[str, Any]:
@@ -598,15 +698,20 @@ def _generated_typespec_status(
         visiting.remove(node_id)
 
 
-def parse_generated_signature_param_index() -> dict[tuple[str, str, str], dict[str, Any]]:
+def parse_generated_signature_param_index(
+    *, expand_exports: bool = True
+) -> dict[tuple[str, str, str], dict[str, Any]]:
     manifest = load_generated_typespec_manifest()
     strings = manifest["strings"]
     grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
-    for callable_row in manifest["callables"]:
+    for callable_row in _generated_callable_rows(
+        manifest, include_class_inventory=expand_exports
+    ):
         if not callable_row[12]:
             continue
         key = tuple(strings[callable_row[i]] for i in range(3))
-        binding_supported = callable_row[3] in {"m", "i", "c", "s"}
+        kind = callable_row[3]
+        binding_supported = kind in {"m", "i", "c", "s", "t"}
         type_param_start, type_param_length = callable_row[5]
         type_param_ids = manifest["type_param_edges"][
             type_param_start : type_param_start + type_param_length
@@ -639,15 +744,28 @@ def parse_generated_signature_param_index() -> dict[tuple[str, str, str], dict[s
                 "params": branch,
                 "reasons": branch_reasons,
                 "binding_supported": binding_supported,
+                "kind": kind,
             }
         )
 
+    if expand_exports:
+        _expand_generated_callable_exports(manifest, grouped)
+
     out: dict[tuple[str, str, str], dict[str, Any]] = {}
     for key, manifest_branches in grouped.items():
-        wired_branches = [
-            branch for branch in manifest_branches if branch["binding_supported"]
+        property_setters = [
+            branch for branch in manifest_branches if branch["kind"] == "t"
         ]
-        branches = wired_branches or manifest_branches
+        property_only = all(
+            branch["kind"] in {"g", "t"} for branch in manifest_branches
+        )
+        if property_only and property_setters:
+            branches = property_setters
+        else:
+            wired_branches = [
+                branch for branch in manifest_branches if branch["binding_supported"]
+            ]
+            branches = wired_branches or manifest_branches
         names = {name for branch in branches for name in branch["params"]}
         params: dict[str, str] = {}
         param_reasons: dict[str, str] = {}
@@ -686,15 +804,29 @@ def parse_generated_signature_param_index() -> dict[tuple[str, str, str], dict[s
     return out
 
 
-def parse_type_fixture_subject(path: Path) -> tuple[str, str] | None:
+def parse_type_fixture_contract(path: Path) -> tuple[str, str, str] | None:
     text = path.read_text(encoding="utf-8", errors="replace")
     subject_match = TYPE_FIXTURE_SUBJECT_RE.search(text)
     if subject_match is None:
         return None
-    call_match = TYPE_FIXTURE_SUBJECT_CALL_RE.match(subject_match.group("subject"))
+    subject = subject_match.group("subject")
+    call_match = TYPE_FIXTURE_SUBJECT_PROPERTY_SET_RE.match(subject)
+    binding = "property_set"
+    if call_match is None:
+        call_match = TYPE_FIXTURE_SUBJECT_CALL_RE.match(subject)
+        binding = "call"
     if call_match is None:
         return None
-    return call_match.group("call"), call_match.group("param")
+    return (
+        call_match.group("call").strip(),
+        call_match.group("param"),
+        binding,
+    )
+
+
+def parse_type_fixture_subject(path: Path) -> tuple[str, str] | None:
+    parsed = parse_type_fixture_contract(path)
+    return None if parsed is None else parsed[:2]
 
 
 def resolve_generated_sig_key(
@@ -791,7 +923,7 @@ def is_type_rejection(stdout: str, stderr: str) -> bool:
 
 def parse_generated_signature_counts(typeshed_stdlib: Path) -> dict[str, Any]:
     manifest = load_generated_typespec_manifest()
-    index = parse_generated_signature_param_index()
+    index = parse_generated_signature_param_index(expand_exports=False)
     statuses = Counter(
         status for signature in index.values() for status in signature["params"].values()
     )
@@ -812,9 +944,16 @@ def parse_generated_signature_counts(typeshed_stdlib: Path) -> dict[str, Any]:
     callable_kind_branches = Counter(
         callable_kind_names[row[3]] for row in py312_callables
     )
+    structured_wired_kinds = [
+        "module",
+        "instance",
+        "class",
+        "static",
+        "property_get",
+        "property_set",
+    ]
     structured_wired_branches = sum(
-        callable_kind_branches[kind]
-        for kind in ("module", "instance", "class", "static")
+        callable_kind_branches[kind] for kind in structured_wired_kinds
     )
     enforceable = sum(signature["enforceable"] for signature in index.values())
     return {
@@ -824,7 +963,7 @@ def parse_generated_signature_counts(typeshed_stdlib: Path) -> dict[str, Any]:
         "branches": len(py312_callables),
         "callable_kind_branches": dict(sorted(callable_kind_branches.items())),
         "structured_module_branches": callable_kind_branches["module"],
-        "structured_wired_kinds": ["module", "instance", "class", "static"],
+        "structured_wired_kinds": structured_wired_kinds,
         "structured_wired_branches": structured_wired_branches,
         "unhandled_binding_branches": len(py312_callables) - structured_wired_branches,
         "enforceable": enforceable,
@@ -997,6 +1136,11 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         path
         for path in type_fixture_candidates
         if is_version_specific_unavailable_type_fixture(path)
+    ]
+    excluded_inactive_typespec = [
+        path
+        for path in type_fixture_candidates
+        if is_generated_typespec_inactive_type_fixture(path)
     ]
     type_fixture_wall_candidates = executable_type_fixtures(type_fixture_candidates)
     excluded_unconstrained_contracts, unresolved_generated_contracts = (
@@ -1171,6 +1315,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "version_removed_type_libs": VERSION_REMOVED_TYPE_LIBS,
             "version_specific_type_fixture_cases": VERSION_SPECIFIC_TYPE_FIXTURES,
             "version_removed_type_fixture_cases": VERSION_REMOVED_TYPE_FIXTURES,
+            "excluded_inactive_typespec_fixtures": len(excluded_inactive_typespec),
             "excluded_unconstrained_contract_fixtures": len(
                 excluded_unconstrained_contracts
             ),

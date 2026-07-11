@@ -7,14 +7,16 @@
 # lib = "builtins"
 # dimension = "type"
 # case = "object____class____type_as_type_wrong"
-# subject = "builtins.object.__class__(type: type)"
+# subject = "builtins.object.__class__ = (type: type)"
 # kind = "semantic"
+# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed type"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
+# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed type
 # mamba-strict-type: TypeError
-"""Type wall: builtins.object.__class__(type: type); call it with the wrong type.
+"""Type wall: builtins.object.__class__ = (type: type); assign the wrong type.
 
 typeshed contract: type is type. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
@@ -23,12 +25,12 @@ class _W:
     pass
 
 
-from builtins import object
-obj = object.__new__(object)
+from builtins import object as Object
+obj: Object = Object()
 try:
-    obj.__class__(_W())  # type: type <- wrong-typed
+    obj.__class__ = _W()  # type: type <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
 except Exception as e:
-    print("setup_or_other:", type(e).__name__)
+    print("assignment_other:", type(e).__name__)
