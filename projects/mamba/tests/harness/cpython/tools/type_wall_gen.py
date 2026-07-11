@@ -763,16 +763,14 @@ _L3_FOLD_EXCLUDE: frozenset[tuple[str, str, str, str]] = frozenset({
 #   does not yet enforce this contract. Pinned to `Unknown` (skip).
 # - #882 `CoreTy::TypedNamed("<contract>")` seeds: `chr`/`hex`/`oct`/`bin`'s
 #   `SupportsIndex` param is pinned to the tagged contract rather than
-#   typeshed's plain `Typed` fold. All four are individually verified safe:
-#   `check_expr.rs`'s pre-existing hardcoded `index_protocol_ok` check
-#   already compile-time-rejects a non-`SupportsIndex` actual for exactly
-#   these four builtins today (this override just gives Path A the same
-#   positive predicate Path B already enforces — additive, not new
-#   rejections), and no `errors/`/`behavior`-dimension fixture calls any of
-#   them with a literal wrong-typed scalar expecting a runtime catch (only
-#   bare-class shapes, e.g. `type/builtin-libs/builtins/
-#   chr__i_as_SupportsIndex_wrong.py`, which already passes today via the
-#   pre-existing `Typed` bare-class rule). `os.fspath.path` is pinned on ALL
+#   typeshed's plain `Typed` fold. The generated TypeSpec path preserves the
+#   complete `typing.SupportsIndex` protocol and is the authoritative checker
+#   for these builtins; this compact-table override keeps the legacy fallback
+#   semantically aligned when TypeSpec cannot resolve a call. No
+#   `errors/`/`behavior`-dimension fixture calls them with a literal
+#   wrong-typed scalar expecting a runtime catch (only bare-class shapes, e.g.
+#   `type/builtin-libs/builtins/chr__i_as_SupportsIndex_wrong.py`).
+#   `os.fspath.path` is pinned on ALL
 #   THREE of its `@overload` branches (`str`/`bytes`/`PathLike[AnyStr]`) to
 #   the SAME tag so `merge_overload_params` trivially agrees and folds them
 #   into one `TypedNamed("PathLike")` row — the literal #882 AC1 case
