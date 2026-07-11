@@ -6815,3 +6815,135 @@ fn typeshed_structured_alias_expansion_enforces_literal_contracts() {
         "expanded alias target must reject values outside its Literal set: {invalid:?}"
     );
 }
+
+#[test]
+fn pep695_type_var_tuple_alias_accepts_zero_one_and_many_members() {
+    let errors = check(
+        "type Frame[Head, *Ts, Tail] = tuple[Head, *Ts, Tail]\n\
+         zero: Frame[int, str] = (1, \"tail\")\n\
+         one: Frame[int, str, bool] = (1, \"middle\", True)\n\
+         many: Frame[int, str, float, bool] = (1, \"middle\", 2.5, True)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "ordered TypeVarTuple members must preserve valid tuple aliases: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_type_var_tuple_alias_rejects_only_the_changed_pack_member() {
+    let errors = check(
+        "type Frame[Head, *Ts, Tail] = tuple[Head, *Ts, Tail]\n\
+         bad: Frame[int, str, bool] = (1, 2, True)\n",
+    );
+    let mismatches: Vec<_> = errors
+        .iter()
+        .filter(|error| error.contains("type mismatch"))
+        .collect();
+    assert_eq!(mismatches.len(), 1, "unexpected diagnostics: {errors:?}");
+    assert!(
+        mismatches[0].contains("tuple[int, str, bool]")
+            && mismatches[0].contains("tuple[int, int, bool]"),
+        "the changed packed member must retain its exact expected type: {errors:?}"
+    );
+}
+
+#[test]
+fn pep695_recursive_type_var_tuple_alias_specializes_its_backedge() {
+    let valid = check(
+        "type Recursive[*Ts] = tuple[*Ts] | list[Recursive[*Ts]]\n\
+         direct: Recursive[int, str] = (1, \"ok\")\n\
+         nested: Recursive[int, str] = [(1, \"ok\")]\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "recursive alias backedges must retain the ordered specialization: {valid:?}"
+    );
+
+    let invalid = check(
+        "type Recursive[*Ts] = tuple[*Ts] | list[Recursive[*Ts]]\n\
+         bad: Recursive[int, str] = [(1, 2)]\n",
+    );
+    assert!(
+        invalid.iter().any(|error| error.contains("type mismatch")),
+        "recursive specialized backedges must reject a changed pack member: {invalid:?}"
+    );
+}
+
+#[test]
+fn type_var_tuple_unpack_is_limited_to_pack_aware_positions() {
+    let valid = check("def forward[*Ts](*args: *Ts):\n    pass\n");
+    assert!(
+        valid.is_empty(),
+        "a variadic parameter is a pack-aware position: {valid:?}"
+    );
+    let legacy = check(
+        "from typing import TypeVarTuple\n\
+         LegacyTs = TypeVarTuple(\"LegacyTs\")\n\
+         def legacy(*args: *LegacyTs):\n\
+         \x20   pass\n",
+    );
+    assert!(
+        legacy.is_empty(),
+        "legacy TypeVarTuple factories must retain their static kind: {legacy:?}"
+    );
+
+    let pep692 = check(
+        "from typing import TypedDict, Unpack\n\
+         class Movie(TypedDict):\n\
+         \x20   title: str\n\
+         def show(**kwargs: Unpack[Movie]):\n\
+         \x20   pass\n",
+    );
+    assert!(
+        pep692.is_empty(),
+        "PEP 692 TypedDict kwargs must remain separate from static type packs: {pep692:?}"
+    );
+
+    for source in [
+        "def bad[*Ts](value: *Ts):\n    pass\n",
+        "type Bad[*Ts] = list[*Ts]\n",
+        "type Bad[*Ts] = list[Ts]\n",
+        "type Scalar[T] = tuple[T]\ntype Bad[*Ts] = Scalar[*Ts]\n",
+        "from typing import TypeVarTuple\nLegacyTs = TypeVarTuple(\"LegacyTs\")\nbad: list[LegacyTs]\n",
+        "def bad(**kwargs: Unpack[int]):\n    pass\n",
+    ] {
+        let errors = check(source);
+        assert!(
+            errors.iter().any(|error| {
+                error.contains("TypeVarTuple unpack is not valid")
+                    || error.contains("does not accept an unpacked type argument")
+                    || error.contains("must be used through an unpack operation")
+                    || error.contains("requires a TypedDict")
+            }),
+            "a non-pack-aware position must reject raw unpack state: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn pep695_variadic_class_methods_rebuild_ordered_type_packs() {
+    let valid = check(
+        "class Frame[*Ts]:\n\
+         \x20   def values(self) -> tuple[*Ts]:\n\
+         \x20       pass\n\
+         def read(value: Frame[int, str]) -> tuple[int, str]:\n\
+         \x20   return value.values()\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "specialized class methods must rebuild their TypePack: {valid:?}"
+    );
+
+    let invalid = check(
+        "class Frame[*Ts]:\n\
+         \x20   def values(self) -> tuple[*Ts]:\n\
+         \x20       pass\n\
+         def wrong(value: Frame[int, str]) -> tuple[int, int]:\n\
+         \x20   return value.values()\n",
+    );
+    assert!(
+        invalid.iter().any(|error| error.contains("type mismatch")),
+        "a specialized variadic method must retain member order: {invalid:?}"
+    );
+}
