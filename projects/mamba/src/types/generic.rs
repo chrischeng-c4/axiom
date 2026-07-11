@@ -181,6 +181,7 @@ impl Substitution {
                 ref params,
                 ret,
                 variadic,
+                param_spec,
             } => {
                 let new_params: Vec<TypeId> = params.iter().map(|p| self.apply(*p, tcx)).collect();
                 let new_ret = self.apply(ret, tcx);
@@ -191,6 +192,7 @@ impl Substitution {
                         params: new_params,
                         ret: new_ret,
                         variadic,
+                        param_spec,
                     })
                 }
             }
@@ -1140,6 +1142,7 @@ mod tests {
             params: vec![var_ty],
             ret: var_ty,
             variadic: false,
+            param_spec: None,
         });
 
         let mut subst = Substitution::new();
@@ -1152,7 +1155,8 @@ mod tests {
             Ty::Fn {
                 params: vec![int_ty],
                 ret: int_ty,
-                variadic: false
+                variadic: false,
+                param_spec: None,
             }
         );
     }
