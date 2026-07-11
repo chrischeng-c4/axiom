@@ -20,31 +20,31 @@ Public API manifest for `projects/lumen/src/storage.rs` generated from AST durin
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ApplyOutcome` | projects/lumen/src/storage.rs | enum | pub | 4707 |  |
-| `CollectionSnapshot` | projects/lumen/src/storage.rs | struct | pub | 8862 |  |
+| `ApplyOutcome` | projects/lumen/src/storage.rs | enum | pub | 4727 |  |
+| `CollectionSnapshot` | projects/lumen/src/storage.rs | struct | pub | 8882 |  |
 | `DropOutcome` | projects/lumen/src/storage.rs | enum | pub | 66 |  |
 | `Engine` | projects/lumen/src/storage.rs | struct | pub | 2938 |  |
-| `FieldIndexSnapshot` | projects/lumen/src/storage.rs | enum | pub | 8888 |  |
+| `FieldIndexSnapshot` | projects/lumen/src/storage.rs | enum | pub | 8908 |  |
 | `MAX_INDEX_ITEMS` | projects/lumen/src/storage.rs | constant | pub | 57 |  |
 | `MAX_SORT_KEYS` | projects/lumen/src/storage.rs | constant | pub | 62 |  |
 | `Postings` | projects/lumen/src/storage.rs | struct | pub | 323 |  |
-| `ReshardApplyOutcome` | projects/lumen/src/storage.rs | struct | pub | 8872 | #1380 R1: response summary for `POST /admin/reshard:apply`. |
-| `ReshardEvictOutcome` | projects/lumen/src/storage.rs | struct | pub | 8880 | #1380 R3: response summary for `POST /admin/reshard:evict`. |
-| `SnapshotV1` | projects/lumen/src/storage.rs | struct | pub | 8853 |  |
+| `ReshardApplyOutcome` | projects/lumen/src/storage.rs | struct | pub | 8892 | #1380 R1: response summary for `POST /admin/reshard:apply`. |
+| `ReshardEvictOutcome` | projects/lumen/src/storage.rs | struct | pub | 8900 | #1380 R3: response summary for `POST /admin/reshard:evict`. |
+| `SnapshotV1` | projects/lumen/src/storage.rs | struct | pub | 8873 |  |
 | `SortableF64` | projects/lumen/src/storage.rs | struct | pub | 114 |  |
 | `StorageError` | projects/lumen/src/storage.rs | enum | pub | 79 |  |
-| `__collection_schema` | projects/lumen/src/storage.rs | function | pub | 10400 | __collection_schema(         &self,         collection_id: &str,     ) -> Result<BTreeMap<String, FieldSpec>>  |
-| `__field_forward_probe` | projects/lumen/src/storage.rs | function | pub | 10437 | __field_forward_probe(         &self,         collection_id: &str,         field: &str,     ) -> Result<(usize, usize, bool)>  |
-| `__open_collection_from_segments` | projects/lumen/src/storage.rs | function | pub | 10416 | __open_collection_from_segments(         collection_id: &str,         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<std::sync::Arc<Engine>>  |
-| `__seal_collection_to_segments` | projects/lumen/src/storage.rs | function | pub | 10384 | __seal_collection_to_segments(         &self,         collection_id: &str,         dir: &std::path::Path,         applied_seq: u64,     ) -> Result<()>  |
-| `__seal_hash_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10320 | __seal_hash_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_keyword_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10130 | __seal_keyword_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_number_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10067 | __seal_number_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_set_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10196 | __seal_set_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_text_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10264 | __seal_text_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_vector_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10357 | __seal_vector_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__collection_schema` | projects/lumen/src/storage.rs | function | pub | 10420 | __collection_schema(         &self,         collection_id: &str,     ) -> Result<BTreeMap<String, FieldSpec>>  |
+| `__field_forward_probe` | projects/lumen/src/storage.rs | function | pub | 10457 | __field_forward_probe(         &self,         collection_id: &str,         field: &str,     ) -> Result<(usize, usize, bool)>  |
+| `__open_collection_from_segments` | projects/lumen/src/storage.rs | function | pub | 10436 | __open_collection_from_segments(         collection_id: &str,         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<std::sync::Arc<Engine>>  |
+| `__seal_collection_to_segments` | projects/lumen/src/storage.rs | function | pub | 10404 | __seal_collection_to_segments(         &self,         collection_id: &str,         dir: &std::path::Path,         applied_seq: u64,     ) -> Result<()>  |
+| `__seal_hash_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10340 | __seal_hash_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_keyword_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10150 | __seal_keyword_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_number_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10087 | __seal_number_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_set_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10216 | __seal_set_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_text_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10284 | __seal_text_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_vector_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10377 | __seal_vector_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
 | `add_field` | projects/lumen/src/storage.rs | function | pub | 3141 | add_field(&self, collection_id: &str, field_name: &str, spec: FieldSpec) -> Result<u32> |
-| `apply_raft_entry` | projects/lumen/src/storage.rs | function | pub | 4665 | apply_raft_entry(&self, entry: crate::log_entry::RaftLogEntry) -> Result<ApplyOutcome> |
+| `apply_raft_entry` | projects/lumen/src/storage.rs | function | pub | 4685 | apply_raft_entry(&self, entry: crate::log_entry::RaftLogEntry) -> Result<ApplyOutcome> |
 | `apply_reshard_batch` | projects/lumen/src/storage.rs | function | pub | 4492 | #1380 R1: additively merge one `ReshardBatch`'s snapshot into the live engine (upsert semantics, idempotent on retry). apply_reshard_batch(&self, delta: SnapshotV1) -> Result<ReshardApplyOutcome> |
 | `bits` | projects/lumen/src/storage.rs | function | pub | 151 | bits(self) -> u64 |
 | `create_collection` | projects/lumen/src/storage.rs | function | pub | 2997 | create_collection(         &self,         collection_id: &str,         req: CreateCollectionRequest,     ) -> Result<CreateCollectionResponse> |
@@ -54,7 +54,7 @@ Public API manifest for `projects/lumen/src/storage.rs` generated from AST durin
 | `drop_field` | projects/lumen/src/storage.rs | function | pub | 3086 | drop_field(&self, collection_id: &str, field_name: &str) -> Result<u32> |
 | `duplicates` | projects/lumen/src/storage.rs | function | pub | 4280 | duplicates(         &self,         collection_id: &str,         req: DuplicatesRequest,     ) -> Result<DuplicatesResponse> |
 | `evict_not_owned` | projects/lumen/src/storage.rs | function | pub | 4555 | #1380 R3: source-side post-cutover eviction under a newer `VirtualBucketShardMap` (idempotent). evict_not_owned(         &self,         to: &VirtualBucketShardMap,         this_shard: u32,     ) -> Result<ReshardEvictOutcome> |
-| `flush_to_segments` | projects/lumen/src/storage.rs | function | pub | 9917 | flush_to_segments(&self, dir: &std::path::Path, up_to_seq: u64) -> Result<()>  |
+| `flush_to_segments` | projects/lumen/src/storage.rs | function | pub | 9937 | flush_to_segments(&self, dir: &std::path::Path, up_to_seq: u64) -> Result<()>  |
 | `from_bits` | projects/lumen/src/storage.rs | function | pub | 159 | from_bits(bits: u64) -> Self |
 | `from_sorted` | projects/lumen/src/storage.rs | function | pub | 334 | from_sorted(docids: Vec<u32>, tfs: Vec<u32>) -> Self |
 | `index` | projects/lumen/src/storage.rs | function | pub | 3180 | index(&self, collection_id: &str, req: IndexRequest) -> Result<IndexResponse> |
@@ -64,21 +64,21 @@ Public API manifest for `projects/lumen/src/storage.rs` generated from AST durin
 | `new` | projects/lumen/src/storage.rs | function | pub | 120 | new(x: f64) -> Result<Self> |
 | `new` | projects/lumen/src/storage.rs | function | pub | 2960 | new() -> Self  |
 | `number_value_for_external_id` | projects/lumen/src/storage.rs | function | pub | 3724 | number_value_for_external_id(         &self,         collection_id: &str,         external_id: &str,         field: &str,     ) -> Result<Option<f64>> |
-| `open_from_segments` | projects/lumen/src/storage.rs | function | pub | 9727 | open_from_segments(         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<Self>  |
-| `reopen_from_segment_dir` | projects/lumen/src/storage.rs | function | pub | 9961 | reopen_from_segment_dir(&self, dir: &std::path::Path) -> Result<u64>  |
+| `open_from_segments` | projects/lumen/src/storage.rs | function | pub | 9747 | open_from_segments(         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<Self>  |
+| `reopen_from_segment_dir` | projects/lumen/src/storage.rs | function | pub | 9981 | reopen_from_segment_dir(&self, dir: &std::path::Path) -> Result<u64>  |
 | `replace_docs` | projects/lumen/src/storage.rs | function | pub | 3430 | replace_docs(         &self,         collection_id: &str,         req: ReplaceDocsRequest,     ) -> Result<ReplaceDocsResponse> |
 | `restore` | projects/lumen/src/storage.rs | function | pub | 4451 | restore(&self, snap: SnapshotV1) -> Result<()> |
-| `seal_to_segments` | projects/lumen/src/storage.rs | function | pub | 9692 | seal_to_segments(&mut self, dir: &std::path::Path, applied_seq: u64) -> Result<()>  |
+| `seal_to_segments` | projects/lumen/src/storage.rs | function | pub | 9712 | seal_to_segments(&mut self, dir: &std::path::Path, applied_seq: u64) -> Result<()>  |
 | `search` | projects/lumen/src/storage.rs | function | pub | 3752 | search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> |
 | `search_fast_string_term` | projects/lumen/src/storage.rs | function | pub | 4221 | search_fast_string_term(         &self,         collection_id: &str,         field: &str,         value: &str,         limit: u32,     ) -> Result<SearchResponse> |
-| `segment_field_probe` | projects/lumen/src/storage.rs | function | pub | 10003 | segment_field_probe(&self, collection_id: &str, field: &str) -> Result<(usize, bool)>  |
+| `segment_field_probe` | projects/lumen/src/storage.rs | function | pub | 10023 | segment_field_probe(&self, collection_id: &str, field: &str) -> Result<(usize, bool)>  |
 | `snapshot` | projects/lumen/src/storage.rs | function | pub | 4436 | snapshot(&self) -> Result<SnapshotV1> |
 | `start_drain` | projects/lumen/src/storage.rs | function | pub | 2972 | start_drain(&self) |
-| `stats` | projects/lumen/src/storage.rs | function | pub | 4609 | stats(&self, collection_id: &str) -> Result<StatsResponse> |
+| `stats` | projects/lumen/src/storage.rs | function | pub | 4617 | stats(&self, collection_id: &str) -> Result<StatsResponse> |
 | `sweep_deleted` | projects/lumen/src/storage.rs | function | pub | 3116 | sweep_deleted(&self, grace: Duration) -> Result<usize> |
 | `tfs` | projects/lumen/src/storage.rs | function | pub | 344 | tfs(&self) -> &[u32] |
 | `to_f64` | projects/lumen/src/storage.rs | function | pub | 136 | to_f64(self) -> f64 |
-| `validate_query` | projects/lumen/src/storage.rs | function | pub | 4996 | validate_query(root: &QueryNode) -> std::result::Result<(), StorageError> |
+| `validate_query` | projects/lumen/src/storage.rs | function | pub | 5016 | validate_query(root: &QueryNode) -> std::result::Result<(), StorageError> |
 
 ## Source
 <!-- type: rust-source-unit lang: rust -->
@@ -4679,13 +4679,21 @@ impl Engine {
             }
             documents_evicted = documents_evicted.saturating_add(to_evict.len() as u32);
             collections_touched += 1;
-            // #1386 R2: recompute and publish this collection's real
-            // post-eviction byte footprint immediately, the same
-            // computation `stats()` does, rather than leaving the gauge to
-            // whatever the last `/stats` caller happened to report.
-            let total_bytes: u64 = coll.fields.values().map(|fi| fi.bytes()).sum();
-            self.metrics.set_storage_bytes(total_bytes);
         }
+        // #1386 R2 / #1397 R2: publish the engine-wide byte footprint (summed
+        // across every live collection), not just whichever collection this
+        // loop happened to touch last — the reshard split trigger reads this
+        // gauge, and a per-collection last-writer-wins value under-reports
+        // any engine holding more than one collection. Computed once, after
+        // the loop, over the same live-collection view `stats()` uses.
+        let total_bytes: u64 = state
+            .collections
+            .values()
+            .filter(|c| c.deleted_at.is_none())
+            .flat_map(|c| c.fields.values())
+            .map(|fi| fi.bytes())
+            .sum();
+        self.metrics.set_storage_bytes(total_bytes);
         Ok(ReshardEvictOutcome {
             collections_touched,
             documents_evicted,
@@ -4715,7 +4723,19 @@ impl Engine {
             .collect();
 
         let total_bytes: u64 = fields.values().map(|s| s.bytes).sum();
-        self.metrics.set_storage_bytes(total_bytes);
+        // #1397 R2: the response reports this collection's own total, but the
+        // gauge is engine-wide — summing only this collection here is the
+        // same last-writer-wins defect `evict_not_owned` had (whichever
+        // collection was `/stats`-ed last "wins" the gauge), and the reshard
+        // trigger reads this gauge expecting an engine-wide figure.
+        let engine_total_bytes: u64 = state
+            .collections
+            .values()
+            .filter(|c| c.deleted_at.is_none())
+            .flat_map(|c| c.fields.values())
+            .map(|fi| fi.bytes())
+            .sum();
+        self.metrics.set_storage_bytes(engine_total_bytes);
 
         let last_indexed_at = coll.last_indexed_at.map(|t| {
             let dt: chrono::DateTime<chrono::Utc> = t.into();
@@ -16758,6 +16778,133 @@ mod tests {
                 lte: None
             }),
             3
+        );
+    }
+
+    fn kw_only_schema() -> CreateCollectionRequest {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "email".into(),
+            FieldSpec {
+                field_type: FieldType::Keyword,
+                analyzer: None,
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        CreateCollectionRequest { fields }
+    }
+
+    fn index_kw(e: &Engine, collection_id: &str, eid: &str) {
+        e.index(
+            collection_id,
+            IndexRequest {
+                items: vec![item(
+                    eid,
+                    "email",
+                    FieldValue::String(format!("{eid}@x.com")),
+                )],
+                request_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    /// Ground truth read of one collection's own byte footprint, independent
+    /// of the engine-wide gauge under test.
+    fn collection_live_bytes(e: &Engine, collection_id: &str) -> u64 {
+        let state = e.state.read().unwrap();
+        state
+            .collections
+            .get(collection_id)
+            .unwrap()
+            .fields
+            .values()
+            .map(|fi| fi.bytes())
+            .sum()
+    }
+
+    /// #1397 R2 / AC2: `evict_not_owned` must publish the ENGINE-WIDE byte
+    /// total (summed across every live collection) after eviction, not just
+    /// whichever collection the loop happened to touch last. Two
+    /// collections, both with enough documents spread across the shard
+    /// map's virtual buckets that eviction touches both (a real
+    /// `balanced()` map, same shape production reshard uses) — the old
+    /// last-writer-wins gauge update would equal only the
+    /// later-in-iteration-order collection's post-eviction bytes ("b"
+    /// sorts after "a" in the `BTreeMap` the loop walks), not the sum.
+    #[test]
+    fn evict_not_owned_publishes_engine_wide_byte_total() {
+        let e = Engine::new();
+        e.create_collection("a", kw_only_schema()).unwrap();
+        e.create_collection("b", kw_only_schema()).unwrap();
+        for i in 0..40 {
+            index_kw(&e, "a", &format!("a{i:02}"));
+        }
+        for i in 0..40 {
+            index_kw(&e, "b", &format!("b{i:02}"));
+        }
+
+        let map = VirtualBucketShardMap::balanced(1, 8, 2).unwrap();
+        let touches_a =
+            (0..40).any(|i| map.route_document("a", None, &format!("a{i:02}")).shard != 0);
+        let touches_b =
+            (0..40).any(|i| map.route_document("b", None, &format!("b{i:02}")).shard != 0);
+        assert!(
+            touches_a && touches_b,
+            "fixture must evict from both collections to exercise the \
+             engine-wide sum (touches_a={touches_a}, touches_b={touches_b})"
+        );
+
+        let outcome = e.evict_not_owned(&map, 0).unwrap();
+        assert_eq!(outcome.collections_touched, 2);
+        assert!(outcome.documents_evicted > 0);
+
+        let expected_total = collection_live_bytes(&e, "a") + collection_live_bytes(&e, "b");
+        assert!(expected_total > 0);
+        assert_eq!(
+            e.metrics().storage_bytes.get(),
+            expected_total,
+            "gauge must equal the sum of both collections' post-eviction bytes, \
+             not just one of them"
+        );
+    }
+
+    /// #1397 R2 / AC2: `stats()` has the same last-writer-wins defect as
+    /// `evict_not_owned` — it must also publish the engine-wide byte total,
+    /// summed across every live collection, even though the API response it
+    /// returns stays scoped to the one requested collection.
+    #[test]
+    fn stats_publishes_engine_wide_byte_total() {
+        let e = Engine::new();
+        e.create_collection("a", kw_only_schema()).unwrap();
+        e.create_collection("b", kw_only_schema()).unwrap();
+        for i in 0..10 {
+            index_kw(&e, "a", &format!("a{i:02}"));
+        }
+        for i in 0..25 {
+            index_kw(&e, "b", &format!("b{i:02}"));
+        }
+
+        let bytes_a = collection_live_bytes(&e, "a");
+        let bytes_b = collection_live_bytes(&e, "b");
+        assert!(bytes_a > 0 && bytes_b != bytes_a);
+
+        // Calling stats on the SMALLER collection last is the case the old
+        // per-collection-only update got wrong: a last-writer-wins gauge
+        // would equal `bytes_a` alone, not `bytes_a + bytes_b`.
+        let stats_b = e.stats("b").unwrap();
+        assert_eq!(stats_b.storage.total_bytes, bytes_b);
+        e.stats("a").unwrap();
+
+        assert_eq!(
+            e.metrics().storage_bytes.get(),
+            bytes_a + bytes_b,
+            "gauge must equal the sum across both collections after a \
+             single-collection stats() call"
         );
     }
 }

@@ -20,13 +20,13 @@ Public API manifest for `projects/lumen/src/segment_rdb.rs` generated from AST d
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `SegmentRdbStore` | projects/lumen/src/segment_rdb.rs | struct | pub | 41 |  |
-| `generation_seqs` | projects/lumen/src/segment_rdb.rs | function | pub | 190 | generation_seqs(&self) -> Result<Vec<u64>> |
-| `load_latest` | projects/lumen/src/segment_rdb.rs | function | pub | 148 | load_latest(&self) -> Result<Option<(Arc<Engine>, u64)>> |
-| `new` | projects/lumen/src/segment_rdb.rs | function | pub | 48 | new(root: impl Into<PathBuf>) -> Result<Self> |
-| `prune` | projects/lumen/src/segment_rdb.rs | function | pub | 173 | prune(&self, keep: usize) -> Result<usize> |
-| `reopen_into` | projects/lumen/src/segment_rdb.rs | function | pub | 160 | reopen_into(&self, engine: &Arc<Engine>) -> Result<Option<u64>> |
-| `save` | projects/lumen/src/segment_rdb.rs | function | pub | 114 | save(&self, engine: &Arc<Engine>, up_to_seq: u64) -> Result<()> |
+| `SegmentRdbStore` | projects/lumen/src/segment_rdb.rs | struct | pub | 59 |  |
+| `generation_seqs` | projects/lumen/src/segment_rdb.rs | function | pub | 233 | generation_seqs(&self) -> Result<Vec<u64>> |
+| `load_latest` | projects/lumen/src/segment_rdb.rs | function | pub | 184 | load_latest(&self) -> Result<Option<(Arc<Engine>, u64)>> |
+| `new` | projects/lumen/src/segment_rdb.rs | function | pub | 67 | new(root: impl Into<PathBuf>) -> Result<Self> |
+| `prune` | projects/lumen/src/segment_rdb.rs | function | pub | 212 | prune(&self, keep: usize) -> Result<usize> |
+| `reopen_into` | projects/lumen/src/segment_rdb.rs | function | pub | 196 | reopen_into(&self, engine: &Arc<Engine>) -> Result<Option<u64>> |
+| `save` | projects/lumen/src/segment_rdb.rs | function | pub | 146 | save(&self, engine: &Arc<Engine>, up_to_seq: u64) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -60,7 +60,7 @@ Public API manifest for `projects/lumen/src/segment_rdb.rs` generated from AST d
 //! — no separate pointer file is needed; the highest `gen-*` is the latest.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 
@@ -69,10 +69,29 @@ use crate::storage::Engine;
 /// Filesystem-backed segment-checkpoint store: `<root>/gen-<seq>/`. The newest
 /// `gen-*` (by sequence) is the latest. Parallels [`crate::rdb::LocalFsRdbStore`]
 /// but persists the columnar segment tree instead of a CBOR blob.
+///
+/// ## Concurrency (#1397)
+///
+/// The serving binary shares one store instance between the on-demand
+/// checkpoint sink (`POST /admin/checkpoint`) and the periodic snapshotter —
+/// both call [`Self::save`]/[`Self::prune`] on clones of the same
+/// `Arc<SegmentRdbStore>`. Without serialization, one caller's
+/// [`Self::sweep_staging`] can delete another caller's in-flight staging
+/// dir, and two concurrent `save`s at the same `applied_seq` (routine during
+/// a quiet cutover, since reshard apply/evict mutate state without
+/// advancing `applied_seq`) can interleave their stage/flush/rename steps
+/// into a torn `gen-<seq>` directory that `load_latest` would then pick with
+/// no integrity check. `save_lock` fully serializes every mutating call on
+/// this store, so a caller only ever observes a fully-old or fully-new
+/// generation, never a partial one. It is wrapped in its own `Arc` (rather
+/// than relying on the struct's derived `Clone`) so the lock is shared even
+/// if a `SegmentRdbStore` value itself — not just an outer `Arc` around it —
+/// is cloned.
 #[derive(Debug, Clone)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment_rdb-rs.md#source
 pub struct SegmentRdbStore {
     root: PathBuf,
+    save_lock: Arc<Mutex<()>>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment_rdb-rs.md#source
@@ -82,7 +101,10 @@ impl SegmentRdbStore {
         let root = root.into();
         std::fs::create_dir_all(&root)
             .with_context(|| format!("create segment-checkpoint dir {}", root.display()))?;
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            save_lock: Arc::new(Mutex::new(())),
+        })
     }
 
     /// The committed generation path for `seq`.
@@ -144,7 +166,21 @@ impl SegmentRdbStore {
     /// atomically rename it to `gen-<up_to_seq>/`. The rename is the commit point
     /// — a crash before it leaves only the temp dir (swept on the next call), so a
     /// torn checkpoint never replaces a good one.
+    ///
+    /// Serialized via `save_lock` (#1397): the checkpoint sink and the
+    /// periodic snapshotter can both call this on the same store instance,
+    /// including at an unchanged `up_to_seq` (reshard apply/evict mutate
+    /// engine state without advancing `applied_seq`, so a same-seq save is
+    /// NOT a no-op and must still run — it is only made safe, not skipped).
+    /// Holding the lock across sweep+stage+flush+rename means a concurrent
+    /// caller's `sweep_staging` can never delete this call's in-flight
+    /// staging dir, and two saves at the same seq simply run one after the
+    /// other instead of interleaving into a torn generation.
     pub fn save(&self, engine: &Arc<Engine>, up_to_seq: u64) -> Result<()> {
+        let _guard = self
+            .save_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.sweep_staging();
         let staging = self.staging_path(up_to_seq);
         // A re-run at the same seq would collide; start from a clean staging dir.
@@ -203,7 +239,14 @@ impl SegmentRdbStore {
     /// Drop committed generations older than the newest `keep` (retention). The
     /// newest `keep` survive; returns how many were removed. Also sweeps any
     /// torn staging dirs.
+    ///
+    /// Shares `save_lock` with [`Self::save`] (#1397): `sweep_staging` here
+    /// could otherwise delete a concurrent `save`'s in-flight staging dir.
     pub fn prune(&self, keep: usize) -> Result<usize> {
+        let _guard = self
+            .save_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.sweep_staging();
         let all = self.generations()?;
         if all.len() <= keep {
@@ -412,6 +455,53 @@ mod tests {
             reloaded_source.stats("u").unwrap().documents_indexed,
             remaining_before_checkpoint
         );
+    }
+
+    /// #1397 AC1: `POST /admin/checkpoint` (the checkpoint sink) and the
+    /// periodic snapshotter share one `SegmentRdbStore` and can both fire at
+    /// an unchanged `applied_seq` (reshard apply/evict mutate engine state
+    /// without advancing `applied_seq`, so this is a routine, not a rare,
+    /// interleaving). Loop the interleaving many rounds with several
+    /// concurrent `save` callers per round: every round must cold-start to a
+    /// complete engine, never a torn one — proving `save_lock` actually
+    /// prevents `sweep_staging`/`rename` races rather than merely narrowing
+    /// them.
+    #[test]
+    fn concurrent_saves_at_same_seq_never_produce_torn_checkpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(SegmentRdbStore::new(dir.path()).unwrap());
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", kw_schema()).unwrap();
+        for i in 0..20 {
+            index_kw(&engine, &format!("u{i:02}"), &format!("u{i:02}@x.com"));
+        }
+        let expected_docs = engine.stats("u").unwrap().documents_indexed;
+
+        for round in 0..50u64 {
+            // Same `up_to_seq` across every concurrent caller this round,
+            // mirroring a quiet cutover where `applied_seq` hasn't moved.
+            let seq = round;
+            let handles: Vec<_> = (0..4)
+                .map(|_| {
+                    let store = store.clone();
+                    let engine = engine.clone();
+                    std::thread::spawn(move || store.save(&engine, seq))
+                })
+                .collect();
+            for h in handles {
+                h.join().unwrap().unwrap();
+            }
+
+            // Cold-start from scratch after the interleaving: the committed
+            // generation must always be complete and loadable, never torn.
+            let (reloaded, loaded_seq) = store.load_latest().unwrap().expect("a checkpoint");
+            assert_eq!(loaded_seq, seq);
+            assert_eq!(
+                reloaded.stats("u").unwrap().documents_indexed,
+                expected_docs,
+                "round {round}: cold start after concurrent saves must be complete"
+            );
+        }
     }
 }
 // CODEGEN-END
