@@ -819,10 +819,16 @@ pub struct MbParamInfo {
     pub default: MbValue,
     /// Textual annotation (`"int"`), None when un-annotated.
     pub annotation: Option<String>,
+    /// Lowered entry representation. Older metadata is conservatively boxed.
+    pub entry_abi: String,
+    /// Resolved scalar contract; unlike annotation, this is authoritative for
+    /// runtime rejection and is absent for Any/generic/container/forward refs.
+    pub contract: Option<String>,
 }
 
 /// Register a function's declared parameters. `params` is a list of
-/// (name, kind, has_default, default, annotation) tuples — see the
+/// seven-field (name, kind, has_default, default, annotation, entry_abi,
+/// contract) tuples. Five/six-field tuples remain accepted for old modules.
 /// lower_top_level priming loop in hir_to_mir.rs.
 pub fn mb_func_set_params(func: MbValue, params: MbValue) {
     let mut infos: Vec<MbParamInfo> = Vec::new();
@@ -843,12 +849,19 @@ pub fn mb_func_set_params(func: MbValue, params: MbValue) {
                     let default = elems[3];
                     super::rc::retain_if_ptr(default);
                     let annotation = extract_str(elems[4]);
+                    let entry_abi = elems
+                        .get(5)
+                        .and_then(|value| extract_str(*value))
+                        .unwrap_or_else(|| "boxed".to_string());
+                    let contract = elems.get(6).and_then(|value| extract_str(*value));
                     infos.push(MbParamInfo {
                         name,
                         kind,
                         has_default,
                         default,
                         annotation,
+                        entry_abi,
+                        contract,
                     });
                 }
             }
