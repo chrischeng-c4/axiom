@@ -326,7 +326,7 @@ fn mb_coroutine_step_with_post(
         Exhausted(MbValue),
         Invoke {
             body: unsafe extern "C" fn(i64) -> i64,
-            module_name: String,
+            module_name: Option<String>,
         },
         Idle,
         Error,
@@ -377,7 +377,11 @@ fn mb_coroutine_step_with_post(
                 if let Some(body) = coro.body_fn {
                     StepPlan::Invoke {
                         body,
-                        module_name: coro.module_name.clone(),
+                        module_name: if super::closure::active_module_matches(&coro.module_name) {
+                            None
+                        } else {
+                            Some(coro.module_name.clone())
+                        },
                     }
                 } else {
                     // Fail fast: no body function registered (#313 R1)
@@ -411,19 +415,24 @@ fn mb_coroutine_step_with_post(
                 cell.set(Some(id));
                 previous
             });
-            super::closure::push_active_module_name(module_name);
-            struct ModuleGuard;
+            struct ModuleGuard(bool);
             impl Drop for ModuleGuard {
                 fn drop(&mut self) {
-                    crate::runtime::closure::pop_active_module_name();
+                    if self.0 {
+                        crate::runtime::closure::pop_active_module_name();
+                    }
                 }
             }
-            let _module_guard = ModuleGuard;
+            let pushed_module = module_name.is_some();
+            if let Some(module_name) = module_name {
+                super::closure::push_active_module_name(module_name);
+            }
+            let _module_guard = ModuleGuard(pushed_module);
             let raw_return = unsafe { body(coro_handle.to_bits() as i64) };
             body_return = Some(MbValue::from_bits(raw_return as u64));
             CURRENT_COROUTINE_ID.with(|cell| cell.set(previous));
             clear_running = true;
-            if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
+            if super::exception::current_exception_is("StopIteration") {
                 super::exception::mb_clear_exception();
                 raise_runtime_error("coroutine raised StopIteration");
             }
@@ -912,61 +921,22 @@ pub fn mb_coroutine_send(coro_handle: MbValue, value: MbValue) -> MbValue {
     if COMPLETED_COROUTINES.read().unwrap().contains(id) {
         return raise_runtime_error("cannot reuse already awaited coroutine");
     }
-    let Some((state, exhausted, running)) = COROUTINES
-        .read()
-        .unwrap()
-        .get(&id)
-        .map(|c| (c.state, c.exhausted, c.running))
-    else {
+    let Some(snapshot) = coroutine_await_state_by_id(id) else {
         return MbValue::none();
     };
-    if exhausted {
+    if snapshot.exhausted {
         return raise_runtime_error("cannot reuse already awaited coroutine");
     }
-    if running {
-        super::exception::mb_raise(
-            new_str("ValueError"),
-            new_str("coroutine already executing"),
-        );
-        return MbValue::none();
-    }
-    if state == 0 && !value.is_none() {
-        return raise_type_error("can't send non-None value to a just-started coroutine");
-    }
-
-    if let Some(resumed) = super::async_task::mb_coroutine_resume_pending_await(coro_handle, value)
-    {
-        match resumed {
-            super::async_task::AwaitResume::Yield(yielded) => {
-                if super::exception::current_exception_type().is_some() {
-                    return MbValue::none();
-                }
-                return yielded;
+    match mb_coroutine_send_for_await_state(coro_handle, snapshot, value) {
+        CoroutineAwaitPoll::Yielded(yielded) => {
+            if super::exception::has_current_exception() {
+                return MbValue::none();
             }
-            super::async_task::AwaitResume::Complete(result) => {
-                mb_coroutine_store_resume_value(coro_handle, result);
-                let step = mb_coroutine_step_with_post(coro_handle, CoroutineStepPost::Snapshot);
-                if super::exception::current_exception_type().is_some() {
-                    return MbValue::none();
-                }
-                if step.exhausted {
-                    return raise_stop_iteration_value(step.result.unwrap_or_else(MbValue::none));
-                }
-                return step.value;
-            }
+            yielded
         }
+        CoroutineAwaitPoll::Complete(result) => raise_stop_iteration_value(result),
+        CoroutineAwaitPoll::Error => MbValue::none(),
     }
-
-    let step = mb_coroutine_step_with_post(coro_handle, CoroutineStepPost::MarkAwaiting);
-    if super::exception::current_exception_type().is_some() {
-        return MbValue::none();
-    }
-
-    if step.exhausted {
-        return raise_stop_iteration_value(step.result.unwrap_or_else(MbValue::none));
-    }
-
-    step.value
 }
 
 pub fn mb_coroutine_throw(coro_handle: MbValue, exc_type: MbValue, exc_msg: MbValue) -> MbValue {
