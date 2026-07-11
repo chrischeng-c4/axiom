@@ -2934,6 +2934,9 @@ semantic_domain:
           - name: "decide_pretool_payload"
             kind: "function"
             public: false
+          - name: "sanction_reason_for"
+            kind: "function"
+            public: false
           - name: "extract_target_paths"
             kind: "function"
             public: false
@@ -2947,6 +2950,9 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "contains"
+            kind: "function"
+            public: false
+          - name: "strip_project_prefix"
             kind: "function"
             public: false
           - name: "guard_prefixes_from_row"
@@ -3908,5 +3914,19 @@ changes:
       Issue #848: added the `source_units` evidence block for view.rs (the
       read-only repo visual-reader snapshot and desktop app surface),
       missing from this semantic domain's evidence list.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/guard.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1429 (closes #1269): `aw guard pretool` now consults the #1428
+      sanctioned-path resolver (`guard_sanction::is_sanctioned`) before its
+      deny decision, allowing edits to TD `impl_mode: hand-written` paths
+      declared by an active WI at an eligible phase. `decide_pretool_payload`
+      became async and gained a new `sanction_reason_for` helper (resolves a
+      guarded target's project-root-relative sanction reason); `GuardScope`
+      gained a `strip_project_prefix` method to translate repo-root-relative
+      targets into the project-root-relative keys the resolver uses. Symbol
+      list updated for both new functions.
     impl_mode: hand-written
 ```

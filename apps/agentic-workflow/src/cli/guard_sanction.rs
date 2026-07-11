@@ -140,6 +140,12 @@ pub fn sanctioned_edit_paths_from_issues(
 /// and its staleness window. Fails closed (returns an empty map) when the
 /// project or its backend config cannot be resolved; propagates only
 /// unexpected I/O errors from the offline backend's own `list()`.
+///
+/// Backend config resolution reads `repo_root`'s `aw.toml` (the
+/// `[agentic_workflow.issue_platform]`/`[agentic_workflow.repo_platform]`
+/// table `aw wi` itself reads via `crate::find_project_root()` +
+/// `resolve_default_backend`) — *not* the per-project subdirectory under
+/// `row.path`, which ordinarily carries no issue-platform config of its own.
 pub async fn sanctioned_edit_paths(
     repo_root: &Path,
     project: &str,
@@ -149,7 +155,7 @@ pub async fn sanctioned_edit_paths(
     };
     let project_root = repo_root.join(&row.path);
 
-    let Some(backend) = offline_issue_backend(&project_root) else {
+    let Some(backend) = offline_issue_backend(repo_root, &project_root) else {
         return Ok(HashMap::new());
     };
 
@@ -182,13 +188,16 @@ pub async fn is_sanctioned(
     Ok(map.get(&key).cloned())
 }
 
-/// Pick the offline-only issue source for `project_root`'s configured
-/// backend: the durable local store for a `local`-platform project, else
-/// the read-through cache for `github`/`gitlab` (never the live backend
-/// itself — see the module doc). `None` when the backend config cannot be
-/// resolved (missing/invalid `aw.toml`) — callers fail closed.
-fn offline_issue_backend(project_root: &Path) -> Option<Box<dyn IssueBackend>> {
-    let (kind, repo, host) = resolve_default_backend(project_root).ok()?;
+/// Pick the offline-only issue source for `repo_root`'s configured backend
+/// (the same `aw.toml` `aw wi` itself reads — see the module doc and
+/// [`sanctioned_edit_paths`]'s doc comment): the durable local store rooted
+/// at `project_root` for a `local`-platform project (workspace-scoped, same
+/// as `aw wi`'s own local backend construction), else the read-through
+/// cache for `github`/`gitlab` (never the live backend itself). `None` when
+/// the backend config cannot be resolved (missing/invalid `aw.toml`) —
+/// callers fail closed.
+fn offline_issue_backend(repo_root: &Path, project_root: &Path) -> Option<Box<dyn IssueBackend>> {
+    let (kind, repo, host) = resolve_default_backend(repo_root).ok()?;
     if kind == "local" {
         Some(Box::new(local_backend(project_root)))
     } else {
@@ -556,5 +565,52 @@ changes:
             .get(&PathBuf::from("src/bundler/dts.rs"))
             .expect("legacy td_gen_coded normalizes to cb_genned, which is eligible");
         assert_eq!(reason.phase, td_phase::CB_GENNED);
+    }
+
+    /// #1429 regression: `sanctioned_edit_paths`/`is_sanctioned` must read
+    /// backend config (`[agentic_workflow.issue_platform]`) from
+    /// `repo_root`'s `aw.toml` — the same file `aw wi` reads via
+    /// `crate::find_project_root()` — not from the per-project subdirectory
+    /// under `row.path`, which ordinarily carries no issue-platform config
+    /// of its own. Uses the read-through cache (`github` kind) so no env
+    /// var / process-global fixture flag is touched.
+    #[tokio::test]
+    async fn async_resolver_reads_backend_config_from_repo_root_not_project_subdir() {
+        use crate::issues::IssueBackend;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = format!("aw-guard-sanction-test/{}", uuid::Uuid::new_v4());
+        std::fs::write(
+            tmp.path().join("aw.toml"),
+            format!(
+                "[[projects]]\nname = \"demo\"\npath = \"projects/demo\"\n\n[agentic_workflow.issue_platform]\ntype = \"github\"\nrepo = \"{repo}\"\n"
+            ),
+        )
+        .unwrap();
+        write_td(
+            &tmp.path().join("projects/demo"),
+            "tech-design/dts.md",
+            HAND_WRITTEN_TD,
+        );
+
+        let cache = crate::issues::remote_read_cache_backend("github", Some(&repo), None);
+        let issue = open_issue(937, "937", td_phase::CB_GENNED, vec!["tech-design/dts.md"]);
+        cache.write(&issue).await.unwrap();
+
+        let map = sanctioned_edit_paths(tmp.path(), "demo").await.unwrap();
+        assert!(
+            map.contains_key(&PathBuf::from("src/bundler/dts.rs")),
+            "expected sanctioned path resolved via repo-root aw.toml backend config, got {map:?}"
+        );
+
+        let abs_target = tmp.path().join("projects/demo/src/bundler/dts.rs");
+        let reason = is_sanctioned(tmp.path(), "demo", &abs_target)
+            .await
+            .unwrap();
+        assert_eq!(reason.map(|r| r.wi_id), Some("937".to_string()));
+
+        // Best-effort cleanup of the shared /tmp/aw read-through cache dir.
+        let cache_dir = crate::issues::remote_read_cache_dir("github", Some(&repo), None);
+        let _ = std::fs::remove_dir_all(cache_dir.parent().unwrap_or(&cache_dir));
     }
 }
