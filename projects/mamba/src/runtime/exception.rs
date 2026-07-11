@@ -1050,6 +1050,22 @@ pub fn current_exception_type() -> Option<String> {
     CURRENT_EXCEPTION.with(|cell| cell.borrow().as_ref().map(|e| e.exc_type.clone()))
 }
 
+/// Cheap probe for hot paths that only need to know whether an exception
+/// exists, not allocate its type name.
+pub fn has_current_exception() -> bool {
+    CURRENT_EXCEPTION.with(|cell| cell.borrow().is_some())
+}
+
+/// Cheap type-name equality probe for hot paths that need to branch on one
+/// specific exception kind without cloning the stored name.
+pub fn current_exception_is(type_name: &str) -> bool {
+    CURRENT_EXCEPTION.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .is_some_and(|exc| exc.exc_type == type_name)
+    })
+}
+
 // ── Exception Introspection ──
 
 /// Get the type name of an exception value.
