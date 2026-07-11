@@ -22,7 +22,7 @@ Public API manifest for `apps/agentic-workflow/src/cli/commands.rs` generated fr
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `Commands` | apps/agentic-workflow/src/cli/commands.rs | enum | pub | 23 |  |
-| `run_command` | apps/agentic-workflow/src/cli/commands.rs | function | pub | 100 | run_command(cmd: Commands) -> Result<()> |
+| `run_command` | apps/agentic-workflow/src/cli/commands.rs | function | pub | 77 | run_command(cmd: Commands) -> Result<()> |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
@@ -37,6 +37,7 @@ use clap::Subcommand;
 use crate::cli::capability;
 use crate::cli::chat;
 use crate::cli::conf;
+use crate::cli::drift;
 use crate::cli::ec;
 use crate::cli::generator;
 use crate::cli::guard;
@@ -105,6 +106,8 @@ pub enum Commands {
 /// Run an Agentic Workflow CLI command
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/commands.md#source
 pub async fn run_command(cmd: Commands) -> Result<()> {
+    drift::check_once(env!("AW_BUILD_VERSION"), env!("AW_GIT_SHA"));
+
     match cmd {
         Commands::New(args) => {
             init::run_new(args).await?;
@@ -189,4 +192,14 @@ changes:
       focused producer internals.
       read-only `--check` flag; `run_command` dispatches it to
       `init::run_check()` instead of the mutating `init::run(...)` path.
+  - path: apps/agentic-workflow/src/cli/commands.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1309: adds the `drift` module import and a `drift::check_once`
+      call at the top of `run_command`, a stale-installed-binary detection
+      that warns on stderr (never stdout) at most once per hour when the
+      running binary's build version is behind the axiom checkout's
+      declared source version. Never fails the command.
 ```
