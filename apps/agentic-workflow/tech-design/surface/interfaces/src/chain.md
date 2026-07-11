@@ -644,6 +644,11 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         class: VerbLifecycleClass::Utility,
         sunset_criterion: "",
     },
+    VerbLifecycle {
+        path: "issue.comment",
+        class: VerbLifecycleClass::Utility,
+        sunset_criterion: "",
+    },
     // -- td (core LINEAR lifecycle + read-only/debug support verbs) -----
     VerbLifecycle {
         path: "td.create",
@@ -1607,5 +1612,14 @@ changes:
       ...]` runners. guard's `--meter-command` flag value is a further,
       nested third hop this deliberately does not recurse into (documented
       as executed-only, already covered by `--verify-ec`).
+  - path: apps/agentic-workflow/src/cli/chain.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      #927: added a `VERB_LIFECYCLE_REGISTRY` entry for the new
+      `issue.comment` verb (`Utility` class, no sunset criterion), keeping
+      `leaf_verb_paths_are_all_classified` green for the `aw issue comment`
+      subcommand wired in `standard_cli.rs`.
 
 

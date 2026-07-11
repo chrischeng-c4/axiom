@@ -610,6 +610,11 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         class: VerbLifecycleClass::Utility,
         sunset_criterion: "",
     },
+    VerbLifecycle {
+        path: "issue.comment",
+        class: VerbLifecycleClass::Utility,
+        sunset_criterion: "",
+    },
     // -- td (core LINEAR lifecycle + read-only/debug support verbs) -----
     VerbLifecycle {
         path: "td.create",

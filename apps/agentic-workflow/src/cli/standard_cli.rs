@@ -82,6 +82,8 @@ pub enum IssueCommand {
     View(IssueViewArgs),
     /// Create a diagnostics-rich Agentic Workflow issue.
     Create(IssueCreateArgs),
+    /// Reopen (if needed) and add a diagnostics-rich comment to an issue.
+    Comment(IssueCommentArgs),
 }
 
 #[derive(Debug, Args, Clone)]
@@ -127,6 +129,28 @@ pub struct IssueCreateArgs {
     pub yes: bool,
 
     /// Free-text description placed above the diagnostics block.
+    #[arg(value_name = "message", trailing_var_arg = true)]
+    pub message: Vec<String>,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct IssueCommentArgs {
+    /// Issue number to comment on.
+    pub number: u64,
+
+    /// Target repository (`owner/name`); defaults to aw's repository.
+    #[arg(long)]
+    pub repo: Option<String>,
+
+    /// Assemble and print the comment without submitting anything.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Skip the confirmation prompt.
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+
+    /// Optional verification note placed above the diagnostics block.
     #[arg(value_name = "message", trailing_var_arg = true)]
     pub message: Vec<String>,
 }
@@ -191,6 +215,20 @@ pub async fn run_issue(args: IssueArgs) -> Result<()> {
             )
             .await
         }
+        IssueCommand::Comment(args) => {
+            let message = (!args.message.is_empty()).then(|| args.message.join(" "));
+            cli_std::issue::comment(
+                &ISSUE_TOOL,
+                cli_std::issue::CommentOptions {
+                    number: args.number,
+                    message,
+                    repo: args.repo,
+                    dry_run: args.dry_run,
+                    yes: args.yes,
+                },
+            )
+            .await
+        }
     }
 }
 
@@ -207,6 +245,7 @@ fn report_issue_labels(mut extra: Vec<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     #[test]
     fn report_issue_labels_include_project_once() {
@@ -217,5 +256,70 @@ mod tests {
             labels,
             vec!["app:agentic-workflow".to_string(), "bug".to_string()]
         );
+    }
+
+    #[derive(Debug, clap::Parser)]
+    struct IssueCommandCli {
+        #[command(subcommand)]
+        command: IssueCommand,
+    }
+
+    #[test]
+    fn issue_comment_parses_number_dry_run_and_message() {
+        let cli = IssueCommandCli::try_parse_from([
+            "aw",
+            "comment",
+            "123",
+            "--dry-run",
+            "still",
+            "failing",
+        ])
+        .expect("issue comment should parse");
+
+        let IssueCommand::Comment(args) = cli.command else {
+            panic!("expected IssueCommand::Comment");
+        };
+        assert_eq!(args.number, 123);
+        assert!(args.dry_run);
+        assert!(!args.yes);
+        assert_eq!(
+            args.message,
+            vec!["still".to_string(), "failing".to_string()]
+        );
+    }
+
+    #[test]
+    fn issue_comment_requires_a_number() {
+        let err = IssueCommandCli::try_parse_from(["aw", "comment"])
+            .expect_err("issue comment without a number should fail to parse");
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn issue_comment_dispatches_via_cli_std_comment_options() {
+        // Argument-shape parity with `cli_std::issue::CommentOptions` (the
+        // dispatch this test's sibling above proves the parser produces)
+        // rather than a live network round trip — `run_issue` forwards
+        // `IssueCommentArgs` fields 1:1 into `CommentOptions`.
+        let args = IssueCommentArgs {
+            number: 927,
+            repo: Some("o/n".to_string()),
+            dry_run: true,
+            yes: false,
+            message: vec!["hello".to_string()],
+        };
+        let message = (!args.message.is_empty()).then(|| args.message.join(" "));
+        let opts = cli_std::issue::CommentOptions {
+            number: args.number,
+            message,
+            repo: args.repo.clone(),
+            dry_run: args.dry_run,
+            yes: args.yes,
+        };
+        assert_eq!(opts.number, 927);
+        assert_eq!(opts.message.as_deref(), Some("hello"));
+        assert_eq!(opts.repo.as_deref(), Some("o/n"));
+        assert!(opts.dry_run);
+        assert!(!opts.yes);
     }
 }
