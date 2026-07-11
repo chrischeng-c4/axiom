@@ -921,7 +921,6 @@ fn imported_alias_accounting_stays_limited_to_proven_generated_identities() {
 import importlib.util
 import pathlib
 import sys
-from collections import Counter
 
 gen_tool = pathlib.Path("tests/harness/cpython/tools/type_wall_gen.py")
 sys.path.insert(0, str(gen_tool.parent))
@@ -1025,18 +1024,260 @@ assert len(paths) == 13
 assert all(path.is_file() for path in paths), paths
 sigs = accounting.parse_generated_signature_param_index()
 assert all(accounting.unenforceable_generated_param_reason(path, sigs) is None for path in paths)
-
-wall = accounting.executable_type_fixtures(sorted(accounting.TYPE_DIR.rglob("*.py")))
-unconstrained, unresolved = accounting.partition_generated_contract_coverage(wall, sigs)
-assert len(wall) == 7415
-assert len(unconstrained) == 266
-assert len(unresolved) == 165
-assert Counter(item["reason"] for item in unresolved) == {
-    "structured_param_partial": 109,
-    "structured_param_type_unsupported": 56,
-}
 "#;
     assert_python_script(script, "proven imported alias accounting regression");
+}
+
+#[test]
+fn productive_recursive_alias_accounting_matches_checker_contractiveness() {
+    let script = r#"
+import importlib.util
+import pathlib
+import sys
+from collections import Counter
+
+tool = pathlib.Path("tests/harness/cpython/tools/strict_type_accounting.py")
+sys.path.insert(0, str(tool.parent))
+spec = importlib.util.spec_from_file_location("strict_type_accounting", tool)
+accounting = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = accounting
+spec.loader.exec_module(accounting)
+
+manifest = {
+    "strings": [""],
+    "nodes": [],
+    "edges": [],
+    "aliases": [],
+    "type_params": [],
+    "type_param_edges": [],
+}
+
+def string_id(value):
+    if value not in manifest["strings"]:
+        manifest["strings"].append(value)
+    return manifest["strings"].index(value)
+
+def node(value):
+    manifest["nodes"].append(value)
+    return len(manifest["nodes"]) - 1
+
+def edge_range(items):
+    start = len(manifest["edges"])
+    manifest["edges"].extend(items)
+    return [start, len(items)]
+
+def name(module, value, kind):
+    return node({"Name": {
+        "module": string_id(module), "name": string_id(value), "kind": kind,
+    }})
+
+def alias_ref(value):
+    return name("example", value, "a")
+
+def apply(base, args):
+    return node({"Apply": {"base": base, "args": edge_range(args)}})
+
+def union(items):
+    return node({"Union": edge_range(items)})
+
+def tuple_node(items):
+    return node({"Tuple": edge_range(items)})
+
+def param_list(items):
+    return node({"ParamList": edge_range(items)})
+
+def declare_alias(value, target, type_params=()):
+    start = len(manifest["type_param_edges"])
+    manifest["type_param_edges"].extend(type_params)
+    manifest["aliases"].append({
+        "module": string_id("example"),
+        "name": string_id(value),
+        "qualifier": 0,
+        "target": target,
+        "type_params": [start, len(type_params)],
+    })
+
+list_type = name("builtins", "list", "b")
+int_type = name("builtins", "int", "b")
+optional = name("typing", "Optional", "s")
+typing_union = name("typing", "Union", "s")
+callable_type = name("typing", "Callable", "s")
+type_guard = name("typing", "TypeGuard", "s")
+type_is = name("typing", "TypeIs", "s")
+any_node = node("Any")
+unsupported_node = node({"Unsupported": string_id("synthetic")})
+
+cases = {}
+direct = alias_ref("Direct")
+declare_alias("Direct", direct)
+cases["direct"] = (direct, "unsupported")
+cases["outer_guard_does_not_fix_direct"] = (
+    apply(list_type, [direct]), "unsupported",
+)
+
+guarded = alias_ref("Guarded")
+declare_alias("Guarded", apply(list_type, [guarded]))
+cases["list_guard"] = (guarded, "supported")
+
+tuple_guarded = alias_ref("TupleGuarded")
+declare_alias("TupleGuarded", tuple_node([tuple_guarded]))
+cases["tuple_guard"] = (tuple_guarded, "supported")
+
+callable_guarded = alias_ref("CallableGuarded")
+declare_alias(
+    "CallableGuarded",
+    apply(callable_type, [param_list([callable_guarded]), int_type]),
+)
+cases["callable_guard"] = (callable_guarded, "supported")
+
+optional_cycle = alias_ref("OptionalCycle")
+declare_alias("OptionalCycle", apply(optional, [optional_cycle]))
+cases["optional_is_transparent"] = (optional_cycle, "unsupported")
+
+union_cycle = alias_ref("UnionCycle")
+declare_alias("UnionCycle", apply(typing_union, [union_cycle, int_type]))
+cases["typing_union_is_transparent"] = (union_cycle, "unsupported")
+
+branch_cycle = alias_ref("BranchCycle")
+declare_alias(
+    "BranchCycle",
+    union([apply(list_type, [branch_cycle]), branch_cycle]),
+)
+cases["guards_do_not_leak_between_union_branches"] = (
+    branch_cycle, "unsupported",
+)
+
+optional_productive = alias_ref("OptionalProductive")
+declare_alias(
+    "OptionalProductive",
+    apply(optional, [apply(list_type, [optional_productive])]),
+)
+cases["optional_can_contain_a_real_guard"] = (
+    optional_productive, "supported",
+)
+
+for module, wrapper in [
+    ("typing", "Annotated"),
+    ("typing", "ClassVar"),
+    ("typing", "Final"),
+    ("typing", "Required"),
+    ("typing", "NotRequired"),
+    ("typing_extensions", "ReadOnly"),
+]:
+    alias_name = f"{wrapper}Cycle"
+    recursive = alias_ref(alias_name)
+    args = [recursive, any_node] if wrapper == "Annotated" else [recursive]
+    declare_alias(alias_name, apply(name(module, wrapper, "s"), args))
+    cases[f"{wrapper}_is_transparent"] = (recursive, "unsupported")
+
+mutual_a = alias_ref("MutualA")
+mutual_b = alias_ref("MutualB")
+declare_alias("MutualA", mutual_b)
+declare_alias("MutualB", mutual_a)
+cases["mutual_direct"] = (mutual_a, "unsupported")
+
+productive_a = alias_ref("ProductiveA")
+productive_b = alias_ref("ProductiveB")
+declare_alias("ProductiveA", apply(list_type, [productive_b]))
+declare_alias("ProductiveB", productive_a)
+cases["mutual_productive"] = (productive_a, "supported")
+
+bad_a = alias_ref("BadA")
+bad_b = alias_ref("BadB")
+declare_alias("BadA", apply(list_type, [bad_b]))
+declare_alias("BadB", bad_b)
+cases["new_alias_frame_starts_unguarded"] = (bad_a, "unsupported")
+
+manifest["type_params"].append({
+    "constraints": [0, 0], "bound": None, "default": None,
+    "kind": "t", "key": 0, "name": string_id("T"), "variance": "i",
+})
+type_param = node({"TypeParam": 0})
+generic_a = alias_ref("GenericA")
+generic_b = alias_ref("GenericB")
+declare_alias("GenericA", apply(generic_b, [generic_a]))
+declare_alias("GenericB", apply(list_type, [type_param]), [0])
+cases["generic_substitution_keeps_guard"] = (generic_a, "supported")
+
+identity_a = alias_ref("IdentityA")
+identity_b = alias_ref("IdentityB")
+declare_alias("IdentityA", apply(identity_b, [identity_a]))
+declare_alias("IdentityB", type_param, [0])
+cases["generic_identity_is_unproductive"] = (identity_a, "unsupported")
+
+cases["type_guard_is_terminal"] = (
+    apply(type_guard, [unsupported_node]), "supported",
+)
+cases["type_is_is_terminal"] = (
+    apply(type_is, [unsupported_node]), "supported",
+)
+
+for label, (node_id, expected) in cases.items():
+    actual = accounting._generated_typespec_status(manifest, node_id)
+    assert actual == expected, (label, expected, actual)
+
+live_manifest = accounting.load_generated_typespec_manifest()
+for key in [
+    ("marshal", "_Marshallable"),
+    ("xmlrpc.client", "_Marshallable"),
+    ("_typeshed", "TraceFunction"),
+    ("xml.etree.ElementTree", "_ElementCallable"),
+]:
+    decl = accounting._generated_alias_decl(live_manifest, *key)
+    assert decl is not None
+    assert accounting._generated_typespec_status(
+        live_manifest, decl["target"], alias_frames={key: False}
+    ) == "supported", key
+
+relative_paths = [
+    "std-libs/marshal/dump__value_as__Marshallable_wrong.py",
+    "std-libs/marshal/dumps__value_as__Marshallable_wrong.py",
+    "std-libs/sys/settrace__function_as_typed_wrong.py",
+    "std-libs/threading/settrace__func_as_typed_wrong.py",
+    "std-libs/threading/settrace_all_threads__func_as_typed_wrong.py",
+    "std-libs/xml_etree_ElementTree/Element__init__tag_as__Tag_wrong.py",
+    "std-libs/xml_etree_ElementTree/Element__makeelement__tag_as__OtherTag_wrong.py",
+    "std-libs/xmlrpc_client/Marshaller__dump_array__value_as_Iterable_wrong.py",
+    "std-libs/xmlrpc_client/Marshaller__dump_struct__value_as_Mapping_wrong.py",
+    "std-libs/xmlrpc_client/Marshaller__dumps__values_as_typed_wrong.py",
+    "std-libs/xmlrpc_client/MultiCallIterator__init__results_as_list_wrong.py",
+    "std-libs/xmlrpc_client/dumps__params_as_typed_wrong.py",
+    "std-libs/xmlrpc_server/SimpleXMLRPCDispatcher__system_multicall__call_list_as_list_wrong.py",
+]
+paths = [accounting.TYPE_DIR / path for path in relative_paths]
+assert len(paths) == 13
+assert all(path.is_file() for path in paths), paths
+sigs = accounting.parse_generated_signature_param_index()
+assert all(
+    accounting.unenforceable_generated_param_reason(path, sigs) is None
+    for path in paths
+)
+
+expanded = Counter(
+    status for row in sigs.values() for status in row["params"].values()
+)
+assert expanded == {
+    "supported": 21328,
+    "unconstrained": 2192,
+    "partial": 1686,
+    "unsupported": 1018,
+}
+wall = accounting.executable_type_fixtures(
+    sorted(accounting.TYPE_DIR.rglob("*.py"))
+)
+unconstrained, unresolved = accounting.partition_generated_contract_coverage(
+    wall, sigs
+)
+assert len(wall) == 7415
+assert len(unconstrained) == 266
+assert len(unresolved) == 152
+assert Counter(item["reason"] for item in unresolved) == {
+    "structured_param_partial": 109,
+    "structured_param_type_unsupported": 43,
+}
+"#;
+    assert_python_script(script, "productive recursive alias accounting regression");
 }
 
 #[test]
