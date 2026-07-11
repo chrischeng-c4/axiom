@@ -6,6 +6,7 @@
 //! unsupported annotation nodes remain explicit and distinct from `Any`.
 
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
@@ -414,6 +415,53 @@ pub fn class_spec(module: &str, name: &str) -> Option<(ClassSpecId, &'static Cla
     Some((export.2, class_by_id(export.2)))
 }
 
+fn class_spec_canonical(module: &str, qualifier: &str) -> Option<(ClassSpecId, &'static ClassSpec)> {
+    MANIFEST
+        .classes
+        .iter()
+        .enumerate()
+        .find(|(_, class)| {
+            string(class.module) == module && string(class.qualifier) == qualifier
+        })
+        .map(|(index, class)| (ClassSpecId(index as u32), class))
+}
+
+fn class_spec_any_name(module: &str, name: &str) -> Option<(ClassSpecId, &'static ClassSpec)> {
+    class_spec(module, name).or_else(|| class_spec_canonical(module, name))
+}
+
+/// Whether the generated Python 3.12 corpus contains a usable namespace for
+/// this module. Modules with only constants intentionally remain dynamic.
+pub fn module_exists(module: &str) -> bool {
+    MANIFEST
+        .class_exports
+        .iter()
+        .any(|export| string(export.0) == module)
+        || MANIFEST
+            .callable_exports
+            .iter()
+            .any(|export| string(export.0) == module)
+        || MANIFEST.aliases.iter().any(|alias| {
+            string(alias.module) == module && string(alias.qualifier).is_empty()
+        })
+        || MANIFEST.classes.iter().any(|class| string(class.module) == module)
+        || MANIFEST
+            .callables
+            .iter()
+            .any(|callable| callable.py312 && string(callable.module) == module)
+}
+
+/// Resolve a public class export to its canonical generated identity.
+pub fn exported_class(module: &str, name: &str) -> Option<(&'static str, &'static str)> {
+    let (_, class) = class_spec(module, name)?;
+    Some((string(class.module), string(class.qualifier)))
+}
+
+/// Whether a public module member has a generated module-function contract.
+pub fn module_callable_exists(module: &str, name: &str) -> bool {
+    overloads(module, "", name).any(|sig| sig.kind == CallableSpecKind::ModuleFn)
+}
+
 pub fn class_bases(class: &ClassSpec) -> &'static [TypeSpecId] {
     edges(class.bases)
 }
@@ -428,6 +476,102 @@ pub fn class_methods(
     MANIFEST.class_method_edges[class.methods.bounds()]
         .iter()
         .map(|id| &MANIFEST.class_callables[*id as usize])
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClassBaseStep {
+    pub child: ClassSpecId,
+    pub base: ClassSpecId,
+    pub args: TableRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClassCallableResolution {
+    pub owner: ClassSpecId,
+    pub path: Vec<ClassBaseStep>,
+}
+
+fn class_base_step(child: ClassSpecId, spec_id: TypeSpecId) -> Option<ClassBaseStep> {
+    let (module, name, args) = match node(spec_id) {
+        TypeSpecNode::Name { module, name, .. } => (*module, *name, TableRange::EMPTY),
+        TypeSpecNode::Apply { base, args } => match node(*base) {
+            TypeSpecNode::Name { module, name, .. } => (*module, *name, *args),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let (base, _) = class_spec_any_name(string(module), string(name))?;
+    Some(ClassBaseStep { child, base, args })
+}
+
+/// Resolve a class callable and retain the generic inheritance path from the
+/// requested class to its declaration owner. Distinct paths remain ambiguous
+/// even when they reach the same owner because they may project type arguments
+/// differently.
+pub fn class_callable_resolution(
+    module: &str,
+    qualifier: &str,
+    name: &str,
+    kinds: &[CallableSpecKind],
+) -> Option<ClassCallableResolution> {
+    fn visit(
+        class_id: ClassSpecId,
+        name: &str,
+        kinds: &[CallableSpecKind],
+        visiting: &mut HashSet<ClassSpecId>,
+    ) -> Result<Option<ClassCallableResolution>, ()> {
+        if !visiting.insert(class_id) {
+            return Err(());
+        }
+        let result = (|| {
+            let class = class_by_id(class_id);
+            if class_methods(class).any(|method| {
+                method.py312 && string(method.name) == name && kinds.contains(&method.kind)
+            }) {
+                return Ok(Some(ClassCallableResolution {
+                    owner: class_id,
+                    path: Vec::new(),
+                }));
+            }
+
+            let mut found: Option<ClassCallableResolution> = None;
+            for base in class_bases(class) {
+                let step = class_base_step(class_id, *base).ok_or(())?;
+                if let Some(mut resolution) = visit(step.base, name, kinds, visiting)? {
+                    resolution.path.insert(0, step);
+                    if found
+                        .as_ref()
+                        .is_some_and(|existing| existing != &resolution)
+                    {
+                        return Err(());
+                    }
+                    found = Some(resolution);
+                }
+            }
+            Ok(found)
+        })();
+        visiting.remove(&class_id);
+        result
+    }
+
+    let (class_id, _) = class_spec_any_name(module, qualifier)?;
+    visit(class_id, name, kinds, &mut HashSet::new())
+        .ok()
+        .flatten()
+}
+
+/// Resolve the declaration owner for a class callable, walking generated base
+/// classes conservatively. A direct declaration wins; ambiguous or incomplete
+/// multiple-inheritance paths return `None` instead of guessing an MRO.
+pub fn class_callable_owner(
+    module: &str,
+    qualifier: &str,
+    name: &str,
+    kinds: &[CallableSpecKind],
+) -> Option<(&'static str, &'static str)> {
+    let resolution = class_callable_resolution(module, qualifier, name, kinds)?;
+    let owner = class_by_id(resolution.owner);
+    Some((string(owner.module), string(owner.qualifier)))
 }
 
 pub fn decorators(range: TableRange) -> impl Iterator<Item = &'static str> {
@@ -537,6 +681,18 @@ mod tests {
     }
 
     #[test]
+    fn generated_manifest_canonicalizes_plain_class_aliases() {
+        assert_eq!(
+            exported_class("types", "LambdaType"),
+            Some(("types", "FunctionType")),
+        );
+        assert_eq!(
+            exported_class("types", "BuiltinMethodType"),
+            Some(("types", "BuiltinFunctionType")),
+        );
+    }
+
+    #[test]
     fn generated_manifest_canonicalizes_public_callable_exports() {
         let sig = overloads("operator", "", "index")
             .next()
@@ -555,6 +711,53 @@ mod tests {
             .collect();
         assert_eq!(methods.len(), 1);
         assert_eq!(string(methods[0].name), "__index__");
+    }
+
+    #[test]
+    fn generated_manifest_resolves_direct_and_inherited_class_callable_owners() {
+        let method_kinds = [
+            CallableSpecKind::InstanceMethod,
+            CallableSpecKind::ClassMethod,
+            CallableSpecKind::StaticMethod,
+        ];
+        assert_eq!(
+            class_callable_owner("builtins", "set", "__ior__", &method_kinds),
+            Some(("builtins", "set")),
+        );
+        assert_eq!(
+            class_callable_owner("pathlib", "Path", "as_posix", &method_kinds),
+            Some(("pathlib", "PurePath")),
+        );
+    }
+
+    #[test]
+    fn generated_manifest_retains_inherited_generic_projection_path() {
+        let method_kinds = [CallableSpecKind::InstanceMethod];
+        let resolution = class_callable_resolution(
+            "queue",
+            "PriorityQueue",
+            "get",
+            &method_kinds,
+        )
+        .expect("PriorityQueue.get inherited owner");
+        let [step] = resolution.path.as_slice() else {
+            panic!("PriorityQueue.get must have one generic base step");
+        };
+        let child = class_by_id(step.child);
+        let owner = class_by_id(resolution.owner);
+        assert_eq!(string(child.qualifier), "PriorityQueue");
+        assert_eq!(string(owner.qualifier), "Queue");
+        let [child_param] = class_type_params(child) else {
+            panic!("PriorityQueue must retain its class TypeVar");
+        };
+        let [owner_param] = class_type_params(owner) else {
+            panic!("Queue must retain its class TypeVar");
+        };
+        assert_ne!(child_param, owner_param);
+        let [base_arg] = edges(step.args) else {
+            panic!("PriorityQueue base must apply one type argument");
+        };
+        assert_eq!(node(*base_arg), &TypeSpecNode::TypeParam(*child_param));
     }
 
     #[test]
