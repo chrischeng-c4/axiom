@@ -1,7 +1,7 @@
 use super::stdlib_typespec::StrSpecId;
 use super::ty::{
-    AliasInstanceId, ExternalValue, ParamPack, Ty, TypeId, TypeParamDefault, TypeVarId,
-    TypeVarKind,
+    AliasInstanceId, ExternalValue, ParamPack, Ty, TypeId, TypePack, TypeParamDefault,
+    TypeVarId, TypeVarKind,
 };
 use crate::resolve::SymbolId;
 use std::collections::{HashMap, HashSet};
@@ -45,6 +45,7 @@ pub struct DeferredAliasTarget {
     pub template: AliasInstanceId,
     pub substitutions: Vec<(TypeVarId, TypeId)>,
     pub param_packs: Vec<(TypeVarId, ParamPack)>,
+    pub type_packs: Vec<(TypeVarId, TypePack)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -286,6 +287,7 @@ impl TypeContext {
         template: AliasInstanceId,
         substitutions: Vec<(TypeVarId, TypeId)>,
         param_packs: Vec<(TypeVarId, ParamPack)>,
+        type_packs: Vec<(TypeVarId, TypePack)>,
     ) {
         let _ = self.record_alias_target_change(id);
         let instance = &mut self.alias_instances[id.0 as usize];
@@ -296,6 +298,7 @@ impl TypeContext {
             template,
             substitutions,
             param_packs,
+            type_packs,
         };
         if let Some(existing) = &instance.deferred_target {
             debug_assert_eq!(existing, &deferred);
@@ -454,6 +457,7 @@ impl TypeContext {
                 Ty::Tuple(items) | Ty::Union(items) => {
                     items.iter().any(|item| visit(tcx, origin, *item, seen))
                 }
+                Ty::Unpack(_) => false,
                 Ty::Fn {
                     params,
                     ret,
@@ -580,7 +584,7 @@ impl TypeContext {
     /// PEP 695 bounds and constraints must be concrete after name resolution.
     pub fn contains_type_var(&self, id: TypeId) -> bool {
         match self.get(id) {
-            Ty::TypeVar(_) | Ty::SelfType | Ty::Infer(_) => true,
+            Ty::TypeVar(_) | Ty::Unpack(_) | Ty::SelfType | Ty::Infer(_) => true,
             Ty::AliasRef(id) => self
                 .alias_instance(*id)
                 .args
@@ -663,7 +667,7 @@ impl TypeContext {
 
     fn collect_type_vars(&self, id: TypeId, vars: &mut Vec<TypeVarId>) {
         match self.get(id) {
-            Ty::TypeVar(var) => vars.push(*var),
+            Ty::TypeVar(var) | Ty::Unpack(var) => vars.push(*var),
             Ty::AliasRef(id) => {
                 for arg in &self.alias_instance(*id).args {
                     self.collect_type_vars(*arg, vars);
@@ -1245,7 +1249,13 @@ mod tests {
         );
         let outer = tcx.begin_alias_target_transaction();
         let inner = tcx.begin_alias_target_transaction();
-        tcx.defer_alias_target(specialized, template, Vec::new(), Vec::new());
+        tcx.defer_alias_target(
+            specialized,
+            template,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
         assert!(tcx.deferred_alias_target(specialized).is_some());
         tcx.finish_alias_target_transaction(inner, true);
         assert!(tcx.deferred_alias_target(specialized).is_some());

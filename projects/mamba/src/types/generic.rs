@@ -1,7 +1,7 @@
 use super::context::{AliasIdentity, TypeContext};
 use super::ty::{
-    CallableParam, CallableParamKind, ParamPack, ParamPackTail, Ty, TypeId, TypeParamDefault,
-    TypeVarId, TypeVarKind,
+    CallableParam, CallableParamKind, ParamPack, ParamPackTail, Ty, TypeId, TypePack,
+    TypeParamDefault, TypeVarId, TypeVarKind,
 };
 /// Generics support for Mamba (#314 R1, R3).
 ///
@@ -88,6 +88,7 @@ impl GenericParams {
 pub struct Substitution {
     map: HashMap<TypeVarId, TypeId>,
     param_packs: HashMap<TypeVarId, ParamPack>,
+    type_packs: HashMap<TypeVarId, TypePack>,
 }
 
 impl Substitution {
@@ -95,6 +96,7 @@ impl Substitution {
         Self {
             map: HashMap::new(),
             param_packs: HashMap::new(),
+            type_packs: HashMap::new(),
         }
     }
 
@@ -122,9 +124,20 @@ impl Substitution {
         bindings
     }
 
+    pub(crate) fn type_pack_bindings(&self) -> Vec<(TypeVarId, TypePack)> {
+        let mut bindings: Vec<_> = self
+            .type_packs
+            .iter()
+            .map(|(var, pack)| (*var, pack.clone()))
+            .collect();
+        bindings.sort_by_key(|(var, _)| var.0);
+        bindings
+    }
+
     pub(crate) fn from_bindings(
         scalar: &[(TypeVarId, TypeId)],
         param_packs: &[(TypeVarId, ParamPack)],
+        type_packs: &[(TypeVarId, TypePack)],
     ) -> Self {
         let mut substitution = Self::new();
         for (var, ty) in scalar {
@@ -132,6 +145,9 @@ impl Substitution {
         }
         for (var, pack) in param_packs {
             substitution.insert_param_pack(*var, pack.clone());
+        }
+        for (var, pack) in type_packs {
+            substitution.insert_type_pack(*var, pack.clone());
         }
         substitution
     }
@@ -144,8 +160,16 @@ impl Substitution {
         self.param_packs.get(&var)
     }
 
+    pub fn insert_type_pack(&mut self, var: TypeVarId, pack: TypePack) {
+        self.type_packs.insert(var, pack);
+    }
+
+    pub fn get_type_pack(&self, var: TypeVarId) -> Option<&TypePack> {
+        self.type_packs.get(&var)
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.map.is_empty() && self.param_packs.is_empty()
+        self.map.is_empty() && self.param_packs.is_empty() && self.type_packs.is_empty()
     }
 
     pub fn apply_param_pack(&self, pack: &ParamPack, tcx: &mut TypeContext) -> ParamPack {
@@ -191,6 +215,33 @@ impl Substitution {
         self.apply_inner(ty, tcx, &mut HashSet::new())
     }
 
+    fn apply_type_list_inner(
+        &self,
+        items: &[TypeId],
+        tcx: &mut TypeContext,
+        visiting_packs: &mut HashSet<TypeVarId>,
+    ) -> Vec<TypeId> {
+        let mut applied = Vec::new();
+        for item in items {
+            if let Ty::Unpack(var) = tcx.get(*item) {
+                let var = *var;
+                if let Some(pack) = self.type_packs.get(&var) {
+                    if visiting_packs.insert(var) {
+                        applied.extend(self.apply_type_list_inner(
+                            &pack.types,
+                            tcx,
+                            visiting_packs,
+                        ));
+                        visiting_packs.remove(&var);
+                        continue;
+                    }
+                }
+            }
+            applied.push(self.apply_inner(*item, tcx, visiting_packs));
+        }
+        applied
+    }
+
     fn apply_inner(
         &self,
         ty: TypeId,
@@ -202,12 +253,20 @@ impl Substitution {
             Ty::TypeVar(var_id) => self.map.get(&var_id).copied().unwrap_or(ty),
             Ty::AliasRef(alias_id) => {
                 let source = tcx.alias_instance(alias_id).clone();
-                let new_args: Vec<_> = source
-                    .args
-                    .iter()
-                    .map(|arg| self.apply_inner(*arg, tcx, visiting_param_packs))
-                    .collect();
-                if new_args == source.args {
+                let mut new_args = self.apply_type_list_inner(
+                    &source.args[..source.display_arg_count],
+                    tcx,
+                    visiting_param_packs,
+                );
+                let new_display_arg_count = new_args.len();
+                new_args.extend(self.apply_type_list_inner(
+                    &source.args[source.display_arg_count..],
+                    tcx,
+                    visiting_param_packs,
+                ));
+                if new_args == source.args
+                    && new_display_arg_count == source.display_arg_count
+                {
                     return ty;
                 }
 
@@ -215,7 +274,7 @@ impl Substitution {
                     source.identity,
                     source.name,
                     new_args,
-                    source.display_arg_count,
+                    new_display_arg_count,
                 );
                 if tcx.alias_target_is_rejected(alias_id) {
                     tcx.reject_alias_target(specialized_id);
@@ -243,6 +302,7 @@ impl Substitution {
                         alias_id,
                         self.scalar_bindings(),
                         self.param_pack_bindings(),
+                        self.type_pack_bindings(),
                     );
                 }
                 specialized_ty
@@ -281,10 +341,8 @@ impl Substitution {
                 }
             }
             Ty::Tuple(ref elems) => {
-                let new_elems: Vec<TypeId> = elems
-                    .iter()
-                    .map(|e| self.apply_inner(*e, tcx, visiting_param_packs))
-                    .collect();
+                let new_elems =
+                    self.apply_type_list_inner(elems, tcx, visiting_param_packs);
                 if new_elems == *elems {
                     ty
                 } else {
@@ -301,10 +359,8 @@ impl Substitution {
                 let bound_var = param_spec.filter(|var| {
                     self.param_packs.contains_key(var) && visiting_param_packs.insert(*var)
                 });
-                let new_params: Vec<TypeId> = params
-                    .iter()
-                    .map(|p| self.apply_inner(*p, tcx, visiting_param_packs))
-                    .collect();
+                let new_params =
+                    self.apply_type_list_inner(params, tcx, visiting_param_packs);
                 let new_ret = self.apply_inner(ret, tcx, visiting_param_packs);
                 let new_signature = signature.as_ref().map(|params| {
                     params
@@ -406,20 +462,20 @@ impl Substitution {
             } => {
                 let new_user = user.as_ref().map(|user| super::ty::UserClass {
                     symbol: user.symbol,
-                    args: user
-                        .args
-                        .iter()
-                        .map(|arg| self.apply_inner(*arg, tcx, visiting_param_packs))
-                        .collect(),
+                    args: self.apply_type_list_inner(
+                        &user.args,
+                        tcx,
+                        visiting_param_packs,
+                    ),
                 });
                 let new_external = external.as_ref().map(|external| super::ty::ExternalClass {
                     module: external.module.clone(),
                     name: external.name.clone(),
-                    args: external
-                        .args
-                        .iter()
-                        .map(|arg| self.apply_inner(*arg, tcx, visiting_param_packs))
-                        .collect(),
+                    args: self.apply_type_list_inner(
+                        &external.args,
+                        tcx,
+                        visiting_param_packs,
+                    ),
                 });
                 let new_fields: Vec<_> = fields
                     .iter()
@@ -473,8 +529,9 @@ impl Substitution {
 /// Bind explicit type arguments to a declaration's type parameters.
 ///
 /// Ordinary TypeVars have fixed arity and may consume trailing defaults.
-/// TypeVarTuple and ParamSpec still require richer pack/parameter-list types;
-/// keep their legacy positional binding without claiming fixed-arity support.
+/// One TypeVarTuple consumes the ordered middle slice between fixed prefix and
+/// suffix parameters. ParamSpec and unsupported mixed-pack declarations retain
+/// their legacy skip-safe positional behavior.
 pub fn bind_explicit_type_args(
     generic_params: &GenericParams,
     supplied: &[TypeId],
@@ -497,15 +554,98 @@ pub fn bind_explicit_type_args_without_bounds(
     let mut subst = Substitution::new();
     let mut resolved = supplied.to_vec();
 
+    if let Some(pack_index) = generic_params
+        .params
+        .iter()
+        .position(|param| param.kind == TypeVarKind::TypeVarTuple)
+        .filter(|_| {
+            generic_params
+                .params
+                .iter()
+                .filter(|param| param.kind == TypeVarKind::TypeVarTuple)
+                .count()
+                == 1
+                && generic_params
+                    .params
+                    .iter()
+                    .all(|param| param.kind != TypeVarKind::ParamSpec)
+        })
+    {
+        let trailing = generic_params.params.len() - pack_index - 1;
+        let required = generic_params
+            .params
+            .iter()
+            .filter(|param| {
+                param.kind != TypeVarKind::TypeVarTuple && !param.default.is_present()
+            })
+            .count();
+        let mut errors = Vec::new();
+        if supplied.len() < required {
+            errors.push(format!(
+                "expected at least {required} type arguments, got {}",
+                supplied.len()
+            ));
+        }
+        resolved.clear();
+        for (index, param) in generic_params.params[..pack_index].iter().enumerate() {
+            let concrete = supplied
+                .get(index)
+                .copied()
+                .or_else(|| {
+                    param
+                        .default
+                        .resolved()
+                        .map(|default| subst.apply(default, tcx))
+                })
+                .unwrap_or_else(|| tcx.any());
+            let concrete = normalize_scalar_explicit_arg(param, concrete, tcx, &mut errors);
+            subst.insert(param.id, concrete);
+            resolved.push(concrete);
+        }
+        let pack_start = pack_index.min(supplied.len());
+        let pack_end = supplied
+            .len()
+            .saturating_sub(trailing)
+            .max(pack_start);
+        let pack = TypePack {
+            types: supplied[pack_start..pack_end].to_vec(),
+        };
+        resolved.extend(pack.types.iter().copied());
+        subst.insert_type_pack(
+            generic_params.params[pack_index].id,
+            pack,
+        );
+        for (offset, param) in generic_params.params[pack_index + 1..].iter().enumerate() {
+            let index = pack_end + offset;
+            let concrete = supplied
+                .get(index)
+                .copied()
+                .or_else(|| {
+                    param
+                        .default
+                        .resolved()
+                        .map(|default| subst.apply(default, tcx))
+                })
+                .unwrap_or_else(|| tcx.any());
+            let concrete = normalize_scalar_explicit_arg(param, concrete, tcx, &mut errors);
+            subst.insert(param.id, concrete);
+            resolved.push(concrete);
+        }
+        return (subst, resolved, errors);
+    }
+
     if generic_params
         .params
         .iter()
         .any(|param| param.kind != TypeVarKind::TypeVar)
     {
-        for (param, concrete) in generic_params.params.iter().zip(supplied) {
-            subst.insert(param.id, *concrete);
+        let mut errors = Vec::new();
+        for (index, (param, concrete)) in generic_params.params.iter().zip(supplied).enumerate() {
+            let concrete = normalize_scalar_explicit_arg(param, *concrete, tcx, &mut errors);
+            subst.insert(param.id, concrete);
+            resolved[index] = concrete;
         }
-        return (subst, resolved, Vec::new());
+        return (subst, resolved, errors);
     }
 
     let total = generic_params.params.len();
@@ -528,7 +668,7 @@ pub fn bind_explicit_type_args_without_bounds(
     }
 
     for (index, (param, concrete)) in generic_params.params.iter().zip(supplied).enumerate() {
-        let concrete = normalize_constrained_candidate(param, *concrete, tcx);
+        let concrete = normalize_scalar_explicit_arg(param, *concrete, tcx, &mut errors);
         subst.insert(param.id, concrete);
         resolved[index] = concrete;
     }
@@ -547,12 +687,28 @@ pub fn bind_explicit_type_args_without_bounds(
     (subst, resolved, errors)
 }
 
+fn normalize_scalar_explicit_arg(
+    param: &TypeVar,
+    candidate: TypeId,
+    tcx: &TypeContext,
+    errors: &mut Vec<String>,
+) -> TypeId {
+    if matches!(tcx.get(candidate), Ty::Unpack(_)) {
+        errors.push(format!(
+            "type parameter '{}' does not accept an unpacked type argument",
+            param.name
+        ));
+        return tcx.error();
+    }
+    normalize_constrained_candidate(param, candidate, tcx)
+}
+
 /// Complete a partially inferred ordinary-TypeVar substitution.
 ///
 /// Constructor inference may solve only some class parameters. Remaining
 /// parameters consume their declared default, or `Any` when no default is
-/// available. Pack parameters require a pack-aware consumer and remain
-/// unavailable to scalar class/alias specialization.
+/// available. Inferred pack parameters require a pack-aware completion path;
+/// this scalar completion helper deliberately declines them.
 pub fn complete_type_args(
     generic_params: &GenericParams,
     mut subst: Substitution,
@@ -1278,6 +1434,13 @@ mod tests {
             Vec::new(),
             TypeParamDefault::None,
         );
+        let type_var_tuple = tcx.new_type_param(
+            "Ts".to_string(),
+            TypeVarKind::TypeVarTuple,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
         let var_ty = tcx.intern(Ty::TypeVar(var));
         let other_ty = tcx.intern(Ty::TypeVar(other));
         let (template, template_ref) = tcx.intern_alias_instance(
@@ -1304,6 +1467,10 @@ mod tests {
             tail: ParamPackTail::Closed,
         };
         subst.insert_param_pack(param_spec, pack.clone());
+        let type_pack = TypePack {
+            types: vec![tcx.str(), tcx.bool()],
+        };
+        subst.insert_type_pack(type_var_tuple, type_pack.clone());
         let specialized_ref = subst.apply(template_ref, &mut tcx);
         let Ty::AliasRef(specialized) = tcx.get(specialized_ref) else {
             panic!("transformed specialization lost its alias identity");
@@ -1318,10 +1485,19 @@ mod tests {
             vec![(var, tcx.int()), (other, tcx.str())]
         );
         assert_eq!(deferred.param_packs, vec![(param_spec, pack.clone())]);
-        let rebuilt = Substitution::from_bindings(&deferred.substitutions, &deferred.param_packs);
+        assert_eq!(
+            deferred.type_packs,
+            vec![(type_var_tuple, type_pack.clone())]
+        );
+        let rebuilt = Substitution::from_bindings(
+            &deferred.substitutions,
+            &deferred.param_packs,
+            &deferred.type_packs,
+        );
         assert_eq!(rebuilt.get(var), Some(tcx.int()));
         assert_eq!(rebuilt.get(other), Some(tcx.str()));
         assert_eq!(rebuilt.get_param_pack(param_spec), Some(&pack));
+        assert_eq!(rebuilt.get_type_pack(type_var_tuple), Some(&type_pack));
         assert_eq!(tcx.alias_target(*specialized), None);
 
         let target = tcx.intern(Ty::List(template_ref));
@@ -2214,5 +2390,164 @@ mod tests {
         let (subst, conflicts) = infer_type_args(&gp, &[tuple_param], &[tuple_arg], &tcx);
         assert!(conflicts.is_empty());
         assert_eq!(subst.get(var_id), Some(str_ty));
+    }
+
+    #[test]
+    fn bind_explicit_type_args_keeps_ordered_type_var_tuple_slice() {
+        let mut tcx = TypeContext::new();
+        let mut gp = GenericParams::new();
+        gp.add("Head", TypeVarId(0), None);
+        gp.add_param(
+            "Ts",
+            TypeVarId(1),
+            TypeVarKind::TypeVarTuple,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
+        gp.add("Tail", TypeVarId(2), None);
+
+        let int = tcx.int();
+        let str_ = tcx.str();
+        let bool_ = tcx.bool();
+        let (subst, resolved, errors) =
+            bind_explicit_type_args(&gp, &[int, str_, bool_], &mut tcx);
+        assert!(errors.is_empty());
+        assert_eq!(resolved, vec![int, str_, bool_]);
+        assert_eq!(subst.get(TypeVarId(0)), Some(int));
+        assert_eq!(subst.get(TypeVarId(2)), Some(bool_));
+        assert_eq!(
+            subst.get_type_pack(TypeVarId(1)).unwrap().types,
+            vec![str_]
+        );
+
+        let (zero, zero_resolved, zero_errors) =
+            bind_explicit_type_args(&gp, &[int, bool_], &mut tcx);
+        assert!(zero_errors.is_empty());
+        assert_eq!(zero_resolved, vec![int, bool_]);
+        assert_eq!(zero.get(TypeVarId(0)), Some(int));
+        assert_eq!(zero.get(TypeVarId(2)), Some(bool_));
+        assert!(zero.get_type_pack(TypeVarId(1)).unwrap().types.is_empty());
+
+        let float = tcx.float();
+        let (many, many_resolved, many_errors) =
+            bind_explicit_type_args(&gp, &[int, str_, float, bool_], &mut tcx);
+        assert!(many_errors.is_empty());
+        assert_eq!(many_resolved, vec![int, str_, float, bool_]);
+        assert_eq!(many.get(TypeVarId(0)), Some(int));
+        assert_eq!(many.get(TypeVarId(2)), Some(bool_));
+        assert_eq!(many.get_type_pack(TypeVarId(1)).unwrap().types, vec![str_, float]);
+
+        let head = tcx.intern(Ty::TypeVar(TypeVarId(0)));
+        let unpack = tcx.intern(Ty::Unpack(TypeVarId(1)));
+        let tail = tcx.intern(Ty::TypeVar(TypeVarId(2)));
+        let template = tcx.intern(Ty::Tuple(vec![head, unpack, tail]));
+        let zero_applied = zero.apply(template, &mut tcx);
+        assert_eq!(tcx.get(zero_applied), &Ty::Tuple(vec![int, bool_]));
+        let one_applied = subst.apply(template, &mut tcx);
+        assert_eq!(tcx.get(one_applied), &Ty::Tuple(vec![int, str_, bool_]));
+        let many_applied = many.apply(template, &mut tcx);
+        assert_eq!(
+            tcx.get(many_applied),
+            &Ty::Tuple(vec![int, str_, float, bool_])
+        );
+        let callable = tcx.intern(Ty::Fn {
+            params: vec![head, unpack, tail],
+            ret: bool_,
+            variadic: false,
+            signature: None,
+            param_spec: None,
+        });
+        let callable_applied = many.apply(callable, &mut tcx);
+        let Ty::Fn { params, ret, .. } = tcx.get(callable_applied) else {
+            panic!("TypeVarTuple substitution lost the callable type");
+        };
+        assert_eq!(params, &vec![int, str_, float, bool_]);
+        assert_eq!(*ret, bool_);
+
+        for supplied in [&[][..], &[int][..]] {
+            let (under_arity, _, under_arity_errors) =
+                bind_explicit_type_args(&gp, supplied, &mut tcx);
+            assert_eq!(under_arity_errors.len(), 1);
+            assert!(under_arity_errors[0].contains("expected at least 2"));
+            assert!(under_arity
+                .get_type_pack(TypeVarId(1))
+                .unwrap()
+                .types
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn bind_explicit_type_args_applies_defaults_around_type_var_tuple() {
+        let mut tcx = TypeContext::new();
+        let mut gp = GenericParams::new();
+        gp.add_param(
+            "Head",
+            TypeVarId(0),
+            TypeVarKind::TypeVar,
+            None,
+            Vec::new(),
+            TypeParamDefault::Resolved(tcx.int()),
+        );
+        gp.add_param(
+            "Ts",
+            TypeVarId(1),
+            TypeVarKind::TypeVarTuple,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
+        gp.add_param(
+            "Tail",
+            TypeVarId(2),
+            TypeVarKind::TypeVar,
+            None,
+            Vec::new(),
+            TypeParamDefault::Resolved(tcx.str()),
+        );
+
+        let (subst, resolved, errors) = bind_explicit_type_args(&gp, &[], &mut tcx);
+        assert!(errors.is_empty());
+        assert_eq!(resolved, vec![tcx.int(), tcx.str()]);
+        assert_eq!(subst.get(TypeVarId(0)), Some(tcx.int()));
+        assert_eq!(subst.get(TypeVarId(2)), Some(tcx.str()));
+        assert!(subst.get_type_pack(TypeVarId(1)).unwrap().types.is_empty());
+    }
+
+    #[test]
+    fn bind_explicit_type_args_preserves_paramspec_fallback_without_false_arity() {
+        let mut tcx = TypeContext::new();
+        let mut gp = GenericParams::new();
+        gp.add_param(
+            "P",
+            TypeVarId(0),
+            TypeVarKind::ParamSpec,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
+
+        let int = tcx.int();
+        let str_ = tcx.str();
+        let (subst, resolved, errors) =
+            bind_explicit_type_args(&gp, &[int, str_], &mut tcx);
+        assert!(errors.is_empty());
+        assert_eq!(resolved, vec![int, str_]);
+        assert_eq!(subst.get(TypeVarId(0)), Some(int));
+    }
+
+    #[test]
+    fn bind_explicit_type_args_rejects_unpack_for_scalar_parameter() {
+        let mut tcx = TypeContext::new();
+        let mut gp = GenericParams::new();
+        gp.add("T", TypeVarId(0), None);
+        let unpack = tcx.intern(Ty::Unpack(TypeVarId(1)));
+
+        let (subst, resolved, errors) = bind_explicit_type_args(&gp, &[unpack], &mut tcx);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("does not accept an unpacked type argument"));
+        assert_eq!(resolved, vec![tcx.error()]);
+        assert_eq!(subst.get(TypeVarId(0)), Some(tcx.error()));
     }
 }
