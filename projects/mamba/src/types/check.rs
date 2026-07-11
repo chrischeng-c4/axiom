@@ -576,6 +576,8 @@ pub struct TypeChecker {
     /// Nominal base graph for user-class semantics that cannot tolerate
     /// same-named nested declarations sharing the legacy name map.
     pub(crate) class_base_symbols: HashMap<SymbolId, Vec<SymbolId>>,
+    /// Classes whose base graph contains an external or unresolved base.
+    pub(crate) class_inheritance_open: HashSet<SymbolId>,
     /// Subject type of the enclosing `match` statement, used to propagate type
     /// into capture / star / AS bindings in `check_pattern` (#827).
     pub(crate) current_match_subject_ty: Option<TypeId>,
@@ -586,17 +588,15 @@ pub struct TypeChecker {
     /// `(i := i + 1)` inside a function body re-defined `i` at module scope,
     /// poisoning a same-named outer variable's type.
     pub(crate) comprehension_depth: u32,
-    /// ① Type-wall PoC: import provenance for stdlib call resolution. Maps a
-    /// bound symbol to its `(dotted-module, qualifier)` origin so a later call
-    /// site can recover `(module, qualifier, name)` and consult the hardcoded
-    /// `stdlib_sigs` table. The bound *symbol type* stays `Any` — this map is a
-    /// purely additive side channel that never changes inference.
+    /// Import provenance for stdlib call resolution. Maps a bound symbol to
+    /// its `(dotted-module, qualifier)` origin so generated and compact
+    /// signatures can recover the canonical callable.
     ///
     /// Symbol identity prevents a parameter or nested local with the same text
     /// from inheriting an outer import's contract.
     pub(crate) import_origins: HashMap<SymbolId, (String, String)>,
-    /// ① Type-wall PoC: snapshots the imported class origin of the stdlib
-    /// instance a local binding holds, populated when a var is assigned
+    /// Imported class origin of the stdlib instance a local binding holds,
+    /// populated when a var is assigned
     /// `object.__new__(Cls)` or `Cls(...)` where `Cls` is a known imported
     /// stdlib class. The snapshot survives later rebinding of `Cls`.
     pub(crate) instance_origins: HashMap<SymbolId, (String, String)>,
@@ -677,6 +677,7 @@ impl TypeChecker {
             numeric_derived_class_symbols: HashMap::new(),
             class_bases: HashMap::new(),
             class_base_symbols: HashMap::new(),
+            class_inheritance_open: HashSet::new(),
             current_match_subject_ty: None,
             comprehension_depth: 0,
             import_origins: HashMap::new(),
@@ -840,6 +841,17 @@ impl TypeChecker {
         actual: TypeId,
         value: &Spanned<Expr>,
     ) -> TypeId {
+        let expects_class_info = matches!(
+            self.tcx.get(expected),
+            Ty::Class {
+                external: Some(external),
+                ..
+            } if (external.module.as_str(), external.name.as_str())
+                == ("builtins", "_ClassInfo")
+        );
+        if expects_class_info {
+            return self.refine_class_info_actual(value, actual);
+        }
         if !matches!(self.tcx.get(expected), Ty::TypeObject(_)) {
             return actual;
         }
@@ -847,6 +859,26 @@ impl TypeChecker {
             return actual;
         };
         self.tcx.intern(Ty::TypeObject(instance))
+    }
+
+    fn refine_class_info_actual(&mut self, value: &Spanned<Expr>, actual: TypeId) -> TypeId {
+        if let Some(instance) = self.class_object_instance_type(value, actual) {
+            return self.tcx.intern(Ty::TypeObject(instance));
+        }
+        let (Expr::TupleLit(values), Ty::Tuple(items)) =
+            (&value.node, self.tcx.get(actual).clone())
+        else {
+            return actual;
+        };
+        if values.len() != items.len() {
+            return actual;
+        }
+        let items = values
+            .iter()
+            .zip(items)
+            .map(|(value, item)| self.refine_class_info_actual(value, item))
+            .collect();
+        self.tcx.intern(Ty::Tuple(items))
     }
 
     fn stdlib_class_contract_exists(module: &str, qualifier: &str) -> bool {
@@ -2110,6 +2142,21 @@ impl TypeChecker {
                             .insert(Self::declaration_key(stmt), symbol);
                         symbol
                     };
+                    let non_object_base_count = bases
+                        .iter()
+                        .filter(|base| {
+                            !matches!(&base.node, Expr::Ident(name) if name == "object")
+                        })
+                        .count();
+                    let inheritance_open = base_symbols.len() != non_object_base_count
+                        || base_symbols
+                            .iter()
+                            .any(|base| self.class_inheritance_open.contains(base));
+                    if inheritance_open {
+                        self.class_inheritance_open.insert(sym);
+                    } else {
+                        self.class_inheritance_open.remove(&sym);
+                    }
                     self.symbols.push_scope();
                     let class_metadata_error_mark = self.errors_mark();
                     self.preregister_type_alias_headers(body);
@@ -2927,10 +2974,7 @@ impl TypeChecker {
         }
     }
 
-    /// ① Type-wall PoC: does the sig table contain a `Method` whose owning class
-    /// is `class_name` in `module`? Used at import time to mark a from-imported
-    /// class binding so its instances can resolve method sigs.
-    /// ① Type-wall PoC: map a [`CoreTy`] to a concrete scalar [`TypeId`], or
+    /// Map a compact signature [`CoreTy`] to a concrete scalar [`TypeId`], or
     /// `None` when the param is non-scalar / unenforceable. `Bytes` and
     /// `MemoryView`, and `Complex` have no dedicated scalar `Ty` (buffer/complex
     /// expressions infer to `Any`), so scalar rejection for them lives in the
@@ -2963,7 +3007,7 @@ impl TypeChecker {
         }
     }
 
-    /// ① Type-wall PoC: true only when `actual` is a *concrete scalar* type we
+    /// True only when `actual` is a concrete scalar type we
     /// are confident about (Int/Float/Str/Bool/None). Any/Error/Union/typevar/
     /// collection/class -> not concrete -> the hook skips (zero false positives).
     pub(crate) fn is_concrete_scalar(&self, actual: TypeId) -> bool {
@@ -3080,6 +3124,26 @@ impl TypeChecker {
                 && matches!(a, Ty::Bool | Ty::Int | Ty::Float)
             {
                 return true;
+            }
+
+            if external.module == "typing" && external.name == "MutableSequence" {
+                let mutable_items = match a.clone() {
+                    Ty::List(item) => Some(vec![item]),
+                    Ty::Class {
+                        external: Some(actual),
+                        ..
+                    } if actual.module == "builtins" && actual.name == "bytearray" => {
+                        Some(vec![self.tcx.int()])
+                    }
+                    _ => None,
+                };
+                if let (Some(expected_item), Some(actual_items)) =
+                    (external.args.first().copied(), mutable_items)
+                {
+                    return actual_items.into_iter().all(|actual_item| {
+                        self.types_compatible_inner(expected_item, actual_item, visiting)
+                    });
+                }
             }
 
             let collection_item = match a.clone() {
@@ -3643,10 +3707,18 @@ impl TypeChecker {
                 // Generic methods (`def meth[U](...)`) resolve their own
                 // type params within the signature (PEP 695).
                 let gp = self.register_type_params(type_params);
+                let is_staticmethod = decorators.iter().any(|decorator| {
+                    matches!(&decorator.node, Expr::Ident(name) if name == "staticmethod")
+                        || matches!(
+                            &decorator.node,
+                            Expr::Attr { attr, .. } if attr == "staticmethod"
+                        )
+                });
                 let param_sigs: Vec<FunctionParamSig> = params
                     .iter()
-                    .filter(|p| p.name != "self")
-                    .map(|p| FunctionParamSig {
+                    .enumerate()
+                    .filter(|(index, _)| is_staticmethod || *index != 0)
+                    .map(|(_, p)| FunctionParamSig {
                         name: p.name.clone(),
                         ty: self.resolve_type_expr(&p.ty),
                         kind: p.kind,
