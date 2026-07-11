@@ -128,25 +128,25 @@ const LEGACY_SCORE_WORKSPACE_DIR: &str = concat!(".", "score");
 
 fn legacy_score_workspace_error(root: &std::path::Path) -> anyhow::Error {
     anyhow::anyhow!(
-        "legacy Agentic Workflow state found at {}; active state now lives under .aw. Move or remove the old directory explicitly, then rerun this command.",
+        "legacy Agentic Workflow state found at {}; active runtime state now lives under /tmp/aw and root config lives in aw.toml. Move or remove the old directory explicitly, then rerun this command.",
         root.join(LEGACY_SCORE_WORKSPACE_DIR).display()
     )
 }
 
-// Find the project root by walking up from CWD looking for `.aw/config.toml`.
-// Falls back to CWD if no `.aw/` is found (e.g., during greenfield setup).
+// Find the project root by walking up from CWD looking for `aw.toml`.
+// Falls back to CWD if no `aw.toml` is found (e.g., during greenfield setup).
 ///
 // This intentionally returns the repo root for the CLI process's current
 // working tree. In a git linked-worktree checkout, do not use shared git
 // metadata to redirect to another checkout: mutating Agentic Workflow commands must write
-// to the `.aw/` tree visible from the user's current checkout.
+// to the `aw.toml` config visible from the user's current checkout.
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/lib.md#source
 pub fn find_project_root() -> anyhow::Result<std::path::PathBuf> {
     let cwd = std::env::current_dir()?;
     let mut dir = cwd.as_path();
     let mut legacy_root = None;
     loop {
-        if dir.join(".aw/config.toml").exists() {
+        if dir.join("aw.toml").exists() {
             if dir.join(LEGACY_SCORE_WORKSPACE_DIR).exists() {
                 return Err(legacy_score_workspace_error(dir));
             }
@@ -161,7 +161,7 @@ pub fn find_project_root() -> anyhow::Result<std::path::PathBuf> {
                 if let Some(root) = legacy_root {
                     return Err(legacy_score_workspace_error(&root));
                 }
-                // No .aw/ found — fall back to CWD for uninitialized repos.
+                // No aw.toml found — fall back to CWD for uninitialized repos.
                 return Ok(cwd);
             }
         }
@@ -172,11 +172,12 @@ pub fn find_project_root() -> anyhow::Result<std::path::PathBuf> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use std::sync::Mutex;
 
     // find_project_root() reads process-global CWD; serialize tests that
-    // mutate it so parallel cargo test runs don't race.
-    static CWD_LOCK: Mutex<()> = Mutex::new(());
+    // mutate it against the crate-wide `shell_env::CWD_LOCK` (issue #1401)
+    // so parallel cargo test runs don't race against cwd mutations in
+    // OTHER modules (e.g. `cli/guard.rs`, `cli/cb.rs`), not just this one.
+    use crate::cli::shell_env::CWD_LOCK;
 
     fn git_available() -> bool {
         std::process::Command::new("git")
@@ -219,7 +220,9 @@ mod tests {
         if !git_available() {
             return;
         }
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let prev = std::env::current_dir().unwrap();
 
         let tmp = tempfile::TempDir::new().unwrap();
@@ -227,7 +230,7 @@ mod tests {
         std::fs::create_dir_all(&main_repo).unwrap();
         init_git_repo(&main_repo);
         std::fs::create_dir_all(main_repo.join(".aw")).unwrap();
-        std::fs::write(main_repo.join(".aw/config.toml"), "").unwrap();
+        std::fs::write(main_repo.join("aw.toml"), "").unwrap();
 
         let worktree_rel = "../linked/foo";
         let out = std::process::Command::new("git")
@@ -243,7 +246,7 @@ mod tests {
 
         let worktree = main_repo.join(worktree_rel);
         std::fs::create_dir_all(worktree.join(".aw")).unwrap();
-        std::fs::write(worktree.join(".aw/config.toml"), "").unwrap();
+        std::fs::write(worktree.join("aw.toml"), "").unwrap();
 
         std::env::set_current_dir(&worktree).unwrap();
         let resolved = find_project_root().unwrap();
@@ -261,7 +264,9 @@ mod tests {
         if !git_available() {
             return;
         }
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let prev = std::env::current_dir().unwrap();
 
         let tmp = tempfile::TempDir::new().unwrap();
@@ -269,7 +274,7 @@ mod tests {
         std::fs::create_dir_all(&repo).unwrap();
         init_git_repo(&repo);
         std::fs::create_dir_all(repo.join(".aw")).unwrap();
-        std::fs::write(repo.join(".aw/config.toml"), "").unwrap();
+        std::fs::write(repo.join("aw.toml"), "").unwrap();
         let subdir = repo.join("crates/demo");
         std::fs::create_dir_all(&subdir).unwrap();
 
@@ -285,13 +290,15 @@ mod tests {
 
     #[test]
     fn find_project_root_non_git_tempdir_walks_up() {
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let prev = std::env::current_dir().unwrap();
 
         let tmp = tempfile::TempDir::new().unwrap();
         let proj = tmp.path().join("proj");
         std::fs::create_dir_all(proj.join(".aw")).unwrap();
-        std::fs::write(proj.join(".aw/config.toml"), "").unwrap();
+        std::fs::write(proj.join("aw.toml"), "").unwrap();
 
         std::env::set_current_dir(&proj).unwrap();
         let resolved = find_project_root().unwrap();
@@ -311,7 +318,6 @@ mod tests {
 }
 
 // CODEGEN-END
-
 ```
 
 ## Changes
