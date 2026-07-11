@@ -69,6 +69,17 @@ pub fn make_backend(
     }
 }
 
+/// Fixture-only escape hatch (#1348): when set to `"1"`, allows
+/// [`resolve_default_backend`] to resolve `type = "local"` instead of
+/// rejecting it. Namespaced under `AW_FIXTURE_*` so it reads as
+/// test-harness-only at the call site and cannot be tripped by a real
+/// `aw.toml`; production code paths never set it. Test-harness-set only
+/// (e.g. `tests/cli/tests/fixture_loop_test.rs`'s runner-driven case) —
+/// never read from `aw.toml` itself, so a checked-in config can never
+/// enable it.
+/// @spec apps/agentic-workflow/tech-design/core/interfaces/issues/issues_module_runtime_source.md#source
+pub const AW_FIXTURE_LOCAL_BACKEND_ENV: &str = "AW_FIXTURE_LOCAL_BACKEND";
+
 /// Resolution priority for the default `aw wi` backend (Phase A).
 ///
 /// 1. `[agentic_workflow.issue_platform].type` (+ optional `repo`, `host`)
@@ -80,6 +91,13 @@ pub fn make_backend(
 /// Internal lifecycle verbs still use `LocalBackend` directly for ephemeral
 /// lifecycle issue files; public `aw wi` verbs resolve backend selection from
 /// config.
+///
+/// The one exception is the fixture-only escape hatch gated by
+/// [`AW_FIXTURE_LOCAL_BACKEND_ENV`] (#1348): when that env var is exactly
+/// `"1"`, `type = "local"` is accepted too, so a fully offline sandbox can
+/// drive `aw wi run` / `aw capability run` end to end and observe a literal
+/// `completion.workflow_complete=true`. Unset (the default in every real
+/// invocation), behavior is byte-for-byte the original rejection.
 ///
 /// Returns `(kind, repo, host)` where `repo` and `host` may be `None` when
 /// the backend can auto-detect them (e.g. `gh` CLI in a checked-out repo).
@@ -134,16 +152,21 @@ pub fn resolve_default_backend(
     let parsed: ConfigFile = toml::from_str(&content)?;
     let workflow = parsed.agentic_workflow;
 
-    fn validate_kind(kind: &str) -> Result<()> {
+    // See `AW_FIXTURE_LOCAL_BACKEND_ENV` doc comment: fixture-only, unset in
+    // every real invocation, byte-for-byte the original rejection when so.
+    let allow_local_fixture = std::env::var(AW_FIXTURE_LOCAL_BACKEND_ENV).as_deref() == Ok("1");
+
+    let validate_kind = |kind: &str| -> Result<()> {
         match kind {
             "github" | "gitlab" => Ok(()),
+            "local" if allow_local_fixture => Ok(()),
             other => anyhow::bail!(
                 "platform type must be 'github' or 'gitlab', got '{}' \
                  — configure [agentic_workflow.issue_platform] or [agentic_workflow.repo_platform]",
                 other
             ),
         }
-    }
+    };
 
     if let Some(ref s) = workflow {
         if let Some(ref ip) = s.issue_platform {
@@ -253,6 +276,45 @@ mod resolve_tests {
         fs::write(dir.join("aw.toml"), body).unwrap();
     }
 
+    /// Serializes every test that touches `AW_FIXTURE_LOCAL_BACKEND` — env
+    /// vars are process-global and `cargo test` runs `#[test]` fns from this
+    /// binary on parallel threads by default, so an unguarded set/unset here
+    /// could race `invalid_type_errors` (a `type = "local"` config with no
+    /// flag, run concurrently) into a false pass or false fail. Always
+    /// restores whatever value (or absence) was there before it ran, even on
+    /// panic/unwind.
+    static FIXTURE_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct FixtureEnvGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        prev: Option<String>,
+    }
+
+    impl FixtureEnvGuard {
+        fn set(value: &str) -> Self {
+            let lock = FIXTURE_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            let prev = std::env::var(AW_FIXTURE_LOCAL_BACKEND_ENV).ok();
+            std::env::set_var(AW_FIXTURE_LOCAL_BACKEND_ENV, value);
+            Self { _lock: lock, prev }
+        }
+
+        fn absent() -> Self {
+            let lock = FIXTURE_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            let prev = std::env::var(AW_FIXTURE_LOCAL_BACKEND_ENV).ok();
+            std::env::remove_var(AW_FIXTURE_LOCAL_BACKEND_ENV);
+            Self { _lock: lock, prev }
+        }
+    }
+
+    impl Drop for FixtureEnvGuard {
+        fn drop(&mut self) {
+            match &self.prev {
+                Some(v) => std::env::set_var(AW_FIXTURE_LOCAL_BACKEND_ENV, v),
+                None => std::env::remove_var(AW_FIXTURE_LOCAL_BACKEND_ENV),
+            }
+        }
+    }
+
     #[test]
     fn remote_read_cache_dir_is_under_tmp_and_sanitized() {
         let path = remote_read_cache_dir("github", Some("ChrisCheng-C4/cclab"), None);
@@ -325,6 +387,12 @@ repo = "group/project"
 
     #[test]
     fn invalid_type_errors() {
+        // Guarded (not just left bare) so this can't race
+        // `fixture_local_backend_env_opens_local_path` setting the fixture
+        // flag process-wide on another thread — production behavior itself
+        // is unchanged: with the env var absent, `type = "local"` is still
+        // rejected exactly as before.
+        let _guard = FixtureEnvGuard::absent();
         let tmp = TempDir::new().unwrap();
         write_config(
             tmp.path(),
@@ -335,6 +403,43 @@ type = "local"
         );
         let err = resolve_default_backend(tmp.path()).unwrap_err().to_string();
         assert!(err.contains("must be 'github' or 'gitlab'"), "got: {err}");
+    }
+
+    /// AC2 (#1348): absence of the fixture flag keeps the local-backend
+    /// rejection closed — a second, explicit proof alongside
+    /// `invalid_type_errors` above (that test now shares this guard).
+    #[test]
+    fn fixture_local_backend_env_absent_keeps_local_rejected() {
+        let _guard = FixtureEnvGuard::absent();
+        let tmp = TempDir::new().unwrap();
+        write_config(
+            tmp.path(),
+            r#"
+[agentic_workflow.issue_platform]
+type = "local"
+"#,
+        );
+        let err = resolve_default_backend(tmp.path()).unwrap_err().to_string();
+        assert!(err.contains("must be 'github' or 'gitlab'"), "got: {err}");
+    }
+
+    /// AC2 (#1348): the fixture flag, set exactly as
+    /// `AW_FIXTURE_LOCAL_BACKEND=1`, opens the local-backend path.
+    #[test]
+    fn fixture_local_backend_env_opens_local_path() {
+        let _guard = FixtureEnvGuard::set("1");
+        let tmp = TempDir::new().unwrap();
+        write_config(
+            tmp.path(),
+            r#"
+[agentic_workflow.issue_platform]
+type = "local"
+"#,
+        );
+        let (kind, repo, host) = resolve_default_backend(tmp.path()).unwrap();
+        assert_eq!(kind, "local");
+        assert_eq!(repo, None);
+        assert_eq!(host, None);
     }
 
     #[test]
