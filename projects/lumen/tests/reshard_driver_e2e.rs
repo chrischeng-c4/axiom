@@ -41,8 +41,24 @@ struct Shard {
 }
 
 fn spin_up_shard() -> Shard {
+    // #1396 R3: `AppState::open`'s default `NoopCheckpoint` sink reports
+    // `persisted: false` (vacuously — no durable store configured), which
+    // the driver's `checkpoint_shard` now correctly treats as a failed
+    // durability gate rather than a satisfied one. Tests using this helper
+    // want a shard that behaves like a real, working checkpoint sink (a
+    // shard whose data actually reaches durable storage), not one that
+    // exercises the checkpoint-failure path itself — that path has its own
+    // dedicated coverage via `spin_up_shard_with_checkpoint` in
+    // `cutover_blocked_until_every_touched_shard_checkpoints`. So wire a
+    // permanently-succeeding `ControllableCheckpoint` here instead of
+    // leaving the default no-op sink, which would now wedge every full-split
+    // e2e test at the cutover gate forever.
     let engine = Arc::new(Engine::new());
-    let app = router(AppState::open(engine));
+    let state = AppState::open(engine).with_checkpoint(Arc::new(ControllableCheckpoint {
+        fail: Arc::new(AtomicBool::new(false)),
+        calls: Arc::new(AtomicI64::new(0)),
+    }));
+    let app = router(state);
     let server = TestServer::new_with_config(
         app,
         TestServerConfig {
@@ -182,6 +198,14 @@ fn initial_lumen(max_shard_bytes: Option<u64>, blocking_condition: Option<&str>)
     lumen.status = Some(LumenStatus {
         reshard: LumenReshardStatus {
             blocking_conditions: blocking_condition.into_iter().map(str::to_string).collect(),
+            // #1396 R5: `should_start_split` now requires the status's
+            // measurement generation to match the CR's *current*
+            // `spec.shardMap.version` (0 here, this fixture's initial map)
+            // in addition to a crossed-threshold string condition. Model a
+            // status write that was actually fresh when it landed, not one
+            // that happens to fail the new freshness check purely by
+            // fixture omission.
+            usage_measured_at_map_version: Some(0),
             ..Default::default()
         },
         ..Default::default()
@@ -567,5 +591,225 @@ async fn cutover_blocked_until_every_touched_shard_checkpoints() {
          and succeeding attempts, got {}",
         checkpoint_calls.load(Ordering::SeqCst)
     );
+}
+/// AC1 (#1396 R1): a target-shard checkpoint failure — modeling a crash or
+/// transient durability fault on the shard the driver just migrated data
+/// to — must block the workflow strictly *before* any source eviction is
+/// even attempted, not just before the cutover patch. Proves the new
+/// migrate -> checkpoint(target) -> evict(sources) -> checkpoint(sources) ->
+/// cutover ordering: while the target's checkpoint is failing, every moved
+/// document is still fully present on the (never-evicted) source shard, so
+/// a resume can always re-derive the missing durable copy without data
+/// loss. Once the fault clears, the very next tick evicts, checkpoints the
+/// sources, and cuts over normally — proving the earlier block left the
+/// workflow resumable rather than wedged.
+#[tokio::test]
+async fn cutover_ordering_never_evicts_before_target_checkpoint_succeeds() {
+    let source_fail = Arc::new(AtomicBool::new(false));
+    let source_calls = Arc::new(AtomicI64::new(0));
+    let target_fail = Arc::new(AtomicBool::new(true)); // target starts "crashed".
+    let target_calls = Arc::new(AtomicI64::new(0));
+    let shard0 = spin_up_shard_with_checkpoint(source_fail.clone(), source_calls.clone());
+    let shard1 = spin_up_shard_with_checkpoint(target_fail.clone(), target_calls.clone());
+    create_users_collection(&shard0.server).await;
+    create_users_collection(&shard1.server).await;
+
+    let ids: Vec<String> = (0..40).map(|i| format!("u-{i:03}")).collect();
+    for id in &ids {
+        index_user(&shard0.server, id).await;
+    }
+    let moving: Vec<&String> = ids.iter().filter(|id| bucket_of(id) < 4).collect();
+    let staying: Vec<&String> = ids.iter().filter(|id| bucket_of(id) >= 4).collect();
+    assert!(!moving.is_empty() && !staying.is_empty());
+
+    let cluster = Arc::new(Mutex::new(initial_lumen(
+        Some(1_000_000_000),
+        Some("urgentThresholdCrossed"),
+    )));
+    let shard_urls = vec![shard0.base_url.clone(), shard1.base_url.clone()];
+    let http = reqwest::Client::new();
+    let control = FakeControl::new(cluster.clone(), shard_urls.clone());
+
+    // Drive to CatchingUp with the real migration pass already run (tick 3):
+    // the target-shard fault has not been reached yet (checkpointing only
+    // happens on the CatchingUp -> Complete attempt).
+    for _ in 0..3 {
+        let lumen = control.snapshot();
+        drive_tick(&control, &http, &lumen).await;
+    }
+    assert_eq!(
+        control.snapshot().spec.reshard_policy.workflow.phase,
+        ReshardPhase::CatchingUp
+    );
+    // Migration already copied the moving docs onto the target, even though
+    // the target's checkpoint sink is still "crashed" — checkpointing and
+    // migrating are independent steps, and migration always runs first.
+    for id in &moving {
+        assert!(
+            has_doc(&shard1.server, id).await,
+            "migration should have already copied {id}"
+        );
+    }
+
+    // CatchingUp -> would-be Complete: the target's checkpoint fails, so the
+    // whole tick must Block *before* any eviction is attempted.
+    let lumen = control.snapshot();
+    let outcome = drive_tick(&control, &http, &lumen).await;
+    assert!(
+        matches!(outcome, DriveOutcome::Blocked(_)),
+        "expected Blocked while the target shard's checkpoint is failing, got {outcome:?}"
+    );
+    assert_eq!(
+        control.snapshot().spec.reshard_policy.workflow.phase,
+        ReshardPhase::CatchingUp,
+        "must not advance past CatchingUp while the target checkpoint is failing"
+    );
+    assert_eq!(control.restart_trigger_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        control.snapshot().spec.shard_map.version,
+        0,
+        "cutover must not have applied"
+    );
+
+    // The crux of R1: the source shard must still hold every moved
+    // document, untouched, because eviction is only ever attempted *after*
+    // the target's checkpoint succeeds — a target-shard crash before that
+    // point can never lose data, because the source copy was never removed.
+    assert_eq!(
+        total_docs(&shard0.server).await,
+        40,
+        "source must retain every document (nothing evicted) while the target checkpoint fails"
+    );
+    for id in &moving {
+        assert!(
+            has_doc(&shard0.server, id).await,
+            "{id} must still be recoverable from the source shard"
+        );
+    }
+    assert_eq!(
+        source_calls.load(Ordering::SeqCst),
+        0,
+        "the source shard's own checkpoint must not even be attempted before eviction, and \
+         eviction must not have run yet either"
+    );
+
+    // Recover: once the target shard's fault clears, the very next tick
+    // evicts, checkpoints the sources, and cuts over — proving the block
+    // above left the workflow resumable, not wedged, and that no data was
+    // lost across the simulated crash.
+    target_fail.store(false, Ordering::SeqCst);
+    let lumen = control.snapshot();
+    let outcome = drive_tick(&control, &http, &lumen).await;
+    assert_eq!(outcome, DriveOutcome::CompletedSplit { new_map_version: 1 });
+    assert_eq!(
+        control.snapshot().spec.reshard_policy.workflow.phase,
+        ReshardPhase::Complete
+    );
+    assert_eq!(control.restart_trigger_calls.load(Ordering::SeqCst), 1);
+    assert!(
+        source_calls.load(Ordering::SeqCst) >= 1,
+        "source shard must now be checkpointed too"
+    );
+
+    for id in &moving {
+        assert!(
+            has_doc(&shard1.server, id).await,
+            "{id} should be on the target shard"
+        );
+        assert!(
+            !has_doc(&shard0.server, id).await,
+            "{id} should have been evicted from the source"
+        );
+    }
+    for id in &staying {
+        assert!(
+            has_doc(&shard0.server, id).await,
+            "{id} should still be on the source shard"
+        );
+    }
+    assert_eq!(total_docs(&shard0.server).await, staying.len() as u64);
+    assert_eq!(total_docs(&shard1.server).await, moving.len() as u64);
+}
+
+/// AC2 (#1396 R2): a document written into a moving bucket on the source
+/// shard *during* `CatchingUp` — after the initial migration pass already
+/// ran, but before the final convergence pass that closes the cutover —
+/// must still end up present on exactly one shard once the workflow
+/// reaches `Complete`: never silently dropped by eviction, and never left
+/// duplicated on both shards. This is exactly the gap #1396's review
+/// flagged (a document indexed to the source after that source's data was
+/// already copied to the target, but before the source got evicted, used
+/// to only exist wherever the copy-then-evict race happened to land it).
+/// The final `CatchingUp` tick's write-fence-protected pass — which always
+/// re-migrates a fresh snapshot of the source before evicting anything —
+/// is what closes this window; this proves it end to end with a real late
+/// write and a real driver run, no mocked fence calls.
+#[tokio::test]
+async fn late_write_to_moving_bucket_during_catching_up_survives_cutover_exactly_once() {
+    let shard0 = spin_up_shard();
+    let shard1 = spin_up_shard();
+    create_users_collection(&shard0.server).await;
+    create_users_collection(&shard1.server).await;
+
+    let ids: Vec<String> = (0..40).map(|i| format!("u-{i:03}")).collect();
+    for id in &ids {
+        index_user(&shard0.server, id).await;
+    }
+    let moving: Vec<&String> = ids.iter().filter(|id| bucket_of(id) < 4).collect();
+    assert!(!moving.is_empty());
+
+    let cluster = Arc::new(Mutex::new(initial_lumen(
+        Some(1_000_000_000),
+        Some("urgentThresholdCrossed"),
+    )));
+    let shard_urls = vec![shard0.base_url.clone(), shard1.base_url.clone()];
+    let http = reqwest::Client::new();
+    let control = FakeControl::new(cluster.clone(), shard_urls.clone());
+
+    // Drive to CatchingUp with the initial migration pass already run.
+    for _ in 0..3 {
+        let lumen = control.snapshot();
+        drive_tick(&control, &http, &lumen).await;
+    }
+    assert_eq!(
+        control.snapshot().spec.reshard_policy.workflow.phase,
+        ReshardPhase::CatchingUp
+    );
+
+    // A late write lands directly on the source shard, in a moving bucket,
+    // strictly after the migration pass above already ran — the source
+    // still legitimately owns writes for this bucket until cutover
+    // (`spec.shardMap` has not flipped yet), so this write is indexed
+    // there, exactly like a real client write racing the reshard.
+    let late_id = (0..)
+        .map(|i| format!("late-{i:03}"))
+        .find(|id| bucket_of(id) < 4)
+        .unwrap();
+    index_user(&shard0.server, &late_id).await;
+    assert!(has_doc(&shard0.server, &late_id).await);
+    assert!(!has_doc(&shard1.server, &late_id).await, "not migrated yet");
+
+    // Final CatchingUp -> Complete tick: the real fence-protected pass
+    // re-migrates a fresh snapshot of the source (picking up the late
+    // write), checkpoints, evicts, checkpoints, and cuts over.
+    let lumen = control.snapshot();
+    let outcome = drive_tick(&control, &http, &lumen).await;
+    assert_eq!(outcome, DriveOutcome::CompletedSplit { new_map_version: 1 });
+
+    // The late write must be present on exactly one shard afterward — the
+    // target it now belongs to — never lost, never duplicated.
+    let on_target = has_doc(&shard1.server, &late_id).await;
+    let on_source = has_doc(&shard0.server, &late_id).await;
+    assert!(
+        on_target && !on_source,
+        "late write to a moving bucket must survive cutover on exactly the target shard \
+         (on_target={on_target}, on_source={on_source})"
+    );
+
+    // Every originally-moved document also still converged correctly.
+    for id in &moving {
+        assert!(has_doc(&shard1.server, id).await);
+        assert!(!has_doc(&shard0.server, id).await);
+    }
 }
 // CODEGEN-END

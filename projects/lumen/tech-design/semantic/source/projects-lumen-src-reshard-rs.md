@@ -20,12 +20,13 @@ Public API manifest for `projects/lumen/src/reshard.rs` generated from AST durin
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `BucketMove` | projects/lumen/src/reshard.rs | struct | pub | 21 |  |
-| `ReshardBatch` | projects/lumen/src/reshard.rs | struct | pub | 32 | #1380: `Serialize`/`Deserialize` make a batch postable to `POST /admin/reshard:apply` as-is. |
-| `bucket_moves` | projects/lumen/src/reshard.rs | function | pub | 46 | bucket_moves(     from: &VirtualBucketShardMap,     to: &VirtualBucketShardMap, ) -> Result<Vec<BucketMove>> |
-| `snapshot_reshard_batches` | projects/lumen/src/reshard.rs | function | pub | 82 | snapshot_reshard_batches(     snapshot: &SnapshotV1,     from: &VirtualBucketShardMap,     to: &VirtualBucketShardMap,     max_external_ids_per_batch: usize, ) -> Result<Vec<ReshardBatch>> |
-| `merge_snapshot_delta` | projects/lumen/src/reshard.rs | function | pub | 159 | merge_snapshot_delta(mut base: SnapshotV1, delta: SnapshotV1) -> Result<SnapshotV1> |
-| `snapshot_bucket_subset` | projects/lumen/src/reshard.rs | function | pub | 187 | #1380 R2: bucket-scoped export subset, routed with the same `route_document` hash `snapshot_reshard_batches` uses. snapshot_bucket_subset(     snapshot: &SnapshotV1,     virtual_bucket_count: u32,     buckets: &BTreeSet<u32>, ) -> Result<SnapshotV1> |
+| `MAX_BATCH_BYTES` | projects/lumen/src/reshard.rs | const | pub | 29 | #1396 R4: upper bound on one batch's serialized `snapshot` payload, well under `api.rs`'s 8 MiB `DefaultBodyLimit` on `/admin/reshard:apply`. |
+| `BucketMove` | projects/lumen/src/reshard.rs | struct | pub | 33 |  |
+| `ReshardBatch` | projects/lumen/src/reshard.rs | struct | pub | 44 | #1380: `Serialize`/`Deserialize` make a batch postable to `POST /admin/reshard:apply` as-is. |
+| `bucket_moves` | projects/lumen/src/reshard.rs | function | pub | 58 | bucket_moves(     from: &VirtualBucketShardMap,     to: &VirtualBucketShardMap, ) -> Result<Vec<BucketMove>> |
+| `snapshot_reshard_batches` | projects/lumen/src/reshard.rs | function | pub | 94 | #1396 R4: batches are now also byte-capped (`MAX_BATCH_BYTES`), splitting an id-chunk further via `byte_cap_chunk` when its serialized snapshot would exceed the cap. snapshot_reshard_batches(     snapshot: &SnapshotV1,     from: &VirtualBucketShardMap,     to: &VirtualBucketShardMap,     max_external_ids_per_batch: usize, ) -> Result<Vec<ReshardBatch>> |
+| `merge_snapshot_delta` | projects/lumen/src/reshard.rs | function | pub | 204 | merge_snapshot_delta(mut base: SnapshotV1, delta: SnapshotV1) -> Result<SnapshotV1> |
+| `snapshot_bucket_subset` | projects/lumen/src/reshard.rs | function | pub | 232 | #1380 R2: bucket-scoped export subset, routed with the same `route_document` hash `snapshot_reshard_batches` uses. snapshot_bucket_subset(     snapshot: &SnapshotV1,     virtual_bucket_count: u32,     buckets: &BTreeSet<u32>, ) -> Result<SnapshotV1> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -47,6 +48,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::routing::VirtualBucketShardMap;
 use crate::storage::{CollectionSnapshot, FieldIndexSnapshot, SnapshotV1};
+
+/// Upper bound on one batch's serialized `snapshot` payload (#1396 R4):
+/// `api.rs`'s `/admin/reshard:apply` route sits behind an 8 MiB
+/// `DefaultBodyLimit`, but [`snapshot_reshard_batches`] used to cap batches
+/// only by external-id count (`MAX_EXTERNAL_IDS_PER_BATCH`-style caller
+/// constants) — a bucket of large documents (long text fields, vectors,
+/// hashes) can still serialize well past 8 MiB even at a small id count, and
+/// a 413 from an oversized batch is deterministically recomputed identically
+/// every driver tick, wedging the split forever (the confirmed defect).
+/// 4 MiB — half the route limit — leaves comfortable headroom for JSON/wire
+/// overhead and per-item framing above the raw snapshot bytes measured here.
+pub const MAX_BATCH_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
@@ -166,21 +179,54 @@ pub fn snapshot_reshard_batches(
         pending.sort();
 
         for chunk in pending.chunks(max_external_ids_per_batch) {
-            let external_ids = ids_map_from_pairs(chunk.iter().cloned());
-            let partial = snapshot_subset(snapshot, &external_ids)?;
-            batches.push(ReshardBatch {
-                from_map_version: from.version(),
-                to_map_version: to.version(),
-                bucket,
-                from_shard,
-                to_shard,
-                external_ids,
-                snapshot: partial,
-            });
+            let mut sub_batches = Vec::new();
+            byte_cap_chunk(snapshot, chunk, MAX_BATCH_BYTES, &mut sub_batches)?;
+            for (external_ids, partial) in sub_batches {
+                batches.push(ReshardBatch {
+                    from_map_version: from.version(),
+                    to_map_version: to.version(),
+                    bucket,
+                    from_shard,
+                    to_shard,
+                    external_ids,
+                    snapshot: partial,
+                });
+            }
         }
     }
 
     Ok(batches)
+}
+
+/// Recursively halve `chunk` (already `<= max_external_ids_per_batch` ids)
+/// until each emitted `(external_ids, snapshot)` pair's serialized snapshot
+/// is at or under `max_batch_bytes`, or the chunk is down to a single
+/// external_id — one oversized document cannot be split further, so it is
+/// emitted as its own (over-budget) batch rather than looping forever; a
+/// single document that alone exceeds the route's 8 MiB body limit is a
+/// data-modeling problem this splitter cannot solve, not a batching bug.
+fn byte_cap_chunk(
+    snapshot: &SnapshotV1,
+    chunk: &[(String, String)],
+    max_batch_bytes: usize,
+    out: &mut Vec<(BTreeMap<String, BTreeSet<String>>, SnapshotV1)>,
+) -> Result<()> {
+    if chunk.is_empty() {
+        return Ok(());
+    }
+    let external_ids = ids_map_from_pairs(chunk.iter().cloned());
+    let partial = snapshot_subset(snapshot, &external_ids)?;
+    let size = serde_json::to_vec(&partial)
+        .map(|bytes| bytes.len())
+        .unwrap_or(usize::MAX);
+    if size <= max_batch_bytes || chunk.len() == 1 {
+        out.push((external_ids, partial));
+        return Ok(());
+    }
+    let mid = chunk.len() / 2;
+    byte_cap_chunk(snapshot, &chunk[..mid], max_batch_bytes, out)?;
+    byte_cap_chunk(snapshot, &chunk[mid..], max_batch_bytes, out)?;
+    Ok(())
 }
 
 /// Merge a reshard delta snapshot into an existing target snapshot. This is
@@ -738,6 +784,118 @@ mod tests {
         );
     }
 
+    /// AC4 (#1396 R4): a moved bucket's delta whose full snapshot serializes
+    /// well over 8 MiB (large per-doc text bodies, not merely a high id
+    /// count) still migrates completely via byte-capped batches — the
+    /// fixture picks a document count/size that would collapse to a single
+    /// oversized batch under the old id-count-only cap
+    /// (`max_external_ids_per_batch` set high enough that byte size, not id
+    /// count, is the binding constraint).
+    #[test]
+    fn snapshot_reshard_batches_splits_oversized_bucket_delta_by_bytes() {
+        let collection_id = "docs";
+        let source = Engine::new();
+        source
+            .create_collection(
+                collection_id,
+                CreateCollectionRequest {
+                    fields: BTreeMap::from([("body".into(), field(FieldType::Text))]),
+                },
+            )
+            .unwrap();
+
+        // A text field's snapshot wire size is driven by its *inverted
+        // index* (`FieldIndexSnapshot::Text`'s `forward`: per-doc unique
+        // token set, and `tokens`: per-term postings) — repeating one word
+        // many times within a doc collapses to a single unique token and
+        // stays tiny on the wire, so this fixture instead gives every doc a
+        // large, shared vocabulary of distinct tokens: ~2500 unique tokens
+        // per doc across 200 docs comes to well over 8 MiB serialized
+        // (~25 KiB/doc of forward token strings alone, plus per-term
+        // postings), comfortably over both `MAX_BATCH_BYTES` (4 MiB) and
+        // the route's 8 MiB body limit if emitted as one batch.
+        const VOCAB_SIZE: usize = 2500;
+        let vocab: Vec<String> = (0..VOCAB_SIZE).map(|i| format!("tok{i}")).collect();
+        let big_body = vocab.join(" ");
+        let ids: Vec<String> = (0..200).map(|i| format!("d-{i:04}")).collect();
+        for id in &ids {
+            source
+                .index(
+                    collection_id,
+                    IndexRequest {
+                        request_id: None,
+                        items: vec![item(id, "body", FieldValue::String(big_body.clone()))],
+                    },
+                )
+                .unwrap();
+        }
+
+        let snapshot = source.snapshot().unwrap();
+        // Single physical shard -> two, everything in one bucket moves.
+        let from = VirtualBucketShardMap::new(1, vec![0], 1).unwrap();
+        let to = VirtualBucketShardMap::new(2, vec![1], 2).unwrap();
+        // A generous id-count cap so byte size, not id count, is what
+        // forces the split.
+        let batches = snapshot_reshard_batches(&snapshot, &from, &to, 10_000).unwrap();
+
+        assert!(
+            batches.len() > 1,
+            "expected the oversized delta to split into more than one batch, got {}",
+            batches.len()
+        );
+        for batch in &batches {
+            let wire_bytes = serde_json::to_vec(batch).unwrap().len();
+            assert!(
+                wire_bytes < 8 * 1024 * 1024,
+                "batch serialized to {wire_bytes} bytes, over the route's 8 MiB body limit"
+            );
+        }
+
+        // Every id made it into exactly one batch, and merging them back
+        // together restores every document.
+        let moved_ids: BTreeSet<String> = batches
+            .iter()
+            .flat_map(|b| b.external_ids.values().flat_map(|s| s.iter().cloned()))
+            .collect();
+        assert_eq!(moved_ids, ids.iter().cloned().collect::<BTreeSet<_>>());
+
+        let mut target_snapshot = SnapshotV1 {
+            version: snapshot.version,
+            collections: BTreeMap::new(),
+        };
+        for batch in &batches {
+            target_snapshot =
+                merge_snapshot_delta(target_snapshot, batch.snapshot.clone()).unwrap();
+        }
+        let moved = Engine::new();
+        moved.restore(target_snapshot).unwrap();
+        let hits = moved
+            .search(
+                collection_id,
+                SearchRequest {
+                    query: QueryNode::Match(MatchQuery {
+                        field: "body".into(),
+                        text: "tok0".into(),
+                        op: MatchOp::And,
+                    }),
+                    limit: 1000,
+                    cursor: None,
+                    routing_key: None,
+                    sort: None,
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap()
+            .hits
+            .len();
+        assert_eq!(
+            hits,
+            ids.len(),
+            "every moved document should be restorable from the byte-capped batches"
+        );
+    }
+
     fn field(field_type: FieldType) -> FieldSpec {
         FieldSpec {
             field_type,
@@ -760,6 +918,7 @@ mod tests {
     }
 }
 // CODEGEN-END
+
 ````
 
 ## Changes
@@ -774,4 +933,17 @@ changes:
       Existing reshard source is captured as a per-file rust-source-unit so
       dynamic shard topology has semantic and codegen traceability.
     impl_mode: codegen
+  - path: "projects/lumen/src/reshard.rs"
+    action: modify
+    section: rust-source-unit
+    description: |
+      #1396 R4: cap `snapshot_reshard_batches`'s emitted batches by
+      serialized byte size (`MAX_BATCH_BYTES`, 4 MiB), not only by
+      external-id count, so a bucket of large documents can no longer
+      serialize past `api.rs`'s 8 MiB `/admin/reshard:apply` body limit
+      and wedge a split forever on a deterministic 413. A new private
+      `byte_cap_chunk` helper recursively halves an id-chunk until each
+      emitted batch's snapshot is at or under the cap (or down to one
+      document, which is emitted as-is since it cannot be split further).
+    impl_mode: hand-written
 ```
