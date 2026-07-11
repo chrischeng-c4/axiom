@@ -36,6 +36,7 @@ Public API manifest for `apps/agentic-workflow/src/cli/mod.rs` generated from AS
 | `find_project_root` | apps/agentic-workflow/src/cli/mod.rs | function | pub | 76 | find_project_root() -> anyhow::Result<std::path::PathBuf> |
 | `generator` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 21 |  |
 | `guard` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 22 |  |
+| `guard_sanction` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 25 |  |
 | `hook` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 23 |  |
 | `init` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 24 |  |
 | `issues` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 25 |  |
@@ -91,6 +92,7 @@ pub mod ec;
 pub mod fillback;
 pub mod generator;
 pub mod guard;
+pub mod guard_sanction;
 pub mod hook;
 pub mod init;
 pub mod issues;
