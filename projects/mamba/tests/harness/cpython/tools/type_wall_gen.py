@@ -1453,6 +1453,10 @@ def _spec_scan_scope(info, body, qualifier="", v312=True):
                         value=value,
                     )
                 )
+            elif not qualifier and isinstance(node, ast.Assign):
+                alias_target = _spec_dotted_name(value)
+                if alias_target:
+                    info["class_aliases"].append((target, alias_target))
         elif isinstance(node, ast.AugAssign) and not qualifier:
             if isinstance(node.target, ast.Name) and node.target.id == "__all__":
                 values = _spec_string_items(node.value)
@@ -1530,7 +1534,31 @@ def _spec_resolve_class_exports(infos):
                 local[(info["module"], decl["name"])] = (
                     info["module"], decl["qualifier"]
                 )
-    return _spec_resolve_exports(infos, local)
+    resolved = _spec_resolve_exports(infos, local)
+    for _ in range(len(infos) + 1):
+        expanded = dict(local)
+        for info in infos:
+            for name, alias_target in info["class_aliases"]:
+                parts = alias_target.split(".")
+                root, tail = parts[0], parts[1:]
+                imported = info["imports"].get(root)
+                if imported is None:
+                    key = (info["module"], alias_target)
+                else:
+                    origin, imported_name = imported
+                    target_parts = ([imported_name] if imported_name else []) + tail
+                    if not target_parts:
+                        continue
+                    key = (origin, ".".join(target_parts))
+                target = resolved.get(key)
+                if target is not None:
+                    expanded[(info["module"], name)] = target
+        updated = _spec_resolve_exports(infos, expanded)
+        if updated == resolved:
+            return resolved
+        local = expanded
+        resolved = updated
+    return resolved
 
 
 def _spec_resolve_callable_exports(infos, callables):
@@ -1564,6 +1592,7 @@ def _spec_parse_modules():
             all_names=None,
             classes={},
             class_decls=[],
+            class_aliases=[],
             aliases=set(),
             alias_decls=[],
             type_param_decls=[],

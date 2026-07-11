@@ -946,9 +946,8 @@ impl TypeChecker {
                 module_alias,
                 module,
             } => {
-                // Imported names get type Any — external modules are not resolved.
-                // This prevents false "undefined name" errors for third-party imports.
-                let any_ty = self.tcx.any();
+                // Generated stdlib imports retain canonical module, callable,
+                // or class identity. Unknown third-party imports remain Any.
                 let dotted = module.join(".");
                 if let Some(import_names) = names {
                     // `from module import X` / `from module import X as Y`
@@ -958,23 +957,36 @@ impl TypeChecker {
                         }
                         let effective = alias.as_ref().unwrap_or(name);
                         let sym = self.symbols.define(effective.clone(), SymbolKind::Variable);
-                        self.set_sym_type(sym.0, any_ty);
+                        let imported_ty = self.stdlib_imported_member_type(&dotted, name);
+                        self.set_sym_type(sym.0, imported_ty);
                         self.set_binding_origins(sym, None, None, None);
                         self.import_origins
                             .insert(sym, (dotted.clone(), name.clone()));
                     }
                 } else if let Some(alias) = module_alias {
                     // `import module as alias`
+                    let previous = self
+                        .symbols
+                        .lookup_in_scope(self.symbols.current_scope_idx(), alias)
+                        .map(|symbol| self.get_sym_type(symbol.0));
+                    let imported_ty =
+                        self.stdlib_module_import_type(&dotted, &dotted, previous);
                     let sym = self.symbols.define(alias.clone(), SymbolKind::Variable);
-                    self.set_sym_type(sym.0, any_ty);
+                    self.set_sym_type(sym.0, imported_ty);
                     self.set_binding_origins(sym, None, None, None);
                     self.import_origins
                         .insert(sym, (dotted.clone(), String::new()));
                 } else {
                     // `import module` — register the root module name
                     if let Some(root) = module.first() {
+                        let previous = self
+                            .symbols
+                            .lookup_in_scope(self.symbols.current_scope_idx(), root)
+                            .map(|symbol| self.get_sym_type(symbol.0));
+                        let imported_ty =
+                            self.stdlib_module_import_type(root, &dotted, previous);
                         let sym = self.symbols.define(root.clone(), SymbolKind::Variable);
-                        self.set_sym_type(sym.0, any_ty);
+                        self.set_sym_type(sym.0, imported_ty);
                         self.set_binding_origins(sym, None, None, None);
                         self.import_origins
                             .insert(sym, (root.clone(), String::new()));

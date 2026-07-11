@@ -4,12 +4,16 @@ use super::check::{
 use super::generic::{
     check_bounds, complete_type_args, infer_type_args, GenericParams, Substitution,
 };
-use super::ty::{ClassRole, LiteralValue, TypeParamDefault, TypeVarKind};
+use super::ty::{
+    ClassRole, ExternalCallable, ExternalCallableAccess, ExternalCallableRuntimeKind, ExternalClass,
+    ExternalValue, LiteralValue, TypeParamDefault, TypeVarKind,
+};
 use super::{Ty, TypeId};
 use crate::parser::ast::*;
 use crate::resolve::{SymbolId, SymbolKind};
 use crate::source::span::{Span, Spanned};
 
+#[derive(Debug)]
 enum StdlibSpecCandidate {
     Accepted(Option<TypeId>),
     Rejected(Span, String, u8),
@@ -40,11 +44,13 @@ enum StdlibSpecAccess {
     BoundMember,
 }
 
+#[derive(Debug)]
 struct ResolvedStdlibSpecCall {
     module: String,
     qualifier: String,
     name: String,
     access: StdlibSpecAccess,
+    receiver: Option<ExternalClass>,
 }
 
 fn bind_explicit_inference_args(
@@ -314,6 +320,26 @@ impl TypeChecker {
                 let func_symbol = func_name
                     .as_deref()
                     .and_then(|name| self.symbols.lookup(name));
+                let mut builtin_constructor_result = func_symbol
+                    .and_then(|symbol| self.builtin_class_aliases.get(&symbol).copied())
+                    .or_else(|| {
+                        func_name.as_deref().and_then(|name| {
+                            self.is_unshadowed_builtin(name)
+                                .then(|| self.builtin_class_pattern_instance(name))
+                                .flatten()
+                        })
+                    });
+                if builtin_constructor_result.is_some_and(|ty| {
+                    matches!(
+                        self.tcx.get(ty),
+                        Ty::Class {
+                            external: Some(external),
+                            ..
+                        } if external.module == "builtins" && external.name == "type"
+                    )
+                }) {
+                    builtin_constructor_result = None;
+                }
                 let method_key = self.user_method_key(func);
                 let unbound_user_method = match &func.node {
                     Expr::Attr { object, .. } => self.user_class_object(object).is_some(),
@@ -322,7 +348,8 @@ impl TypeChecker {
                 // A resolved generated TypeSpec contract owns the call even
                 // when its result is indeterminate. The compact scalar table
                 // is only a fallback when no generated candidate exists.
-                let structured_stdlib = self.check_structured_stdlib_call(func, args);
+                let structured_stdlib =
+                    self.check_structured_stdlib_call(func, func_ty_id, args);
                 let structured_stdlib_handled = structured_stdlib.is_some();
                 let structured_stdlib_authoritative =
                     structured_stdlib_handled && func_name.is_some();
@@ -656,7 +683,7 @@ impl TypeChecker {
                             }
                             return applied;
                         }
-                        ret
+                        builtin_constructor_result.unwrap_or(ret)
                     }
                     Ty::TypeObject(instance) => {
                         for arg in args {
@@ -665,7 +692,12 @@ impl TypeChecker {
                         instance
                     }
                     // #246: calling a class constructor returns instance of that class
-                    Ty::Class { role, user, .. } => {
+                    Ty::Class {
+                        role,
+                        user,
+                        external,
+                        ..
+                    } => {
                         if role == ClassRole::Instance {
                             for arg in args {
                                 self.check_call_arg(arg);
@@ -676,6 +708,14 @@ impl TypeChecker {
                             }
                             self.error(expr.span, "called value is not a function");
                             return self.tcx.error();
+                        }
+                        if external.is_some() {
+                            if !structured_stdlib_handled {
+                                for arg in args {
+                                    self.check_call_arg(arg);
+                                }
+                            }
+                            return self.with_class_role(func_ty_id, ClassRole::Instance);
                         }
                         let class_symbol = user.as_ref().map(|user| user.symbol).or(func_symbol);
                         let init_params = class_symbol
@@ -773,6 +813,18 @@ impl TypeChecker {
                         }
                         self.with_class_role(func_ty_id, ClassRole::Instance)
                     }
+                    Ty::External(ExternalValue::Callable(_)) => {
+                        if !structured_stdlib_handled {
+                            for arg in args {
+                                self.check_call_arg(arg);
+                            }
+                        }
+                        stdlib_ret.unwrap_or_else(|| self.tcx.any())
+                    }
+                    Ty::External(ExternalValue::Module { .. }) => {
+                        self.error(expr.span, "called value is not a function");
+                        self.tcx.error()
+                    }
                     Ty::Any => {
                         for arg in args {
                             self.check_call_arg(arg);
@@ -810,7 +862,10 @@ impl TypeChecker {
                     // callable, accept the call and return Any (join of return types).
                     Ty::Union(ref members)
                         if members.iter().all(|&member| match self.tcx.get(member) {
-                            Ty::Fn { .. } | Ty::Any | Ty::Error => true,
+                            Ty::Fn { .. }
+                            | Ty::External(ExternalValue::Callable(_))
+                            | Ty::Any
+                            | Ty::Error => true,
                             Ty::Class {
                                 role: ClassRole::Object,
                                 ..
@@ -835,6 +890,9 @@ impl TypeChecker {
             }
             Expr::Attr { object, attr } => {
                 let obj_ty_id = self.check_expr(object);
+                if let Some(external) = self.resolve_external_value_attr(obj_ty_id, attr) {
+                    return external;
+                }
                 if let Some(method_ty) =
                     self.resolve_unbound_class_method(object, obj_ty_id, attr)
                 {
@@ -965,6 +1023,10 @@ impl TypeChecker {
                 let et = self.check_expr(else_body);
                 let joined = if bt == et {
                     bt
+                } else if matches!(self.tcx.get(bt), Ty::External(_))
+                    || matches!(self.tcx.get(et), Ty::External(_))
+                {
+                    self.tcx.any()
                 } else if self.types_compatible(bt, et) {
                     bt
                 } else if self.types_compatible(et, bt) {
@@ -1366,7 +1428,7 @@ impl TypeChecker {
         super::stdlib_sigs::get(module, class_name, attr)
     }
 
-    fn materialize_stdlib_type_param(
+    pub(crate) fn materialize_stdlib_type_param(
         &mut self,
         spec_id: super::stdlib_typespec::TypeParamSpecId,
     ) -> Option<TypeId> {
@@ -1728,42 +1790,162 @@ impl TypeChecker {
     }
 
     fn structured_stdlib_module_fn_exists(module: &str, name: &str) -> bool {
-        use super::stdlib_typespec::{self as spec, CallableSpecKind};
-        spec::overloads(module, "", name)
-            .any(|sig| sig.kind == CallableSpecKind::ModuleFn)
+        super::stdlib_typespec::module_callable_exists(module, name)
     }
 
-    fn structured_stdlib_member_exists(module: &str, qualifier: &str, name: &str) -> bool {
+    fn structured_stdlib_member_owner(
+        module: &str,
+        qualifier: &str,
+        name: &str,
+    ) -> Option<(String, String)> {
         use super::stdlib_typespec::{self as spec, CallableSpecKind};
-        spec::overloads(module, qualifier, name).any(|sig| {
-            matches!(
-                sig.kind,
-                CallableSpecKind::InstanceMethod
-                    | CallableSpecKind::ClassMethod
-                    | CallableSpecKind::StaticMethod
-            )
-        })
+        spec::class_callable_owner(
+            module,
+            qualifier,
+            name,
+            &[
+                CallableSpecKind::InstanceMethod,
+                CallableSpecKind::ClassMethod,
+                CallableSpecKind::StaticMethod,
+            ],
+        )
+        .map(|(module, qualifier)| (module.to_string(), qualifier.to_string()))
+    }
+
+    fn structured_stdlib_direct_member_owner(
+        module: &str,
+        qualifier: &str,
+        name: &str,
+    ) -> Option<(String, String)> {
+        use super::stdlib_typespec::{self as spec, CallableSpecKind};
+
+        let resolution = spec::class_callable_resolution(
+            module,
+            qualifier,
+            name,
+            &[
+                CallableSpecKind::InstanceMethod,
+                CallableSpecKind::ClassMethod,
+                CallableSpecKind::StaticMethod,
+            ],
+        )?;
+        if !resolution.path.is_empty() {
+            return None;
+        }
+        let owner = spec::class_by_id(resolution.owner);
+        Some((
+            spec::string(owner.module).to_string(),
+            spec::string(owner.qualifier).to_string(),
+        ))
     }
 
     fn structured_stdlib_constructor(
         module: &str,
         qualifier: &str,
-    ) -> Option<&'static str> {
-        use super::stdlib_typespec::{self as spec, CallableSpecKind};
-        let is_constructor = |sig: &super::stdlib_typespec::CallableSpec| {
-            matches!(
-                sig.kind,
-                CallableSpecKind::InstanceMethod
-                    | CallableSpecKind::ClassMethod
-                    | CallableSpecKind::StaticMethod
-            )
+    ) -> Option<(String, String, &'static str)> {
+        for name in ["__init__", "__new__"] {
+            if let Some((owner_module, owner_qualifier)) =
+                Self::structured_stdlib_direct_member_owner(module, qualifier, name)
+            {
+                return Some((owner_module, owner_qualifier, name));
+            }
+        }
+        for name in ["__init__", "__new__"] {
+            if let Some((owner_module, owner_qualifier)) =
+                Self::structured_stdlib_member_owner(module, qualifier, name)
+            {
+                return Some((owner_module, owner_qualifier, name));
+            }
+        }
+        None
+    }
+
+    fn structured_stdlib_receiver(&self, ty: TypeId) -> Option<ExternalClass> {
+        let receiver = match self.tcx.get(ty) {
+            Ty::Bool => ExternalClass {
+                module: "builtins".to_string(),
+                name: "bool".to_string(),
+                args: Vec::new(),
+            },
+            Ty::Int => ExternalClass {
+                module: "builtins".to_string(),
+                name: "int".to_string(),
+                args: Vec::new(),
+            },
+            Ty::Float => ExternalClass {
+                module: "builtins".to_string(),
+                name: "float".to_string(),
+                args: Vec::new(),
+            },
+            Ty::Str => ExternalClass {
+                module: "builtins".to_string(),
+                name: "str".to_string(),
+                args: Vec::new(),
+            },
+            Ty::List(item) => ExternalClass {
+                module: "builtins".to_string(),
+                name: "list".to_string(),
+                args: vec![*item],
+            },
+            Ty::Set(item) => ExternalClass {
+                module: "builtins".to_string(),
+                name: "set".to_string(),
+                args: if self.tcx.get(*item).is_any() {
+                    Vec::new()
+                } else {
+                    vec![*item]
+                },
+            },
+            Ty::Dict(key, value) => ExternalClass {
+                module: "builtins".to_string(),
+                name: "dict".to_string(),
+                args: vec![*key, *value],
+            },
+            Ty::Tuple(_) => ExternalClass {
+                module: "builtins".to_string(),
+                name: "tuple".to_string(),
+                args: Vec::new(),
+            },
+            Ty::Class {
+                external: Some(external),
+                ..
+            } => external.clone(),
+            _ => return None,
         };
-        if spec::overloads(module, qualifier, "__init__").any(is_constructor) {
-            Some("__init__")
-        } else if spec::overloads(module, qualifier, "__new__").any(is_constructor) {
-            Some("__new__")
-        } else {
-            None
+        Some(receiver)
+    }
+
+    fn external_callable_target(&self, ty: TypeId) -> Option<ResolvedStdlibSpecCall> {
+        match self.tcx.get(ty) {
+            Ty::External(ExternalValue::Callable(callable)) => Some(ResolvedStdlibSpecCall {
+                module: callable.module.clone(),
+                qualifier: callable.qualifier.clone(),
+                name: callable.name.clone(),
+                access: match callable.access {
+                    ExternalCallableAccess::Module => StdlibSpecAccess::ModuleFn,
+                    ExternalCallableAccess::ClassMember => StdlibSpecAccess::ClassMember,
+                    ExternalCallableAccess::BoundMember => StdlibSpecAccess::BoundMember,
+                },
+                receiver: callable.receiver.clone(),
+            }),
+            Ty::Class {
+                role: ClassRole::Object,
+                external: Some(receiver),
+                ..
+            } => {
+                let (module, qualifier, name) = Self::structured_stdlib_constructor(
+                    &receiver.module,
+                    &receiver.name,
+                )?;
+                Some(ResolvedStdlibSpecCall {
+                    module,
+                    qualifier,
+                    name: name.to_string(),
+                    access: StdlibSpecAccess::Constructor,
+                    receiver: Some(receiver.clone()),
+                })
+            }
+            _ => None,
         }
     }
 
@@ -1776,31 +1958,21 @@ impl TypeChecker {
             return Some(origin.clone());
         }
         let ty = self.get_sym_type(symbol.0);
-        let origin = match self.tcx.get(ty) {
-            Ty::Bool => ("builtins", "bool"),
-            Ty::Int => ("builtins", "int"),
-            Ty::Float => ("builtins", "float"),
-            Ty::Str => ("builtins", "str"),
-            Ty::List(_) => ("builtins", "list"),
-            Ty::Dict(_, _) => ("builtins", "dict"),
-            Ty::Tuple(_) => ("builtins", "tuple"),
-            Ty::Class {
-                role: ClassRole::Instance,
-                external: Some(external),
-                ..
-            } => return Some((external.module.clone(), external.name.clone())),
-            _ if self.symbols.get_symbol(symbol).kind == SymbolKind::Function => {
-                ("builtins", "function")
-            }
-            _ => return None,
-        };
-        Some((origin.0.to_string(), origin.1.to_string()))
+        if let Some(receiver) = self.structured_stdlib_receiver(ty) {
+            return Some((receiver.module, receiver.name));
+        }
+        (self.symbols.get_symbol(symbol).kind == SymbolKind::Function)
+            .then(|| ("builtins".to_string(), "function".to_string()))
     }
 
     fn resolve_structured_stdlib_call(
         &self,
         func: &Spanned<Expr>,
+        func_ty: TypeId,
     ) -> Option<ResolvedStdlibSpecCall> {
+        if let Some(target) = self.external_callable_target(func_ty) {
+            return Some(target);
+        }
         match &func.node {
             Expr::Ident(name) => self
                 .symbols
@@ -1814,14 +1986,24 @@ impl TypeChecker {
                             qualifier: String::new(),
                             name: member.to_string(),
                             access: StdlibSpecAccess::ModuleFn,
+                            receiver: None,
                         })
                     } else {
-                        Self::structured_stdlib_constructor(module, member).map(|constructor| {
+                        Self::structured_stdlib_constructor(module, member).map(|(
+                            owner_module,
+                            owner_qualifier,
+                            constructor,
+                        )| {
                             ResolvedStdlibSpecCall {
-                                module: module.clone(),
-                                qualifier: member.to_string(),
+                                module: owner_module,
+                                qualifier: owner_qualifier,
                                 name: constructor.to_string(),
                                 access: StdlibSpecAccess::Constructor,
+                                receiver: Some(ExternalClass {
+                                    module: module.clone(),
+                                    name: member.to_string(),
+                                    args: Vec::new(),
+                                }),
                             }
                         })
                     }
@@ -1836,14 +2018,24 @@ impl TypeChecker {
                             qualifier: String::new(),
                             name: name.clone(),
                             access: StdlibSpecAccess::ModuleFn,
+                            receiver: None,
                         })
                     } else {
-                        Self::structured_stdlib_constructor("builtins", name).map(|constructor| {
+                        Self::structured_stdlib_constructor("builtins", name).map(|(
+                            owner_module,
+                            owner_qualifier,
+                            constructor,
+                        )| {
                             ResolvedStdlibSpecCall {
-                                module: "builtins".to_string(),
-                                qualifier: name.clone(),
+                                module: owner_module,
+                                qualifier: owner_qualifier,
                                 name: constructor.to_string(),
                                 access: StdlibSpecAccess::Constructor,
+                                receiver: Some(ExternalClass {
+                                    module: "builtins".to_string(),
+                                    name: name.clone(),
+                                    args: Vec::new(),
+                                }),
                             }
                         })
                     }
@@ -1859,26 +2051,37 @@ impl TypeChecker {
                                         qualifier: String::new(),
                                         name: attr.clone(),
                                         access: StdlibSpecAccess::ModuleFn,
+                                        receiver: None,
                                     });
                                 }
-                                if let Some(constructor) =
+                                if let Some((owner_module, owner_qualifier, constructor)) =
                                     Self::structured_stdlib_constructor(module, attr)
                                 {
                                     return Some(ResolvedStdlibSpecCall {
-                                        module: module.clone(),
-                                        qualifier: attr.clone(),
+                                        module: owner_module,
+                                        qualifier: owner_qualifier,
                                         name: constructor.to_string(),
                                         access: StdlibSpecAccess::Constructor,
+                                        receiver: Some(ExternalClass {
+                                            module: module.clone(),
+                                            name: attr.clone(),
+                                            args: Vec::new(),
+                                        }),
                                     });
                                 }
-                            } else if Self::structured_stdlib_member_exists(
-                                module, qualifier, attr,
-                            ) {
+                            } else if let Some((owner_module, owner_qualifier)) =
+                                Self::structured_stdlib_member_owner(module, qualifier, attr)
+                            {
                                 return Some(ResolvedStdlibSpecCall {
-                                    module: module.clone(),
-                                    qualifier: qualifier.clone(),
+                                    module: owner_module,
+                                    qualifier: owner_qualifier,
                                     name: attr.clone(),
                                     access: StdlibSpecAccess::ClassMember,
+                                    receiver: Some(ExternalClass {
+                                        module: module.clone(),
+                                        name: qualifier.clone(),
+                                        args: Vec::new(),
+                                    }),
                                 });
                             }
                         }
@@ -1886,12 +2089,19 @@ impl TypeChecker {
                     if let Some((module, qualifier)) =
                         self.inferred_structured_stdlib_instance(base)
                     {
-                        if Self::structured_stdlib_member_exists(&module, &qualifier, attr) {
+                        if let Some((owner_module, owner_qualifier)) =
+                            Self::structured_stdlib_member_owner(&module, &qualifier, attr)
+                        {
                             return Some(ResolvedStdlibSpecCall {
-                                module,
-                                qualifier,
+                                module: owner_module,
+                                qualifier: owner_qualifier,
                                 name: attr.clone(),
                                 access: StdlibSpecAccess::BoundMember,
+                                receiver: Some(ExternalClass {
+                                    module,
+                                    name: qualifier,
+                                    args: Vec::new(),
+                                }),
                             });
                         }
                     }
@@ -1908,16 +2118,21 @@ impl TypeChecker {
                 };
                 let symbol = self.symbols.lookup(module_alias)?;
                 let (module, imported) = self.import_origins.get(&symbol)?;
-                if !imported.is_empty()
-                    || !Self::structured_stdlib_member_exists(module, qualifier, attr)
-                {
+                if !imported.is_empty() {
                     return None;
                 }
+                let (owner_module, owner_qualifier) =
+                    Self::structured_stdlib_member_owner(module, qualifier, attr)?;
                 Some(ResolvedStdlibSpecCall {
-                    module: module.clone(),
-                    qualifier: qualifier.clone(),
+                    module: owner_module,
+                    qualifier: owner_qualifier,
                     name: attr.clone(),
                     access: StdlibSpecAccess::ClassMember,
+                    receiver: Some(ExternalClass {
+                        module: module.clone(),
+                        name: qualifier.clone(),
+                        args: Vec::new(),
+                    }),
                 })
             }
             _ => None,
@@ -1947,6 +2162,61 @@ impl TypeChecker {
             );
         }
         Some(params)
+    }
+
+    fn stdlib_receiver_substitution(
+        &mut self,
+        receiver: &ExternalClass,
+        resolution: &super::stdlib_typespec::ClassCallableResolution,
+    ) -> Option<Substitution> {
+        use super::stdlib_typespec as spec;
+
+        let root_id = resolution
+            .path
+            .first()
+            .map(|step| step.child)
+            .unwrap_or(resolution.owner);
+        let root = spec::class_by_id(root_id);
+        let root_params = spec::class_type_params(root);
+        if receiver.args.len() > root_params.len() {
+            return None;
+        }
+        let mut substitution = Substitution::new();
+        for (param, arg) in root_params.iter().zip(&receiver.args) {
+            let Some(param_ty) = self.materialize_stdlib_type_param(*param) else {
+                continue;
+            };
+            let Ty::TypeVar(var) = self.tcx.get(param_ty) else {
+                continue;
+            };
+            substitution.insert(*var, *arg);
+        }
+        let mut current = root_id;
+        for step in &resolution.path {
+            if step.child != current {
+                return None;
+            }
+            let base = spec::class_by_id(step.base);
+            let base_params = spec::class_type_params(base);
+            let base_args = spec::edges(step.args);
+            if base_params.len() != base_args.len() {
+                return None;
+            }
+            let mut projected = Substitution::new();
+            for (param, arg) in base_params.iter().zip(base_args) {
+                let param_ty = self.materialize_stdlib_type_param(*param)?;
+                let var = match self.tcx.get(param_ty) {
+                    Ty::TypeVar(var) => *var,
+                    _ => return None,
+                };
+                let arg = self.materialize_stdlib_type(*arg)?;
+                let arg = substitution.apply(arg, &mut self.tcx);
+                projected.insert(var, arg);
+            }
+            substitution = projected;
+            current = step.base;
+        }
+        (current == resolution.owner).then_some(substitution)
     }
 
     fn known_stdlib_class_projection(
@@ -2681,6 +2951,22 @@ impl TypeChecker {
         }
     }
 
+    pub(crate) fn stdlib_generic_bounds_error(
+        &mut self,
+        substitution: &Substitution,
+        params: &GenericParams,
+    ) -> Option<String> {
+        if self.stdlib_generic_bounds_relation(substitution, params)
+            != StrictRelation::Incompatible
+        {
+            return None;
+        }
+        check_bounds(substitution, params, &self.tcx)
+            .into_iter()
+            .next()
+            .or_else(|| Some("external generic type argument violates its bound".to_string()))
+    }
+
     fn evaluate_stdlib_spec_candidate(
         &mut self,
         sig: &super::stdlib_typespec::CallableSpec,
@@ -2688,6 +2974,7 @@ impl TypeChecker {
         checked: &[Option<TypeId>],
         hide_implicit_receiver: bool,
         preserve_return_type: bool,
+        receiver: Option<&ExternalClass>,
     ) -> StdlibSpecCandidate {
         use super::stdlib_typespec::{self as spec, ParamSpecKind};
 
@@ -2823,11 +3110,51 @@ impl TypeChecker {
                 .collect();
             let inference_params: Vec<_> = inference_pairs.iter().map(|item| item.0).collect();
             let inference_args: Vec<_> = inference_pairs.iter().map(|item| item.1).collect();
-            let (subst, conflicts) =
+            let (mut subst, conflicts) =
                 infer_type_args(&generic_params, &inference_params, &inference_args, &self.tcx);
             if let Some(message) = conflicts.into_iter().next() {
                 let span = matched.first().map(|item| item.2).unwrap_or_default();
                 return StdlibSpecCandidate::Rejected(span, message, 1);
+            }
+            if let Some(receiver) = receiver {
+                let resolution = spec::class_callable_resolution(
+                    &receiver.module,
+                    &receiver.name,
+                    spec::string(sig.name),
+                    &[sig.kind],
+                );
+                let receiver_substitution = resolution.as_ref().and_then(|resolution| {
+                    self.stdlib_receiver_substitution(receiver, resolution)
+                });
+                if let Some(receiver_substitution) = receiver_substitution {
+                    for param in &generic_params.params {
+                        let Some(receiver_arg) = receiver_substitution.get(param.id) else {
+                            continue;
+                        };
+                        if let Some(inferred_arg) = subst.get(param.id) {
+                            match self.stdlib_type_relation(receiver_arg, inferred_arg) {
+                                StrictRelation::Compatible => {}
+                                StrictRelation::Indeterminate => indeterminate = true,
+                                StrictRelation::Incompatible => {
+                                    let span =
+                                        matched.first().map(|item| item.2).unwrap_or_default();
+                                    return StdlibSpecCandidate::Rejected(
+                                        span,
+                                        format!(
+                                            "argument type mismatch: receiver expects `{}`, got `{}`",
+                                            self.ty_name(receiver_arg),
+                                            self.ty_name(inferred_arg),
+                                        ),
+                                        1,
+                                    );
+                                }
+                            }
+                        }
+                        subst.insert(param.id, receiver_arg);
+                    }
+                } else {
+                    indeterminate = true;
+                }
             }
             relation_substitution = Some(subst.clone());
             match complete_type_args(&generic_params, subst, &mut self.tcx) {
@@ -2915,13 +3242,25 @@ impl TypeChecker {
     fn check_structured_stdlib_call(
         &mut self,
         func: &Spanned<Expr>,
+        func_ty: TypeId,
         args: &[CallArg],
     ) -> Option<Option<TypeId>> {
         use super::stdlib_typespec as spec;
 
         use super::stdlib_typespec::CallableSpecKind;
 
-        let target = self.resolve_structured_stdlib_call(func)?;
+        let target = self.resolve_structured_stdlib_call(func, func_ty)?;
+        let constructor_result = if target.access == StdlibSpecAccess::Constructor {
+            target.receiver.as_ref().map(|receiver| {
+                self.external_class_instance(
+                    &receiver.module,
+                    &receiver.name,
+                    receiver.args.clone(),
+                )
+            })
+        } else {
+            None
+        };
         let accepts_kind = |kind: CallableSpecKind| match target.access {
             StdlibSpecAccess::ModuleFn => kind == CallableSpecKind::ModuleFn,
             StdlibSpecAccess::Constructor
@@ -2984,15 +3323,31 @@ impl TypeChecker {
                 | StdlibSpecAccess::ClassMember
                 | StdlibSpecAccess::BoundMember => true,
             };
+            let candidate_receiver = if target.access == StdlibSpecAccess::ClassMember
+                && candidate.kind == CallableSpecKind::InstanceMethod
+            {
+                checked
+                    .first()
+                    .and_then(|actual| *actual)
+                    .and_then(|actual| self.structured_stdlib_receiver(actual))
+            } else {
+                target.receiver.clone()
+            };
             let evaluated = self.evaluate_stdlib_spec_candidate(
                 candidate,
                 args,
                 &checked,
                 hide_implicit_receiver,
-                target.access == StdlibSpecAccess::ModuleFn,
+                target.access != StdlibSpecAccess::Constructor,
+                candidate_receiver.as_ref(),
             );
             match evaluated {
-                StdlibSpecCandidate::Accepted(ret) => accepted.push(ret),
+                StdlibSpecCandidate::Accepted(ret) => accepted.push(ret.map(|ret| {
+                    candidate_receiver
+                        .as_ref()
+                        .map(|receiver| self.contextualize_stdlib_return(ret, receiver))
+                        .unwrap_or(ret)
+                })),
                 StdlibSpecCandidate::Rejected(span, message, priority) => {
                     rejected.push((span, message, priority))
                 }
@@ -3009,15 +3364,15 @@ impl TypeChecker {
                 {
                     self.error(span, message);
                 }
-                return Some(None);
+                return Some(constructor_result);
             }
-            return Some(None);
+            return Some(constructor_result);
         }
         if indeterminate {
-            return Some(None);
+            return Some(constructor_result);
         }
         if accepted.iter().any(Option::is_none) {
-            return Some(None);
+            return Some(constructor_result);
         }
         let mut returns: Vec<_> = accepted.into_iter().flatten().collect();
         returns.sort_unstable_by_key(|ty| ty.0);
@@ -3728,25 +4083,264 @@ impl TypeChecker {
         subst.apply(ty, &mut self.tcx)
     }
 
+    fn external_callable_type(
+        &mut self,
+        module: String,
+        qualifier: String,
+        name: &str,
+        access: ExternalCallableAccess,
+        receiver: Option<ExternalClass>,
+    ) -> TypeId {
+        self.tcx
+            .intern(Ty::External(ExternalValue::Callable(ExternalCallable {
+                module,
+                qualifier,
+                name: name.to_string(),
+                access,
+                runtime_kind: ExternalCallableRuntimeKind::Unknown,
+                receiver,
+            })))
+    }
+
+    fn contextualize_stdlib_return(
+        &mut self,
+        ty: TypeId,
+        receiver: &ExternalClass,
+    ) -> TypeId {
+        match self.tcx.get(ty).clone() {
+            Ty::SelfType => self.external_class_instance(
+                &receiver.module,
+                &receiver.name,
+                receiver.args.clone(),
+            ),
+            Ty::List(item) => {
+                let item = self.contextualize_stdlib_return(item, receiver);
+                self.tcx.intern(Ty::List(item))
+            }
+            Ty::Set(item) => {
+                let item = self.contextualize_stdlib_return(item, receiver);
+                self.tcx.intern(Ty::Set(item))
+            }
+            Ty::Dict(key, value) => {
+                let key = self.contextualize_stdlib_return(key, receiver);
+                let value = self.contextualize_stdlib_return(value, receiver);
+                self.tcx.intern(Ty::Dict(key, value))
+            }
+            Ty::Tuple(items) => {
+                let items = items
+                    .into_iter()
+                    .map(|item| self.contextualize_stdlib_return(item, receiver))
+                    .collect();
+                self.tcx.intern(Ty::Tuple(items))
+            }
+            Ty::Union(items) => {
+                let items = items
+                    .into_iter()
+                    .map(|item| self.contextualize_stdlib_return(item, receiver))
+                    .collect();
+                self.tcx.intern(Ty::Union(items))
+            }
+            Ty::TypeObject(instance) => {
+                let instance = self.contextualize_stdlib_return(instance, receiver);
+                self.tcx.intern(Ty::TypeObject(instance))
+            }
+            _ => ty,
+        }
+    }
+
+    fn resolve_external_property_type(
+        &mut self,
+        receiver: &ExternalClass,
+        attr: &str,
+    ) -> Option<TypeId> {
+        use super::stdlib_typespec::{self as spec, CallableSpecKind};
+
+        let resolution = spec::class_callable_resolution(
+            &receiver.module,
+            &receiver.name,
+            attr,
+            &[CallableSpecKind::PropertyGet],
+        )?;
+        let owner = spec::class_by_id(resolution.owner);
+        let module = spec::string(owner.module);
+        let qualifier = spec::string(owner.qualifier);
+        let receiver_substitution = self.stdlib_receiver_substitution(receiver, &resolution)?;
+        let candidates: Vec<_> = spec::overloads(module, qualifier, attr)
+            .filter(|sig| sig.kind == CallableSpecKind::PropertyGet)
+            .cloned()
+            .collect();
+        if candidates.is_empty() {
+            return None;
+        }
+        let mut returns = Vec::new();
+        for candidate in candidates {
+            if candidate.is_async {
+                return None;
+            }
+            let ret = self.materialize_stdlib_type(spec::type_use(candidate.ret).0)?;
+            let ret = receiver_substitution.apply(ret, &mut self.tcx);
+            let ret = self.contextualize_stdlib_return(ret, receiver);
+            if self.tcx.contains_type_var(ret) {
+                return None;
+            }
+            returns.push(ret);
+        }
+        returns.sort_unstable_by_key(|ty| ty.0);
+        returns.dedup();
+        match returns.as_slice() {
+            [] => None,
+            [ret] => Some(*ret),
+            _ => Some(self.tcx.intern(Ty::Union(returns))),
+        }
+    }
+
+    fn resolve_external_property_setter_type(
+        &mut self,
+        receiver: &ExternalClass,
+        attr: &str,
+    ) -> Option<TypeId> {
+        use super::stdlib_typespec::{self as spec, CallableSpecKind};
+
+        let resolution = spec::class_callable_resolution(
+            &receiver.module,
+            &receiver.name,
+            attr,
+            &[CallableSpecKind::PropertySet],
+        )?;
+        let owner = spec::class_by_id(resolution.owner);
+        let module = spec::string(owner.module);
+        let qualifier = spec::string(owner.qualifier);
+        let receiver_substitution = self.stdlib_receiver_substitution(receiver, &resolution)?;
+        let mut accepted = Vec::new();
+        for candidate in spec::overloads(module, qualifier, attr)
+            .filter(|sig| sig.kind == CallableSpecKind::PropertySet)
+        {
+            let visible: Vec<_> = spec::params(candidate.params)
+                .iter()
+                .filter(|param| !param.implicit_receiver)
+                .collect();
+            let [value] = visible.as_slice() else {
+                return None;
+            };
+            let expected = self.materialize_stdlib_type(spec::type_use(value.ty).0)?;
+            let expected = receiver_substitution.apply(expected, &mut self.tcx);
+            let expected = self.contextualize_stdlib_return(expected, receiver);
+            if self.tcx.contains_type_var(expected) {
+                return None;
+            }
+            accepted.push(expected);
+        }
+        accepted.sort_unstable_by_key(|ty| ty.0);
+        accepted.dedup();
+        match accepted.as_slice() {
+            [] => None,
+            [expected] => Some(*expected),
+            _ => Some(self.tcx.intern(Ty::Union(accepted))),
+        }
+    }
+
+    fn resolve_external_value_attr(&mut self, object_ty: TypeId, attr: &str) -> Option<TypeId> {
+        match self.tcx.get(object_ty).clone() {
+            Ty::External(ExternalValue::Module { path, loaded }) => {
+                let child = format!("{path}.{attr}");
+                if loaded
+                    .iter()
+                    .any(|module| module == &child || module.starts_with(&format!("{child}.")))
+                {
+                    return Some(self.tcx.intern(Ty::External(ExternalValue::Module {
+                        path: child,
+                        loaded,
+                    })));
+                }
+                if let Some((module, name)) =
+                    super::stdlib_typespec::exported_class(&path, attr)
+                {
+                    return Some(self.external_class_object(module, name, Vec::new()));
+                }
+                if Self::structured_stdlib_module_fn_exists(&path, attr) {
+                    return Some(self.external_callable_type(
+                        path,
+                        String::new(),
+                        attr,
+                        ExternalCallableAccess::Module,
+                        None,
+                    ));
+                }
+                None
+            }
+            Ty::Class {
+                role,
+                external: Some(receiver),
+                ..
+            } => {
+                if role == ClassRole::Instance {
+                    if let Some(property) = self.resolve_external_property_type(&receiver, attr) {
+                        return Some(property);
+                    }
+                }
+                let (module, qualifier) = Self::structured_stdlib_member_owner(
+                    &receiver.module,
+                    &receiver.name,
+                    attr,
+                )?;
+                let access = if role == ClassRole::Object {
+                    ExternalCallableAccess::ClassMember
+                } else {
+                    ExternalCallableAccess::BoundMember
+                };
+                Some(self.external_callable_type(
+                    module,
+                    qualifier,
+                    attr,
+                    access,
+                    Some(receiver),
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    fn resolve_generated_bound_member(&mut self, object_ty: TypeId, attr: &str) -> Option<TypeId> {
+        let receiver = self.structured_stdlib_receiver(object_ty)?;
+        let (module, qualifier) = Self::structured_stdlib_member_owner(
+            &receiver.module,
+            &receiver.name,
+            attr,
+        )?;
+        Some(self.external_callable_type(
+            module,
+            qualifier,
+            attr,
+            ExternalCallableAccess::BoundMember,
+            Some(receiver),
+        ))
+    }
+
     pub(crate) fn resolve_property_setter_type(
         &mut self,
         object_ty: TypeId,
         attr: &str,
     ) -> Option<TypeId> {
-        let Ty::Class {
-            role: ClassRole::Instance,
-            user: Some(user),
-            ..
-        } = self.semantic_ty(object_ty)
-        else {
-            return None;
-        };
-        let setter_ty = self
-            .class_property_setters
-            .get(&user.symbol)?
-            .get(attr)
-            .copied()?;
-        Some(self.specialize_class_member_type(user.symbol, &user.args, setter_ty))
+        match self.semantic_ty(object_ty) {
+            Ty::Class {
+                role: ClassRole::Instance,
+                user: Some(user),
+                ..
+            } => {
+                let setter_ty = self
+                    .class_property_setters
+                    .get(&user.symbol)?
+                    .get(attr)
+                    .copied()?;
+                Some(self.specialize_class_member_type(user.symbol, &user.args, setter_ty))
+            }
+            Ty::Class {
+                role: ClassRole::Instance,
+                external: Some(receiver),
+                ..
+            } => self.resolve_external_property_setter_type(&receiver, attr),
+            _ => None,
+        }
     }
 
     /// Resolve attribute access (#246).
@@ -3806,7 +4400,9 @@ impl TypeChecker {
                     ret: self.tcx.int(),
                     variadic: false,
                 }),
-                _ => self.tcx.any(),
+                _ => self
+                    .resolve_generated_bound_member(obj_ty_id, attr)
+                    .unwrap_or_else(|| self.tcx.any()),
             },
             Ty::Set(elem) => match attr {
                 "add" | "remove" => self.tcx.intern(Ty::Fn {
@@ -3814,7 +4410,9 @@ impl TypeChecker {
                     ret: self.tcx.none(),
                     variadic: false,
                 }),
-                _ => self.tcx.any(),
+                _ => self
+                    .resolve_generated_bound_member(obj_ty_id, attr)
+                    .unwrap_or_else(|| self.tcx.any()),
             },
             Ty::Dict(key, value) => match attr {
                 "__delitem__" => self.tcx.intern(Ty::Fn {
@@ -3840,7 +4438,9 @@ impl TypeChecker {
                         variadic: false,
                     })
                 }
-                _ => self.tcx.any(),
+                _ => self
+                    .resolve_generated_bound_member(obj_ty_id, attr)
+                    .unwrap_or_else(|| self.tcx.any()),
             },
             Ty::Class {
                 role, user, fields, ..
@@ -3899,7 +4499,9 @@ impl TypeChecker {
                 self.tcx.any()
             }
             Ty::Any | Ty::Error => self.tcx.any(),
-            _ => self.tcx.any(),
+            _ => self
+                .resolve_generated_bound_member(obj_ty_id, attr)
+                .unwrap_or_else(|| self.tcx.any()),
         }
     }
 
@@ -4675,6 +5277,7 @@ mod tests {
     use crate::parser::ast::*;
     use crate::source::span::{Span, Spanned};
     use crate::types::check::TypeChecker;
+    use crate::types::ty::ClassRole;
     use crate::types::Ty;
 
     fn sp<T>(node: T) -> Spanned<T> {
@@ -4833,14 +5436,28 @@ mod tests {
     fn test_check_expr_complex_lit() {
         let mut checker = TypeChecker::new();
         let ty = checker.check_expr(&sp(Expr::ComplexLit(2.0)));
-        assert_eq!(checker.tcx.get(ty), &Ty::Any);
+        assert!(matches!(
+            checker.tcx.get(ty),
+            Ty::Class {
+                role: ClassRole::Instance,
+                external: Some(external),
+                ..
+            } if external.module == "builtins" && external.name == "complex"
+        ));
     }
 
     #[test]
     fn test_check_expr_bytes_lit() {
         let mut checker = TypeChecker::new();
         let ty = checker.check_expr(&sp(Expr::BytesLit(vec![104, 105])));
-        assert_eq!(checker.tcx.get(ty), &Ty::Any);
+        assert!(matches!(
+            checker.tcx.get(ty),
+            Ty::Class {
+                role: ClassRole::Instance,
+                external: Some(external),
+                ..
+            } if external.module == "builtins" && external.name == "bytes"
+        ));
     }
 
     #[test]

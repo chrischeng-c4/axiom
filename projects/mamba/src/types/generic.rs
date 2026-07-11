@@ -241,6 +241,27 @@ impl Substitution {
                     })
                 }
             }
+            Ty::External(super::ty::ExternalValue::Callable(ref callable)) => {
+                let mut new_callable = callable.clone();
+                if let Some(receiver) = &callable.receiver {
+                    new_callable.receiver = Some(super::ty::ExternalClass {
+                        module: receiver.module.clone(),
+                        name: receiver.name.clone(),
+                        args: receiver
+                            .args
+                            .iter()
+                            .map(|arg| self.apply(*arg, tcx))
+                            .collect(),
+                    });
+                }
+                if new_callable == *callable {
+                    ty
+                } else {
+                    tcx.intern(Ty::External(
+                        super::ty::ExternalValue::Callable(new_callable),
+                    ))
+                }
+            }
             // Primitive types are unchanged
             _ => ty,
         }
@@ -257,6 +278,20 @@ pub fn bind_explicit_type_args(
     supplied: &[TypeId],
     tcx: &mut TypeContext,
 ) -> (Substitution, Vec<TypeId>, Vec<String>) {
+    let (subst, resolved, mut errors) =
+        bind_explicit_type_args_without_bounds(generic_params, supplied, tcx);
+    errors.extend(check_bounds(&subst, generic_params, tcx));
+    (subst, resolved, errors)
+}
+
+/// Bind explicit type arguments without choosing a relation for bounds.
+/// External generated contracts use their protocol-aware three-state relation;
+/// user declarations keep using `bind_explicit_type_args` above.
+pub fn bind_explicit_type_args_without_bounds(
+    generic_params: &GenericParams,
+    supplied: &[TypeId],
+    tcx: &mut TypeContext,
+) -> (Substitution, Vec<TypeId>, Vec<String>) {
     let mut subst = Substitution::new();
     let mut resolved = supplied.to_vec();
 
@@ -268,8 +303,7 @@ pub fn bind_explicit_type_args(
         for (param, concrete) in generic_params.params.iter().zip(supplied) {
             subst.insert(param.id, *concrete);
         }
-        let errors = check_bounds(&subst, generic_params, tcx);
-        return (subst, resolved, errors);
+        return (subst, resolved, Vec::new());
     }
 
     let total = generic_params.params.len();
@@ -308,7 +342,6 @@ pub fn bind_explicit_type_args(
         resolved.push(concrete);
     }
 
-    errors.extend(check_bounds(&subst, generic_params, tcx));
     (subst, resolved, errors)
 }
 

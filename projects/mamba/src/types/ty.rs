@@ -66,6 +66,59 @@ pub struct ExternalClass {
     pub args: Vec<TypeId>,
 }
 
+/// How a generated stdlib callable is bound at the point of access.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalCallableAccess {
+    Module,
+    ClassMember,
+    BoundMember,
+}
+
+/// Runtime nominal class of an external callable when independently proven.
+/// Typeshed describes call signatures but does not distinguish Python from
+/// builtin implementations, so generated callables default to `Unknown`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalCallableRuntimeKind {
+    Unknown,
+    PythonFunction,
+    PythonMethod,
+    BuiltinFunction,
+    BuiltinMethod,
+    WrapperDescriptor,
+    MethodWrapper,
+    MethodDescriptor,
+    ClassMethodDescriptor,
+}
+
+/// Canonical generated-contract identity for a callable value.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternalCallable {
+    /// Module that owns the callable declaration. For inherited methods this
+    /// can differ from the receiver's module.
+    pub module: String,
+    pub qualifier: String,
+    pub name: String,
+    pub access: ExternalCallableAccess,
+    pub runtime_kind: ExternalCallableRuntimeKind,
+    /// Canonical class whose attribute produced this callable. This preserves
+    /// `Self` and nominal return identity across aliases and method chains.
+    pub receiver: Option<ExternalClass>,
+}
+
+/// External Python values whose generated identity must survive ordinary
+/// expression flow instead of living only in symbol side tables.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExternalValue {
+    Module {
+        path: String,
+        /// Modules explicitly loaded by the originating import statement.
+        /// `import a.b` binds `a`, but only the loaded `a.b` child may be
+        /// traversed as a module without another import.
+        loaded: Vec<String>,
+    },
+    Callable(ExternalCallable),
+}
+
 /// Literal value for `Literal[42]` / `Literal["a", "b"]` types (#243).
 #[derive(Debug, Clone, PartialEq)]
 pub enum LiteralValue {
@@ -95,6 +148,7 @@ pub enum Ty {
         ret: TypeId,
         variadic: bool,
     },
+    External(ExternalValue),
     /// A boxed Python class object whose constructor produces `TypeId`.
     TypeObject(TypeId),
     /// `match_args: None` = no explicit `__match_args__`; callers fall back to field order.
