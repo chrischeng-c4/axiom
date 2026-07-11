@@ -925,8 +925,20 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_list_new_untracked",
+            list_ops::mb_list_new_untracked as fn() -> super::MbValue,
+            [],
+            I64
+        ),
+        rt_sym!(
             "mb_list_new_with_capacity",
             list_ops::mb_list_new_with_capacity as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_list_new_with_capacity_untracked",
+            list_ops::mb_list_new_with_capacity_untracked as fn(super::MbValue) -> super::MbValue,
             [I64],
             I64
         ),
@@ -938,8 +950,21 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_list_new_1_untracked",
+            list_ops::mb_list_new_1_untracked as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
             "mb_list_new_2",
             list_ops::mb_list_new_2 as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_list_new_2_untracked",
+            list_ops::mb_list_new_2_untracked
+                as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
             I64
         ),
@@ -951,8 +976,27 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_list_new_3_untracked",
+            list_ops::mb_list_new_3_untracked
+                as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_list_new_4",
             list_ops::mb_list_new_4
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ) -> super::MbValue,
+            [I64, I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_list_new_4_untracked",
+            list_ops::mb_list_new_4_untracked
                 as fn(
                     super::MbValue,
                     super::MbValue,
@@ -976,8 +1020,35 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_list_new_5_untracked",
+            list_ops::mb_list_new_5_untracked
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ) -> super::MbValue,
+            [I64, I64, I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_list_new_6",
             list_ops::mb_list_new_6
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ) -> super::MbValue,
+            [I64, I64, I64, I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_list_new_6_untracked",
+            list_ops::mb_list_new_6_untracked
                 as fn(
                     super::MbValue,
                     super::MbValue,
@@ -1005,8 +1076,39 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_list_new_7_untracked",
+            list_ops::mb_list_new_7_untracked
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ) -> super::MbValue,
+            [I64, I64, I64, I64, I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_list_new_8",
             list_ops::mb_list_new_8
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ) -> super::MbValue,
+            [I64, I64, I64, I64, I64, I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_list_new_8_untracked",
+            list_ops::mb_list_new_8_untracked
                 as fn(
                     super::MbValue,
                     super::MbValue,
@@ -1038,8 +1140,43 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_list_new_9_untracked",
+            list_ops::mb_list_new_9_untracked
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ) -> super::MbValue,
+            [I64, I64, I64, I64, I64, I64, I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_list_new_10",
             list_ops::mb_list_new_10
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ) -> super::MbValue,
+            [I64, I64, I64, I64, I64, I64, I64, I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_list_new_10_untracked",
+            list_ops::mb_list_new_10_untracked
                 as fn(
                     super::MbValue,
                     super::MbValue,
@@ -1241,6 +1378,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!(
             "mb_dict_new",
             dict_ops::mb_dict_new as fn() -> super::MbValue,
+            [],
+            I64
+        ),
+        rt_sym!(
+            "mb_dict_new_untracked",
+            dict_ops::mb_dict_new_untracked as fn() -> super::MbValue,
             [],
             I64
         ),

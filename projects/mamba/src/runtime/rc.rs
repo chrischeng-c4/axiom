@@ -568,7 +568,7 @@ impl MbObject {
     /// the list avoids an indirection). For `len > 8` `SmallVec::from_vec`
     /// reuses the Vec's existing heap buffer as the spilled allocation
     /// (zero extra copies, just a pointer transfer). #2517.
-    pub fn new_list(elements: Vec<super::value::MbValue>) -> *mut Self {
+    fn new_list_with_tracking(elements: Vec<super::value::MbValue>, track_gc: bool) -> *mut Self {
         let buf: MbList = if elements.len() <= 8 {
             MbList::from_slice(&elements)
         } else {
@@ -582,8 +582,18 @@ impl MbObject {
             data: ObjData::List(MbRwLock::new(buf)),
         });
         let ptr = Box::into_raw(obj);
-        super::gc::gc_track(ptr);
+        if track_gc {
+            super::gc::gc_track(ptr);
+        }
         ptr
+    }
+
+    pub fn new_list(elements: Vec<super::value::MbValue>) -> *mut Self {
+        Self::new_list_with_tracking(elements, true)
+    }
+
+    pub fn new_list_untracked(elements: Vec<super::value::MbValue>) -> *mut Self {
+        Self::new_list_with_tracking(elements, false)
     }
 
     /// Create a new list from an inline-built `MbList`, skipping the
@@ -592,7 +602,7 @@ impl MbObject {
     /// known at compile time and the SmallVec is built inline via
     /// `smallvec![a,b,c,d]` without ever touching a `Vec` heap
     /// allocation. #2517.
-    pub fn new_list_inline(buf: MbList) -> *mut Self {
+    fn new_list_inline_with_tracking(buf: MbList, track_gc: bool) -> *mut Self {
         let obj = Box::new(MbObject {
             header: MbObjectHeader {
                 rc: atomic_rc(1),
@@ -601,8 +611,18 @@ impl MbObject {
             data: ObjData::List(MbRwLock::new(buf)),
         });
         let ptr = Box::into_raw(obj);
-        super::gc::gc_track(ptr);
+        if track_gc {
+            super::gc::gc_track(ptr);
+        }
         ptr
+    }
+
+    pub fn new_list_inline(buf: MbList) -> *mut Self {
+        Self::new_list_inline_with_tracking(buf, true)
+    }
+
+    pub fn new_list_inline_untracked(buf: MbList) -> *mut Self {
+        Self::new_list_inline_with_tracking(buf, false)
     }
 
     /// Create a new list, retaining all pointer elements.
@@ -617,7 +637,7 @@ impl MbObject {
         Self::new_list(elements)
     }
 
-    pub fn new_dict() -> *mut Self {
+    fn new_dict_with_tracking(track_gc: bool) -> *mut Self {
         let obj = Box::new(MbObject {
             header: MbObjectHeader {
                 rc: atomic_rc(1),
@@ -626,8 +646,18 @@ impl MbObject {
             data: ObjData::Dict(MbRwLock::new(MbDictMap::default())),
         });
         let ptr = Box::into_raw(obj);
-        super::gc::gc_track(ptr);
+        if track_gc {
+            super::gc::gc_track(ptr);
+        }
         ptr
+    }
+
+    pub fn new_dict() -> *mut Self {
+        Self::new_dict_with_tracking(true)
+    }
+
+    pub fn new_dict_untracked() -> *mut Self {
+        Self::new_dict_with_tracking(false)
     }
 
     /// Create a dict with pre-allocated capacity.

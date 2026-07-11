@@ -263,3 +263,53 @@ fn copy_alias_propagation_does_not_rewrite_literal_roots() {
         Some(LiteralEscapeClassification::NonEscaping)
     );
 }
+
+#[test]
+fn nested_literals_mark_the_inner_root_as_escaping() {
+    let tcx = TypeContext::new();
+    let body = body(
+        vec![
+            MirInst::MakeList {
+                dest: VReg(0),
+                elements: vec![],
+                ty: tcx.any(),
+            },
+            MirInst::MakeList {
+                dest: VReg(1),
+                elements: vec![VReg(0)],
+                ty: tcx.any(),
+            },
+            MirInst::MakeDict {
+                dest: VReg(2),
+                keys: vec![],
+                values: vec![],
+                ty: tcx.any(),
+            },
+            MirInst::MakeList {
+                dest: VReg(3),
+                elements: vec![VReg(2)],
+                ty: tcx.any(),
+            },
+        ],
+        Terminator::Return(None),
+    );
+
+    let analysis = analyze_literal_escapes(&body);
+
+    assert_eq!(
+        analysis.classification(VReg(0)),
+        Some(LiteralEscapeClassification::Escaping)
+    );
+    assert_eq!(
+        analysis.classification(VReg(1)),
+        Some(LiteralEscapeClassification::NonEscaping)
+    );
+    assert_eq!(
+        analysis.classification(VReg(2)),
+        Some(LiteralEscapeClassification::Escaping)
+    );
+    assert_eq!(
+        analysis.classification(VReg(3)),
+        Some(LiteralEscapeClassification::NonEscaping)
+    );
+}
