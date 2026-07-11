@@ -2670,90 +2670,109 @@ impl CraneliftJitBackend {
             }
         }
 
-        // #1010: inline the recursion-depth guard's fast path.
+        // #1010 / #1439: inline the recursion-depth guard's fast path.
         // `mb_recursion_enter` is emitted once at the top of every function
         // body (hir_to_mir's prologue) and, together with the
         // `mb_has_exception` check that used to follow it, was the dominant
-        // remaining per-call overhead after #959's rc-elision work. Fetch
-        // this thread's depth/limit cell addresses via two trivial
-        // leaf-function calls (no branching, no closures — see
-        // `mb_recursion_depth_ptr`/`mb_recursion_limit_ptr`), then do the
-        // actual load+increment+compare inline; only fall back to the real
-        // `mb_recursion_enter` FFI call (unchanged, so the raise — exact
-        // message and limit value — stays byte-identical) on the rare,
-        // near-the-limit slow path. Dest is marked native_bool/raw_int so
-        // downstream consumers (the exception-propagate branch this feeds)
-        // read the 0/1 result directly.
+        // remaining per-call overhead after #959's rc-elision work. Prefer
+        // fetching this thread's depth/limit cell addresses via one bundled
+        // leaf helper (`mb_recursion_state_ptr`), then do the actual
+        // load+increment+compare inline; fall back to the legacy separate
+        // `mb_recursion_depth_ptr`/`mb_recursion_limit_ptr` helpers when the
+        // bundle symbol is absent. Only the rare, near-the-limit slow path
+        // reaches the real `mb_recursion_enter` FFI call (unchanged, so the
+        // raise — exact message and limit value — stays byte-identical).
+        // Dest is marked native_bool/raw_int so downstream consumers (the
+        // exception-propagate branch this feeds) read the 0/1 result
+        // directly.
         if name == "mb_recursion_enter" && args.is_empty() {
-            if let (Some(dest_vreg), Some(&depth_ptr_id), Some(&limit_ptr_id), Some(&enter_id)) = (
-                dest,
-                self.extern_funcs.get("mb_recursion_depth_ptr"),
-                self.extern_funcs.get("mb_recursion_limit_ptr"),
-                self.extern_funcs.get("mb_recursion_enter"),
-            ) {
+            if let (Some(dest_vreg), Some(&enter_id)) =
+                (dest, self.extern_funcs.get("mb_recursion_enter"))
+            {
                 use cranelift_codegen::ir::condcodes::IntCC;
                 use cranelift_codegen::ir::InstBuilder;
 
-                let depth_ptr_ref = self
-                    .module()
-                    .declare_func_in_func(depth_ptr_id, builder.func);
-                let depth_ptr_call = builder.ins().call(depth_ptr_ref, &[]);
-                let depth_ptr = builder.inst_results(depth_ptr_call)[0];
-                vars.recursion_depth_ptr = Some(depth_ptr);
-
-                let limit_ptr_ref = self
-                    .module()
-                    .declare_func_in_func(limit_ptr_id, builder.func);
-                let limit_ptr_call = builder.ins().call(limit_ptr_ref, &[]);
-                let limit_ptr = builder.inst_results(limit_ptr_call)[0];
-
                 let mem_flags = MemFlags::trusted();
-                let current = builder.ins().load(cl_types::I64, mem_flags, depth_ptr, 0);
-                let limit = builder.ins().load(cl_types::I64, mem_flags, limit_ptr, 0);
-                let next = builder.ins().iadd_imm(current, 1);
-                let exceeded = builder.ins().icmp(IntCC::SignedGreaterThan, next, limit);
+                let ptrs =
+                    if let Some(&state_ptr_id) = self.extern_funcs.get("mb_recursion_state_ptr") {
+                        let state_ptr_ref = self
+                            .module()
+                            .declare_func_in_func(state_ptr_id, builder.func);
+                        let state_ptr_call = builder.ins().call(state_ptr_ref, &[]);
+                        let state_ptr = builder.inst_results(state_ptr_call)[0];
+                        let depth_ptr = builder.ins().load(cl_types::I64, mem_flags, state_ptr, 0);
+                        let limit_ptr = builder.ins().load(cl_types::I64, mem_flags, state_ptr, 8);
+                        Some((depth_ptr, limit_ptr))
+                    } else if let (Some(&depth_ptr_id), Some(&limit_ptr_id)) = (
+                        self.extern_funcs.get("mb_recursion_depth_ptr"),
+                        self.extern_funcs.get("mb_recursion_limit_ptr"),
+                    ) {
+                        let depth_ptr_ref = self
+                            .module()
+                            .declare_func_in_func(depth_ptr_id, builder.func);
+                        let depth_ptr_call = builder.ins().call(depth_ptr_ref, &[]);
+                        let depth_ptr = builder.inst_results(depth_ptr_call)[0];
 
-                let fast_block = builder.create_block();
-                let slow_block = builder.create_block();
-                let merge_block = builder.create_block();
-                let merge_param = builder.append_block_param(merge_block, cl_types::I8);
+                        let limit_ptr_ref = self
+                            .module()
+                            .declare_func_in_func(limit_ptr_id, builder.func);
+                        let limit_ptr_call = builder.ins().call(limit_ptr_ref, &[]);
+                        let limit_ptr = builder.inst_results(limit_ptr_call)[0];
+                        Some((depth_ptr, limit_ptr))
+                    } else {
+                        None
+                    };
 
-                builder
-                    .ins()
-                    .brif(exceeded, slow_block, &[], fast_block, &[]);
+                if let Some((depth_ptr, limit_ptr)) = ptrs {
+                    vars.recursion_depth_ptr = Some(depth_ptr);
 
-                // Fast: depth has headroom — commit the increment inline
-                // and report ok. This is the overwhelming common case; it
-                // never leaves JIT-generated code beyond the two pointer
-                // fetches above.
-                builder.switch_to_block(fast_block);
-                builder.seal_block(fast_block);
-                builder.ins().store(mem_flags, next, depth_ptr, 0);
-                let ok_true = builder.ins().iconst(cl_types::I8, 1);
-                builder.ins().jump(merge_block, &[ok_true.into()]);
+                    let current = builder.ins().load(cl_types::I64, mem_flags, depth_ptr, 0);
+                    let limit = builder.ins().load(cl_types::I64, mem_flags, limit_ptr, 0);
+                    let next = builder.ins().iadd_imm(current, 1);
+                    let exceeded = builder.ins().icmp(IntCC::SignedGreaterThan, next, limit);
 
-                // Slow: would exceed the limit — defer entirely to
-                // `mb_recursion_enter` itself. We never wrote `next` on
-                // this path, so there is no double count; it reloads
-                // current/limit fresh, finds the same over-limit condition,
-                // raises RecursionError exactly as before, and returns the
-                // (false) ok flag.
-                builder.switch_to_block(slow_block);
-                builder.seal_block(slow_block);
-                let enter_ref = self.module().declare_func_in_func(enter_id, builder.func);
-                let slow_call = builder.ins().call(enter_ref, &[]);
-                let slow_raw = builder.inst_results(slow_call)[0];
-                let slow_bit = builder.ins().band_imm(slow_raw, 1);
-                let slow_ok = builder.ins().ireduce(cl_types::I8, slow_bit);
-                builder.ins().jump(merge_block, &[slow_ok.into()]);
+                    let fast_block = builder.create_block();
+                    let slow_block = builder.create_block();
+                    let merge_block = builder.create_block();
+                    let merge_param = builder.append_block_param(merge_block, cl_types::I8);
 
-                builder.switch_to_block(merge_block);
-                builder.seal_block(merge_block);
-                let dv = vars.get(*dest_vreg, builder, cl_types::I8);
-                builder.def_var(dv, merge_param);
-                vars.raw_ints.insert(*dest_vreg);
-                vars.native_bools.insert(*dest_vreg);
-                return;
+                    builder
+                        .ins()
+                        .brif(exceeded, slow_block, &[], fast_block, &[]);
+
+                    // Fast: depth has headroom — commit the increment inline
+                    // and report ok. This is the overwhelming common case; it
+                    // never leaves JIT-generated code beyond the pointer
+                    // fetches above.
+                    builder.switch_to_block(fast_block);
+                    builder.seal_block(fast_block);
+                    builder.ins().store(mem_flags, next, depth_ptr, 0);
+                    let ok_true = builder.ins().iconst(cl_types::I8, 1);
+                    builder.ins().jump(merge_block, &[ok_true.into()]);
+
+                    // Slow: would exceed the limit — defer entirely to
+                    // `mb_recursion_enter` itself. We never wrote `next` on
+                    // this path, so there is no double count; it reloads
+                    // current/limit fresh, finds the same over-limit condition,
+                    // raises RecursionError exactly as before, and returns the
+                    // (false) ok flag.
+                    builder.switch_to_block(slow_block);
+                    builder.seal_block(slow_block);
+                    let enter_ref = self.module().declare_func_in_func(enter_id, builder.func);
+                    let slow_call = builder.ins().call(enter_ref, &[]);
+                    let slow_raw = builder.inst_results(slow_call)[0];
+                    let slow_bit = builder.ins().band_imm(slow_raw, 1);
+                    let slow_ok = builder.ins().ireduce(cl_types::I8, slow_bit);
+                    builder.ins().jump(merge_block, &[slow_ok.into()]);
+
+                    builder.switch_to_block(merge_block);
+                    builder.seal_block(merge_block);
+                    let dv = vars.get(*dest_vreg, builder, cl_types::I8);
+                    builder.def_var(dv, merge_param);
+                    vars.raw_ints.insert(*dest_vreg);
+                    vars.native_bools.insert(*dest_vreg);
+                    return;
+                }
             }
         }
 
