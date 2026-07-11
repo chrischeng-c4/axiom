@@ -1470,6 +1470,11 @@ pub fn mb_dict_new() -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
 }
 
+/// Create a new empty dict that intentionally skips GC tracking.
+pub fn mb_dict_new_untracked() -> MbValue {
+    MbValue::from_ptr(MbObject::new_dict_untracked())
+}
+
 /// dict(iterable_of_pairs) — build a dict from an iterable of (key, value) pairs.
 /// Also accepts another dict (shallow copy), user-defined iterables (via __iter__),
 /// and iterator handles from mb_iter/generators.

@@ -7,7 +7,10 @@ use super::marshal;
 use super::perf_map;
 use super::{emit_binop, emit_terminator, VarAlloc, EMIT_REFCOUNT_CALLS};
 use crate::codegen::{CodegenBackend, CodegenOutput};
-use crate::mir::{MirBinOp, MirBody, MirConst, MirExtern, MirInst, MirModule, MirType, VReg};
+use crate::mir::{
+    analyze_literal_escapes, LiteralEscapeAnalysis, LiteralEscapeClassification, LiteralEscapeKind,
+    MirBinOp, MirBody, MirConst, MirExtern, MirInst, MirModule, MirType, VReg,
+};
 use crate::runtime::rc::MbObject;
 use crate::runtime::symbols::{runtime_externs, runtime_symbols};
 use crate::runtime::value::MbValue;
@@ -433,6 +436,8 @@ impl CraneliftJitBackend {
         let mut fb_ctx = cranelift_frontend::FunctionBuilderContext::new();
         let mut builder = cranelift_frontend::FunctionBuilder::new(&mut func, &mut fb_ctx);
         let mut vars = VarAlloc::new();
+        let literal_escapes = analyze_literal_escapes(body);
+        let is_entry_body = body.name.0 == u32::MAX;
         // Per-block "definitely assigned on all incoming paths" VReg sets,
         // consumed by `emit_terminator`'s Return epilogue via
         // `vars.live_filter` so large branch-local release sets do not force
@@ -480,7 +485,6 @@ impl CraneliftJitBackend {
         // `stdlib/re/*` fixtures, and the original perf motivation (#1274)
         // is already met via a separate idempotency fix (28cb58070), so the
         // 4× bench gate stays green without entry-body release.
-        let is_entry_body = body.name.0 == u32::MAX;
         let release_func_ref = if EMIT_REFCOUNT_CALLS && !is_entry_body {
             let release_id = self.extern_funcs.get("mb_release_value").copied();
             release_id.map(|id| self.module().declare_func_in_func(id, builder.func))
@@ -534,7 +538,16 @@ impl CraneliftJitBackend {
                 builder.switch_to_block(cl_blocks[&block.id.0]);
             }
             for inst in &block.stmts {
-                self.emit_inst(inst, tcx, externs, &mut builder, &mut vars, &param_vregs);
+                self.emit_inst(
+                    inst,
+                    tcx,
+                    externs,
+                    &literal_escapes,
+                    !is_entry_body,
+                    &mut builder,
+                    &mut vars,
+                    &param_vregs,
+                );
             }
             // Scope the Return epilogue's release loop to VRegs that are
             // definitely assigned on every path reaching THIS terminator
@@ -627,6 +640,8 @@ impl CraneliftJitBackend {
         inst: &MirInst,
         tcx: &TypeContext,
         externs: &[MirExtern],
+        literal_escapes: &LiteralEscapeAnalysis,
+        allow_untracked_literals: bool,
         builder: &mut cranelift_frontend::FunctionBuilder,
         vars: &mut VarAlloc,
         param_vregs: &std::collections::HashSet<VReg>,
@@ -1288,7 +1303,15 @@ impl CraneliftJitBackend {
                 elements,
                 ty: _,
             } => {
-                self.emit_make_list(dest, elements, builder, vars, externs);
+                self.emit_make_list(
+                    dest,
+                    elements,
+                    literal_escapes,
+                    allow_untracked_literals,
+                    builder,
+                    vars,
+                    externs,
+                );
             }
             MirInst::MakeDict {
                 dest,
@@ -1296,7 +1319,16 @@ impl CraneliftJitBackend {
                 values,
                 ty: _,
             } => {
-                self.emit_make_dict(dest, keys, values, builder, vars, externs);
+                self.emit_make_dict(
+                    dest,
+                    keys,
+                    values,
+                    literal_escapes,
+                    allow_untracked_literals,
+                    builder,
+                    vars,
+                    externs,
+                );
             }
             MirInst::MakeTuple {
                 dest,
@@ -2065,10 +2097,51 @@ impl CraneliftJitBackend {
         }
     }
 
+    fn literal_can_skip_gc_track(
+        literal_escapes: &LiteralEscapeAnalysis,
+        vreg: VReg,
+        expected_kind: LiteralEscapeKind,
+    ) -> bool {
+        matches!(
+            literal_escapes.get(vreg),
+            Some(info)
+                if info.kind == expected_kind
+                    && info.classification == LiteralEscapeClassification::NonEscaping
+        )
+    }
+
+    fn fixed_arity_list_ctor_name(len: usize, skip_gc_track: bool) -> Option<&'static str> {
+        match (len, skip_gc_track) {
+            (1, false) => Some("mb_list_new_1"),
+            (2, false) => Some("mb_list_new_2"),
+            (3, false) => Some("mb_list_new_3"),
+            (4, false) => Some("mb_list_new_4"),
+            (5, false) => Some("mb_list_new_5"),
+            (6, false) => Some("mb_list_new_6"),
+            (7, false) => Some("mb_list_new_7"),
+            (8, false) => Some("mb_list_new_8"),
+            (9, false) => Some("mb_list_new_9"),
+            (10, false) => Some("mb_list_new_10"),
+            (1, true) => Some("mb_list_new_1_untracked"),
+            (2, true) => Some("mb_list_new_2_untracked"),
+            (3, true) => Some("mb_list_new_3_untracked"),
+            (4, true) => Some("mb_list_new_4_untracked"),
+            (5, true) => Some("mb_list_new_5_untracked"),
+            (6, true) => Some("mb_list_new_6_untracked"),
+            (7, true) => Some("mb_list_new_7_untracked"),
+            (8, true) => Some("mb_list_new_8_untracked"),
+            (9, true) => Some("mb_list_new_9_untracked"),
+            (10, true) => Some("mb_list_new_10_untracked"),
+            _ => None,
+        }
+    }
+
     fn emit_make_list(
         &mut self,
         dest: &crate::mir::VReg,
         elements: &[crate::mir::VReg],
+        literal_escapes: &LiteralEscapeAnalysis,
+        allow_untracked_literals: bool,
         builder: &mut cranelift_frontend::FunctionBuilder,
         vars: &mut VarAlloc,
         _externs: &[MirExtern],
@@ -2089,19 +2162,9 @@ impl CraneliftJitBackend {
         // that args spill to the stack but a single FFI dispatch is
         // still cheaper than 1+N. 10 covers the list_sort_builtin shape
         // (`data = [9, 3, 7, 1, 5, 8, 2, 6, 4, 0]`).
-        let small_arity_fn = match n {
-            1 => Some("mb_list_new_1"),
-            2 => Some("mb_list_new_2"),
-            3 => Some("mb_list_new_3"),
-            4 => Some("mb_list_new_4"),
-            5 => Some("mb_list_new_5"),
-            6 => Some("mb_list_new_6"),
-            7 => Some("mb_list_new_7"),
-            8 => Some("mb_list_new_8"),
-            9 => Some("mb_list_new_9"),
-            10 => Some("mb_list_new_10"),
-            _ => None,
-        };
+        let skip_gc_track = allow_untracked_literals
+            && Self::literal_can_skip_gc_track(literal_escapes, *dest, LiteralEscapeKind::List);
+        let small_arity_fn = Self::fixed_arity_list_ctor_name(n, skip_gc_track);
         if let Some(fn_name) = small_arity_fn {
             if let Some(&fn_id) = self.extern_funcs.get(fn_name) {
                 let fn_ref = self.module().declare_func_in_func(fn_id, builder.func);
@@ -2118,11 +2181,29 @@ impl CraneliftJitBackend {
 
         let new_id_opt = if n > 0 {
             self.extern_funcs
-                .get("mb_list_new_with_capacity")
+                .get(if skip_gc_track {
+                    "mb_list_new_with_capacity_untracked"
+                } else {
+                    "mb_list_new_with_capacity"
+                })
                 .copied()
-                .or_else(|| self.extern_funcs.get("mb_list_new").copied())
+                .or_else(|| {
+                    self.extern_funcs
+                        .get(if skip_gc_track {
+                            "mb_list_new_untracked"
+                        } else {
+                            "mb_list_new"
+                        })
+                        .copied()
+                })
         } else {
-            self.extern_funcs.get("mb_list_new").copied()
+            self.extern_funcs
+                .get(if skip_gc_track {
+                    "mb_list_new_untracked"
+                } else {
+                    "mb_list_new"
+                })
+                .copied()
         };
         // The freshly-allocated list has no other references yet, so the
         // RwLock try_write/write fallback in mb_list_append is wasted —
@@ -2165,12 +2246,21 @@ impl CraneliftJitBackend {
         dest: &crate::mir::VReg,
         keys: &[crate::mir::VReg],
         values: &[crate::mir::VReg],
+        literal_escapes: &LiteralEscapeAnalysis,
+        allow_untracked_literals: bool,
         builder: &mut cranelift_frontend::FunctionBuilder,
         vars: &mut VarAlloc,
         _externs: &[MirExtern],
     ) {
+        let ctor_name = if allow_untracked_literals
+            && Self::literal_can_skip_gc_track(literal_escapes, *dest, LiteralEscapeKind::Dict)
+        {
+            "mb_dict_new_untracked"
+        } else {
+            "mb_dict_new"
+        };
         if let (Some(&new_id), Some(&set_id)) = (
-            self.extern_funcs.get("mb_dict_new"),
+            self.extern_funcs.get(ctor_name),
             self.extern_funcs.get("mb_dict_setitem"),
         ) {
             let new_ref = self.module().declare_func_in_func(new_id, builder.func);
@@ -2921,6 +3011,8 @@ mod tests {
         BasicBlock, BlockId, MirBody, MirConst, MirInst, MirModule, Terminator, VReg,
     };
     use crate::resolve::SymbolId;
+    use crate::runtime::closure::cleanup_all_closures;
+    use crate::runtime::gc::{gc_clear_all_state, gc_get_full_stats};
     use crate::types::TypeContext;
 
     #[test]
@@ -2946,6 +3038,49 @@ mod tests {
     /// Helper: acquire JIT_LOCK, tolerating poison from other test threads.
     fn acquire_jit_lock() -> std::sync::MutexGuard<'static, ()> {
         JIT_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn run_zero_arg_body_and_alloc_delta(module: MirModule, tcx: &TypeContext) -> (i64, usize) {
+        let _guard = acquire_jit_lock();
+        cleanup_all_closures();
+        gc_clear_all_state();
+        let before_alloc = gc_get_full_stats().3;
+
+        let mut backend = CraneliftJitBackend::new().unwrap();
+        let output = backend.codegen(&module, tcx).unwrap();
+        let result = match output {
+            crate::codegen::CodegenOutput::Jit { entry } => unsafe {
+                let func: extern "C" fn() -> i64 = std::mem::transmute(entry);
+                func()
+            },
+            _ => panic!("expected Jit output"),
+        };
+
+        let after_alloc = gc_get_full_stats().3;
+        unsafe {
+            crate::runtime::rc::release_if_ptr(MbValue::from_bits(result as u64));
+        }
+        cleanup_all_closures();
+        gc_clear_all_state();
+        (result, after_alloc.saturating_sub(before_alloc))
+    }
+
+    fn zero_arg_body(return_ty: TypeId, blocks: Vec<BasicBlock>) -> MirBody {
+        MirBody {
+            name: SymbolId(0),
+            params: vec![],
+            return_ty,
+            blocks,
+        }
+    }
+
+    fn entry_zero_arg_body(return_ty: TypeId, blocks: Vec<BasicBlock>) -> MirBody {
+        MirBody {
+            name: SymbolId(u32::MAX),
+            params: vec![],
+            return_ty,
+            blocks,
+        }
     }
 
     /// S2/R1: JIT_LOCK exists and is acquirable from external callers.
@@ -3306,5 +3441,638 @@ mod tests {
             }
             _ => panic!("expected Jit output"),
         }
+    }
+
+    #[test]
+    fn test_non_escaping_list_and_dict_literals_skip_gc_tracking() {
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let none_ty = tcx.none();
+
+        let list_body = zero_arg_body(
+            none_ty,
+            vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![MirInst::MakeList {
+                    dest: VReg(0),
+                    elements: vec![],
+                    ty: any_ty,
+                }],
+                terminator: Terminator::Return(None),
+            }],
+        );
+        let (_, list_delta) = run_zero_arg_body_and_alloc_delta(
+            MirModule {
+                bodies: vec![list_body],
+                externs: vec![],
+            },
+            &tcx,
+        );
+        assert_eq!(
+            list_delta, 0,
+            "non-escaping list literal must skip gc_track"
+        );
+
+        let dict_body = zero_arg_body(
+            none_ty,
+            vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![MirInst::MakeDict {
+                    dest: VReg(0),
+                    keys: vec![],
+                    values: vec![],
+                    ty: any_ty,
+                }],
+                terminator: Terminator::Return(None),
+            }],
+        );
+        let (_, dict_delta) = run_zero_arg_body_and_alloc_delta(
+            MirModule {
+                bodies: vec![dict_body],
+                externs: vec![],
+            },
+            &tcx,
+        );
+        assert_eq!(
+            dict_delta, 0,
+            "non-escaping dict literal must skip gc_track"
+        );
+    }
+
+    #[test]
+    fn test_entry_body_literals_remain_tracked() {
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let none_ty = tcx.none();
+
+        let list_body = entry_zero_arg_body(
+            none_ty,
+            vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![MirInst::MakeList {
+                    dest: VReg(0),
+                    elements: vec![],
+                    ty: any_ty,
+                }],
+                terminator: Terminator::Return(None),
+            }],
+        );
+        let (_, list_delta) = run_zero_arg_body_and_alloc_delta(
+            MirModule {
+                bodies: vec![list_body],
+                externs: vec![],
+            },
+            &tcx,
+        );
+        assert_eq!(
+            list_delta, 1,
+            "entry-body list literal must remain tracked because __main__ has no release epilogue"
+        );
+
+        let dict_body = entry_zero_arg_body(
+            none_ty,
+            vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![MirInst::MakeDict {
+                    dest: VReg(0),
+                    keys: vec![],
+                    values: vec![],
+                    ty: any_ty,
+                }],
+                terminator: Terminator::Return(None),
+            }],
+        );
+        let (_, dict_delta) = run_zero_arg_body_and_alloc_delta(
+            MirModule {
+                bodies: vec![dict_body],
+                externs: vec![],
+            },
+            &tcx,
+        );
+        assert_eq!(
+            dict_delta, 1,
+            "entry-body dict literal must remain tracked because __main__ has no release epilogue"
+        );
+    }
+
+    #[test]
+    fn test_returned_called_global_cell_aggregate_and_unknown_literals_remain_tracked() {
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let none_ty = tcx.none();
+        let bool_ty = tcx.bool();
+
+        let returned_list = zero_arg_body(
+            any_ty,
+            vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![MirInst::MakeList {
+                    dest: VReg(0),
+                    elements: vec![],
+                    ty: any_ty,
+                }],
+                terminator: Terminator::Return(Some(VReg(0))),
+            }],
+        );
+        let (_, returned_list_delta) = run_zero_arg_body_and_alloc_delta(
+            MirModule {
+                bodies: vec![returned_list],
+                externs: vec![],
+            },
+            &tcx,
+        );
+        assert_eq!(
+            returned_list_delta, 1,
+            "returned list literal must remain tracked"
+        );
+
+        let returned_dict = zero_arg_body(
+            any_ty,
+            vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![MirInst::MakeDict {
+                    dest: VReg(0),
+                    keys: vec![],
+                    values: vec![],
+                    ty: any_ty,
+                }],
+                terminator: Terminator::Return(Some(VReg(0))),
+            }],
+        );
+        let (_, returned_dict_delta) = run_zero_arg_body_and_alloc_delta(
+            MirModule {
+                bodies: vec![returned_dict],
+                externs: vec![],
+            },
+            &tcx,
+        );
+        assert_eq!(
+            returned_dict_delta, 1,
+            "returned dict literal must remain tracked"
+        );
+
+        let called_list = zero_arg_body(
+            none_ty,
+            vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    MirInst::MakeList {
+                        dest: VReg(0),
+                        elements: vec![],
+                        ty: any_ty,
+                    },
+                    MirInst::CallExtern {
+                        dest: None,
+                        name: "mb_is_truthy".to_string(),
+                        args: vec![VReg(0)],
+                        ty: bool_ty,
+                    },
+                ],
+                terminator: Terminator::Return(None),
+            }],
+        );
+        let (_, called_list_delta) = run_zero_arg_body_and_alloc_delta(
+            MirModule {
+                bodies: vec![called_list],
+                externs: vec![],
+            },
+            &tcx,
+        );
+        assert_eq!(
+            called_list_delta, 1,
+            "called list literal must remain tracked"
+        );
+
+        let called_dict = zero_arg_body(
+            none_ty,
+            vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    MirInst::MakeDict {
+                        dest: VReg(0),
+                        keys: vec![],
+                        values: vec![],
+                        ty: any_ty,
+                    },
+                    MirInst::CallExtern {
+                        dest: None,
+                        name: "mb_is_truthy".to_string(),
+                        args: vec![VReg(0)],
+                        ty: bool_ty,
+                    },
+                ],
+                terminator: Terminator::Return(None),
+            }],
+        );
+        let (_, called_dict_delta) = run_zero_arg_body_and_alloc_delta(
+            MirModule {
+                bodies: vec![called_dict],
+                externs: vec![],
+            },
+            &tcx,
+        );
+        assert_eq!(
+            called_dict_delta, 1,
+            "called dict literal must remain tracked"
+        );
+
+        let global_list = zero_arg_body(
+            none_ty,
+            vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    MirInst::MakeList {
+                        dest: VReg(0),
+                        elements: vec![],
+                        ty: any_ty,
+                    },
+                    MirInst::StoreGlobal {
+                        name: SymbolId(17),
+                        value: VReg(0),
+                    },
+                ],
+                terminator: Terminator::Return(None),
+            }],
+        );
+        let (_, global_list_delta) = run_zero_arg_body_and_alloc_delta(
+            MirModule {
+                bodies: vec![global_list],
+                externs: vec![],
+            },
+            &tcx,
+        );
+        assert_eq!(
+            global_list_delta, 1,
+            "global-stored list literal must remain tracked"
+        );
+
+        let global_dict = zero_arg_body(
+            none_ty,
+            vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    MirInst::MakeDict {
+                        dest: VReg(0),
+                        keys: vec![],
+                        values: vec![],
+                        ty: any_ty,
+                    },
+                    MirInst::StoreGlobal {
+                        name: SymbolId(23),
+                        value: VReg(0),
+                    },
+                ],
+                terminator: Terminator::Return(None),
+            }],
+        );
+        let (_, global_dict_delta) = run_zero_arg_body_and_alloc_delta(
+            MirModule {
+                bodies: vec![global_dict],
+                externs: vec![],
+            },
+            &tcx,
+        );
+        assert_eq!(
+            global_dict_delta, 1,
+            "global-stored dict literal must remain tracked"
+        );
+
+        let cell_list = zero_arg_body(
+            none_ty,
+            vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    MirInst::MakeList {
+                        dest: VReg(0),
+                        elements: vec![],
+                        ty: any_ty,
+                    },
+                    MirInst::MakeCell {
+                        dest: VReg(1),
+                        value: VReg(0),
+                        ty: any_ty,
+                    },
+                ],
+                terminator: Terminator::Return(None),
+            }],
+        );
+        let (_, cell_list_delta) = run_zero_arg_body_and_alloc_delta(
+            MirModule {
+                bodies: vec![cell_list],
+                externs: vec![],
+            },
+            &tcx,
+        );
+        assert_eq!(
+            cell_list_delta, 1,
+            "cell-captured list literal must remain tracked"
+        );
+
+        let cell_dict = zero_arg_body(
+            none_ty,
+            vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    MirInst::MakeDict {
+                        dest: VReg(0),
+                        keys: vec![],
+                        values: vec![],
+                        ty: any_ty,
+                    },
+                    MirInst::MakeCell {
+                        dest: VReg(1),
+                        value: VReg(0),
+                        ty: any_ty,
+                    },
+                ],
+                terminator: Terminator::Return(None),
+            }],
+        );
+        let (_, cell_dict_delta) = run_zero_arg_body_and_alloc_delta(
+            MirModule {
+                bodies: vec![cell_dict],
+                externs: vec![],
+            },
+            &tcx,
+        );
+        assert_eq!(
+            cell_dict_delta, 1,
+            "cell-captured dict literal must remain tracked"
+        );
+
+        let aggregate_list = zero_arg_body(
+            none_ty,
+            vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    MirInst::MakeList {
+                        dest: VReg(0),
+                        elements: vec![],
+                        ty: any_ty,
+                    },
+                    MirInst::MakeList {
+                        dest: VReg(1),
+                        elements: vec![VReg(0)],
+                        ty: any_ty,
+                    },
+                ],
+                terminator: Terminator::Return(None),
+            }],
+        );
+        let (_, aggregate_list_delta) = run_zero_arg_body_and_alloc_delta(
+            MirModule {
+                bodies: vec![aggregate_list],
+                externs: vec![],
+            },
+            &tcx,
+        );
+        assert_eq!(
+            aggregate_list_delta, 1,
+            "inner aggregate list literal must remain tracked while the outer local skips tracking"
+        );
+
+        let aggregate_dict = zero_arg_body(
+            none_ty,
+            vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    MirInst::MakeDict {
+                        dest: VReg(0),
+                        keys: vec![],
+                        values: vec![],
+                        ty: any_ty,
+                    },
+                    MirInst::MakeList {
+                        dest: VReg(1),
+                        elements: vec![VReg(0)],
+                        ty: any_ty,
+                    },
+                ],
+                terminator: Terminator::Return(None),
+            }],
+        );
+        let (_, aggregate_dict_delta) = run_zero_arg_body_and_alloc_delta(
+            MirModule {
+                bodies: vec![aggregate_dict],
+                externs: vec![],
+            },
+            &tcx,
+        );
+        assert_eq!(
+            aggregate_dict_delta, 1,
+            "inner aggregate dict literal must remain tracked while the outer local skips tracking"
+        );
+
+        let unknown_list = zero_arg_body(
+            none_ty,
+            vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    stmts: vec![MirInst::MakeList {
+                        dest: VReg(0),
+                        elements: vec![],
+                        ty: any_ty,
+                    }],
+                    terminator: Terminator::Branch {
+                        cond: VReg(0),
+                        then_block: BlockId(1),
+                        else_block: BlockId(2),
+                    },
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    stmts: vec![],
+                    terminator: Terminator::Return(None),
+                },
+                BasicBlock {
+                    id: BlockId(2),
+                    stmts: vec![],
+                    terminator: Terminator::Return(None),
+                },
+            ],
+        );
+        let (_, unknown_list_delta) = run_zero_arg_body_and_alloc_delta(
+            MirModule {
+                bodies: vec![unknown_list],
+                externs: vec![],
+            },
+            &tcx,
+        );
+        assert_eq!(
+            unknown_list_delta, 1,
+            "unknown-use list literal must remain tracked"
+        );
+
+        let unknown_dict = zero_arg_body(
+            none_ty,
+            vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    stmts: vec![MirInst::MakeDict {
+                        dest: VReg(0),
+                        keys: vec![],
+                        values: vec![],
+                        ty: any_ty,
+                    }],
+                    terminator: Terminator::Branch {
+                        cond: VReg(0),
+                        then_block: BlockId(1),
+                        else_block: BlockId(2),
+                    },
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    stmts: vec![],
+                    terminator: Terminator::Return(None),
+                },
+                BasicBlock {
+                    id: BlockId(2),
+                    stmts: vec![],
+                    terminator: Terminator::Return(None),
+                },
+            ],
+        );
+        let (_, unknown_dict_delta) = run_zero_arg_body_and_alloc_delta(
+            MirModule {
+                bodies: vec![unknown_dict],
+                externs: vec![],
+            },
+            &tcx,
+        );
+        assert_eq!(
+            unknown_dict_delta, 1,
+            "unknown-use dict literal must remain tracked"
+        );
+    }
+
+    #[test]
+    fn test_stored_literals_remain_tracked() {
+        let _guard = acquire_jit_lock();
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let int_ty = tcx.int();
+        let none_ty = tcx.none();
+
+        cleanup_all_closures();
+        gc_clear_all_state();
+
+        let list_container = MbValue::from_ptr(MbObject::new_dict());
+        gc_clear_all_state();
+        let before_list_alloc = gc_get_full_stats().3;
+        let list_body = MirBody {
+            name: SymbolId(0),
+            params: vec![(VReg(0), any_ty)],
+            return_ty: none_ty,
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    MirInst::LoadConst {
+                        dest: VReg(1),
+                        value: MirConst::Int(0),
+                        ty: int_ty,
+                    },
+                    MirInst::MakeList {
+                        dest: VReg(2),
+                        elements: vec![],
+                        ty: any_ty,
+                    },
+                    MirInst::SetItem {
+                        object: VReg(0),
+                        index: VReg(1),
+                        value: VReg(2),
+                    },
+                ],
+                terminator: Terminator::Return(None),
+            }],
+        };
+        let mut backend = CraneliftJitBackend::new().unwrap();
+        let output = backend
+            .codegen(
+                &MirModule {
+                    bodies: vec![list_body],
+                    externs: vec![],
+                },
+                &tcx,
+            )
+            .unwrap();
+        let list_result = match output {
+            crate::codegen::CodegenOutput::Jit { entry } => unsafe {
+                let func: extern "C" fn(i64) -> i64 = std::mem::transmute(entry);
+                func(list_container.to_bits() as i64)
+            },
+            _ => panic!("expected Jit output"),
+        };
+        let after_list_alloc = gc_get_full_stats().3;
+        unsafe {
+            crate::runtime::rc::release_if_ptr(MbValue::from_bits(list_result as u64));
+            crate::runtime::rc::release_if_ptr(list_container);
+        }
+        cleanup_all_closures();
+        gc_clear_all_state();
+        assert_eq!(
+            after_list_alloc.saturating_sub(before_list_alloc),
+            1,
+            "stored list literal must remain tracked"
+        );
+
+        let dict_container = MbValue::from_ptr(MbObject::new_dict());
+        gc_clear_all_state();
+        let before_dict_alloc = gc_get_full_stats().3;
+        let dict_body = MirBody {
+            name: SymbolId(0),
+            params: vec![(VReg(0), any_ty)],
+            return_ty: none_ty,
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    MirInst::LoadConst {
+                        dest: VReg(1),
+                        value: MirConst::Int(0),
+                        ty: int_ty,
+                    },
+                    MirInst::MakeDict {
+                        dest: VReg(2),
+                        keys: vec![],
+                        values: vec![],
+                        ty: any_ty,
+                    },
+                    MirInst::SetItem {
+                        object: VReg(0),
+                        index: VReg(1),
+                        value: VReg(2),
+                    },
+                ],
+                terminator: Terminator::Return(None),
+            }],
+        };
+        let mut backend = CraneliftJitBackend::new().unwrap();
+        let output = backend
+            .codegen(
+                &MirModule {
+                    bodies: vec![dict_body],
+                    externs: vec![],
+                },
+                &tcx,
+            )
+            .unwrap();
+        let dict_result = match output {
+            crate::codegen::CodegenOutput::Jit { entry } => unsafe {
+                let func: extern "C" fn(i64) -> i64 = std::mem::transmute(entry);
+                func(dict_container.to_bits() as i64)
+            },
+            _ => panic!("expected Jit output"),
+        };
+        let after_dict_alloc = gc_get_full_stats().3;
+        unsafe {
+            crate::runtime::rc::release_if_ptr(MbValue::from_bits(dict_result as u64));
+            crate::runtime::rc::release_if_ptr(dict_container);
+        }
+        cleanup_all_closures();
+        gc_clear_all_state();
+        assert_eq!(
+            after_dict_alloc.saturating_sub(before_dict_alloc),
+            1,
+            "stored dict literal must remain tracked"
+        );
     }
 }
