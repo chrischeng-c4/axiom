@@ -34,6 +34,125 @@ enum ParamPackCallBinding {
     Rejected(Span, String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProtocolCallShape {
+    positional: Vec<usize>,
+    keywords: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProtocolParamShape {
+    name: &'static str,
+    kind: super::stdlib_typespec::ParamSpecKind,
+    has_default: bool,
+}
+
+fn protocol_required_call_shapes(required: &[ProtocolParamShape]) -> Vec<ProtocolCallShape> {
+    use super::stdlib_typespec::ParamSpecKind;
+
+    let positional: Vec<_> = required
+        .iter()
+        .enumerate()
+        .filter(|(_, param)| {
+            matches!(param.kind, ParamSpecKind::PosOnly | ParamSpecKind::PosOrKw)
+        })
+        .map(|(index, _)| index)
+        .collect();
+    let mut shapes = Vec::new();
+    // A finite nonvariadic signature is determined by its positional prefix.
+    // For each prefix, the required-keyword base plus every optional keyword
+    // singleton proves all subsets because explicit parameter names are unique.
+    for prefix_len in 0..=positional.len() {
+        if positional[prefix_len..].iter().any(|index| {
+            required[*index].kind == ParamSpecKind::PosOnly
+                && !required[*index].has_default
+        }) {
+            continue;
+        }
+        let required_keywords: Vec<_> = required
+            .iter()
+            .enumerate()
+            .filter(|(index, param)| {
+                !param.has_default
+                    && (param.kind == ParamSpecKind::KwOnly
+                        || (param.kind == ParamSpecKind::PosOrKw
+                            && positional[prefix_len..].contains(index)))
+            })
+            .map(|(index, _)| index)
+            .collect();
+        let base = ProtocolCallShape {
+            positional: positional[..prefix_len].to_vec(),
+            keywords: required_keywords,
+        };
+        if !shapes.contains(&base) {
+            shapes.push(base.clone());
+        }
+        for (index, param) in required.iter().enumerate() {
+            let optional_keyword = param.has_default
+                && (param.kind == ParamSpecKind::KwOnly
+                    || (param.kind == ParamSpecKind::PosOrKw
+                        && positional[prefix_len..].contains(&index)));
+            if !optional_keyword {
+                continue;
+            }
+            let mut with_optional = base.clone();
+            with_optional.keywords.push(index);
+            if !shapes.contains(&with_optional) {
+                shapes.push(with_optional);
+            }
+        }
+    }
+    shapes
+}
+
+fn bind_protocol_call_shape(
+    required: &[ProtocolParamShape],
+    actual: &[FunctionParamSig],
+    shape: &ProtocolCallShape,
+) -> Option<Vec<(usize, usize)>> {
+    let positional: Vec<_> = actual
+        .iter()
+        .enumerate()
+        .filter(|(_, param)| param.kind == ParamKind::Regular && !param.kw_only)
+        .map(|(index, _)| index)
+        .collect();
+    let var_pos = actual
+        .iter()
+        .position(|param| param.kind == ParamKind::Star);
+    let var_kw = actual
+        .iter()
+        .position(|param| param.kind == ParamKind::DoubleStar);
+    let mut bound = std::collections::HashSet::new();
+    let mut matched = Vec::new();
+
+    for (position, required_index) in shape.positional.iter().enumerate() {
+        let actual_index = positional.get(position).copied().or(var_pos)?;
+        if actual[actual_index].kind == ParamKind::Regular && !bound.insert(actual_index) {
+            return None;
+        }
+        matched.push((*required_index, actual_index));
+    }
+    for required_index in &shape.keywords {
+        let name = required[*required_index].name;
+        let actual_index = actual
+            .iter()
+            .position(|param| {
+                param.kind == ParamKind::Regular && !param.pos_only && param.name == name
+            })
+            .or(var_kw)?;
+        if actual[actual_index].kind == ParamKind::Regular && !bound.insert(actual_index) {
+            return None;
+        }
+        matched.push((*required_index, actual_index));
+    }
+    if actual.iter().enumerate().any(|(index, param)| {
+        param.kind == ParamKind::Regular && !param.has_default && !bound.contains(&index)
+    }) {
+        return None;
+    }
+    Some(matched)
+}
+
 enum UserProtocolMethod {
     Found(
         super::protocol::MethodSig,
@@ -2468,6 +2587,14 @@ impl TypeChecker {
         if !visiting.insert(symbol) {
             return UserProtocolMethod::Indeterminate;
         }
+        if self
+            .protocol_indeterminate_methods
+            .get(&symbol)
+            .is_some_and(|methods| methods.contains(name))
+        {
+            visiting.remove(&symbol);
+            return UserProtocolMethod::Indeterminate;
+        }
         if let Some(method) = self
             .class_methods_by_symbol
             .get(&symbol)
@@ -2528,6 +2655,92 @@ impl TypeChecker {
         })
     }
 
+    fn stdlib_protocol_branch_relation(
+        &mut self,
+        required: &super::stdlib_typespec::CallableSpec,
+        actual_method: &super::protocol::MethodSig,
+        actual_params: &[FunctionParamSig],
+        substitution: &Substitution,
+        visiting: &mut std::collections::HashSet<(TypeId, TypeId)>,
+    ) -> StrictRelation {
+        use super::stdlib_typespec::{self as spec, ParamSpecKind};
+
+        let required_params: Vec<_> = spec::params(required.params)
+            .iter()
+            .filter(|param| !param.implicit_receiver)
+            .collect();
+        if required_params.iter().any(|param| {
+            matches!(param.kind, ParamSpecKind::VarPos | ParamSpecKind::VarKw)
+        }) || actual_params.len() != actual_method.params.len()
+        {
+            return StrictRelation::Indeterminate;
+        }
+        let required_shapes: Vec<_> = required_params
+            .iter()
+            .map(|param| ProtocolParamShape {
+                name: spec::string(param.name),
+                kind: param.kind,
+                has_default: param.has_default,
+            })
+            .collect();
+        let call_shapes = protocol_required_call_shapes(&required_shapes);
+        if call_shapes.is_empty() {
+            return StrictRelation::Indeterminate;
+        }
+        let mut required_types = Vec::with_capacity(required_params.len());
+        for param in &required_params {
+            let spec_id = spec::type_use(param.ty).0;
+            let ty = self
+                .materialize_stdlib_type(spec_id)
+                .map(|ty| substitution.apply(ty, &mut self.tcx));
+            required_types.push(ty);
+        }
+
+        let mut saw_indeterminate = false;
+        for shape in &call_shapes {
+            let Some(bindings) =
+                bind_protocol_call_shape(&required_shapes, actual_params, shape)
+            else {
+                return StrictRelation::Incompatible;
+            };
+            for (required_index, actual_index) in bindings {
+                let Some(required_ty) = required_types[required_index] else {
+                    saw_indeterminate = true;
+                    continue;
+                };
+                match self.stdlib_type_relation_inner(
+                    actual_method.params[actual_index],
+                    required_ty,
+                    visiting,
+                ) {
+                    StrictRelation::Compatible => {}
+                    StrictRelation::Incompatible => return StrictRelation::Incompatible,
+                    StrictRelation::Indeterminate => saw_indeterminate = true,
+                }
+            }
+        }
+
+        let Some(required_ret) = self.materialize_stdlib_type(spec::type_use(required.ret).0)
+        else {
+            return StrictRelation::Indeterminate;
+        };
+        let required_ret = substitution.apply(required_ret, &mut self.tcx);
+        match self.stdlib_type_relation_inner(
+            required_ret,
+            actual_method.return_type,
+            visiting,
+        ) {
+            StrictRelation::Compatible => {}
+            StrictRelation::Incompatible => return StrictRelation::Incompatible,
+            StrictRelation::Indeterminate => saw_indeterminate = true,
+        }
+        if saw_indeterminate {
+            StrictRelation::Indeterminate
+        } else {
+            StrictRelation::Compatible
+        }
+    }
+
     fn stdlib_protocol_relation(
         &mut self,
         class: &super::stdlib_typespec::ClassSpec,
@@ -2535,7 +2748,7 @@ impl TypeChecker {
         actual: TypeId,
         visiting: &mut std::collections::HashSet<(TypeId, TypeId)>,
     ) -> StrictRelation {
-        use super::stdlib_typespec::{self as spec, CallableSpecKind, ParamSpecKind};
+        use super::stdlib_typespec::{self as spec, CallableSpecKind};
 
         let Ty::Class {
             user: Some(actual_user),
@@ -2600,97 +2813,29 @@ impl TypeChecker {
                     };
                 }
             };
-            if required.len() != 1
-                || spec::type_param_edges(required[0].type_params)
-                    .iter()
-                    .any(|param| !class_params.contains(param))
-            {
-                saw_indeterminate = true;
-                continue;
-            }
-            let required = required[0];
-            let required_params: Vec<_> = spec::params(required.params)
-                .iter()
-                .filter(|param| !param.implicit_receiver)
-                .collect();
-            if required_params.iter().any(|param| {
-                matches!(param.kind, ParamSpecKind::VarPos | ParamSpecKind::VarKw)
-            }) || required_params.len() != actual_method.params.len()
-            {
-                saw_indeterminate = true;
-                continue;
-            }
             let Some(actual_params) = actual_params else {
                 saw_indeterminate = true;
                 continue;
             };
-            if actual_params.len() != required_params.len() {
-                saw_indeterminate = true;
-                continue;
-            }
-            for ((required_param, actual_param), actual_ty) in required_params
-                .iter()
-                .zip(&actual_params)
-                .zip(&actual_method.params)
-            {
-                let kind_compatible = match required_param.kind {
-                    ParamSpecKind::PosOnly => {
-                        (actual_param.kind == ParamKind::Regular && !actual_param.kw_only)
-                            || actual_param.kind == ParamKind::Star
-                    }
-                    ParamSpecKind::PosOrKw => {
-                        actual_param.kind == ParamKind::Regular
-                            && !actual_param.pos_only
-                            && !actual_param.kw_only
-                    }
-                    ParamSpecKind::KwOnly => {
-                        (actual_param.kind == ParamKind::Regular && !actual_param.pos_only)
-                            || actual_param.kind == ParamKind::DoubleStar
-                    }
-                    ParamSpecKind::VarPos | ParamSpecKind::VarKw => false,
-                };
-                let required_name = spec::string(required_param.name);
-                let name_compatible = match required_param.kind {
-                    ParamSpecKind::PosOnly => true,
-                    ParamSpecKind::PosOrKw => actual_param.name == required_name,
-                    ParamSpecKind::KwOnly => {
-                        actual_param.kind == ParamKind::DoubleStar
-                            || actual_param.name == required_name
-                    }
-                    ParamSpecKind::VarPos | ParamSpecKind::VarKw => false,
-                };
-                let omission_compatible = !required_param.has_default
-                    || actual_param.has_default
-                    || matches!(actual_param.kind, ParamKind::Star | ParamKind::DoubleStar);
-                if !kind_compatible || !name_compatible || !omission_compatible {
-                    return StrictRelation::Incompatible;
-                }
-                let required_ty = spec::type_use(required_param.ty).0;
-                let Some(required_ty) = self.materialize_stdlib_type(required_ty) else {
+            for required_branch in required {
+                if spec::type_param_edges(required_branch.type_params)
+                    .iter()
+                    .any(|param| !class_params.contains(param))
+                {
                     saw_indeterminate = true;
                     continue;
-                };
-                let required_ty = substitution.apply(required_ty, &mut self.tcx);
-                match self.stdlib_type_relation_inner(*actual_ty, required_ty, visiting) {
+                }
+                match self.stdlib_protocol_branch_relation(
+                    required_branch,
+                    &actual_method,
+                    &actual_params,
+                    &substitution,
+                    visiting,
+                ) {
                     StrictRelation::Compatible => {}
                     StrictRelation::Incompatible => return StrictRelation::Incompatible,
                     StrictRelation::Indeterminate => saw_indeterminate = true,
                 }
-            }
-            let Some(required_ret) = self.materialize_stdlib_type(spec::type_use(required.ret).0)
-            else {
-                saw_indeterminate = true;
-                continue;
-            };
-            let required_ret = substitution.apply(required_ret, &mut self.tcx);
-            match self.stdlib_type_relation_inner(
-                required_ret,
-                actual_method.return_type,
-                visiting,
-            ) {
-                StrictRelation::Compatible => {}
-                StrictRelation::Incompatible => return StrictRelation::Incompatible,
-                StrictRelation::Indeterminate => saw_indeterminate = true,
             }
         }
 
@@ -5624,13 +5769,15 @@ fn collect_bindings_inner(pat: &Pattern, names: &mut std::collections::BTreeSet<
 #[cfg(test)]
 mod tests {
     use super::{
-        bind_forwarded_param_pack, intrinsic_function_param_sigs, ParamPackCallBinding,
+        bind_forwarded_param_pack, bind_protocol_call_shape, intrinsic_function_param_sigs,
+        protocol_required_call_shapes, ParamPackCallBinding, ProtocolParamShape, StrictRelation,
     };
     use crate::parser::ast::*;
-    use crate::source::span::{Span, Spanned};
+    use crate::source::span::{FileId, Span, Spanned};
     use crate::types::check::TypeChecker;
     use crate::types::ty::{
-        CallableParam, CallableParamKind, ClassRole, ParamPack, ParamPackTail, TypeVarId,
+        CallableParam, CallableParamKind, ClassRole, ExternalClass, ParamPack, ParamPackTail,
+        TypeVarId,
     };
     use crate::types::Ty;
 
@@ -5685,6 +5832,180 @@ mod tests {
         assert_eq!(matched.len(), 1);
         assert_eq!(matched[0].0, expected);
         assert_eq!(matched[0].1, actual);
+    }
+
+    #[test]
+    fn protocol_call_shapes_cover_positional_keyword_collisions_and_variadics() {
+        use crate::types::stdlib_typespec::ParamSpecKind;
+
+        let checker = TypeChecker::new();
+        let required = [
+            ProtocolParamShape {
+                name: "a",
+                kind: ParamSpecKind::PosOrKw,
+                has_default: true,
+            },
+            ProtocolParamShape {
+                name: "b",
+                kind: ParamSpecKind::PosOrKw,
+                has_default: true,
+            },
+        ];
+        let shapes = protocol_required_call_shapes(&required);
+        let hybrid = shapes
+            .iter()
+            .find(|shape| shape.positional == [0] && shape.keywords == [1])
+            .expect("the required signature accepts a positional a plus keyword b");
+
+        let duplicate_b = [
+            super::FunctionParamSig {
+                name: "b".to_string(),
+                ty: checker.tcx.int(),
+                kind: ParamKind::Regular,
+                pos_only: false,
+                kw_only: false,
+                has_default: true,
+            },
+            super::FunctionParamSig {
+                name: "args".to_string(),
+                ty: checker.tcx.int(),
+                kind: ParamKind::Star,
+                pos_only: false,
+                kw_only: false,
+                has_default: false,
+            },
+            super::FunctionParamSig {
+                name: "kwargs".to_string(),
+                ty: checker.tcx.int(),
+                kind: ParamKind::DoubleStar,
+                pos_only: false,
+                kw_only: false,
+                has_default: false,
+            },
+        ];
+        assert_eq!(
+            bind_protocol_call_shape(&required, &duplicate_b, hybrid),
+            None,
+            "positional a must not bind b and then accept a duplicate keyword b"
+        );
+
+        let variadic = [
+            super::FunctionParamSig {
+                name: "args".to_string(),
+                ty: checker.tcx.int(),
+                kind: ParamKind::Star,
+                pos_only: false,
+                kw_only: false,
+                has_default: false,
+            },
+            super::FunctionParamSig {
+                name: "kwargs".to_string(),
+                ty: checker.tcx.int(),
+                kind: ParamKind::DoubleStar,
+                pos_only: false,
+                kw_only: false,
+                has_default: false,
+            },
+        ];
+        assert_eq!(
+            bind_protocol_call_shape(&required, &variadic, hybrid),
+            Some(vec![(0, 0), (1, 1)]),
+            "*args and **kwargs must accept the same valid call shape"
+        );
+    }
+
+    #[test]
+    fn overloaded_protocol_relation_intersects_every_required_branch() {
+        let module = crate::parser::parse(
+            "class Good:\n\
+             \x20   def __round__(self, ndigits: int = 0) -> int:\n\
+             \x20       return ndigits\n\
+             good = Good()\n\
+             class RequiredArg:\n\
+             \x20   def __round__(self, ndigits: int) -> int:\n\
+             \x20       return ndigits\n\
+             required_arg = RequiredArg()\n\
+             class ZeroOnly:\n\
+             \x20   def __round__(self) -> int:\n\
+             \x20       return 0\n\
+             zero_only = ZeroOnly()\n\
+             class WrongParam:\n\
+             \x20   def __round__(self, ndigits: str = \"\") -> int:\n\
+             \x20       return 0\n\
+             wrong_param = WrongParam()\n\
+             class WrongReturn:\n\
+             \x20   def __round__(self, ndigits: int = 0) -> str:\n\
+             \x20       return \"\"\n\
+             wrong_return = WrongReturn()\n\
+             class StaticGood:\n\
+             \x20   @staticmethod\n\
+             \x20   def __round__(ndigits: int = 0) -> int:\n\
+             \x20       return ndigits\n\
+             static_good = StaticGood()\n\
+             class StaticBad:\n\
+             \x20   @staticmethod\n\
+             \x20   def __round__(ndigits: int = 0) -> str:\n\
+             \x20       return \"\"\n\
+             static_bad = StaticBad()\n\
+             class ClassGood:\n\
+             \x20   @classmethod\n\
+             \x20   def __round__(cls, ndigits: int = 0) -> int:\n\
+             \x20       return ndigits\n\
+             class_good = ClassGood()\n\
+             class ClassBad:\n\
+             \x20   @classmethod\n\
+             \x20   def __round__(cls, ndigits: str = \"\") -> int:\n\
+             \x20       return 0\n\
+             class_bad = ClassBad()\n\
+             class Missing:\n\
+             \x20   pass\n\
+             missing = Missing()\n",
+            FileId(0),
+        )
+        .expect("parse overloaded protocol implementations");
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty(), "class setup must type-check: {errors:?}");
+        let (_, protocol) = crate::types::stdlib_typespec::class_spec(
+            "typing",
+            "SupportsRound",
+        )
+        .expect("generated SupportsRound protocol");
+        let expected = ExternalClass {
+            module: "typing".to_string(),
+            name: "SupportsRound".to_string(),
+            args: vec![checker.tcx.int()],
+        };
+        for (name, expected_relation) in [
+            ("good", StrictRelation::Compatible),
+            ("required_arg", StrictRelation::Incompatible),
+            ("zero_only", StrictRelation::Incompatible),
+            ("wrong_param", StrictRelation::Incompatible),
+            ("wrong_return", StrictRelation::Incompatible),
+            ("static_good", StrictRelation::Compatible),
+            ("static_bad", StrictRelation::Incompatible),
+            ("class_good", StrictRelation::Compatible),
+            ("class_bad", StrictRelation::Incompatible),
+            ("missing", StrictRelation::Incompatible),
+        ] {
+            let symbol = checker
+                .symbols
+                .lookup(name)
+                .unwrap_or_else(|| panic!("{name} variable registered"));
+            let actual = checker
+                .get_symbol_type(symbol)
+                .unwrap_or_else(|| panic!("{name} variable typed"));
+            assert_eq!(
+                checker.stdlib_protocol_relation(
+                    protocol,
+                    &expected,
+                    actual,
+                    &mut std::collections::HashSet::new(),
+                ),
+                expected_relation,
+                "unexpected overloaded protocol relation for {name}"
+            );
+        }
     }
 
     // --- Literal types (via check_expr, which is pub(crate)) ---
