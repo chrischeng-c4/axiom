@@ -4593,13 +4593,21 @@ impl Engine {
             }
             documents_evicted = documents_evicted.saturating_add(to_evict.len() as u32);
             collections_touched += 1;
-            // #1386 R2: recompute and publish this collection's real
-            // post-eviction byte footprint immediately, the same
-            // computation `stats()` does, rather than leaving the gauge to
-            // whatever the last `/stats` caller happened to report.
-            let total_bytes: u64 = coll.fields.values().map(|fi| fi.bytes()).sum();
-            self.metrics.set_storage_bytes(total_bytes);
         }
+        // #1386 R2 / #1397 R2: publish the engine-wide byte footprint (summed
+        // across every live collection), not just whichever collection this
+        // loop happened to touch last — the reshard split trigger reads this
+        // gauge, and a per-collection last-writer-wins value under-reports
+        // any engine holding more than one collection. Computed once, after
+        // the loop, over the same live-collection view `stats()` uses.
+        let total_bytes: u64 = state
+            .collections
+            .values()
+            .filter(|c| c.deleted_at.is_none())
+            .flat_map(|c| c.fields.values())
+            .map(|fi| fi.bytes())
+            .sum();
+        self.metrics.set_storage_bytes(total_bytes);
         Ok(ReshardEvictOutcome {
             collections_touched,
             documents_evicted,
@@ -4629,7 +4637,19 @@ impl Engine {
             .collect();
 
         let total_bytes: u64 = fields.values().map(|s| s.bytes).sum();
-        self.metrics.set_storage_bytes(total_bytes);
+        // #1397 R2: the response reports this collection's own total, but the
+        // gauge is engine-wide — summing only this collection here is the
+        // same last-writer-wins defect `evict_not_owned` had (whichever
+        // collection was `/stats`-ed last "wins" the gauge), and the reshard
+        // trigger reads this gauge expecting an engine-wide figure.
+        let engine_total_bytes: u64 = state
+            .collections
+            .values()
+            .filter(|c| c.deleted_at.is_none())
+            .flat_map(|c| c.fields.values())
+            .map(|fi| fi.bytes())
+            .sum();
+        self.metrics.set_storage_bytes(engine_total_bytes);
 
         let last_indexed_at = coll.last_indexed_at.map(|t| {
             let dt: chrono::DateTime<chrono::Utc> = t.into();
@@ -16672,6 +16692,133 @@ mod tests {
                 lte: None
             }),
             3
+        );
+    }
+
+    fn kw_only_schema() -> CreateCollectionRequest {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "email".into(),
+            FieldSpec {
+                field_type: FieldType::Keyword,
+                analyzer: None,
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        CreateCollectionRequest { fields }
+    }
+
+    fn index_kw(e: &Engine, collection_id: &str, eid: &str) {
+        e.index(
+            collection_id,
+            IndexRequest {
+                items: vec![item(
+                    eid,
+                    "email",
+                    FieldValue::String(format!("{eid}@x.com")),
+                )],
+                request_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    /// Ground truth read of one collection's own byte footprint, independent
+    /// of the engine-wide gauge under test.
+    fn collection_live_bytes(e: &Engine, collection_id: &str) -> u64 {
+        let state = e.state.read().unwrap();
+        state
+            .collections
+            .get(collection_id)
+            .unwrap()
+            .fields
+            .values()
+            .map(|fi| fi.bytes())
+            .sum()
+    }
+
+    /// #1397 R2 / AC2: `evict_not_owned` must publish the ENGINE-WIDE byte
+    /// total (summed across every live collection) after eviction, not just
+    /// whichever collection the loop happened to touch last. Two
+    /// collections, both with enough documents spread across the shard
+    /// map's virtual buckets that eviction touches both (a real
+    /// `balanced()` map, same shape production reshard uses) — the old
+    /// last-writer-wins gauge update would equal only the
+    /// later-in-iteration-order collection's post-eviction bytes ("b"
+    /// sorts after "a" in the `BTreeMap` the loop walks), not the sum.
+    #[test]
+    fn evict_not_owned_publishes_engine_wide_byte_total() {
+        let e = Engine::new();
+        e.create_collection("a", kw_only_schema()).unwrap();
+        e.create_collection("b", kw_only_schema()).unwrap();
+        for i in 0..40 {
+            index_kw(&e, "a", &format!("a{i:02}"));
+        }
+        for i in 0..40 {
+            index_kw(&e, "b", &format!("b{i:02}"));
+        }
+
+        let map = VirtualBucketShardMap::balanced(1, 8, 2).unwrap();
+        let touches_a =
+            (0..40).any(|i| map.route_document("a", None, &format!("a{i:02}")).shard != 0);
+        let touches_b =
+            (0..40).any(|i| map.route_document("b", None, &format!("b{i:02}")).shard != 0);
+        assert!(
+            touches_a && touches_b,
+            "fixture must evict from both collections to exercise the \
+             engine-wide sum (touches_a={touches_a}, touches_b={touches_b})"
+        );
+
+        let outcome = e.evict_not_owned(&map, 0).unwrap();
+        assert_eq!(outcome.collections_touched, 2);
+        assert!(outcome.documents_evicted > 0);
+
+        let expected_total = collection_live_bytes(&e, "a") + collection_live_bytes(&e, "b");
+        assert!(expected_total > 0);
+        assert_eq!(
+            e.metrics().storage_bytes.get(),
+            expected_total,
+            "gauge must equal the sum of both collections' post-eviction bytes, \
+             not just one of them"
+        );
+    }
+
+    /// #1397 R2 / AC2: `stats()` has the same last-writer-wins defect as
+    /// `evict_not_owned` — it must also publish the engine-wide byte total,
+    /// summed across every live collection, even though the API response it
+    /// returns stays scoped to the one requested collection.
+    #[test]
+    fn stats_publishes_engine_wide_byte_total() {
+        let e = Engine::new();
+        e.create_collection("a", kw_only_schema()).unwrap();
+        e.create_collection("b", kw_only_schema()).unwrap();
+        for i in 0..10 {
+            index_kw(&e, "a", &format!("a{i:02}"));
+        }
+        for i in 0..25 {
+            index_kw(&e, "b", &format!("b{i:02}"));
+        }
+
+        let bytes_a = collection_live_bytes(&e, "a");
+        let bytes_b = collection_live_bytes(&e, "b");
+        assert!(bytes_a > 0 && bytes_b != bytes_a);
+
+        // Calling stats on the SMALLER collection last is the case the old
+        // per-collection-only update got wrong: a last-writer-wins gauge
+        // would equal `bytes_a` alone, not `bytes_a + bytes_b`.
+        let stats_b = e.stats("b").unwrap();
+        assert_eq!(stats_b.storage.total_bytes, bytes_b);
+        e.stats("a").unwrap();
+
+        assert_eq!(
+            e.metrics().storage_bytes.get(),
+            bytes_a + bytes_b,
+            "gauge must equal the sum across both collections after a \
+             single-collection stats() call"
         );
     }
 }
