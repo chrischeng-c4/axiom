@@ -1901,6 +1901,36 @@ impl TypeChecker {
         }
 
         let instance = self.tcx.alias_instance(id).clone();
+        if let Some(deferred) = self.tcx.deferred_alias_target(id).cloned() {
+            let checkpoint = self.tcx.begin_alias_target_transaction();
+            let materialized = (|| {
+                let template = self.materialize_alias_instance(deferred.template)?;
+                if !self.tcx.begin_alias_target(id) {
+                    return self.tcx.alias_target(id);
+                }
+                let substitution = Substitution::from_bindings(
+                    &deferred.substitutions,
+                    &deferred.param_packs,
+                );
+                let target = substitution.apply(template, &mut self.tcx);
+                if self.tcx.alias_has_unguarded_cycle(id, target)
+                    || self
+                        .tcx
+                        .alias_target_has_invalid_generated_edge(id, target)
+                {
+                    return None;
+                }
+                self.tcx.set_alias_target(id, target);
+                Some(target)
+            })();
+            self.tcx
+                .finish_alias_target_transaction(checkpoint, materialized.is_some());
+            if materialized.is_none() {
+                self.tcx.reject_alias_target(id);
+            }
+            return materialized.or_else(|| self.tcx.alias_target(id));
+        }
+
         let AliasIdentity::Source(symbol) = instance.identity else {
             return None;
         };
@@ -1937,6 +1967,9 @@ impl TypeChecker {
                 return current;
             };
             let id = *id;
+            if self.tcx.alias_target_is_rejected(id) {
+                return current;
+            }
             if !seen.insert(id) {
                 return self.tcx.error();
             }
@@ -1947,6 +1980,9 @@ impl TypeChecker {
             let Some(target) = target else {
                 return self.tcx.error();
             };
+            if self.tcx.alias_target_is_rejected(id) {
+                return current;
+            }
             current = target;
         }
     }
@@ -3314,6 +3350,11 @@ impl TypeChecker {
         actual: TypeId,
         visiting: &mut HashSet<(TypeId, TypeId)>,
     ) -> bool {
+        if self.tcx.alias_ref_is_rejected(expected)
+            || self.tcx.alias_ref_is_rejected(actual)
+        {
+            return false;
+        }
         if expected == actual {
             return true;
         }
@@ -4297,6 +4338,164 @@ pub(crate) fn expr_to_type_expr(expr: &Spanned<Expr>) -> Option<Spanned<TypeExpr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generated_transformed_recursive_alias_backfills_transactionally() {
+        use crate::types::context::AliasIdentity;
+        use crate::types::generic::Substitution;
+        use crate::types::stdlib_typespec::StrSpecId;
+
+        let mut checker = TypeChecker::new();
+        let var = checker.tcx.new_type_var("T".to_string(), None, Vec::new());
+        let var_ty = checker.tcx.intern(Ty::TypeVar(var));
+        let (template, template_ref) = checker.tcx.intern_alias_instance(
+            AliasIdentity::Generated(StrSpecId(1), StrSpecId(2)),
+            "example.A".to_string(),
+            vec![var_ty],
+            1,
+        );
+        assert!(checker.tcx.begin_alias_target(template));
+        let mut subst = Substitution::new();
+        let list_of_var = checker.tcx.intern(Ty::List(var_ty));
+        subst.insert(var, list_of_var);
+        let specialized_ref = subst.apply(template_ref, &mut checker.tcx);
+        let Ty::AliasRef(specialized) = checker.tcx.get(specialized_ref) else {
+            panic!("transformed recursive specialization lost its AliasRef");
+        };
+        let specialized = *specialized;
+        assert!(checker.tcx.alias_target(specialized).is_none());
+        assert!(checker.tcx.deferred_alias_target(specialized).is_some());
+
+        let target = checker.tcx.intern(Ty::List(template_ref));
+        checker.tcx.set_alias_target(template, target);
+
+        let checkpoint = checker.tcx.begin_alias_target_transaction();
+        let rolled_back = checker
+            .materialize_alias_instance(specialized)
+            .expect("productive transformed alias must materialize");
+        assert!(matches!(checker.tcx.get(rolled_back), Ty::List(_)));
+        checker
+            .tcx
+            .finish_alias_target_transaction(checkpoint, false);
+        assert!(checker.tcx.alias_target(specialized).is_none());
+        assert!(checker.tcx.deferred_alias_target(specialized).is_some());
+
+        let first = checker.materialize_alias_instance(specialized);
+        let second = checker.materialize_alias_instance(specialized);
+        assert_eq!(
+            first, second,
+            "repeated lookup must retain the backfilled target"
+        );
+        let target = first.expect("productive transformed alias must materialize");
+        let Ty::List(edge) = checker.tcx.get(target) else {
+            panic!("transformed recursive alias lost its productive list head");
+        };
+        assert_eq!(*edge, specialized_ref);
+        assert!(checker.tcx.deferred_alias_target(specialized).is_none());
+        assert!(!checker.tcx.alias_target_is_rejected(specialized));
+        assert!(!checker
+            .tcx
+            .alias_target_has_invalid_generated_edge(specialized, target));
+        assert!(!matches!(checker.tcx.get(target), Ty::Any | Ty::Error));
+        let str_ty = checker.tcx.str();
+        assert!(!checker.types_compatible(specialized_ref, str_ty));
+    }
+
+    #[test]
+    fn generated_parameter_changing_recursive_alias_fails_closed() {
+        use crate::types::context::AliasIdentity;
+        use crate::types::generic::Substitution;
+        use crate::types::stdlib_typespec::StrSpecId;
+
+        let mut checker = TypeChecker::new();
+        let var = checker.tcx.new_type_var("T".to_string(), None, Vec::new());
+        let var_ty = checker.tcx.intern(Ty::TypeVar(var));
+        let (template, template_ref) = checker.tcx.intern_alias_instance(
+            AliasIdentity::Generated(StrSpecId(3), StrSpecId(4)),
+            "example.NonRegular".to_string(),
+            vec![var_ty],
+            1,
+        );
+        assert!(checker.tcx.begin_alias_target(template));
+        let mut subst = Substitution::new();
+        let list_of_var = checker.tcx.intern(Ty::List(var_ty));
+        subst.insert(var, list_of_var);
+        let specialized_ref = subst.apply(template_ref, &mut checker.tcx);
+        let Ty::AliasRef(specialized) = checker.tcx.get(specialized_ref) else {
+            panic!("parameter-changing specialization lost its AliasRef");
+        };
+        let specialized = *specialized;
+        let target = checker.tcx.intern(Ty::List(specialized_ref));
+        checker.tcx.set_alias_target(template, target);
+
+        let checkpoint = checker.tcx.begin_alias_target_transaction();
+        let never = checker.tcx.never();
+        assert_eq!(
+            checker.materialize_alias_instance(specialized),
+            Some(never)
+        );
+        assert!(checker.tcx.deferred_alias_target(specialized).is_none());
+        assert!(checker.tcx.alias_target_is_rejected(specialized));
+        checker
+            .tcx
+            .finish_alias_target_transaction(checkpoint, false);
+        assert!(checker.tcx.alias_target(specialized).is_none());
+        assert!(checker.tcx.deferred_alias_target(specialized).is_some());
+        assert!(!checker.tcx.alias_target_is_rejected(specialized));
+
+        let first = checker.materialize_alias_instance(specialized);
+        let second = checker.materialize_alias_instance(specialized);
+        assert_eq!(first, Some(checker.tcx.never()));
+        assert_eq!(second, first);
+        assert!(checker.tcx.deferred_alias_target(specialized).is_none());
+        assert!(checker.tcx.alias_target_is_rejected(specialized));
+        assert_eq!(
+            checker.tcx.semantic_head_id(specialized_ref),
+            Err(crate::types::context::AliasHeadError::Rejected(specialized))
+        );
+        let str_ty = checker.tcx.str();
+        assert!(!checker.types_compatible(specialized_ref, specialized_ref));
+        assert!(!checker.types_compatible(specialized_ref, str_ty));
+        assert!(!checker.types_compatible(str_ty, specialized_ref));
+    }
+
+    #[test]
+    fn generated_unguarded_transformed_alias_fails_closed() {
+        use crate::types::context::AliasIdentity;
+        use crate::types::generic::Substitution;
+        use crate::types::stdlib_typespec::StrSpecId;
+
+        let mut checker = TypeChecker::new();
+        let var = checker.tcx.new_type_var("T".to_string(), None, Vec::new());
+        let var_ty = checker.tcx.intern(Ty::TypeVar(var));
+        let (template, template_ref) = checker.tcx.intern_alias_instance(
+            AliasIdentity::Generated(StrSpecId(5), StrSpecId(6)),
+            "example.Direct".to_string(),
+            vec![var_ty],
+            1,
+        );
+        assert!(checker.tcx.begin_alias_target(template));
+        let mut subst = Substitution::new();
+        let list_of_var = checker.tcx.intern(Ty::List(var_ty));
+        subst.insert(var, list_of_var);
+        let specialized_ref = subst.apply(template_ref, &mut checker.tcx);
+        let Ty::AliasRef(specialized) = checker.tcx.get(specialized_ref) else {
+            panic!("transformed specialization lost its AliasRef");
+        };
+        let specialized = *specialized;
+        checker.tcx.set_alias_target(template, specialized_ref);
+
+        let first = checker.materialize_alias_instance(specialized);
+        let second = checker.materialize_alias_instance(specialized);
+        assert_eq!(first, Some(checker.tcx.never()));
+        assert_eq!(second, first);
+        assert!(checker.tcx.deferred_alias_target(specialized).is_none());
+        assert!(checker.tcx.alias_target_is_rejected(specialized));
+        let str_ty = checker.tcx.str();
+        assert!(!checker.types_compatible(specialized_ref, specialized_ref));
+        assert!(!checker.types_compatible(specialized_ref, str_ty));
+        assert!(!checker.types_compatible(str_ty, specialized_ref));
+    }
 
     #[test]
     fn test_new_has_builtins() {

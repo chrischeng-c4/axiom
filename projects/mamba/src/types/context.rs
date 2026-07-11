@@ -1,6 +1,7 @@
 use super::stdlib_typespec::StrSpecId;
 use super::ty::{
-    AliasInstanceId, ExternalValue, Ty, TypeId, TypeParamDefault, TypeVarId, TypeVarKind,
+    AliasInstanceId, ExternalValue, ParamPack, Ty, TypeId, TypeParamDefault, TypeVarId,
+    TypeVarKind,
 };
 use crate::resolve::SymbolId;
 use std::collections::{HashMap, HashSet};
@@ -30,14 +31,27 @@ pub struct AliasInstance {
     pub args: Vec<TypeId>,
     pub display_arg_count: usize,
     pub target: Option<TypeId>,
+    deferred_target: Option<DeferredAliasTarget>,
+    rejected: bool,
     resolving: bool,
     ty: TypeId,
+}
+
+/// A generated specialization whose template was still resolving when the
+/// specialization was first encountered. The template's completed target is
+/// substituted lazily before this instance is exposed to a semantic consumer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeferredAliasTarget {
+    pub template: AliasInstanceId,
+    pub substitutions: Vec<(TypeVarId, TypeId)>,
+    pub param_packs: Vec<(TypeVarId, ParamPack)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AliasHeadError {
     Unresolved(AliasInstanceId),
     Cycle(AliasInstanceId),
+    Rejected(AliasInstanceId),
 }
 
 /// Interner and registry for all types used during compilation.
@@ -51,7 +65,13 @@ pub struct TypeContext {
     /// Stable recursive-alias nodes, keyed by declaration identity + arguments.
     alias_instances: Vec<AliasInstance>,
     alias_instance_ids: HashMap<(AliasIdentity, Vec<TypeId>), AliasInstanceId>,
-    alias_target_undo: Vec<(AliasInstanceId, Option<TypeId>, bool)>,
+    alias_target_undo: Vec<(
+        AliasInstanceId,
+        Option<TypeId>,
+        Option<DeferredAliasTarget>,
+        bool,
+        bool,
+    )>,
     alias_target_transaction_depth: usize,
 }
 
@@ -170,6 +190,8 @@ impl TypeContext {
             args,
             display_arg_count,
             target: None,
+            deferred_target: None,
+            rejected: false,
             resolving: false,
             ty,
         });
@@ -189,22 +211,37 @@ impl TypeContext {
         self.alias_instance(id).resolving
     }
 
+    pub fn alias_target_is_rejected(&self, id: AliasInstanceId) -> bool {
+        self.alias_instance(id).rejected
+    }
+
+    pub fn alias_ref_is_rejected(&self, ty: TypeId) -> bool {
+        matches!(self.get(ty), Ty::AliasRef(id) if self.alias_target_is_rejected(*id))
+    }
+
+    pub fn deferred_alias_target(&self, id: AliasInstanceId) -> Option<&DeferredAliasTarget> {
+        self.alias_instance(id).deferred_target.as_ref()
+    }
+
     pub fn begin_alias_target_transaction(&mut self) -> usize {
-        debug_assert_eq!(self.alias_target_transaction_depth, 0);
         self.alias_target_transaction_depth += 1;
         self.alias_target_undo.len()
     }
 
     pub fn finish_alias_target_transaction(&mut self, checkpoint: usize, commit: bool) {
-        debug_assert_eq!(self.alias_target_transaction_depth, 1);
+        debug_assert!(self.alias_target_transaction_depth > 0);
         debug_assert!(checkpoint <= self.alias_target_undo.len());
         if commit {
-            self.alias_target_undo.truncate(checkpoint);
+            if self.alias_target_transaction_depth == 1 {
+                self.alias_target_undo.truncate(checkpoint);
+            }
         } else {
             let changes: Vec<_> = self.alias_target_undo.drain(checkpoint..).collect();
-            for (id, target, resolving) in changes.into_iter().rev() {
+            for (id, target, deferred_target, rejected, resolving) in changes.into_iter().rev() {
                 let instance = &mut self.alias_instances[id.0 as usize];
                 instance.target = target;
+                instance.deferred_target = deferred_target;
+                instance.rejected = rejected;
                 instance.resolving = resolving;
             }
         }
@@ -217,7 +254,13 @@ impl TypeContext {
         }
         let instance = &self.alias_instances[id.0 as usize];
         self.alias_target_undo
-            .push((id, instance.target, instance.resolving));
+            .push((
+                id,
+                instance.target,
+                instance.deferred_target.clone(),
+                instance.rejected,
+                instance.resolving,
+            ));
         true
     }
 
@@ -234,6 +277,33 @@ impl TypeContext {
         true
     }
 
+    /// Record how to finish a transformed specialization once its declaration
+    /// instance has completed resolving. This is deliberately state in the
+    /// TypeContext so generated-alias materialization can be transactional.
+    pub fn defer_alias_target(
+        &mut self,
+        id: AliasInstanceId,
+        template: AliasInstanceId,
+        substitutions: Vec<(TypeVarId, TypeId)>,
+        param_packs: Vec<(TypeVarId, ParamPack)>,
+    ) {
+        let _ = self.record_alias_target_change(id);
+        let instance = &mut self.alias_instances[id.0 as usize];
+        debug_assert!(instance.target.is_none());
+        debug_assert!(!instance.resolving);
+        instance.rejected = false;
+        let deferred = DeferredAliasTarget {
+            template,
+            substitutions,
+            param_packs,
+        };
+        if let Some(existing) = &instance.deferred_target {
+            debug_assert_eq!(existing, &deferred);
+        } else {
+            instance.deferred_target = Some(deferred);
+        }
+    }
+
     pub fn set_alias_target(&mut self, id: AliasInstanceId, target: TypeId) {
         let _ = self.record_alias_target_change(id);
         let instance = &mut self.alias_instances[id.0 as usize];
@@ -246,6 +316,8 @@ impl TypeContext {
             return;
         }
         instance.target = Some(target);
+        instance.deferred_target = None;
+        instance.rejected = false;
         instance.resolving = false;
     }
 
@@ -254,6 +326,21 @@ impl TypeContext {
         let _ = self.record_alias_target_change(id);
         let instance = &mut self.alias_instances[id.0 as usize];
         instance.target = None;
+        instance.deferred_target = None;
+        instance.rejected = false;
+        instance.resolving = false;
+    }
+
+    /// Permanently close an alias expansion that cannot produce a sound
+    /// target. `Never` is the fail-closed semantic target: unlike `Error`, it
+    /// cannot make an arbitrary value satisfy the alias contract.
+    pub fn reject_alias_target(&mut self, id: AliasInstanceId) {
+        let never = self.never();
+        let _ = self.record_alias_target_change(id);
+        let instance = &mut self.alias_instances[id.0 as usize];
+        instance.target = Some(never);
+        instance.deferred_target = None;
+        instance.rejected = true;
         instance.resolving = false;
     }
 
@@ -266,6 +353,9 @@ impl TypeContext {
             let Ty::AliasRef(id) = self.get(current) else {
                 return Ok(current);
             };
+            if self.alias_target_is_rejected(*id) {
+                return Err(AliasHeadError::Rejected(*id));
+            }
             if !seen.insert(*id) {
                 return Err(AliasHeadError::Cycle(*id));
             }
@@ -276,7 +366,11 @@ impl TypeContext {
     }
 
     pub fn semantic_ty_or_error(&self, ty: TypeId) -> &Ty {
-        let head = self.semantic_head_id(ty).unwrap_or_else(|_| self.error());
+        let head = match self.semantic_head_id(ty) {
+            Ok(head) => head,
+            Err(AliasHeadError::Rejected(_)) => self.never(),
+            Err(AliasHeadError::Unresolved(_) | AliasHeadError::Cycle(_)) => self.error(),
+        };
         self.get(head)
     }
 
@@ -314,6 +408,116 @@ impl TypeContext {
         let origin_identity = self.alias_instance(origin).identity;
         let mut seen = HashSet::new();
         visit(self, origin_identity, target, &mut seen)
+    }
+
+    /// Whether a candidate target reaches a rejected alias or a generated
+    /// alias that still has no semantic target. The origin itself is the one
+    /// valid exception: once installed, that edge is a finite back-edge.
+    pub fn alias_target_has_invalid_generated_edge(
+        &self,
+        origin: AliasInstanceId,
+        target: TypeId,
+    ) -> bool {
+        fn visit(
+            tcx: &TypeContext,
+            origin: AliasInstanceId,
+            current: TypeId,
+            seen: &mut HashSet<AliasInstanceId>,
+        ) -> bool {
+            match tcx.get(current) {
+                Ty::AliasRef(id) => {
+                    if *id == origin {
+                        return false;
+                    }
+                    if tcx.alias_target_is_rejected(*id) {
+                        return true;
+                    }
+                    if !seen.insert(*id) {
+                        return false;
+                    }
+                    let unresolved = match tcx.alias_target(*id) {
+                        Some(target) => visit(tcx, origin, target, seen),
+                        None => matches!(
+                            tcx.alias_instance(*id).identity,
+                            AliasIdentity::Generated(_, _)
+                        ),
+                    };
+                    seen.remove(id);
+                    unresolved
+                }
+                Ty::List(item) | Ty::Set(item) | Ty::TypeObject(item) => {
+                    visit(tcx, origin, *item, seen)
+                }
+                Ty::Dict(key, value) => {
+                    visit(tcx, origin, *key, seen) || visit(tcx, origin, *value, seen)
+                }
+                Ty::Tuple(items) | Ty::Union(items) => {
+                    items.iter().any(|item| visit(tcx, origin, *item, seen))
+                }
+                Ty::Fn {
+                    params,
+                    ret,
+                    signature,
+                    ..
+                } => {
+                    params.iter().any(|param| visit(tcx, origin, *param, seen))
+                        || signature.as_ref().is_some_and(|params| {
+                            params
+                                .iter()
+                                .any(|param| visit(tcx, origin, param.ty, seen))
+                        })
+                        || visit(tcx, origin, *ret, seen)
+                }
+                Ty::External(ExternalValue::Callable(callable)) => callable
+                    .receiver
+                    .as_ref()
+                    .is_some_and(|receiver| {
+                        receiver
+                            .args
+                            .iter()
+                            .any(|arg| visit(tcx, origin, *arg, seen))
+                    }),
+                Ty::Class {
+                    user,
+                    external,
+                    fields,
+                    ..
+                } => {
+                    user.as_ref().is_some_and(|user| {
+                        user.args
+                            .iter()
+                            .any(|arg| visit(tcx, origin, *arg, seen))
+                    }) || external.as_ref().is_some_and(|external| {
+                        external
+                            .args
+                            .iter()
+                            .any(|arg| visit(tcx, origin, *arg, seen))
+                    }) || fields
+                        .iter()
+                        .any(|(_, field)| visit(tcx, origin, *field, seen))
+                }
+                Ty::Enum { variants, .. } => variants.iter().any(|(_, fields)| {
+                    fields
+                        .iter()
+                        .any(|field| visit(tcx, origin, *field, seen))
+                }),
+                Ty::Never
+                | Ty::None
+                | Ty::Bool
+                | Ty::Int
+                | Ty::Float
+                | Ty::Str
+                | Ty::Any
+                | Ty::TypeVar(_)
+                | Ty::External(ExternalValue::Module { .. })
+                | Ty::Literal(_)
+                | Ty::SelfType
+                | Ty::Infer(_)
+                | Ty::Error => false,
+            }
+        }
+
+        visit(self, origin, target, &mut HashSet::new())
     }
 
     // --- Type variables (#242) ---
@@ -560,6 +764,9 @@ impl TypeContext {
         sup: TypeId,
         visiting: &mut HashSet<(TypeId, TypeId)>,
     ) -> bool {
+        if self.alias_ref_is_rejected(sub) || self.alias_ref_is_rejected(sup) {
+            return false;
+        }
         if sub == sup {
             return true;
         }
@@ -970,6 +1177,27 @@ mod tests {
     }
 
     #[test]
+    fn rejected_alias_heads_preserve_identity_and_fail_compatibility() {
+        let mut tcx = TypeContext::new();
+        let (instance, alias_ref) = tcx.intern_alias_instance(
+            AliasIdentity::Generated(StrSpecId(4), StrSpecId(5)),
+            "example.Rejected".to_string(),
+            vec![tcx.int()],
+            1,
+        );
+        tcx.reject_alias_target(instance);
+
+        assert_eq!(
+            tcx.semantic_head_id(alias_ref),
+            Err(AliasHeadError::Rejected(instance))
+        );
+        assert!(matches!(tcx.semantic_ty_or_error(alias_ref), Ty::Never));
+        assert!(!tcx.is_subtype(alias_ref, alias_ref));
+        assert!(!tcx.is_subtype(alias_ref, tcx.int()));
+        assert!(!tcx.is_subtype(tcx.int(), alias_ref));
+    }
+
+    #[test]
     fn generated_alias_cycles_can_be_abandoned_and_retried() {
         let mut tcx = TypeContext::new();
         let (left, left_ref) = tcx.intern_alias_instance(
@@ -995,8 +1223,43 @@ mod tests {
         tcx.finish_alias_target_transaction(checkpoint, false);
         assert_eq!(tcx.alias_target(left), None);
         assert_eq!(tcx.alias_target(right), None);
+        assert!(tcx.deferred_alias_target(left).is_none());
         assert!(tcx.begin_alias_target(left));
         assert!(tcx.begin_alias_target(right));
+    }
+
+    #[test]
+    fn deferred_alias_targets_roll_back_with_their_transaction() {
+        let mut tcx = TypeContext::new();
+        let (template, _) = tcx.intern_alias_instance(
+            AliasIdentity::Generated(StrSpecId(1), StrSpecId(2)),
+            "example.Template".to_string(),
+            Vec::new(),
+            0,
+        );
+        let (specialized, _) = tcx.intern_alias_instance(
+            AliasIdentity::Generated(StrSpecId(1), StrSpecId(2)),
+            "example.Specialized".to_string(),
+            vec![tcx.int()],
+            1,
+        );
+        let outer = tcx.begin_alias_target_transaction();
+        let inner = tcx.begin_alias_target_transaction();
+        tcx.defer_alias_target(specialized, template, Vec::new(), Vec::new());
+        assert!(tcx.deferred_alias_target(specialized).is_some());
+        tcx.finish_alias_target_transaction(inner, true);
+        assert!(tcx.deferred_alias_target(specialized).is_some());
+
+        let rejection = tcx.begin_alias_target_transaction();
+        tcx.reject_alias_target(specialized);
+        assert!(tcx.alias_target_is_rejected(specialized));
+        tcx.finish_alias_target_transaction(rejection, true);
+        assert!(tcx.alias_target_is_rejected(specialized));
+
+        tcx.finish_alias_target_transaction(outer, false);
+        assert_eq!(tcx.alias_target(specialized), None);
+        assert!(tcx.deferred_alias_target(specialized).is_none());
+        assert!(!tcx.alias_target_is_rejected(specialized));
     }
 
     #[test]
