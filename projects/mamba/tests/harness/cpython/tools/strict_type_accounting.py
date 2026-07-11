@@ -1120,6 +1120,124 @@ def _fixture_bound_receiver_matches(
     )
 
 
+def _fixture_has_canonical_execution(
+    tree: ast.Module,
+    call: ast.Call,
+    expected_binding: tuple[str, str, str],
+) -> bool:
+    containers = [
+        node
+        for node in tree.body
+        if node.lineno <= call.lineno <= (node.end_lineno or node.lineno)
+    ]
+    if len(containers) != 1 or containers[0] is not tree.body[-1]:
+        return False
+    container = containers[0]
+
+    imports: list[tuple[str, str, str]] = []
+    for index, node in enumerate(tree.body[:-1]):
+        if (
+            index == 0
+            and isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            continue
+        if isinstance(node, ast.ClassDef) and node.name == "_W":
+            continue
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.level == 0
+            and node.module is not None
+            and len(node.names) == 1
+            and node.names[0].name != "*"
+        ):
+            alias = node.names[0]
+            imports.append((alias.asname or alias.name, node.module, alias.name))
+            continue
+        return False
+
+    local, module, imported = expected_binding
+    expected_import = (local, module, imported)
+    if module == "builtins" and local == imported:
+        if imports not in ([], [expected_import]):
+            return False
+    elif imports != [expected_import]:
+        return False
+
+    if isinstance(container, ast.Expr):
+        return container.value is call
+    if not isinstance(container, (ast.Try, ast.TryStar)):
+        return False
+    if (
+        container.orelse
+        or container.finalbody
+        or len(container.body) != 2
+        or len(container.handlers) != 2
+    ):
+        return False
+    operation, no_typeerror = container.body
+    if not (
+        isinstance(operation, ast.Expr)
+        and operation.value is call
+        and isinstance(no_typeerror, ast.Expr)
+        and isinstance(no_typeerror.value, ast.Call)
+    ):
+        return False
+    print_call = no_typeerror.value
+    if not (
+        isinstance(print_call.func, ast.Name)
+        and print_call.func.id == "print"
+        and len(print_call.args) == 1
+        and not print_call.keywords
+        and isinstance(print_call.args[0], ast.Constant)
+        and isinstance(print_call.args[0].value, str)
+        and print_call.args[0].value.startswith("no_typeerror:")
+    ):
+        return False
+
+    def canonical_handler(
+        handler: ast.ExceptHandler, exception: str, prefix: str
+    ) -> bool:
+        if not (
+            isinstance(handler.type, ast.Name)
+            and handler.type.id == exception
+            and handler.name == "e"
+            and len(handler.body) == 1
+            and isinstance(handler.body[0], ast.Expr)
+            and isinstance(handler.body[0].value, ast.Call)
+        ):
+            return False
+        output = handler.body[0].value
+        if not (
+            isinstance(output.func, ast.Name)
+            and output.func.id == "print"
+            and len(output.args) == 2
+            and not output.keywords
+            and isinstance(output.args[0], ast.Constant)
+            and output.args[0].value == prefix
+        ):
+            return False
+        type_name = output.args[1]
+        return (
+            isinstance(type_name, ast.Attribute)
+            and type_name.attr == "__name__"
+            and isinstance(type_name.value, ast.Call)
+            and isinstance(type_name.value.func, ast.Name)
+            and type_name.value.func.id == "type"
+            and len(type_name.value.args) == 1
+            and not type_name.value.keywords
+            and isinstance(type_name.value.args[0], ast.Name)
+            and type_name.value.args[0].id == "e"
+        )
+
+    return canonical_handler(
+        container.handlers[0], "TypeError", "typeerror:"
+    ) and canonical_handler(
+        container.handlers[1], "Exception", "setup_or_other:"
+    )
+
+
 def parse_type_fixture_call_shape(
     path: Path, key: tuple[str, str, str]
 ) -> FixtureCallShape | None:
@@ -1209,6 +1327,7 @@ def parse_type_fixture_call_shape(
         if not _fixture_binding_matches(tree, callee, module, name, call.lineno):
             return None
         access = "module"
+        expected_binding = (callee, module, name)
     elif name in {"__init__", "__new__"} and isinstance(call.func, ast.Name):
         if call.func.id != qualifier.split(".")[-1]:
             return None
@@ -1217,6 +1336,11 @@ def parse_type_fixture_call_shape(
         ):
             return None
         access = "constructor"
+        expected_binding = (
+            call.func.id,
+            module,
+            qualifier.split(".")[0],
+        )
     elif isinstance(call.func, ast.Attribute) and call.func.attr == name:
         owner = _fixture_dotted_name(call.func.value)
         if owner is None:
@@ -1227,6 +1351,7 @@ def parse_type_fixture_call_shape(
             ):
                 return None
             access = "bound"
+            expected_binding = None
         else:
             owner_parts = owner.split(".")
             qualifier_parts = qualifier.split(".")
@@ -1238,7 +1363,12 @@ def parse_type_fixture_call_shape(
             ):
                 return None
             access = "class"
+            expected_binding = (local, module, qualifier_parts[0])
     else:
+        return None
+    if expected_binding is not None and not _fixture_has_canonical_execution(
+        tree, call, expected_binding
+    ):
         return None
     return FixtureCallShape(
         access=access,
