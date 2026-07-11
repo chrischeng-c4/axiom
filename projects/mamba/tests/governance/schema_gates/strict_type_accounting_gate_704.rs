@@ -1206,6 +1206,39 @@ declare_alias("IdentityA", apply(identity_b, [identity_a]))
 declare_alias("IdentityB", type_param, [0])
 cases["generic_identity_is_unproductive"] = (identity_a, "unsupported")
 
+regular_transformed = alias_ref("RegularTransformed")
+declare_alias(
+    "RegularTransformed",
+    apply(list_type, [apply(regular_transformed, [type_param])]),
+    [0],
+)
+cases["regular_generic_recursion_keeps_structural_guard"] = (
+    apply(regular_transformed, [int_type]), "supported",
+)
+
+transformed = alias_ref("Transformed")
+declare_alias(
+    "Transformed",
+    apply(
+        list_type,
+        [apply(transformed, [apply(list_type, [type_param])])],
+    ),
+    [0],
+)
+cases["parameter_changing_recursion_is_fail_closed"] = (
+    apply(transformed, [int_type]), "unsupported",
+)
+
+transformed_direct = alias_ref("TransformedDirect")
+declare_alias(
+    "TransformedDirect",
+    apply(transformed_direct, [apply(list_type, [type_param])]),
+    [0],
+)
+cases["parameter_changing_direct_cycle_is_unproductive"] = (
+    apply(transformed_direct, [int_type]), "unsupported",
+)
+
 cases["type_guard_is_terminal"] = (
     apply(type_guard, [unsupported_node]), "supported",
 )

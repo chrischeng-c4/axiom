@@ -1,4 +1,4 @@
-use super::context::TypeContext;
+use super::context::{AliasIdentity, TypeContext};
 use super::ty::{
     CallableParam, CallableParamKind, ParamPack, ParamPackTail, Ty, TypeId, TypeParamDefault,
     TypeVarId, TypeVarKind,
@@ -106,6 +106,36 @@ impl Substitution {
         self.map.get(&var).copied()
     }
 
+    pub(crate) fn scalar_bindings(&self) -> Vec<(TypeVarId, TypeId)> {
+        let mut bindings: Vec<_> = self.map.iter().map(|(var, ty)| (*var, *ty)).collect();
+        bindings.sort_by_key(|(var, _)| var.0);
+        bindings
+    }
+
+    pub(crate) fn param_pack_bindings(&self) -> Vec<(TypeVarId, ParamPack)> {
+        let mut bindings: Vec<_> = self
+            .param_packs
+            .iter()
+            .map(|(var, pack)| (*var, pack.clone()))
+            .collect();
+        bindings.sort_by_key(|(var, _)| var.0);
+        bindings
+    }
+
+    pub(crate) fn from_bindings(
+        scalar: &[(TypeVarId, TypeId)],
+        param_packs: &[(TypeVarId, ParamPack)],
+    ) -> Self {
+        let mut substitution = Self::new();
+        for (var, ty) in scalar {
+            substitution.insert(*var, *ty);
+        }
+        for (var, pack) in param_packs {
+            substitution.insert_param_pack(*var, pack.clone());
+        }
+        substitution
+    }
+
     pub fn insert_param_pack(&mut self, var: TypeVarId, pack: ParamPack) {
         self.param_packs.insert(var, pack);
     }
@@ -191,8 +221,27 @@ impl Substitution {
                     if tcx.begin_alias_target(specialized_id) {
                         let specialized_target =
                             self.apply_inner(source_target, tcx, visiting_param_packs);
-                        tcx.set_alias_target(specialized_id, specialized_target);
+                        if tcx.alias_has_unguarded_cycle(specialized_id, specialized_target)
+                            || tcx.alias_target_has_invalid_generated_edge(
+                                specialized_id,
+                                specialized_target,
+                            )
+                        {
+                            tcx.reject_alias_target(specialized_id);
+                        } else {
+                            tcx.set_alias_target(specialized_id, specialized_target);
+                        }
                     }
+                } else if matches!(source.identity, AliasIdentity::Generated(_, _))
+                    && tcx.alias_target(specialized_id).is_none()
+                    && !tcx.alias_target_is_resolving(specialized_id)
+                {
+                    tcx.defer_alias_target(
+                        specialized_id,
+                        alias_id,
+                        self.scalar_bindings(),
+                        self.param_pack_bindings(),
+                    );
                 }
                 specialized_ty
             }
@@ -1240,6 +1289,98 @@ mod tests {
             panic!("specialized target lost its productive list head");
         };
         assert_eq!(*nested, specialized_ref);
+    }
+
+    #[test]
+    fn substitution_defers_transformed_alias_until_template_target_exists() {
+        let mut tcx = TypeContext::new();
+        let var = tcx.new_type_var("T".to_string(), None, Vec::new());
+        let other = tcx.new_type_var("U".to_string(), None, Vec::new());
+        let param_spec = tcx.new_type_param(
+            "P".to_string(),
+            TypeVarKind::ParamSpec,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
+        let var_ty = tcx.intern(Ty::TypeVar(var));
+        let other_ty = tcx.intern(Ty::TypeVar(other));
+        let (template, template_ref) = tcx.intern_alias_instance(
+            crate::types::context::AliasIdentity::Generated(
+                crate::types::stdlib_typespec::StrSpecId(1),
+                crate::types::stdlib_typespec::StrSpecId(2),
+            ),
+            "example.A".to_string(),
+            vec![var_ty, other_ty],
+            2,
+        );
+        assert!(tcx.begin_alias_target(template));
+
+        let mut subst = Substitution::new();
+        subst.insert(other, tcx.str());
+        subst.insert(var, tcx.int());
+        let pack = ParamPack {
+            params: vec![CallableParam {
+                name: Some("value".to_string()),
+                ty: tcx.int(),
+                kind: CallableParamKind::PosOrKw,
+                has_default: false,
+            }],
+            tail: ParamPackTail::Closed,
+        };
+        subst.insert_param_pack(param_spec, pack.clone());
+        let specialized_ref = subst.apply(template_ref, &mut tcx);
+        let Ty::AliasRef(specialized) = tcx.get(specialized_ref) else {
+            panic!("transformed specialization lost its alias identity");
+        };
+        let deferred = tcx
+            .deferred_alias_target(*specialized)
+            .expect("resolving template must leave a deferred recipe")
+            .clone();
+        assert_eq!(deferred.template, template);
+        assert_eq!(
+            deferred.substitutions,
+            vec![(var, tcx.int()), (other, tcx.str())]
+        );
+        assert_eq!(deferred.param_packs, vec![(param_spec, pack.clone())]);
+        let rebuilt = Substitution::from_bindings(
+            &deferred.substitutions,
+            &deferred.param_packs,
+        );
+        assert_eq!(rebuilt.get(var), Some(tcx.int()));
+        assert_eq!(rebuilt.get(other), Some(tcx.str()));
+        assert_eq!(rebuilt.get_param_pack(param_spec), Some(&pack));
+        assert_eq!(tcx.alias_target(*specialized), None);
+
+        let target = tcx.intern(Ty::List(template_ref));
+        tcx.set_alias_target(template, target);
+    }
+
+    #[test]
+    fn substitution_rejects_resolved_unguarded_alias_specialization() {
+        let mut tcx = TypeContext::new();
+        let var = tcx.new_type_var("T".to_string(), None, Vec::new());
+        let var_ty = tcx.intern(Ty::TypeVar(var));
+        let (template, template_ref) = tcx.intern_alias_instance(
+            crate::types::context::AliasIdentity::Generated(
+                crate::types::stdlib_typespec::StrSpecId(7),
+                crate::types::stdlib_typespec::StrSpecId(8),
+            ),
+            "example.Direct".to_string(),
+            vec![var_ty],
+            1,
+        );
+        tcx.set_alias_target(template, template_ref);
+
+        let mut subst = Substitution::new();
+        subst.insert(var, tcx.int());
+        let specialized_ref = subst.apply(template_ref, &mut tcx);
+        let Ty::AliasRef(specialized) = tcx.get(specialized_ref) else {
+            panic!("unguarded specialization lost its alias identity");
+        };
+        assert_eq!(tcx.alias_target(*specialized), Some(tcx.never()));
+        assert!(tcx.alias_target_is_rejected(*specialized));
+        assert!(tcx.deferred_alias_target(*specialized).is_none());
     }
 
     #[test]

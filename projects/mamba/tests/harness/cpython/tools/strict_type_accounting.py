@@ -522,12 +522,32 @@ def _materializable_status(statuses: list[str], *, outer_constraint: bool) -> st
     return "supported"
 
 
+AliasFrame = bool | tuple[bool, tuple[Any, ...]]
+
+
+def _alias_frame_guarded(frame: AliasFrame) -> bool:
+    return frame if isinstance(frame, bool) else frame[0]
+
+
+def _alias_frame_args(frame: AliasFrame) -> tuple[Any, ...] | None:
+    return None if isinstance(frame, bool) else frame[1]
+
+
+def _guard_alias_frames(
+    frames: dict[tuple[str, str], AliasFrame],
+) -> dict[tuple[str, str], AliasFrame]:
+    return {
+        key: True if (args := _alias_frame_args(frame)) is None else (True, args)
+        for key, frame in frames.items()
+    }
+
+
 def _generated_type_param_status(
     manifest: dict[str, Any],
     decl_id: int,
     visiting: set[int],
     *,
-    alias_frames: dict[tuple[str, str], bool],
+    alias_frames: dict[tuple[str, str], AliasFrame],
     substitutions: dict[int, int],
 ) -> str:
     decl = manifest["type_params"][decl_id]
@@ -678,12 +698,72 @@ def _generated_typespec_guards_alias(
     }
 
 
+def _generated_typespec_shape(
+    manifest: dict[str, Any],
+    node_id: int,
+    substitutions: dict[int, int],
+    visiting: set[int] | None = None,
+) -> tuple[Any, ...]:
+    """Canonical TypeSpec shape after applying scalar type substitutions."""
+    visiting = set() if visiting is None else visiting
+    if node_id in visiting:
+        return ("Cycle", node_id)
+    visiting.add(node_id)
+    try:
+        kind, value = _typespec_variant(manifest["nodes"][node_id])
+        if kind == "TypeParam":
+            target = substitutions.get(value)
+            if target is not None and target != node_id:
+                return _generated_typespec_shape(
+                    manifest, target, substitutions, visiting
+                )
+            return (kind, value)
+        if kind == "ForwardRef":
+            return _generated_typespec_shape(
+                manifest, value["target"], substitutions, visiting
+            )
+        if kind in {"Union", "Tuple", "ParamList"}:
+            start, length = value
+            return (
+                kind,
+                tuple(
+                    _generated_typespec_shape(
+                        manifest, item, substitutions, visiting
+                    )
+                    for item in manifest["edges"][start : start + length]
+                ),
+            )
+        if kind == "Apply":
+            start, length = value["args"]
+            return (
+                kind,
+                _generated_typespec_shape(
+                    manifest, value["base"], substitutions, visiting
+                ),
+                tuple(
+                    _generated_typespec_shape(
+                        manifest, item, substitutions, visiting
+                    )
+                    for item in manifest["edges"][start : start + length]
+                ),
+            )
+        if kind == "Name":
+            return (kind, value["module"], value["name"], value["kind"])
+        if isinstance(value, dict):
+            return (kind, tuple(sorted((key, repr(item)) for key, item in value.items())))
+        if isinstance(value, list):
+            return (kind, tuple(value))
+        return (kind, value)
+    finally:
+        visiting.remove(node_id)
+
+
 def _generated_typespec_status(
     manifest: dict[str, Any],
     node_id: int,
     visiting: set[int] | None = None,
     *,
-    alias_frames: dict[tuple[str, str], bool] | None = None,
+    alias_frames: dict[tuple[str, str], AliasFrame] | None = None,
     substitutions: dict[int, int] | None = None,
     allow_active_alias_ref: bool = False,
 ) -> str:
@@ -706,6 +786,7 @@ def _generated_typespec_status(
             alias_args = manifest["edges"][start : start + length]
 
     if alias_key in alias_frames:
+        frame = alias_frames[alias_key]
         if alias_args:
             decl = _generated_alias_decl(manifest, *alias_key)
             if decl is None:
@@ -724,9 +805,17 @@ def _generated_typespec_status(
             )
             for item in alias_args
         ]
+        active_args = _alias_frame_args(frame)
+        if active_args is not None:
+            current_args = tuple(
+                _generated_typespec_shape(manifest, item, substitutions)
+                for item in alias_args
+            )
+            if current_args != active_args:
+                return "unsupported"
         cycle_status = (
             "supported"
-            if allow_active_alias_ref or alias_frames[alias_key]
+            if allow_active_alias_ref or _alias_frame_guarded(frame)
             else "unsupported"
         )
         return _materializable_status(
@@ -737,7 +826,7 @@ def _generated_typespec_status(
         return (
             "supported"
             if allow_active_alias_ref
-            or any(alias_frames.values())
+            or any(_alias_frame_guarded(frame) for frame in alias_frames.values())
             or (
                 bool(alias_frames)
                 and _generated_typespec_guards_alias(manifest, kind, value)
@@ -795,7 +884,7 @@ def _generated_typespec_status(
                 if decl is None:
                     return "unsupported"
                 nested_frames = dict(alias_frames)
-                nested_frames[key] = False
+                nested_frames[key] = (False, ())
                 return _generated_typespec_status(
                     manifest,
                     decl["target"],
@@ -827,7 +916,7 @@ def _generated_typespec_status(
         if kind in {"Union", "Tuple"}:
             start, length = value
             child_frames = (
-                {key: True for key in alias_frames}
+                _guard_alias_frames(alias_frames)
                 if kind == "Tuple"
                 else alias_frames
             )
@@ -874,7 +963,13 @@ def _generated_typespec_status(
                 if "unsupported" in arg_statuses:
                     return "unsupported"
                 nested_frames = dict(alias_frames)
-                nested_frames[base_key] = False
+                nested_frames[base_key] = (
+                    False,
+                    tuple(
+                        _generated_typespec_shape(manifest, item, substitutions)
+                        for item in alias_args
+                    ),
+                )
                 nested_substitutions = dict(substitutions)
                 if alias_args:
                     nested_substitutions.update(zip(type_params, alias_args))
@@ -930,7 +1025,7 @@ def _generated_typespec_status(
             }:
                 if len(args) != 2:
                     return "unsupported"
-                callable_frames = {key: True for key in alias_frames}
+                callable_frames = _guard_alias_frames(alias_frames)
                 param_kind, param_value = _typespec_variant(manifest["nodes"][args[0]])
                 if param_kind == "ParamList":
                     param_start, param_length = param_value
@@ -1032,7 +1127,7 @@ def _generated_typespec_status(
                 ("typing", "Optional"), ("typing", "Union"),
             }
             child_frames = (
-                {key: True for key in alias_frames}
+                _guard_alias_frames(alias_frames)
                 if outer_constraint
                 else alias_frames
             )
