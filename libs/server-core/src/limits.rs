@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 /// Shared connection budget with RAII accounting.
-/// @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
+/// @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 #[derive(Debug, Clone)]
 pub struct ConnectionBudget {
     inner: Arc<ConnectionBudgetInner>,
@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn permit_tracks_active_connections() {
-        // @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#unit-test
+        // @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#unit-test
         let budget = ConnectionBudget::new(1);
         let permit = budget.try_acquire().expect("first permit");
         assert_eq!(budget.active(), 1);

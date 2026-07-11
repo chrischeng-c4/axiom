@@ -1,5 +1,5 @@
 /// Hook surface for connection-oriented runtimes.
-/// @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
+/// @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 pub trait ConnectionMetrics: Send + Sync + 'static {
     fn connection_accepted(&self) {}
     fn connection_rejected(&self) {}

@@ -1,7 +1,7 @@
 // SPEC-MANAGED: libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! HTTP transport: the h2c serve loop + the standard request-tracing layer.
-//! @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
+//! @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 //!
 //! [`serve`] composes [`http_server::serve_h2c`] (HTTP/1.1 + HTTP/2 cleartext on one port —
 //! the in-cluster default `axum::serve` can't do) rather than re-implementing

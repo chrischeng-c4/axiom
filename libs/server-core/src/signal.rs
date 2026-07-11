@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 /// Resolve when SIGINT or, on Unix, SIGTERM arrives.
-/// @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
+/// @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 pub async fn wait_shutdown_signal() {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
