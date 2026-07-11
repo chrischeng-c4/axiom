@@ -441,10 +441,7 @@ def _generated_protocol_status(
                 if manifest["class_callables"][method_id][12]
                 and manifest["class_callables"][method_id][3] == "i"
             ]
-            branches = Counter(
-                manifest["strings"][method[2]] for method in methods
-            )
-            supported = all(count == 1 for count in branches.values())
+            supported = True
             unconstrained = False
             for method in methods:
                 method_param_start, method_param_length = method[5]
