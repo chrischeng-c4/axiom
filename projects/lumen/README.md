@@ -63,13 +63,13 @@ agent integration remain first-class domain roots.
 | EC Gates Configured | 1165 | implemented | verified | conformance | ready | mandatory baseline: aw.toml, vat runners, claim tests, and external-contract claim closure stay wired together |
 | Search Core | - | implemented | verified | conformance | ready | domain: pure search index returning ranked external_ids only |
 | Lexical Search | - | implemented | verified | conformance | ready | domain: BM25 and analyzer-backed text search |
-| Exact & Filter Search | - | implemented | verified | conformance | ready | domain: keyword, number, set, boolean, range, and sorted filters |
+| Exact & Filter Search | - | implemented | verified | conformance | ready | domain: keyword, number, set, boolean, range (numeric and keyword byte-lexicographic), and sorted filters |
 | Vector & Hash Search | 4141 | implemented | verified | conformance | ready | domain: CPU vector kNN, filtered kNN, and Hamming hash search |
 | Hybrid Search | 4139 | implemented | verified | conformance | ready | domain: lexical+semantic RRF fusion |
 | Duplicate & Nested Search | - | implemented | verified | conformance | ready | domain: duplicates, group/has_child/collapse, exists, and CJK substring cases |
 | Schema & Ops Lifecycle | - | implemented | verified | conformance | ready | domain: collection DDL, drop-field drain, reindex/replay, stats, and metadata |
 | Elastic Scale | - | implemented | verified | conformance | ready | domain: RAM-hot/disk-all columnar mmap segment tier |
-| Dynamic Shard Topology | 1179 | implemented | verified | conformance, dogfood | ready | domain: versioned virtual-bucket shard map, bounded snapshot-batch reshard movement, operator-managed shard split policy, and multi-shard kind proof |
+| Dynamic Shard Topology | 1319 | implemented | verified | conformance, dogfood | ready | domain: versioned virtual-bucket shard map, checkpointed autonomous reshard phase driver (threshold -> topology -> migration -> durable checkpoint -> cutover), and multi-shard kind proof |
 | Backup & Restore | - | implemented | verified | conformance | ready | domain: RDB snapshots and bounded cold start |
 | Replica Sync & Bootstrap | 1181 | implemented | passing | conformance | ready | domain: raft replica sync semantics plus empty-PVC snapshot/object seed before raft catch-up |
 | Observability | - | implemented | verified | conformance | ready | domain: Prometheus metrics, ServiceMonitor/alerts, and opt-in OTLP |
@@ -80,8 +80,8 @@ agent integration remain first-class domain roots.
 
 ID: cli-interface
 Type: RuntimeTool
-Surfaces: CLI: `lumen serve` - long-running search service process.; CLI: `lumen spec` - offline OpenAPI/JSON-schema contract.; CLI: `lumen llm` - offline agent integration topics.; CLI: `lumen dockerfile render` - source/release image artifacts.; CLI: `lumen k8s crd render`, `lumen k8s operator render|run`, and `lumen k8s instance render` - cluster API, control-plane, and app-namespace deployment surfaces.; HTTP: `POST /index`, `POST /search`, `/openapi.json`, `/healthz`, `/readyz`, `/metrics` - binary-served API surface.
-EC Dimensions: behavior: `cargo test -p lumen --test spec_cli` - offline CLI contract; API probe/OpenAPI/metrics evidence is tracked by named api_e2e subtests because the full api_e2e suite currently has an unrelated unsupported-sort regression
+Surfaces: CLI: `lumen serve` - long-running search service process.; CLI: `lumen spec` - offline OpenAPI/JSON-schema contract.; CLI: `lumen llm` - offline agent integration topics.; CLI: `lumen dockerfile render` - source/release image artifacts.; CLI: `lumen k8s crd render`, `lumen k8s operator render|run`, and `lumen k8s instance render` - cluster API, control-plane, and app-namespace deployment surfaces.; CLI: `lumen connect` - k8s port-forward + token resolution wrapper around a command.; CLI: `lumen query index|search|duplicates|collections list` - one-shot wire-body wrappers for the index/search/duplicates/collections-list API surface.; HTTP: `POST /index`, `POST /search`, `/openapi.json`, `/healthz`, `/readyz`, `/metrics` - binary-served API surface.
+EC Dimensions: behavior: `cargo test -p lumen --test spec_cli` - offline CLI contract; behavior: named `api_e2e` subtests - API probe/OpenAPI/metrics evidence
 Root WI: 4143
 Status: verified
 Required Verification: conformance
@@ -97,6 +97,7 @@ Gate Inventory:
 | lumen-spec-schema-openapi-json-yaml-json-schema-offline | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
 | query-shape-cookbook-field-analyzer-catalog | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
 | lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
+| lumen-connect-query-k8s-agent-workflow | change | 1321 | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs |
 | deployment-operator-command-surface | epic | - | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs<br>projects/lumen/src/operator |
 
 ### CLI Standard Surface
@@ -248,23 +249,30 @@ Gate Inventory:
 
 ID: http2-api-list
 Type: Service
-Surfaces: HTTP: `POST /index`, `POST /search`, collection/schema/stats/reindex/replay routes, `/openapi.json`, `/healthz`, `/readyz`, `/metrics` - concise HTTP/2 API list for clients and operators.; CLI: `lumen spec` and `lumen spec --format openapi-yaml` - offline API/schema inventory.
-EC Dimensions: behavior: `cargo test -p lumen --test spec_cli` - offline API/schema inventory; behavior: named `api_e2e` subtests - served OpenAPI, health, readiness, and metrics smoke
+Surfaces: HTTP: `POST /index`, `POST /search`, `QUERY /collections/{id}` and `QUERY /collections` (RFC 10008 twins of `POST .../search` and `POST /collections:search`), collection/schema/stats/reindex/replay routes, `POST /admin/reshard:apply`, `POST /admin/backup:scoped`, `POST /admin/reshard:evict`, `POST /admin/checkpoint`, `/openapi.json`, `/healthz`, `/readyz`, `/metrics` - concise HTTP/2 API list for clients and operators.; CLI: `lumen spec` and `lumen spec --format openapi-yaml` - offline API/schema inventory.
+EC Dimensions: behavior: `cargo test -p lumen --test spec_cli` - offline API/schema inventory; behavior: named `api_e2e` subtests - served OpenAPI, health, readiness, and metrics smoke; behavior: `cargo test -p lumen --test reshard_admin_e2e` - reshard admin verb conformance
 Root WI: 4143
 Status: verified
 Required Verification: conformance
 Promise:
 Publish Lumen's supported HTTP/2 API surface as a compact endpoint inventory
 and offline spec commands, without making OpenAPI completeness the capability
-definition.
+definition. Every QUERY endpoint keeps a POST twin (same handler, byte-identical
+response), and `x-read-consistency` (leader/bounded/any) is enforced against
+live cluster state in primary-replica mode rather than parsed and discarded.
 Gate Inventory:
-- projects/lumen/README.md#api-surface; projects/lumen/tests/spec_cli.rs; projects/lumen/tests/api_e2e.rs (health_and_ready, openapi_spec_served, metrics_exposes_prometheus_text)
+- projects/lumen/README.md#api-surface; projects/lumen/tests/spec_cli.rs; projects/lumen/tests/api_e2e.rs (health_and_ready, openapi_spec_served, metrics_exposes_prometheus_text); projects/lumen/tests/reshard_admin_e2e.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | client-search-and-index-route-list | epic | - | implemented | passing | conformance | projects/lumen/README.md#api-surface; projects/lumen/tests/api_e2e.rs |
 | ops-metadata-probe-and-metrics-route-list | epic | - | implemented | passing | conformance | projects/lumen/tests/api_e2e.rs |
 | offline-spec-openapi-list | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
+| query-method-post-twins-accept-query | change | 1297 | implemented | passing | conformance | projects/lumen/src/api.rs |
+| x-read-consistency-live-cluster-state | change | 1310 | implemented | passing | conformance | projects/lumen/src/api.rs |
+| x-read-consistency-raft-bootstrap-wiring | change | 1349 | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs |
+| reshard-apply-scoped-backup-evict-admin-verbs | change | 1380 | implemented | passing | conformance | projects/lumen/tests/reshard_admin_e2e.rs |
+| synchronous-checkpoint-admin-verb | change | 1389 | implemented | passing | conformance | projects/lumen/src/api.rs |
 
 ### Standard Operational Endpoints
 
@@ -355,14 +363,15 @@ Gate Inventory:
 
 ID: exact-filter-search
 Type: Service
-Surfaces: HTTP: `POST /search` - keyword, number, set, boolean, range, and sort filters.; CLI: `lumen serve` - exact/filter planner.
+Surfaces: HTTP: `POST /search` - keyword, number, set, boolean, range, and sort filters; range bounds cover both number (numeric) and keyword (byte-lexicographic string/date) fields in one `RangeQuery` node.; CLI: `lumen serve` - exact/filter planner.
 EC Dimensions: behavior: `cargo test -p lumen` - term/range/set planner conformance; efficiency: `meter` - filter and range profile
 Root WI: -
 Status: verified
 Required Verification: conformance
 Promise:
-Support keyword terms, number ranges, set membership, boolean composition, and
-sort/filter early termination at roaring-bitmap and sorted-column speed.
+Support keyword terms, number ranges, keyword byte-lexicographic string/date
+ranges, set membership, boolean composition, and sort/filter early
+termination at roaring-bitmap and sorted-column speed.
 Gate Inventory:
 - projects/lumen/tests/perf_gate_vs_db.rs; projects/lumen/src/storage.rs
 
@@ -370,6 +379,7 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | term-range-set-early-termination | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs |
 | wide-range-filter-index-on-disk-sorted-value-range | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs<br>projects/lumen/src/storage.rs |
+| keyword-byte-lexicographic-range-query | change | 1307 | implemented | passing | conformance | projects/lumen/src/storage.rs |
 
 ### Vector & Hash Search
 
@@ -477,22 +487,32 @@ Gate Inventory:
 
 ID: dynamic-shard-topology
 Type: Service
-Surfaces: CRD/operator: `spec.shardCount`, `spec.replicasPerShard`, `spec.voterCount`, and reshard policy fields - storage ownership and HA topology.; Routing: versioned virtual-bucket map - `bucket = hash(collection_id, routing_key || external_id) % virtualBucketCount`; Search: scatter/gather when no routing key is supplied, targeted shard search when a routing key is supplied.
+Surfaces: CRD/operator: `spec.shardCount`, `spec.replicasPerShard`, `spec.voterCount`, `spec.shardMap`, and reshard policy fields - storage ownership and HA topology.; Routing: versioned virtual-bucket map - `bucket = hash(collection_id, routing_key || external_id) % virtualBucketCount`; Search: scatter/gather when no routing key is supplied, targeted shard search when a routing key is supplied; serving nodes route by the shard map delivered through `SHARD_MAP_VERSION`/`SHARD_MAP_ASSIGNMENTS` env, re-read on rolling restart.; Operator: checkpointed reshard phase driver (`PrepareSplit -> Splitting -> CatchingUp -> Complete`) that turns a crossed reshard-policy threshold into a resumable topology change, ending in a synchronous durability checkpoint and cutover restart with zero human step.
 EC Dimensions: behavior: `cargo test -p lumen --lib routing::tests` - versioned virtual-bucket shard map and bounded reshard batch conformance; behavior: `cargo test -p lumen --features operator --test operator_render` - operator-owned reshard policy, storage topology, status, and shard-map CRD/render conformance; stability: `projects/lumen/scripts/kind-e2e.sh` - live operator dogfood for shardCount=2 with replicasPerShard=1 and replicasPerShard=3
-Root WI: 1179
+Root WI: 1319
 Status: verified
 Required Verification: conformance, dogfood
 Promise:
 Scale storage by moving virtual buckets between physical shards under an
-operator-controlled workflow, while keeping replica HA and HPA-driven query
-capacity separate from data ownership.
+operator-autonomous workflow end to end — threshold detection, topology
+change, data migration, durable checkpoint, and cutover all execute without
+a human step — while keeping replica HA and HPA-driven query capacity
+separate from data ownership.
 Gate Inventory:
-- #1179 dynamic shard topology epic; #1182 versioned virtual-bucket shard map; #1180 operator reshard policy and storage topology control; projects/lumen/src/routing.rs; projects/lumen/src/reshard.rs; projects/lumen/src/operator; projects/lumen/tests/operator_render.rs; projects/lumen/scripts/kind-e2e.sh
+- #1179 dynamic shard topology epic; #1182 versioned virtual-bucket shard map; #1180 operator reshard policy and storage topology control; #1319 autonomous reshard workflow epic; projects/lumen/src/routing.rs; projects/lumen/src/reshard.rs; projects/lumen/src/operator; projects/lumen/src/operator/reshard_driver.rs; projects/lumen/tests/operator_render.rs; projects/lumen/tests/reshard_driver_e2e.rs; projects/lumen/tests/reshard_admin_e2e.rs; projects/lumen/scripts/kind-e2e.sh
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | versioned-virtual-bucket-shard-map | epic | 1182 | implemented | passing | conformance | projects/lumen/src/routing.rs<br>projects/lumen/tests/operator_render.rs |
 | storage-pressure-operator-split-policy | epic | 1180 | implemented | passing | conformance | projects/lumen/src/operator<br>projects/lumen/tests/operator_render.rs |
+| autonomous-reshard-workflow | epic | 1319 | implemented | passing | dogfood | projects/lumen/src/operator/reshard_driver.rs<br>projects/lumen/tests/reshard_driver_e2e.rs |
+| reshard-data-plane-admin-verbs | change | 1380 | implemented | passing | conformance | projects/lumen/tests/reshard_admin_e2e.rs |
+| checkpointed-reshard-phase-driver | change | 1381 | implemented | passing | conformance | projects/lumen/src/operator/reshard_driver.rs<br>projects/lumen/tests/reshard_driver_e2e.rs |
+| serve-consumes-delivered-shard-map | change | 1384 | implemented | passing | dogfood | projects/lumen/src/bin/lumen.rs<br>projects/lumen/src/operator/render.rs |
+| stale-single-member-hpa-handoff-deletion | change | 1385 | implemented | passing | dogfood | projects/lumen/src/operator |
+| post-cutover-usage-freshness-split-gate | change | 1386 | implemented | passing | conformance | projects/lumen/src/operator/reshard_driver.rs |
+| single-member-durable-persistence-render | change | 1387 | implemented | passing | dogfood | projects/lumen/src/operator/render.rs |
+| reshard-apply-evict-synchronous-checkpoint | change | 1389 | implemented | passing | dogfood | projects/lumen/src/operator/reshard_driver.rs<br>projects/lumen/src/api.rs |
 | multi-shard-replica-kind-e2e | epic | 1179 | implemented | passing | dogfood | projects/lumen/scripts/kind-e2e.sh |
 
 ### Backup & Restore
@@ -584,7 +604,7 @@ that namespace; cluster-wide operation is an optional platform mode. HPA may
 scale stateless or near-stateless query/read workers, but never changes shard
 ownership.
 Gate Inventory:
-- projects/lumen/k8s; projects/lumen/src/operator; projects/lumen/tests/operator_render.rs; projects/lumen/scripts/kind-e2e.sh
+- projects/lumen/k8s; projects/lumen/src/operator; projects/lumen/src/operator/render.rs; projects/lumen/tests/operator_render.rs; projects/lumen/scripts/kind-e2e.sh
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -592,6 +612,8 @@ Gate Inventory:
 | lumen-crd-reconcile-loop-kube-rs-operator | epic | - | implemented | passing | conformance | projects/lumen/src/operator<br>projects/lumen/tests/operator_render.rs |
 | kind-api-recovery-no-relay | epic | - | implemented | passing | dogfood | projects/lumen/scripts/kind-e2e.sh |
 | operator-owned-storage-topology-and-reshard-status | epic | 1180 | implemented | passing | conformance | projects/lumen/src/operator<br>projects/lumen/tests/operator_render.rs |
+| single-member-durable-persistence-render | change | 1387 | implemented | passing | dogfood | projects/lumen/src/operator/render.rs (live kind pod-delete-and-recreate proof) |
+| topology-transition-hpa-handoff-deletion | change | 1385 | implemented | passing | dogfood | projects/lumen/src/operator (live kind proof: stale single-member HPA deleted on split) |
 
 ### Agent Offline Integration
 
@@ -907,6 +929,26 @@ skip). Stop when `cursor` is null. Legacy `{"offset":N}` tokens keep working
 `track_total: true`, `total` counts the REMAINING matches from the cursor,
 not the full set — read the full total off the first page.
 
+**`range` also accepts a string bound** (`gte`/`lte`/`gt`/`lt`) against a
+`keyword` field for byte-lexicographic (string/date) ranges, e.g.
+`{ "range": { "field": "created_at", "gte": "2026-01-01", "lt": "2026-02-01" } }`
+— a numeric bound against a `keyword` field or a string bound against a
+`number` field is rejected with 400 rather than silently misparsed.
+
+**`QUERY /collections/{id}` is a dual-registered twin of this endpoint**
+(RFC 10008): same request body, same handler, byte-identical response.
+`OPTIONS`/`HEAD` on either target advertise `Accept-Query: application/json`.
+POST remains the permanent fallback for clients without QUERY support.
+
+The **`X-Read-Consistency`** request header (`leader` / `bounded(<ms>)` / `any`
+— default and safest is `leader`, missing/unrecognized values also fall back
+to `leader`) is enforced against live cluster state in primary-replica (raft)
+mode: `leader` only succeeds on the pod currently holding leadership,
+`bounded(<ms>)` succeeds on the leader or a follower whose replication lag is
+at or under the bound, and a request that fails the check is rejected rather
+than silently served from a possibly-stale replica. Standalone deployments
+(no raft) ignore the header.
+
 ### Batch search (msearch-style, multi-collection)
 
 ```
@@ -1027,6 +1069,10 @@ GET    /collections                               # list (filtered by RBAC)
 GET  /admin/backup                                # full SnapshotV1 JSON dump
 POST /admin/restore                               # replace state from a snapshot
 POST /admin/backup/local                          # snapshot → LocalFsSink (path + prefix)
+POST /admin/backup:scoped                         # SnapshotV1 restricted to a set of virtual buckets
+POST /admin/reshard:apply                         # additively merge one ReshardBatch into live state
+POST /admin/reshard:evict                         # remove docs no longer owned under a newer shard map
+POST /admin/checkpoint                            # force a synchronous full-state durability checkpoint
 GET  /debug/cluster                               # pod/shard/role/peers/replication-lag
 GET  /metrics                                     # Prometheus text format
 GET  /healthz                                     # liveness
@@ -1034,6 +1080,19 @@ GET  /readyz                                      # readiness (503 while drainin
 GET  /openapi.json                                # live OpenAPI spec
 GET  /docs                                        # Swagger UI (interactive "Try it out")
 ```
+
+`backup:scoped` / `reshard:apply` / `reshard:evict` are the operator-driven
+reshard data-plane verbs: `backup:scoped` exports only the documents routed
+to a requested set of virtual buckets (the same hash the engine's own routing
+uses), `reshard:apply` idempotently upserts one such export's batch into a
+target shard, and `reshard:evict` removes exactly the documents a supplied
+newer virtual-bucket map no longer routes to that shard. All three are
+`Role::Admin`-gated and idempotent on retry. `reshard:apply`/`reshard:evict`
+mutate engine state directly, bypassing the normal WriteCoordinator/AOF write
+path, so the reshard driver calls `POST /admin/checkpoint` — a synchronous
+full-state segment checkpoint returning `{"persisted": bool}` — on every
+touched shard before cutover, making the migration durable ahead of the
+rolling-restart that flips the live shard map.
 
 ### Stats
 
