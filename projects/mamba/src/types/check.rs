@@ -577,6 +577,9 @@ pub struct TypeChecker {
         HashMap<SymbolId, HashMap<String, super::protocol::MethodSig>>,
     /// Named/kinded method parameters retained for keyword argument matching.
     pub(crate) class_method_param_sigs: HashMap<SymbolId, HashMap<String, Vec<FunctionParamSig>>>,
+    /// Decorated method declarations whose runtime call shape is not faithfully
+    /// represented by the single-signature protocol map.
+    pub(crate) protocol_indeterminate_methods: HashMap<SymbolId, HashSet<String>>,
     /// Method-local PEP 695 parameters keyed by owning class and method name.
     pub(crate) class_method_generic_defs: HashMap<(SymbolId, String), GenericParams>,
     /// Class method signatures for bare-class unbound calls such as
@@ -711,6 +714,7 @@ impl TypeChecker {
             class_methods: HashMap::new(),
             class_methods_by_symbol: HashMap::new(),
             class_method_param_sigs: HashMap::new(),
+            protocol_indeterminate_methods: HashMap::new(),
             class_method_generic_defs: HashMap::new(),
             class_unbound_methods: HashMap::new(),
             class_unbound_method_param_sigs: HashMap::new(),
@@ -4045,6 +4049,7 @@ impl TypeChecker {
 
         let mut methods = HashMap::new();
         let mut method_param_sigs = HashMap::new();
+        let mut protocol_indeterminate_methods = HashSet::new();
         let mut unbound_methods = HashMap::new();
         let mut unbound_method_param_sigs = HashMap::new();
         let mut property_getters = HashMap::new();
@@ -4092,6 +4097,16 @@ impl TypeChecker {
                             &decorator.node,
                             Expr::Attr { attr, .. } if attr == "staticmethod"
                         )
+                });
+                let protocol_signature_unfaithful = decorators.iter().any(|decorator| {
+                    matches!(
+                        &decorator.node,
+                        Expr::Ident(name) if matches!(name.as_str(), "overload" | "property")
+                    ) || matches!(
+                        &decorator.node,
+                        Expr::Attr { attr, .. }
+                            if matches!(attr.as_str(), "overload" | "property" | "setter")
+                    )
                 });
                 let all_param_sigs: Vec<FunctionParamSig> = params
                     .iter()
@@ -4147,6 +4162,9 @@ impl TypeChecker {
                             .unwrap_or_else(|| self.tcx.any()),
                     );
                 }
+                if protocol_signature_unfaithful {
+                    protocol_indeterminate_methods.insert(name.clone());
+                }
                 methods.insert(
                     name.clone(),
                     MethodSig {
@@ -4174,6 +4192,8 @@ impl TypeChecker {
         self.class_methods.insert(class_name.to_string(), methods);
         self.class_method_param_sigs
             .insert(class_symbol, method_param_sigs);
+        self.protocol_indeterminate_methods
+            .insert(class_symbol, protocol_indeterminate_methods);
         self.class_unbound_methods
             .insert(class_symbol, unbound_methods);
         self.class_unbound_method_param_sigs

@@ -5998,6 +5998,89 @@ fn typeshed_protocol_defaulted_parameters_are_structural() {
 }
 
 #[test]
+fn typeshed_overloaded_protocols_require_every_call_branch() {
+    let valid = check(
+        "class Roundable:\n\
+         \x20   def __round__(self, ndigits: int = 0) -> int:\n\
+         \x20       return ndigits\n\
+         whole: int = round(Roundable())\n\
+         digits: int = round(Roundable(), 2)\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "one implementation may contain every SupportsRound[int] overload branch: {valid:?}"
+    );
+
+    let int_only = check(
+        "from getopt import getopt\n\
+         class IntOnly:\n\
+         \x20   def __getitem__(self, key: int) -> str:\n\
+         \x20       return \"\"\n\
+         getopt(IntOnly(), \"\")\n",
+    );
+    assert!(
+        int_only
+            .iter()
+            .any(|error| error.contains("argument type mismatch")),
+        "an implementation of only the int overload must fail the slice branch: {int_only:?}"
+    );
+}
+
+#[test]
+fn decorated_protocol_method_metadata_stays_indeterminate() {
+    let module = parser::parse(
+        "from typing import overload\n\
+         class Overloaded:\n\
+         \x20   @overload\n\
+         \x20   def __round__(self) -> int: ...\n\
+         \x20   @overload\n\
+         \x20   def __round__(self, ndigits: int) -> int: ...\n\
+         class Property:\n\
+         \x20   @property\n\
+         \x20   def __round__(self) -> int:\n\
+         \x20       return 0\n\
+         class Static:\n\
+         \x20   @staticmethod\n\
+         \x20   def __round__(ndigits: int = 0) -> int:\n\
+         \x20       return ndigits\n\
+         class ClassMethod:\n\
+         \x20   @classmethod\n\
+         \x20   def __round__(cls, ndigits: int = 0) -> int:\n\
+         \x20       return ndigits\n",
+        FileId(0),
+    )
+    .expect("parse decorated protocol methods");
+    let mut checker = TypeChecker::new();
+    let _ = checker.check_module(&module);
+    for class_name in ["Overloaded", "Property"] {
+        let symbol = checker
+            .symbols
+            .lookup(class_name)
+            .unwrap_or_else(|| panic!("{class_name} class registered"));
+        assert!(
+            checker
+                .protocol_indeterminate_methods
+                .get(&symbol)
+                .is_some_and(|methods| methods.contains("__round__")),
+            "{class_name} must not expose an unfaithful single protocol signature"
+        );
+    }
+    for class_name in ["Static", "ClassMethod"] {
+        let symbol = checker
+            .symbols
+            .lookup(class_name)
+            .unwrap_or_else(|| panic!("{class_name} class registered"));
+        assert!(
+            checker
+                .protocol_indeterminate_methods
+                .get(&symbol)
+                .is_none_or(|methods| !methods.contains("__round__")),
+            "{class_name} keeps a faithful bound protocol signature"
+        );
+    }
+}
+
+#[test]
 fn typeshed_protocol_class_type_params_are_substituted_in_members() {
     let valid = check(
         "import json\n\
