@@ -58,6 +58,13 @@ pub mod raft_sm;
 pub mod rdb;
 pub mod reshard;
 pub mod routing;
+/// Cross-pod shard routing for operator/k8s serving pods (#1398 R1-R3): local
+/// reads/writes hit the engine directly, remote-owned buckets forward one hop
+/// over h2c. Behind `operator` because it is the only module that needs
+/// `reqwest` as a directly-nameable type; every real deployment already links
+/// it via `operator`'s `backup` feature, so this adds no new crate.
+#[cfg(feature = "operator")]
+pub mod routing_remote;
 /// Columnar mmap disk segment (Stage 2 disk-tier): a single Number column
 /// for `n_docs` rows at one `applied_seq`, written page-aligned for zero-copy
 /// reads. Compiled by default; the disk tier is selected at runtime

@@ -381,14 +381,22 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
             spec.insert("replicas".into(), json!(replicas));
         }
         if let Some(env) = sts["spec"]["template"]["spec"]["containers"][0]["env"].as_array_mut() {
+            // `shard_count > 1` at `replicasPerShard <= 1` is the routed
+            // serving topology (#1398): each pod still needs its own stable
+            // headless DNS name to forward cross-shard requests one hop to
+            // the owning pod (`lumen::routing::shard_host`), so
+            // `HEADLESS_ENV_KEY` is only stripped alongside the raft peer
+            // env when there is truly one physical shard and nothing to
+            // route to.
+            let strip_headless = lumen.spec.shard_count <= 1;
             env.retain(|value| {
                 let Some(name) = value["name"].as_str() else {
                     return true;
                 };
-                !matches!(
-                    name,
-                    "REPLICAS_PER_SHARD" | "VOTER_COUNT" | HEADLESS_ENV_KEY
-                )
+                if name == HEADLESS_ENV_KEY {
+                    return !strip_headless;
+                }
+                !matches!(name, "REPLICAS_PER_SHARD" | "VOTER_COUNT")
             });
         }
     }

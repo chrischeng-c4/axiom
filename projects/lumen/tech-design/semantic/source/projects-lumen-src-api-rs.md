@@ -27,20 +27,24 @@ Public API manifest for `projects/lumen/src/api.rs` generated from AST during Sc
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 532 |  |
-| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 2093 |  |
+| `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 594 |  |
+| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 2208 |  |
 | `AppState` | projects/lumen/src/api.rs | struct | pub | 64 |  |
-| `WriteFence` | projects/lumen/src/api.rs | struct | pub | 166 | #1396 R2: bounded write pause on still-moving virtual buckets during a reshard's final `CatchingUp` pass. Armed/cleared via `POST /admin/reshard:fence`; self-expires on its TTL deadline so a crashed driver can never leave a permanent fence. |
-| `new` | projects/lumen/src/api.rs | function | pub | 389 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
-| `open` | projects/lumen/src/api.rs | function | pub | 418 | open(engine: Arc<Engine>) -> Self |
-| `openapi` | projects/lumen/src/api.rs | function | pub | 2021 | openapi() -> utoipa::openapi::OpenApi |
-| `router` | projects/lumen/src/api.rs | function | pub | 571 | router(state: AppState) -> Router |
-| `with_checkpoint` | projects/lumen/src/api.rs | function | pub | 411 | with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self |
-| `with_cluster` | projects/lumen/src/api.rs | function | pub | 393 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
-| `with_components` | projects/lumen/src/api.rs | function | pub | 366 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<dyn WriteSink>,     ) -> Self |
-| `with_search_backend` | projects/lumen/src/api.rs | function | pub | 398 | with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self |
-| `with_wal` | projects/lumen/src/api.rs | function | pub | 358 | with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self |
-| `with_write_backend` | projects/lumen/src/api.rs | function | pub | 403 | with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self |
+| `RoutedBackend` | projects/lumen/src/api.rs | trait | pub | 259 | Cross-pod shard routing for operator/k8s serving pods (#1398 R1-R3); `AppState::routed` is `None` for every non-routed deployment. |
+| `ShardForwardRemoteError` | projects/lumen/src/api.rs | struct | pub | 2245 | The owning shard was reached and answered, but with a non-2xx status. |
+| `ShardForwardUnavailable` | projects/lumen/src/api.rs | struct | pub | 2229 | One-hop shard-forward failure — the owning shard was unreachable or its response could not be decoded. |
+| `WriteFence` | projects/lumen/src/api.rs | struct | pub | 173 | #1396 R2: bounded write pause on still-moving virtual buckets during a reshard's final `CatchingUp` pass. Armed/cleared via `POST /admin/reshard:fence`; self-expires on its TTL deadline so a crashed driver can never leave a permanent fence. |
+| `new` | projects/lumen/src/api.rs | function | pub | 442 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
+| `open` | projects/lumen/src/api.rs | function | pub | 480 | open(engine: Arc<Engine>) -> Self |
+| `openapi` | projects/lumen/src/api.rs | function | pub | 2136 | openapi() -> utoipa::openapi::OpenApi |
+| `router` | projects/lumen/src/api.rs | function | pub | 633 | router(state: AppState) -> Router |
+| `with_checkpoint` | projects/lumen/src/api.rs | function | pub | 464 | with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self |
+| `with_cluster` | projects/lumen/src/api.rs | function | pub | 446 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
+| `with_components` | projects/lumen/src/api.rs | function | pub | 418 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<dyn WriteSink>,     ) -> Self |
+| `with_routed` | projects/lumen/src/api.rs | function | pub | 473 | with_routed(mut self, routed: Arc<dyn RoutedBackend>) -> Self |
+| `with_search_backend` | projects/lumen/src/api.rs | function | pub | 451 | with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self |
+| `with_wal` | projects/lumen/src/api.rs | function | pub | 410 | with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self |
+| `with_write_backend` | projects/lumen/src/api.rs | function | pub | 456 | with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self |
 
 ## Source
 <!-- type: rust-source-unit lang: rust -->
@@ -134,6 +138,13 @@ pub struct AppState {
     /// (every write passes through unchanged); the reshard driver arms it
     /// via `POST /admin/reshard:fence`. See [`WriteFence`].
     pub write_fence: WriteFence,
+    /// Cross-pod shard router for operator/k8s serving (#1398 R1-R3).
+    /// `None` for every deployment shape except the routed one (`SHARD_COUNT`
+    /// > 1, `replicasPerShard <= 1`, no `--search-shard-segment-dirs`) — see
+    /// [`RoutedBackend`]. The server binary wires a real
+    /// `routing_remote::RoutedRouter` via [`Self::with_routed`]; tests and
+    /// every other deployment shape leave this `None`.
+    pub routed: Option<Arc<dyn RoutedBackend>>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
@@ -283,6 +294,51 @@ pub trait WriteBackend: Send + Sync {
     async fn drop_field(&self, collection_id: String, field_name: String) -> Result<u32>;
 }
 
+/// Cross-pod shard routing for operator/k8s serving pods (#1398 R1-R3).
+/// `AppState::routed` is `None` for every non-routed deployment (standalone,
+/// primary/replica, and the `--search-shard-segment-dirs` fan-in path) —
+/// handlers consult it first and fall back to `search_backend`/
+/// `write_backend` unchanged when it is absent, so `shardCount:1` serving
+/// never even constructs an implementation (AC5: no forwarding overhead).
+///
+/// Every method takes the inbound request's `headers` verbatim: the sole
+/// concrete implementation ([`crate::routing_remote::RoutedRouter`], behind
+/// the `operator` feature) checks the `x-lumen-forwarded` one-hop guard
+/// first and, when forwarding, carries the caller's `Authorization` bearer
+/// and `x-read-consistency` through unchanged (R3).
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+#[async_trait]
+pub trait RoutedBackend: Send + Sync {
+    async fn search(
+        &self,
+        collection_id: &str,
+        req: SearchRequest,
+        headers: &HeaderMap,
+    ) -> Result<SearchResponse>;
+
+    async fn index(
+        &self,
+        collection_id: String,
+        req: IndexRequest,
+        headers: &HeaderMap,
+    ) -> Result<IndexResponse>;
+
+    async fn replace_docs(
+        &self,
+        collection_id: String,
+        req: ReplaceDocsRequest,
+        headers: &HeaderMap,
+    ) -> Result<ReplaceDocsResponse>;
+
+    async fn delete(
+        &self,
+        collection_id: String,
+        external_id: String,
+        field: Option<String>,
+        headers: &HeaderMap,
+    ) -> Result<()>;
+}
+
 #[derive(Clone)]
 struct LocalEngineSearch {
     engine: Arc<Engine>,
@@ -429,6 +485,7 @@ impl AppState {
             writer,
             checkpoint: Arc::new(NoopCheckpoint),
             write_fence: WriteFence::default(),
+            routed: None,
         }
     }
 
@@ -458,6 +515,15 @@ impl AppState {
     /// control/observe `POST /admin/checkpoint` behavior.
     pub fn with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self {
         self.checkpoint = checkpoint;
+        self
+    }
+
+    /// Wire a [`RoutedBackend`] (#1398) — the server binary calls this only
+    /// in the routed serving topology (`SHARD_COUNT` env > 1 at
+    /// `replicasPerShard <= 1`, no `--search-shard-segment-dirs`); every
+    /// other deployment shape leaves `routed` at its `None` default.
+    pub fn with_routed(mut self, routed: Arc<dyn RoutedBackend>) -> Self {
+        self.routed = Some(routed);
         self
     }
 
@@ -1045,6 +1111,7 @@ async fn drop_collection(
 async fn index(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
     Path(collection_id): Path<String>,
     Json(req): Json<IndexRequest>,
 ) -> Result<Json<IndexResponse>, ApiErr> {
@@ -1052,11 +1119,18 @@ async fn index(
     for item in &req.items {
         enforce_write_fence(&state, &collection_id, &item.external_id)?;
     }
-    let resp = state
-        .write_backend
-        .index(collection_id.clone(), req)
-        .await
-        .map_err(ApiErr::from)?;
+    let resp = if let Some(router) = &state.routed {
+        router
+            .index(collection_id.clone(), req, &headers)
+            .await
+            .map_err(ApiErr::from)?
+    } else {
+        state
+            .write_backend
+            .index(collection_id.clone(), req)
+            .await
+            .map_err(ApiErr::from)?
+    };
     Ok(Json(resp))
 }
 
@@ -1079,15 +1153,23 @@ struct DeleteQuery {
 async fn delete_external_id(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
     Path((collection_id, external_id)): Path<(String, String)>,
     Query(q): Query<DeleteQuery>,
 ) -> Result<StatusCode, ApiErr> {
     auth.ensure(&collection_id, Role::Write)?;
-    state
-        .write_backend
-        .delete(collection_id.clone(), external_id, q.field)
-        .await
-        .map_err(ApiErr::from)?;
+    if let Some(router) = &state.routed {
+        router
+            .delete(collection_id.clone(), external_id, q.field, &headers)
+            .await
+            .map_err(ApiErr::from)?;
+    } else {
+        state
+            .write_backend
+            .delete(collection_id.clone(), external_id, q.field)
+            .await
+            .map_err(ApiErr::from)?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1123,6 +1205,7 @@ async fn delete_external_id(
 async fn replace_docs(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
     Path(collection_id): Path<String>,
     Json(req): Json<ReplaceDocsRequest>,
 ) -> Result<Json<ReplaceDocsResponse>, ApiErr> {
@@ -1140,12 +1223,30 @@ async fn replace_docs(
     for doc in &req.docs {
         enforce_write_fence(&state, &collection_id, &doc.external_id)?;
     }
-    let resp = state
-        .write_backend
-        .replace_docs(collection_id.clone(), req)
-        .await
-        .map_err(ApiErr::from)?;
+    let resp = replace_docs_routed_or_local(&state, &headers, collection_id, req).await?;
     Ok(Json(resp))
+}
+
+/// Shared write-backend/router branch for [`replace_docs`] and
+/// [`replace_doc`] (its single-doc sugar).
+async fn replace_docs_routed_or_local(
+    state: &AppState,
+    headers: &HeaderMap,
+    collection_id: String,
+    req: ReplaceDocsRequest,
+) -> Result<ReplaceDocsResponse, ApiErr> {
+    if let Some(router) = &state.routed {
+        router
+            .replace_docs(collection_id, req, headers)
+            .await
+            .map_err(ApiErr::from)
+    } else {
+        state
+            .write_backend
+            .replace_docs(collection_id, req)
+            .await
+            .map_err(ApiErr::from)
+    }
 }
 
 /// Single-resource sugar over `docs:replace`: exactly the one-item batch
@@ -1171,6 +1272,7 @@ async fn replace_docs(
 async fn replace_doc(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
     Path((collection_id, external_id)): Path<(String, String)>,
     Json(body): Json<ReplaceDocBody>,
 ) -> Result<Json<ReplaceDocResult>, ApiErr> {
@@ -1183,11 +1285,7 @@ async fn replace_doc(
             fields: body.fields,
         }],
     };
-    let resp = state
-        .write_backend
-        .replace_docs(collection_id.clone(), req)
-        .await
-        .map_err(ApiErr::from)?;
+    let resp = replace_docs_routed_or_local(&state, &headers, collection_id, req).await?;
     let result = resp.results.into_iter().next().ok_or_else(|| {
         ApiErr::new(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1217,20 +1315,19 @@ async fn search(
     Path(collection_id): Path<String>,
     Json(req): Json<SearchRequest>,
 ) -> Result<Json<SearchResponse>, ApiErr> {
-    Ok(Json(search_core(
-        &state,
-        &auth,
-        &headers,
-        &collection_id,
-        req,
-    )?))
+    Ok(Json(
+        search_core(&state, &auth, &headers, &collection_id, req).await?,
+    ))
 }
 
 /// Shared implementation behind `POST /collections/{collection_id}/search`
 /// and its `QUERY /collections/{collection_id}` twin
 /// ([`collection_id_query_dispatch`], epic #1296 R1: every QUERY endpoint
-/// keeps a POST twin — same handler, identical response).
-fn search_core(
+/// keeps a POST twin — same handler, identical response). Consults
+/// `state.routed` first (#1398 R1) — a routed deployment scatters/forwards
+/// by ownership; every other deployment falls through to `search_backend`
+/// unchanged.
+async fn search_core(
     state: &AppState,
     auth: &AuthContext,
     headers: &HeaderMap,
@@ -1240,6 +1337,12 @@ fn search_core(
     auth.ensure(collection_id, Role::Read)?;
     let consistency = read_consistency_from(headers);
     enforce_read_consistency(state, consistency)?;
+    if let Some(router) = &state.routed {
+        return router
+            .search(collection_id, req, headers)
+            .await
+            .map_err(ApiErr::from);
+    }
     state
         .search_backend
         .search(collection_id, req)
@@ -1300,11 +1403,19 @@ async fn batch_search_core(
     let results = join_all(req.searches.into_iter().map(|item| {
         let state = state.clone();
         let auth = auth.clone();
+        let headers = headers.clone();
         async move {
             if let Err(e) = auth.ensure(&item.collection, Role::Read) {
                 return batch_search_auth_error(e);
             }
-            match state.search_backend.search(&item.collection, item.request) {
+            let result = if let Some(router) = &state.routed {
+                router
+                    .search(&item.collection, item.request, &headers)
+                    .await
+            } else {
+                state.search_backend.search(&item.collection, item.request)
+            };
+            match result {
                 Ok(response) => BatchSearchResult::Ok { response },
                 Err(e) => batch_search_storage_error(e),
             }
@@ -1384,7 +1495,7 @@ async fn collection_id_query_dispatch(
     }
     let headers = request.headers().clone();
     match Json::<SearchRequest>::from_request(request, &state).await {
-        Ok(Json(req)) => match search_core(&state, &auth, &headers, &collection_id, req) {
+        Ok(Json(req)) => match search_core(&state, &auth, &headers, &collection_id, req).await {
             Ok(resp) => Json(resp).into_response(),
             Err(e) => e.into_response(),
         },
@@ -1463,6 +1574,14 @@ fn batch_search_auth_error(e: crate::auth::AuthErr) -> BatchSearchResult {
     request_body = DuplicatesRequest,
     responses((status = 200, description = "Duplicate groups", body = DuplicatesResponse))
 )]
+/// Local-shard only, deliberately not wired to `state.routed` (#1398 known
+/// gap): `Engine::duplicates` filters by `min_group_size` *before* any
+/// cross-shard merge could happen, so scatter-then-merge would silently miss
+/// a true cross-shard group (e.g. one copy per shard under `min_group_size:
+/// 2`) — a correctness regression, not a routing gap. Unchanged from
+/// pre-#1398 behavior (already local-shard-only); a correct cross-shard
+/// implementation needs unfiltered per-shard candidate groups from
+/// `storage.rs`, out of this WI's scope.
 async fn duplicates(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -2151,9 +2270,61 @@ impl ApiErr {
     }
 }
 
+/// One-hop shard-forward failure — the owning shard was unreachable (pod
+/// down/rolling) or its response could not be decoded. Raised via `anyhow`
+/// by `routing_remote::RoutedRouter` so `ApiErr`'s classification stays
+/// centralized here rather than duplicated in the `operator`-gated module;
+/// R2 requires this to surface as a clear, distinctly-kinded retryable
+/// error, never a silent local answer.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+#[derive(Debug)]
+pub struct ShardForwardUnavailable(pub String);
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::fmt::Display for ShardForwardUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::error::Error for ShardForwardUnavailable {}
+
+/// The owning shard was reached and answered, but with a non-2xx status
+/// (e.g. a forwarded write hit `404`/`422`). Re-emitted locally with the
+/// same status so a forwarded error is as legible as a local one; `message`
+/// carries the remote's own `{error, message}` envelope verbatim.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+#[derive(Debug)]
+pub struct ShardForwardRemoteError {
+    pub status: u16,
+    pub message: String,
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::fmt::Display for ShardForwardRemoteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "shard forward error ({}): {}", self.status, self.message)
+    }
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::error::Error for ShardForwardRemoteError {}
+
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl From<anyhow::Error> for ApiErr {
     fn from(e: anyhow::Error) -> Self {
+        if e.downcast_ref::<ShardForwardUnavailable>().is_some() {
+            return Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "shard_forward_unavailable",
+                e.to_string(),
+            );
+        }
+        if let Some(re) = e.downcast_ref::<ShardForwardRemoteError>() {
+            let status = StatusCode::from_u16(re.status).unwrap_or(StatusCode::BAD_GATEWAY);
+            return Self::new(status, "shard_forwarded_error", re.message.clone());
+        }
         if let Some(se) = e.downcast_ref::<StorageError>() {
             return match se {
                 StorageError::CollectionNotFound(_) => {
@@ -2222,10 +2393,7 @@ impl From<crate::auth::AuthErr> for ApiErr {
     }
 }
 // CODEGEN-END
-
 ````
-## Changes
-<!-- type: changes lang: yaml -->
 
 ```yaml
 changes:
@@ -2252,4 +2420,25 @@ changes:
       `delete_external_id`, which is safe to race either way); a write to a
       fenced bucket is rejected `503 bucket_write_paused`. `AppState` gained
       a `write_fence: WriteFence` field (defaulted in `with_components`).
+  - path: projects/lumen/src/api.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1398 R1-R3: cross-pod shard routing for operator/k8s serving pods.
+      New `RoutedBackend` trait (`search`/`index`/`replace_docs`/`delete`,
+      all take the inbound `headers` so the one implementation can forward
+      `Authorization` + `x-read-consistency`); new `AppState.routed:
+      Option<Arc<dyn RoutedBackend>>` field (defaulted `None` in
+      `with_components`, wired via new `with_routed`). `search_core`,
+      `batch_search_core`, `index`, `delete_external_id`, `replace_docs`,
+      and `replace_doc` all branch on `state.routed` first and fall back to
+      the existing local `search_backend`/`write_backend` path unchanged
+      when it is absent, so `shardCount:1` serving never constructs a
+      router (AC5). New `ShardForwardUnavailable`/`ShardForwardRemoteError`
+      error types classify forwarding failures distinctly from local
+      errors via new `From<anyhow::Error> for ApiErr` downcast arms. The
+      `duplicates` handler is deliberately not wired to `state.routed`
+      (per-shard `min_group_size` filtering happens before a cross-shard
+      merge could be correct) — out of #1398's scope, left local-only.
 ```

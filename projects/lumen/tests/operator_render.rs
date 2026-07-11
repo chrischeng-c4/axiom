@@ -331,6 +331,28 @@ fn multi_shard_single_replica_is_fixed_storage_topology_not_hpa() {
         !has(&objs, "HorizontalPodAutoscaler", "search"),
         "HPA must not change multi-shard storage ownership"
     );
+
+    // #1398: shardCount > 1 at replicasPerShard <= 1 is the routed serving
+    // topology — each pod still needs LUMEN_HEADLESS_SERVICE to build stable
+    // per-shard DNS names (`lumen::routing::shard_host`) for one-hop
+    // cross-pod forwarding, even though there is no raft consensus to peer.
+    let c = &sts["spec"]["template"]["spec"]["containers"][0];
+    let names: Vec<String> = c["env"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        names.contains(&"LUMEN_HEADLESS_SERVICE".to_string()),
+        "routed topology (shardCount>1) must render LUMEN_HEADLESS_SERVICE; have {names:?}"
+    );
+    for absent in ["REPLICAS_PER_SHARD", "VOTER_COUNT"] {
+        assert!(
+            !names.contains(&absent.to_string()),
+            "single-member shards still have no raft peer env; unexpected {absent}; have {names:?}"
+        );
+    }
 }
 
 #[test]
