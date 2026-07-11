@@ -2756,6 +2756,33 @@ impl CraneliftJitBackend {
             }
         }
 
+        // #1073 / #1437: mirror the safe part of the recursion-leave fast
+        // path inline. Fetch this thread's TLS depth-cell address at runtime
+        // via `mb_recursion_depth_ptr`, then store `current.saturating_sub(1)`
+        // back.
+        // Keep the generic extern-call path as the fallback when the helper
+        // symbol is unavailable or the MIR shape differs.
+        if name == "mb_recursion_leave" && args.is_empty() {
+            if let Some(&depth_ptr_id) = self.extern_funcs.get("mb_recursion_depth_ptr") {
+                use cranelift_codegen::ir::condcodes::IntCC;
+                use cranelift_codegen::ir::InstBuilder;
+
+                let depth_ptr_ref = self
+                    .module()
+                    .declare_func_in_func(depth_ptr_id, builder.func);
+                let depth_ptr_call = builder.ins().call(depth_ptr_ref, &[]);
+                let depth_ptr = builder.inst_results(depth_ptr_call)[0];
+
+                let mem_flags = MemFlags::trusted();
+                let current = builder.ins().load(cl_types::I64, mem_flags, depth_ptr, 0);
+                let decremented = builder.ins().iadd_imm(current, -1);
+                let is_i64_min = builder.ins().icmp_imm(IntCC::Equal, current, i64::MIN);
+                let next = builder.ins().select(is_i64_min, current, decremented);
+                builder.ins().store(mem_flags, next, depth_ptr, 0);
+                return;
+            }
+        }
+
         if name == "mb_is_stop_iter" && args.len() == 1 {
             if let Some(dest_vreg) = dest {
                 const SENTINEL_BITS: i64 = 0xFFFE_0000_0000_0000_u64 as i64;
