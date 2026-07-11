@@ -215,6 +215,11 @@ pub(crate) fn current_active_module_name() -> String {
         .unwrap_or_else(|| "__main__".to_string())
 }
 
+pub(crate) fn active_module_matches(name: &str) -> bool {
+    ACTIVE_MODULE_NAMES.with(|names| names.borrow().last().is_some_and(|current| current == name))
+        || (name == "__main__" && ACTIVE_MODULE_NAMES.with(|names| names.borrow().last().is_none()))
+}
+
 pub(crate) fn caller_active_module_name() -> String {
     ACTIVE_MODULE_NAMES.with(|names| {
         let names = names.borrow();
@@ -564,8 +569,7 @@ pub fn mb_closure_get_func(closure_handle: MbValue) -> MbValue {
             let Some(idx) = closure_slot_index(id) else {
                 return MbValue::none();
             };
-            vec
-                .get(idx)
+            vec.get(idx)
                 .and_then(|slot| slot.as_ref())
                 .map(|c| c.func)
                 .unwrap_or(MbValue::none())
@@ -2243,8 +2247,14 @@ mod tests {
         );
         assert!(mb_closure_set_wrapped(closure, wrapped));
 
-        assert_eq!(extract_str(mb_func_get_name(closure)).as_deref(), Some("wrapped_name"));
-        assert_eq!(extract_str(mb_func_get_doc(closure)).as_deref(), Some("wrapped doc"));
+        assert_eq!(
+            extract_str(mb_func_get_name(closure)).as_deref(),
+            Some("wrapped_name")
+        );
+        assert_eq!(
+            extract_str(mb_func_get_doc(closure)).as_deref(),
+            Some("wrapped doc")
+        );
         assert_eq!(
             extract_str(mb_func_get_module(closure)).as_deref(),
             Some("wrapped.mod")
@@ -2252,8 +2262,14 @@ mod tests {
         assert_eq!(mb_closure_get_wrapped(closure), Some(wrapped));
 
         let plain = MbValue::from_int(4242);
-        mb_func_set_name(plain, MbValue::from_ptr(MbObject::new_str("plain".to_string())));
-        mb_func_set_doc(plain, MbValue::from_ptr(MbObject::new_str("plain doc".to_string())));
+        mb_func_set_name(
+            plain,
+            MbValue::from_ptr(MbObject::new_str("plain".to_string())),
+        );
+        mb_func_set_doc(
+            plain,
+            MbValue::from_ptr(MbObject::new_str("plain doc".to_string())),
+        );
         mb_func_set_module(
             plain,
             MbValue::from_ptr(MbObject::new_str("plain.mod".to_string())),
