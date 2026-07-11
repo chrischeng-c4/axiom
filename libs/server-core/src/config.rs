@@ -1,7 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 /// Listener bind configuration shared by TCP and HTTP servers.
-/// @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
+/// @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BindConfig {
     pub host: IpAddr,

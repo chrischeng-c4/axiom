@@ -1,5 +1,5 @@
 //! Shared HTTP runtime above `server-core` and `tcp-server`.
-//! @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
+//! @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 //!
 //! This crate is intentionally below `service-http`: it provides HTTP serving
 //! primitives for both production services and tool/dev servers. Service
@@ -16,7 +16,7 @@ pub use tcp_server as tcp;
 pub use h2c::ServerOptions as H2cServerOptions;
 
 /// Serve HTTP/1.1 + h2c on one listener.
-/// @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
+/// @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 pub async fn serve_h2c(
     listener: TcpListener,
     app: axum::Router,
