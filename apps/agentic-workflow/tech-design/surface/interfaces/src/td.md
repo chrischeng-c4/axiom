@@ -829,6 +829,14 @@ async fn bootstrap_td_issue(project_root: &std::path::Path, issue_ref: &str) -> 
 /// callers didn't pass `--spec-path`. Returns the checkout-relative path
 /// of the unique spec under `.aw/tech-design/` that the current branch added or modified
 /// relative to its parent. Returns None if zero or multiple candidates.
+///
+/// #1403: this is a *read/detect* path over branch history, not a spec-path
+/// *derivation* path — it only surfaces a spec file that some prior commit
+/// on this branch already placed under the legacy `.aw/tech-design/` tree
+/// (e.g. from before the resolver-backed default landed). It must never be
+/// widened into a fallback that invents a new `.aw/tech-design` path; new
+/// derivation goes through `default_spec_path_for_issue_in_project`, which
+/// hard-errors instead of falling back (see #1403).
 /// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
 pub(crate) fn discover_worktree_spec(worktree_abs: &std::path::Path) -> Option<String> {
     let git_bin = crate::git::find_git_bin()?;
@@ -1950,15 +1958,6 @@ fn active_td_section_types() -> Vec<crate::models::spec_rules::SectionType> {
         .collect()
 }
 
-#[cfg(test)]
-fn derive_spec_dir(labels: &[String]) -> String {
-    derive_spec_dir_from_parts(labels, None)
-}
-
-fn derive_spec_dir_for_issue(issue: &Issue) -> String {
-    derive_spec_dir_from_parts(&issue.labels, Some(&issue.title))
-}
-
 /// The `projects/<name>/...` → `apps/<name>/...` source-root move (#1211)
 /// left only `mamba` and `lumen` under the legacy `projects/` root; every
 /// other `app:<name>` label routes to `apps/`.
@@ -2005,41 +2004,44 @@ fn derive_project_td_spec_dir(labels: &[String]) -> String {
     format!("projects/score/tech-design/{concern}/")
 }
 
-fn project_label_for_issue(issue: &Issue) -> Option<&str> {
-    issue.labels.iter().find_map(|label| {
-        let project = label
-            .strip_prefix("app:")
-            .or_else(|| label.strip_prefix("lib:"))?
-            .trim();
-        (!project.is_empty()).then_some(project)
-    })
-}
-
-fn derive_spec_dir_from_parts(labels: &[String], title: Option<&str>) -> String {
-    let concern = derive_td_concern(labels, title);
-    for label in labels {
+/// Resolve the aw.toml project name implied by `issue`'s label set, per the
+/// current label conventions: `crate:<name>`, `app:<name>`, `lib:<name>`
+/// (checked in that label order, first match wins). `crate:` carries the two
+/// legacy name mappings `derive_project_td_spec_dir` also applies (`sdd` ->
+/// the `agentic-workflow` project, `mamba`/`cclab-mamba` -> the `mamba`
+/// project); every other `crate:<name>` maps straight through to a
+/// `<name>`-registered project row.
+///
+/// Returns `None` when no recognized label prefix is present at all —
+/// callers must fail loudly (#1403) rather than fall back to a legacy
+/// default path.
+fn project_label_for_issue(issue: &Issue) -> Option<String> {
+    for label in &issue.labels {
         if let Some(crate_name) = label.strip_prefix("crate:") {
-            return match crate_name {
-                "sdd" => format!("apps/agentic-workflow/{concern}/"),
-                "mamba" | "cclab-mamba" => format!("projects/mamba/{concern}/"),
-                _ => format!("crates/{}/{concern}/", slugify_path_component(crate_name)),
-            };
-        }
-        if let Some(app) = label.strip_prefix("app:") {
-            let app = app.trim();
-            if !app.is_empty() {
-                let root = app_source_root(app);
-                return format!("{root}/{}/{concern}/", slugify_path_component(app));
+            let crate_name = crate_name.trim();
+            if crate_name.is_empty() {
+                continue;
             }
+            return Some(
+                match crate_name {
+                    "sdd" => "agentic-workflow",
+                    "mamba" | "cclab-mamba" => "mamba",
+                    other => other,
+                }
+                .to_string(),
+            );
         }
-        if let Some(lib) = label.strip_prefix("lib:") {
-            let lib = lib.trim();
-            if !lib.is_empty() {
-                return format!("libs/{}/{concern}/", slugify_path_component(lib));
+        if let Some(project) = label
+            .strip_prefix("app:")
+            .or_else(|| label.strip_prefix("lib:"))
+        {
+            let project = project.trim();
+            if !project.is_empty() {
+                return Some(project.to_string());
             }
         }
     }
-    format!("projects/score/{concern}/")
+    None
 }
 
 fn derive_td_concern(labels: &[String], title: Option<&str>) -> &'static str {
@@ -2192,12 +2194,6 @@ fn td_section_queue_for_spec(
         .unwrap_or_else(|| td_section_queue(pass))
 }
 
-fn default_spec_path_for_issue(issue: &Issue, fallback_slug: &str, target_dir: &str) -> String {
-    let filename =
-        td_spec_filename_for_issue(issue).unwrap_or_else(|| format!("issue-{fallback_slug}"));
-    format!(".aw/tech-design/{}{}.md", target_dir, filename)
-}
-
 // Deterministic default spec path for `issue` — the same derivation `aw td
 // create` uses when no explicit `--spec-path` is given. Exposed at
 // `pub(crate)` (issue #854) as a last-resort fallback for the terminal
@@ -2205,30 +2201,50 @@ fn default_spec_path_for_issue(issue: &Issue, fallback_slug: &str, target_dir: &
 // (`resolve_slug_spec_paths` in cb.rs), used only when neither
 // `Issue.implements` nor a branch-diff-discovered spec
 // (`discover_worktree_spec`) can identify the completing slug's spec.
+//
+// Resolution is entirely td-root-resolver-backed
+// (`resolve_td_root_from_config`, the same machinery `aw td create
+// --from-source` uses since #1273/#1313): an issue's `crate:`/`app:`/`lib:`
+// label names an aw.toml `[[projects]]` row, whose `td_path`/`path` gives
+// the project-local `tech-design/` root. There is no retired repo-root
+// `.aw/tech-design` fallback (#1403 — merges #1336/#1246): an unrecognized
+// label or an unresolvable project name is a hard error, not a silent
+// legacy path.
 pub(crate) fn default_spec_path_for_issue_in_project(
     project_root: &std::path::Path,
     issue: &Issue,
     fallback_slug: &str,
-) -> String {
+) -> Result<String> {
     let filename =
         td_spec_filename_for_issue(issue).unwrap_or_else(|| format!("issue-{fallback_slug}"));
-    if let Some(project) = project_label_for_issue(issue) {
-        if let Ok(resolved) =
-            crate::services::project_registry::resolve_td_root_from_config(project_root, project)
-        {
-            let root = std::path::PathBuf::from(resolved.root);
-            if let Ok(rel_root) = root.strip_prefix(project_root) {
-                return slash_path(
-                    rel_root
-                        .join(derive_td_concern(&issue.labels, Some(&issue.title)))
-                        .join(format!("{filename}.md")),
-                );
-            }
-        }
-    }
-
-    let target_dir = derive_spec_dir_for_issue(issue);
-    default_spec_path_for_issue(issue, fallback_slug, &target_dir)
+    let project = project_label_for_issue(issue).ok_or_else(|| {
+        anyhow::anyhow!(
+            "cannot derive TD spec path for issue '{fallback_slug}': no recognized project \
+             label. Expected one of `crate:<name>`, `app:<name>`, or `lib:<name>`; labels \
+             present: {:?}. Add the correct project label to the issue, or pass --spec-path \
+             explicitly.",
+            issue.labels,
+        )
+    })?;
+    let resolved =
+        crate::services::project_registry::resolve_td_root_from_config(project_root, &project)
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "cannot derive TD spec path for issue '{fallback_slug}': project '{project}' \
+                     is not resolvable via aw.toml ({}: {}). Register `[[projects]] name = \
+                     \"{project}\"` (with `path`/`td_path`) in aw.toml, or pass --spec-path \
+                     explicitly.",
+                    e.kind,
+                    e.message,
+                )
+            })?;
+    let root = std::path::PathBuf::from(resolved.root);
+    let rel_root = root.strip_prefix(project_root).unwrap_or(&root);
+    Ok(slash_path(
+        rel_root
+            .join(derive_td_concern(&issue.labels, Some(&issue.title)))
+            .join(format!("{filename}.md")),
+    ))
 }
 
 fn slash_path(path: std::path::PathBuf) -> String {
@@ -2313,6 +2329,31 @@ fn initialize_td_payload_file(payload_path: &str, content: &str) -> Result<bool>
     }
     std::fs::write(abs, content)
         .with_context(|| format!("failed to write payload {}", abs.display()))?;
+    Ok(true)
+}
+
+/// Write the initial TD skeleton (frontmatter with `id`/`summary`/
+/// `fill_sections`, no sections yet) for a spec that does not exist on disk.
+/// Idempotent — a no-op when the file already exists, so this never
+/// clobbers authored content on a repeat `aw td create` call. Returns
+/// whether a file was written.
+///
+/// `run_create_brief` calls this itself (issue #1246/#1403) so the `apply`
+/// next-command it emits always targets a path the calling agent can
+/// immediately merge a section payload into, instead of a skeleton the
+/// agent would have had to hand-create — a write `aw guard` denies inside a
+/// guarded project's TD scope.
+fn initialize_td_spec_skeleton(spec_abs: &std::path::Path, slug: &str) -> Result<bool> {
+    if spec_abs.exists() {
+        return Ok(false);
+    }
+    if let Some(parent) = spec_abs.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create spec directory {}", parent.display()))?;
+    }
+    let skeleton = format!("---\nid: {slug}\nsummary: (fill)\nfill_sections: []\n---\n");
+    std::fs::write(spec_abs, skeleton)
+        .with_context(|| format!("failed to write TD skeleton {}", spec_abs.display()))?;
     Ok(true)
 }
 
@@ -2667,6 +2708,15 @@ fn lifecycle_pass_phase(pass: &str) -> String {
 /// `<project_root>/.aw/tech-design/`, mirror its exact relative path so
 /// the claim does not duplicate a legacy in-tree spec into a label-derived
 /// directory. Otherwise fall back to the project-local `tech-design` tree.
+///
+/// #1403: the `.aw/tech-design` branch here only *echoes* a path a caller
+/// handed in that already lives there (claiming a pre-existing legacy-tree
+/// source file in place) — it never *invents* a new `.aw/tech-design`
+/// path. The "otherwise" branch below always resolves through
+/// `derive_project_td_spec_dir`, which is the project-local `tech-design`
+/// tree, not the legacy root. This is a distinct code path from
+/// `default_spec_path_for_issue_in_project`'s derivation, which must never
+/// fall back to `.aw/tech-design` at all.
 fn preserve_or_derive_dest_rel(
     src: &std::path::Path,
     project_root: &std::path::Path,
@@ -2923,10 +2973,22 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     }
 
     let pass = td_authoring_pass(args.phase.as_deref());
-    let spec_path = args
-        .spec_path
-        .clone()
-        .unwrap_or_else(|| default_spec_path_for_issue_in_project(&project_root, &issue, &slug));
+    let spec_path = match args.spec_path.clone() {
+        Some(explicit) => explicit,
+        None => match default_spec_path_for_issue_in_project(&project_root, &issue, &slug) {
+            Ok(derived) => derived,
+            Err(e) => return td_error(&slug, e.to_string()),
+        },
+    };
+
+    // #1246/#1403: write the initial TD skeleton ourselves (idempotent, never
+    // overwrites an already-authored file) so the `apply` command this brief
+    // goes on to emit never targets a path only a *manual* edit could
+    // create. `aw guard` denies direct edit/create anywhere inside a guarded
+    // project's TD scope, so a skeleton that depended on the calling agent's
+    // own Write/Edit tool call would deadlock the same lifecycle it's
+    // driving.
+    initialize_td_spec_skeleton(&project_root.join(&spec_path), &slug)?;
 
     // Issue #939: record the spec `aw td create` just provisioned/located
     // for this issue in `Issue.implements`, so `cb.rs`'s tier-1
@@ -3044,8 +3106,11 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     println!();
     println!("## Target");
     println!();
-    println!("Write the TD skeleton to `{}`.", spec_path);
-    println!("Then fill exactly one initialized section payload at a time as directed below.");
+    println!(
+        "TD skeleton is at `{}` (frontmatter only, already initialized).",
+        spec_path
+    );
+    println!("Fill exactly one initialized section payload at a time as directed below.");
     println!();
     println!("## Spec format");
     println!();
@@ -4555,27 +4620,6 @@ mod tests {
     }
 
     #[test]
-    fn default_td_spec_path_uses_issue_title_not_numeric_id() {
-        let issue =
-            issue_with_title("enhancement(jet): emit parity-ready jet browser observation bundles");
-
-        assert_eq!(
-            default_spec_path_for_issue(&issue, "3940", "apps/jet/specs/"),
-            ".aw/tech-design/apps/jet/specs/emit-parity-ready-jet-browser-observation-bundles.md"
-        );
-    }
-
-    #[test]
-    fn default_td_spec_path_falls_back_when_title_has_no_words() {
-        let issue = issue_with_title("#3940");
-
-        assert_eq!(
-            default_spec_path_for_issue(&issue, "3940", "apps/jet/specs/"),
-            ".aw/tech-design/apps/jet/specs/issue-3940.md"
-        );
-    }
-
-    #[test]
     fn default_td_spec_path_uses_project_td_path_from_config() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join(".aw")).unwrap();
@@ -4596,9 +4640,91 @@ label = "app:agentic-workflow"
         issue.labels = vec!["app:agentic-workflow".to_string()];
 
         assert_eq!(
-            default_spec_path_for_issue_in_project(tmp.path(), &issue, "4162"),
+            default_spec_path_for_issue_in_project(tmp.path(), &issue, "4162").unwrap(),
             "apps/agentic-workflow/tech-design/logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md"
         );
+    }
+
+    // #1403 AC2: an issue whose labels use no recognized project-label
+    // convention (`crate:`/`app:`/`lib:`) must error loudly, naming the
+    // expected conventions — never fall back to a legacy default path.
+    #[test]
+    fn default_td_spec_path_errors_loudly_on_unrecognized_project_label() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut issue = issue_with_title("pgpool: served admin plane with drain-aware readiness");
+        // `project:` is the retired convention (#1336) — must not resolve.
+        issue.labels = vec!["project:pgpool".to_string()];
+
+        let err = default_spec_path_for_issue_in_project(tmp.path(), &issue, "1290")
+            .expect_err("unrecognized project label must error, not fall back");
+        let msg = err.to_string();
+        assert!(msg.contains("crate:"), "message: {msg}");
+        assert!(msg.contains("app:"), "message: {msg}");
+        assert!(msg.contains("lib:"), "message: {msg}");
+        assert!(!msg.contains(".aw/tech-design"), "message: {msg}");
+    }
+
+    // #1403 AC2: a recognized label naming a project that has no aw.toml
+    // `[[projects]]` row must also error loudly, naming the aw.toml fix.
+    #[test]
+    fn default_td_spec_path_errors_loudly_on_unresolvable_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut issue = issue_with_title("served admin plane with drain-aware readiness");
+        issue.labels = vec!["app:pgpool".to_string()];
+
+        let err = default_spec_path_for_issue_in_project(tmp.path(), &issue, "1290")
+            .expect_err("unresolvable project must error, not fall back");
+        let msg = err.to_string();
+        assert!(msg.contains("aw.toml"), "message: {msg}");
+        assert!(msg.contains("pgpool"), "message: {msg}");
+        assert!(!msg.contains(".aw/tech-design"), "message: {msg}");
+    }
+
+    // #1403 AC1 guard: no derivation branch — recognized `crate:`/`app:`/
+    // `lib:` labels across the concern-routing matrix — may ever produce a
+    // path rooted at the retired `.aw/tech-design`.
+    #[test]
+    fn default_td_spec_path_never_returns_an_aw_prefixed_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("aw.toml"),
+            r#"
+[[projects]]
+name = "agentic-workflow"
+aliases = ["aw"]
+path = "apps/agentic-workflow"
+td_path = "apps/agentic-workflow/tech-design"
+label = "app:agentic-workflow"
+
+[[projects]]
+name = "jet"
+path = "apps/jet"
+td_path = "apps/jet/tech-design"
+label = "app:jet"
+
+[[projects]]
+name = "pg"
+path = "libs/pg"
+td_path = "libs/pg/tech-design"
+label = "lib:pg"
+"#,
+        )
+        .unwrap();
+
+        for labels in [
+            vec!["crate:sdd".to_string()],
+            vec!["app:jet".to_string()],
+            vec!["lib:pg".to_string()],
+        ] {
+            let mut issue = issue_with_title("enhancement(jet): browser cli protocol schema");
+            issue.labels = labels.clone();
+            let derived = default_spec_path_for_issue_in_project(tmp.path(), &issue, "1")
+                .unwrap_or_else(|e| panic!("labels {labels:?} must resolve: {e}"));
+            assert!(
+                !derived.starts_with(".aw/"),
+                "labels {labels:?} derived a legacy .aw path: {derived}"
+            );
+        }
     }
 
     #[test]
@@ -4918,64 +5044,81 @@ label = "app:agentic-workflow"
     }
 
     #[test]
-    fn derive_spec_dir_uses_project_label_name() {
+    fn derive_project_td_spec_dir_uses_project_label_name() {
         let labels = vec!["type:enhancement".to_string(), "app:jet".to_string()];
-        assert_eq!(derive_spec_dir(&labels), "apps/jet/logic/");
+        assert_eq!(
+            derive_project_td_spec_dir(&labels),
+            "apps/jet/tech-design/logic/"
+        );
     }
 
     #[test]
-    fn derive_spec_dir_preserves_crate_routing() {
+    fn derive_project_td_spec_dir_preserves_crate_routing() {
         let labels = vec!["type:bug".to_string(), "crate:sdd".to_string()];
-        assert_eq!(derive_spec_dir(&labels), "apps/agentic-workflow/logic/");
+        assert_eq!(
+            derive_project_td_spec_dir(&labels),
+            "apps/agentic-workflow/tech-design/logic/"
+        );
     }
 
     #[test]
-    fn derive_spec_dir_routes_legacy_projects_root_apps_by_default() {
+    fn derive_project_td_spec_dir_routes_legacy_projects_root_apps_by_default() {
         // #1312: only mamba/lumen stayed under the legacy `projects/` root
         // after the projects/ -> apps/ move; every other app: label routes
         // to apps/.
         let labels = vec!["type:enhancement".to_string(), "app:mamba".to_string()];
-        assert_eq!(derive_spec_dir(&labels), "projects/mamba/logic/");
+        assert_eq!(
+            derive_project_td_spec_dir(&labels),
+            "projects/mamba/tech-design/logic/"
+        );
 
         let labels = vec!["type:enhancement".to_string(), "app:lumen".to_string()];
-        assert_eq!(derive_spec_dir(&labels), "projects/lumen/logic/");
+        assert_eq!(
+            derive_project_td_spec_dir(&labels),
+            "projects/lumen/tech-design/logic/"
+        );
 
         let labels = vec!["type:enhancement".to_string(), "app:keep".to_string()];
-        assert_eq!(derive_spec_dir(&labels), "apps/keep/logic/");
+        assert_eq!(
+            derive_project_td_spec_dir(&labels),
+            "apps/keep/tech-design/logic/"
+        );
     }
 
     #[test]
-    fn derive_spec_dir_routes_issue_title_to_ddd_concern() {
+    fn derive_td_concern_routes_issue_title_to_ddd_concern() {
         let issue = issue_with_title("enhancement(jet): browser cli protocol schema");
         assert_eq!(
-            derive_spec_dir_for_issue(&issue),
-            "apps/jet/interfaces/cli/"
+            derive_td_concern(&issue.labels, Some(&issue.title)),
+            "interfaces/cli"
         );
 
         let issue = issue_with_title("test(jet): parity fixture conformance gate");
-        assert_eq!(derive_spec_dir_for_issue(&issue), "apps/jet/validate/");
+        assert_eq!(
+            derive_td_concern(&issue.labels, Some(&issue.title)),
+            "validate"
+        );
     }
 
     #[test]
     fn interface_concern_never_derives_a_loose_interfaces_path() {
         // #460: a loose `interfaces/<slug>.md` fails R6a (structure:loose-root-file),
         // so `aw td create --apply` deadlocked on its own derived path. The derived
-        // dir must always carry a protocol subdir under interfaces/.
+        // concern must always carry a protocol subdir under interfaces/.
         for (title, want_subdir) in [
             ("browser cli protocol schema", "interfaces/cli"),
             ("widget service api contract", "interfaces/rest"),
             ("wire protocol for rpc bundles", "interfaces/rpc"),
         ] {
-            let dir = derive_spec_dir_for_issue(&issue_with_title(title));
+            let concern = derive_td_concern(&[], Some(title));
             assert_eq!(
-                dir,
-                format!("apps/jet/{want_subdir}/"),
+                concern, want_subdir,
                 "interface concern for `{title}` must land under a protocol subdir"
             );
             assert_ne!(
-                dir.trim_end_matches('/').rsplit('/').next(),
+                concern.trim_end_matches('/').rsplit('/').next(),
                 Some("interfaces"),
-                "loose interfaces dir (no protocol subdir) for `{title}`: `{dir}`"
+                "loose interfaces dir (no protocol subdir) for `{title}`: `{concern}`"
             );
         }
     }
@@ -5371,6 +5514,38 @@ label = "app:agentic-workflow"
 
         assert!(!initialize_td_payload_file(&payload_path_s, "second\n").unwrap());
         assert_eq!(std::fs::read_to_string(&payload_path).unwrap(), "first\n");
+    }
+
+    // #1403 AC3: `run_create_brief` calls `initialize_td_spec_skeleton`
+    // itself (via the `aw` process, not an agent-issued Write tool call) so
+    // the `apply --section ...` next-command it emits never targets a spec
+    // path that only a manual, guard-deniable edit could create (#1246).
+    #[test]
+    fn initialize_td_spec_skeleton_writes_frontmatter_and_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spec_abs = tmp
+            .path()
+            .join("apps/widget/tech-design/logic/some-slug.md");
+
+        assert!(initialize_td_spec_skeleton(&spec_abs, "some-slug").unwrap());
+        let content = std::fs::read_to_string(&spec_abs).unwrap();
+        assert!(content.starts_with("---\n"), "content: {content}");
+        assert!(content.contains("id: some-slug"), "content: {content}");
+        assert!(content.contains("fill_sections: []"), "content: {content}");
+
+        // Idempotent: a second call on an already-authored file must not
+        // clobber it (a repeat `aw td create` brief call between section
+        // fills must never lose in-progress content).
+        std::fs::write(
+            &spec_abs,
+            "---\nid: some-slug\nfill_sections: [logic]\n---\nauthored\n",
+        )
+        .unwrap();
+        assert!(!initialize_td_spec_skeleton(&spec_abs, "some-slug").unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&spec_abs).unwrap(),
+            "---\nid: some-slug\nfill_sections: [logic]\n---\nauthored\n"
+        );
     }
 
     #[test]
