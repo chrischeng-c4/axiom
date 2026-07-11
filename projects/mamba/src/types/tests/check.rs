@@ -49,6 +49,28 @@ fn check_desugared(src: &str) -> Vec<String> {
     errors.into_iter().map(|e| e.to_string()).collect()
 }
 
+fn has_parameter_error(errors: &[String], parameter: &str) -> bool {
+    let marker = format!("parameter `{parameter}`");
+    errors.iter().any(|error| error.contains(&marker))
+}
+
+fn parameter_error_count(errors: &[String], parameter: &str) -> usize {
+    let marker = format!("parameter `{parameter}`");
+    errors
+        .iter()
+        .filter(|error| error.contains(&marker))
+        .count()
+}
+
+fn bare_instance_parameter_error_count(errors: &[String]) -> usize {
+    errors
+        .iter()
+        .filter(|error| {
+            error.contains("got `_W`") || error.contains("does not satisfy parameter")
+        })
+        .count()
+}
+
 #[test]
 fn test_valid_fibonacci() {
     let errors = check(
@@ -89,6 +111,46 @@ fn test_function_str_arg_rejects_bytes_literal() {
     assert!(
         errors.is_empty(),
         "valid str literal and dynamic Any calls should remain accepted, got: {errors:?}"
+    );
+}
+
+#[test]
+fn external_builtin_annotations_preserve_nominal_identity() {
+    let errors = check(
+        "data: bytes = b\"ok\"\n\
+         mutable: bytearray = bytearray(b\"ok\")\n\
+         number: complex = 1j\n\
+         view: memoryview = memoryview(data)\n\
+         span: range = range(3)\n\
+         cut: slice = slice(1)\n\
+         frozen: frozenset[int] = frozenset()\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "external builtin annotations must match their literals and constructors: {errors:?}"
+    );
+
+    let errors = check(
+        "data: bytes = bytearray()\n\
+         mutable: bytearray = b\"bad\"\n\
+         number: complex = \"bad\"\n\
+         view: memoryview = b\"bad\"\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("expected `bytes`, got `bytearray`")),
+        "bytes and bytearray must stay nominally distinct: {errors:?}"
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("expected `bytearray`, got `bytes`")),
+        "bytearray and bytes must stay nominally distinct: {errors:?}"
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("expected `complex`, got `str`")),
+        "complex annotations must reject strings: {errors:?}"
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("expected `memoryview`, got `bytes`")),
+        "memoryview annotations must reject raw bytes: {errors:?}"
     );
 }
 
@@ -3847,17 +3909,13 @@ fn test_iter_two_arg_form_accepted() {
 fn test_stdlib_iter_wrong_bare_object_rejected() {
     let errors = check("class _W:\n    pass\niter(_W())\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `object`")),
+        has_parameter_error(&errors, "object"),
         "iter(_W()) should reject a bare object operand, got: {errors:?}"
     );
 
     let errors = check("class _W:\n    pass\niter(_W(), None)\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `object`")),
+        has_parameter_error(&errors, "object"),
         "iter(_W(), None) should reject a bare callable operand, got: {errors:?}"
     );
 
@@ -3877,7 +3935,7 @@ fn test_stdlib_list_dunder_contracts_rejected() {
     );
     let list_value_errors = errors
         .iter()
-        .filter(|e| e.contains("expected `list`, got `int`"))
+        .filter(|e| e.contains("got `int` for parameter `value`"))
         .count();
     assert_eq!(
         list_value_errors, 5,
@@ -3887,10 +3945,7 @@ fn test_stdlib_list_dunder_contracts_rejected() {
     let errors = check(
         "class _W:\n    pass\nobj = []\nobj.__getitem__(_W())\nobj.__delitem__(_W())\nobj.__setitem__(_W(), None)\n",
     );
-    let key_errors = errors
-        .iter()
-        .filter(|e| e.contains("does not satisfy parameter `key`"))
-        .count();
+    let key_errors = parameter_error_count(&errors, "key");
     assert_eq!(
         key_errors, 3,
         "list key dunders should reject bare key operands, got: {errors:?}"
@@ -3912,7 +3967,7 @@ fn test_stdlib_tuple_dunder_contracts_rejected() {
     );
     let tuple_value_errors = errors
         .iter()
-        .filter(|e| e.contains("expected `tuple`, got `int`"))
+        .filter(|e| e.contains("got `int` for parameter `value`"))
         .count();
     assert_eq!(
         tuple_value_errors, 5,
@@ -3920,10 +3975,7 @@ fn test_stdlib_tuple_dunder_contracts_rejected() {
     );
 
     let errors = check("class _W:\n    pass\nobj = ()\nobj.__getitem__(_W())\n");
-    let key_errors = errors
-        .iter()
-        .filter(|e| e.contains("does not satisfy parameter `key`"))
-        .count();
+    let key_errors = parameter_error_count(&errors, "key");
     assert_eq!(
         key_errors, 1,
         "tuple key dunder should reject a bare key operand, got: {errors:?}"
@@ -3954,18 +4006,14 @@ fn test_stdlib_type_and_zip_contracts_rejected() {
         "class _W:\n    pass\nfrom builtins import type\nobj = object.__new__(type)\nobj.__subclasscheck__(_W())\n",
     );
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `subclass`")),
+        has_parameter_error(&errors, "subclass"),
         "type.__subclasscheck__ should reject a bare instance subclass, got: {errors:?}"
     );
 
     let errors =
         check("class _W:\n    pass\nfrom builtins import zip\nobj = object.__new__(zip)\nobj.__new__(_W())\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `iter1`")),
+        has_parameter_error(&errors, "iter1"),
         "zip.__new__ should reject a bare non-iterable probe, got: {errors:?}"
     );
 
@@ -4027,10 +4075,7 @@ fn test_stdlib_slice_new_contracts_rejected() {
     let errors = check(
         "from builtins import slice\nclass _W:\n    pass\nslice.__new__(slice, _W())\nslice.__new__(slice, _W(), None)\nslice.__new__(slice, None, _W())\n",
     );
-    let typed_errors = errors
-        .iter()
-        .filter(|e| e.contains("does not satisfy parameter"))
-        .count();
+    let typed_errors = bare_instance_parameter_error_count(&errors);
     assert_eq!(
         typed_errors, 3,
         "slice.__new__ should reject bare start/stop instances, got: {errors:?}"
@@ -4050,12 +4095,9 @@ fn test_stdlib_str_contracts_rejected() {
     let errors = check(
         "from builtins import str\nclass _W:\n    pass\nobj = str.__new__(str)\nobj.__add__(_W())\nobj.__add__(123)\nobj.__getitem__(_W())\nobj.__mod__(_W())\nobj.__mul__(_W())\nobj.__rmul__(_W())\nobj.center(_W())\nobj.endswith(_W())\nobj.expandtabs(_W())\nstr.__new__(str, _W(), \"utf-8\")\n",
     );
-    let typed_errors = errors
-        .iter()
-        .filter(|e| e.contains("does not satisfy parameter"))
-        .count();
+    let typed_errors = bare_instance_parameter_error_count(&errors);
     assert_eq!(
-        typed_errors, 9,
+        typed_errors, 8,
         "str protocol/typed walls should reject bare instances, got: {errors:?}"
     );
     assert!(
@@ -4079,15 +4121,12 @@ fn test_stdlib_str_text_method_contracts_rejected() {
     let errors = check(
         "from builtins import str\nclass _W:\n    pass\nobj = str.__new__(str)\nobj.ljust(_W())\nobj.rjust(_W())\nobj.zfill(_W())\nobj.lstrip(_W())\nobj.rstrip(_W())\nobj.strip(_W())\nobj.split(_W())\nobj.rsplit(_W())\nobj.startswith(_W())\nstr.maketrans(_W())\nobj.partition(123)\nobj.rpartition(123)\nobj.removeprefix(123)\nobj.removesuffix(123)\nobj.replace(123, \"\")\nobj.splitlines(123)\nstr.maketrans(123, \"\")\n",
     );
-    let typed_errors = errors
-        .iter()
-        .filter(|e| e.contains("does not satisfy parameter"))
-        .count();
+    let typed_errors = bare_instance_parameter_error_count(&errors);
     assert_eq!(
         typed_errors, 10,
         "str text-method protocol walls should reject bare instances, got: {errors:?}"
     );
-    let scalar_errors = errors.iter().filter(|e| e.contains("expected `")).count();
+    let scalar_errors = errors.len().saturating_sub(typed_errors);
     assert_eq!(
         scalar_errors, 7,
         "str text-method scalar walls should reject wrong scalars, got: {errors:?}"
@@ -4107,9 +4146,7 @@ fn test_stdlib_map_new_callable_rejected() {
     let errors =
         check("from builtins import map\nclass _W:\n    pass\nmap.__new__(map, _W(), None)\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `func`")),
+        has_parameter_error(&errors, "func"),
         "map.__new__(map, _W(), None) should reject a bare non-Callable func, got: {errors:?}"
     );
 
@@ -4127,10 +4164,7 @@ fn test_stdlib_memoryview_method_contracts_rejected() {
     let errors = check(
         "from builtins import memoryview\nclass _W:\n    pass\nobj = memoryview(bytearray(b\"abc\"))\nobj.__exit__(_W(), None, None)\nobj.__getitem__(_W())\nobj.__setitem__(_W(), None)\nobj.tobytes(_W())\nobj.__release_buffer__(12345)\n",
     );
-    let typed_errors = errors
-        .iter()
-        .filter(|e| e.contains("does not satisfy parameter"))
-        .count();
+    let typed_errors = bare_instance_parameter_error_count(&errors);
     assert_eq!(
         typed_errors, 4,
         "memoryview typed params should reject bare user instances, got: {errors:?}"
@@ -4156,10 +4190,7 @@ fn test_stdlib_range_method_contracts_rejected() {
     let errors = check(
         "from builtins import range\nclass _W:\n    pass\nobj = range(3)\nobj.__getitem__(_W())\nrange.__new__(range, _W())\nrange.__new__(range, _W(), 3)\nrange.__new__(range, 0, _W())\n",
     );
-    let typed_errors = errors
-        .iter()
-        .filter(|e| e.contains("does not satisfy parameter"))
-        .count();
+    let typed_errors = bare_instance_parameter_error_count(&errors);
     assert_eq!(
         typed_errors, 4,
         "range protocol params should reject bare user instances, got: {errors:?}"
@@ -4179,12 +4210,9 @@ fn test_stdlib_property_descriptor_contracts_rejected() {
     let errors = check(
         "from builtins import property\nclass _W:\n    pass\ndef f(self=None):\n    return None\nobj = property(f)\nobj.__get__(_W(), None)\nobj.__get__(None, _W())\nobj.getter(_W())\nobj.setter(_W())\nobj.deleter(_W())\nproperty(_W())\n",
     );
-    let typed_errors = errors
-        .iter()
-        .filter(|e| e.contains("does not satisfy parameter"))
-        .count();
+    let typed_errors = bare_instance_parameter_error_count(&errors);
     assert_eq!(
-        typed_errors, 6,
+        typed_errors, 5,
         "property descriptor protocol slots should reject bare user instances, got: {errors:?}"
     );
 
@@ -4202,9 +4230,7 @@ fn test_stdlib_object_subclasshook_rejects_instance_not_type() {
     let errors =
         check("from builtins import object\nclass _W:\n    pass\nobject.__subclasshook__(_W())\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `subclass`")),
+        has_parameter_error(&errors, "subclass"),
         "object.__subclasshook__(_W()) should reject a bare instance, got: {errors:?}"
     );
 
@@ -4526,10 +4552,17 @@ fn test_stdlib_constructor_wrong_scalar_rejected() {
         errors.iter().any(|e| e.contains("argument type mismatch")),
         "SyntaxError(non_str_msg, details) should be rejected by the strict type wall, got: {errors:?}"
     );
-    let errors = check("from builtins import SyntaxError\nSyntaxError(\"bad\", None)\n");
+    let errors = check(
+        "from builtins import SyntaxError\nSyntaxError(\"bad\", (\"file.py\", 1, 1, \"line\"))\n",
+    );
     assert!(
         errors.is_empty(),
-        "SyntaxError(str_msg, details) must be clean at type-check time, got: {errors:?}"
+        "SyntaxError(str_msg, valid_details) must be clean at type-check time, got: {errors:?}"
+    );
+    let errors = check("from builtins import SyntaxError\nSyntaxError(\"bad\", None)\n");
+    assert!(
+        has_parameter_error(&errors, "info"),
+        "SyntaxError details must follow CPython's tuple contract, got: {errors:?}"
     );
 }
 
@@ -4539,9 +4572,7 @@ fn test_stdlib_exception_group_typed_method_rejects_bare_instance() {
         "from builtins import ExceptionGroup\nclass _W:\n    pass\nobj = ExceptionGroup(\"msg\", [ValueError(\"x\")])\nobj.split(_W())\n",
     );
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `matcher_value`")),
+        has_parameter_error(&errors, "matcher_value"),
         "ExceptionGroup.split(_W()) should reject a bare instance, got: {errors:?}"
     );
 
@@ -4549,9 +4580,7 @@ fn test_stdlib_exception_group_typed_method_rejects_bare_instance() {
         "from builtins import BaseExceptionGroup\nclass _W:\n    pass\nobj = BaseExceptionGroup(\"msg\", [ValueError(\"x\")])\nobj.derive(_W())\n",
     );
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `excs`")),
+        has_parameter_error(&errors, "excs"),
         "BaseExceptionGroup.derive(_W()) should reject a bare instance, got: {errors:?}"
     );
 
@@ -4702,17 +4731,13 @@ fn test_stdlib_bytes_bytearray_constructor_overload_walls() {
 
     let errors = check("from builtins import bytes\nbytes(12345, \"\")\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("expected `str` source when `encoding` is provided")),
+        has_parameter_error(&errors, "string"),
         "bytes(int, encoding) should reject the dependent overload mismatch, got: {errors:?}"
     );
 
     let errors = check("from builtins import bytearray\nbytearray(12345, \"\")\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("expected `str` source when `encoding` is provided")),
+        has_parameter_error(&errors, "string"),
         "bytearray(int, encoding) should reject the dependent overload mismatch, got: {errors:?}"
     );
 
@@ -4891,7 +4916,15 @@ fn test_dict_operator_negative_mapping_walls() {
     );
 
     let errors = check(
-        "class MappingLike:\n    def keys(self):\n        return []\n    def __getitem__(self, key):\n        return 1\nobj: dict[str, int] = {}\nobj.__or__({\"a\": 1})\nobj.__or__(MappingLike())\nobj.__ior__([(\"b\", 2)])\nvalue: Any = 1\nobj.__ror__(value)\n",
+        "class MappingLike:\n    def keys(self):\n        return []\n    def __getitem__(self, key):\n        return 1\nobj: dict[str, int] = {}\nobj.__or__(MappingLike())\n",
+    );
+    assert!(
+        has_parameter_error(&errors, "value"),
+        "dict.__or__ only accepts dict operands, not arbitrary mappings: {errors:?}"
+    );
+
+    let errors = check(
+        "class MappingLike:\n    def keys(self):\n        return []\n    def __getitem__(self, key):\n        return 1\nobj: dict[str, int] = {}\nobj.__or__({\"a\": 1})\nobj.__ior__(MappingLike())\nobj.__ior__([(\"b\", 2)])\nvalue: Any = 1\nobj.__ror__(value)\n",
     );
     assert!(
         errors.is_empty(),
@@ -4963,9 +4996,7 @@ fn test_stdlib_staticmethod_wrong_bare_instance_rejected() {
 fn test_stdlib_function_get_owner_rejected() {
     let errors = check("class _W:\n    pass\ndef f():\n    pass\nf.__get__(None, _W())\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `owner`")),
+        has_parameter_error(&errors, "owner"),
         "function.__get__(None, _W()) should reject a bare owner operand, got: {errors:?}"
     );
 
@@ -4980,18 +5011,14 @@ fn test_stdlib_function_get_owner_rejected() {
 fn test_stdlib_int_new_x_rejected() {
     let errors = check("from builtins import int\nclass _W:\n    pass\nint.__new__(int, _W())\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `x`")),
+        has_parameter_error(&errors, "x"),
         "int.__new__(int, _W()) should reject a bare x operand, got: {errors:?}"
     );
 
     let errors =
         check("from builtins import int\nclass _W:\n    pass\nint.__new__(int, _W(), None)\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("does not satisfy parameter `x`")),
+        has_parameter_error(&errors, "x"),
         "int.__new__(int, _W(), None) should reject a bare x operand before runtime base validation, got: {errors:?}"
     );
 
@@ -5384,5 +5411,181 @@ fn property_getter_and_setter_keep_distinct_type_contracts() {
             .count(),
         1,
         "setter annotations must reject the wrong assigned value: {invalid:?}"
+    );
+}
+
+#[test]
+fn typeshed_generic_module_function_propagates_return_type() {
+    for source in [
+        "from copy import copy\nvalue: int = copy(1)\ntext: str = copy(\"x\")\n",
+        "import copy\nvalue: int = copy.copy(1)\ntext: str = copy.copy(\"x\")\n",
+    ] {
+        let errors = check(source);
+        assert!(
+            errors.is_empty(),
+            "copy.copy must preserve its argument TypeVar in the return: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn typeshed_generic_module_function_rejects_wrong_result_annotation() {
+    for source in [
+        "from copy import copy\nvalue: str = copy(1)\n",
+        "import copy\nvalue: str = copy.copy(1)\n",
+    ] {
+        let errors = check(source);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("expected `str`, got `int`")),
+            "copy.copy(1) must infer int rather than Any: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn typeshed_structured_binder_enforces_required_extra_and_duplicate_arguments() {
+    for (source, needle) in [
+        ("from copy import copy\ncopy()\n", "missing required parameter `x`"),
+        (
+            "from copy import copy\ncopy(1, 2)\n",
+            "argument that no parameter accepts",
+        ),
+        (
+            "import ast\nast.parse(\"x\", source=\"y\")\n",
+            "multiple values for parameter `source`",
+        ),
+    ] {
+        let errors = check(source);
+        assert!(
+            errors.iter().any(|error| error.contains(needle)),
+            "structured binder must reject `{source}` with `{needle}`: {errors:?}"
+        );
+    }
+
+    let errors = check(
+        "import ast\n\
+         ast.parse(\"x\")\n\
+         ast.parse(\"x\", filename=\"demo.py\", type_comments=True)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "defaulted and keyword-only parameters must remain optional: {errors:?}"
+    );
+}
+
+#[test]
+fn typeshed_structured_literal_overloads_match_exact_ast_values() {
+    let valid = check(
+        "import time\n\
+         time.get_clock_info(\"monotonic\")\n\
+         time.get_clock_info(\"perf_counter\")\n\
+         time.get_clock_info(\"thread_time\")\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "exact Literal arguments must select their overloads: {valid:?}"
+    );
+
+    let invalid = check("import time\ntime.get_clock_info(\"bogus\")\n");
+    assert!(
+        invalid
+            .iter()
+            .any(|error| error.contains("argument type mismatch")),
+        "a value outside the Literal set must be rejected: {invalid:?}"
+    );
+}
+
+#[test]
+fn typeshed_structured_constructor_binds_without_exposing_receiver() {
+    for source in [
+        "from modulefinder import Module\nModule()\n",
+        "import modulefinder as mf\nmf.Module()\n",
+    ] {
+        let errors = check(source);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("missing required parameter `name`")),
+            "constructor must hide self and require name: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn typeshed_structured_bound_and_builtin_methods_enforce_arguments() {
+    for (source, parameter) in [
+        (
+            "from html.parser import HTMLParser\n\
+             parser = HTMLParser()\n\
+             parser.handle_entityref(1)\n",
+            "name",
+        ),
+        (
+            "import html.parser as hp\n\
+             parser = hp.HTMLParser()\n\
+             parser.handle_entityref(1)\n",
+            "name",
+        ),
+        ("items = [1]\nitems.sort(reverse=\"bad\")\n", "reverse"),
+    ] {
+        let errors = check(source);
+        assert!(
+            errors.iter().any(|error| {
+                error.contains("argument type mismatch")
+                    && error.contains(&format!("parameter `{parameter}`"))
+            }),
+            "bound method must enforce `{parameter}` through TypeSpec: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn typeshed_structured_descriptor_access_controls_receiver_visibility() {
+    for (source, missing) in [
+        (
+            "from datetime import date\ndate.fromtimestamp()\n",
+            "timestamp",
+        ),
+        (
+            "from email.headerregistry import DateHeader\nDateHeader.value_parser()\n",
+            "value",
+        ),
+        (
+            "from html.parser import HTMLParser\n\
+             HTMLParser.handle_entityref(object.__new__(HTMLParser))\n",
+            "name",
+        ),
+    ] {
+        let errors = check(source);
+        assert!(
+            errors.iter().any(|error| {
+                error.contains(&format!("missing required parameter `{missing}`"))
+            }),
+            "descriptor binding must expose only the Python-visible parameters: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn typeshed_structured_alias_expansion_enforces_literal_contracts() {
+    let valid = check(
+        "import logging\n\
+         logging.basicConfig(style=\"%\")\n\
+         logging.basicConfig(style=\"{\")\n\
+         logging.basicConfig(style=\"$\")\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "typeshed alias Literal members must remain valid: {valid:?}"
+    );
+
+    let invalid = check("import logging\nlogging.basicConfig(style=\"bogus\")\n");
+    assert!(
+        invalid.iter().any(|error| {
+            error.contains("argument type mismatch") && error.contains("parameter `style`")
+        }),
+        "expanded alias target must reject values outside its Literal set: {invalid:?}"
     );
 }
