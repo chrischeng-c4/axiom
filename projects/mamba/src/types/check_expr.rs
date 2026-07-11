@@ -362,6 +362,7 @@ impl TypeChecker {
                         params,
                         ret,
                         variadic,
+                        ..
                     } => {
                         let has_star = args
                             .iter()
@@ -983,6 +984,7 @@ impl TypeChecker {
                     params: param_types,
                     ret,
                     variadic: false,
+                    param_spec: None,
                 })
             }
             Expr::ListComp {
@@ -1503,7 +1505,68 @@ impl TypeChecker {
         materialized
     }
 
-    fn materialize_stdlib_type(
+    fn materialize_stdlib_param_spec(
+        &mut self,
+        spec_id: super::stdlib_typespec::TypeSpecId,
+    ) -> Option<super::ty::TypeVarId> {
+        use super::stdlib_typespec::{self as spec, TypeParamSpecKind, TypeSpecNode};
+
+        let TypeSpecNode::TypeParam(param_id) = spec::node(spec_id) else {
+            return None;
+        };
+        if spec::type_param(*param_id).kind != TypeParamSpecKind::ParamSpec {
+            return None;
+        }
+        let ty = self.materialize_stdlib_type_param(*param_id)?;
+        let Ty::TypeVar(var) = self.tcx.get(ty) else {
+            return None;
+        };
+        Some(*var)
+    }
+
+    fn materialize_stdlib_callable_params(
+        &mut self,
+        spec_id: super::stdlib_typespec::TypeSpecId,
+    ) -> Option<(Vec<TypeId>, bool, Option<super::ty::TypeVarId>)> {
+        use super::stdlib_typespec::{self as spec, TypeSpecNode};
+
+        match spec::node(spec_id).clone() {
+            TypeSpecNode::ParamList(range) => {
+                let params = spec::edges(range)
+                    .iter()
+                    .map(|param| self.materialize_stdlib_type(*param))
+                    .collect::<Option<Vec<_>>>()?;
+                Some((params, false, None))
+            }
+            TypeSpecNode::Ellipsis => Some((Vec::new(), true, None)),
+            TypeSpecNode::TypeParam(_) => {
+                let param_spec = self.materialize_stdlib_param_spec(spec_id)?;
+                Some((Vec::new(), false, Some(param_spec)))
+            }
+            TypeSpecNode::Apply { base, args } => {
+                let TypeSpecNode::Name { module, name, .. } = spec::node(base) else {
+                    return None;
+                };
+                if !matches!(
+                    (spec::string(*module), spec::string(*name)),
+                    ("typing", "Concatenate") | ("typing_extensions", "Concatenate")
+                ) {
+                    return None;
+                }
+                let args = spec::edges(args);
+                let (tail, prefix) = args.split_last()?;
+                let param_spec = self.materialize_stdlib_param_spec(*tail)?;
+                let params = prefix
+                    .iter()
+                    .map(|param| self.materialize_stdlib_type(*param))
+                    .collect::<Option<Vec<_>>>()?;
+                Some((params, false, Some(param_spec)))
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn materialize_stdlib_type(
         &mut self,
         spec_id: super::stdlib_typespec::TypeSpecId,
     ) -> Option<TypeId> {
@@ -1621,22 +1684,14 @@ impl TypeChecker {
                     ("typing", "Callable") | ("collections.abc", "Callable")
                         if args.len() == 2 =>
                     {
-                        let (params, variadic) = match spec::node(args[0]) {
-                            TypeSpecNode::ParamList(range) => (
-                                spec::edges(*range)
-                                    .iter()
-                                    .map(|param| self.materialize_stdlib_type(*param))
-                                    .collect::<Option<Vec<_>>>()?,
-                                false,
-                            ),
-                            TypeSpecNode::Ellipsis => (Vec::new(), true),
-                            _ => return None,
-                        };
+                        let (params, variadic, param_spec) =
+                            self.materialize_stdlib_callable_params(args[0])?;
                         let ret = self.materialize_stdlib_type(args[1])?;
                         self.tcx.intern(Ty::Fn {
                             params,
                             ret,
                             variadic,
+                            param_spec,
                         })
                     }
                     ("typing", "TypeGuard")
@@ -2499,6 +2554,131 @@ impl TypeChecker {
         self.stdlib_type_relation_inner(expected, actual, &mut std::collections::HashSet::new())
     }
 
+    fn stdlib_callable_relation_inner(
+        &mut self,
+        expected: TypeId,
+        actual: TypeId,
+        visiting: &mut std::collections::HashSet<(TypeId, TypeId)>,
+    ) -> StrictRelation {
+        let Ty::Fn {
+            params: expected_params,
+            ret: expected_ret,
+            variadic: expected_variadic,
+            param_spec: expected_param_spec,
+        } = self.tcx.get(expected).clone()
+        else {
+            return StrictRelation::Indeterminate;
+        };
+        let Ty::Fn {
+            params: actual_params,
+            ret: actual_ret,
+            variadic: actual_variadic,
+            param_spec: actual_param_spec,
+        } = self.tcx.get(actual).clone()
+        else {
+            return match self.tcx.get(actual).clone() {
+                Ty::External(ExternalValue::Callable(_)) | Ty::TypeObject(_) => {
+                    StrictRelation::Indeterminate
+                }
+                Ty::Class {
+                    role: ClassRole::Instance,
+                    user: Some(user),
+                    ..
+                } => match self.user_protocol_method(
+                    user.symbol,
+                    "__call__",
+                    &mut std::collections::HashSet::new(),
+                ) {
+                    UserProtocolMethod::Missing => StrictRelation::Incompatible,
+                    UserProtocolMethod::Found(..) | UserProtocolMethod::Indeterminate => {
+                        StrictRelation::Indeterminate
+                    }
+                },
+                Ty::Class { .. } => StrictRelation::Indeterminate,
+                _ => StrictRelation::Incompatible,
+            };
+        };
+
+        let return_relation =
+            self.stdlib_type_relation_inner(expected_ret, actual_ret, visiting);
+        if return_relation == StrictRelation::Incompatible {
+            return StrictRelation::Incompatible;
+        }
+
+        let mut compare_prefix = |limit: usize| {
+            let mut unknown = false;
+            for (&expected, &actual) in expected_params
+                .iter()
+                .zip(&actual_params)
+                .take(limit)
+            {
+                match self.stdlib_type_relation_inner(actual, expected, visiting) {
+                    StrictRelation::Compatible => {}
+                    StrictRelation::Indeterminate => unknown = true,
+                    StrictRelation::Incompatible => {
+                        return StrictRelation::Incompatible;
+                    }
+                }
+            }
+            if unknown {
+                StrictRelation::Indeterminate
+            } else {
+                StrictRelation::Compatible
+            }
+        };
+
+        let parameter_relation = if expected_param_spec.is_some() {
+            if actual_param_spec.is_none()
+                && !actual_variadic
+                && actual_params.len() < expected_params.len()
+            {
+                StrictRelation::Incompatible
+            } else {
+                match compare_prefix(expected_params.len().min(actual_params.len())) {
+                    StrictRelation::Incompatible => StrictRelation::Incompatible,
+                    StrictRelation::Compatible | StrictRelation::Indeterminate => {
+                        StrictRelation::Indeterminate
+                    }
+                }
+            }
+        } else if actual_param_spec.is_some() {
+            StrictRelation::Indeterminate
+        } else if expected_variadic {
+            if expected_params.is_empty() {
+                StrictRelation::Indeterminate
+            } else if !actual_variadic && actual_params.len() < expected_params.len() {
+                StrictRelation::Incompatible
+            } else {
+                match compare_prefix(expected_params.len().min(actual_params.len())) {
+                    StrictRelation::Incompatible => StrictRelation::Incompatible,
+                    StrictRelation::Compatible | StrictRelation::Indeterminate => {
+                        StrictRelation::Indeterminate
+                    }
+                }
+            }
+        } else if actual_variadic {
+            if actual_params.len() > expected_params.len() {
+                StrictRelation::Incompatible
+            } else {
+                compare_prefix(actual_params.len())
+            }
+        } else if expected_params.len() != actual_params.len() {
+            StrictRelation::Incompatible
+        } else {
+            compare_prefix(expected_params.len())
+        };
+
+        if parameter_relation == StrictRelation::Incompatible {
+            StrictRelation::Incompatible
+        } else if parameter_relation == StrictRelation::Indeterminate
+            || return_relation == StrictRelation::Indeterminate
+        {
+            StrictRelation::Indeterminate
+        } else {
+            StrictRelation::Compatible
+        }
+    }
+
     fn stdlib_type_relation_inner(
         &mut self,
         expected: TypeId,
@@ -2606,6 +2786,9 @@ impl TypeChecker {
                 } else {
                     StrictRelation::Compatible
                 }
+            }
+            (Ty::Fn { .. }, _) => {
+                self.stdlib_callable_relation_inner(expected, actual, visiting)
             }
             (
                 Ty::Class {
@@ -4269,6 +4452,7 @@ impl TypeChecker {
             params: sig.params,
             ret: sig.return_type,
             variadic: false,
+            param_spec: None,
         }))
     }
 
@@ -4280,16 +4464,19 @@ impl TypeChecker {
                     params: vec![elem],
                     ret: self.tcx.none(),
                     variadic: false,
+                    param_spec: None,
                 }),
                 "count" => self.tcx.intern(Ty::Fn {
                     params: vec![elem],
                     ret: self.tcx.int(),
                     variadic: false,
+                    param_spec: None,
                 }),
                 "index" => self.tcx.intern(Ty::Fn {
                     params: vec![elem, self.tcx.int(), self.tcx.int()],
                     ret: self.tcx.int(),
                     variadic: false,
+                    param_spec: None,
                 }),
                 _ => self
                     .resolve_generated_bound_member(obj_ty_id, attr)
@@ -4300,6 +4487,7 @@ impl TypeChecker {
                     params: vec![elem],
                     ret: self.tcx.none(),
                     variadic: false,
+                    param_spec: None,
                 }),
                 _ => self
                     .resolve_generated_bound_member(obj_ty_id, attr)
@@ -4310,16 +4498,19 @@ impl TypeChecker {
                     params: vec![key],
                     ret: self.tcx.none(),
                     variadic: false,
+                    param_spec: None,
                 }),
                 "__getitem__" => self.tcx.intern(Ty::Fn {
                     params: vec![key],
                     ret: value,
                     variadic: false,
+                    param_spec: None,
                 }),
                 "__setitem__" => self.tcx.intern(Ty::Fn {
                     params: vec![key, value],
                     ret: self.tcx.none(),
                     variadic: false,
+                    param_spec: None,
                 }),
                 "get" | "pop" => {
                     let any = self.tcx.any();
@@ -4327,6 +4518,7 @@ impl TypeChecker {
                         params: vec![key, any],
                         ret: any,
                         variadic: false,
+                        param_spec: None,
                     })
                 }
                 _ => self
@@ -4385,6 +4577,7 @@ impl TypeChecker {
                         params,
                         ret,
                         variadic: false,
+                        param_spec: None,
                     });
                 }
                 self.tcx.any()

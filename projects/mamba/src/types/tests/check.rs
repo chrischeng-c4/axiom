@@ -2,7 +2,7 @@
 
 use crate::parser;
 use crate::source::span::FileId;
-use crate::types::ty::{ClassRole, TypeParamDefault, TypeVarKind};
+use crate::types::ty::{ClassRole, Ty, TypeParamDefault, TypeVarKind};
 use crate::types::TypeChecker;
 
 fn check(src: &str) -> Vec<String> {
@@ -6025,6 +6025,125 @@ fn typeshed_typing_extensions_never_defaults_materialize() {
             .any(|error| error.contains("argument type mismatch")),
         "select's TypeVar bound must reject a non-iterable: {invalid:?}"
     );
+}
+
+#[test]
+fn typeshed_callable_paramspec_identity_materializes_without_widening() {
+    use crate::types::stdlib_typespec as spec;
+
+    let mut checker = TypeChecker::new();
+    let run = spec::overloads("_contextvars", "Context", "run")
+        .next()
+        .expect("Context.run spec");
+    let callable = spec::params(run.params)
+        .iter()
+        .find(|param| spec::string(param.name) == "callable")
+        .expect("callable parameter");
+    let callable_ty = checker
+        .materialize_stdlib_type(spec::type_use(callable.ty).0)
+        .expect("Callable[P, T] must materialize");
+    let Ty::Fn {
+        params,
+        variadic,
+        param_spec: Some(param_spec),
+        ..
+    } = checker.tcx.get(callable_ty)
+    else {
+        panic!("Callable[P, T] must retain its ParamSpec tail")
+    };
+    assert!(params.is_empty());
+    assert!(!variadic);
+    assert_eq!(checker.tcx.get_type_var(*param_spec).kind, TypeVarKind::ParamSpec);
+    assert!(checker.tcx.contains_type_var(callable_ty));
+
+    let wrapper = spec::overloads("curses", "", "wrapper")
+        .next()
+        .expect("curses.wrapper spec");
+    let func = spec::params(wrapper.params)
+        .iter()
+        .find(|param| spec::string(param.name) == "func")
+        .expect("func parameter");
+    let func_ty = checker
+        .materialize_stdlib_type(spec::type_use(func.ty).0)
+        .expect("Callable[Concatenate[window, P], T] must materialize");
+    let Ty::Fn {
+        params,
+        variadic,
+        param_spec: Some(param_spec),
+        ..
+    } = checker.tcx.get(func_ty)
+    else {
+        panic!("Concatenate must retain its prefix and ParamSpec tail")
+    };
+    assert_eq!(params.len(), 1);
+    assert!(!variadic);
+    assert_eq!(checker.tcx.get_type_var(*param_spec).kind, TypeVarKind::ParamSpec);
+    let Ty::Class {
+        external: Some(prefix),
+        ..
+    } = checker.tcx.get(params[0])
+    else {
+        panic!("Concatenate prefix must retain curses.window nominal identity")
+    };
+    assert_eq!((prefix.module.as_str(), prefix.name.as_str()), ("_curses", "window"));
+}
+
+#[test]
+fn typeshed_unbound_paramspec_rejects_only_definite_noncallables() {
+    let valid = check(
+        "from _contextvars import Context\n\
+         context = Context()\n\
+         context.run(lambda: 1)\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "an unbound ParamSpec must not reject a known callable: {valid:?}"
+    );
+
+    let invalid = check(
+        "from _contextvars import Context\n\
+         context = Context()\n\
+         context.run(12345)\n",
+    );
+    assert!(
+        invalid.iter().any(|error| {
+            error.contains("argument type mismatch") && error.contains("parameter `callable`")
+        }),
+        "a definite non-callable must still be rejected: {invalid:?}"
+    );
+}
+
+#[test]
+fn callable_ellipsis_compatibility_is_arity_independent() {
+    let mut checker = TypeChecker::new();
+    let expected = checker.tcx.intern(Ty::Fn {
+        params: Vec::new(),
+        ret: checker.tcx.int(),
+        variadic: true,
+        param_spec: None,
+    });
+    let zero = checker.tcx.intern(Ty::Fn {
+        params: Vec::new(),
+        ret: checker.tcx.int(),
+        variadic: false,
+        param_spec: None,
+    });
+    let two = checker.tcx.intern(Ty::Fn {
+        params: vec![checker.tcx.str(), checker.tcx.bool()],
+        ret: checker.tcx.int(),
+        variadic: false,
+        param_spec: None,
+    });
+    let wrong_return = checker.tcx.intern(Ty::Fn {
+        params: Vec::new(),
+        ret: checker.tcx.str(),
+        variadic: false,
+        param_spec: None,
+    });
+
+    assert!(checker.types_compatible(expected, zero));
+    assert!(checker.types_compatible(expected, two));
+    assert!(!checker.types_compatible(expected, wrong_return));
 }
 
 #[test]

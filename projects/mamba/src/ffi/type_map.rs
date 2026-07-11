@@ -126,6 +126,7 @@ pub fn map_header_types(header: &CHeader, tcx: &mut TypeContext) -> MappedTypes 
             params: param_types,
             ret,
             variadic: false,
+            param_spec: None,
         });
         mapped.functions.push((f.name.clone(), fn_ty));
     }
