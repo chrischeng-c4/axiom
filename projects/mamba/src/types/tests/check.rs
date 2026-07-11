@@ -5922,6 +5922,37 @@ fn typeshed_protocol_keyword_parameter_names_are_enforced() {
 }
 
 #[test]
+fn typeshed_protocol_class_type_params_are_substituted_in_members() {
+    let valid = check(
+        "import json\n\
+         class Writer:\n\
+         \x20   def write(self, value: str) -> object:\n\
+         \x20       return None\n\
+         json.dump(None, Writer())\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "SupportsWrite[str] must accept its class-owned TypeVar substitution: {valid:?}"
+    );
+
+    let invalid = check(
+        "import json\n\
+         class WrongWriter:\n\
+         \x20   def write(self, value: int) -> object:\n\
+         \x20       return None\n\
+         json.dump(None, WrongWriter())\n",
+    );
+    assert_eq!(
+        invalid
+            .iter()
+            .filter(|error| error.contains("argument type mismatch"))
+            .count(),
+        1,
+        "SupportsWrite[str] must reject a method using the wrong class TypeVar: {invalid:?}"
+    );
+}
+
+#[test]
 fn typeshed_indeterminate_contract_does_not_fall_back_to_compact_wall() {
     let errors = check(
         "from dataclasses import asdict\n\

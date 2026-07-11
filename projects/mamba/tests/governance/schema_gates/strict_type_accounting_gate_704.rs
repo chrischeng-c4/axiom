@@ -340,6 +340,11 @@ spec.loader.exec_module(module)
 
 manifest = module.load_generated_typespec_manifest()
 assert module._generated_protocol_status(manifest, "typing", "SupportsIndex") == "supported"
+assert module._generated_protocol_status(manifest, "collections.abc", "Iterable") == "supported"
+assert module._generated_protocol_status(manifest, "os", "PathLike") == "supported"
+assert module._generated_protocol_status(manifest, "_typeshed", "SupportsWrite") == "unconstrained"
+# A callable-level TypeVar that is not owned by the protocol stays unsupported.
+assert module._generated_protocol_status(manifest, "_typeshed", "IdentityFunction") == "unsupported"
 assert module._generated_protocol_status(manifest, "typing", "SupportsRound") == "unsupported"
 assert module._generated_protocol_status(manifest, "_typeshed", "DataclassInstance") == "unsupported"
 assert module._generated_protocol_status(manifest, "_typeshed", "SupportsFlush") == "unconstrained"
