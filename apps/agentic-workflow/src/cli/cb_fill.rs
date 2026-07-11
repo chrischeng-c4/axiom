@@ -1002,6 +1002,43 @@ fn resolve_base_branch() -> String {
     std::env::var("SCORE_CB_FILL_BASE_BRANCH").unwrap_or_else(|_| "main".to_string())
 }
 
+// Resolve the concrete ref to diff `HEAD` against for a given base branch
+// name. The rebase-landing recipe (squash-merge to `origin/<base>` +
+// `git fetch origin <base>` + `git rebase origin/<base>`) advances the
+// remote-tracking ref but leaves the local `<base_branch>` ref exactly
+// where it was before the fetch — only an explicit `git pull`/checkout of
+// that local branch would move it, and the recipe never does that on a
+// long-lived work-area branch. A three-dot diff against that stale local
+// ref then re-walks every commit that landed on `<base_branch>` since the
+// last local sync and misattributes it to this branch (issue #1423).
+// Prefer the remote-tracking ref (`origin/<base_branch>`) whenever it
+// resolves, since the rebase-landing recipe always fetches it immediately
+// before rebasing; fall back to the bare local branch name for repos with
+// no `origin` remote (fixtures, detached/standalone clones), preserving
+// prior behaviour there.
+///
+// @spec apps/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#logic
+fn resolve_diff_base_ref(git_bin: &Path, worktree: &Path, base_branch: &str) -> String {
+    let remote_ref = format!("origin/{base_branch}");
+    let remote_resolves = std::process::Command::new(git_bin)
+        .arg("-C")
+        .arg(worktree)
+        .args([
+            "rev-parse",
+            "--verify",
+            "-q",
+            &format!("refs/remotes/{remote_ref}"),
+        ])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if remote_resolves {
+        remote_ref
+    } else {
+        base_branch.to_string()
+    }
+}
+
 // Files changed by the worktree branch relative to its base. Returns
 // repo-root-relative paths (matching `HandwriteMarkerEntry.source_path`).
 ///
@@ -1016,10 +1053,11 @@ pub fn branch_changed_files(worktree: &Path, base_branch: &str) -> HashSet<Strin
         Some(g) => g,
         None => return HashSet::new(),
     };
+    let diff_base = resolve_diff_base_ref(&git_bin, worktree, base_branch);
     let out = match std::process::Command::new(&git_bin)
         .arg("-C")
         .arg(worktree)
-        .args(["diff", "--name-only", &format!("{base_branch}...HEAD")])
+        .args(["diff", "--name-only", &format!("{diff_base}...HEAD")])
         .output()
     {
         Ok(o) if o.status.success() => o,
@@ -1495,6 +1533,101 @@ mod tests {
         assert!(out.contains(HANDWRITE_END_TOKEN));
         assert!(out.contains("export const value = 1;"));
         assert!(!out.contains("stub"));
+    }
+
+    /// Issue #1423 repro: the rebase-landing recipe (squash-merge to
+    /// `origin/main` + `git fetch origin main` + `git rebase origin/main`)
+    /// advances the remote-tracking `origin/main` ref but leaves the local
+    /// `main` branch ref exactly where it was before the fetch. A diff
+    /// against that stale local ref must not misattribute already-landed
+    /// main-side work (from a completely unrelated branch) to this branch;
+    /// only this branch's own commit must show up.
+    #[test]
+    fn branch_changed_files_survives_rebase_landing_stale_local_main() {
+        let Some(git) = crate::git::find_git_bin() else {
+            eprintln!("skipping: git binary not on PATH");
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let origin = tmp.path().join("origin.git");
+        let work = tmp.path().join("work");
+        let other = tmp.path().join("other");
+
+        let run = |dir: &Path, args: &[&str]| {
+            let out = std::process::Command::new(&git)
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .unwrap_or_else(|e| panic!("git {args:?} failed to spawn: {e}"));
+            assert!(
+                out.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        let configure_identity = |dir: &Path| {
+            for (k, v) in [
+                ("user.email", "test@test"),
+                ("user.name", "test"),
+                ("commit.gpgsign", "false"),
+            ] {
+                run(dir, &["config", k, v]);
+            }
+        };
+
+        std::process::Command::new(&git)
+            .args(["init", "--bare", "-q"])
+            .arg(&origin)
+            .status()
+            .unwrap();
+        std::process::Command::new(&git)
+            .args(["clone", "-q"])
+            .arg(&origin)
+            .arg(&work)
+            .status()
+            .unwrap();
+        configure_identity(&work);
+        std::fs::write(work.join("README.md"), "seed\n").unwrap();
+        run(&work, &["checkout", "-q", "-b", "main"]);
+        run(&work, &["add", "-A"]);
+        run(&work, &["commit", "-q", "-m", "seed"]);
+        run(&work, &["push", "-q", "origin", "main"]);
+        run(&work, &["checkout", "-q", "-b", "feature"]);
+        std::fs::write(work.join("feature.txt"), "feature work\n").unwrap();
+        run(&work, &["add", "-A"]);
+        run(&work, &["commit", "-q", "-m", "feature work"]);
+
+        // An independent PR lands directly on origin/main via a second
+        // clone — unrelated to `feature`, and never fetched into `work`
+        // until the explicit `git fetch` below.
+        std::process::Command::new(&git)
+            .args(["clone", "-q"])
+            .arg(&origin)
+            .arg(&other)
+            .status()
+            .unwrap();
+        configure_identity(&other);
+        std::fs::write(other.join("unrelated.rs"), "unrelated\n").unwrap();
+        run(&other, &["add", "-A"]);
+        run(&other, &["commit", "-q", "-m", "unrelated landed work"]);
+        run(&other, &["push", "-q", "origin", "main"]);
+
+        // Rebase-landing recipe: fetch advances `origin/main` (remote-
+        // tracking) but `work`'s local `main` branch stays at `seed`.
+        run(&work, &["fetch", "-q", "origin", "main"]);
+        run(&work, &["rebase", "-q", "origin/main"]);
+
+        let changed = branch_changed_files(&work, "main");
+        assert!(
+            changed.contains("feature.txt"),
+            "this branch's own commit must still be detected, got: {changed:?}"
+        );
+        assert!(
+            !changed.contains("unrelated.rs"),
+            "already-landed main-side work from an unrelated branch must not \
+             be attributed to this branch after rebase-landing, got: {changed:?}"
+        );
     }
 }
 
