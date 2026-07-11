@@ -5,9 +5,9 @@ use super::generic::{
 use super::protocol::ProtocolRegistry;
 use super::stdlib_typespec::{StrSpecId, TypeParamSpecId, TypeSpecId};
 use super::ty::{
-    AliasInstanceId, ClassRole, ExternalCallable, ExternalCallableAccess,
-    ExternalCallableRuntimeKind, ExternalClass, ExternalValue, TypeParamDefault, TypeVarId,
-    TypeVarKind, UserClass,
+    AliasInstanceId, CallableParam, CallableParamKind, ClassRole, ExternalCallable,
+    ExternalCallableAccess, ExternalCallableRuntimeKind, ExternalClass, ExternalValue,
+    TypeParamDefault, TypeVarId, TypeVarKind, UserClass,
 };
 use super::{Ty, TypeContext, TypeId};
 use crate::error::MambaError;
@@ -155,6 +155,46 @@ pub(crate) struct FunctionParamSig {
     pub(crate) kind: ParamKind,
     pub(crate) pos_only: bool,
     pub(crate) kw_only: bool,
+    pub(crate) has_default: bool,
+}
+
+impl FunctionParamSig {
+    pub(crate) fn into_callable_param(self) -> CallableParam {
+        let kind = match self.kind {
+            ParamKind::Star => CallableParamKind::VarPos,
+            ParamKind::DoubleStar => CallableParamKind::VarKw,
+            ParamKind::Regular if self.pos_only => CallableParamKind::PosOnly,
+            ParamKind::Regular if self.kw_only => CallableParamKind::KwOnly,
+            ParamKind::Regular => CallableParamKind::PosOrKw,
+        };
+        CallableParam {
+            name: Some(self.name),
+            ty: self.ty,
+            kind,
+            has_default: self.has_default,
+        }
+    }
+
+    pub(crate) fn from_callable_param(param: CallableParam) -> Self {
+        // An empty name is not a valid Python identifier. It preserves an
+        // unnamed positional contract without making keyword binding guess.
+        let name = param.name.unwrap_or_default();
+        let (kind, pos_only, kw_only) = match param.kind {
+            CallableParamKind::PosOnly => (ParamKind::Regular, true, false),
+            CallableParamKind::PosOrKw => (ParamKind::Regular, false, false),
+            CallableParamKind::VarPos => (ParamKind::Star, false, false),
+            CallableParamKind::KwOnly => (ParamKind::Regular, false, true),
+            CallableParamKind::VarKw => (ParamKind::DoubleStar, false, false),
+        };
+        Self {
+            name,
+            ty: param.ty,
+            kind,
+            pos_only,
+            kw_only,
+            has_default: param.has_default,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -508,9 +548,8 @@ pub struct TypeChecker {
     /// Semantic annotation results keyed by source span. Lowering consumes
     /// these instead of independently re-resolving class/generic annotations.
     resolved_type_exprs: HashMap<Span, TypeId>,
-    /// Full user-function parameter metadata. `Ty::Fn` deliberately keeps a
-    /// compact ABI-facing shape, so keyword-only and variadic annotation checks
-    /// live in this checker-only side channel.
+    /// Declaration lookup retained while call sites migrate to intrinsic
+    /// `Ty::Fn::signature` metadata.
     pub(crate) function_param_sigs: HashMap<SymbolId, Vec<FunctionParamSig>>,
     /// Canonical preregistered function types keyed by declaration binding.
     /// Body checking allocates temporary TypeVars, so declaration reassertion
@@ -544,6 +583,8 @@ pub struct TypeChecker {
     /// `Box.get(obj, arg)`. These include the explicit receiver parameter.
     pub(crate) class_unbound_methods:
         HashMap<SymbolId, HashMap<String, super::protocol::MethodSig>>,
+    pub(crate) class_unbound_method_param_sigs:
+        HashMap<SymbolId, HashMap<String, Vec<FunctionParamSig>>>,
     /// Property access contracts keyed by nominal class identity. Getter and
     /// setter declarations intentionally share a Python name, so the ordinary
     /// last-definition-wins method map cannot represent both contracts.
@@ -672,6 +713,7 @@ impl TypeChecker {
             class_method_param_sigs: HashMap::new(),
             class_method_generic_defs: HashMap::new(),
             class_unbound_methods: HashMap::new(),
+            class_unbound_method_param_sigs: HashMap::new(),
             class_property_getters: HashMap::new(),
             class_property_setters: HashMap::new(),
             typed_dict_classes: HashSet::new(),
@@ -1021,9 +1063,22 @@ impl TypeChecker {
                 kind: param.kind,
                 pos_only: param.pos_only,
                 kw_only: param.kw_only,
+                has_default: param.default.is_some(),
             })
             .collect();
         self.function_param_sigs.insert(symbol, sigs);
+    }
+
+    pub(crate) fn function_callable_signature(
+        &self,
+        symbol: SymbolId,
+    ) -> Option<Vec<CallableParam>> {
+        self.function_param_sigs.get(&symbol).cloned().map(|params| {
+            params
+                .into_iter()
+                .map(FunctionParamSig::into_callable_param)
+                .collect()
+        })
     }
 
     pub(crate) fn error(&mut self, span: Span, msg: impl Into<String>) {
@@ -1302,6 +1357,7 @@ impl TypeChecker {
             params: param_types,
             ret,
             variadic,
+            signature: self.function_callable_signature(symbol),
             param_spec: None,
         });
         self.set_sym_type(symbol.0, function_ty);
@@ -2050,6 +2106,7 @@ impl TypeChecker {
                         params: param_types,
                         ret,
                         variadic: is_variadic,
+                        signature: self.function_callable_signature(sym),
                         param_spec: None,
                     });
                     self.set_sym_type(sym.0, fn_ty);
@@ -2305,6 +2362,7 @@ impl TypeChecker {
                             params: param_types,
                             ret: self.tcx.any(),
                             variadic: is_variadic,
+                            signature: self.function_callable_signature(sym),
                             param_spec: None,
                         });
                         self.set_sym_type(sym.0, fn_ty);
@@ -3097,6 +3155,7 @@ impl TypeChecker {
                             params,
                             ret,
                             variadic: false,
+                            signature: None,
                             param_spec: None,
                         })
                     }
@@ -3177,6 +3236,7 @@ impl TypeChecker {
                     params: param_types,
                     ret: ret_ty,
                     variadic: false,
+                    signature: None,
                     param_spec: None,
                 })
             }
@@ -3705,12 +3765,14 @@ impl TypeChecker {
                 ret: re,
                 variadic: expected_variadic,
                 param_spec: expected_param_spec,
+                ..
             },
             Ty::Fn {
                 params: pa,
                 ret: ra,
                 variadic: actual_variadic,
                 param_spec: actual_param_spec,
+                ..
             },
         ) = (e, a)
         {
@@ -3822,6 +3884,7 @@ impl TypeChecker {
                 ret,
                 variadic,
                 param_spec,
+                ..
             } => {
                 let mut ps: Vec<_> = params
                     .iter()
@@ -3983,6 +4046,7 @@ impl TypeChecker {
         let mut methods = HashMap::new();
         let mut method_param_sigs = HashMap::new();
         let mut unbound_methods = HashMap::new();
+        let mut unbound_method_param_sigs = HashMap::new();
         let mut property_getters = HashMap::new();
         let mut property_setters = HashMap::new();
         self.class_method_generic_defs
@@ -4029,18 +4093,22 @@ impl TypeChecker {
                             Expr::Attr { attr, .. } if attr == "staticmethod"
                         )
                 });
-                let param_sigs: Vec<FunctionParamSig> = params
+                let all_param_sigs: Vec<FunctionParamSig> = params
                     .iter()
-                    .enumerate()
-                    .filter(|(index, _)| is_staticmethod || *index != 0)
-                    .map(|(_, p)| FunctionParamSig {
+                    .map(|p| FunctionParamSig {
                         name: p.name.clone(),
                         ty: self.resolve_type_expr(&p.ty),
                         kind: p.kind,
                         pos_only: p.pos_only,
                         kw_only: p.kw_only,
+                        has_default: p.default.is_some(),
                     })
                     .collect();
+                let param_sigs: Vec<FunctionParamSig> = if is_staticmethod {
+                    all_param_sigs.clone()
+                } else {
+                    all_param_sigs.iter().skip(1).cloned().collect()
+                };
                 let param_types = param_sigs.iter().map(|p| p.ty).collect();
                 let ret = return_ty
                     .as_ref()
@@ -4088,6 +4156,9 @@ impl TypeChecker {
                 );
                 method_param_sigs.insert(name.clone(), param_sigs);
                 if let Some(unbound_param_types) = unbound_param_types {
+                    let mut unbound_param_sigs = all_param_sigs.clone();
+                    unbound_param_sigs[0].ty = receiver_ty;
+                    unbound_method_param_sigs.insert(name.clone(), unbound_param_sigs);
                     unbound_methods.insert(
                         name.clone(),
                         MethodSig {
@@ -4105,6 +4176,8 @@ impl TypeChecker {
             .insert(class_symbol, method_param_sigs);
         self.class_unbound_methods
             .insert(class_symbol, unbound_methods);
+        self.class_unbound_method_param_sigs
+            .insert(class_symbol, unbound_method_param_sigs);
         self.class_property_getters
             .insert(class_symbol, property_getters);
         self.class_property_setters
@@ -4473,6 +4546,7 @@ mod tests {
             params: vec![tc.tcx.int(), tc.tcx.str()],
             ret: tc.tcx.bool(),
             variadic: false,
+            signature: None,
             param_spec: None,
         });
         assert_eq!(tc.ty_name(fn_ty), "(int, str) -> bool");

@@ -262,6 +262,35 @@ fn test_unbound_method_receiver_contract_rejected() {
 }
 
 #[test]
+fn unbound_method_alias_preserves_declared_receiver_metadata() {
+    let valid = check(
+        "class Box:\n\
+         \x20   def get(receiver, value: int = 1) -> int:\n\
+         \x20       return value\n\
+         method = Box.get\n\
+         method(receiver=Box())\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "an aliased unbound method must retain the declared receiver name and defaults: {valid:?}"
+    );
+
+    let invalid = check(
+        "class Box:\n\
+         \x20   def get(receiver, value: int = 1) -> int:\n\
+         \x20       return value\n\
+         method = Box.get\n\
+         method(receiver=\"bad\")\n",
+    );
+    assert!(
+        invalid
+            .iter()
+            .any(|error| error.contains("expected `Box`, got `str`")),
+        "receiver metadata must remain intrinsic through method aliasing: {invalid:?}"
+    );
+}
+
+#[test]
 fn test_keyword_iskeyword_wall_is_universal() {
     let errors = check("from keyword import iskeyword\niskeyword(12345)\n");
     assert!(
@@ -6114,30 +6143,174 @@ fn typeshed_unbound_paramspec_rejects_only_definite_noncallables() {
 }
 
 #[test]
+fn context_run_binds_paramspec_args_and_kwargs_to_callback_signature() {
+    let prelude =
+        "from _contextvars import Context\n\
+         context = Context()\n\
+         def callback(x: int, /, y: str = \"d\", *, flag: bool = False) -> int:\n\
+         \x20   return x\n";
+    for call in [
+        "context.run(callback, 1)\n",
+        "context.run(callback, 1, flag=True)\n",
+    ] {
+        let errors = check(&format!("{prelude}{call}"));
+        assert!(
+            errors.is_empty(),
+            "a valid ParamSpec forwarding call must pass: {call}: {errors:?}"
+        );
+    }
+
+    for (call, message) in [
+        ("context.run(callback)\n", "missing required callback parameter `x`"),
+        ("context.run(callback, \"bad\")\n", "parameter `x`"),
+        ("context.run(callback, 1, flag=\"bad\")\n", "parameter `flag`"),
+        (
+            "context.run(callback, x=1)\n",
+            "argument that the callback does not accept",
+        ),
+        (
+            "context.run(callback, 1, unknown=True)\n",
+            "argument that the callback does not accept",
+        ),
+        (
+            "context.run(callback, 1, \"a\", y=\"b\")\n",
+            "multiple values for callback parameter `y`",
+        ),
+    ] {
+        let errors = check(&format!("{prelude}{call}"));
+        assert!(
+            errors.iter().any(|error| error.contains(message)),
+            "invalid ParamSpec forwarding must report `{message}`: {call}: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn context_run_keeps_callable_signature_through_alias_flow() {
+    let errors = check(
+        "from _contextvars import Context\n\
+         context = Context()\n\
+         def callback(value: int) -> int:\n\
+         \x20   return value\n\
+         alias = callback\n\
+         context.run(alias, \"bad\")\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("parameter `value`")),
+        "callable metadata must remain intrinsic after assignment: {errors:?}"
+    );
+}
+
+#[test]
+fn curses_wrapper_binds_concatenate_prefix_before_forwarded_paramspec() {
+    let valid = check(
+        "from curses import wrapper\n\
+         from _curses import window\n\
+         def app(screen: window, count: int, *, title: str = \"\") -> int:\n\
+         \x20   return count\n\
+         wrapper(app, 1, title=\"ok\")\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "Concatenate must consume the injected window prefix: {valid:?}"
+    );
+
+    let wrong_forwarded = check(
+        "from curses import wrapper\n\
+         from _curses import window\n\
+         def app(screen: window, count: int) -> int:\n\
+         \x20   return count\n\
+         wrapper(app, \"bad\")\n",
+    );
+    assert!(
+        wrong_forwarded
+            .iter()
+            .any(|error| error.contains("parameter `count`")),
+        "forwarded arguments must be checked after the Concatenate prefix: {wrong_forwarded:?}"
+    );
+
+    let wrong_prefix = check(
+        "from curses import wrapper\n\
+         def app(screen: int, count: int) -> int:\n\
+         \x20   return count\n\
+         wrapper(app, 1)\n",
+    );
+    assert!(
+        wrong_prefix
+            .iter()
+            .any(|error| error.contains("argument type mismatch")),
+        "the injected window prefix must reject a callback with a different leading type: {wrong_prefix:?}"
+    );
+
+    let variadic_prefix_mismatch = check(
+        "from curses import wrapper\n\
+         def app(*values: int) -> int:\n\
+         \x20   return 0\n\
+         wrapper(app)\n",
+    );
+    assert!(
+        variadic_prefix_mismatch
+            .iter()
+            .any(|error| error.contains("callable variadic parameter")),
+        "a callback's *args annotation must accept the injected prefix: {variadic_prefix_mismatch:?}"
+    );
+
+    let variadic_prefix_valid = check(
+        "from curses import wrapper\n\
+         def app(*values: object) -> int:\n\
+         \x20   return 0\n\
+         wrapper(app)\n",
+    );
+    assert!(
+        variadic_prefix_valid.is_empty(),
+        "an unconstrained callback *args pack may accept the injected prefix: {variadic_prefix_valid:?}"
+    );
+
+    for callback in [
+        "def app(*, screen: window) -> int:\n\x20   return 0\n",
+        "def app(**values: window) -> int:\n\x20   return 0\n",
+    ] {
+        let errors = check(&format!(
+            "from curses import wrapper\nfrom _curses import window\n{callback}wrapper(app)\n"
+        ));
+        assert!(
+            errors.iter().any(|error| error.contains("positionally")),
+            "a keyword-only callback cannot accept the injected positional prefix: {callback}: {errors:?}"
+        );
+    }
+}
+
+#[test]
 fn callable_ellipsis_compatibility_is_arity_independent() {
     let mut checker = TypeChecker::new();
     let expected = checker.tcx.intern(Ty::Fn {
         params: Vec::new(),
         ret: checker.tcx.int(),
         variadic: true,
+        signature: None,
         param_spec: None,
     });
     let zero = checker.tcx.intern(Ty::Fn {
         params: Vec::new(),
         ret: checker.tcx.int(),
         variadic: false,
+        signature: None,
         param_spec: None,
     });
     let two = checker.tcx.intern(Ty::Fn {
         params: vec![checker.tcx.str(), checker.tcx.bool()],
         ret: checker.tcx.int(),
         variadic: false,
+        signature: None,
         param_spec: None,
     });
     let wrong_return = checker.tcx.intern(Ty::Fn {
         params: Vec::new(),
         ret: checker.tcx.str(),
         variadic: false,
+        signature: None,
         param_spec: None,
     });
 

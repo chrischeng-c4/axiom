@@ -1,5 +1,8 @@
 use super::context::TypeContext;
-use super::ty::{Ty, TypeId, TypeParamDefault, TypeVarId, TypeVarKind};
+use super::ty::{
+    CallableParam, CallableParamKind, ParamPack, ParamPackTail, Ty, TypeId, TypeParamDefault,
+    TypeVarId, TypeVarKind,
+};
 /// Generics support for Mamba (#314 R1, R3).
 ///
 /// Implements PEP 695 type parameter syntax and generic type resolution.
@@ -80,16 +83,18 @@ impl GenericParams {
     }
 }
 
-/// Substitution map: TypeVarId → concrete TypeId.
+/// Scalar type and callable-parameter-pack substitutions.
 #[derive(Debug, Clone)]
 pub struct Substitution {
     map: HashMap<TypeVarId, TypeId>,
+    param_packs: HashMap<TypeVarId, ParamPack>,
 }
 
 impl Substitution {
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
+            param_packs: HashMap::new(),
         }
     }
 
@@ -101,13 +106,67 @@ impl Substitution {
         self.map.get(&var).copied()
     }
 
+    pub fn insert_param_pack(&mut self, var: TypeVarId, pack: ParamPack) {
+        self.param_packs.insert(var, pack);
+    }
+
+    pub fn get_param_pack(&self, var: TypeVarId) -> Option<&ParamPack> {
+        self.param_packs.get(&var)
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.map.is_empty()
+        self.map.is_empty() && self.param_packs.is_empty()
+    }
+
+    pub fn apply_param_pack(&self, pack: &ParamPack, tcx: &mut TypeContext) -> ParamPack {
+        self.apply_param_pack_inner(pack, tcx, &mut HashSet::new())
+    }
+
+    fn apply_param_pack_inner(
+        &self,
+        pack: &ParamPack,
+        tcx: &mut TypeContext,
+        visiting: &mut HashSet<TypeVarId>,
+    ) -> ParamPack {
+        let mut params: Vec<_> = pack
+            .params
+            .iter()
+            .map(|param| CallableParam {
+                name: param.name.clone(),
+                ty: self.apply_inner(param.ty, tcx, visiting),
+                kind: param.kind,
+                has_default: param.has_default,
+            })
+            .collect();
+        let tail = match pack.tail {
+            ParamPackTail::ParamSpec(var) if visiting.insert(var) => {
+                if let Some(bound) = self.param_packs.get(&var) {
+                    let bound = self.apply_param_pack_inner(bound, tcx, visiting);
+                    params.extend(bound.params);
+                    visiting.remove(&var);
+                    bound.tail
+                } else {
+                    visiting.remove(&var);
+                    ParamPackTail::ParamSpec(var)
+                }
+            }
+            tail => tail,
+        };
+        ParamPack { params, tail }
     }
 
     /// Apply this substitution to a type, replacing type variables with
     /// their concrete types. Requires mutable TypeContext to intern new types.
     pub fn apply(&self, ty: TypeId, tcx: &mut TypeContext) -> TypeId {
+        self.apply_inner(ty, tcx, &mut HashSet::new())
+    }
+
+    fn apply_inner(
+        &self,
+        ty: TypeId,
+        tcx: &mut TypeContext,
+        visiting_param_packs: &mut HashSet<TypeVarId>,
+    ) -> TypeId {
         let ty_val = tcx.get(ty).clone();
         match ty_val {
             Ty::TypeVar(var_id) => self.map.get(&var_id).copied().unwrap_or(ty),
@@ -116,7 +175,7 @@ impl Substitution {
                 let new_args: Vec<_> = source
                     .args
                     .iter()
-                    .map(|arg| self.apply(*arg, tcx))
+                    .map(|arg| self.apply_inner(*arg, tcx, visiting_param_packs))
                     .collect();
                 if new_args == source.args {
                     return ty;
@@ -130,14 +189,15 @@ impl Substitution {
                 );
                 if let Some(source_target) = source.target {
                     if tcx.begin_alias_target(specialized_id) {
-                        let specialized_target = self.apply(source_target, tcx);
+                        let specialized_target =
+                            self.apply_inner(source_target, tcx, visiting_param_packs);
                         tcx.set_alias_target(specialized_id, specialized_target);
                     }
                 }
                 specialized_ty
             }
             Ty::List(elem) => {
-                let new_elem = self.apply(elem, tcx);
+                let new_elem = self.apply_inner(elem, tcx, visiting_param_packs);
                 if new_elem == elem {
                     ty
                 } else {
@@ -145,7 +205,7 @@ impl Substitution {
                 }
             }
             Ty::Set(elem) => {
-                let new_elem = self.apply(elem, tcx);
+                let new_elem = self.apply_inner(elem, tcx, visiting_param_packs);
                 if new_elem == elem {
                     ty
                 } else {
@@ -153,7 +213,7 @@ impl Substitution {
                 }
             }
             Ty::TypeObject(instance) => {
-                let new_instance = self.apply(instance, tcx);
+                let new_instance = self.apply_inner(instance, tcx, visiting_param_packs);
                 if new_instance == instance {
                     ty
                 } else {
@@ -161,8 +221,8 @@ impl Substitution {
                 }
             }
             Ty::Dict(k, v) => {
-                let new_k = self.apply(k, tcx);
-                let new_v = self.apply(v, tcx);
+                let new_k = self.apply_inner(k, tcx, visiting_param_packs);
+                let new_v = self.apply_inner(v, tcx, visiting_param_packs);
                 if new_k == k && new_v == v {
                     ty
                 } else {
@@ -170,7 +230,10 @@ impl Substitution {
                 }
             }
             Ty::Tuple(ref elems) => {
-                let new_elems: Vec<TypeId> = elems.iter().map(|e| self.apply(*e, tcx)).collect();
+                let new_elems: Vec<TypeId> = elems
+                    .iter()
+                    .map(|e| self.apply_inner(*e, tcx, visiting_param_packs))
+                    .collect();
                 if new_elems == *elems {
                     ty
                 } else {
@@ -181,24 +244,104 @@ impl Substitution {
                 ref params,
                 ret,
                 variadic,
+                ref signature,
                 param_spec,
             } => {
-                let new_params: Vec<TypeId> = params.iter().map(|p| self.apply(*p, tcx)).collect();
-                let new_ret = self.apply(ret, tcx);
-                if new_params == *params && new_ret == ret {
+                let bound_var = param_spec.filter(|var| {
+                    self.param_packs.contains_key(var)
+                        && visiting_param_packs.insert(*var)
+                });
+                let new_params: Vec<TypeId> = params
+                    .iter()
+                    .map(|p| self.apply_inner(*p, tcx, visiting_param_packs))
+                    .collect();
+                let new_ret = self.apply_inner(ret, tcx, visiting_param_packs);
+                let new_signature = signature.as_ref().map(|params| {
+                    params
+                        .iter()
+                        .map(|param| CallableParam {
+                            name: param.name.clone(),
+                            ty: self.apply_inner(param.ty, tcx, visiting_param_packs),
+                            kind: param.kind,
+                            has_default: param.has_default,
+                        })
+                        .collect::<Vec<_>>()
+                });
+                let bound_pack = bound_var
+                    .and_then(|var| self.param_packs.get(&var))
+                    .map(|pack| {
+                        self.apply_param_pack_inner(pack, tcx, visiting_param_packs)
+                    });
+                let (new_params, new_signature, new_variadic, new_param_spec) =
+                    if let Some(pack) = bound_pack {
+                        let mut full_signature = new_signature.unwrap_or_else(|| {
+                            new_params
+                                .iter()
+                                .map(|ty| CallableParam {
+                                    name: None,
+                                    ty: *ty,
+                                    kind: CallableParamKind::PosOnly,
+                                    has_default: false,
+                                })
+                                .collect()
+                        });
+                        full_signature.extend(pack.params);
+                        let compact = full_signature
+                            .iter()
+                            .take_while(|param| param.kind != CallableParamKind::VarPos)
+                            .filter(|param| {
+                                matches!(
+                                    param.kind,
+                                    CallableParamKind::PosOnly
+                                        | CallableParamKind::PosOrKw
+                                        | CallableParamKind::KwOnly
+                                )
+                            })
+                            .map(|param| param.ty)
+                            .collect();
+                        let (variadic, param_spec) = match pack.tail {
+                            ParamPackTail::Closed => (
+                                full_signature.iter().any(|param| {
+                                    matches!(
+                                        param.kind,
+                                        CallableParamKind::VarPos | CallableParamKind::VarKw
+                                    )
+                                }),
+                                None,
+                            ),
+                            ParamPackTail::Ellipsis => (true, None),
+                            ParamPackTail::ParamSpec(var) => (false, Some(var)),
+                        };
+                        (compact, Some(full_signature), variadic, param_spec)
+                    } else {
+                        (new_params, new_signature, variadic, param_spec)
+                    };
+                let result = if new_params == *params
+                    && new_ret == ret
+                    && new_signature == *signature
+                    && new_variadic == variadic
+                    && new_param_spec == param_spec
+                {
                     ty
                 } else {
                     tcx.intern(Ty::Fn {
                         params: new_params,
                         ret: new_ret,
-                        variadic,
-                        param_spec,
+                        variadic: new_variadic,
+                        signature: new_signature,
+                        param_spec: new_param_spec,
                     })
+                };
+                if let Some(var) = bound_var {
+                    visiting_param_packs.remove(&var);
                 }
+                result
             }
             Ty::Union(ref variants) => {
-                let new_variants: Vec<TypeId> =
-                    variants.iter().map(|v| self.apply(*v, tcx)).collect();
+                let new_variants: Vec<TypeId> = variants
+                    .iter()
+                    .map(|v| self.apply_inner(*v, tcx, visiting_param_packs))
+                    .collect();
                 if new_variants == *variants {
                     ty
                 } else {
@@ -215,7 +358,11 @@ impl Substitution {
             } => {
                 let new_user = user.as_ref().map(|user| super::ty::UserClass {
                     symbol: user.symbol,
-                    args: user.args.iter().map(|arg| self.apply(*arg, tcx)).collect(),
+                    args: user
+                        .args
+                        .iter()
+                        .map(|arg| self.apply_inner(*arg, tcx, visiting_param_packs))
+                        .collect(),
                 });
                 let new_external = external.as_ref().map(|external| super::ty::ExternalClass {
                     module: external.module.clone(),
@@ -223,12 +370,17 @@ impl Substitution {
                     args: external
                         .args
                         .iter()
-                        .map(|arg| self.apply(*arg, tcx))
+                        .map(|arg| self.apply_inner(*arg, tcx, visiting_param_packs))
                         .collect(),
                 });
                 let new_fields: Vec<_> = fields
                     .iter()
-                    .map(|(field_name, field_ty)| (field_name.clone(), self.apply(*field_ty, tcx)))
+                    .map(|(field_name, field_ty)| {
+                        (
+                            field_name.clone(),
+                            self.apply_inner(*field_ty, tcx, visiting_param_packs),
+                        )
+                    })
                     .collect();
                 if new_user == *user && new_external == *external && new_fields == *fields {
                     ty
@@ -252,7 +404,7 @@ impl Substitution {
                         args: receiver
                             .args
                             .iter()
-                            .map(|arg| self.apply(*arg, tcx))
+                            .map(|arg| self.apply_inner(*arg, tcx, visiting_param_packs))
                             .collect(),
                     });
                 }
@@ -351,7 +503,8 @@ pub fn bind_explicit_type_args_without_bounds(
 ///
 /// Constructor inference may solve only some class parameters. Remaining
 /// parameters consume their declared default, or `Any` when no default is
-/// available. Pack and ParamSpec completion waits for richer representations.
+/// available. Pack parameters require a pack-aware consumer and remain
+/// unavailable to scalar class/alias specialization.
 pub fn complete_type_args(
     generic_params: &GenericParams,
     mut subst: Substitution,
@@ -381,6 +534,34 @@ pub fn complete_type_args(
     Some((subst, resolved))
 }
 
+/// Complete type arguments for a callable consumer that understands ParamPack.
+pub fn complete_callable_type_args(
+    generic_params: &GenericParams,
+    mut subst: Substitution,
+    tcx: &mut TypeContext,
+) -> Option<Substitution> {
+    for param in &generic_params.params {
+        match param.kind {
+            TypeVarKind::ParamSpec => {
+                subst.get_param_pack(param.id)?;
+            }
+            TypeVarKind::TypeVarTuple => return None,
+            TypeVarKind::TypeVar => {
+                let concrete = subst.get(param.id).unwrap_or_else(|| {
+                    param
+                        .default
+                        .resolved()
+                        .map(|default| subst.apply(default, tcx))
+                        .unwrap_or_else(|| tcx.any())
+                });
+                let concrete = normalize_constrained_candidate(param, concrete, tcx);
+                subst.insert(param.id, concrete);
+            }
+        }
+    }
+    Some(subst)
+}
+
 /// Infer type arguments by unifying generic parameters with concrete arguments.
 ///
 /// Given `def f[T](x: T, y: T)` called as `f(1, 2)`,
@@ -408,6 +589,63 @@ pub fn infer_type_args(
     }
 
     (subst, conflicts)
+}
+
+fn callable_param_pack(
+    params: Vec<TypeId>,
+    variadic: bool,
+    signature: Option<Vec<CallableParam>>,
+    param_spec: Option<TypeVarId>,
+) -> ParamPack {
+    let has_signature = signature.is_some();
+    let params = signature.unwrap_or_else(|| {
+        params
+            .into_iter()
+            .map(|ty| CallableParam {
+                name: None,
+                ty,
+                kind: CallableParamKind::PosOrKw,
+                has_default: false,
+            })
+            .collect()
+    });
+    let tail = if let Some(var) = param_spec {
+        ParamPackTail::ParamSpec(var)
+    } else if variadic && !has_signature {
+        ParamPackTail::Ellipsis
+    } else {
+        ParamPackTail::Closed
+    };
+    ParamPack { params, tail }
+}
+
+fn callable_prefix_definitely_incompatible(
+    expected: TypeId,
+    actual_parameter: TypeId,
+    tcx: &TypeContext,
+) -> bool {
+    if tcx.is_subtype(expected, actual_parameter)
+        || tcx.contains_type_var(expected)
+        || tcx.contains_type_var(actual_parameter)
+    {
+        return false;
+    }
+    let indeterminate = |ty: &Ty| {
+        matches!(
+            ty,
+            Ty::Any
+                | Ty::Error
+                | Ty::SelfType
+                | Ty::Infer(_)
+                | Ty::AliasRef(_)
+                | Ty::External(_)
+                | Ty::Class {
+                    user: Some(_),
+                    ..
+                }
+        )
+    };
+    !indeterminate(tcx.get(expected)) && !indeterminate(tcx.get(actual_parameter))
 }
 
 /// Attempt to unify a parameter type with an argument type to infer type variables.
@@ -596,6 +834,134 @@ fn unify_for_inference_step(
                 for (p, a) in params_inner.iter().zip(args_inner.iter()) {
                     unify_for_inference_inner(*p, *a, type_vars, subst, conflicts, tcx, visiting);
                 }
+            }
+        }
+        Ty::Fn {
+            params,
+            ret,
+            variadic,
+            signature,
+            param_spec,
+        } => {
+            let Ty::Fn {
+                params: arg_params,
+                ret: arg_ret,
+                variadic: arg_variadic,
+                signature: arg_signature,
+                param_spec: arg_param_spec,
+            } = tcx.get(arg).clone()
+            else {
+                return;
+            };
+            unify_for_inference_inner(
+                ret, arg_ret, type_vars, subst, conflicts, tcx, visiting,
+            );
+            let expected = callable_param_pack(params, variadic, signature, param_spec);
+            if expected.tail == ParamPackTail::Ellipsis {
+                return;
+            }
+            let actual = callable_param_pack(
+                arg_params,
+                arg_variadic,
+                arg_signature,
+                arg_param_spec,
+            );
+            let captures_tail = matches!(expected.tail, ParamPackTail::ParamSpec(_));
+            let residual_start = if captures_tail {
+                let mut actual_index = 0usize;
+                for expected_param in &expected.params {
+                    let Some(actual_param) = actual.params.get(actual_index) else {
+                        if actual.tail == ParamPackTail::Closed {
+                            conflicts.push(
+                                "argument type mismatch: callable does not accept the Concatenate prefix positionally"
+                                    .to_string(),
+                            );
+                        }
+                        return;
+                    };
+                    match actual_param.kind {
+                        CallableParamKind::PosOnly | CallableParamKind::PosOrKw => {
+                            actual_index += 1;
+                        }
+                        CallableParamKind::VarPos => {
+                            if callable_prefix_definitely_incompatible(
+                                expected_param.ty,
+                                actual_param.ty,
+                                tcx,
+                            ) {
+                                conflicts.push(
+                                    "argument type mismatch: callable variadic parameter does not accept the Concatenate prefix"
+                                        .to_string(),
+                                );
+                                return;
+                            }
+                        }
+                        CallableParamKind::KwOnly | CallableParamKind::VarKw => {
+                            if actual.tail == ParamPackTail::Closed {
+                                conflicts.push(
+                                    "argument type mismatch: callable parameter kind does not accept the Concatenate prefix positionally"
+                                        .to_string(),
+                                );
+                            }
+                            return;
+                        }
+                    }
+                    unify_for_inference_inner(
+                        expected_param.ty,
+                        actual_param.ty,
+                        type_vars,
+                        subst,
+                        conflicts,
+                        tcx,
+                        visiting,
+                    );
+                }
+                actual_index
+            } else {
+                if actual.params.len() < expected.params.len() {
+                    return;
+                }
+                for (expected_param, actual_param) in
+                    expected.params.iter().zip(&actual.params)
+                {
+                    unify_for_inference_inner(
+                        expected_param.ty,
+                        actual_param.ty,
+                        type_vars,
+                        subst,
+                        conflicts,
+                        tcx,
+                        visiting,
+                    );
+                }
+                return;
+            };
+            let ParamPackTail::ParamSpec(var) = expected.tail else {
+                return;
+            };
+            if !type_vars
+                .iter()
+                .any(|param| param.id == var && param.kind == TypeVarKind::ParamSpec)
+            {
+                return;
+            }
+            let residual = ParamPack {
+                params: actual.params[residual_start..].to_vec(),
+                tail: actual.tail,
+            };
+            if let Some(existing) = subst.get_param_pack(var) {
+                if existing != &residual {
+                    let name = type_vars
+                        .iter()
+                        .find(|param| param.id == var)
+                        .map(|param| param.name.as_str())
+                        .unwrap_or("P");
+                    conflicts.push(format!(
+                        "conflicting callable parameter packs for type parameter '{name}'"
+                    ));
+                }
+            } else {
+                subst.insert_param_pack(var, residual);
             }
         }
         Ty::Class {
@@ -1057,6 +1423,232 @@ mod tests {
     }
 
     #[test]
+    fn paramspec_inference_retains_full_callable_pack_and_splices_it() {
+        let mut tcx = TypeContext::new();
+        let p_id = TypeVarId(40);
+        let r_id = TypeVarId(41);
+        let r_ty = tcx.intern(Ty::TypeVar(r_id));
+        let expected = tcx.intern(Ty::Fn {
+            params: Vec::new(),
+            ret: r_ty,
+            variadic: false,
+            signature: None,
+            param_spec: Some(p_id),
+        });
+        let signature = vec![
+            CallableParam {
+                name: Some("x".to_string()),
+                ty: tcx.int(),
+                kind: CallableParamKind::PosOnly,
+                has_default: false,
+            },
+            CallableParam {
+                name: Some("flag".to_string()),
+                ty: tcx.bool(),
+                kind: CallableParamKind::KwOnly,
+                has_default: true,
+            },
+            CallableParam {
+                name: Some("rest".to_string()),
+                ty: tcx.str(),
+                kind: CallableParamKind::VarPos,
+                has_default: false,
+            },
+        ];
+        let actual = tcx.intern(Ty::Fn {
+            params: vec![tcx.int()],
+            ret: tcx.str(),
+            variadic: true,
+            signature: Some(signature.clone()),
+            param_spec: None,
+        });
+        let mut params = GenericParams::new();
+        params.add_param(
+            "P",
+            p_id,
+            TypeVarKind::ParamSpec,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
+        params.add("R", r_id, None);
+
+        let (subst, conflicts) = infer_type_args(&params, &[expected], &[actual], &tcx);
+        assert!(conflicts.is_empty());
+        assert_eq!(subst.get(r_id), Some(tcx.str()));
+        assert_eq!(
+            subst.get_param_pack(p_id),
+            Some(&ParamPack {
+                params: signature.clone(),
+                tail: ParamPackTail::Closed,
+            })
+        );
+        assert!(
+            complete_type_args(&params, subst.clone(), &mut tcx).is_none(),
+            "scalar class/alias completion must not collapse ParamSpec to Any"
+        );
+        let completed = complete_callable_type_args(&params, subst, &mut tcx).unwrap();
+        let applied = completed.apply(expected, &mut tcx);
+        let Ty::Fn {
+            ret,
+            signature: Some(applied_signature),
+            param_spec,
+            ..
+        } = tcx.get(applied)
+        else {
+            panic!("bound ParamSpec must produce a concrete callable signature")
+        };
+        assert_eq!(*ret, tcx.str());
+        assert_eq!(applied_signature, &signature);
+        assert_eq!(*param_spec, None);
+    }
+
+    #[test]
+    fn paramspec_inference_reports_repeated_pack_conflicts() {
+        let mut tcx = TypeContext::new();
+        let p_id = TypeVarId(50);
+        let expected = tcx.intern(Ty::Fn {
+            params: Vec::new(),
+            ret: tcx.any(),
+            variadic: false,
+            signature: None,
+            param_spec: Some(p_id),
+        });
+        let one = tcx.intern(Ty::Fn {
+            params: vec![tcx.int()],
+            ret: tcx.any(),
+            variadic: false,
+            signature: None,
+            param_spec: None,
+        });
+        let two = tcx.intern(Ty::Fn {
+            params: vec![tcx.str()],
+            ret: tcx.any(),
+            variadic: false,
+            signature: None,
+            param_spec: None,
+        });
+        let mut params = GenericParams::new();
+        params.add_param(
+            "P",
+            p_id,
+            TypeVarKind::ParamSpec,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
+
+        let (_, conflicts) =
+            infer_type_args(&params, &[expected, expected], &[one, two], &tcx);
+        assert_eq!(conflicts.len(), 1);
+        assert!(conflicts[0].contains("conflicting callable parameter packs"));
+    }
+
+    #[test]
+    fn paramspec_substitution_preserves_cyclic_open_tail_without_duplication() {
+        let mut tcx = TypeContext::new();
+        let p_id = TypeVarId(60);
+        let q_id = TypeVarId(61);
+        let callable = tcx.intern(Ty::Fn {
+            params: Vec::new(),
+            ret: tcx.none(),
+            variadic: false,
+            signature: None,
+            param_spec: Some(p_id),
+        });
+        let mut subst = Substitution::new();
+        subst.insert_param_pack(
+            p_id,
+            ParamPack {
+                params: vec![CallableParam {
+                    name: Some("left".to_string()),
+                    ty: tcx.int(),
+                    kind: CallableParamKind::PosOrKw,
+                    has_default: false,
+                }],
+                tail: ParamPackTail::ParamSpec(q_id),
+            },
+        );
+        subst.insert_param_pack(
+            q_id,
+            ParamPack {
+                params: vec![CallableParam {
+                    name: Some("right".to_string()),
+                    ty: tcx.str(),
+                    kind: CallableParamKind::PosOrKw,
+                    has_default: false,
+                }],
+                tail: ParamPackTail::ParamSpec(p_id),
+            },
+        );
+
+        let applied = subst.apply(callable, &mut tcx);
+        let Ty::Fn {
+            signature: Some(signature),
+            param_spec,
+            ..
+        } = tcx.get(applied)
+        else {
+            panic!("cyclic pack must remain an open callable")
+        };
+        assert_eq!(signature.len(), 2);
+        assert_eq!(signature[0].name.as_deref(), Some("left"));
+        assert_eq!(signature[1].name.as_deref(), Some("right"));
+        assert_eq!(*param_spec, Some(p_id));
+    }
+
+    #[test]
+    fn paramspec_substitution_preserves_nested_callable_cycle() {
+        let mut tcx = TypeContext::new();
+        let p_id = TypeVarId(62);
+        let nested = tcx.intern(Ty::Fn {
+            params: Vec::new(),
+            ret: tcx.none(),
+            variadic: false,
+            signature: None,
+            param_spec: Some(p_id),
+        });
+        let outer = tcx.intern(Ty::Fn {
+            params: Vec::new(),
+            ret: tcx.none(),
+            variadic: false,
+            signature: None,
+            param_spec: Some(p_id),
+        });
+        let mut subst = Substitution::new();
+        subst.insert_param_pack(
+            p_id,
+            ParamPack {
+                params: vec![CallableParam {
+                    name: Some("callback".to_string()),
+                    ty: nested,
+                    kind: CallableParamKind::PosOrKw,
+                    has_default: false,
+                }],
+                tail: ParamPackTail::Closed,
+            },
+        );
+
+        let applied = subst.apply(outer, &mut tcx);
+        let Ty::Fn {
+            signature: Some(signature),
+            param_spec: None,
+            ..
+        } = tcx.get(applied)
+        else {
+            panic!("the outer ParamSpec must bind without recursing forever")
+        };
+        let Ty::Fn {
+            param_spec: Some(nested_param_spec),
+            ..
+        } = tcx.get(signature[0].ty)
+        else {
+            panic!("the nested cyclic callable must remain open")
+        };
+        assert_eq!(*nested_param_spec, p_id);
+    }
+
+    #[test]
     fn test_substitution_empty() {
         let subst = Substitution::new();
         assert!(subst.is_empty());
@@ -1142,6 +1734,7 @@ mod tests {
             params: vec![var_ty],
             ret: var_ty,
             variadic: false,
+            signature: None,
             param_spec: None,
         });
 
@@ -1156,6 +1749,7 @@ mod tests {
                 params: vec![int_ty],
                 ret: int_ty,
                 variadic: false,
+                signature: None,
                 param_spec: None,
             }
         );
