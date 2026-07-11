@@ -6947,3 +6947,140 @@ fn pep695_variadic_class_methods_rebuild_ordered_type_packs() {
         "a specialized variadic method must retain member order: {invalid:?}"
     );
 }
+
+#[test]
+fn type_var_tuple_correlates_callable_unpack_with_tuple_unpack() {
+    let valid = check(
+        "import _thread\n\
+         def pair(left: int, right: str) -> str:\n\
+         \x20   return right\n\
+         def optional(left: int, right: str = \"\") -> object:\n\
+         \x20   return left\n\
+         def accepts_float(value: float) -> object:\n\
+         \x20   return value\n\
+         def accepts_ints(*values: int) -> object:\n\
+         \x20   return values\n\
+         open_values: tuple[int, ...] = (1, 2)\n\
+         _thread.start_new_thread(pair, (1, \"ok\"))\n\
+         _thread.start_new_thread(optional, (1,))\n\
+         _thread.start_new_thread(accepts_float, (1,))\n\
+         _thread.start_new_thread(accepts_ints, open_values)\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "correlated callable/tuple packs must honor optional, widening, and open-tuple evidence: {valid:?}"
+    );
+
+    let dynamic = check(
+        "from typing import Any\n\
+         import _thread\n\
+         function: Any\n\
+         arguments: Any\n\
+         _thread.start_new_thread(function, arguments)\n",
+    );
+    assert!(
+        dynamic.is_empty(),
+        "unknown callable and tuple evidence must remain indeterminate: {dynamic:?}"
+    );
+
+    let invalid = check(
+        "import _thread\n\
+         def pair(left: int, right: str) -> str:\n\
+         \x20   return right\n\
+         _thread.start_new_thread(pair, (1, 2))\n",
+    );
+    assert!(
+        invalid.iter().any(|error| {
+            error.contains("type mismatch") || error.contains("conflicting ordered type packs")
+        }),
+        "one changed tuple member must reject the correlated callable pack: {invalid:?}"
+    );
+
+    let invalid = check(
+        "from typing import Any\n\
+         import _thread\n\
+         class _W:\n\
+         \x20   pass\n\
+         arguments: Any\n\
+         _thread.start_new_thread(_W(), arguments)\n",
+    );
+    assert!(
+        invalid.iter().any(|error| {
+            error.contains("got `_W`") && error.contains("parameter `function`")
+        }),
+        "missing pack evidence must not hide a definite non-callable argument: {invalid:?}"
+    );
+
+    let invalid = check(
+        "import _thread\n\
+         def callback(*values: int) -> object:\n\
+         \x20   return values\n\
+         arguments: int | str = 1\n\
+         _thread.start_new_thread(callback, arguments)\n",
+    );
+    assert!(
+        invalid.iter().any(|error| {
+            error.contains("expected `tuple[*_Ts]`") && error.contains("got `int | str`")
+        }),
+        "a non-tuple union must remain a definite outer mismatch: {invalid:?}"
+    );
+}
+
+#[test]
+fn type_var_tuple_correlates_callable_unpack_with_varargs_unpack() {
+    let valid = check(
+        "import asyncio\n\
+         def pair(left: int, right: str) -> str:\n\
+         \x20   return right\n\
+         def zero(*values: int) -> object:\n\
+         \x20   return values\n\
+         def accepts_float(value: float) -> object:\n\
+         \x20   return value\n\
+         def optional(value: int, suffix: str = \"\") -> object:\n\
+         \x20   return value\n\
+         def accepts_ints(*values: int) -> object:\n\
+         \x20   return values\n\
+         asyncio.get_event_loop().call_soon(pair, 1, \"ok\")\n\
+         asyncio.get_event_loop().call_soon(zero)\n\
+         asyncio.get_event_loop().call_soon(accepts_float, 1)\n\
+         asyncio.get_event_loop().call_soon(optional, 1)\n\
+         asyncio.get_event_loop().call_soon(accepts_ints, 1, 2)\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "correlated callable/varargs packs must honor empty, widening, defaults, and typed varargs: {valid:?}"
+    );
+
+    for (source, message) in [
+        (
+            "import asyncio\n\
+             def pair(left: int, right: str) -> str:\n\
+             \x20   return right\n\
+             asyncio.get_event_loop().call_soon(pair, 1, 2)\n",
+            "one changed forwarded member",
+        ),
+        (
+            "import asyncio\n\
+             def needs_kw(value: int, *, required: str) -> object:\n\
+             \x20   return required\n\
+             asyncio.get_event_loop().call_soon(needs_kw, 1)\n",
+            "a missing required keyword-only callback parameter",
+        ),
+        (
+            "import asyncio\n\
+             def accepts_strings(*values: str) -> object:\n\
+             \x20   return values\n\
+             asyncio.get_event_loop().call_soon(accepts_strings, 1)\n",
+            "an incompatible typed variadic callback parameter",
+        ),
+    ] {
+        let invalid = check(source);
+        assert!(
+            invalid.iter().any(|error| {
+                error.contains("type mismatch")
+                    || error.contains("conflicting ordered type packs")
+            }),
+            "{message} must reject the correlated callable pack: {invalid:?}"
+        );
+    }
+}

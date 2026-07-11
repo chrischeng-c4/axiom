@@ -2,13 +2,13 @@ use super::check::{
     expr_to_type_expr, ClassPatternTarget, FunctionParamSig, NumericRoot, TypeChecker,
 };
 use super::generic::{
-    bind_explicit_type_args_without_bounds, check_bounds, complete_callable_type_args,
-    complete_type_args, infer_type_args, GenericParams, Substitution,
+    bind_explicit_type_args_without_bounds, callable_param_pack, check_bounds,
+    complete_callable_type_args, complete_type_args, infer_type_args, GenericParams, Substitution,
 };
 use super::ty::{
     CallableParam, CallableParamKind, ClassRole, ExternalCallable, ExternalCallableAccess,
     ExternalCallableRuntimeKind, ExternalClass, ExternalValue, LiteralValue, ParamPack,
-    ParamPackTail, TypeParamDefault, TypeVarId, TypeVarKind,
+    ParamPackTail, TypePack, TypeParamDefault, TypeVarId, TypeVarKind,
 };
 use super::{Ty, TypeId};
 use crate::parser::ast::*;
@@ -45,6 +45,52 @@ struct ProtocolParamShape {
     name: &'static str,
     kind: super::stdlib_typespec::ParamSpecKind,
     has_default: bool,
+}
+
+fn bind_generated_alias_args(
+    type_params: &[(TypeVarId, TypeVarKind)],
+    args: &[TypeId],
+) -> Option<Substitution> {
+    let mut substitution = Substitution::new();
+    let mut pack_index = None;
+    for (index, (_, kind)) in type_params.iter().enumerate() {
+        if *kind == TypeVarKind::TypeVarTuple {
+            if pack_index.replace(index).is_some() {
+                return None;
+            }
+        }
+    }
+
+    let Some(pack_index) = pack_index else {
+        if args.len() != type_params.len() {
+            return None;
+        }
+        for ((var, _), arg) in type_params.iter().zip(args) {
+            substitution.insert(*var, *arg);
+        }
+        return Some(substitution);
+    };
+
+    let fixed = type_params.len() - 1;
+    if args.len() < fixed {
+        return None;
+    }
+    let pack_end = args.len() - (type_params.len() - pack_index - 1);
+    for (index, (var, _)) in type_params.iter().enumerate() {
+        if index < pack_index {
+            substitution.insert(*var, args[index]);
+        } else if index == pack_index {
+            substitution.insert_type_pack(
+                *var,
+                TypePack {
+                    types: args[pack_index..pack_end].to_vec(),
+                },
+            );
+        } else {
+            substitution.insert(*var, args[pack_end + index - pack_index - 1]);
+        }
+    }
+    Some(substitution)
 }
 
 fn protocol_required_call_shapes(required: &[ProtocolParamShape]) -> Vec<ProtocolCallShape> {
@@ -1766,8 +1812,19 @@ impl TypeChecker {
 
         let alias = spec::alias(module, name)?.clone();
         let type_params = spec::type_param_edges(alias.type_params);
-        if !args.is_empty() && args.len() != type_params.len() {
-            return None;
+        if !args.is_empty() {
+            let packs = type_params
+                .iter()
+                .filter(|param| {
+                    spec::type_param(**param).kind == spec::TypeParamSpecKind::TypeVarTuple
+                })
+                .count();
+            if packs > 1
+                || (packs == 0 && args.len() != type_params.len())
+                || (packs == 1 && args.len() < type_params.len() - 1)
+            {
+                return None;
+            }
         }
         let identity = super::context::AliasIdentity::Generated(alias.module, alias.name);
         let (instance, alias_ref) = self.tcx.intern_alias_instance(
@@ -1790,14 +1847,16 @@ impl TypeChecker {
             if args.is_empty() {
                 return Some(target);
             }
-            let mut substitution = Substitution::new();
-            for (param, arg) in type_params.iter().zip(args) {
+            let mut params = Vec::with_capacity(type_params.len());
+            for param in type_params {
                 let ty = self.materialize_stdlib_type_param(*param)?;
                 let Ty::TypeVar(var) = self.tcx.get(ty) else {
                     return None;
                 };
-                substitution.insert(*var, arg);
+                let var = *var;
+                params.push((var, self.tcx.get_type_var(var).kind));
             }
+            let substitution = bind_generated_alias_args(&params, &args)?;
             Some(substitution.apply(target, &mut self.tcx))
         })();
         let Some(target) = materialized else {
@@ -2958,6 +3017,133 @@ impl TypeChecker {
         self.stdlib_type_relation_inner(expected, actual, &mut std::collections::HashSet::new())
     }
 
+    fn stdlib_unresolved_type_var_tuple_outer_relation(
+        &mut self,
+        expected: TypeId,
+        actual: TypeId,
+    ) -> StrictRelation {
+        let actual_node = self.tcx.get(actual).clone();
+        if matches!(
+            &actual_node,
+            Ty::Any
+                | Ty::Error
+                | Ty::Never
+                | Ty::Infer(_)
+                | Ty::TypeVar(_)
+                | Ty::AliasRef(_)
+        ) {
+            return StrictRelation::Indeterminate;
+        }
+        if let Ty::Union(members) = actual_node {
+            let mut unknown = false;
+            for member in members {
+                match self.stdlib_unresolved_type_var_tuple_outer_relation(expected, member) {
+                    StrictRelation::Compatible => {}
+                    StrictRelation::Indeterminate => unknown = true,
+                    StrictRelation::Incompatible => return StrictRelation::Incompatible,
+                }
+            }
+            return if unknown {
+                StrictRelation::Indeterminate
+            } else {
+                StrictRelation::Compatible
+            };
+        }
+
+        match self.tcx.get(expected).clone() {
+            Ty::Fn { .. } => {
+                if matches!(self.tcx.get(actual), Ty::Fn { .. }) {
+                    StrictRelation::Indeterminate
+                } else {
+                    self.stdlib_callable_relation_inner(
+                        expected,
+                        actual,
+                        &mut std::collections::HashSet::new(),
+                    )
+                }
+            }
+            Ty::Tuple(_) => match self.tcx.get(actual) {
+                Ty::Tuple(_) => StrictRelation::Indeterminate,
+                Ty::Class {
+                    role: ClassRole::Object,
+                    ..
+                } => StrictRelation::Incompatible,
+                Ty::Class {
+                    role: ClassRole::Instance,
+                    user: Some(user),
+                    ..
+                } if !self.class_inheritance_open.contains(&user.symbol) => {
+                    StrictRelation::Incompatible
+                }
+                Ty::Class { .. } => StrictRelation::Indeterminate,
+                _ => StrictRelation::Incompatible,
+            },
+            _ => StrictRelation::Indeterminate,
+        }
+    }
+
+    fn stdlib_positional_invocation_relation(
+        &mut self,
+        callback: &ParamPack,
+        arguments: &[TypeId],
+        visiting: &mut std::collections::HashSet<(TypeId, TypeId)>,
+    ) -> StrictRelation {
+        let positional: Vec<_> = callback
+            .params
+            .iter()
+            .enumerate()
+            .filter(|(_, param)| {
+                matches!(
+                    param.kind,
+                    CallableParamKind::PosOnly | CallableParamKind::PosOrKw
+                )
+            })
+            .map(|(index, _)| index)
+            .collect();
+        let var_pos = callback
+            .params
+            .iter()
+            .position(|param| param.kind == CallableParamKind::VarPos);
+        let mut bound = std::collections::HashSet::new();
+        let mut unknown = false;
+
+        for (position, argument) in arguments.iter().enumerate() {
+            let Some(param_index) = positional.get(position).copied().or(var_pos) else {
+                return if callback.tail == ParamPackTail::Closed {
+                    StrictRelation::Incompatible
+                } else {
+                    StrictRelation::Indeterminate
+                };
+            };
+            let param = &callback.params[param_index];
+            if param.kind != CallableParamKind::VarPos {
+                bound.insert(param_index);
+            }
+            match self.stdlib_type_relation_inner(param.ty, *argument, visiting) {
+                StrictRelation::Compatible => {}
+                StrictRelation::Indeterminate => unknown = true,
+                StrictRelation::Incompatible => return StrictRelation::Incompatible,
+            }
+        }
+
+        for (param_index, param) in callback.params.iter().enumerate() {
+            if matches!(
+                param.kind,
+                CallableParamKind::VarPos | CallableParamKind::VarKw
+            ) || param.has_default
+                || bound.contains(&param_index)
+            {
+                continue;
+            }
+            return StrictRelation::Incompatible;
+        }
+        if callback.tail != ParamPackTail::Closed || unknown {
+            StrictRelation::Indeterminate
+        } else {
+            StrictRelation::Compatible
+        }
+    }
+
     fn stdlib_callable_relation_inner(
         &mut self,
         expected: TypeId,
@@ -2968,8 +3154,8 @@ impl TypeChecker {
             params: expected_params,
             ret: expected_ret,
             variadic: expected_variadic,
+            signature: expected_signature,
             param_spec: expected_param_spec,
-            ..
         } = self.tcx.get(expected).clone()
         else {
             return StrictRelation::Indeterminate;
@@ -2978,8 +3164,8 @@ impl TypeChecker {
             params: actual_params,
             ret: actual_ret,
             variadic: actual_variadic,
+            signature: actual_signature,
             param_spec: actual_param_spec,
-            ..
         } = self.tcx.get(actual).clone()
         else {
             return match self.tcx.get(actual).clone() {
@@ -3009,6 +3195,32 @@ impl TypeChecker {
             self.stdlib_type_relation_inner(expected_ret, actual_ret, visiting);
         if return_relation == StrictRelation::Incompatible {
             return StrictRelation::Incompatible;
+        }
+
+        if expected_signature.is_none()
+            && expected_param_spec.is_none()
+            && !expected_variadic
+        {
+            let actual = callable_param_pack(
+                actual_params.clone(),
+                actual_variadic,
+                actual_signature,
+                actual_param_spec,
+            );
+            let parameter_relation = self.stdlib_positional_invocation_relation(
+                &actual,
+                &expected_params,
+                visiting,
+            );
+            return if parameter_relation == StrictRelation::Incompatible {
+                StrictRelation::Incompatible
+            } else if parameter_relation == StrictRelation::Indeterminate
+                || return_relation == StrictRelation::Indeterminate
+            {
+                StrictRelation::Indeterminate
+            } else {
+                StrictRelation::Compatible
+            };
         }
 
         let mut compare_prefix = |limit: usize| {
@@ -3554,6 +3766,10 @@ impl TypeChecker {
             TypeVarId,
             Vec<(usize, TypeId, Span)>,
         > = std::collections::HashMap::new();
+        let mut forwarded_type_pack_args: std::collections::HashMap<
+            TypeVarId,
+            Vec<(usize, TypeId, Span)>,
+        > = std::collections::HashMap::new();
         let mut indeterminate = false;
         for param in &visible {
             let expected_spec = spec::type_use(param.ty).0;
@@ -3567,6 +3783,13 @@ impl TypeChecker {
                     forwarded_param_args.entry(var).or_default();
                 } else {
                     indeterminate = true;
+                }
+            }
+            if param.kind == ParamSpecKind::VarPos {
+                if let Some(expected) = self.materialize_stdlib_type(expected_spec) {
+                    if let Ty::Unpack(var) = self.tcx.get(expected) {
+                        forwarded_type_pack_args.entry(*var).or_default();
+                    }
                 }
             }
         }
@@ -3587,6 +3810,17 @@ impl TypeChecker {
                     indeterminate = true;
                 }
                 continue;
+            }
+            if visible[param_index].kind == ParamSpecKind::VarPos {
+                if let Some(expected) = self.materialize_stdlib_type(expected_spec) {
+                    if let Ty::Unpack(var) = self.tcx.get(expected) {
+                        forwarded_type_pack_args
+                            .entry(*var)
+                            .or_default()
+                            .push((arg_index, actual, span));
+                        continue;
+                    }
+                }
             }
             let expected = self.materialize_stdlib_type(expected_spec);
             indeterminate |= expected.is_none();
@@ -3619,10 +3853,30 @@ impl TypeChecker {
 
         let mut relation_substitution = None;
         let completed = if let Some(generic_params) = self.stdlib_spec_generic_params(sig) {
-            let inference_pairs: Vec<_> = matched
+            let mut inference_pairs: Vec<_> = matched
                 .iter()
                 .filter_map(|item| item.0.map(|expected| (expected, item.1)))
                 .collect();
+            let type_var_tuple_ids: std::collections::HashSet<_> = generic_params
+                .params
+                .iter()
+                .filter(|param| param.kind == TypeVarKind::TypeVarTuple)
+                .map(|param| param.id)
+                .collect();
+            let non_callable_pack_evidence: std::collections::HashSet<_> = inference_pairs
+                .iter()
+                .filter(|(expected, _)| !matches!(self.tcx.get(*expected), Ty::Fn { .. }))
+                .flat_map(|(expected, _)| self.tcx.type_vars_in(*expected))
+                .filter(|var| type_var_tuple_ids.contains(var))
+                .collect();
+            inference_pairs.retain(|(expected, _)| {
+                !matches!(self.tcx.get(*expected), Ty::Fn { .. })
+                    || !self
+                        .tcx
+                        .type_vars_in(*expected)
+                        .iter()
+                        .any(|var| non_callable_pack_evidence.contains(var))
+            });
             let inference_params: Vec<_> = inference_pairs.iter().map(|item| item.0).collect();
             let inference_args: Vec<_> = inference_pairs.iter().map(|item| item.1).collect();
             let (mut subst, conflicts) =
@@ -3690,6 +3944,54 @@ impl TypeChecker {
                     }
                 }
             }
+            for (var, forwarded) in &forwarded_type_pack_args {
+                let mut forwarded = forwarded.clone();
+                forwarded.sort_by_key(|(arg_index, _, _)| *arg_index);
+                let captured = TypePack {
+                    types: forwarded.iter().map(|(_, actual, _)| *actual).collect(),
+                };
+                let expected = if let Some(mut existing) = subst.get_type_pack(*var).cloned() {
+                    if existing.types.len() != captured.types.len() {
+                        let name = generic_params
+                            .params
+                            .iter()
+                            .find(|param| param.id == *var)
+                            .map(|param| param.name.as_str())
+                            .unwrap_or("Ts");
+                        let span = forwarded.first().map(|(_, _, span)| *span).unwrap_or_default();
+                        return StdlibSpecCandidate::Rejected(
+                            span,
+                            format!(
+                                "conflicting ordered type packs for type parameter '{name}'"
+                            ),
+                            1,
+                        );
+                    }
+                    for (expected, actual) in existing.types.iter_mut().zip(&captured.types) {
+                        if matches!(self.tcx.get(*expected), Ty::Any | Ty::Error)
+                            && !matches!(self.tcx.get(*actual), Ty::Any | Ty::Error)
+                        {
+                            *expected = *actual;
+                        }
+                    }
+                    subst.insert_type_pack(*var, existing.clone());
+                    existing
+                } else {
+                    subst.insert_type_pack(*var, captured.clone());
+                    captured
+                };
+                matched.extend(expected.types.iter().zip(&forwarded).map(
+                    |(expected, (arg_index, actual, span))| {
+                        (
+                            Some(*expected),
+                            *actual,
+                            *span,
+                            "<variadic parameter>".to_string(),
+                            *arg_index,
+                        )
+                    },
+                ));
+            }
             relation_substitution = Some(subst.clone());
             match complete_callable_type_args(&generic_params, subst, &mut self.tcx) {
                 Some(completed) => {
@@ -3730,9 +4032,33 @@ impl TypeChecker {
             let Some(mut expected) = expected else {
                 continue;
             };
+            let has_relation_substitution = relation_substitution.is_some();
             if let Some(substitution) = &relation_substitution {
                 expected = substitution.apply(expected, &mut self.tcx);
-            } else if self.tcx.contains_type_var(expected) {
+            }
+            let has_unresolved_type_var_tuple = self
+                .tcx
+                .type_vars_in(expected)
+                .iter()
+                .any(|var| self.tcx.get_type_var(*var).kind == TypeVarKind::TypeVarTuple);
+            if has_unresolved_type_var_tuple {
+                if self.stdlib_unresolved_type_var_tuple_outer_relation(expected, actual)
+                    == StrictRelation::Incompatible
+                {
+                    return StdlibSpecCandidate::Rejected(
+                        span,
+                        format!(
+                            "argument type mismatch: expected `{}`, got `{}` for parameter `{name}`",
+                            self.ty_name(expected),
+                            self.ty_name(actual),
+                        ),
+                        1,
+                    );
+                }
+                indeterminate = true;
+                continue;
+            }
+            if !has_relation_substitution && self.tcx.contains_type_var(expected) {
                 indeterminate = true;
                 continue;
             }
@@ -5864,8 +6190,9 @@ fn collect_bindings_inner(pat: &Pattern, names: &mut std::collections::BTreeSet<
 #[cfg(test)]
 mod tests {
     use super::{
-        bind_forwarded_param_pack, bind_protocol_call_shape, intrinsic_function_param_sigs,
-        protocol_required_call_shapes, ParamPackCallBinding, ProtocolParamShape, StrictRelation,
+        bind_forwarded_param_pack, bind_generated_alias_args, bind_protocol_call_shape,
+        intrinsic_function_param_sigs, protocol_required_call_shapes, ParamPackCallBinding,
+        ProtocolParamShape, StrictRelation,
     };
     use crate::parser::ast::*;
     use crate::source::span::{FileId, Span, Spanned};
@@ -5992,6 +6319,108 @@ mod tests {
         assert!(checker
             .materialize_stdlib_type(typed_dict_apply)
             .is_none());
+    }
+
+    #[test]
+    fn generated_alias_arg_binding_preserves_type_var_tuple_middle() {
+        let mut checker = TypeChecker::new();
+        let prefix = checker.tcx.new_type_param(
+            "Prefix".to_string(),
+            TypeVarKind::TypeVar,
+            None,
+            Vec::new(),
+            crate::types::ty::TypeParamDefault::None,
+        );
+        let pack = checker.tcx.new_type_param(
+            "Pack".to_string(),
+            TypeVarKind::TypeVarTuple,
+            None,
+            Vec::new(),
+            crate::types::ty::TypeParamDefault::None,
+        );
+        let suffix = checker.tcx.new_type_param(
+            "Suffix".to_string(),
+            TypeVarKind::TypeVar,
+            None,
+            Vec::new(),
+            crate::types::ty::TypeParamDefault::None,
+        );
+        let params = [
+            (prefix, TypeVarKind::TypeVar),
+            (pack, TypeVarKind::TypeVarTuple),
+            (suffix, TypeVarKind::TypeVar),
+        ];
+
+        let many = bind_generated_alias_args(
+            &params,
+            &[
+                checker.tcx.int(),
+                checker.tcx.str(),
+                checker.tcx.float(),
+                checker.tcx.bool(),
+            ],
+        )
+        .expect("one generated TypeVarTuple must consume the ordered middle");
+        assert_eq!(many.get(prefix), Some(checker.tcx.int()));
+        assert_eq!(
+            many.get_type_pack(pack).map(|pack| pack.types.as_slice()),
+            Some([checker.tcx.str(), checker.tcx.float()].as_slice())
+        );
+        assert_eq!(many.get(suffix), Some(checker.tcx.bool()));
+
+        let zero_middle = bind_generated_alias_args(
+            &params,
+            &[checker.tcx.int(), checker.tcx.bool()],
+        )
+        .expect("fixed generated alias arguments must allow an empty middle pack");
+        assert_eq!(zero_middle.get(prefix), Some(checker.tcx.int()));
+        assert_eq!(
+            zero_middle
+                .get_type_pack(pack)
+                .map(|pack| pack.types.as_slice()),
+            Some([].as_slice())
+        );
+        assert_eq!(zero_middle.get(suffix), Some(checker.tcx.bool()));
+
+        let one_middle = bind_generated_alias_args(
+            &params,
+            &[
+                checker.tcx.int(),
+                checker.tcx.str(),
+                checker.tcx.bool(),
+            ],
+        )
+        .expect("fixed generated alias arguments must allow one middle pack member");
+        assert_eq!(
+            one_middle
+                .get_type_pack(pack)
+                .map(|pack| pack.types.as_slice()),
+            Some([checker.tcx.str()].as_slice())
+        );
+
+        let only_pack = [(pack, TypeVarKind::TypeVarTuple)];
+        let empty = bind_generated_alias_args(&only_pack, &[])
+            .expect("a generated TypeVarTuple must accept an empty pack");
+        assert_eq!(
+            empty.get_type_pack(pack).map(|pack| pack.types.as_slice()),
+            Some([].as_slice())
+        );
+        let one = bind_generated_alias_args(&only_pack, &[checker.tcx.int()])
+            .expect("a generated TypeVarTuple must accept one member");
+        assert_eq!(
+            one.get_type_pack(pack).map(|pack| pack.types.as_slice()),
+            Some([checker.tcx.int()].as_slice())
+        );
+
+        assert!(bind_generated_alias_args(&params, &[checker.tcx.int()]).is_none());
+        assert!(bind_generated_alias_args(
+            &[
+                (pack, TypeVarKind::TypeVarTuple),
+                (pack, TypeVarKind::TypeVarTuple),
+            ],
+            &[checker.tcx.int()],
+        )
+        .is_none());
     }
 
     #[test]

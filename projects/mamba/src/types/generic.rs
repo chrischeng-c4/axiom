@@ -749,7 +749,11 @@ pub fn complete_callable_type_args(
             TypeVarKind::ParamSpec => {
                 subst.get_param_pack(param.id)?;
             }
-            TypeVarKind::TypeVarTuple => return None,
+            TypeVarKind::TypeVarTuple => {
+                // A TypeVarTuple is evidence-bearing: unlike scalar variables it
+                // cannot be completed by inventing Any (or an empty pack).
+                subst.get_type_pack(param.id)?;
+            }
             TypeVarKind::TypeVar => {
                 let concrete = subst.get(param.id).unwrap_or_else(|| {
                     param
@@ -795,7 +799,123 @@ pub fn infer_type_args(
     (subst, conflicts)
 }
 
-fn callable_param_pack(
+/// Unify an ordered sequence containing one `Unpack[TypeVarTuple]`.
+///
+/// The unpack consumes the complete middle slice after its fixed prefix and
+/// suffix.  Returning `true` means the sequence was pack-shaped (including a
+/// too-short actual sequence); callers must not fall back to zip inference in
+/// that case.
+fn unify_ordered_type_sequence_for_inference(
+    expected: &[TypeId],
+    actual: &[TypeId],
+    type_vars: &[TypeVar],
+    subst: &mut Substitution,
+    conflicts: &mut Vec<String>,
+    tcx: &TypeContext,
+    visiting: &mut HashSet<(TypeId, TypeId)>,
+) -> bool {
+    let unpack_positions: Vec<_> = expected
+        .iter()
+        .enumerate()
+        .filter_map(|(index, ty)| match tcx.get(*ty) {
+            Ty::Unpack(var)
+                if type_vars.iter().any(|param| {
+                    param.id == *var && param.kind == TypeVarKind::TypeVarTuple
+                }) => Some((index, *var)),
+            _ => None,
+        })
+        .collect();
+    if unpack_positions.is_empty() {
+        return false;
+    }
+    let &[(unpack_index, pack_var)] = unpack_positions.as_slice() else {
+        conflicts.push(
+            "ordered sequence inference supports exactly one TypeVarTuple unpack".to_string(),
+        );
+        return true;
+    };
+    let suffix_len = expected.len() - unpack_index - 1;
+    if actual.len() < unpack_index + suffix_len {
+        let name = type_vars
+            .iter()
+            .find(|param| param.id == pack_var)
+            .map(|param| param.name.as_str())
+            .unwrap_or("Ts");
+        conflicts.push(format!(
+            "ordered sequence is too short for TypeVarTuple '{name}'"
+        ));
+        return true;
+    }
+    for (expected, actual) in expected[..unpack_index]
+        .iter()
+        .zip(&actual[..unpack_index])
+    {
+        unify_for_inference_inner(
+            *expected, *actual, type_vars, subst, conflicts, tcx, visiting,
+        );
+    }
+    let middle_end = actual.len() - suffix_len;
+    let captured = TypePack {
+        types: actual[unpack_index..middle_end].to_vec(),
+    };
+    if let Some(existing) = subst.get_type_pack(pack_var).cloned() {
+        if existing.types.len() != captured.types.len() {
+            let name = type_vars
+                .iter()
+                .find(|param| param.id == pack_var)
+                .map(|param| param.name.as_str())
+                .unwrap_or("Ts");
+            conflicts.push(format!(
+                "conflicting ordered type packs for type parameter '{name}'"
+            ));
+        } else {
+            let mut refined = existing.clone();
+            let mut incompatible = false;
+            for ((slot, existing), captured) in refined
+                .types
+                .iter_mut()
+                .zip(&existing.types)
+                .zip(&captured.types)
+            {
+                if matches!(tcx.get(*existing), Ty::Any | Ty::Error)
+                    && !matches!(tcx.get(*captured), Ty::Any | Ty::Error)
+                {
+                    *slot = *captured;
+                } else if existing != captured
+                    && !matches!(tcx.get(*captured), Ty::Any | Ty::Error)
+                {
+                    incompatible = true;
+                    break;
+                }
+            }
+            if incompatible {
+                let name = type_vars
+                    .iter()
+                    .find(|param| param.id == pack_var)
+                    .map(|param| param.name.as_str())
+                    .unwrap_or("Ts");
+                conflicts.push(format!(
+                    "conflicting ordered type packs for type parameter '{name}'"
+                ));
+            } else if refined != existing {
+                subst.insert_type_pack(pack_var, refined);
+            }
+        }
+    } else {
+        subst.insert_type_pack(pack_var, captured);
+    }
+    for (expected, actual) in expected[unpack_index + 1..]
+        .iter()
+        .zip(&actual[middle_end..])
+    {
+        unify_for_inference_inner(
+            *expected, *actual, type_vars, subst, conflicts, tcx, visiting,
+        );
+    }
+    true
+}
+
+pub(crate) fn callable_param_pack(
     params: Vec<TypeId>,
     variadic: bool,
     signature: Option<Vec<CallableParam>>,
@@ -821,6 +941,16 @@ fn callable_param_pack(
         ParamPackTail::Closed
     };
     ParamPack { params, tail }
+}
+
+fn is_exact_positional_param_pack(pack: &ParamPack) -> bool {
+    pack.tail == ParamPackTail::Closed
+        && pack.params.iter().all(|param| {
+            matches!(
+                param.kind,
+                CallableParamKind::PosOnly | CallableParamKind::PosOrKw
+            ) && !param.has_default
+        })
 }
 
 fn callable_prefix_definitely_incompatible(
@@ -1032,6 +1162,20 @@ fn unify_for_inference_step(
         Ty::Tuple(params_inner) => {
             let arg_ty = tcx.get(arg).clone();
             if let Ty::Tuple(args_inner) = arg_ty {
+                let open_tuple_sentinel = args_inner.len() == 2 && tcx.get(args_inner[1]).is_any();
+                if !open_tuple_sentinel
+                    && unify_ordered_type_sequence_for_inference(
+                        &params_inner,
+                        &args_inner,
+                        type_vars,
+                        subst,
+                        conflicts,
+                        tcx,
+                        visiting,
+                    )
+                {
+                    return;
+                }
                 for (p, a) in params_inner.iter().zip(args_inner.iter()) {
                     unify_for_inference_inner(*p, *a, type_vars, subst, conflicts, tcx, visiting);
                 }
@@ -1061,6 +1205,23 @@ fn unify_for_inference_step(
             }
             let actual =
                 callable_param_pack(arg_params, arg_variadic, arg_signature, arg_param_spec);
+            let expected_types: Vec<_> =
+                expected.params.iter().map(|param| param.ty).collect();
+            if is_exact_positional_param_pack(&expected)
+                && is_exact_positional_param_pack(&actual)
+            {
+                if unify_ordered_type_sequence_for_inference(
+                    &expected_types,
+                    &actual.params.iter().map(|param| param.ty).collect::<Vec<_>>(),
+                    type_vars,
+                    subst,
+                    conflicts,
+                    tcx,
+                    visiting,
+                ) {
+                    return;
+                }
+            }
             let captures_tail = matches!(expected.tail, ParamPackTail::ParamSpec(_));
             let residual_start = if captures_tail {
                 let mut actual_index = 0usize;
@@ -2390,6 +2551,326 @@ mod tests {
         let (subst, conflicts) = infer_type_args(&gp, &[tuple_param], &[tuple_arg], &tcx);
         assert!(conflicts.is_empty());
         assert_eq!(subst.get(var_id), Some(str_ty));
+    }
+
+    #[test]
+    fn type_var_tuple_inference_captures_tuple_middle_slice() {
+        let mut tcx = TypeContext::new();
+        let ts = TypeVarId(1);
+        let unpack = tcx.intern(Ty::Unpack(ts));
+        let expected = tcx.intern(Ty::Tuple(vec![tcx.int(), unpack, tcx.bool()]));
+        let actual = tcx.intern(Ty::Tuple(vec![tcx.int(), tcx.str(), tcx.float(), tcx.bool()]));
+        let mut params = GenericParams::new();
+        params.add_param(
+            "Ts",
+            ts,
+            TypeVarKind::TypeVarTuple,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
+
+        let (subst, conflicts) = infer_type_args(&params, &[expected], &[actual], &tcx);
+        assert!(conflicts.is_empty(), "unexpected conflicts: {conflicts:?}");
+        assert_eq!(
+            subst.get_type_pack(ts).unwrap().types,
+            vec![tcx.str(), tcx.float()]
+        );
+    }
+
+    #[test]
+    fn type_var_tuple_inference_captures_closed_callable_middle_slice() {
+        let mut tcx = TypeContext::new();
+        let ts = TypeVarId(1);
+        let unpack = tcx.intern(Ty::Unpack(ts));
+        let expected = tcx.intern(Ty::Fn {
+            params: vec![tcx.int(), unpack, tcx.bool()],
+            ret: tcx.none(),
+            variadic: false,
+            signature: None,
+            param_spec: None,
+        });
+        let actual = tcx.intern(Ty::Fn {
+            params: vec![tcx.int(), tcx.str(), tcx.float(), tcx.bool()],
+            ret: tcx.none(),
+            variadic: false,
+            signature: None,
+            param_spec: None,
+        });
+        let mut params = GenericParams::new();
+        params.add_param(
+            "Ts",
+            ts,
+            TypeVarKind::TypeVarTuple,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
+
+        let (subst, conflicts) = infer_type_args(&params, &[expected], &[actual], &tcx);
+        assert!(conflicts.is_empty(), "unexpected conflicts: {conflicts:?}");
+        assert_eq!(
+            subst.get_type_pack(ts).unwrap().types,
+            vec![tcx.str(), tcx.float()]
+        );
+        let applied = subst.apply(expected, &mut tcx);
+        let Ty::Fn { params, .. } = tcx.get(applied) else {
+            panic!("TypeVarTuple callable substitution lost its callable")
+        };
+        assert_eq!(params, &vec![tcx.int(), tcx.str(), tcx.float(), tcx.bool()]);
+    }
+
+    #[test]
+    fn type_var_tuple_inference_aligns_callable_suffix_after_prebound_pack() {
+        let mut tcx = TypeContext::new();
+        let head_id = TypeVarId(0);
+        let pack_id = TypeVarId(1);
+        let tail_id = TypeVarId(2);
+        let head = tcx.intern(Ty::TypeVar(head_id));
+        let unpack = tcx.intern(Ty::Unpack(pack_id));
+        let tail = tcx.intern(Ty::TypeVar(tail_id));
+        let tuple_expected = tcx.intern(Ty::Tuple(vec![unpack]));
+        let tuple_actual = tcx.intern(Ty::Tuple(vec![tcx.str(), tcx.float()]));
+        let callable_expected = tcx.intern(Ty::Fn {
+            params: vec![head, unpack, tail],
+            ret: tcx.none(),
+            variadic: false,
+            signature: None,
+            param_spec: None,
+        });
+        let callable_actual = tcx.intern(Ty::Fn {
+            params: vec![tcx.int(), tcx.str(), tcx.float(), tcx.bool()],
+            ret: tcx.none(),
+            variadic: false,
+            signature: None,
+            param_spec: None,
+        });
+        let mut params = GenericParams::new();
+        params.add("T", head_id, None);
+        params.add_param(
+            "Ts",
+            pack_id,
+            TypeVarKind::TypeVarTuple,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
+        params.add("U", tail_id, None);
+
+        let (subst, conflicts) = infer_type_args(
+            &params,
+            &[tuple_expected, callable_expected],
+            &[tuple_actual, callable_actual],
+            &tcx,
+        );
+        assert!(conflicts.is_empty(), "unexpected conflicts: {conflicts:?}");
+        assert_eq!(subst.get(head_id), Some(tcx.int()));
+        assert_eq!(
+            subst.get_type_pack(pack_id).unwrap().types,
+            vec![tcx.str(), tcx.float()]
+        );
+        assert_eq!(subst.get(tail_id), Some(tcx.bool()));
+    }
+
+    #[test]
+    fn type_var_tuple_inference_rejects_callable_after_prebound_pack_mismatch() {
+        let mut tcx = TypeContext::new();
+        let pack_id = TypeVarId(1);
+        let unpack = tcx.intern(Ty::Unpack(pack_id));
+        let tuple_expected = tcx.intern(Ty::Tuple(vec![unpack]));
+        let tuple_actual = tcx.intern(Ty::Tuple(vec![tcx.int()]));
+        let callable_expected = tcx.intern(Ty::Fn {
+            params: vec![unpack],
+            ret: tcx.none(),
+            variadic: false,
+            signature: None,
+            param_spec: None,
+        });
+        let callable_actual = tcx.intern(Ty::Fn {
+            params: vec![tcx.str()],
+            ret: tcx.none(),
+            variadic: false,
+            signature: None,
+            param_spec: None,
+        });
+        let mut params = GenericParams::new();
+        params.add_param(
+            "Ts",
+            pack_id,
+            TypeVarKind::TypeVarTuple,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
+
+        let (_, conflicts) = infer_type_args(
+            &params,
+            &[tuple_expected, callable_expected],
+            &[tuple_actual, callable_actual],
+            &tcx,
+        );
+        assert_eq!(conflicts.len(), 1);
+        assert!(conflicts[0].contains("conflicting ordered type packs"));
+    }
+
+    #[test]
+    fn type_var_tuple_inference_does_not_capture_open_callable_signature() {
+        let mut tcx = TypeContext::new();
+        let ts = TypeVarId(1);
+        let unpack = tcx.intern(Ty::Unpack(ts));
+        let expected = tcx.intern(Ty::Fn {
+            params: vec![unpack],
+            ret: tcx.none(),
+            variadic: false,
+            signature: None,
+            param_spec: None,
+        });
+        let actual = tcx.intern(Ty::Fn {
+            params: vec![tcx.int()],
+            ret: tcx.none(),
+            variadic: true,
+            signature: Some(vec![CallableParam {
+                name: Some("values".to_string()),
+                ty: tcx.int(),
+                kind: CallableParamKind::VarPos,
+                has_default: false,
+            }]),
+            param_spec: None,
+        });
+        let mut params = GenericParams::new();
+        params.add_param(
+            "Ts",
+            ts,
+            TypeVarKind::TypeVarTuple,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
+
+        let (subst, conflicts) = infer_type_args(&params, &[expected], &[actual], &tcx);
+        assert!(conflicts.is_empty(), "unexpected conflicts: {conflicts:?}");
+        assert!(
+            subst.get_type_pack(ts).is_none(),
+            "an open callable signature is not finite TypeVarTuple evidence"
+        );
+    }
+
+    #[test]
+    fn type_var_tuple_inference_declines_open_tuple_sentinel() {
+        let mut tcx = TypeContext::new();
+        let ts = TypeVarId(1);
+        let unpack = tcx.intern(Ty::Unpack(ts));
+        let expected = tcx.intern(Ty::Tuple(vec![unpack]));
+        let actual = tcx.intern(Ty::Tuple(vec![tcx.int(), tcx.any()]));
+        let mut params = GenericParams::new();
+        params.add_param(
+            "Ts",
+            ts,
+            TypeVarKind::TypeVarTuple,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
+
+        let (subst, conflicts) = infer_type_args(&params, &[expected], &[actual], &tcx);
+        assert!(conflicts.is_empty(), "unexpected conflicts: {conflicts:?}");
+        assert!(
+            subst.get_type_pack(ts).is_none(),
+            "tuple[T, ...] cannot provide finite TypeVarTuple evidence"
+        );
+    }
+
+    #[test]
+    fn type_var_tuple_inference_rejects_multiple_unpacks_in_one_sequence() {
+        let mut tcx = TypeContext::new();
+        let ts = TypeVarId(1);
+        let unpack = tcx.intern(Ty::Unpack(ts));
+        let expected = tcx.intern(Ty::Tuple(vec![unpack, unpack]));
+        let actual = tcx.intern(Ty::Tuple(vec![tcx.int(), tcx.str()]));
+        let mut params = GenericParams::new();
+        params.add_param(
+            "Ts",
+            ts,
+            TypeVarKind::TypeVarTuple,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
+
+        let (_, conflicts) = infer_type_args(&params, &[expected], &[actual], &tcx);
+        assert_eq!(conflicts.len(), 1);
+        assert!(conflicts[0].contains("exactly one TypeVarTuple unpack"));
+    }
+
+    #[test]
+    fn type_var_tuple_inference_refines_indeterminate_pack_members() {
+        let mut tcx = TypeContext::new();
+        let ts = TypeVarId(1);
+        let unpack = tcx.intern(Ty::Unpack(ts));
+        let expected = tcx.intern(Ty::Tuple(vec![unpack]));
+        let unknown = tcx.intern(Ty::Tuple(vec![tcx.any()]));
+        let concrete = tcx.intern(Ty::Tuple(vec![tcx.str()]));
+        let mut params = GenericParams::new();
+        params.add_param(
+            "Ts",
+            ts,
+            TypeVarKind::TypeVarTuple,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
+
+        let (subst, conflicts) = infer_type_args(
+            &params,
+            &[expected, expected],
+            &[unknown, concrete],
+            &tcx,
+        );
+        assert!(conflicts.is_empty(), "unexpected conflicts: {conflicts:?}");
+        assert_eq!(subst.get_type_pack(ts).unwrap().types, vec![tcx.str()]);
+    }
+
+    #[test]
+    fn type_var_tuple_inference_reports_repeated_ordered_conflicts() {
+        let mut tcx = TypeContext::new();
+        let ts = TypeVarId(1);
+        let unpack = tcx.intern(Ty::Unpack(ts));
+        let expected = tcx.intern(Ty::Tuple(vec![tcx.int(), unpack, tcx.bool()]));
+        let first = tcx.intern(Ty::Tuple(vec![tcx.int(), tcx.str(), tcx.bool()]));
+        let second = tcx.intern(Ty::Tuple(vec![tcx.int(), tcx.float(), tcx.bool()]));
+        let mut params = GenericParams::new();
+        params.add_param(
+            "Ts",
+            ts,
+            TypeVarKind::TypeVarTuple,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
+
+        let (_, conflicts) = infer_type_args(&params, &[expected, expected], &[first, second], &tcx);
+        assert_eq!(conflicts.len(), 1);
+        assert!(conflicts[0].contains("conflicting ordered type packs"));
+    }
+
+    #[test]
+    fn complete_callable_type_args_requires_bound_type_pack() {
+        let mut tcx = TypeContext::new();
+        let ts = TypeVarId(1);
+        let mut params = GenericParams::new();
+        params.add_param(
+            "Ts",
+            ts,
+            TypeVarKind::TypeVarTuple,
+            None,
+            Vec::new(),
+            TypeParamDefault::None,
+        );
+        assert!(complete_callable_type_args(&params, Substitution::new(), &mut tcx).is_none());
+
+        let mut explicitly_empty = Substitution::new();
+        explicitly_empty.insert_type_pack(ts, TypePack { types: Vec::new() });
+        assert!(complete_callable_type_args(&params, explicitly_empty, &mut tcx).is_some());
     }
 
     #[test]
