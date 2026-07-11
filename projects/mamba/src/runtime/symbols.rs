@@ -3072,6 +3072,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Ptr
         ),
         rt_sym!(
+            "mb_recursion_state_ptr",
+            super::stdlib::sys_mod::mb_recursion_state_ptr as fn() -> i64,
+            [],
+            Ptr
+        ),
+        rt_sym!(
             "mb_recursion_limit_ptr",
             super::stdlib::sys_mod::mb_recursion_limit_ptr as fn() -> i64,
             [],

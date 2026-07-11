@@ -201,11 +201,29 @@ unsafe extern "C" fn dispatch_call_tracing(args_ptr: *const MbValue, nargs: usiz
 thread_local! {
     static RECURSION_LIMIT: std::cell::Cell<i64> = const { std::cell::Cell::new(1000) };
     static RECURSION_DEPTH: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
+    static RECURSION_STATE_PTRS: std::cell::Cell<RecursionStatePtrs> =
+        const { std::cell::Cell::new(RecursionStatePtrs::new(0, 0)) };
     static SWITCH_INTERVAL: std::cell::Cell<f64> = const { std::cell::Cell::new(0.005) };
     static INTERN_TABLE: std::cell::RefCell<std::collections::HashMap<String, u64>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
     static ASYNCGEN_HOOKS: std::cell::Cell<(u64, u64)> =
         std::cell::Cell::new((MbValue::none().to_bits(), MbValue::none().to_bits()));
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct RecursionStatePtrs {
+    pub depth_ptr: i64,
+    pub limit_ptr: i64,
+}
+
+impl RecursionStatePtrs {
+    const fn new(depth_ptr: i64, limit_ptr: i64) -> Self {
+        Self {
+            depth_ptr,
+            limit_ptr,
+        }
+    }
 }
 
 /// Build a CPython struct-sequence-like Instance: named fields plus an
@@ -1511,6 +1529,21 @@ pub fn mb_recursion_depth_ptr() -> i64 {
 /// `mb_recursion_depth_ptr`.
 pub fn mb_recursion_limit_ptr() -> i64 {
     RECURSION_LIMIT.with(|c| c.as_ptr() as i64)
+}
+
+/// Raw address of this thread's recursion pointer bundle (#1439).
+///
+/// The returned address points at a thread-local `RecursionStatePtrs` with the
+/// depth pointer at offset 0 and the limit pointer at offset 8 on Mamba's i64
+/// pointer ABI. We refresh the bundle on every call instead of caching it in
+/// backend state so each thread always sees its own TLS cell addresses.
+pub fn mb_recursion_state_ptr() -> i64 {
+    let depth_ptr = RECURSION_DEPTH.with(|c| c.as_ptr() as i64);
+    let limit_ptr = RECURSION_LIMIT.with(|c| c.as_ptr() as i64);
+    RECURSION_STATE_PTRS.with(|state| {
+        state.set(RecursionStatePtrs::new(depth_ptr, limit_ptr));
+        state.as_ptr() as i64
+    })
 }
 
 pub fn mb_recursion_enter() -> MbValue {
