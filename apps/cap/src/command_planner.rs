@@ -1844,8 +1844,19 @@ pub struct SedPrintPlan {
 /// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrepFilePlan {
-    pub pattern: String,
+    /// One or more OR-combined literal patterns (repeatable `-e PATTERN`, or
+    /// a single bare pattern when no `-e` token is present). A line matches
+    /// if any pattern is a substring (case rules per `ignore_case`).
+    pub patterns: Vec<String>,
     pub file: String,
+    pub ignore_case: bool,
+    pub invert: bool,
+    pub line_numbers: bool,
+    pub count: bool,
+    pub files_with_matches: bool,
+    pub only_matching: bool,
+    pub context_before: usize,
+    pub context_after: usize,
 }
 
 // @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
@@ -2213,7 +2224,8 @@ pub fn plan(command: &[String], label: Option<String>) -> CommandPlan {
 pub fn plan_shell(command: &str, label: Option<String>) -> CommandPlan {
     let original = command.trim().to_string();
     let planned_label = label.or_else(|| Some(original.clone()));
-    if let Some(words) = split_simple_shell_words(&original) {
+    if let Some(mut words) = split_simple_shell_words(&original) {
+        translate_leading_rg_pipe_segment(&mut words);
         if words.iter().any(|word| word == "|") {
             if let Some(plan) = plan_pipe_words(&words, planned_label.clone(), &original) {
                 return CommandPlan::Native(plan);
@@ -2431,6 +2443,7 @@ fn plan_native(command: &[String], label: Option<String>, original: &str) -> Opt
         "tr" => plan_tr(&command[1..], label, original),
         "sed" => plan_sed(&command[1..], label, original),
         "grep" => plan_grep_file(&command[1..], label, original),
+        "rg" => plan_rg_alias(&command[1..], label, original),
         "wc" => plan_wc(&command[1..], label, original),
         _ => None,
     }
@@ -9372,8 +9385,16 @@ fn plan_grep_file(args: &[String], label: Option<String>, original: &str) -> Opt
         [pattern] if !pattern.starts_with('-') && is_plain_literal_pattern(pattern) => {
             Some(NativePlan {
                 command: NativeCommand::GrepFile(GrepFilePlan {
-                    pattern: pattern.clone(),
+                    patterns: vec![pattern.clone()],
                     file: String::new(),
+                    ignore_case: false,
+                    invert: false,
+                    line_numbers: false,
+                    count: false,
+                    files_with_matches: false,
+                    only_matching: false,
+                    context_before: 0,
+                    context_after: 0,
                 }),
                 label,
                 original: original.to_string(),
@@ -9388,15 +9409,260 @@ fn plan_grep_file(args: &[String], label: Option<String>, original: &str) -> Opt
         {
             Some(NativePlan {
                 command: NativeCommand::GrepFile(GrepFilePlan {
-                    pattern: pattern.clone(),
+                    patterns: vec![pattern.clone()],
                     file: file.clone(),
+                    ignore_case: false,
+                    invert: false,
+                    line_numbers: false,
+                    count: false,
+                    files_with_matches: false,
+                    only_matching: false,
+                    context_before: 0,
+                    context_after: 0,
                 }),
                 label,
                 original: original.to_string(),
                 reason: "plain literal grep over one regular file can scan in-process".to_string(),
             })
         }
-        _ => None,
+        _ => plan_grep_file_flags(args, label, original),
+    }
+}
+
+/// Flag-aware native grep recognition, activated only when neither of the
+/// two zero-flag branches above matches: `-n`/`--line-number`,
+/// `-i`/`--ignore-case`, `-v`/`--invert-match`, `-c`/`--count`,
+/// `-l`/`--files-with-matches`, `-o`/`--only-matching` (combinable in one
+/// clustered short-flag token, e.g. `-ni`), and `-A`/`-B`/`-C` context
+/// (accepted only as a standalone token immediately followed by a numeric
+/// token, or an attached-digit token such as `-A3` — never fused with
+/// another short flag in the same cluster, e.g. `-A3n` disqualifies).
+/// Repeatable `-e PATTERN` collects into an OR-combined pattern list; when
+/// no `-e` token is present, exactly one remaining non-flag token ahead of
+/// an optional file token is the bare pattern. Every pattern must
+/// independently pass `is_plain_literal_pattern` (no regex-dialect
+/// expansion in this recognizer). At most one non-flag/non-pattern token
+/// may remain as the file argument, which must satisfy
+/// `Path::new(file).is_file()` (excludes directories, matching the
+/// existing zero-flag branch's check; no recursive support). Any
+/// flag/shape outside this vocabulary — `-r`/`-R`, `--glob`/`-g`,
+/// `--type`, `--include`, `-u`, `-p`, `--json`, `-U`, more than one file,
+/// or a rejected combined-context form — returns `None`, so the caller
+/// falls back to the unmodified bash fallback.
+/// @spec apps/cap/tech-design/logic/extend-native-grep-flag-support-and-recognize-rg-as-native-plann.md#logic
+fn plan_grep_file_flags(
+    args: &[String],
+    label: Option<String>,
+    original: &str,
+) -> Option<NativePlan> {
+    let mut ignore_case = false;
+    let mut invert = false;
+    let mut line_numbers = false;
+    let mut count = false;
+    let mut files_with_matches = false;
+    let mut only_matching = false;
+    let mut context_before = 0usize;
+    let mut context_after = 0usize;
+    let mut e_patterns: Vec<String> = Vec::new();
+    let mut positional: Vec<String> = Vec::new();
+
+    let mut i = 0;
+    while i < args.len() {
+        let word = &args[i];
+        if word == "-e" {
+            i += 1;
+            e_patterns.push(args.get(i)?.clone());
+            i += 1;
+            continue;
+        }
+        if let Some(rest) = word.strip_prefix("--") {
+            match rest {
+                "line-number" => line_numbers = true,
+                "ignore-case" => ignore_case = true,
+                "invert-match" => invert = true,
+                "count" => count = true,
+                "files-with-matches" => files_with_matches = true,
+                "only-matching" => only_matching = true,
+                _ => return None,
+            }
+            i += 1;
+            continue;
+        }
+        if word == "-A" || word == "-B" || word == "-C" {
+            i += 1;
+            let num: usize = args.get(i)?.parse().ok()?;
+            match word.as_str() {
+                "-A" => context_after = num,
+                "-B" => context_before = num,
+                _ => {
+                    context_before = num;
+                    context_after = num;
+                }
+            }
+            i += 1;
+            continue;
+        }
+        if let Some(digits) = word.strip_prefix("-A") {
+            if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+            context_after = digits.parse().ok()?;
+            i += 1;
+            continue;
+        }
+        if let Some(digits) = word.strip_prefix("-B") {
+            if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+            context_before = digits.parse().ok()?;
+            i += 1;
+            continue;
+        }
+        if let Some(digits) = word.strip_prefix("-C") {
+            if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+            let num: usize = digits.parse().ok()?;
+            context_before = num;
+            context_after = num;
+            i += 1;
+            continue;
+        }
+        if word.starts_with('-') && word.len() > 1 {
+            for flag in word[1..].chars() {
+                match flag {
+                    'n' => line_numbers = true,
+                    'i' => ignore_case = true,
+                    'v' => invert = true,
+                    'c' => count = true,
+                    'l' => files_with_matches = true,
+                    'o' => only_matching = true,
+                    _ => return None,
+                }
+            }
+            i += 1;
+            continue;
+        }
+        positional.push(word.clone());
+        i += 1;
+    }
+
+    let patterns = if !e_patterns.is_empty() {
+        e_patterns
+    } else {
+        if positional.is_empty() {
+            return None;
+        }
+        vec![positional.remove(0)]
+    };
+    if patterns
+        .iter()
+        .any(|pattern| !is_plain_literal_pattern(pattern))
+    {
+        return None;
+    }
+
+    let file = match positional.len() {
+        0 => String::new(),
+        1 => {
+            let file = positional.remove(0);
+            if !Path::new(&file).is_file() {
+                return None;
+            }
+            file
+        }
+        _ => return None,
+    };
+
+    Some(NativePlan {
+        command: NativeCommand::GrepFile(GrepFilePlan {
+            patterns,
+            file,
+            ignore_case,
+            invert,
+            line_numbers,
+            count,
+            files_with_matches,
+            only_matching,
+            context_before,
+            context_after,
+        }),
+        label,
+        original: original.to_string(),
+        reason: "flag-aware literal grep can scan in-process".to_string(),
+    })
+}
+
+/// `rg` alias entry point: normalizes rg's argv onto the same accepted
+/// grep flag vocabulary `plan_grep_file`/`plan_grep_file_flags` understand
+/// and feeds it through the same native path, so rg gets the identical
+/// in-process recognition grep does with no separate flag-mapping table.
+/// @spec apps/cap/tech-design/logic/extend-native-grep-flag-support-and-recognize-rg-as-native-plann.md#logic
+fn plan_rg_alias(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
+    let translated = normalize_rg_args(args)?;
+    let mut plan = plan_grep_file(&translated, label, original)?;
+    plan.reason = format!(
+        "{} (rg alias normalized onto grep-compatible flags)",
+        plan.reason
+    );
+    Some(plan)
+}
+
+/// Normalize an `rg` invocation's argv onto the vocabulary
+/// `plan_grep_file_flags` accepts (rg's own documentation states
+/// `-n -i -v -c -l -o -A -B -C -e` already mean the same thing as grep's,
+/// so no separate semantic mapping table is needed). A small allowlist of
+/// cosmetic rg-only flags is consumed harmlessly, since they never change
+/// match semantics: `--no-heading`, `--heading`, and any `--color=<mode>`
+/// token. Every other token (including any rg-specific flag outside the
+/// shared vocabulary) is passed through unchanged so the shared flag
+/// parser applies its own vocabulary check and disqualifies (`None`) if
+/// it isn't accepted.
+/// @spec apps/cap/tech-design/logic/extend-native-grep-flag-support-and-recognize-rg-as-native-plann.md#logic
+fn normalize_rg_args(args: &[String]) -> Option<Vec<String>> {
+    let mut out = Vec::with_capacity(args.len());
+    for word in args {
+        if word == "--no-heading" || word == "--heading" || word.starts_with("--color=") {
+            continue;
+        }
+        out.push(word.clone());
+    }
+    Some(out)
+}
+
+/// If the leading pipe-segment's first word is the literal `rg` token and
+/// the remainder of that segment is exactly the already-accepted
+/// zero-flag shape (`[pattern]` or `[pattern, file]`, no leading `-` on
+/// either token, `is_plain_literal_pattern(pattern)`), rewrite that first
+/// word to the literal `grep` token in place — so the existing
+/// `cmd == "grep"`-keyed pipe-fusion match-arm family
+/// (`plan_head_grep_producer_mode` and siblings) fuses it unmodified, with
+/// zero duplicated match arms. Any other shape (a non-grep/rg segment, a
+/// flag-bearing rg/grep segment, or no pipe at all) is left untouched:
+/// flag-bearing rg combined with pipe-fusion is an explicit, documented
+/// out-of-scope boundary for this recognizer, not a regression.
+/// @spec apps/cap/tech-design/logic/extend-native-grep-flag-support-and-recognize-rg-as-native-plann.md#logic
+fn translate_leading_rg_pipe_segment(words: &mut [String]) {
+    if words.first().map(String::as_str) != Some("rg") {
+        return;
+    }
+    let end = words
+        .iter()
+        .position(|word| word == "|")
+        .unwrap_or(words.len());
+    let segment = &words[1..end];
+    let qualifies = match segment {
+        [pattern] => !pattern.starts_with('-') && is_plain_literal_pattern(pattern),
+        [pattern, file] => {
+            !pattern.starts_with('-')
+                && is_plain_literal_pattern(pattern)
+                && !file.starts_with('-')
+                && Path::new(file).is_file()
+        }
+        _ => false,
+    };
+    if qualifies {
+        words[0] = "grep".to_string();
     }
 }
 
@@ -14196,22 +14462,203 @@ fn collect_grep_plain_lines_reader<R: BufRead>(
     Ok((lines, had_error))
 }
 
+/// Read every line of `plan.file` (or stdin when empty), unconditionally —
+/// unlike `collect_grep_file_plain_lines` (which only keeps already-matched
+/// lines for the zero-flag pipe-fusion consumers and is left untouched),
+/// `run_grep_file` needs the full line set to build `-A`/`-B`/`-C` context
+/// windows around each match.
+/// @spec apps/cap/tech-design/logic/extend-native-grep-flag-support-and-recognize-rg-as-native-plann.md#unit-test
+fn read_all_grep_lines(file: &str, stderr: &mut dyn Write) -> Result<(Vec<Vec<u8>>, bool)> {
+    if file.is_empty() {
+        let stdin = io::stdin();
+        return read_all_grep_lines_reader(stdin.lock(), stderr, "stdin");
+    }
+
+    let file_handle = match fs::File::open(file) {
+        Ok(file_handle) => file_handle,
+        Err(e) => {
+            writeln!(stderr, "grep: {file}: {e}")?;
+            return Ok((Vec::new(), true));
+        }
+    };
+    read_all_grep_lines_reader(BufReader::new(file_handle), stderr, file)
+}
+
+fn read_all_grep_lines_reader<R: BufRead>(
+    reader: R,
+    stderr: &mut dyn Write,
+    source_label: &str,
+) -> Result<(Vec<Vec<u8>>, bool)> {
+    let mut lines = Vec::new();
+    let mut had_error = false;
+    for line in reader.split(b'\n') {
+        match line {
+            Ok(line) => {
+                let mut out = line;
+                out.push(b'\n');
+                lines.push(out);
+            }
+            Err(e) => {
+                writeln!(stderr, "grep: {source_label}: {e}")?;
+                had_error = true;
+                break;
+            }
+        }
+    }
+    Ok((lines, had_error))
+}
+
+/// Every non-overlapping occurrence of any `needles` entry within `content`,
+/// sorted by start offset — used for `-o`/`--only-matching` output.
+/// @spec apps/cap/tech-design/logic/extend-native-grep-flag-support-and-recognize-rg-as-native-plann.md#unit-test
+fn find_literal_occurrences(
+    content: &[u8],
+    needles: &[Vec<u8>],
+    ignore_case: bool,
+) -> Vec<(usize, usize)> {
+    let folded;
+    let haystack: &[u8] = if ignore_case {
+        folded = content.to_ascii_lowercase();
+        &folded
+    } else {
+        content
+    };
+    let mut occurrences = Vec::new();
+    for needle in needles {
+        if needle.is_empty() {
+            continue;
+        }
+        let mut start = 0;
+        while start + needle.len() <= haystack.len() {
+            if &haystack[start..start + needle.len()] == needle.as_slice() {
+                occurrences.push((start, start + needle.len()));
+                start += needle.len();
+            } else {
+                start += 1;
+            }
+        }
+    }
+    occurrences.sort_unstable();
+    occurrences
+}
+
+fn grep_exit_code(matched_indices: &[usize], had_error: bool) -> i32 {
+    if had_error {
+        2
+    } else if matched_indices.is_empty() {
+        1
+    } else {
+        0
+    }
+}
+
+/// @spec apps/cap/tech-design/logic/extend-native-grep-flag-support-and-recognize-rg-as-native-plann.md#unit-test
 fn run_grep_file(
     plan: &GrepFilePlan,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> Result<i32> {
-    let (lines, had_error) = collect_grep_file_plain_lines(&plan.file, &plan.pattern, stderr)?;
-    for line in &lines {
-        stdout.write_all(line)?;
+    let (all_lines, had_error) = read_all_grep_lines(&plan.file, stderr)?;
+
+    let needles: Vec<Vec<u8>> = plan
+        .patterns
+        .iter()
+        .map(|pattern| {
+            if plan.ignore_case {
+                pattern.to_ascii_lowercase().into_bytes()
+            } else {
+                pattern.clone().into_bytes()
+            }
+        })
+        .collect();
+
+    let is_match = |content: &[u8]| -> bool {
+        let folded;
+        let haystack: &[u8] = if plan.ignore_case {
+            folded = content.to_ascii_lowercase();
+            &folded
+        } else {
+            content
+        };
+        needles.iter().any(|needle| {
+            haystack
+                .windows(needle.len())
+                .any(|window| window == needle.as_slice())
+        })
+    };
+
+    let mut matched_indices: Vec<usize> = Vec::new();
+    for (idx, line) in all_lines.iter().enumerate() {
+        let content = byte_line_without_trailing_newline(line);
+        if is_match(content) != plan.invert {
+            matched_indices.push(idx);
+        }
     }
-    if had_error {
-        Ok(2)
-    } else if lines.is_empty() {
-        Ok(1)
+
+    if plan.files_with_matches {
+        if !matched_indices.is_empty() {
+            let name = if plan.file.is_empty() {
+                "(standard input)"
+            } else {
+                plan.file.as_str()
+            };
+            writeln!(stdout, "{name}")?;
+        }
+        return Ok(grep_exit_code(&matched_indices, had_error));
+    }
+
+    if plan.count {
+        writeln!(stdout, "{}", matched_indices.len())?;
+        return Ok(grep_exit_code(&matched_indices, had_error));
+    }
+
+    // Context windows are only meaningful around genuinely matched (not
+    // inverted, not only-matching) lines; both -v and -o are treated as
+    // suppressing -A/-B/-C, mirroring real grep's documented behavior that
+    // context options have no effect when combined with -v or -o.
+    let (context_before, context_after) = if plan.invert || plan.only_matching {
+        (0, 0)
     } else {
-        Ok(0)
+        (plan.context_before, plan.context_after)
+    };
+
+    let mut print_indices: Vec<usize> = Vec::new();
+    let mut seen = vec![false; all_lines.len()];
+    for &idx in &matched_indices {
+        let start = idx.saturating_sub(context_before);
+        let end = (idx + context_after).min(all_lines.len().saturating_sub(1));
+        for i in start..=end {
+            if !seen[i] {
+                seen[i] = true;
+                print_indices.push(i);
+            }
+        }
     }
+    print_indices.sort_unstable();
+
+    for idx in print_indices {
+        let content = byte_line_without_trailing_newline(&all_lines[idx]);
+        if plan.only_matching {
+            for (start, end) in find_literal_occurrences(content, &needles, plan.ignore_case) {
+                if plan.line_numbers {
+                    write!(stdout, "{}:", idx + 1)?;
+                }
+                stdout.write_all(&content[start..end])?;
+                stdout.write_all(b"\n")?;
+            }
+            continue;
+        }
+
+        if plan.line_numbers {
+            let is_primary = matched_indices.binary_search(&idx).is_ok();
+            let sep = if is_primary { ':' } else { '-' };
+            write!(stdout, "{}{sep}", idx + 1)?;
+        }
+        stdout.write_all(content)?;
+        stdout.write_all(b"\n")?;
+    }
+
+    Ok(grep_exit_code(&matched_indices, had_error))
 }
 
 fn run_pipe_grep_file(
@@ -19390,6 +19837,358 @@ mod tests {
     #[test]
     fn cd_prefix_wrong_head_arity_disqualifies() {
         assert_cd_prefix_bash_fallback_unchanged("cd /tmp extra && ls");
+    }
+
+    // --- #1392: native grep flag support + rg alias tests ---
+    // @spec apps/cap/tech-design/logic/extend-native-grep-flag-support-and-recognize-rg-as-native-plann.md#unit-test
+
+    fn expect_native_grep_plan(args: &[&str]) -> GrepFilePlan {
+        match plan_without_tools(args) {
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::GrepFile(plan),
+                ..
+            }) => plan,
+            other => panic!("expected native grep plan, got {other:?}"),
+        }
+    }
+
+    fn expect_grep_bash_fallback(args: &[&str]) {
+        match plan_without_tools(args) {
+            CommandPlan::External(plan) => {
+                assert_eq!(plan.implementation, ExternalImplementation::Original);
+            }
+            other => panic!("expected bash/external fallback, got {other:?}"),
+        }
+    }
+
+    fn run_grep_plan_to_string(plan: &GrepFilePlan) -> String {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_grep_file(plan, &mut stdout, &mut stderr).expect("run_grep_file should not error");
+        assert!(stderr.is_empty(), "unexpected stderr: {stderr:?}");
+        String::from_utf8(stdout).expect("grep output should be utf8")
+    }
+
+    #[test]
+    fn grep_combined_short_flags_cluster_recognized() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "NEEDLE\nother\n").unwrap();
+        let plan = expect_native_grep_plan(&["grep", "-ni", "needle", file.to_str().unwrap()]);
+        assert!(plan.line_numbers);
+        assert!(plan.ignore_case);
+        assert_eq!(plan.patterns, vec!["needle".to_string()]);
+    }
+
+    #[test]
+    fn grep_context_after_standalone_numeric_token_recognized() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "a\nNEEDLE\nb\nc\nd\n").unwrap();
+        let plan = expect_native_grep_plan(&["grep", "-A", "2", "NEEDLE", file.to_str().unwrap()]);
+        assert_eq!(plan.context_after, 2);
+        assert_eq!(plan.context_before, 0);
+        let out = run_grep_plan_to_string(&plan);
+        assert_eq!(out, "NEEDLE\nb\nc\n");
+    }
+
+    #[test]
+    fn grep_context_before_attached_digit_form_recognized() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "a\nb\nNEEDLE\nc\n").unwrap();
+        let plan = expect_native_grep_plan(&["grep", "-B2", "NEEDLE", file.to_str().unwrap()]);
+        assert_eq!(plan.context_before, 2);
+        assert_eq!(plan.context_after, 0);
+        let out = run_grep_plan_to_string(&plan);
+        assert_eq!(out, "a\nb\nNEEDLE\n");
+    }
+
+    #[test]
+    fn grep_context_both_c_flag_recognized() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "a\nNEEDLE\nb\n").unwrap();
+        let plan = expect_native_grep_plan(&["grep", "-C", "1", "NEEDLE", file.to_str().unwrap()]);
+        assert_eq!(plan.context_before, 1);
+        assert_eq!(plan.context_after, 1);
+        let out = run_grep_plan_to_string(&plan);
+        assert_eq!(out, "a\nNEEDLE\nb\n");
+    }
+
+    #[test]
+    fn grep_context_flag_combined_with_other_short_flag_falls_back() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "NEEDLE\n").unwrap();
+        expect_grep_bash_fallback(&["grep", "-A3n", "NEEDLE", file.to_str().unwrap()]);
+    }
+
+    #[test]
+    fn grep_count_flag_recognized() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "NEEDLE\nother\nNEEDLE\n").unwrap();
+        let plan = expect_native_grep_plan(&["grep", "-c", "NEEDLE", file.to_str().unwrap()]);
+        assert!(plan.count);
+        let out = run_grep_plan_to_string(&plan);
+        assert_eq!(out, "2\n");
+    }
+
+    #[test]
+    fn grep_directory_as_file_arg_falls_back() {
+        let tmp = tempdir().unwrap();
+        expect_grep_bash_fallback(&["grep", "-n", "NEEDLE", tmp.path().to_str().unwrap()]);
+    }
+
+    #[test]
+    fn grep_files_with_matches_flag_recognized() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "NEEDLE\n").unwrap();
+        let plan = expect_native_grep_plan(&["grep", "-l", "NEEDLE", file.to_str().unwrap()]);
+        assert!(plan.files_with_matches);
+        let out = run_grep_plan_to_string(&plan);
+        assert_eq!(out, format!("{}\n", file.display()));
+    }
+
+    #[test]
+    fn grep_glob_flag_falls_back() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "NEEDLE\n").unwrap();
+        expect_grep_bash_fallback(&["grep", "--glob=*.rs", "NEEDLE", file.to_str().unwrap()]);
+        expect_grep_bash_fallback(&["grep", "-g", "*.rs", "NEEDLE", file.to_str().unwrap()]);
+    }
+
+    #[test]
+    fn grep_ignore_case_flag_recognized() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "NEEDLE\n").unwrap();
+        let plan = expect_native_grep_plan(&["grep", "-i", "needle", file.to_str().unwrap()]);
+        assert!(plan.ignore_case);
+        let out = run_grep_plan_to_string(&plan);
+        assert_eq!(out, "NEEDLE\n");
+    }
+
+    #[test]
+    fn grep_invert_match_flag_recognized() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "NEEDLE\nother\n").unwrap();
+        let plan = expect_native_grep_plan(&["grep", "-v", "NEEDLE", file.to_str().unwrap()]);
+        assert!(plan.invert);
+        let out = run_grep_plan_to_string(&plan);
+        assert_eq!(out, "other\n");
+    }
+
+    #[test]
+    fn grep_line_number_flag_recognized() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "a\nNEEDLE\nc\n").unwrap();
+        let plan = expect_native_grep_plan(&["grep", "-n", "NEEDLE", file.to_str().unwrap()]);
+        assert!(plan.line_numbers);
+        let out = run_grep_plan_to_string(&plan);
+        assert_eq!(out, "2:NEEDLE\n");
+    }
+
+    #[test]
+    fn grep_more_than_one_file_argument_falls_back() {
+        let tmp = tempdir().unwrap();
+        let file1 = tmp.path().join("grep1.txt");
+        let file2 = tmp.path().join("grep2.txt");
+        fs::write(&file1, "NEEDLE\n").unwrap();
+        fs::write(&file2, "NEEDLE\n").unwrap();
+        expect_grep_bash_fallback(&[
+            "grep",
+            "-n",
+            "NEEDLE",
+            file1.to_str().unwrap(),
+            file2.to_str().unwrap(),
+        ]);
+    }
+
+    #[test]
+    fn grep_multiline_mode_flags_fall_back() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "NEEDLE\n").unwrap();
+        expect_grep_bash_fallback(&["grep", "-u", "NEEDLE", file.to_str().unwrap()]);
+        expect_grep_bash_fallback(&["grep", "-p", "NEEDLE", file.to_str().unwrap()]);
+        expect_grep_bash_fallback(&["grep", "--json", "NEEDLE", file.to_str().unwrap()]);
+        expect_grep_bash_fallback(&["grep", "-U", "NEEDLE", file.to_str().unwrap()]);
+    }
+
+    #[test]
+    fn grep_only_matching_flag_recognized() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "xxNEEDLEyy\n").unwrap();
+        let plan = expect_native_grep_plan(&["grep", "-o", "NEEDLE", file.to_str().unwrap()]);
+        assert!(plan.only_matching);
+        let out = run_grep_plan_to_string(&plan);
+        assert_eq!(out, "NEEDLE\n");
+    }
+
+    #[test]
+    fn grep_pcre_only_pattern_falls_back() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "aab\n").unwrap();
+        expect_grep_bash_fallback(&["grep", "-n", "a+b", file.to_str().unwrap()]);
+    }
+
+    #[test]
+    fn grep_recursive_flags_fall_back() {
+        let tmp = tempdir().unwrap();
+        fs::write(tmp.path().join("f.txt"), "NEEDLE\n").unwrap();
+        expect_grep_bash_fallback(&["grep", "-r", "NEEDLE", tmp.path().to_str().unwrap()]);
+        expect_grep_bash_fallback(&["grep", "-R", "NEEDLE", tmp.path().to_str().unwrap()]);
+    }
+
+    #[test]
+    fn grep_repeated_e_multi_pattern_or_matches() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "one\ntwo\nthree\n").unwrap();
+        let plan =
+            expect_native_grep_plan(&["grep", "-e", "one", "-e", "three", file.to_str().unwrap()]);
+        assert_eq!(plan.patterns, vec!["one".to_string(), "three".to_string()]);
+        let out = run_grep_plan_to_string(&plan);
+        assert_eq!(out, "one\nthree\n");
+    }
+
+    #[test]
+    fn grep_type_and_include_flags_fall_back() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "NEEDLE\n").unwrap();
+        expect_grep_bash_fallback(&["grep", "--type", "rust", "NEEDLE", file.to_str().unwrap()]);
+        expect_grep_bash_fallback(&["grep", "--include=*.rs", "NEEDLE", file.to_str().unwrap()]);
+    }
+
+    #[test]
+    fn rg_context_after_numeric_alias_recognized() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "NEEDLE\nb\nc\nd\n").unwrap();
+        let plan = expect_native_grep_plan(&["rg", "-A", "3", "NEEDLE", file.to_str().unwrap()]);
+        assert_eq!(plan.context_after, 3);
+    }
+
+    #[test]
+    fn rg_count_alias_recognized() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "NEEDLE\nNEEDLE\n").unwrap();
+        let plan = expect_native_grep_plan(&["rg", "-c", "NEEDLE", file.to_str().unwrap()]);
+        assert!(plan.count);
+    }
+
+    #[test]
+    fn rg_line_number_alias_recognized() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "NEEDLE\n").unwrap();
+        let plan = expect_native_grep_plan(&["rg", "-n", "NEEDLE", file.to_str().unwrap()]);
+        assert!(plan.line_numbers);
+    }
+
+    #[test]
+    fn rg_no_heading_cosmetic_flag_consumed_harmlessly() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "NEEDLE\n").unwrap();
+        let plan = expect_native_grep_plan(&[
+            "rg",
+            "--no-heading",
+            "-n",
+            "NEEDLE",
+            file.to_str().unwrap(),
+        ]);
+        assert!(plan.line_numbers);
+        assert_eq!(plan.patterns, vec!["NEEDLE".to_string()]);
+    }
+
+    #[test]
+    fn rg_repeated_e_multi_pattern_alias_recognized() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "one\ntwo\n").unwrap();
+        let plan = expect_native_grep_plan(&[
+            "rg",
+            "-n",
+            "-e",
+            "one",
+            "-e",
+            "two",
+            file.to_str().unwrap(),
+        ]);
+        assert!(plan.line_numbers);
+        assert_eq!(plan.patterns, vec!["one".to_string(), "two".to_string()]);
+    }
+
+    #[test]
+    fn rg_unsupported_specific_flag_falls_back() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "NEEDLE\n").unwrap();
+        expect_grep_bash_fallback(&["rg", "--json", "NEEDLE", file.to_str().unwrap()]);
+    }
+
+    #[test]
+    fn zero_flag_grep_pipe_fusion_unaffected() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "NEEDLE\nother\n").unwrap();
+        let command = format!("grep NEEDLE {} | wc -l", file.display());
+        match plan_shell(&command, None) {
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::PipeGrepFile(plan),
+                ..
+            }) => {
+                assert_eq!(plan.pattern, "NEEDLE");
+                assert_eq!(plan.mode, GrepFilePipeMode::WcLines);
+            }
+            other => panic!("expected PipeGrepFile native plan, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn zero_flag_rg_pipe_fusion_translates_to_grep() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "NEEDLE\nother\n").unwrap();
+        let command = format!("rg NEEDLE {} | wc -l", file.display());
+        match plan_shell(&command, None) {
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::PipeGrepFile(plan),
+                ..
+            }) => {
+                assert_eq!(plan.pattern, "NEEDLE");
+                assert_eq!(plan.mode, GrepFilePipeMode::WcLines);
+            }
+            other => {
+                panic!("expected PipeGrepFile native plan (rg translated to grep), got {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn flag_bearing_rg_in_pipe_falls_back_to_bash() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, "NEEDLE\nother\n").unwrap();
+        let command = format!("rg -n NEEDLE {} | wc -l", file.display());
+        match plan_shell(&command, None) {
+            CommandPlan::External(plan) => {
+                assert_eq!(plan.program, "bash");
+                assert_eq!(plan.args, vec!["-c".to_string(), command.clone()]);
+            }
+            other => panic!("expected bash fallback for flag-bearing rg pipe, got {other:?}"),
+        }
     }
 }
 // CODEGEN-END
