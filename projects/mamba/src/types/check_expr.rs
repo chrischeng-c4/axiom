@@ -1,12 +1,35 @@
 use super::check::{
     expr_to_type_expr, ClassPatternTarget, FunctionParamSig, NumericRoot, TypeChecker,
 };
-use super::generic::{check_bounds, complete_type_args, infer_type_args, Substitution};
-use super::ty::ClassRole;
+use super::generic::{
+    check_bounds, complete_type_args, infer_type_args, GenericParams, Substitution,
+};
+use super::ty::{ClassRole, LiteralValue, TypeParamDefault, TypeVarKind};
 use super::{Ty, TypeId};
 use crate::parser::ast::*;
 use crate::resolve::{SymbolId, SymbolKind};
 use crate::source::span::{Span, Spanned};
+
+enum StdlibSpecCandidate {
+    Accepted(Option<TypeId>),
+    Rejected(Span, String, u8),
+    Indeterminate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StdlibSpecAccess {
+    ModuleFn,
+    Constructor,
+    ClassMember,
+    BoundMember,
+}
+
+struct ResolvedStdlibSpecCall {
+    module: String,
+    qualifier: String,
+    name: String,
+    access: StdlibSpecAccess,
+}
 
 fn bind_explicit_inference_args(
     args: &[CallArg],
@@ -129,7 +152,9 @@ impl TypeChecker {
         match &expr.node {
             Expr::IntLit(_) | Expr::BigIntLit(_) => self.tcx.int(),
             Expr::FloatLit(_) => self.tcx.float(),
-            Expr::ComplexLit(_) => self.tcx.any(), // heap ObjData::Complex (ast_to_hir lowers to `complex(0, N)`)
+            Expr::ComplexLit(_) => {
+                self.external_class_instance("builtins", "complex", Vec::new())
+            }
             Expr::StrLit(_) => self.tcx.str(),
             Expr::FString(parts) => {
                 // Walk replacement fields for their binding side effects
@@ -152,7 +177,9 @@ impl TypeChecker {
                 walk(self, parts);
                 self.tcx.str()
             }
-            Expr::BytesLit(_) => self.tcx.any(),
+            Expr::BytesLit(_) => {
+                self.external_class_instance("builtins", "bytes", Vec::new())
+            }
             Expr::BoolLit(_) => self.tcx.bool(),
             Expr::NoneLit => self.tcx.none(),
             // `...` is a real runtime singleton (the `ellipsis` type) — type
@@ -281,7 +308,10 @@ impl TypeChecker {
                 // Any-path return. It only *emits* the existing arg-mismatch
                 // error when a known stdlib signature is genuinely violated by a
                 // concrete-scalar argument. Skip-when-unsure at every branch.
-                let stdlib_ret = self.check_stdlib_call(func, args);
+                let stdlib_ret = match self.check_structured_stdlib_call(func, args) {
+                    Some(ret) => ret,
+                    None => self.check_stdlib_call(func, args),
+                };
                 self.check_dict_operator_call(func, args);
                 match func_ty {
                     Ty::Fn {
@@ -720,6 +750,7 @@ impl TypeChecker {
                                 name: class_name.to_string(),
                                 role: ClassRole::Instance,
                                 user: None,
+                                external: None,
                                 fields: Vec::new(),
                                 match_args: None,
                             });
@@ -1287,6 +1318,878 @@ impl TypeChecker {
             return None;
         };
         super::stdlib_sigs::get(module, class_name, attr)
+    }
+
+    fn materialize_stdlib_type_param(
+        &mut self,
+        spec_id: super::stdlib_typespec::TypeParamSpecId,
+    ) -> Option<TypeId> {
+        use super::stdlib_typespec::{self as spec, TypeParamSpecKind};
+
+        if self.stdlib_spec_type_param_failed.contains(&spec_id) {
+            return None;
+        }
+        let var_id = if let Some(id) = self.stdlib_spec_type_params.get(&spec_id).copied() {
+            id
+        } else {
+            let decl = spec::type_param(spec_id).clone();
+            let kind = match decl.kind {
+                TypeParamSpecKind::TypeVar => TypeVarKind::TypeVar,
+                TypeParamSpecKind::TypeVarTuple => TypeVarKind::TypeVarTuple,
+                TypeParamSpecKind::ParamSpec => TypeVarKind::ParamSpec,
+            };
+            let id = self.tcx.new_type_param(
+                spec::string(decl.name).to_string(),
+                kind,
+                None,
+                Vec::new(),
+                TypeParamDefault::None,
+            );
+            self.stdlib_spec_type_params.insert(spec_id, id);
+            id
+        };
+        let ty = self.tcx.intern(Ty::TypeVar(var_id));
+        if self.stdlib_spec_type_param_initialized.contains(&spec_id)
+            || self.stdlib_spec_type_param_initializing.contains(&spec_id)
+        {
+            return Some(ty);
+        }
+
+        self.stdlib_spec_type_param_initializing.insert(spec_id);
+        let decl = spec::type_param(spec_id).clone();
+        let metadata = (|| {
+            let bound = match decl.bound {
+                Some(bound) => Some(self.materialize_stdlib_type(bound)?),
+                None => None,
+            };
+            let constraints = spec::edges(decl.constraints)
+                .iter()
+                .map(|constraint| self.materialize_stdlib_type(*constraint))
+                .collect::<Option<Vec<_>>>()?;
+            let default = match decl.default {
+                Some(default) => {
+                    TypeParamDefault::Resolved(self.materialize_stdlib_type(default)?)
+                }
+                None => TypeParamDefault::None,
+            };
+            Some((bound, constraints, default))
+        })();
+        self.stdlib_spec_type_param_initializing.remove(&spec_id);
+        let Some((bound, constraints, default)) = metadata else {
+            self.stdlib_spec_type_param_failed.insert(spec_id);
+            return None;
+        };
+        self.tcx
+            .set_type_var_metadata(var_id, bound, constraints, default);
+        self.stdlib_spec_type_param_initialized.insert(spec_id);
+        Some(ty)
+    }
+
+    fn stdlib_literal_values(
+        &self,
+        spec_id: super::stdlib_typespec::TypeSpecId,
+    ) -> Option<Vec<LiteralValue>> {
+        use super::stdlib_typespec::{self as spec, TypeSpecNode};
+
+        match spec::node(spec_id) {
+            TypeSpecNode::LiteralInt(value) => Some(vec![LiteralValue::Int(*value)]),
+            TypeSpecNode::LiteralStr(value) => {
+                Some(vec![LiteralValue::Str(spec::string(*value).to_string())])
+            }
+            TypeSpecNode::LiteralBool(value) => Some(vec![LiteralValue::Bool(*value)]),
+            _ => None,
+        }
+    }
+
+    fn materialize_stdlib_named_type(
+        &mut self,
+        module: &str,
+        name: &str,
+        kind: super::stdlib_typespec::TypeNameKind,
+        args: Vec<TypeId>,
+    ) -> Option<TypeId> {
+        use super::stdlib_typespec::TypeNameKind;
+
+        if kind == TypeNameKind::Alias {
+            return self.materialize_stdlib_alias(module, name, args);
+        }
+        let ty = match (module, name) {
+            ("builtins", "bool") if args.is_empty() => self.tcx.bool(),
+            ("builtins", "int") if args.is_empty() => self.tcx.int(),
+            ("builtins", "float") if args.is_empty() => self.tcx.float(),
+            ("builtins", "str") if args.is_empty() => self.tcx.str(),
+            ("builtins", "object") | ("typing", "Any") if args.is_empty() => {
+                self.tcx.any()
+            }
+            ("typing", "Never" | "NoReturn") if args.is_empty() => self.tcx.never(),
+            ("typing", "Self") | ("typing_extensions", "Self") if args.is_empty() => {
+                self.tcx.intern(Ty::SelfType)
+            }
+            ("typing", "LiteralString") | ("typing_extensions", "LiteralString")
+                if args.is_empty() =>
+            {
+                self.tcx.str()
+            }
+            ("builtins", "list") if args.is_empty() => {
+                self.tcx.intern(Ty::List(self.tcx.any()))
+            }
+            ("builtins", "set") if args.is_empty() => {
+                self.tcx.intern(Ty::Set(self.tcx.any()))
+            }
+            ("builtins", "dict") if args.is_empty() => {
+                self.tcx.intern(Ty::Dict(self.tcx.any(), self.tcx.any()))
+            }
+            ("builtins", "tuple") if args.is_empty() => {
+                self.tcx.intern(Ty::Tuple(Vec::new()))
+            }
+            _ if matches!(kind, TypeNameKind::Nominal | TypeNameKind::Builtin) => {
+                self.external_class_instance(module, name, args)
+            }
+            _ => return None,
+        };
+        Some(ty)
+    }
+
+    fn materialize_stdlib_alias(
+        &mut self,
+        module: &str,
+        name: &str,
+        args: Vec<TypeId>,
+    ) -> Option<TypeId> {
+        use super::stdlib_typespec as spec;
+
+        let alias = spec::alias(module, name)?.clone();
+        let key = (alias.module, alias.name);
+        if !self.stdlib_spec_alias_initializing.insert(key) {
+            return None;
+        }
+        let materialized = (|| {
+            let target = self.materialize_stdlib_type(alias.target)?;
+            let type_params = spec::type_param_edges(alias.type_params);
+            if args.is_empty() {
+                return Some(target);
+            }
+            if args.len() != type_params.len() {
+                return None;
+            }
+            let mut substitution = Substitution::new();
+            for (param, arg) in type_params.iter().zip(args) {
+                let ty = self.materialize_stdlib_type_param(*param)?;
+                let Ty::TypeVar(var) = self.tcx.get(ty) else {
+                    return None;
+                };
+                substitution.insert(*var, arg);
+            }
+            Some(substitution.apply(target, &mut self.tcx))
+        })();
+        self.stdlib_spec_alias_initializing.remove(&key);
+        materialized
+    }
+
+    fn materialize_stdlib_type(
+        &mut self,
+        spec_id: super::stdlib_typespec::TypeSpecId,
+    ) -> Option<TypeId> {
+        use super::stdlib_typespec::{self as spec, TypeSpecNode};
+
+        if let Some(ty) = self.stdlib_spec_types.get(&spec_id).copied() {
+            return Some(ty);
+        }
+        let node = spec::node(spec_id).clone();
+        let ty = match node {
+            TypeSpecNode::Missing | TypeSpecNode::Unsupported(_) => return None,
+            TypeSpecNode::Any => self.tcx.any(),
+            TypeSpecNode::Never => self.tcx.never(),
+            TypeSpecNode::None | TypeSpecNode::LiteralNone => self.tcx.none(),
+            TypeSpecNode::SelfType => self.tcx.intern(Ty::SelfType),
+            TypeSpecNode::Ellipsis => self.tcx.any(),
+            TypeSpecNode::TypeParam(id) => self.materialize_stdlib_type_param(id)?,
+            TypeSpecNode::ForwardRef { target, .. } => {
+                self.materialize_stdlib_type(target)?
+            }
+            TypeSpecNode::Name { module, name, kind } => {
+                let module = spec::string(module);
+                let name = spec::string(name);
+                self.materialize_stdlib_named_type(module, name, kind, Vec::new())?
+            }
+            TypeSpecNode::Union(range) => {
+                let members = spec::edges(range)
+                    .iter()
+                    .map(|member| self.materialize_stdlib_type(*member))
+                    .collect::<Option<Vec<_>>>()?;
+                self.tcx.intern(Ty::Union(members))
+            }
+            TypeSpecNode::Tuple(range) => {
+                let members = spec::edges(range)
+                    .iter()
+                    .map(|member| self.materialize_stdlib_type(*member))
+                    .collect::<Option<Vec<_>>>()?;
+                self.tcx.intern(Ty::Tuple(members))
+            }
+            TypeSpecNode::ParamList(_) | TypeSpecNode::Unpack(_) => return None,
+            TypeSpecNode::LiteralInt(_)
+            | TypeSpecNode::LiteralStr(_)
+            | TypeSpecNode::LiteralBool(_) => {
+                self.tcx
+                    .intern(Ty::Literal(self.stdlib_literal_values(spec_id)?))
+            }
+            TypeSpecNode::LiteralBytes(_) => return None,
+            TypeSpecNode::Apply { base, args } => {
+                let TypeSpecNode::Name {
+                    module: base_module,
+                    name: base_name,
+                    kind: base_kind,
+                } = spec::node(base)
+                else {
+                    return None;
+                };
+                let module = spec::string(*base_module);
+                let name = spec::string(*base_name);
+                let args = spec::edges(args);
+                match (module, name) {
+                    ("builtins", "list") if args.len() == 1 => {
+                        let item = self.materialize_stdlib_type(args[0])?;
+                        self.tcx.intern(Ty::List(item))
+                    }
+                    ("builtins", "set" | "frozenset") if args.len() == 1 => {
+                        let item = self.materialize_stdlib_type(args[0])?;
+                        if name == "set" {
+                            self.tcx.intern(Ty::Set(item))
+                        } else {
+                            self.materialize_stdlib_named_type(
+                                module,
+                                name,
+                                *base_kind,
+                                vec![item],
+                            )?
+                        }
+                    }
+                    ("builtins", "dict") if args.len() == 2 => {
+                        let key = self.materialize_stdlib_type(args[0])?;
+                        let value = self.materialize_stdlib_type(args[1])?;
+                        self.tcx.intern(Ty::Dict(key, value))
+                    }
+                    ("builtins", "tuple") => {
+                        let items = args
+                            .iter()
+                            .map(|item| self.materialize_stdlib_type(*item))
+                            .collect::<Option<Vec<_>>>()?;
+                        self.tcx.intern(Ty::Tuple(items))
+                    }
+                    ("typing", "Optional") if args.len() == 1 => {
+                        let item = self.materialize_stdlib_type(args[0])?;
+                        self.tcx.intern(Ty::Union(vec![item, self.tcx.none()]))
+                    }
+                    ("typing", "Union") => {
+                        let items = args
+                            .iter()
+                            .map(|item| self.materialize_stdlib_type(*item))
+                            .collect::<Option<Vec<_>>>()?;
+                        self.tcx.intern(Ty::Union(items))
+                    }
+                    ("typing", "Literal") | ("typing_extensions", "Literal") => {
+                        let values = args
+                            .iter()
+                            .map(|item| self.stdlib_literal_values(*item))
+                            .collect::<Option<Vec<_>>>()?
+                            .into_iter()
+                            .flatten()
+                            .collect();
+                        self.tcx.intern(Ty::Literal(values))
+                    }
+                    ("typing", "Callable") | ("collections.abc", "Callable")
+                        if args.len() == 2 =>
+                    {
+                        let (params, variadic) = match spec::node(args[0]) {
+                            TypeSpecNode::ParamList(range) => (
+                                spec::edges(*range)
+                                    .iter()
+                                    .map(|param| self.materialize_stdlib_type(*param))
+                                    .collect::<Option<Vec<_>>>()?,
+                                false,
+                            ),
+                            TypeSpecNode::Ellipsis => (Vec::new(), true),
+                            _ => return None,
+                        };
+                        let ret = self.materialize_stdlib_type(args[1])?;
+                        self.tcx.intern(Ty::Fn {
+                            params,
+                            ret,
+                            variadic,
+                        })
+                    }
+                    ("typing", "Annotated") | ("typing_extensions", "Annotated")
+                        if !args.is_empty() =>
+                    {
+                        self.materialize_stdlib_type(args[0])?
+                    }
+                    ("typing", "ClassVar" | "Final" | "Required" | "NotRequired")
+                    | (
+                        "typing_extensions",
+                        "ClassVar" | "Final" | "Required" | "NotRequired" | "ReadOnly",
+                    ) if args.len() == 1 => self.materialize_stdlib_type(args[0])?,
+                    _ => {
+                        let materialized = args
+                            .iter()
+                            .map(|arg| self.materialize_stdlib_type(*arg))
+                            .collect::<Option<Vec<_>>>()?;
+                        self.materialize_stdlib_named_type(
+                            module,
+                            name,
+                            *base_kind,
+                            materialized,
+                        )?
+                    }
+                }
+            }
+        };
+        self.stdlib_spec_types.insert(spec_id, ty);
+        Some(ty)
+    }
+
+    fn structured_stdlib_module_fn_exists(module: &str, name: &str) -> bool {
+        use super::stdlib_typespec::{self as spec, CallableSpecKind};
+        spec::overloads(module, "", name)
+            .any(|sig| sig.kind == CallableSpecKind::ModuleFn)
+    }
+
+    fn structured_stdlib_member_exists(module: &str, qualifier: &str, name: &str) -> bool {
+        use super::stdlib_typespec::{self as spec, CallableSpecKind};
+        spec::overloads(module, qualifier, name).any(|sig| {
+            matches!(
+                sig.kind,
+                CallableSpecKind::InstanceMethod
+                    | CallableSpecKind::ClassMethod
+                    | CallableSpecKind::StaticMethod
+            )
+        })
+    }
+
+    fn structured_stdlib_constructor(
+        module: &str,
+        qualifier: &str,
+    ) -> Option<&'static str> {
+        use super::stdlib_typespec::{self as spec, CallableSpecKind};
+        let is_constructor = |sig: &super::stdlib_typespec::CallableSpec| {
+            matches!(
+                sig.kind,
+                CallableSpecKind::InstanceMethod
+                    | CallableSpecKind::ClassMethod
+                    | CallableSpecKind::StaticMethod
+            )
+        };
+        if spec::overloads(module, qualifier, "__init__").any(is_constructor) {
+            Some("__init__")
+        } else if spec::overloads(module, qualifier, "__new__").any(is_constructor) {
+            Some("__new__")
+        } else {
+            None
+        }
+    }
+
+    fn inferred_structured_stdlib_instance(
+        &self,
+        base: &str,
+    ) -> Option<(String, String)> {
+        let symbol = self.symbols.lookup(base)?;
+        if let Some(origin) = self.instance_origins.get(&symbol) {
+            return Some(origin.clone());
+        }
+        let ty = self.get_sym_type(symbol.0);
+        let origin = match self.tcx.get(ty) {
+            Ty::Bool => ("builtins", "bool"),
+            Ty::Int => ("builtins", "int"),
+            Ty::Float => ("builtins", "float"),
+            Ty::Str => ("builtins", "str"),
+            Ty::List(_) => ("builtins", "list"),
+            Ty::Dict(_, _) => ("builtins", "dict"),
+            Ty::Tuple(_) => ("builtins", "tuple"),
+            Ty::Class {
+                role: ClassRole::Instance,
+                external: Some(external),
+                ..
+            } => return Some((external.module.clone(), external.name.clone())),
+            _ if self.symbols.get_symbol(symbol).kind == SymbolKind::Function => {
+                ("builtins", "function")
+            }
+            _ => return None,
+        };
+        Some((origin.0.to_string(), origin.1.to_string()))
+    }
+
+    fn resolve_structured_stdlib_call(
+        &self,
+        func: &Spanned<Expr>,
+    ) -> Option<ResolvedStdlibSpecCall> {
+        match &func.node {
+            Expr::Ident(name) => self
+                .symbols
+                .lookup(name)
+                .and_then(|symbol| self.import_origins.get(&symbol))
+                .and_then(|(module, member)| {
+                    let member = if member.is_empty() { name } else { member };
+                    if Self::structured_stdlib_module_fn_exists(module, member) {
+                        Some(ResolvedStdlibSpecCall {
+                            module: module.clone(),
+                            qualifier: String::new(),
+                            name: member.to_string(),
+                            access: StdlibSpecAccess::ModuleFn,
+                        })
+                    } else {
+                        Self::structured_stdlib_constructor(module, member).map(|constructor| {
+                            ResolvedStdlibSpecCall {
+                                module: module.clone(),
+                                qualifier: member.to_string(),
+                                name: constructor.to_string(),
+                                access: StdlibSpecAccess::Constructor,
+                            }
+                        })
+                    }
+                })
+                .or_else(|| {
+                    if !self.is_unshadowed_builtin(name) {
+                        return None;
+                    }
+                    if Self::structured_stdlib_module_fn_exists("builtins", name) {
+                        Some(ResolvedStdlibSpecCall {
+                            module: "builtins".to_string(),
+                            qualifier: String::new(),
+                            name: name.clone(),
+                            access: StdlibSpecAccess::ModuleFn,
+                        })
+                    } else {
+                        Self::structured_stdlib_constructor("builtins", name).map(|constructor| {
+                            ResolvedStdlibSpecCall {
+                                module: "builtins".to_string(),
+                                qualifier: name.clone(),
+                                name: constructor.to_string(),
+                                access: StdlibSpecAccess::Constructor,
+                            }
+                        })
+                    }
+                }),
+            Expr::Attr { object, attr } => {
+                if let Expr::Ident(base) = &object.node {
+                    if let Some(symbol) = self.symbols.lookup(base) {
+                        if let Some((module, qualifier)) = self.import_origins.get(&symbol) {
+                            if qualifier.is_empty() {
+                                if Self::structured_stdlib_module_fn_exists(module, attr) {
+                                    return Some(ResolvedStdlibSpecCall {
+                                        module: module.clone(),
+                                        qualifier: String::new(),
+                                        name: attr.clone(),
+                                        access: StdlibSpecAccess::ModuleFn,
+                                    });
+                                }
+                                if let Some(constructor) =
+                                    Self::structured_stdlib_constructor(module, attr)
+                                {
+                                    return Some(ResolvedStdlibSpecCall {
+                                        module: module.clone(),
+                                        qualifier: attr.clone(),
+                                        name: constructor.to_string(),
+                                        access: StdlibSpecAccess::Constructor,
+                                    });
+                                }
+                            } else if Self::structured_stdlib_member_exists(
+                                module, qualifier, attr,
+                            ) {
+                                return Some(ResolvedStdlibSpecCall {
+                                    module: module.clone(),
+                                    qualifier: qualifier.clone(),
+                                    name: attr.clone(),
+                                    access: StdlibSpecAccess::ClassMember,
+                                });
+                            }
+                        }
+                    }
+                    if let Some((module, qualifier)) =
+                        self.inferred_structured_stdlib_instance(base)
+                    {
+                        if Self::structured_stdlib_member_exists(&module, &qualifier, attr) {
+                            return Some(ResolvedStdlibSpecCall {
+                                module,
+                                qualifier,
+                                name: attr.clone(),
+                                access: StdlibSpecAccess::BoundMember,
+                            });
+                        }
+                    }
+                }
+                let Expr::Attr {
+                    object: module_object,
+                    attr: qualifier,
+                } = &object.node
+                else {
+                    return None;
+                };
+                let Expr::Ident(module_alias) = &module_object.node else {
+                    return None;
+                };
+                let symbol = self.symbols.lookup(module_alias)?;
+                let (module, imported) = self.import_origins.get(&symbol)?;
+                if !imported.is_empty()
+                    || !Self::structured_stdlib_member_exists(module, qualifier, attr)
+                {
+                    return None;
+                }
+                Some(ResolvedStdlibSpecCall {
+                    module: module.clone(),
+                    qualifier: qualifier.clone(),
+                    name: attr.clone(),
+                    access: StdlibSpecAccess::ClassMember,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn stdlib_spec_generic_params(
+        &mut self,
+        sig: &super::stdlib_typespec::CallableSpec,
+    ) -> Option<GenericParams> {
+        use super::stdlib_typespec as spec;
+
+        let mut params = GenericParams::new();
+        for spec_id in spec::type_param_edges(sig.type_params) {
+            let ty = self.materialize_stdlib_type_param(*spec_id)?;
+            let Ty::TypeVar(var_id) = self.tcx.get(ty) else {
+                return None;
+            };
+            let info = self.tcx.get_type_var(*var_id).clone();
+            params.add_param(
+                &info.name,
+                *var_id,
+                info.kind,
+                info.bound,
+                info.constraints,
+                info.default,
+            );
+        }
+        Some(params)
+    }
+
+    fn stdlib_literal_argument_matches(
+        &mut self,
+        expected: TypeId,
+        actual: TypeId,
+        value: &Spanned<Expr>,
+    ) -> bool {
+        match self.tcx.get(expected).clone() {
+            Ty::Literal(values) => values.iter().any(|literal| {
+                matches!(
+                    (literal, &value.node),
+                    (LiteralValue::Int(left), Expr::IntLit(right)) if left == right
+                ) || matches!(
+                    (literal, &value.node),
+                    (LiteralValue::Str(left), Expr::StrLit(right)) if left == right
+                ) || matches!(
+                    (literal, &value.node),
+                    (LiteralValue::Bool(left), Expr::BoolLit(right)) if left == right
+                )
+            }),
+            Ty::Union(members) => members.into_iter().any(|member| {
+                self.stdlib_literal_argument_matches(member, actual, value)
+            }),
+            _ => self.types_compatible(expected, actual),
+        }
+    }
+
+    fn evaluate_stdlib_spec_candidate(
+        &mut self,
+        sig: &super::stdlib_typespec::CallableSpec,
+        args: &[CallArg],
+        checked: &[Option<TypeId>],
+        hide_implicit_receiver: bool,
+        preserve_return_type: bool,
+    ) -> StdlibSpecCandidate {
+        use super::stdlib_typespec::{self as spec, ParamSpecKind};
+
+        if args
+            .iter()
+            .any(|arg| matches!(arg, CallArg::StarArg(_) | CallArg::DoubleStarArg(_)))
+        {
+            return StdlibSpecCandidate::Indeterminate;
+        }
+        let params = spec::params(sig.params);
+        let visible: Vec<_> = params
+            .iter()
+            .filter(|param| !hide_implicit_receiver || !param.implicit_receiver)
+            .collect();
+        let positional: Vec<_> = visible
+            .iter()
+            .enumerate()
+            .filter(|(_, param)| {
+                matches!(param.kind, ParamSpecKind::PosOnly | ParamSpecKind::PosOrKw)
+            })
+            .map(|(index, _)| index)
+            .collect();
+        let var_pos = visible
+            .iter()
+            .position(|param| param.kind == ParamSpecKind::VarPos);
+        let var_kw = visible
+            .iter()
+            .position(|param| param.kind == ParamSpecKind::VarKw);
+        let mut bound = std::collections::HashSet::new();
+        let mut positional_index = 0usize;
+        let mut bound_args = Vec::new();
+        for (arg_index, (arg, actual)) in args.iter().zip(checked).enumerate() {
+            let Some(actual) = actual else {
+                return StdlibSpecCandidate::Indeterminate;
+            };
+            let (param_index, span) = match arg {
+                CallArg::Positional(value) => {
+                    let index = positional.get(positional_index).copied().or(var_pos);
+                    positional_index += 1;
+                    (index, value.span)
+                }
+                CallArg::Keyword { name, value } => {
+                    let index = visible
+                        .iter()
+                        .position(|param| {
+                            matches!(param.kind, ParamSpecKind::PosOrKw | ParamSpecKind::KwOnly)
+                                && spec::string(param.name) == name
+                        })
+                        .or(var_kw);
+                    (index, value.span)
+                }
+                CallArg::StarArg(_) | CallArg::DoubleStarArg(_) => unreachable!(),
+            };
+            let Some(param_index) = param_index else {
+                return StdlibSpecCandidate::Rejected(
+                    span,
+                    "call has an argument that no parameter accepts".to_string(),
+                    0,
+                );
+            };
+            let param = visible[param_index];
+            if !matches!(param.kind, ParamSpecKind::VarPos | ParamSpecKind::VarKw)
+                && !bound.insert(param_index)
+            {
+                return StdlibSpecCandidate::Rejected(
+                    span,
+                    format!(
+                        "multiple values for parameter `{}`",
+                        spec::string(param.name)
+                    ),
+                    0,
+                );
+            }
+            bound_args.push((
+                param_index,
+                *actual,
+                span,
+                spec::string(param.name).to_string(),
+                arg_index,
+            ));
+        }
+        for (param_index, param) in visible.iter().enumerate() {
+            if matches!(param.kind, ParamSpecKind::VarPos | ParamSpecKind::VarKw)
+                || param.has_default
+                || bound.contains(&param_index)
+            {
+                continue;
+            }
+            return StdlibSpecCandidate::Rejected(
+                Span::default(),
+                format!("missing required parameter `{}`", spec::string(param.name)),
+                0,
+            );
+        }
+        let mut matched = Vec::with_capacity(bound_args.len());
+        let mut indeterminate = false;
+        for (param_index, actual, span, name, arg_index) in bound_args {
+            let expected_spec = spec::type_use(visible[param_index].ty).0;
+            let expected = self.materialize_stdlib_type(expected_spec);
+            indeterminate |= expected.is_none();
+            matched.push((expected, actual, span, name, arg_index));
+        }
+
+        let completed = if let Some(generic_params) = self.stdlib_spec_generic_params(sig) {
+            let inference_pairs: Vec<_> = matched
+                .iter()
+                .filter_map(|item| item.0.map(|expected| (expected, item.1)))
+                .collect();
+            let inference_params: Vec<_> = inference_pairs.iter().map(|item| item.0).collect();
+            let inference_args: Vec<_> = inference_pairs.iter().map(|item| item.1).collect();
+            let (subst, conflicts) =
+                infer_type_args(&generic_params, &inference_params, &inference_args, &self.tcx);
+            if let Some(message) = conflicts.into_iter().next() {
+                let span = matched.first().map(|item| item.2).unwrap_or_default();
+                return StdlibSpecCandidate::Rejected(span, message, 1);
+            }
+            match complete_type_args(&generic_params, subst, &mut self.tcx) {
+                Some((completed, _)) => {
+                    if let Some(message) = check_bounds(&completed, &generic_params, &self.tcx)
+                        .into_iter()
+                        .next()
+                    {
+                        let span = matched.first().map(|item| item.2).unwrap_or_default();
+                        return StdlibSpecCandidate::Rejected(span, message, 1);
+                    }
+                    Some(completed)
+                }
+                None => {
+                    indeterminate = true;
+                    None
+                }
+            }
+        } else {
+            indeterminate = true;
+            None
+        };
+        for (expected, actual, span, name, arg_index) in matched {
+            let Some(mut expected) = expected else {
+                continue;
+            };
+            if let Some(completed) = &completed {
+                expected = completed.apply(expected, &mut self.tcx);
+            } else if self.tcx.contains_type_var(expected) {
+                indeterminate = true;
+                continue;
+            }
+            let value = match &args[arg_index] {
+                CallArg::Positional(value)
+                | CallArg::StarArg(value)
+                | CallArg::Keyword { value, .. }
+                | CallArg::DoubleStarArg(value) => value,
+            };
+            if !self.stdlib_literal_argument_matches(expected, actual, value) {
+                return StdlibSpecCandidate::Rejected(
+                    span,
+                    format!(
+                        "argument type mismatch: expected `{}`, got `{}` for parameter `{name}`",
+                        self.ty_name(expected),
+                        self.ty_name(actual),
+                    ),
+                    1,
+                );
+            }
+        }
+        if indeterminate {
+            return StdlibSpecCandidate::Indeterminate;
+        }
+        let ret = if sig.is_async || !preserve_return_type {
+            None
+        } else {
+            let ret = spec::type_use(sig.ret).0;
+            self.materialize_stdlib_type(ret)
+                .map(|ret| completed.expect("determinate candidate").apply(ret, &mut self.tcx))
+        };
+        StdlibSpecCandidate::Accepted(ret)
+    }
+
+    fn check_structured_stdlib_call(
+        &mut self,
+        func: &Spanned<Expr>,
+        args: &[CallArg],
+    ) -> Option<Option<TypeId>> {
+        use super::stdlib_typespec as spec;
+
+        use super::stdlib_typespec::CallableSpecKind;
+
+        let target = self.resolve_structured_stdlib_call(func)?;
+        let accepts_kind = |kind: CallableSpecKind| match target.access {
+            StdlibSpecAccess::ModuleFn => kind == CallableSpecKind::ModuleFn,
+            StdlibSpecAccess::Constructor
+            | StdlibSpecAccess::ClassMember
+            | StdlibSpecAccess::BoundMember => matches!(
+                kind,
+                CallableSpecKind::InstanceMethod
+                    | CallableSpecKind::ClassMethod
+                    | CallableSpecKind::StaticMethod
+            ),
+        };
+        let candidates: Vec<_> = spec::overloads(
+            &target.module,
+            &target.qualifier,
+            &target.name,
+        )
+        .filter(|sig| accepts_kind(sig.kind))
+        .cloned()
+        .collect();
+        if candidates.is_empty() {
+            return None;
+        }
+        if matches!(
+            target.access,
+            StdlibSpecAccess::ClassMember | StdlibSpecAccess::BoundMember
+        ) {
+            let mut kinds = Vec::new();
+            for candidate in &candidates {
+                if !kinds.contains(&candidate.kind) {
+                    kinds.push(candidate.kind);
+                }
+            }
+            if kinds.len() > 1 {
+                return None;
+            }
+        }
+        let checked: Vec<_> = args
+            .iter()
+            .map(|arg| match arg {
+                CallArg::Positional(value) | CallArg::StarArg(value) => {
+                    Some(self.check_expr(value))
+                }
+                CallArg::Keyword { value, .. } | CallArg::DoubleStarArg(value) => {
+                    Some(self.check_expr(value))
+                }
+            })
+            .collect();
+        let mut accepted = Vec::new();
+        let mut rejected = Vec::new();
+        let mut indeterminate = false;
+        for candidate in &candidates {
+            let hide_implicit_receiver = match target.access {
+                StdlibSpecAccess::ModuleFn | StdlibSpecAccess::ClassMember
+                    if candidate.kind == CallableSpecKind::InstanceMethod =>
+                {
+                    false
+                }
+                StdlibSpecAccess::ModuleFn => false,
+                StdlibSpecAccess::Constructor
+                | StdlibSpecAccess::ClassMember
+                | StdlibSpecAccess::BoundMember => true,
+            };
+            match self.evaluate_stdlib_spec_candidate(
+                candidate,
+                args,
+                &checked,
+                hide_implicit_receiver,
+                target.access == StdlibSpecAccess::ModuleFn,
+            ) {
+                StdlibSpecCandidate::Accepted(ret) => accepted.push(ret),
+                StdlibSpecCandidate::Rejected(span, message, priority) => {
+                    rejected.push((span, message, priority))
+                }
+                StdlibSpecCandidate::Indeterminate => indeterminate = true,
+            }
+        }
+        if accepted.is_empty() {
+            if !indeterminate && rejected.len() == candidates.len() {
+                if let Some((span, message, _)) =
+                    rejected.into_iter().max_by_key(|item| item.2)
+                {
+                    self.error(span, message);
+                }
+                return Some(None);
+            }
+            return None;
+        }
+        if indeterminate {
+            return None;
+        }
+        if accepted.iter().any(Option::is_none) {
+            return Some(None);
+        }
+        let mut returns: Vec<_> = accepted.into_iter().flatten().collect();
+        returns.sort_unstable_by_key(|ty| ty.0);
+        returns.dedup();
+        Some(match returns.as_slice() {
+            [] => None,
+            [ret] => Some(*ret),
+            _ => Some(self.tcx.intern(Ty::Union(returns))),
+        })
     }
 
     /// ① Type-wall PoC HOOK. Resolve a call's callee to `(module, qualifier,

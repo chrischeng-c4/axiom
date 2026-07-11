@@ -18,6 +18,14 @@ impl TypeChecker {
         let bool_ty = self.tcx.bool();
         let str_ty = self.tcx.str();
         let none = self.tcx.none();
+        let bytes_ty = self.external_class_instance("builtins", "bytes", Vec::new());
+        let bytearray_ty = self.external_class_instance("builtins", "bytearray", Vec::new());
+        let complex_ty = self.external_class_instance("builtins", "complex", Vec::new());
+        let memoryview_ty = self.external_class_instance("builtins", "memoryview", Vec::new());
+        let frozenset_ty =
+            self.external_class_instance("builtins", "frozenset", vec![any]);
+        let range_ty = self.external_class_instance("builtins", "range", Vec::new());
+        let slice_ty = self.external_class_instance("builtins", "slice", Vec::new());
 
         // I/O — print(*args), input(prompt='')
         self.def_builtin_variadic("print", &[], none);
@@ -31,7 +39,7 @@ impl TypeChecker {
         self.def_builtin_variadic("list", &[], any);
         self.def_builtin_variadic("dict", &[], any);
         self.def_builtin_variadic("set", &[], any);
-        self.def_builtin_variadic("frozenset", &[], any);
+        self.def_builtin_variadic("frozenset", &[], frozenset_ty);
         self.def_builtin_variadic("tuple", &[], any);
 
         // Numeric — min/max accept *args, round(n, ndigits=0)
@@ -53,9 +61,9 @@ impl TypeChecker {
 
         // Sequences / iterables
         self.def_builtin("len", &[any], int);
-        self.def_builtin_variadic("range", &[any], any);
+        self.def_builtin_variadic("range", &[any], range_ty);
         // slice(stop), slice(start, stop[, step]) — same variadic form as range
-        self.def_builtin_variadic("slice", &[], any);
+        self.def_builtin_variadic("slice", &[], slice_ty);
         self.def_builtin_variadic("enumerate", &[any], any);
         self.def_builtin_variadic("zip", &[], any);
         self.def_builtin_variadic("map", &[any, any], any);
@@ -101,17 +109,17 @@ impl TypeChecker {
         self.def_builtin("all", &[any], bool_ty);
 
         // Byte sequences — bytes/bytearray constructors accept 0-3 args
-        self.def_builtin_variadic("bytes", &[], any);
-        self.def_builtin_variadic("bytearray", &[], any);
+        self.def_builtin_variadic("bytes", &[], bytes_ty);
+        self.def_builtin_variadic("bytearray", &[], bytearray_ty);
         // complex(real=0, imag=0) — accepts 0-2 numeric args
-        self.def_builtin_variadic("complex", &[], any);
+        self.def_builtin_variadic("complex", &[], complex_ty);
         // breakpoint(*args, **kwargs) — PEP 553. No pdb runtime, so the
         // stub respects PYTHONBREAKPOINT=0 (silent no-op) and otherwise
         // also returns None — matching CPython when sys.breakpointhook
         // is the default and pdb is unavailable.
         self.def_builtin_variadic("breakpoint", &[], any);
         // memoryview(obj) — view into a bytes-like object.
-        self.def_builtin_variadic("memoryview", &[], any);
+        self.def_builtin_variadic("memoryview", &[], memoryview_ty);
         // __import__(name, globals=None, locals=None, fromlist=(), level=0)
         // Routes to the runtime import path; only `name` is honored,
         // matching the public CPython contract for `import x` (which is
@@ -274,6 +282,7 @@ impl TypeChecker {
                 name: name.to_string(),
                 role: ClassRole::Object,
                 user: None,
+                external: None,
                 fields: vec![],
                 match_args: None,
             });

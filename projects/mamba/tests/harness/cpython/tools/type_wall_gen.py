@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 import os
 import re
 import sys
@@ -43,6 +44,8 @@ OUT_DIR = MAMBA_DIR / "tests" / "cpython" / "type"
 # --emit-rust output: the typeshed-derived stdlib signature table consumed by
 # src/types/stdlib_sigs.rs (the ① Type-wall call-site hook).
 RUST_SIGS_OUT = MAMBA_DIR / "src" / "types" / "stdlib_sigs_generated.rs"
+RUST_SPECS_OUT = MAMBA_DIR / "src" / "types" / "stdlib_specs_generated.rs"
+RUST_SPECS_DATA_OUT = MAMBA_DIR / "src" / "types" / "stdlib_specs_generated.json"
 
 # Closed scalar map: the ONLY typeshed BARE (non-subscripted) annotations we
 # encode as a concrete, *enforceable* CoreTy. EVERYTHING else (Any, object,
@@ -1239,6 +1242,628 @@ def rust_rows():
         yield from _walk_module_rust(tree.body, mod, counts)
 
 
+# --- Lossless structured signature manifest ---------------------------------
+
+_SPEC_BUILTINS = {
+    "bool", "bytearray", "bytes", "complex", "dict", "float", "frozenset",
+    "int", "list", "memoryview", "object", "range", "set", "slice", "str",
+    "tuple", "type",
+}
+_SPEC_SPECIALS = {
+    "Any", "AnyStr", "Callable", "ClassVar", "Concatenate", "Final",
+    "Generic", "Literal", "LiteralString", "Never", "NoReturn", "NotRequired",
+    "ParamSpec", "Protocol", "Required", "Self", "TypeAlias", "TypeGuard",
+    "TypeIs", "TypeVar", "TypeVarTuple", "Unpack",
+}
+_SPEC_TYPE_PARAM_CTORS = {"TypeVar", "TypeVarTuple", "ParamSpec"}
+
+
+def _spec_dotted_name(node):
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _spec_dotted_name(node.value)
+        return f"{base}.{node.attr}" if base else None
+    return None
+
+
+def _spec_span(node, source):
+    if node is None:
+        return dict(path=source, line=0, column=0, end_line=0, end_column=0)
+    return dict(
+        path=source,
+        line=getattr(node, "lineno", 0),
+        column=getattr(node, "col_offset", 0),
+        end_line=getattr(node, "end_lineno", 0) or 0,
+        end_column=getattr(node, "end_col_offset", 0) or 0,
+    )
+
+
+def _spec_resolve_relative_module(mod, is_package, level, imported):
+    if level == 0:
+        return imported or ""
+    base = mod.split(".") if is_package else mod.split(".")[:-1]
+    remove = max(0, level - 1)
+    if remove:
+        base = base[:-remove]
+    if imported:
+        base.extend(imported.split("."))
+    return ".".join(base)
+
+
+def _spec_type_param_call(node, info):
+    if not isinstance(node, ast.Call):
+        return None
+    name = _spec_dotted_name(node.func)
+    if not name:
+        return None
+    root, *tail = name.split(".")
+    resolved_module = ""
+    resolved_name = name
+    if root in info["imports"]:
+        resolved_module, imported = info["imports"][root]
+        resolved_name = ".".join(
+            piece for piece in ([imported] if imported else []) + tail if piece
+        )
+    elif len(tail) == 1 and root in {"typing", "typing_extensions"}:
+        resolved_module = root
+        resolved_name = tail[0]
+    elif not tail:
+        resolved_name = root
+    if (
+        resolved_name in _SPEC_TYPE_PARAM_CTORS
+        and resolved_module in {"", "typing", "typing_extensions"}
+    ):
+        return resolved_name
+    return None
+
+
+def _spec_type_alias_annotation(node):
+    name = _spec_dotted_name(node)
+    return bool(name and name.split(".")[-1] == "TypeAlias")
+
+
+def _spec_scan_scope(info, body, qualifier=""):
+    for node in body:
+        if isinstance(node, ast.Import) and not qualifier:
+            for item in node.names:
+                local = item.asname or item.name.split(".")[0]
+                info["imports"][local] = (item.name, "")
+        elif isinstance(node, ast.ImportFrom) and not qualifier:
+            origin = _spec_resolve_relative_module(
+                info["module"], info["is_package"], node.level, node.module
+            )
+            for item in node.names:
+                if item.name == "*":
+                    continue
+                info["imports"][item.asname or item.name] = (origin, item.name)
+        elif isinstance(node, ast.ClassDef):
+            class_qualifier = f"{qualifier}.{node.name}" if qualifier else node.name
+            bases = {
+                _spec_dotted_name(base.value if isinstance(base, ast.Subscript) else base)
+                for base in node.bases
+            }
+            kind = "Protocol" if any(base and base.split(".")[-1] == "Protocol" for base in bases) else "Nominal"
+            info["classes"][class_qualifier] = kind
+            info["classes"].setdefault(node.name, kind)
+            _spec_scan_scope(info, node.body, class_qualifier)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            target = None
+            value = node.value
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                target = node.targets[0].id
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                target = node.target.id
+            if target is None:
+                continue
+            ctor = _spec_type_param_call(value, info)
+            if ctor:
+                key = f'{info["module"]}::{qualifier}::{target}'
+                info["type_param_decls"].append(
+                    dict(key=key, name=target, kind=ctor, value=value, qualifier=qualifier)
+                )
+                info["type_params"][(qualifier, target)] = key
+            elif isinstance(node, ast.AnnAssign) and _spec_type_alias_annotation(node.annotation):
+                info["aliases"].add((qualifier, target))
+                info["aliases"].add(("", target))
+                info["alias_decls"].append(
+                    dict(
+                        key=f'{info["module"]}::{qualifier}::{target}',
+                        module=info["module"],
+                        qualifier=qualifier,
+                        name=target,
+                        value=value,
+                    )
+                )
+        elif hasattr(ast, "TypeAlias") and isinstance(node, ast.TypeAlias):
+            if not isinstance(node.name, ast.Name) or node.type_params:
+                continue
+            target = node.name.id
+            info["aliases"].add((qualifier, target))
+            info["aliases"].add(("", target))
+            info["alias_decls"].append(
+                dict(
+                    key=f'{info["module"]}::{qualifier}::{target}',
+                    module=info["module"],
+                    qualifier=qualifier,
+                    name=target,
+                    value=node.value,
+                )
+            )
+        elif isinstance(node, ast.If):
+            _spec_scan_scope(info, node.body, qualifier)
+            _spec_scan_scope(info, node.orelse, qualifier)
+
+
+def _spec_parse_modules():
+    infos = []
+    failures = []
+    for pyi in sorted(TYPESHED_STDLIB.rglob("*.pyi")):
+        mod = module_name(pyi)
+        source = f'vendor/typeshed/stdlib/{pyi.relative_to(TYPESHED_STDLIB).as_posix()}'
+        try:
+            tree = ast.parse(pyi.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError as exc:
+            failures.append(f"{source}:{exc.lineno}:{exc.offset}: {exc.msg}")
+            continue
+        info = dict(
+            module=mod,
+            source=source,
+            tree=tree,
+            is_package=pyi.name == "__init__.pyi",
+            imports={},
+            classes={},
+            aliases=set(),
+            alias_decls=[],
+            type_param_decls=[],
+            type_params={},
+        )
+        _spec_scan_scope(info, tree.body)
+        infos.append(info)
+    if failures:
+        raise RuntimeError("typeshed parse failures:\n" + "\n".join(failures))
+    return infos
+
+
+class _SpecCorpus:
+    def __init__(self, infos):
+        self.infos = infos
+        self.info_by_module = {info["module"]: info for info in infos}
+        self.nodes = []
+        self.node_ids = {}
+        self.edges = []
+        self.params = []
+        self.type_params = []
+        self.type_param_ids = {}
+        self.type_param_edges = []
+        self.aliases = []
+        self.alias_targets = {}
+        self.decorators = []
+        self.guards = []
+        self.callables = []
+        self.source_files = []
+        self.source_file_ids = {}
+        self.source_spans = []
+        self.source_span_ids = {}
+        self.type_uses = []
+        self.type_use_ids = {}
+        self.global_symbols = {}
+        for info in infos:
+            for name, kind in info["classes"].items():
+                if "." not in name:
+                    self.global_symbols[(info["module"], name)] = kind
+            for qualifier, name in info["aliases"]:
+                if not qualifier:
+                    self.global_symbols[(info["module"], name)] = "Alias"
+        decls = sorted(
+            (
+                (decl, info)
+                for info in infos
+                for decl in info["type_param_decls"]
+            ),
+            key=lambda item: item[0]["key"],
+        )
+        for decl, _info in decls:
+            idx = len(self.type_params)
+            self.type_param_ids[decl["key"]] = idx
+            self.type_params.append(None)
+            if not decl["qualifier"]:
+                self.global_symbols[(_info["module"], decl["name"])] = "TypeParam"
+        self.missing = self._add_node(("Missing",), dict(kind="Missing"))
+        for decl, info in decls:
+            self._fill_type_param(decl, info)
+        alias_decls = sorted(
+            (
+                (decl, info)
+                for info in infos
+                for decl in info["alias_decls"]
+            ),
+            key=lambda item: item[0]["key"],
+        )
+        pending_aliases = []
+        for decl, info in alias_decls:
+            target = self.intern(decl["value"], info, decl["qualifier"])
+            pending_aliases.append((decl, target))
+            if not decl["qualifier"]:
+                self.alias_targets[(decl["module"], decl["name"])] = target
+        for decl, target in pending_aliases:
+            referenced = self.referenced_type_params([target])
+            start = len(self.type_param_edges)
+            self.type_param_edges.extend(referenced)
+            row = dict(
+                module=decl["module"],
+                qualifier=decl["qualifier"],
+                name=decl["name"],
+                target=target,
+                type_params=(start, len(referenced)),
+            )
+            self.aliases.append(row)
+
+    def _add_node(self, key, row):
+        found = self.node_ids.get(key)
+        if found is not None:
+            return found
+        idx = len(self.nodes)
+        self.node_ids[key] = idx
+        self.nodes.append(row)
+        return idx
+
+    def _add_edges(self, values):
+        start = len(self.edges)
+        self.edges.extend(values)
+        return start, len(values)
+
+    def intern_span(self, span):
+        path = span["path"]
+        file_id = self.source_file_ids.get(path)
+        if file_id is None:
+            file_id = len(self.source_files)
+            self.source_file_ids[path] = file_id
+            self.source_files.append(path)
+        key = (
+            file_id,
+            span["line"],
+            span["column"],
+            span["end_line"],
+            span["end_column"],
+        )
+        found = self.source_span_ids.get(key)
+        if found is not None:
+            return found
+        idx = len(self.source_spans)
+        self.source_span_ids[key] = idx
+        self.source_spans.append(key)
+        return idx
+
+    def intern_type_use(self, ty, span):
+        source = self.intern_span(span)
+        key = (ty, source)
+        found = self.type_use_ids.get(key)
+        if found is not None:
+            return found
+        idx = len(self.type_uses)
+        self.type_use_ids[key] = idx
+        self.type_uses.append(key)
+        return idx
+
+    def _scope_candidates(self, qualifier):
+        current = qualifier
+        while True:
+            yield current
+            if not current or "." not in current:
+                break
+            current = current.rsplit(".", 1)[0]
+        if qualifier:
+            yield ""
+
+    def _resolve_name(self, info, qualifier, dotted):
+        root, *tail = dotted.split(".")
+        for scope in self._scope_candidates(qualifier):
+            key = info["type_params"].get((scope, root))
+            if key is not None and not tail:
+                return "TypeParam", self.type_param_ids[key]
+        if root in info["imports"]:
+            module, imported = info["imports"][root]
+            pieces = ([imported] if imported else []) + tail
+            name = ".".join(piece for piece in pieces if piece)
+            if not name:
+                name = root
+            symbol_kind = self.global_symbols.get((module, name), "Imported")
+            if symbol_kind == "TypeParam":
+                imported_info = self.info_by_module.get(module)
+                if imported_info:
+                    key = imported_info["type_params"].get(("", name))
+                    if key is not None:
+                        return "TypeParam", self.type_param_ids[key]
+                symbol_kind = "Unresolved"
+            if module in {"typing", "typing_extensions"} and name in _SPEC_SPECIALS:
+                symbol_kind = "Special"
+            return "Name", (module, name, symbol_kind)
+        if not tail and root in _SPEC_BUILTINS:
+            return "Name", ("builtins", root, "Builtin")
+        if not tail and root in {"None", "Any", "Never", "NoReturn", "Self"}:
+            return "Special", root
+        if not tail and (
+            (qualifier, root) in info["aliases"] or ("", root) in info["aliases"]
+        ):
+            return "Name", (info["module"], root, "Alias")
+        if not tail and root in info["classes"]:
+            return "Name", (info["module"], root, info["classes"][root])
+        if root in _SPEC_SPECIALS:
+            return "Name", ("typing", dotted, "Special")
+        return "Name", (info["module"], dotted, "Unresolved")
+
+    def intern(self, node, info, qualifier, literal_context=False):
+        if node is None:
+            return self.missing
+        if isinstance(node, ast.Constant):
+            if node.value is None:
+                kind = "LiteralNone" if literal_context else "None"
+                return self._add_node((kind,), dict(kind=kind))
+            if node.value is Ellipsis:
+                return self._add_node(("Ellipsis",), dict(kind="Ellipsis"))
+            if isinstance(node.value, bool):
+                return self._add_node(("LiteralBool", node.value), dict(kind="LiteralBool", value=node.value))
+            if isinstance(node.value, int):
+                return self._add_node(("LiteralInt", node.value), dict(kind="LiteralInt", value=node.value))
+            if isinstance(node.value, bytes):
+                value = node.value.hex()
+                return self._add_node(("LiteralBytes", value), dict(kind="LiteralBytes", value=value))
+            if isinstance(node.value, str):
+                expression = node.value
+                if literal_context:
+                    return self._add_node(
+                        ("LiteralStr", expression),
+                        dict(kind="LiteralStr", value=expression),
+                    )
+                try:
+                    target_ast = ast.parse(expression, mode="eval").body
+                    target = self.intern(target_ast, info, qualifier)
+                except SyntaxError:
+                    target = self._add_node(("Unsupported", expression), dict(kind="Unsupported", source=expression))
+                return self._add_node(
+                    ("ForwardRef", expression, target),
+                    dict(kind="ForwardRef", expression=expression, target=target),
+                )
+        dotted = _spec_dotted_name(node)
+        if dotted:
+            resolved, value = self._resolve_name(info, qualifier, dotted)
+            if resolved == "TypeParam":
+                return self._add_node(("TypeParam", value), dict(kind="TypeParam", id=value))
+            if resolved == "Special":
+                special = {"None": "None", "Any": "Any", "Never": "Never", "NoReturn": "Never", "Self": "SelfType"}[value]
+                return self._add_node((special,), dict(kind=special))
+            module, name, kind = value
+            return self._add_node(
+                ("Name", module, name, kind),
+                dict(kind="Name", module=module, name=name, name_kind=kind),
+            )
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            items = []
+            def collect(item):
+                if isinstance(item, ast.BinOp) and isinstance(item.op, ast.BitOr):
+                    collect(item.left); collect(item.right)
+                else:
+                    items.append(self.intern(item, info, qualifier))
+            collect(node)
+            key = ("Union", tuple(items))
+            found = self.node_ids.get(key)
+            if found is not None:
+                return found
+            start, length = self._add_edges(items)
+            return self._add_node(key, dict(kind="Union", range=(start, length)))
+        if isinstance(node, ast.Subscript):
+            base = self.intern(node.value, info, qualifier)
+            raw_args = list(node.slice.elts) if isinstance(node.slice, ast.Tuple) else [node.slice]
+            base_node = self.nodes[base]
+            literal_args = (
+                base_node["kind"] == "Name"
+                and base_node["module"] in {"typing", "typing_extensions"}
+                and base_node["name"] == "Literal"
+            )
+            args = [
+                self.intern(arg, info, qualifier, literal_context=literal_args)
+                for arg in raw_args
+            ]
+            key = ("Apply", base, tuple(args))
+            found = self.node_ids.get(key)
+            if found is not None:
+                return found
+            start, length = self._add_edges(args)
+            return self._add_node(key, dict(kind="Apply", base=base, range=(start, length)))
+        if isinstance(node, ast.Tuple):
+            items = [self.intern(item, info, qualifier) for item in node.elts]
+            key = ("Tuple", tuple(items))
+            found = self.node_ids.get(key)
+            if found is not None:
+                return found
+            start, length = self._add_edges(items)
+            return self._add_node(key, dict(kind="Tuple", range=(start, length)))
+        if isinstance(node, ast.List):
+            items = [self.intern(item, info, qualifier) for item in node.elts]
+            key = ("ParamList", tuple(items))
+            found = self.node_ids.get(key)
+            if found is not None:
+                return found
+            start, length = self._add_edges(items)
+            return self._add_node(key, dict(kind="ParamList", range=(start, length)))
+        if isinstance(node, ast.Starred):
+            inner = self.intern(node.value, info, qualifier)
+            return self._add_node(("Unpack", inner), dict(kind="Unpack", inner=inner))
+        source = ast.unparse(node) if hasattr(ast, "unparse") else ast.dump(node, include_attributes=False)
+        return self._add_node(("Unsupported", source), dict(kind="Unsupported", source=source))
+
+    def _fill_type_param(self, decl, info):
+        call = decl["value"]
+        args = list(call.args[1:])
+        keywords = {kw.arg: kw.value for kw in call.keywords if kw.arg}
+        constraints = [self.intern(arg, info, decl["qualifier"]) for arg in args]
+        start, length = self._add_edges(constraints)
+        bound_node = keywords.get("bound")
+        default_node = keywords.get("default")
+        variance = "Invariant"
+        if isinstance(keywords.get("covariant"), ast.Constant) and keywords["covariant"].value is True:
+            variance = "Covariant"
+        elif isinstance(keywords.get("contravariant"), ast.Constant) and keywords["contravariant"].value is True:
+            variance = "Contravariant"
+        elif isinstance(keywords.get("infer_variance"), ast.Constant) and keywords["infer_variance"].value is True:
+            variance = "Infer"
+        idx = self.type_param_ids[decl["key"]]
+        self.type_params[idx] = dict(
+            key=decl["key"],
+            name=decl["name"],
+            kind=decl["kind"],
+            variance=variance,
+            bound=self.intern(bound_node, info, decl["qualifier"]) if bound_node else None,
+            constraints=(start, length),
+            default=self.intern(default_node, info, decl["qualifier"]) if default_node else None,
+        )
+
+    def referenced_type_params(self, roots):
+        found = set()
+        seen = set()
+        def visit(node_id):
+            if node_id in seen:
+                return
+            seen.add(node_id)
+            node = self.nodes[node_id]
+            kind = node["kind"]
+            if kind == "TypeParam":
+                found.add(node["id"])
+            elif kind in {"Union", "Tuple", "ParamList"}:
+                for child in self.edges[node["range"][0]:sum(node["range"])]:
+                    visit(child)
+            elif kind == "Apply":
+                visit(node["base"])
+                start, length = node["range"]
+                for child in self.edges[start:start + length]:
+                    visit(child)
+            elif kind == "Unpack":
+                visit(node["inner"])
+            elif kind == "ForwardRef":
+                visit(node["target"])
+            elif kind == "Name" and node["name_kind"] == "Alias":
+                target = self.alias_targets.get((node["module"], node["name"]))
+                if target is not None:
+                    visit(target)
+        for root in roots:
+            visit(root)
+        return sorted(found)
+
+
+def _spec_full_params(fn):
+    positional = list(fn.args.posonlyargs) + list(fn.args.args)
+    default_start = len(positional) - len(fn.args.defaults)
+    out = []
+    for index, arg in enumerate(positional):
+        kind = "PosOnly" if index < len(fn.args.posonlyargs) else "PosOrKw"
+        out.append((arg, kind, index >= default_start))
+    if fn.args.vararg is not None:
+        out.append((fn.args.vararg, "VarPos", False))
+    for arg, default in zip(fn.args.kwonlyargs, fn.args.kw_defaults):
+        out.append((arg, "KwOnly", default is not None))
+    if fn.args.kwarg is not None:
+        out.append((fn.args.kwarg, "VarKw", False))
+    return out
+
+
+def _spec_walk_body(corpus, info, body, qualifier="", guards=()):
+    for node in body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if qualifier:
+                if node.name.startswith("_") and not (node.name.startswith("__") and node.name.endswith("__")):
+                    continue
+            elif node.name.startswith("_"):
+                continue
+            decorators = [ast.unparse(item) for item in node.decorator_list]
+            names = decorator_names(node)
+            if not qualifier:
+                binding = "ModuleFn"
+            elif any(item.endswith(".setter") for item in decorators):
+                binding = "PropertySet"
+            elif "property" in names:
+                binding = "PropertyGet"
+            elif "classmethod" in names:
+                binding = "ClassMethod"
+            elif "staticmethod" in names:
+                binding = "StaticMethod"
+            else:
+                binding = "InstanceMethod"
+            implicit_first = bool(qualifier) and (binding != "StaticMethod" or node.name == "__new__")
+            param_start = len(corpus.params)
+            roots = []
+            for index, (arg, kind, has_default) in enumerate(_spec_full_params(node)):
+                ty = corpus.intern(arg.annotation, info, qualifier)
+                roots.append(ty)
+                type_use = corpus.intern_type_use(
+                    ty, _spec_span(arg.annotation or arg, info["source"])
+                )
+                corpus.params.append(dict(
+                    name=arg.arg,
+                    kind=kind,
+                    type_use=type_use,
+                    has_default=has_default,
+                    implicit_receiver=implicit_first and index == 0,
+                ))
+            ret = corpus.intern(node.returns, info, qualifier)
+            roots.append(ret)
+            referenced = corpus.referenced_type_params(roots)
+            type_param_start = len(corpus.type_param_edges)
+            corpus.type_param_edges.extend(referenced)
+            decorator_start = len(corpus.decorators)
+            corpus.decorators.extend(decorators)
+            guard_start = len(corpus.guards)
+            corpus.guards.extend(guards)
+            ret_use = corpus.intern_type_use(
+                ret, _spec_span(node.returns or node, info["source"])
+            )
+            source_span = corpus.intern_span(_spec_span(node, info["source"]))
+            corpus.callables.append(dict(
+                module=info["module"], qualifier=qualifier, name=node.name,
+                kind=binding, params=(param_start, len(corpus.params) - param_start),
+                type_params=(type_param_start, len(referenced)),
+                ret=ret_use,
+                decorators=(decorator_start, len(decorators)),
+                guards=(guard_start, len(guards)), source=source_span,
+                is_async=isinstance(node, ast.AsyncFunctionDef),
+                py312=all(item["py312"] for item in guards), order=len(corpus.callables),
+            ))
+        elif isinstance(node, ast.ClassDef):
+            if node.name.startswith("_"):
+                continue
+            nested = f"{qualifier}.{node.name}" if qualifier else node.name
+            _spec_walk_body(corpus, info, node.body, nested, guards)
+        elif isinstance(node, ast.If):
+            expression = ast.unparse(node.test)
+            result = _eval_version_test(node.test)
+            body_guard = dict(expression=expression, polarity=True, py312=result is not False)
+            else_guard = dict(expression=expression, polarity=False, py312=result is not True)
+            _spec_walk_body(corpus, info, node.body, qualifier, guards + (body_guard,))
+            _spec_walk_body(corpus, info, node.orelse, qualifier, guards + (else_guard,))
+
+
+def build_spec_corpus():
+    infos = _spec_parse_modules()
+    corpus = _SpecCorpus(infos)
+    for info in infos:
+        _spec_walk_body(corpus, info, info["tree"].body)
+    ordered = sorted(
+        corpus.callables,
+        key=lambda row: (row["module"], row["qualifier"], row["name"], row["kind"], row["order"]),
+    )
+    current = None
+    branch = 0
+    for row in ordered:
+        key = (row["module"], row["qualifier"], row["name"], row["kind"])
+        if key != current:
+            current = key
+            branch = 0
+        row["branch"] = branch
+        branch += 1
+    corpus.callables = ordered
+    return corpus
+
+
 def _rust_str(s: str) -> str:
     """Rust string literal escaping (module/class/param names are identifiers,
     but escape defensively)."""
@@ -1287,6 +1912,136 @@ def merge_overload_params(rows):
     ret_values = {r.get("ret", "Unknown") for r in rows}
     base["ret"] = next(iter(ret_values)) if len(ret_values) == 1 else "Unknown"
     return base
+
+
+def render_specs_json() -> str:
+    corpus = build_spec_corpus()
+    strings = []
+    string_ids = {}
+
+    def sid(value):
+        found = string_ids.get(value)
+        if found is not None:
+            return found
+        idx = len(strings)
+        string_ids[value] = idx
+        strings.append(value)
+        return idx
+
+    name_kind = {
+        "Builtin": "b", "Special": "s", "Nominal": "n", "Protocol": "p",
+        "Alias": "a", "Imported": "i", "Unresolved": "u",
+    }
+    param_kind = {"PosOnly": "p", "PosOrKw": "r", "VarPos": "v", "KwOnly": "k", "VarKw": "w"}
+    callable_kind = {
+        "ModuleFn": "m", "InstanceMethod": "i", "ClassMethod": "c",
+        "StaticMethod": "s", "PropertyGet": "g", "PropertySet": "t",
+    }
+    type_param_kind = {"TypeVar": "t", "TypeVarTuple": "v", "ParamSpec": "p"}
+    variance = {"Invariant": "i", "Covariant": "c", "Contravariant": "d", "Infer": "f"}
+
+    nodes = []
+    for node in corpus.nodes:
+        kind = node["kind"]
+        if kind in {"Missing", "Any", "Never", "None", "SelfType", "Ellipsis", "LiteralNone"}:
+            value = kind
+        elif kind == "Unsupported":
+            value = {"Unsupported": sid(node["source"])}
+        elif kind == "Name":
+            value = {"Name": {
+                "module": sid(node["module"]), "name": sid(node["name"]),
+                "kind": name_kind[node["name_kind"]],
+            }}
+        elif kind == "TypeParam":
+            value = {"TypeParam": node["id"]}
+        elif kind in {"Union", "Tuple", "ParamList"}:
+            value = {kind: list(node["range"])}
+        elif kind == "Apply":
+            value = {"Apply": {"base": node["base"], "args": list(node["range"])}}
+        elif kind == "Unpack":
+            value = {"Unpack": node["inner"]}
+        elif kind in {"LiteralInt", "LiteralBool"}:
+            value = {kind: node["value"]}
+        elif kind in {"LiteralStr", "LiteralBytes"}:
+            value = {kind: sid(node["value"])}
+        elif kind == "ForwardRef":
+            value = {"ForwardRef": {"expression": sid(node["expression"]), "target": node["target"]}}
+        else:
+            raise AssertionError(f"unserialized TypeSpec node: {node}")
+        nodes.append(value)
+
+    type_params = [
+        {
+            "key": sid(row["key"]), "name": sid(row["name"]),
+            "kind": type_param_kind[row["kind"]], "variance": variance[row["variance"]],
+            "bound": row["bound"], "constraints": list(row["constraints"]),
+            "default": row["default"],
+        }
+        for row in corpus.type_params
+    ]
+    aliases = [
+        {
+            "module": sid(row["module"]),
+            "qualifier": sid(row["qualifier"]),
+            "name": sid(row["name"]),
+            "target": row["target"],
+            "type_params": list(row["type_params"]),
+        }
+        for row in corpus.aliases
+    ]
+    source_file_ids = [sid(path) for path in corpus.source_files]
+    source_spans = [
+        [source_file_ids[file_id], line, column, end_line, end_column]
+        for file_id, line, column, end_line, end_column in corpus.source_spans
+    ]
+    params = [
+        [sid(row["name"]), param_kind[row["kind"]], row["type_use"], row["has_default"], row["implicit_receiver"]]
+        for row in corpus.params
+    ]
+    guards = [
+        [sid(row["expression"]), row["polarity"], row["py312"]]
+        for row in corpus.guards
+    ]
+    callables = [
+        [
+            sid(row["module"]), sid(row["qualifier"]), sid(row["name"]),
+            callable_kind[row["kind"]], list(row["params"]), list(row["type_params"]),
+            row["ret"], list(row["decorators"]), list(row["guards"]), row["source"],
+            row["is_async"], row["branch"], row["py312"],
+        ]
+        for row in corpus.callables
+    ]
+    manifest = {
+        "schema": 1,
+        "strings": strings,
+        "nodes": nodes,
+        "edges": corpus.edges,
+        "type_params": type_params,
+        "type_param_edges": corpus.type_param_edges,
+        "aliases": aliases,
+        "source_spans": source_spans,
+        "type_uses": [list(row) for row in corpus.type_uses],
+        "params": params,
+        "decorators": [sid(value) for value in corpus.decorators],
+        "guards": guards,
+        "callables": callables,
+    }
+    return json.dumps(manifest, ensure_ascii=True, separators=(",", ":"), sort_keys=True) + "\n"
+
+
+def render_specs_rust(specs_json: str) -> str:
+    manifest = json.loads(specs_json)
+    py312 = sum(bool(row[12]) for row in manifest["callables"])
+    return (
+        "//! GENERATED by tests/harness/cpython/tools/type_wall_gen.py --emit-rust.\n"
+        "//! DO NOT EDIT BY HAND.\n"
+        "//!\n"
+        f"//! schema: {manifest['schema']}  branches: {len(manifest['callables'])}  py312: {py312}\n"
+        f"//! params: {len(manifest['params'])}  type-params: {len(manifest['type_params'])}\n"
+        f"//! aliases: {len(manifest['aliases'])}\n"
+        f"//! type-nodes: {len(manifest['nodes'])}  type-edges: {len(manifest['edges'])}\n\n"
+        "pub const MANIFEST_JSON: &str = include_str!(\"stdlib_specs_generated.json\");\n"
+    )
 
 
 def render_rust() -> str:
@@ -1393,21 +2148,38 @@ def render_rust() -> str:
 
 def emit_rust(check: bool) -> int:
     text = render_rust()
+    specs_data = render_specs_json()
+    specs_text = render_specs_rust(specs_data)
     if check:
-        if not RUST_SIGS_OUT.exists():
-            print(f"MISSING: {RUST_SIGS_OUT} (run --emit-rust)")
-            return 1
-        current = RUST_SIGS_OUT.read_text(encoding="utf-8")
-        if current != text:
-            print(f"STALE: {RUST_SIGS_OUT} differs from --emit-rust output")
-            return 1
-        print(f"OK: {RUST_SIGS_OUT} is byte-for-byte up to date")
-        return 0
+        stale = False
+        for path, expected in (
+            (RUST_SIGS_OUT, text),
+            (RUST_SPECS_OUT, specs_text),
+            (RUST_SPECS_DATA_OUT, specs_data),
+        ):
+            if not path.exists():
+                print(f"MISSING: {path} (run --emit-rust)")
+                stale = True
+                continue
+            current = path.read_text(encoding="utf-8")
+            if current != expected:
+                print(f"STALE: {path} differs from --emit-rust output")
+                stale = True
+            else:
+                print(f"OK: {path} is byte-for-byte up to date")
+        return 1 if stale else 0
     RUST_SIGS_OUT.write_text(text, encoding="utf-8")
+    RUST_SPECS_OUT.write_text(specs_text, encoding="utf-8")
+    RUST_SPECS_DATA_OUT.write_text(specs_data, encoding="utf-8")
     n_total = text.count("    StdlibSig {")
     n_enf = text.count("        enforceable: true,")
     n_ret = n_total - text.count("        ret: CoreTy::Unknown,")
     print(f"wrote {RUST_SIGS_OUT}  ({n_total} sigs, {n_enf} enforceable, {n_ret} concrete return)")
+    manifest = json.loads(specs_data)
+    print(
+        f"wrote {RUST_SPECS_OUT} + {RUST_SPECS_DATA_OUT}  "
+        f"({len(manifest['callables'])} branches, {len(manifest['nodes'])} type nodes)"
+    )
     return 0
 
 
@@ -1421,9 +2193,9 @@ def main() -> int:
                     choices=["module", "init", "smethod", "method"])
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--emit-rust", action="store_true",
-                    help="(re)write src/types/stdlib_sigs_generated.rs")
+                    help="(re)write both generated Rust signature artifacts")
     ap.add_argument("--check-rust", action="store_true",
-                    help="assert stdlib_sigs_generated.rs is byte-for-byte current")
+                    help="assert both generated Rust signature artifacts are current")
     ap.add_argument(
         "--typeshed-stdlib",
         type=Path,

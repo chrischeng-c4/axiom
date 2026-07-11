@@ -7,6 +7,8 @@ pub mod generic;
 pub mod protocol;
 pub mod stdlib_sigs;
 pub mod stdlib_sigs_generated;
+pub mod stdlib_specs_generated;
+pub mod stdlib_typespec;
 pub mod ty;
 
 pub use check::TypeChecker;

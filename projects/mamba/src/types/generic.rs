@@ -199,6 +199,7 @@ impl Substitution {
                 ref name,
                 role,
                 ref user,
+                ref external,
                 ref fields,
                 ref match_args,
             } => {
@@ -206,17 +207,27 @@ impl Substitution {
                     symbol: user.symbol,
                     args: user.args.iter().map(|arg| self.apply(*arg, tcx)).collect(),
                 });
+                let new_external = external.as_ref().map(|external| super::ty::ExternalClass {
+                    module: external.module.clone(),
+                    name: external.name.clone(),
+                    args: external
+                        .args
+                        .iter()
+                        .map(|arg| self.apply(*arg, tcx))
+                        .collect(),
+                });
                 let new_fields: Vec<_> = fields
                     .iter()
                     .map(|(field_name, field_ty)| (field_name.clone(), self.apply(*field_ty, tcx)))
                     .collect();
-                if new_user == *user && new_fields == *fields {
+                if new_user == *user && new_external == *external && new_fields == *fields {
                     ty
                 } else {
                     tcx.intern(Ty::Class {
                         name: name.clone(),
                         role,
                         user: new_user,
+                        external: new_external,
                         fields: new_fields,
                         match_args: match_args.clone(),
                     })
@@ -560,6 +571,39 @@ fn unify_for_inference_step(
                 }
             }
         }
+        Ty::Class {
+            role: param_role,
+            external: Some(param_external),
+            ..
+        } => {
+            let arg_ty = tcx.get(arg).clone();
+            if let Ty::Class {
+                role: arg_role,
+                external: Some(arg_external),
+                ..
+            } = arg_ty
+            {
+                if param_external.module == arg_external.module
+                    && param_external.name == arg_external.name
+                    && param_role == arg_role
+                    && param_external.args.len() == arg_external.args.len()
+                {
+                    for (param_arg, concrete_arg) in
+                        param_external.args.iter().zip(&arg_external.args)
+                    {
+                        unify_for_inference_inner(
+                            *param_arg,
+                            *concrete_arg,
+                            type_vars,
+                            subst,
+                            conflicts,
+                            tcx,
+                            visiting,
+                        );
+                    }
+                }
+            }
+        }
         _ => {
             // Concrete type — no inference needed
         }
@@ -584,19 +628,24 @@ fn inference_shapes_match(param: TypeId, arg: TypeId, tcx: &TypeContext) -> bool
                 name: param_name,
                 role: param_role,
                 user: param_user,
+                external: param_external,
                 ..
             },
             Ty::Class {
                 name: arg_name,
                 role: arg_role,
                 user: arg_user,
+                external: arg_external,
                 ..
             },
         ) => {
             param_role == arg_role
-                && match (param_user, arg_user) {
-                    (Some(param), Some(arg)) => param.symbol == arg.symbol,
-                    (None, None) => param_name == arg_name,
+                && match (param_user, arg_user, param_external, arg_external) {
+                    (Some(param), Some(arg), None, None) => param.symbol == arg.symbol,
+                    (None, None, Some(param), Some(arg)) => {
+                        param.module == arg.module && param.name == arg.name
+                    }
+                    (None, None, None, None) => param_name == arg_name,
                     _ => false,
                 }
         }
@@ -1032,6 +1081,7 @@ mod tests {
                 symbol: crate::resolve::SymbolId(42),
                 args: vec![var_ty],
             }),
+            external: None,
             fields: vec![("value".to_string(), var_ty)],
             match_args: None,
         });

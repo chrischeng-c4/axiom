@@ -32,7 +32,7 @@ REPO_ROOT = MAMBA_DIR.parents[1]
 FIXTURES_DIR = MAMBA_DIR / "tests" / "cpython"
 TYPE_DIR = FIXTURES_DIR / "type"
 SOUND_DIR = FIXTURES_DIR / "behavior" / "core"
-GENERATED_SIGS = MAMBA_DIR / "src" / "types" / "stdlib_sigs_generated.rs"
+GENERATED_SPECS = MAMBA_DIR / "src" / "types" / "stdlib_specs_generated.json"
 DEFAULT_TYPESHED_STDLIB = MAMBA_DIR / "vendor" / "typeshed" / "stdlib"
 TYPE_DIVERGENCES = TOOLS_DIR.parent / "config" / "type_divergences.txt"
 
@@ -251,28 +251,323 @@ def executable_type_fixtures(paths: list[Path]) -> list[Path]:
     return [path for path in paths if not is_excluded_type_fixture(path)]
 
 
-def parse_generated_signature_param_index() -> dict[tuple[str, str, str], dict[str, Any]]:
-    text = GENERATED_SIGS.read_text(encoding="utf-8", errors="replace")
-    out: dict[tuple[str, str, str], dict[str, Any]] = {}
-    for block in GENERATED_SIG_BLOCK_RE.finditer(text):
-        body = block.group("body")
-        fields = {
-            match.group("field"): match.group("value")
-            for match in GENERATED_SIG_FIELD_RE.finditer(body)
+def load_generated_typespec_manifest() -> dict[str, Any]:
+    manifest = json.loads(GENERATED_SPECS.read_text(encoding="utf-8"))
+    if manifest.get("schema") != 1:
+        raise ValueError(f"unsupported generated TypeSpec schema: {manifest.get('schema')!r}")
+    return manifest
+
+
+def _typespec_variant(node: Any) -> tuple[str, Any]:
+    if isinstance(node, str):
+        return node, None
+    if isinstance(node, dict) and len(node) == 1:
+        return next(iter(node.items()))
+    return "Unsupported", None
+
+
+def _generated_alias_target(
+    manifest: dict[str, Any], module: str, name: str
+) -> int | None:
+    index = manifest.get("_alias_target_index")
+    if index is None:
+        strings = manifest["strings"]
+        index = {
+            (strings[row["module"]], strings[row["name"]]): row["target"]
+            for row in manifest.get("aliases", [])
+            if not strings[row["qualifier"]]
         }
-        if not {"module", "qualifier", "name"} <= fields.keys():
+        manifest["_alias_target_index"] = index
+    return index.get((module, name))
+
+
+def _materializable_status(statuses: list[str], *, outer_constraint: bool) -> str:
+    """Combine child statuses using the checker materializer's failure rules."""
+    if "unsupported" in statuses:
+        return "unsupported"
+    if outer_constraint:
+        return "supported"
+    if "unconstrained" in statuses:
+        return "unconstrained"
+    return "supported"
+
+
+def _generated_type_param_status(
+    manifest: dict[str, Any], decl_id: int, visiting: set[int]
+) -> str:
+    decl = manifest["type_params"][decl_id]
+    start, length = decl["constraints"]
+    constraints = manifest["edges"][start : start + length]
+    bound = decl.get("bound")
+    default = decl.get("default")
+    constraint_nodes = ([] if bound is None else [bound]) + constraints
+    constraint_statuses = [
+        _generated_typespec_status(manifest, item, visiting)
+        for item in constraint_nodes
+    ]
+    if default is not None:
+        default_status = _generated_typespec_status(manifest, default, visiting)
+        if default_status == "unsupported":
+            return "unsupported"
+    if "unsupported" in constraint_statuses:
+        return "unsupported"
+    if not constraint_statuses or "unconstrained" in constraint_statuses:
+        return "unconstrained"
+    return "supported"
+
+
+def _generated_typespec_status(
+    manifest: dict[str, Any], node_id: int, visiting: set[int] | None = None
+) -> str:
+    """Return supported, unconstrained, or unsupported for one TypeSpec node."""
+    visiting = set() if visiting is None else visiting
+    if node_id in visiting:
+        return "unsupported"
+    visiting.add(node_id)
+    try:
+        kind, value = _typespec_variant(manifest["nodes"][node_id])
+        if kind in {"Missing", "Unsupported", "LiteralBytes", "Unpack", "ParamList"}:
+            return "unsupported"
+        if kind == "Any":
+            return "unconstrained"
+        if kind in {
+            "Never", "None", "SelfType", "LiteralNone",
+            "LiteralInt", "LiteralStr", "LiteralBool",
+        }:
+            return "supported"
+        if kind == "Ellipsis":
+            return "unconstrained"
+        if kind == "ForwardRef":
+            return _generated_typespec_status(manifest, value["target"], visiting)
+        if kind == "TypeParam":
+            return _generated_type_param_status(manifest, value, visiting)
+        if kind == "Name":
+            strings = manifest["strings"]
+            key = (strings[value["module"]], strings[value["name"]])
+            if value["kind"] == "a":
+                target = _generated_alias_target(manifest, *key)
+                return (
+                    _generated_typespec_status(manifest, target, visiting)
+                    if target is not None
+                    else "unsupported"
+                )
+            if key in {("builtins", "object"), ("typing", "Any")}:
+                return "unconstrained"
+            supported = {
+                ("builtins", "bool"), ("builtins", "int"),
+                ("builtins", "float"), ("builtins", "str"),
+                ("builtins", "list"), ("builtins", "set"),
+                ("builtins", "frozenset"), ("builtins", "dict"),
+                ("builtins", "tuple"), ("typing", "Never"),
+                ("typing", "NoReturn"), ("typing", "Self"),
+                ("typing_extensions", "Self"), ("typing", "LiteralString"),
+                ("typing_extensions", "LiteralString"),
+            }
+            return (
+                "supported"
+                if key in supported or value["kind"] in {"b", "n"}
+                else "unsupported"
+            )
+        if kind in {"Union", "Tuple"}:
+            start, length = value
+            statuses = [
+                _generated_typespec_status(manifest, item, visiting)
+                for item in manifest["edges"][start : start + length]
+            ]
+            return _materializable_status(
+                statuses, outer_constraint=kind == "Tuple"
+            )
+        if kind == "Apply":
+            base_kind, base = _typespec_variant(manifest["nodes"][value["base"]])
+            if base_kind != "Name":
+                return "unsupported"
+            strings = manifest["strings"]
+            base_key = (strings[base["module"]], strings[base["name"]])
+            if base["kind"] == "a":
+                target = _generated_alias_target(manifest, *base_key)
+                if target is None:
+                    return "unsupported"
+                target_status = _generated_typespec_status(manifest, target, visiting)
+                start, length = value["args"]
+                arg_statuses = [
+                    _generated_typespec_status(manifest, item, visiting)
+                    for item in manifest["edges"][start : start + length]
+                ]
+                return _materializable_status(
+                    [target_status, *arg_statuses], outer_constraint=False
+                )
+            allowed = {
+                ("builtins", "list"), ("builtins", "set"),
+                ("builtins", "frozenset"), ("builtins", "dict"),
+                ("builtins", "tuple"), ("typing", "Optional"),
+                ("typing", "Union"), ("typing", "Literal"),
+                ("typing_extensions", "Literal"), ("typing", "Callable"),
+                ("collections.abc", "Callable"),
+                ("typing", "Annotated"), ("typing_extensions", "Annotated"),
+                ("typing", "ClassVar"), ("typing", "Final"),
+                ("typing", "Required"), ("typing", "NotRequired"),
+                ("typing_extensions", "ClassVar"),
+                ("typing_extensions", "Final"),
+                ("typing_extensions", "Required"),
+                ("typing_extensions", "NotRequired"),
+                ("typing_extensions", "ReadOnly"),
+            }
+            if base_key not in allowed and base["kind"] not in {"b", "n"}:
+                return "unsupported"
+            start, length = value["args"]
+            args = manifest["edges"][start : start + length]
+            if base_key in {
+                ("typing", "Literal"), ("typing_extensions", "Literal"),
+            }:
+                literal_kinds = {
+                    _typespec_variant(manifest["nodes"][item])[0] for item in args
+                }
+                return (
+                    "supported"
+                    if literal_kinds <= {"LiteralInt", "LiteralStr", "LiteralBool"}
+                    else "unsupported"
+                )
+            if base_key in {
+                ("typing", "Callable"), ("collections.abc", "Callable"),
+            }:
+                if len(args) != 2:
+                    return "unsupported"
+                param_kind, param_value = _typespec_variant(manifest["nodes"][args[0]])
+                if param_kind == "ParamList":
+                    param_start, param_length = param_value
+                    param_statuses = [
+                        _generated_typespec_status(manifest, item, visiting)
+                        for item in manifest["edges"][
+                            param_start : param_start + param_length
+                        ]
+                    ]
+                elif param_kind == "Ellipsis":
+                    param_statuses = []
+                else:
+                    return "unsupported"
+                statuses = param_statuses + [
+                    _generated_typespec_status(manifest, args[1], visiting)
+                ]
+                return _materializable_status(statuses, outer_constraint=True)
+            if base_key in {
+                ("typing", "Annotated"), ("typing_extensions", "Annotated"),
+            }:
+                return (
+                    _generated_typespec_status(manifest, args[0], visiting)
+                    if args
+                    else "unsupported"
+                )
+            if base_key in {
+                ("typing", "ClassVar"), ("typing", "Final"),
+                ("typing", "Required"), ("typing", "NotRequired"),
+                ("typing_extensions", "ClassVar"),
+                ("typing_extensions", "Final"),
+                ("typing_extensions", "Required"),
+                ("typing_extensions", "NotRequired"),
+                ("typing_extensions", "ReadOnly"),
+            }:
+                return (
+                    _generated_typespec_status(manifest, args[0], visiting)
+                    if len(args) == 1
+                    else "unsupported"
+                )
+            statuses = [
+                _generated_typespec_status(manifest, item, visiting) for item in args
+            ]
+            return _materializable_status(
+                statuses,
+                outer_constraint=base_key
+                not in {("typing", "Optional"), ("typing", "Union")},
+            )
+        return "unsupported"
+    finally:
+        visiting.remove(node_id)
+
+
+def parse_generated_signature_param_index() -> dict[tuple[str, str, str], dict[str, Any]]:
+    manifest = load_generated_typespec_manifest()
+    strings = manifest["strings"]
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for callable_row in manifest["callables"]:
+        if not callable_row[12]:
             continue
-        enforceable_match = GENERATED_ENFORCEABLE_RE.search(body)
-        out[(fields["module"], fields["qualifier"], fields["name"])] = {
-            "params": {
-                match.group("name"): match.group("ty")
-                for match in GENERATED_PARAM_RE.finditer(body)
-                if match.group("star") != "true"
-            },
-            "enforceable": (
-                enforceable_match is not None
-                and enforceable_match.group("value") == "true"
-            ),
+        key = tuple(strings[callable_row[i]] for i in range(3))
+        binding_supported = callable_row[3] in {"m", "i", "c", "s"}
+        type_param_start, type_param_length = callable_row[5]
+        type_param_ids = manifest["type_param_edges"][
+            type_param_start : type_param_start + type_param_length
+        ]
+        generic_metadata_supported = all(
+            _generated_type_param_status(manifest, item, set()) != "unsupported"
+            for item in type_param_ids
+        )
+        start, length = callable_row[4]
+        branch: dict[str, str] = {}
+        branch_reasons: dict[str, str] = {}
+        for param in manifest["params"][start : start + length]:
+            if param[4]:
+                continue
+            param_name = strings[param[0]]
+            node_id = manifest["type_uses"][param[2]][0]
+            if not binding_supported:
+                branch[param_name] = "unsupported"
+                branch_reasons[param_name] = "structured_binding_unsupported"
+            elif not generic_metadata_supported:
+                branch[param_name] = "unsupported"
+                branch_reasons[param_name] = "structured_generic_metadata_unsupported"
+            else:
+                status = _generated_typespec_status(manifest, node_id)
+                branch[param_name] = status
+                if status == "unsupported":
+                    branch_reasons[param_name] = "structured_param_type_unsupported"
+        grouped.setdefault(key, []).append(
+            {
+                "params": branch,
+                "reasons": branch_reasons,
+                "binding_supported": binding_supported,
+            }
+        )
+
+    out: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for key, manifest_branches in grouped.items():
+        wired_branches = [
+            branch for branch in manifest_branches if branch["binding_supported"]
+        ]
+        branches = wired_branches or manifest_branches
+        names = {name for branch in branches for name in branch["params"]}
+        params: dict[str, str] = {}
+        param_reasons: dict[str, str] = {}
+        for name in names:
+            statuses = [branch["params"].get(name, "missing") for branch in branches]
+            if "missing" in statuses:
+                status = "partial"
+                param_reasons[name] = "structured_param_partial"
+            elif "unsupported" in statuses:
+                status = "unsupported"
+                reasons = {
+                    branch["reasons"].get(name)
+                    for branch in branches
+                    if branch["params"].get(name) == "unsupported"
+                }
+                for reason in (
+                    "structured_binding_unsupported",
+                    "structured_generic_metadata_unsupported",
+                    "structured_param_type_unsupported",
+                ):
+                    if reason in reasons:
+                        param_reasons[name] = reason
+                        break
+            elif "unconstrained" in statuses:
+                status = "unconstrained"
+            else:
+                status = "supported"
+            params[name] = status
+        out[key] = {
+            "params": params,
+            "param_reasons": param_reasons,
+            "enforceable": "supported" in params.values(),
+            "branches": len(branches),
+            "manifest_branches": len(manifest_branches),
         }
     return out
 
@@ -311,36 +606,57 @@ def unenforceable_generated_param_reason(
     path: Path, sigs: dict[tuple[str, str, str], dict[str, Any]]
 ) -> str | None:
     text = path.read_text(encoding="utf-8", errors="replace")
-    if TYPEVAR_STAYS_UNWALLED_MARKER in text:
-        return "typevar_must_stay_unwalled"
+    has_typevar_marker = TYPEVAR_STAYS_UNWALLED_MARKER in text
     parsed = parse_type_fixture_subject(path)
     if parsed is None:
-        return None
+        return (
+            "stale_typevar_unwalled_marker_unparseable"
+            if has_typevar_marker
+            else None
+        )
     call, param = parsed
     key = resolve_generated_sig_key(call, sigs)
     if key is None:
+        if has_typevar_marker:
+            return "stale_typevar_unwalled_marker_missing_signature"
+        if (TYPE_DIR / "std-libs") in path.parents:
+            return "structured_signature_missing"
         return None
     params = sigs[key]["params"]
     if param not in params:
-        return "generated_param_missing"
-    if params[param] == "Unknown":
-        return "generated_param_unknown"
+        reason = "structured_param_missing"
+        return (
+            f"stale_typevar_unwalled_marker_{reason}"
+            if has_typevar_marker
+            else reason
+        )
+    status = params[param]
+    if status == "unconstrained":
+        return "contract_unconstrained"
+    reason = sigs[key].get("param_reasons", {}).get(
+        param,
+        "structured_param_partial" if status == "partial" else "structured_param_unsupported",
+    )
+    if has_typevar_marker:
+        return f"stale_typevar_unwalled_marker_{reason}"
+    if status in {"partial", "unsupported"}:
+        return reason
     return None
 
 
 def partition_generated_contract_coverage(
     paths: list[Path], sigs: dict[tuple[str, str, str], dict[str, Any]]
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-    """Separate valid unconstrained TypeVars from unsupported contract gaps."""
-    unwalled_typevars: list[dict[str, str]] = []
+    """Separate intentionally unconstrained contracts from implementation gaps."""
+    unconstrained_contracts: list[dict[str, str]] = []
     unresolved_contracts: list[dict[str, str]] = []
     for path in paths:
         reason = unenforceable_generated_param_reason(path, sigs)
-        if reason == "typevar_must_stay_unwalled":
-            unwalled_typevars.append({"path": repo_rel(path), "reason": reason})
+        if reason == "contract_unconstrained":
+            unconstrained_contracts.append({"path": repo_rel(path), "reason": reason})
         elif reason is not None:
             unresolved_contracts.append({"path": repo_rel(path), "reason": reason})
-    return unwalled_typevars, unresolved_contracts
+    return unconstrained_contracts, unresolved_contracts
 
 
 def run_mamba(mamba_bin: str, fixture: Path, timeout: int) -> tuple[int | None, str, str]:
@@ -360,28 +676,53 @@ def is_type_rejection(stdout: str, stderr: str) -> bool:
 
 
 def parse_generated_signature_counts(typeshed_stdlib: Path) -> dict[str, Any]:
-    text = GENERATED_SIGS.read_text(encoding="utf-8", errors="replace")
-    header = re.search(
-        r"rows:\s*(?P<rows>\d+)\s*.*?enforceable \(scalar\):\s*"
-        r"(?P<enforceable>\d+)\s*.*?unknown-skipped:\s*(?P<unknown>\d+)",
-        text,
-        re.S,
+    manifest = load_generated_typespec_manifest()
+    index = parse_generated_signature_param_index()
+    statuses = Counter(
+        status for signature in index.values() for status in signature["params"].values()
     )
-    if header:
-        return {
-            "source": "generated_table_header",
-            "rows": int(header.group("rows")),
-            "enforceable": int(header.group("enforceable")),
-            "unknown_skipped": int(header.group("unknown")),
-            "vendor_typeshed_available": typeshed_stdlib.is_dir(),
-        }
-    rows = len(re.findall(r"\bStdlibSig\s*\{", text))
-    enforceable = len(re.findall(r"enforceable:\s*true", text))
+    unsupported_reasons = Counter(
+        reason
+        for signature in index.values()
+        for reason in signature["param_reasons"].values()
+    )
+    py312_callables = [row for row in manifest["callables"] if row[12]]
+    callable_kind_names = {
+        "m": "module",
+        "i": "instance",
+        "c": "class",
+        "s": "static",
+        "g": "property_get",
+        "t": "property_set",
+    }
+    callable_kind_branches = Counter(
+        callable_kind_names[row[3]] for row in py312_callables
+    )
+    structured_wired_branches = sum(
+        callable_kind_branches[kind]
+        for kind in ("module", "instance", "class", "static")
+    )
+    enforceable = sum(signature["enforceable"] for signature in index.values())
     return {
-        "source": "generated_table_scan",
-        "rows": rows,
+        "source": "structured_typespec_manifest",
+        "schema": manifest["schema"],
+        "rows": len(index),
+        "branches": len(py312_callables),
+        "callable_kind_branches": dict(sorted(callable_kind_branches.items())),
+        "structured_module_branches": callable_kind_branches["module"],
+        "structured_wired_kinds": ["module", "instance", "class", "static"],
+        "structured_wired_branches": structured_wired_branches,
+        "unhandled_binding_branches": len(py312_callables) - structured_wired_branches,
         "enforceable": enforceable,
-        "unknown_skipped": max(0, rows - enforceable),
+        "structured_enforceable_callables": enforceable,
+        "supported_params": statuses["supported"],
+        "unconstrained_params": statuses["unconstrained"],
+        "unsupported_params": statuses["unsupported"],
+        "partial_overload_params": statuses["partial"],
+        "unsupported_param_reasons": dict(sorted(unsupported_reasons.items())),
+        "unsupported_or_partial_params": (
+            statuses["unsupported"] + statuses["partial"]
+        ),
         "vendor_typeshed_available": typeshed_stdlib.is_dir(),
     }
 
@@ -544,18 +885,18 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         if is_version_specific_unavailable_type_fixture(path)
     ]
     type_fixture_wall_candidates = executable_type_fixtures(type_fixture_candidates)
-    excluded_unwalled_typevars, unresolved_generated_contracts = (
+    excluded_unconstrained_contracts, unresolved_generated_contracts = (
         partition_generated_contract_coverage(
             type_fixture_wall_candidates, generated_param_sigs
         )
     )
-    excluded_unwalled_typevar_paths = {
-        REPO_ROOT / item["path"] for item in excluded_unwalled_typevars
+    excluded_unconstrained_contract_paths = {
+        REPO_ROOT / item["path"] for item in excluded_unconstrained_contracts
     }
     type_fixtures_all = [
         path
         for path in type_fixture_wall_candidates
-        if path not in excluded_unwalled_typevar_paths
+        if path not in excluded_unconstrained_contract_paths
     ]
     unresolved_generated_contract_reasons = Counter(
         item["reason"] for item in unresolved_generated_contracts
@@ -716,8 +1057,12 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "version_removed_type_libs": VERSION_REMOVED_TYPE_LIBS,
             "version_specific_type_fixture_cases": VERSION_SPECIFIC_TYPE_FIXTURES,
             "version_removed_type_fixture_cases": VERSION_REMOVED_TYPE_FIXTURES,
-            "excluded_unwalled_typevar_fixtures": len(excluded_unwalled_typevars),
-            "excluded_unwalled_typevar_examples": excluded_unwalled_typevars[: args.show],
+            "excluded_unconstrained_contract_fixtures": len(
+                excluded_unconstrained_contracts
+            ),
+            "excluded_unconstrained_contract_examples": (
+                excluded_unconstrained_contracts[: args.show]
+            ),
             "unresolved_generated_contract_type_fixtures": len(
                 unresolved_generated_contracts
             ),
@@ -773,12 +1118,19 @@ def print_human(report: dict[str, Any]) -> None:
     typeshed = report["typeshed"]
     print(
         "  typeshed: "
-        f"rows={typeshed['rows']} enforceable={typeshed['enforceable']} "
-        f"unknown_skipped={typeshed['unknown_skipped']} "
+        f"schema={typeshed['schema']} rows={typeshed['rows']} "
+        f"branches={typeshed['branches']} enforceable={typeshed['enforceable']} "
+        f"structured_wired_branches={typeshed['structured_wired_branches']} "
+        f"unhandled_binding_branches={typeshed['unhandled_binding_branches']} "
+        f"supported_params={typeshed['supported_params']} "
+        f"unconstrained_params={typeshed['unconstrained_params']} "
+        f"unsupported_params={typeshed['unsupported_params']} "
+        f"partial_params={typeshed['partial_overload_params']} "
         f"fixtures={typeshed['type_fixture_wall']} "
         "unresolved_contracts="
         f"{typeshed['unresolved_generated_contract_type_fixtures']} "
-        f"unwalled_typevars={typeshed['excluded_unwalled_typevar_fixtures']} "
+        "unconstrained_contracts="
+        f"{typeshed['excluded_unconstrained_contract_fixtures']} "
         f"snapshot_current={typeshed['generated_snapshot']['current']}"
     )
     enforcement = report["enforcement"]

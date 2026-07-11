@@ -9472,6 +9472,7 @@ impl<'a> AstLowerer<'a> {
                             name: class_name.to_string(),
                             role: crate::types::ty::ClassRole::Instance,
                             user: None,
+                            external: None,
                             fields: Vec::new(),
                             match_args: None,
                         })
