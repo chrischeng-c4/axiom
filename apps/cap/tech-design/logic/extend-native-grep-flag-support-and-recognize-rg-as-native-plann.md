@@ -181,3 +181,224 @@ pipe-fusion is an explicit, documented out-of-scope boundary for this TD
 `ExternalPlan`-based ripgrep shell-out path used for ranges this native
 matcher declines (e.g. recursive/glob/type-filtered grep), is untouched by
 this TD; nothing here duplicates its flag-mapping table.
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: extend-native-grep-flag-support-and-recognize-rg-as-native-plann-verification
+requirements:
+  cd_prefix_suite_unaffected_by_grep_rg_changes:
+    id: R6
+    text: "The #1378 cd-prefix native-recognition test suite (cd_prefix_grep_replans_native and siblings) remains unaffected by this TD's flag-parsing and rg-alias additions."
+    kind: regression
+    risk: high
+    verify: cargo test -p cap command_planner::tests::cd_prefix_grep_replans_native
+  flag_bearing_rg_in_pipe_falls_back_to_bash:
+    id: R5
+    text: "A flag-bearing rg segment participating in a pipe (e.g. 'rg -n pattern file | wc -l') is not translated or fused by this TD's changes and the whole pipeline falls back to bash unchanged (explicit, documented out-of-scope boundary, not a regression)."
+    kind: regression
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::flag_bearing_rg_in_pipe_falls_back_to_bash
+  full_command_planner_suite_unaffected:
+    id: R6
+    text: "The full pre-existing command_planner test suite passes with no new failures relative to a pre-change baseline, proving the new flag-aware grep/rg native path is purely additive (AC4)."
+    kind: regression
+    risk: high
+    verify: cargo test -p cap command_planner
+  grep_combined_short_flags_cluster_recognized:
+    id: R1
+    text: "'grep -ni <literal> <file>' (combined short-flag cluster: line numbers + ignore-case) is recognized and native-plans in-process, applying both flags together."
+    kind: functional
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::grep_combined_short_flags_cluster_recognized
+  grep_context_after_standalone_numeric_token_recognized:
+    id: R1
+    text: "'grep -A 2 <literal> <file>' (standalone flag token followed by a numeric token) is recognized and native-plans in-process, emitting the matched line plus 2 trailing context lines."
+    kind: functional
+    risk: high
+    verify: cargo test -p cap command_planner::tests::grep_context_after_standalone_numeric_token_recognized
+  grep_context_before_attached_digit_form_recognized:
+    id: R1
+    text: "'grep -B2 <literal> <file>' (attached-digit form) is recognized and native-plans in-process, emitting 2 leading context lines plus the matched line."
+    kind: functional
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::grep_context_before_attached_digit_form_recognized
+  grep_context_both_c_flag_recognized:
+    id: R1
+    text: "'grep -C 1 <literal> <file>' is recognized and native-plans in-process, emitting 1 line of context on each side of the match."
+    kind: functional
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::grep_context_both_c_flag_recognized
+  grep_context_flag_combined_with_other_short_flag_falls_back:
+    id: R4
+    text: "'grep -A3n <literal> <file>' (an -A/-B/-C context flag fused with another short flag in the same cluster) is NOT accepted by the flag parser and the whole line falls back to bash unchanged (documented scope boundary)."
+    kind: regression
+    risk: high
+    verify: cargo test -p cap command_planner::tests::grep_context_flag_combined_with_other_short_flag_falls_back
+  grep_count_flag_recognized:
+    id: R1
+    text: "'grep -c <literal> <file>' is recognized and native-plans in-process, emitting only the match count."
+    kind: functional
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::grep_count_flag_recognized
+  grep_directory_as_file_arg_falls_back:
+    id: R4
+    text: "'grep -n <literal> <directory>' (the file argument is a directory, not a regular file) fails Path::is_file() and falls back to bash unchanged; no recursive support."
+    kind: regression
+    risk: high
+    verify: cargo test -p cap command_planner::tests::grep_directory_as_file_arg_falls_back
+  grep_files_with_matches_flag_recognized:
+    id: R1
+    text: "'grep -l <literal> <file>' is recognized and native-plans in-process, emitting only the file name when it contains a match."
+    kind: functional
+    risk: low
+    verify: cargo test -p cap command_planner::tests::grep_files_with_matches_flag_recognized
+  grep_glob_flag_falls_back:
+    id: R4
+    text: "'grep --glob=*.rs <literal> <dir>' and 'grep -g *.rs <literal> <file>' are outside the accepted vocabulary and fall back to bash unchanged."
+    kind: regression
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::grep_glob_flag_falls_back
+  grep_ignore_case_flag_recognized:
+    id: R1
+    text: "'grep -i <literal> <file>' is recognized and native-plans in-process, matching case-insensitively."
+    kind: functional
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::grep_ignore_case_flag_recognized
+  grep_invert_match_flag_recognized:
+    id: R1
+    text: "'grep -v <literal> <file>' is recognized and native-plans in-process, emitting only non-matching lines."
+    kind: functional
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::grep_invert_match_flag_recognized
+  grep_line_number_flag_recognized:
+    id: R1
+    text: "'grep -n <literal> <file>' is recognized and native-plans in-process, and run_grep_file emits grep-compatible '<line>:<text>' output for the matched lines."
+    kind: functional
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::grep_line_number_flag_recognized
+  grep_more_than_one_file_argument_falls_back:
+    id: R4
+    text: "'grep -n <literal> <file1> <file2>' (more than one file argument) falls back to bash unchanged; the parser accepts at most one file token."
+    kind: regression
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::grep_more_than_one_file_argument_falls_back
+  grep_multiline_mode_flags_fall_back:
+    id: R4
+    text: "'-u', '-p', '--json', and '-U' are outside the accepted vocabulary for both grep and rg and each falls back to bash unchanged."
+    kind: regression
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::grep_multiline_mode_flags_fall_back
+  grep_only_matching_flag_recognized:
+    id: R1
+    text: "'grep -o <literal> <file>' is recognized and native-plans in-process, emitting only the matched substring per line."
+    kind: functional
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::grep_only_matching_flag_recognized
+  grep_pcre_only_pattern_falls_back:
+    id: R2
+    text: "A pattern containing a regex metacharacter such as '+', '(', or '|' fails is_plain_literal_pattern and the whole invocation falls back to bash unchanged (no regex-dialect expansion in this TD)."
+    kind: regression
+    risk: high
+    verify: cargo test -p cap command_planner::tests::grep_pcre_only_pattern_falls_back
+  grep_recursive_flags_fall_back:
+    id: R4
+    text: "'grep -r <literal> <dir>' and 'grep -R <literal> <dir>' are outside the accepted vocabulary and fall back to bash unchanged."
+    kind: regression
+    risk: high
+    verify: cargo test -p cap command_planner::tests::grep_recursive_flags_fall_back
+  grep_repeated_e_multi_pattern_or_matches:
+    id: R1
+    text: "'grep -e pat1 -e pat2 <file>' collects both patterns into GrepFilePlan.patterns and OR-combines them: a line matches if either literal pattern is present."
+    kind: functional
+    risk: high
+    verify: cargo test -p cap command_planner::tests::grep_repeated_e_multi_pattern_or_matches
+  grep_type_and_include_flags_fall_back:
+    id: R4
+    text: "'grep --type rust <literal> <file>' and 'grep --include=*.rs <literal> <file>' are outside the accepted vocabulary and fall back to bash unchanged."
+    kind: regression
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::grep_type_and_include_flags_fall_back
+  rg_context_after_numeric_alias_recognized:
+    id: R3
+    text: "'rg -A 3 <literal> <file>' is recognized via the rg alias and native-plans in-process, matching AC2's rg -A 3 example."
+    kind: functional
+    risk: high
+    verify: cargo test -p cap command_planner::tests::rg_context_after_numeric_alias_recognized
+  rg_count_alias_recognized:
+    id: R3
+    text: "'rg -c <literal> <file>' is recognized via the rg alias and native-plans in-process, matching AC2's rg -c example."
+    kind: functional
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::rg_count_alias_recognized
+  rg_line_number_alias_recognized:
+    id: R3
+    text: "'rg -n <literal> <file>' is recognized via the rg alias dispatch arm, normalized onto the same accepted vocabulary, and native-plans in-process identically to the grep equivalent."
+    kind: functional
+    risk: high
+    verify: cargo test -p cap command_planner::tests::rg_line_number_alias_recognized
+  rg_no_heading_cosmetic_flag_consumed_harmlessly:
+    id: R3
+    text: "'rg --no-heading -n <literal> <file>' is recognized via the rg alias: the cosmetic --no-heading token is consumed harmlessly (does not disqualify) and -n still applies, matching AC2's --no-heading example."
+    kind: functional
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::rg_no_heading_cosmetic_flag_consumed_harmlessly
+  rg_repeated_e_multi_pattern_alias_recognized:
+    id: R3
+    text: "'rg -n -e pat1 -e pat2 <file>' is recognized via the rg alias: both -e patterns are collected and OR-combined, and -n applies, matching AC2's multi-pattern rg example."
+    kind: functional
+    risk: high
+    verify: cargo test -p cap command_planner::tests::rg_repeated_e_multi_pattern_alias_recognized
+  rg_unsupported_specific_flag_falls_back:
+    id: R3
+    text: "An rg-specific flag outside the shared vocabulary and the cosmetic allowlist (e.g. '--json') disqualifies the whole rg invocation and it falls back to bash unchanged."
+    kind: regression
+    risk: medium
+    verify: cargo test -p cap command_planner::tests::rg_unsupported_specific_flag_falls_back
+  zero_flag_grep_pipe_fusion_unaffected:
+    id: R5
+    text: "Existing zero-flag literal grep pipe-fusion behavior (e.g. plan_head_grep_producer_mode and sibling match arms keyed on the literal 'grep' token) is byte-for-byte unaffected by the new flag-parsing branch and the rg dispatch arm."
+    kind: regression
+    risk: high
+    verify: cargo test -p cap command_planner::tests::zero_flag_grep_pipe_fusion_unaffected
+  zero_flag_rg_pipe_fusion_translates_to_grep:
+    id: R5
+    text: "A bare zero-flag 'rg <pattern> [file]' pipeline segment is translated to the literal 'grep' token at the pipe-segment word-list assembly point in plan_shell, so the existing grep-keyed pipe-fusion match-arm family fuses it exactly as it would fuse the equivalent grep invocation."
+    kind: functional
+    risk: high
+    verify: cargo test -p cap command_planner::tests::zero_flag_rg_pipe_fusion_translates_to_grep
+---
+flowchart TD
+    r1[R1 grep combined short flags cluster recognized] --> cargo_test_p_cap_command_planner_tests_grep_combined_short_flags_cluster_recognized[cargo test -p cap command_planner::tests::grep_combined_short_flags_cluster_recognized]
+    r1[R1 grep context after standalone numeric token recognized] --> cargo_test_p_cap_command_planner_tests_grep_context_after_standalone_numeric_token_recognized[cargo test -p cap command_planner::tests::grep_context_after_standalone_numeric_token_recognized]
+    r1[R1 grep context before attached digit form recognized] --> cargo_test_p_cap_command_planner_tests_grep_context_before_attached_digit_form_recognized[cargo test -p cap command_planner::tests::grep_context_before_attached_digit_form_recognized]
+    r1[R1 grep context both c flag recognized] --> cargo_test_p_cap_command_planner_tests_grep_context_both_c_flag_recognized[cargo test -p cap command_planner::tests::grep_context_both_c_flag_recognized]
+    r1[R1 grep count flag recognized] --> cargo_test_p_cap_command_planner_tests_grep_count_flag_recognized[cargo test -p cap command_planner::tests::grep_count_flag_recognized]
+    r1[R1 grep files with matches flag recognized] --> cargo_test_p_cap_command_planner_tests_grep_files_with_matches_flag_recognized[cargo test -p cap command_planner::tests::grep_files_with_matches_flag_recognized]
+    r1[R1 grep ignore case flag recognized] --> cargo_test_p_cap_command_planner_tests_grep_ignore_case_flag_recognized[cargo test -p cap command_planner::tests::grep_ignore_case_flag_recognized]
+    r1[R1 grep invert match flag recognized] --> cargo_test_p_cap_command_planner_tests_grep_invert_match_flag_recognized[cargo test -p cap command_planner::tests::grep_invert_match_flag_recognized]
+    r1[R1 grep line number flag recognized] --> cargo_test_p_cap_command_planner_tests_grep_line_number_flag_recognized[cargo test -p cap command_planner::tests::grep_line_number_flag_recognized]
+    r1[R1 grep only matching flag recognized] --> cargo_test_p_cap_command_planner_tests_grep_only_matching_flag_recognized[cargo test -p cap command_planner::tests::grep_only_matching_flag_recognized]
+    r1[R1 grep repeated e multi pattern or matches] --> cargo_test_p_cap_command_planner_tests_grep_repeated_e_multi_pattern_or_matches[cargo test -p cap command_planner::tests::grep_repeated_e_multi_pattern_or_matches]
+    r2[R2 grep pcre only pattern falls back] --> cargo_test_p_cap_command_planner_tests_grep_pcre_only_pattern_falls_back[cargo test -p cap command_planner::tests::grep_pcre_only_pattern_falls_back]
+    r3[R3 rg context after numeric alias recognized] --> cargo_test_p_cap_command_planner_tests_rg_context_after_numeric_alias_recognized[cargo test -p cap command_planner::tests::rg_context_after_numeric_alias_recognized]
+    r3[R3 rg count alias recognized] --> cargo_test_p_cap_command_planner_tests_rg_count_alias_recognized[cargo test -p cap command_planner::tests::rg_count_alias_recognized]
+    r3[R3 rg line number alias recognized] --> cargo_test_p_cap_command_planner_tests_rg_line_number_alias_recognized[cargo test -p cap command_planner::tests::rg_line_number_alias_recognized]
+    r3[R3 rg no heading cosmetic flag consumed harmlessly] --> cargo_test_p_cap_command_planner_tests_rg_no_heading_cosmetic_flag_consumed_harmlessly[cargo test -p cap command_planner::tests::rg_no_heading_cosmetic_flag_consumed_harmlessly]
+    r3[R3 rg repeated e multi pattern alias recognized] --> cargo_test_p_cap_command_planner_tests_rg_repeated_e_multi_pattern_alias_recognized[cargo test -p cap command_planner::tests::rg_repeated_e_multi_pattern_alias_recognized]
+    r3[R3 rg unsupported specific flag falls back] --> cargo_test_p_cap_command_planner_tests_rg_unsupported_specific_flag_falls_back[cargo test -p cap command_planner::tests::rg_unsupported_specific_flag_falls_back]
+    r4[R4 grep context flag combined with other short flag falls back] --> cargo_test_p_cap_command_planner_tests_grep_context_flag_combined_with_other_short_flag_falls_back[cargo test -p cap command_planner::tests::grep_context_flag_combined_with_other_short_flag_falls_back]
+    r4[R4 grep directory as file arg falls back] --> cargo_test_p_cap_command_planner_tests_grep_directory_as_file_arg_falls_back[cargo test -p cap command_planner::tests::grep_directory_as_file_arg_falls_back]
+    r4[R4 grep glob flag falls back] --> cargo_test_p_cap_command_planner_tests_grep_glob_flag_falls_back[cargo test -p cap command_planner::tests::grep_glob_flag_falls_back]
+    r4[R4 grep more than one file argument falls back] --> cargo_test_p_cap_command_planner_tests_grep_more_than_one_file_argument_falls_back[cargo test -p cap command_planner::tests::grep_more_than_one_file_argument_falls_back]
+    r4[R4 grep multiline mode flags fall back] --> cargo_test_p_cap_command_planner_tests_grep_multiline_mode_flags_fall_back[cargo test -p cap command_planner::tests::grep_multiline_mode_flags_fall_back]
+    r4[R4 grep recursive flags fall back] --> cargo_test_p_cap_command_planner_tests_grep_recursive_flags_fall_back[cargo test -p cap command_planner::tests::grep_recursive_flags_fall_back]
+    r4[R4 grep type and include flags fall back] --> cargo_test_p_cap_command_planner_tests_grep_type_and_include_flags_fall_back[cargo test -p cap command_planner::tests::grep_type_and_include_flags_fall_back]
+    r5[R5 flag bearing rg in pipe falls back to bash] --> cargo_test_p_cap_command_planner_tests_flag_bearing_rg_in_pipe_falls_back_to_bash[cargo test -p cap command_planner::tests::flag_bearing_rg_in_pipe_falls_back_to_bash]
+    r5[R5 zero flag grep pipe fusion unaffected] --> cargo_test_p_cap_command_planner_tests_zero_flag_grep_pipe_fusion_unaffected[cargo test -p cap command_planner::tests::zero_flag_grep_pipe_fusion_unaffected]
+    r5[R5 zero flag rg pipe fusion translates to grep] --> cargo_test_p_cap_command_planner_tests_zero_flag_rg_pipe_fusion_translates_to_grep[cargo test -p cap command_planner::tests::zero_flag_rg_pipe_fusion_translates_to_grep]
+    r6[R6 cd prefix suite unaffected by grep rg changes] --> cargo_test_p_cap_command_planner_tests_cd_prefix_grep_replans_native[cargo test -p cap command_planner::tests::cd_prefix_grep_replans_native]
+    r6[R6 full command planner suite unaffected] --> cargo_test_p_cap_command_planner[cargo test -p cap command_planner]
+```
