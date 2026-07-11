@@ -100,6 +100,7 @@ Gate Inventory:
 | Memory and CPU pressure sampling | epic | - | implemented | verified | smoke | `cargo test -p cap sampler` |
 | Absolute and idle wall-clock timeouts | epic | #1323 | implemented | verified | smoke | `cargo test -p cap throttle` |
 | Command planner cd-prefix native recognition | change | #1378 | implemented | verified | smoke | `cargo test -p cap command_planner` |
+| Command planner grep flag/rg alias native recognition | change | #1392 | planned | planned | smoke | `cargo test -p cap command_planner` |
 
 ### Daemon Lifecycle and Status
 
