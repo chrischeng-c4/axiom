@@ -3931,21 +3931,110 @@ fn validate_planning_alignment(issue: &Issue) -> Vec<String> {
     errors
 }
 
+// Multi-word phrases that are unambiguous roadmap-scale signals on their own
+// (no surrounding-noun context needed): they either name a whole product
+// ("google maps"), or already pair a scale word with a big-scope noun/verb
+// so a raw substring match cannot collide with a hyphenated technical term.
+const TOO_LARGE_HARD_PHRASES: &[&str] = &[
+    "google map",
+    "google maps",
+    "full platform",
+    "complete platform",
+    "from scratch",
+    "end-to-end product",
+    "rewrite all",
+    "rewrite everything",
+    "all projects",
+    "every project",
+    "every crate",
+    "across the fleet",
+];
+
+// Bare scale words that only signal roadmap scope when they sit next to a
+// big-scope noun ("the whole platform", "rewrite the entire codebase").
+// Matched against standalone word tokens, so hyphenated compounds like
+// "whole-doc" or "always-send-everything" never trigger them.
+const TOO_LARGE_CONTEXT_SCALE_WORDS: &[&str] = &["entire", "whole", "everything"];
+
+const TOO_LARGE_SCOPE_NOUNS: &[&str] = &[
+    "project",
+    "projects",
+    "codebase",
+    "codebases",
+    "repo",
+    "repos",
+    "repository",
+    "repositories",
+    "platform",
+    "platforms",
+    "system",
+    "systems",
+    "product",
+    "products",
+    "application",
+    "applications",
+    "app",
+    "apps",
+    "service",
+    "services",
+    "monorepo",
+    "monorepos",
+    "ecosystem",
+    "ecosystems",
+    "organization",
+    "organizations",
+    "org",
+    "orgs",
+    "roadmap",
+    "roadmaps",
+    "stack",
+    "stacks",
+    "suite",
+    "suites",
+    "fleet",
+    "fleets",
+    "company",
+    "companies",
+    "business",
+    "businesses",
+];
+
+/// Split text into standalone word tokens, keeping internal hyphens intact
+/// so a compound like "whole-doc" or "always-send-everything" stays one
+/// token distinct from the bare word "whole"/"everything".
+fn too_large_word_tokens(text: &str) -> Vec<&str> {
+    text.split(|c: char| c.is_whitespace())
+        .map(|raw| raw.trim_matches(|c: char| !c.is_alphanumeric() && c != '-'))
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// True when the scale word at `idx` has a big-scope noun within a small
+/// window around it, e.g. "the whole platform" or "rewrite the entire
+/// codebase" -- but not "own the whole row".
+fn too_large_scale_word_in_scope_context(words: &[&str], idx: usize) -> bool {
+    let window_start = idx.saturating_sub(2);
+    let window_end = (idx + 4).min(words.len());
+    words[window_start..window_end]
+        .iter()
+        .any(|word| TOO_LARGE_SCOPE_NOUNS.contains(word))
+}
+
 fn looks_too_large_for_atomic_wi(issue: &Issue) -> bool {
     let text = format!("{}\n{}", issue.title, issue.body).to_ascii_lowercase();
-    let large_phrases = [
-        "google map",
-        "google maps",
-        "entire",
-        "whole",
-        "full platform",
-        "complete platform",
-        "from scratch",
-        "end-to-end product",
-        "rewrite all",
-        "everything",
-    ];
-    large_phrases.iter().any(|phrase| text.contains(phrase))
+
+    if TOO_LARGE_HARD_PHRASES
+        .iter()
+        .any(|phrase| text.contains(phrase))
+    {
+        return true;
+    }
+
+    let words = too_large_word_tokens(&text);
+    words.iter().enumerate().any(|(idx, word)| {
+        TOO_LARGE_CONTEXT_SCALE_WORDS.contains(word)
+            && too_large_scale_word_in_scope_context(&words, idx)
+    })
 }
 
 #[derive(Debug, Clone, Default)]
@@ -7057,6 +7146,102 @@ label = "app:score"
             errors.iter().any(|e| e.contains("Capability Alignment")),
             "expected capability alignment error, got {:?}",
             errors
+        );
+    }
+
+    /// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+    #[test]
+    fn too_large_gate_regression_false_positives_pass_issue_1294() {
+        // #1294: hyphenated technical terms must not trip the raw substring
+        // that used to fire on "whole"/"everything" anywhere in the text.
+        let mut whole_doc = planning_issue(
+            IssueType::Enhancement,
+            "Adopt whole-doc LWW conflict resolution",
+            Some("p1"),
+            20,
+        );
+        whole_doc.body = format!(
+            "{}\n\nAlways-send-everything contract stays unchanged; the client should own the whole row on write.",
+            whole_doc.body
+        );
+        assert!(
+            !looks_too_large_for_atomic_wi(&whole_doc),
+            "hyphenated whole-doc/always-send-everything technical prose must not flag too-large"
+        );
+
+        let own_whole_row = planning_issue(
+            IssueType::Bug,
+            "Client should own the whole row on write",
+            Some("p1"),
+            21,
+        );
+        assert!(
+            !looks_too_large_for_atomic_wi(&own_whole_row),
+            "'own the whole row' is bounded technical prose, not roadmap scope"
+        );
+
+        // A genuinely bounded two-clause title joined by a semicolon must
+        // still pass -- semicolon punctuation alone is not a size signal.
+        let semicolon_title = planning_issue(
+            IssueType::Enhancement,
+            "Fix config parser edge case; add regression test for empty section",
+            Some("p1"),
+            22,
+        );
+        assert!(
+            !looks_too_large_for_atomic_wi(&semicolon_title),
+            "a bounded semicolon-joined two-clause title must not flag too-large"
+        );
+    }
+
+    /// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+    #[test]
+    fn too_large_gate_still_flags_context_and_hard_phrases() {
+        // Bare scale word next to a real scope noun still flags.
+        let whole_platform = planning_issue(
+            IssueType::Enhancement,
+            "Migrate the whole platform to Rust",
+            Some("p0"),
+            23,
+        );
+        assert!(
+            looks_too_large_for_atomic_wi(&whole_platform),
+            "'the whole platform' co-occurrence must still flag too-large"
+        );
+
+        let entire_codebase = planning_issue(
+            IssueType::Enhancement,
+            "Rewrite the entire codebase in Zig",
+            Some("p0"),
+            24,
+        );
+        assert!(
+            looks_too_large_for_atomic_wi(&entire_codebase),
+            "'the entire codebase' co-occurrence must still flag too-large"
+        );
+
+        // Adversarial hard-phrase true positives beyond the pre-existing
+        // Google Maps case.
+        let all_projects = planning_issue(
+            IssueType::Enhancement,
+            "Roll out the new lint config across all projects",
+            Some("p0"),
+            25,
+        );
+        assert!(
+            looks_too_large_for_atomic_wi(&all_projects),
+            "'all projects' is an unambiguous roadmap-scale phrase"
+        );
+
+        let rewrite_everything = planning_issue(
+            IssueType::Enhancement,
+            "Rewrite everything across the fleet",
+            Some("p0"),
+            26,
+        );
+        assert!(
+            looks_too_large_for_atomic_wi(&rewrite_everything),
+            "'rewrite everything'/'across the fleet' must still flag too-large"
         );
     }
 
