@@ -825,10 +825,8 @@ impl TypeChecker {
             "set" => Some(self.tcx.intern(Ty::Set(self.tcx.any()))),
             "dict" => Some(self.tcx.intern(Ty::Dict(self.tcx.any(), self.tcx.any()))),
             "tuple" => Some(self.tcx.intern(Ty::Tuple(Vec::new()))),
-            "bytearray" | "bytes" | "complex" | "frozenset" | "memoryview" | "range"
-            | "slice" | "type" => {
-                Some(self.external_class_instance("builtins", name, Vec::new()))
-            }
+            "bytearray" | "bytes" | "complex" | "frozenset" | "memoryview" | "range" | "slice"
+            | "type" => Some(self.external_class_instance("builtins", name, Vec::new())),
             "object" => Some(self.tcx.any()),
             _ => None,
         }
@@ -1083,12 +1081,15 @@ impl TypeChecker {
         &self,
         symbol: SymbolId,
     ) -> Option<Vec<CallableParam>> {
-        self.function_param_sigs.get(&symbol).cloned().map(|params| {
-            params
-                .into_iter()
-                .map(FunctionParamSig::into_callable_param)
-                .collect()
-        })
+        self.function_param_sigs
+            .get(&symbol)
+            .cloned()
+            .map(|params| {
+                params
+                    .into_iter()
+                    .map(FunctionParamSig::into_callable_param)
+                    .collect()
+            })
     }
 
     pub(crate) fn error(&mut self, span: Span, msg: impl Into<String>) {
@@ -1371,8 +1372,7 @@ impl TypeChecker {
             param_spec: None,
         });
         self.set_sym_type(symbol.0, function_ty);
-        self.function_declaration_types
-            .insert(symbol, function_ty);
+        self.function_declaration_types.insert(symbol, function_ty);
 
         if !aliases.is_empty() {
             let names: Vec<_> = aliases.into_iter().map(|(name, _)| name).collect();
@@ -1905,18 +1905,18 @@ impl TypeChecker {
             let checkpoint = self.tcx.begin_alias_target_transaction();
             let materialized = (|| {
                 let template = self.materialize_alias_instance(deferred.template)?;
+                if self.tcx.alias_target_is_rejected(deferred.template) {
+                    self.tcx.reject_alias_target(id);
+                    return self.tcx.alias_target(id);
+                }
                 if !self.tcx.begin_alias_target(id) {
                     return self.tcx.alias_target(id);
                 }
-                let substitution = Substitution::from_bindings(
-                    &deferred.substitutions,
-                    &deferred.param_packs,
-                );
+                let substitution =
+                    Substitution::from_bindings(&deferred.substitutions, &deferred.param_packs);
                 let target = substitution.apply(template, &mut self.tcx);
                 if self.tcx.alias_has_unguarded_cycle(id, target)
-                    || self
-                        .tcx
-                        .alias_target_has_invalid_generated_edge(id, target)
+                    || self.tcx.alias_target_has_invalid_generated_edge(id, target)
                 {
                     return None;
                 }
@@ -2209,10 +2209,8 @@ impl TypeChecker {
                         match base_name.as_str() {
                             "int" | "bool" => Some(NumericRoot::Int),
                             "float" => Some(NumericRoot::Float),
-                            _ => self
-                                .symbols
-                                .lookup(base_name)
-                                .and_then(|symbol| match self.tcx.get(self.get_sym_type(symbol.0)) {
+                            _ => self.symbols.lookup(base_name).and_then(|symbol| {
+                                match self.tcx.get(self.get_sym_type(symbol.0)) {
                                     Ty::Class {
                                         role: ClassRole::Object,
                                         user: Some(user),
@@ -2222,7 +2220,8 @@ impl TypeChecker {
                                         .get(&user.symbol)
                                         .copied(),
                                     _ => self.numeric_derived_classes.get(base_name).copied(),
-                                }),
+                                }
+                            }),
                         }
                     });
                     self.typed_dict_classes.remove(name);
@@ -2244,9 +2243,7 @@ impl TypeChecker {
                     };
                     let non_object_base_count = bases
                         .iter()
-                        .filter(|base| {
-                            !matches!(&base.node, Expr::Ident(name) if name == "object")
-                        })
+                        .filter(|base| !matches!(&base.node, Expr::Ident(name) if name == "object"))
                         .count();
                     let inheritance_open = base_symbols.len() != non_object_base_count
                         || base_symbols
@@ -2441,8 +2438,7 @@ impl TypeChecker {
                             {
                                 let sym =
                                     self.symbols.define(effective.clone(), SymbolKind::Variable);
-                                let imported_ty =
-                                    self.stdlib_imported_member_type(&dotted, name);
+                                let imported_ty = self.stdlib_imported_member_type(&dotted, name);
                                 self.set_sym_type(sym.0, imported_ty);
                                 self.import_origins
                                     .insert(sym, (dotted.clone(), name.clone()));
@@ -2466,8 +2462,7 @@ impl TypeChecker {
                             .symbols
                             .lookup_in_scope(self.symbols.current_scope_idx(), root);
                         let previous = existing.map(|symbol| self.get_sym_type(symbol.0));
-                        let imported_ty =
-                            self.stdlib_module_import_type(root, &dotted, previous);
+                        let imported_ty = self.stdlib_module_import_type(root, &dotted, previous);
                         let sym = existing.unwrap_or_else(|| {
                             self.symbols.define(root.clone(), SymbolKind::Variable)
                         });
@@ -2521,8 +2516,8 @@ impl TypeChecker {
                                 .get(name)
                                 .copied()
                                 .unwrap_or_default();
-                            let only_direct_assignments = binding_events > 0
-                                && binding_events == direct_assignments;
+                            let only_direct_assignments =
+                                binding_events > 0 && binding_events == direct_assignments;
                             if binding_events != 1 && !only_direct_assignments {
                                 let symbol = existing.unwrap_or_else(|| {
                                     self.symbols.define(name.clone(), SymbolKind::Variable)
@@ -2687,7 +2682,10 @@ impl TypeChecker {
             );
         };
         if !external.args.is_empty() {
-            self.error(span, format!("type '{display_name}' is already specialized"));
+            self.error(
+                span,
+                format!("type '{display_name}' is already specialized"),
+            );
             return self.external_class_instance(
                 &external.module,
                 &external.name,
@@ -2733,11 +2731,7 @@ impl TypeChecker {
             if !supplied.is_empty() {
                 self.error(span, format!("type '{display_name}' is not generic"));
             }
-            return self.external_class_instance(
-                &external.module,
-                &external.name,
-                Vec::new(),
-            );
+            return self.external_class_instance(&external.module, &external.name, Vec::new());
         }
         let (substitution, resolved, errors) =
             bind_explicit_type_args_without_bounds(&generic_params, supplied, &mut self.tcx);
@@ -2746,9 +2740,7 @@ impl TypeChecker {
             self.error(span, error);
         }
         if shape_valid {
-            if let Some(error) =
-                self.stdlib_generic_bounds_error(&substitution, &generic_params)
-            {
+            if let Some(error) = self.stdlib_generic_bounds_error(&substitution, &generic_params) {
                 self.error(span, error);
             }
         }
@@ -2782,19 +2774,13 @@ impl TypeChecker {
             }
             module = child;
         }
-        let (module, qualifier) =
-            super::stdlib_typespec::exported_class(&module, class_name)?;
+        let (module, qualifier) = super::stdlib_typespec::exported_class(&module, class_name)?;
         let external = ExternalClass {
             module: module.to_string(),
             name: qualifier.to_string(),
             args: Vec::new(),
         };
-        Some(self.resolve_external_class_annotation(
-            display_name,
-            &external,
-            supplied,
-            span,
-        ))
+        Some(self.resolve_external_class_annotation(display_name, &external, supplied, span))
     }
 
     pub(crate) fn specialize_user_class_as(
@@ -2972,11 +2958,7 @@ impl TypeChecker {
         }))
     }
 
-    pub(crate) fn stdlib_imported_member_type(
-        &mut self,
-        module: &str,
-        member: &str,
-    ) -> TypeId {
+    pub(crate) fn stdlib_imported_member_type(&mut self, module: &str, member: &str) -> TypeId {
         if let Some((class_module, class_name)) =
             super::stdlib_typespec::exported_class(module, member)
         {
@@ -3068,11 +3050,9 @@ impl TypeChecker {
                     let a = self.tcx.any();
                     self.tcx.intern(Ty::Set(a))
                 }
-                "frozenset" => self.external_class_instance(
-                    "builtins",
-                    "frozenset",
-                    vec![self.tcx.any()],
-                ),
+                "frozenset" => {
+                    self.external_class_instance("builtins", "frozenset", vec![self.tcx.any()])
+                }
                 "bytes" | "bytearray" | "memoryview" | "complex" | "range" | "slice" => {
                     self.external_class_instance("builtins", name, Vec::new())
                 }
@@ -3124,21 +3104,15 @@ impl TypeChecker {
                             if let Some((module, qualifier)) =
                                 super::stdlib_typespec::exported_class(&module, &qualifier)
                             {
-                                return self.external_class_instance(
-                                    module,
-                                    qualifier,
-                                    Vec::new(),
-                                );
+                                return self.external_class_instance(module, qualifier, Vec::new());
                             }
                         }
                         let base_ty = self.get_sym_type(sym.0);
                         self.resolve_named_class_annotation(name, sym, base_ty, None, ty.span)
                     } else if name.contains('.') {
-                        if let Some(resolved) = self.resolve_dotted_external_class_annotation(
-                            name,
-                            None,
-                            ty.span,
-                        ) {
+                        if let Some(resolved) =
+                            self.resolve_dotted_external_class_annotation(name, None, ty.span)
+                        {
                             return resolved;
                         }
                         // Dotted reference like `collections.abc.Mapping`
@@ -3177,11 +3151,9 @@ impl TypeChecker {
                     "dict" if inner.len() == 2 => self.tcx.intern(Ty::Dict(inner[0], inner[1])),
                     "tuple" => self.tcx.intern(Ty::Tuple(inner)),
                     "set" if inner.len() == 1 => self.tcx.intern(Ty::Set(inner[0])),
-                    "frozenset" if inner.len() == 1 => self.external_class_instance(
-                        "builtins",
-                        "frozenset",
-                        inner,
-                    ),
+                    "frozenset" if inner.len() == 1 => {
+                        self.external_class_instance("builtins", "frozenset", inner)
+                    }
                     "list" | "set" | "frozenset" => {
                         self.error(
                             ty.span,
@@ -3350,9 +3322,7 @@ impl TypeChecker {
         actual: TypeId,
         visiting: &mut HashSet<(TypeId, TypeId)>,
     ) -> bool {
-        if self.tcx.alias_ref_is_rejected(expected)
-            || self.tcx.alias_ref_is_rejected(actual)
-        {
+        if self.tcx.alias_ref_is_rejected(expected) || self.tcx.alias_ref_is_rejected(actual) {
             return false;
         }
         if expected == actual {
@@ -3418,8 +3388,7 @@ impl TypeChecker {
         {
             return self.types_compatible_inner(expected_instance, actual_instance, visiting);
         }
-        if let (Ty::TypeObject(expected_instance), Ty::Class { role, .. }) =
-            (e.clone(), a.clone())
+        if let (Ty::TypeObject(expected_instance), Ty::Class { role, .. }) = (e.clone(), a.clone())
         {
             if role != ClassRole::Object {
                 return false;
@@ -3524,16 +3493,14 @@ impl TypeChecker {
                     external: Some(actual),
                     ..
                 } if actual.module == "builtins"
-                    && matches!(
-                        actual.name.as_str(),
-                        "bytes" | "bytearray" | "range"
-                    ) => Some(vec![self.tcx.int()]),
+                    && matches!(actual.name.as_str(), "bytes" | "bytearray" | "range") =>
+                {
+                    Some(vec![self.tcx.int()])
+                }
                 Ty::Class {
                     external: Some(actual),
                     ..
-                } if actual.module == "builtins" && actual.name == "frozenset" => {
-                    Some(actual.args)
-                }
+                } if actual.module == "builtins" && actual.name == "frozenset" => Some(actual.args),
                 _ => None,
             };
             if matches!(
@@ -3591,14 +3558,8 @@ impl TypeChecker {
                             || (left.args.len() == right.args.len()
                                 && left.args.iter().zip(&right.args).all(|(left, right)| {
                                     left == right
-                                        || matches!(
-                                            self.tcx.get(*left),
-                                            Ty::Any | Ty::TypeVar(_)
-                                        )
-                                        || matches!(
-                                            self.tcx.get(*right),
-                                            Ty::Any | Ty::TypeVar(_)
-                                        )
+                                        || matches!(self.tcx.get(*left), Ty::Any | Ty::TypeVar(_))
+                                        || matches!(self.tcx.get(*right), Ty::Any | Ty::TypeVar(_))
                                 })));
                 }
                 (Some(left), None)
@@ -3849,15 +3810,16 @@ impl TypeChecker {
             if expected_variadic && pe.is_empty() {
                 return true;
             }
-            let compare_prefix = |this: &mut Self,
-                                  expected: &[TypeId],
-                                  actual: &[TypeId],
-                                  visiting: &mut HashSet<(TypeId, TypeId)>| {
-                expected
-                    .iter()
-                    .zip(actual)
-                    .all(|(&te, &ta)| this.types_compatible_inner(ta, te, visiting))
-            };
+            let compare_prefix =
+                |this: &mut Self,
+                 expected: &[TypeId],
+                 actual: &[TypeId],
+                 visiting: &mut HashSet<(TypeId, TypeId)>| {
+                    expected
+                        .iter()
+                        .zip(actual)
+                        .all(|(&te, &ta)| this.types_compatible_inner(ta, te, visiting))
+                };
             if expected_variadic {
                 if !actual_variadic && pa.len() < pe.len() {
                     return false;
@@ -3872,9 +3834,7 @@ impl TypeChecker {
             }
             return pe.len() == pa.len() && compare_prefix(self, &pe, &pa, visiting);
         }
-        if matches!(e, Ty::Fn { .. })
-            && matches!(a, Ty::External(ExternalValue::Callable(_)))
-        {
+        if matches!(e, Ty::Fn { .. }) && matches!(a, Ty::External(ExternalValue::Callable(_))) {
             return true;
         }
         // Bool is a subclass of int in Python (#1680) — `isinstance(True, int) is True`.
@@ -4107,18 +4067,18 @@ impl TypeChecker {
         self.class_method_generic_defs
             .retain(|(owner, _), _| *owner != class_symbol);
         let receiver_ty = self.get_symbol_type(class_symbol).unwrap_or_else(|| {
-                self.tcx.intern(Ty::Class {
-                    name: class_name.to_string(),
-                    role: ClassRole::Instance,
-                    user: Some(UserClass {
-                        symbol: class_symbol,
-                        args: Vec::new(),
-                    }),
-                    external: None,
-                    fields: vec![],
-                    match_args: None,
-                })
-            });
+            self.tcx.intern(Ty::Class {
+                name: class_name.to_string(),
+                role: ClassRole::Instance,
+                user: Some(UserClass {
+                    symbol: class_symbol,
+                    args: Vec::new(),
+                }),
+                external: None,
+                fields: vec![],
+                match_args: None,
+            })
+        });
         let receiver_ty = self.with_class_role(receiver_ty, ClassRole::Instance);
         for stmt in body {
             if let Stmt::FnDef {
@@ -4430,10 +4390,7 @@ mod tests {
 
         let checkpoint = checker.tcx.begin_alias_target_transaction();
         let never = checker.tcx.never();
-        assert_eq!(
-            checker.materialize_alias_instance(specialized),
-            Some(never)
-        );
+        assert_eq!(checker.materialize_alias_instance(specialized), Some(never));
         assert!(checker.tcx.deferred_alias_target(specialized).is_none());
         assert!(checker.tcx.alias_target_is_rejected(specialized));
         checker
@@ -4495,6 +4452,47 @@ mod tests {
         assert!(!checker.types_compatible(specialized_ref, specialized_ref));
         assert!(!checker.types_compatible(specialized_ref, str_ty));
         assert!(!checker.types_compatible(str_ty, specialized_ref));
+    }
+
+    #[test]
+    fn deferred_specialization_of_rejected_template_stays_rejected() {
+        use crate::types::context::{AliasHeadError, AliasIdentity};
+        use crate::types::generic::Substitution;
+        use crate::types::stdlib_typespec::StrSpecId;
+
+        let mut checker = TypeChecker::new();
+        let var = checker.tcx.new_type_var("T".to_string(), None, Vec::new());
+        let var_ty = checker.tcx.intern(Ty::TypeVar(var));
+        let (template, template_ref) = checker.tcx.intern_alias_instance(
+            AliasIdentity::Generated(StrSpecId(7), StrSpecId(9)),
+            "example.RejectedTemplate".to_string(),
+            vec![var_ty],
+            1,
+        );
+        assert!(checker.tcx.begin_alias_target(template));
+
+        let mut subst = Substitution::new();
+        subst.insert(var, checker.tcx.int());
+        let specialized_ref = subst.apply(template_ref, &mut checker.tcx);
+        let Ty::AliasRef(specialized) = checker.tcx.get(specialized_ref) else {
+            panic!("deferred specialization lost its AliasRef");
+        };
+        let specialized = *specialized;
+        assert!(checker.tcx.deferred_alias_target(specialized).is_some());
+
+        checker.tcx.reject_alias_target(template);
+
+        assert_eq!(
+            checker.materialize_alias_instance(specialized),
+            Some(checker.tcx.never())
+        );
+        assert!(checker.tcx.deferred_alias_target(specialized).is_none());
+        assert!(checker.tcx.alias_target_is_rejected(specialized));
+        assert_eq!(
+            checker.tcx.semantic_head_id(specialized_ref),
+            Err(AliasHeadError::Rejected(specialized))
+        );
+        assert!(!checker.types_compatible(specialized_ref, specialized_ref));
     }
 
     #[test]
