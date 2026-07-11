@@ -464,7 +464,7 @@ def _generated_protocol_status(
                     ]
                     if not param[4]
                 ]
-                if any(param[1] in {"v", "w"} or param[3] for param in params):
+                if any(param[1] in {"v", "w"} for param in params):
                     supported = False
                     break
                 nodes = [manifest["type_uses"][param[2]][0] for param in params]
