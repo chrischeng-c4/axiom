@@ -236,6 +236,7 @@ impl TypeChecker {
                 let class_ref_origin = self.native_ctor_class_call(value);
                 let declared_ty = self.resolve_type_expr(ty);
                 let value_ty = self.check_expr(value);
+                let value_ty = self.refine_class_object_actual(declared_ty, value_ty, value);
                 if !self.types_compatible(declared_ty, value_ty) {
                     self.error(
                         value.span,
@@ -565,11 +566,14 @@ impl TypeChecker {
                 self.invalidate_conditional_class_object_aliases(std::slice::from_ref(stmt));
             }
             Stmt::Return(value) => {
-                let val_ty = value
+                let mut val_ty = value
                     .as_ref()
                     .map(|v| self.check_expr(v))
                     .unwrap_or(self.tcx.none());
                 if let Some(expected) = self.current_return_ty {
+                    if let Some(value) = value {
+                        val_ty = self.refine_class_object_actual(expected, val_ty, value);
+                    }
                     if !self.types_compatible(expected, val_ty) {
                         let span = value.as_ref().map(|v| v.span).unwrap_or(stmt.span);
                         self.error(

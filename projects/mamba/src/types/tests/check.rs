@@ -155,6 +155,48 @@ fn external_builtin_annotations_preserve_nominal_identity() {
 }
 
 #[test]
+fn type_object_annotations_preserve_class_identity_and_subclasses() {
+    let errors = check(
+        "from datetime import date\nclass Base:\n    pass\nclass Child(Base):\n    pass\ndef take(cls: type[Base]) -> None:\n    pass\ndef choose() -> type[Base]:\n    return Child\ndef take_date(cls: type[date]) -> None:\n    pass\ntake(Base)\ntake(Child)\ntake_date(date)\nalias: type[Base] = Child\nvalue: Base = choose()()\ndef take_int(cls: type[int]) -> None:\n    pass\ntake_int(int)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "type[T] must accept proven class objects and preserve their instance type: {errors:?}"
+    );
+
+    let errors = check(
+        "from datetime import date\nclass Base:\n    pass\nclass Other:\n    pass\ndef take(cls: type[Base]) -> None:\n    pass\ndef take_date(cls: type[date]) -> None:\n    pass\ntake(Base())\ntake(Other)\ntake(1)\ntake_date(str)\ndef take_int(cls: type[int]) -> None:\n    pass\ntake_int(str)\n",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("argument type mismatch"))
+            .count(),
+        5,
+        "type[T] must reject instances, unrelated classes, and non-class values: {errors:?}"
+    );
+}
+
+#[test]
+fn typeshed_type_object_generic_round_trips_through_calls() {
+    let errors = check(
+        "from functools import total_ordering\nclass C:\n    def __lt__(self, other):\n        return True\nDecorated = total_ordering(C)\nvalue: C = Decorated()\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "typeshed type[T] returns must preserve the inferred class object: {errors:?}"
+    );
+
+    let errors = check(
+        "from functools import total_ordering\nclass C:\n    def __lt__(self, other):\n        return True\ntotal_ordering(C())\n",
+    );
+    assert!(
+        has_parameter_error(&errors, "cls"),
+        "typeshed type[T] parameters must reject instances: {errors:?}"
+    );
+}
+
+#[test]
 fn test_function_extended_arg_annotations_rejected() {
     let errors = check("def requires_count(*, count: int) -> int:\n    return count\nrequires_count(count=\"3\")\n");
     assert!(

@@ -733,6 +733,23 @@ impl TypeChecker {
             })
     }
 
+    fn user_class_is_subclass(&self, child: SymbolId, parent: SymbolId) -> bool {
+        let mut pending = vec![child];
+        let mut seen = HashSet::new();
+        while let Some(symbol) = pending.pop() {
+            if !seen.insert(symbol) {
+                continue;
+            }
+            if symbol == parent {
+                return true;
+            }
+            if let Some(bases) = self.class_base_symbols.get(&symbol) {
+                pending.extend(bases.iter().copied());
+            }
+        }
+        false
+    }
+
     pub(crate) fn is_unshadowed_builtin(&self, name: &str) -> bool {
         let Some(builtin_id) = self.builtin_symbols.get(name).copied() else {
             return false;
@@ -740,20 +757,26 @@ impl TypeChecker {
         self.symbols.lookup(name) == Some(builtin_id)
     }
 
-    fn builtin_class_pattern_instance(&self, name: &str) -> Option<TypeId> {
+    pub(crate) fn builtin_class_pattern_instance(&mut self, name: &str) -> Option<TypeId> {
         match name {
             "bool" => Some(self.tcx.bool()),
             "float" => Some(self.tcx.float()),
             "int" => Some(self.tcx.int()),
             "str" => Some(self.tcx.str()),
-            "bytearray" | "bytes" | "dict" | "frozenset" | "list" | "set" | "tuple" => {
-                Some(self.tcx.any())
+            "list" => Some(self.tcx.intern(Ty::List(self.tcx.any()))),
+            "set" => Some(self.tcx.intern(Ty::Set(self.tcx.any()))),
+            "dict" => Some(self.tcx.intern(Ty::Dict(self.tcx.any(), self.tcx.any()))),
+            "tuple" => Some(self.tcx.intern(Ty::Tuple(Vec::new()))),
+            "bytearray" | "bytes" | "complex" | "frozenset" | "memoryview" | "range"
+            | "slice" | "type" => {
+                Some(self.external_class_instance("builtins", name, Vec::new()))
             }
+            "object" => Some(self.tcx.any()),
             _ => None,
         }
     }
 
-    pub(crate) fn builtin_class_alias_value(&self, value: &Spanned<Expr>) -> Option<TypeId> {
+    pub(crate) fn builtin_class_alias_value(&mut self, value: &Spanned<Expr>) -> Option<TypeId> {
         let Expr::Ident(name) = &value.node else {
             return None;
         };
@@ -762,6 +785,78 @@ impl TypeChecker {
         }
         let symbol = self.symbols.lookup(name)?;
         self.builtin_class_aliases.get(&symbol).copied()
+    }
+
+    pub(crate) fn class_object_instance_type(
+        &mut self,
+        value: &Spanned<Expr>,
+        actual: TypeId,
+    ) -> Option<TypeId> {
+        if matches!(
+            self.tcx.get(actual),
+            Ty::Class {
+                role: ClassRole::Object,
+                ..
+            }
+        ) {
+            return Some(self.with_class_role(actual, ClassRole::Instance));
+        }
+        match &value.node {
+            Expr::Ident(name) => {
+                if self.is_unshadowed_builtin(name) {
+                    return self.builtin_class_pattern_instance(name);
+                }
+                let symbol = self.symbols.lookup(name)?;
+                if let Some(instance) = self.builtin_class_aliases.get(&symbol).copied() {
+                    return Some(instance);
+                }
+                let (module, qualifier) = self.import_origins.get(&symbol)?.clone();
+                if !Self::stdlib_class_contract_exists(&module, &qualifier) {
+                    return None;
+                }
+                Some(self.external_class_instance(&module, &qualifier, Vec::new()))
+            }
+            Expr::Attr { object, attr } => {
+                let Expr::Ident(module_alias) = &object.node else {
+                    return None;
+                };
+                let symbol = self.symbols.lookup(module_alias)?;
+                let (module, qualifier) = self.import_origins.get(&symbol)?.clone();
+                if !qualifier.is_empty() {
+                    return None;
+                }
+                if !Self::stdlib_class_contract_exists(&module, attr) {
+                    return None;
+                }
+                Some(self.external_class_instance(&module, attr, Vec::new()))
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn refine_class_object_actual(
+        &mut self,
+        expected: TypeId,
+        actual: TypeId,
+        value: &Spanned<Expr>,
+    ) -> TypeId {
+        if !matches!(self.tcx.get(expected), Ty::TypeObject(_)) {
+            return actual;
+        }
+        let Some(instance) = self.class_object_instance_type(value, actual) else {
+            return actual;
+        };
+        self.tcx.intern(Ty::TypeObject(instance))
+    }
+
+    fn stdlib_class_contract_exists(module: &str, qualifier: &str) -> bool {
+        !qualifier.is_empty()
+            && (super::stdlib_typespec::overloads(module, qualifier, "__init__")
+                .next()
+                .is_some()
+                || super::stdlib_typespec::overloads(module, qualifier, "__new__")
+                    .next()
+                    .is_some())
     }
 
     pub(crate) fn set_builtin_class_alias(
@@ -2184,6 +2279,7 @@ impl TypeChecker {
                     module,
                 } => {
                     let any_ty = self.tcx.any();
+                    let dotted = module.join(".");
                     if let Some(import_names) = names {
                         for (name, alias) in import_names {
                             if name == "*" {
@@ -2198,6 +2294,8 @@ impl TypeChecker {
                                 let sym =
                                     self.symbols.define(effective.clone(), SymbolKind::Variable);
                                 self.set_sym_type(sym.0, any_ty);
+                                self.import_origins
+                                    .insert(sym, (dotted.clone(), name.clone()));
                             }
                         }
                     } else if let Some(alias) = module_alias {
@@ -2208,6 +2306,8 @@ impl TypeChecker {
                         {
                             let sym = self.symbols.define(alias.clone(), SymbolKind::Variable);
                             self.set_sym_type(sym.0, any_ty);
+                            self.import_origins
+                                .insert(sym, (dotted.clone(), String::new()));
                         }
                     } else if let Some(root) = module.first() {
                         if self
@@ -2217,6 +2317,8 @@ impl TypeChecker {
                         {
                             let sym = self.symbols.define(root.clone(), SymbolKind::Variable);
                             self.set_sym_type(sym.0, any_ty);
+                            self.import_origins
+                                .insert(sym, (root.clone(), String::new()));
                         }
                     }
                 }
@@ -2620,9 +2722,8 @@ impl TypeChecker {
                 "bytes" | "bytearray" | "memoryview" | "complex" | "range" | "slice" => {
                     self.external_class_instance("builtins", name, Vec::new())
                 }
-                // `type` as a type expression (e.g. `type[BaseModel]` bare name):
-                // the class-object type is represented as Any for now.
-                "type" | "object" => self.tcx.any(),
+                "type" => self.tcx.intern(Ty::TypeObject(self.tcx.any())),
+                "object" => self.tcx.any(),
                 n if crate::parser::ast::strip_forward_ref_name(n).is_some() => {
                     let forwarded = crate::parser::ast::strip_forward_ref_name(n)
                         .expect("forward-reference prefix disappeared");
@@ -2665,9 +2766,35 @@ impl TypeChecker {
                     }
                     // User-defined type — look up in symbols
                     if let Some(sym) = self.symbols.lookup(name) {
+                        if let Some((module, qualifier)) = self.import_origins.get(&sym).cloned() {
+                            if Self::stdlib_class_contract_exists(&module, &qualifier) {
+                                return self.external_class_instance(
+                                    &module,
+                                    &qualifier,
+                                    Vec::new(),
+                                );
+                            }
+                        }
                         let base_ty = self.get_sym_type(sym.0);
                         self.resolve_named_class_annotation(name, sym, base_ty, None, ty.span)
                     } else if name.contains('.') {
+                        if let Some((base, qualifier)) = name.split_once('.') {
+                            if let Some(symbol) = self.symbols.lookup(base) {
+                                if let Some((module, imported)) =
+                                    self.import_origins.get(&symbol).cloned()
+                                {
+                                    if imported.is_empty()
+                                        && Self::stdlib_class_contract_exists(&module, qualifier)
+                                    {
+                                        return self.external_class_instance(
+                                            &module,
+                                            qualifier,
+                                            Vec::new(),
+                                        );
+                                    }
+                                }
+                            }
+                        }
                         // Dotted reference like `collections.abc.Mapping`
                         // (#1576): external/forward type — treat as Any so
                         // CPython-style annotations type-check.
@@ -2732,6 +2859,14 @@ impl TypeChecker {
                             ret,
                             variadic: false,
                         })
+                    }
+                    "type" if inner.len() == 1 => self.tcx.intern(Ty::TypeObject(inner[0])),
+                    "type" => {
+                        self.error(
+                            ty.span,
+                            format!("expected 1 type argument, got {}", inner.len()),
+                        );
+                        self.tcx.error()
                     }
                     _ => {
                         if let Some(symbol) = self.lookup_type_alias_symbol(name) {
@@ -2907,6 +3042,20 @@ impl TypeChecker {
                 }
             );
         }
+        if let (Ty::TypeObject(expected_instance), Ty::TypeObject(actual_instance)) =
+            (e.clone(), a.clone())
+        {
+            return self.types_compatible_inner(expected_instance, actual_instance, visiting);
+        }
+        if let (Ty::TypeObject(expected_instance), Ty::Class { role, .. }) =
+            (e.clone(), a.clone())
+        {
+            if role != ClassRole::Object {
+                return false;
+            }
+            let actual_instance = self.with_class_role(actual, ClassRole::Instance);
+            return self.types_compatible_inner(expected_instance, actual_instance, visiting);
+        }
         if let Ty::Class {
             role: ClassRole::Instance,
             external: Some(external),
@@ -3047,6 +3196,12 @@ impl TypeChecker {
                                 || matches!(self.tcx.get(*right), Ty::Any | Ty::TypeVar(_))
                         });
                     return args_compatible;
+                }
+                (Some(left), Some(right))
+                    if left.args.is_empty()
+                        && self.user_class_is_subclass(right.symbol, left.symbol) =>
+                {
+                    return true;
                 }
                 (None, None) if n1 == n2 => return true,
                 _ => {}
@@ -3303,6 +3458,9 @@ impl TypeChecker {
                     ps.join(", "),
                     self.ty_name_inner(*ret, visiting)
                 )
+            }
+            Ty::TypeObject(instance) => {
+                format!("type[{}]", self.ty_name_inner(*instance, visiting))
             }
             Ty::Class {
                 external: Some(external),

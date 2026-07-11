@@ -95,6 +95,8 @@ pub enum Ty {
         ret: TypeId,
         variadic: bool,
     },
+    /// A boxed Python class object whose constructor produces `TypeId`.
+    TypeObject(TypeId),
     /// `match_args: None` = no explicit `__match_args__`; callers fall back to field order.
     /// `match_args: Some(names)` = explicit (even `Some(vec![])` means no positional matching).
     Class {
