@@ -121,7 +121,10 @@ impl TypeChecker {
         let owns_method = |s: &super::stdlib_sigs::StdlibSig| {
             matches!(s.kind, SigKind::Method) && s.module == module && s.qualifier == class_name
         };
-        if STDLIB_SIGS.iter().any(owns_method) || STDLIB_SIGS_GENERATED.iter().any(owns_method) {
+        if STDLIB_SIGS.iter().any(owns_method)
+            || STDLIB_SIGS_GENERATED.iter().any(owns_method)
+            || super::stdlib_typespec::class_has_callable(module, class_name)
+        {
             Some((module.clone(), class_name.to_string()))
         } else {
             None
@@ -149,6 +152,17 @@ impl TypeChecker {
         }
         // `object.__new__(Cls)` — bare allocation. func is `object.__new__`.
         if let Expr::Attr { object, attr } = &func.node {
+            if let Expr::Ident(module_alias) = &object.node {
+                if let Some(symbol) = self.symbols.lookup(module_alias) {
+                    if let Some((module, qualifier)) = self.import_origins.get(&symbol) {
+                        if qualifier.is_empty()
+                            && super::stdlib_typespec::class_has_callable(module, attr)
+                        {
+                            return Some((module.clone(), attr.clone()));
+                        }
+                    }
+                }
+            }
             if attr == "__new__" {
                 if let Expr::Ident(base) = &object.node {
                     if base == "object" {

@@ -147,25 +147,34 @@ with tempfile.TemporaryDirectory() as tmp:
     fixture.write_text('# subject = "demo.f(value: typed)"\n', encoding="utf-8")
     sigs = {
         ("demo", "", "f"): {
-            "params": {"value": "Unknown"},
+            "params": {"value": "unsupported"},
             "enforceable": False,
         }
     }
-    unwalled, unresolved = module.partition_generated_contract_coverage(
+    excluded, unresolved = module.partition_generated_contract_coverage(
         [fixture], sigs
     )
-    assert not unwalled
-    assert unresolved[0]["reason"] == "generated_param_unknown"
+    assert not excluded
+    assert unresolved[0]["reason"] == "structured_param_unsupported"
 
     fixture.write_text(
         '# subject = "demo.f(value: T)"\n'
         '# TypeVar param must stay unwalled\n',
         encoding="utf-8",
     )
-    unwalled, unresolved = module.partition_generated_contract_coverage(
+    excluded, unresolved = module.partition_generated_contract_coverage(
         [fixture], sigs
     )
-    assert unwalled[0]["reason"] == "typevar_must_stay_unwalled"
+    assert not excluded
+    assert unresolved[0]["reason"] == (
+        "stale_typevar_unwalled_marker_structured_param_unsupported"
+    )
+
+    sigs[("demo", "", "f")]["params"]["value"] = "unconstrained"
+    excluded, unresolved = module.partition_generated_contract_coverage(
+        [fixture], sigs
+    )
+    assert excluded[0]["reason"] == "contract_unconstrained"
     assert not unresolved
 
 source = tool.read_text(encoding="utf-8")
@@ -182,6 +191,42 @@ assert "and not unresolved_generated_contracts" in source
     assert!(
         output.status.success(),
         "strict type authoritative inventory smoke failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn structured_method_accounting_is_not_poisoned_by_property_branches() {
+    let script = r#"
+import importlib.util
+import pathlib
+import sys
+
+tool = pathlib.Path("tests/harness/cpython/tools/strict_type_accounting.py")
+sys.path.insert(0, str(tool.parent))
+spec = importlib.util.spec_from_file_location("strict_type_accounting", tool)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+row = module.parse_generated_signature_param_index()[
+    ("urllib.request", "Request", "full_url")
+]
+assert row["manifest_branches"] == 3
+assert row["branches"] == 1
+assert "value" not in row["params"]
+"#;
+    let output = Command::new("python3.12")
+        .arg("-c")
+        .arg(script)
+        .current_dir(mamba_root())
+        .output()
+        .expect("run mixed property/method accounting smoke");
+    assert!(
+        output.status.success(),
+        "mixed property/method accounting smoke failed\nstdout={}\nstderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -972,9 +1017,18 @@ fn declared_type_divergences_have_machine_owner_refs() {
 
 #[test]
 fn generated_typeshed_denominator_header_is_present() {
-    let text = fs::read_to_string(mamba_root().join("src/types/stdlib_sigs_generated.rs"))
-        .expect("read generated stdlib sig table");
-    assert!(text.contains("rows:"));
-    assert!(text.contains("enforceable (scalar):"));
-    assert!(text.contains("unknown-skipped:"));
+    let root = mamba_root().join("src/types");
+    let wrapper = fs::read_to_string(root.join("stdlib_specs_generated.rs"))
+        .expect("read generated structured stdlib wrapper");
+    assert!(wrapper.contains("schema: 1"));
+    assert!(wrapper.contains("branches:"));
+    assert!(wrapper.contains("type-nodes:"));
+    assert!(wrapper.contains("include_str!(\"stdlib_specs_generated.json\")"));
+
+    let manifest = fs::read_to_string(root.join("stdlib_specs_generated.json"))
+        .expect("read generated structured stdlib manifest");
+    assert!(manifest.contains("\"schema\":1"));
+    assert!(manifest.contains("\"callables\":"));
+    assert!(manifest.contains("\"nodes\":"));
+    assert!(manifest.contains("\"Unsupported\":"));
 }

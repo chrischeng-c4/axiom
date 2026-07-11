@@ -221,8 +221,21 @@ def strict_type_dimension(show: int, type_limit: int) -> Dimension:
         ),
         counts={
             "typeshed_rows": typeshed["rows"],
+            "typeshed_branches": typeshed["branches"],
+            "typeshed_structured_module_branches": typeshed[
+                "structured_module_branches"
+            ],
+            "typeshed_structured_wired_branches": typeshed[
+                "structured_wired_branches"
+            ],
+            "typeshed_unhandled_binding_branches": typeshed[
+                "unhandled_binding_branches"
+            ],
             "typeshed_enforceable": typeshed["enforceable"],
-            "typeshed_unknown_skipped": typeshed["unknown_skipped"],
+            "typeshed_supported_params": typeshed["supported_params"],
+            "typeshed_unconstrained_params": typeshed["unconstrained_params"],
+            "typeshed_unsupported_params": typeshed["unsupported_params"],
+            "typeshed_partial_overload_params": typeshed["partial_overload_params"],
             "type_fixture_wall": typeshed["type_fixture_wall"],
             "type_measured": enforcement["measured"],
             "type_gradable": enforcement["gradable"],
