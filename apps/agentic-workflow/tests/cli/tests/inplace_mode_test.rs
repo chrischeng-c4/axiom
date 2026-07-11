@@ -706,4 +706,215 @@ fn wi_validate_accepts_apply_dirty_issue_file_on_issue_branch() {
     );
 }
 
+/// Pull a `"field":"value"` string out of a JSON envelope's raw stdout
+/// without a full JSON parse (matches this test file's existing
+/// string-search style).
+fn extract_json_string_field(stdout: &str, field: &str) -> Option<String> {
+    let needle = format!("\"{field}\":\"");
+    let start = stdout.find(&needle)? + needle.len();
+    let end = stdout[start..].find('"')? + start;
+    Some(stdout[start..end].replace("\\/", "/"))
+}
+
+/// Issue #813 (incident #799): a replayed `aw td create --apply` must never
+/// clobber an already-authored TD section with a missing or still-`(fill)`
+/// placeholder payload. Exercises the exact wedge scenario — a completed
+/// `## Logic` section, then a stale/replayed apply call against it — via the
+/// real CLI end to end (not just the pure decision function unit tests in
+/// `td.rs`).
+#[test]
+fn td_create_replay_does_not_clobber_authored_logic_section() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+
+    std::fs::create_dir_all(root.join(".aw/tech-design")).unwrap();
+    std::fs::write(
+        root.join("aw.toml"),
+        r#"
+[agentic_workflow.workspace]
+mode = "in_place"
+
+[[projects]]
+name = "agentic-workflow"
+path = "."
+"#,
+    )
+    .unwrap();
+
+    let slug = "demo-813-replay";
+    let issue_body = format!(
+        "---\n\
+         slug: {slug}\n\
+         title: demo 813 replay flow\n\
+         state: open\n\
+         type: bug\n\
+         labels: [\"app:agentic-workflow\"]\n\
+         ---\n\n# Body\n",
+    );
+    write_issue_fixture(root, slug, issue_body);
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "bootstrap"])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", "project-score"])
+        .status()
+        .unwrap();
+
+    let spec_path = "custom/td-813-replay.md";
+
+    // 1) `aw td create <slug> --spec-path <path>` (brief, no --apply):
+    // writes the skeleton and initializes the first section (`logic`)
+    // payload with the blank template.
+    let brief = Command::new(&bin)
+        .arg("td")
+        .arg("create")
+        .arg(slug)
+        .arg("--spec-path")
+        .arg(spec_path)
+        .current_dir(root)
+        .output()
+        .expect("run aw td create (brief)");
+    assert!(
+        brief.status.success(),
+        "td create brief should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&brief.stdout),
+        String::from_utf8_lossy(&brief.stderr),
+    );
+    let brief_stdout = String::from_utf8_lossy(&brief.stdout).into_owned();
+    let payload_path = extract_json_string_field(&brief_stdout, "payload_path")
+        .expect("brief envelope should carry payload_path");
+    let payload_abs = std::path::PathBuf::from(&payload_path);
+
+    // 2) Author the `logic` section for real (a completed section).
+    let real_logic_body = concat!(
+        "## Logic\n",
+        "<!-- type: logic lang: mermaid -->\n\n",
+        "```mermaid\n",
+        "---\n",
+        "id: real-logic-813\n",
+        "entry: start\n",
+        "nodes:\n",
+        "  start: { kind: start }\n",
+        "edges: []\n",
+        "---\n",
+        "flowchart TD\n",
+        "```\n",
+    );
+    let real_payload_json = serde_json::json!({ "body": real_logic_body }).to_string();
+    std::fs::write(&payload_abs, &real_payload_json).unwrap();
+
+    let apply_logic = Command::new(&bin)
+        .arg("td")
+        .arg("create")
+        .arg(slug)
+        .arg("--apply")
+        .arg("--phase")
+        .arg("applicability")
+        .arg("--section")
+        .arg("logic")
+        .arg("--spec-path")
+        .arg(spec_path)
+        .current_dir(root)
+        .output()
+        .expect("run aw td create --apply --section logic");
+    assert!(
+        apply_logic.status.success(),
+        "authoring the logic section should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&apply_logic.stdout),
+        String::from_utf8_lossy(&apply_logic.stderr),
+    );
+
+    let spec_abs = root.join(spec_path);
+    let spec_after_authoring = std::fs::read_to_string(&spec_abs).unwrap();
+    assert!(
+        spec_after_authoring.contains("real-logic-813"),
+        "spec should carry the authored logic content:\n{spec_after_authoring}"
+    );
+    assert!(!spec_after_authoring.contains("```mermaid\n(fill)\n```"));
+    // The section-apply loop removes the payload file on success, and the
+    // queue has moved on to the next section (unit-test) — this reproduces
+    // the #799 setup where a stale/replayed dispatch still names the old
+    // `logic` apply command.
+    assert!(!payload_abs.exists());
+
+    // 3) Simulate the replay: something re-writes a placeholder payload at
+    // the (now-stale) `logic` payload path and re-runs the exact same
+    // apply command #799 replayed.
+    let placeholder_payload_json =
+        serde_json::json!({ "body": "## Logic\n<!-- type: logic lang: mermaid -->\n\n```mermaid\n(fill)\n```\n" })
+            .to_string();
+    std::fs::create_dir_all(payload_abs.parent().unwrap()).unwrap();
+    std::fs::write(&payload_abs, &placeholder_payload_json).unwrap();
+
+    let replay = Command::new(&bin)
+        .arg("td")
+        .arg("create")
+        .arg(slug)
+        .arg("--apply")
+        .arg("--phase")
+        .arg("applicability")
+        .arg("--section")
+        .arg("logic")
+        .arg("--spec-path")
+        .arg(spec_path)
+        .current_dir(root)
+        .output()
+        .expect("run replayed aw td create --apply --section logic");
+
+    // The replay must be rejected (actionable message, non-mutating) —
+    // never silently succeed by clobbering the spec.
+    assert!(
+        !replay.status.success(),
+        "replayed placeholder apply against an authored section must fail, not silently \
+         succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&replay.stdout),
+        String::from_utf8_lossy(&replay.stderr),
+    );
+
+    // The spec must be byte-identical to what authoring produced — the core
+    // #813/#799 regression: replay must never clobber authored content with
+    // `(fill)`.
+    let spec_after_replay = std::fs::read_to_string(&spec_abs).unwrap();
+    assert_eq!(
+        spec_after_replay, spec_after_authoring,
+        "replay must not mutate the spec at all"
+    );
+    assert!(!spec_after_replay.contains("\n(fill)\n```\n"));
+
+    // The payload file must have been reseeded from the existing section
+    // content instead of being left as (or re-initialized to) a blank
+    // placeholder — so a follow-up review/edit has real starting content.
+    let reseeded_payload = std::fs::read_to_string(&payload_abs).unwrap();
+    assert!(
+        reseeded_payload.contains("real-logic-813"),
+        "payload should be reseeded from the existing authored section:\n{reseeded_payload}"
+    );
+
+    // No wedge: the issue's lifecycle phase is untouched by the rejected
+    // replay (still whatever authoring the logic section left it at, not
+    // reset/corrupted by the failed apply).
+    let issue_after_replay = read_issue_fixture(root, slug);
+    assert!(
+        issue_after_replay.contains("phase: td_applicability_in_progress"),
+        "phase must remain the in-progress applicability phase, not wedge into an unexpected \
+         state:\n{issue_after_replay}"
+    );
+}
+
 // CODEGEN-END
