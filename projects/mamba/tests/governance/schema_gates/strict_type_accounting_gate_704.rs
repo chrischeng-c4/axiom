@@ -245,6 +245,7 @@ for key, param in [
     (("traceback", "", "print_exception"), "exc"),
     (("unittest.case", "TestCase", "assertRaises"), "expected_exception"),
     (("asyncio.subprocess", "SubprocessStreamProtocol", "__init__"), "loop"),
+    (("select", "", "select"), "rlist"),
 ]:
     assert exception_index[key]["params"][param] == "supported", (key, param)
 

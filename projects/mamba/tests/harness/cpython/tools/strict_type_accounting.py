@@ -590,6 +590,8 @@ def _generated_typespec_status(
                 ("builtins", "frozenset"), ("builtins", "dict"),
                 ("builtins", "tuple"), ("typing", "Never"),
                 ("typing", "NoReturn"), ("typing", "Self"),
+                ("typing_extensions", "Never"),
+                ("typing_extensions", "NoReturn"),
                 ("typing_extensions", "Self"), ("typing", "LiteralString"),
                 ("typing_extensions", "LiteralString"),
             }
