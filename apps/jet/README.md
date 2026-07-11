@@ -68,7 +68,7 @@ Source map:
 
 | Path | Read when |
 |---|---|
-| `apps/jet/LAYOUT.md` | You need the repo map before editing. |
+| `apps/jet/docs/architecture/layout.md` | You need the repo map before editing. |
 | `apps/jet/src/pkg_manager/` | Package manager behavior, lockfile, registry, store, workspace, audit/publish flows. |
 | `apps/jet/src/bundler/` | Dependency graph, tree shaking, CSS bundle, minification, splitting, sourcemaps. |
 | `apps/jet/src/dev_server/` | Dev server, HMR, proxy, prod static serving, watcher, prebundle/import map behavior. |
@@ -98,6 +98,7 @@ Canonical field-style capability contracts below are machine-readable input for 
 | Browser, Trace, And Parity Infrastructure | #3786 | implemented | verified | smoke, conformance, corpus, negative | ready_for_basic | Jet BB is the executor for current gates, with isolated Playwright baseline evidence and trace substrate tests green. |
 | Library Build And Package Publishing | #168 | implemented | verified | conformance | partial | `jet build --lib` (ESM+CJS, externalized deps/peerDeps, multi-entry), preserve-modules ESM/CJS output, `.d.ts` emission, and `jet publish --build` with metadata validation + private-registry (`.npmrc` scoped) e2e all shipped and tested (A1-A3 merged). `partial`: IIFE lib output, class-member `.d.ts` reduction, and some CJS re-export edge cases are TODO follow-ups. |
 | Component Workbench (Stories) | #169 | implemented | verified | conformance | ready_for_basic | CSF `*.stories.tsx` discovery, the Stories dev manager + isolated preview, preview HMR, and a prop-type-derived Controls panel (B1-B3 + B2b). The earlier `partial` follow-ups have since shipped: hook-state-preserving React Refresh (#196), `node_modules` bare-import resolution for dev + static (#197), generic/cross-file/intersection prop-type controls (#198), CSF2 `Template.bind`/re-exported stories/spread args (#199), and `jet stories build` static export (#190). CSF-compatible, no Storybook runtime. |
+| Jet Project Architecture And Authoring Clarity | #1169 | implemented | verified | smoke | ready | Scoped layout/navigation guidance lives at `projects/jet/docs/architecture/layout.md` (path-role map + crate/package naming conventions), linked from this README's Source map; no project-root uppercase meta doc remains for Jet layout guidance. |
 
 ### Rust-Native Frontend Toolchain Replacement
 
@@ -408,3 +409,22 @@ EC Dimensions:
 | Stories Bare-Import Resolution | change | #197 | implemented | verified | conformance | `cargo test -p jet --test manager` — node_modules bare-import resolution for stories dev and static export |
 | Generic / Cross-File Prop Controls | change | #198 | implemented | verified | conformance | `cargo test -p jet --test controls` — controls inferred from generic, cross-file, and intersection prop types |
 | CSF2 Template.bind + Re-Exports | change | #199 | implemented | verified | conformance | `cargo test -p jet --test csf_discovery` — CSF2 Template.bind, re-exported stories, and spread-args discovery |
+
+### Jet Project Architecture And Authoring Clarity
+
+ID: jet-project-architecture-and-authoring-clarity
+Root WI: #1169
+Status: confirmed
+Type: DeveloperTool
+Required Verification: smoke
+Promise:
+Jet's project architecture and authoring guidance (the top-level path-role map plus crate/package naming conventions) lives in scoped project docs rather than a project-root uppercase meta doc. `projects/jet/docs/architecture/layout.md` is the discoverable, README-linked home for that guidance; `projects/jet/LAYOUT.md` no longer exists, and README/CAPABILITIES.md remain the only Jet project-root uppercase meta docs.
+Gate Inventory:
+- `projects/jet/docs/architecture/layout.md`
+- `test ! -e projects/jet/LAYOUT.md && ! grep -rl "projects/jet/LAYOUT.md" --include=*.md . | grep -v projects/jet/tech-design/logic/move-root-layout-meta-doc-into-scoped-architecture-documentation.md`
+Surfaces:
+- Docs: `projects/jet/docs/architecture/layout.md` - Scoped path-role map and crate/package naming conventions, linked from this README's Source map.
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Move root layout meta doc into scoped architecture documentation | change | #1169 | implemented | verified | smoke | `projects/jet/docs/architecture/layout.md` exists with the preserved path-role map and naming conventions; `projects/jet/LAYOUT.md` removed; README Source map row repointed — see `projects/jet/tech-design/logic/move-root-layout-meta-doc-into-scoped-architecture-documentation.md` |
