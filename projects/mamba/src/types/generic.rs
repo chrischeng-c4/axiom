@@ -182,7 +182,7 @@ impl Substitution {
                 }
 
                 let (specialized_id, specialized_ty) = tcx.intern_alias_instance(
-                    source.symbol,
+                    source.identity,
                     source.name,
                     new_args,
                     source.display_arg_count,
@@ -718,7 +718,7 @@ fn unify_for_inference_step(
                 return;
             };
             let arg_instance = tcx.alias_instance(*arg_id).clone();
-            if param_instance.symbol == arg_instance.symbol
+            if param_instance.identity == arg_instance.identity
                 && param_instance.args.len() == arg_instance.args.len()
             {
                 for (param_arg, arg_arg) in param_instance.args.iter().zip(&arg_instance.args) {
@@ -1213,7 +1213,12 @@ mod tests {
         let var_ty = tcx.intern(Ty::TypeVar(var));
         let symbol = crate::resolve::SymbolId(17);
         let (generic_instance, generic_ref) =
-            tcx.intern_alias_instance(symbol, "Chain".to_string(), vec![var_ty], 1);
+            tcx.intern_alias_instance(
+                crate::types::context::AliasIdentity::Source(symbol),
+                "Chain".to_string(),
+                vec![var_ty],
+                1,
+            );
         let generic_target = tcx.intern(Ty::List(generic_ref));
         tcx.set_alias_target(generic_instance, generic_target);
 
