@@ -247,6 +247,19 @@ for key, param in [
 ]:
     assert exception_index[key]["params"][param] == "supported", (key, param)
 
+generic_index = module.parse_generated_signature_param_index()
+xml_init = generic_index[("xml.etree.ElementTree", "XMLPullParser", "__init__")]
+assert xml_init["params"]["events"] == "supported"
+buffered_reader = generic_index[("_io", "BufferedReader", "__init__")]
+assert buffered_reader["params"]["buffer_size"] == "supported"
+assert buffered_reader["params"]["raw"] == "unsupported"
+assert buffered_reader["param_reasons"]["raw"] == "structured_param_type_unsupported"
+assert all(
+    reason != "structured_generic_metadata_unsupported"
+    for row in generic_index.values()
+    for reason in row["param_reasons"].values()
+)
+
 property_fixture = module.TYPE_DIR / "std-libs/urllib_request/Request__full_url__value_as_str_wrong.py"
 property_text = property_fixture.read_text(encoding="utf-8")
 assert '# subject = "urllib.request.Request.full_url = (value: str)"' in property_text
