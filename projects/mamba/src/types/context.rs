@@ -332,9 +332,15 @@ impl TypeContext {
             Ty::Tuple(items) | Ty::Union(items) => {
                 items.iter().any(|item| self.contains_type_var(*item))
             }
-            Ty::Fn { params, ret, .. } => {
+            Ty::Fn {
+                params,
+                ret,
+                param_spec,
+                ..
+            } => {
                 params.iter().any(|param| self.contains_type_var(*param))
                     || self.contains_type_var(*ret)
+                    || param_spec.is_some()
             }
             Ty::External(ExternalValue::Callable(callable)) => callable
                 .receiver
@@ -408,9 +414,17 @@ impl TypeContext {
                     self.collect_type_vars(*item, vars);
                 }
             }
-            Ty::Fn { params, ret, .. } => {
+            Ty::Fn {
+                params,
+                ret,
+                param_spec,
+                ..
+            } => {
                 for param in params {
                     self.collect_type_vars(*param, vars);
+                }
+                if let Some(param_spec) = param_spec {
+                    vars.push(*param_spec);
                 }
                 self.collect_type_vars(*ret, vars);
             }

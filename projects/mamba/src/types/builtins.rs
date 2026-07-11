@@ -187,6 +187,7 @@ impl TypeChecker {
             params: params.to_vec(),
             ret,
             variadic: false,
+            param_spec: None,
         });
         let sym = self.symbols.define(name.to_string(), SymbolKind::Function);
         self.set_sym_type(sym.0, fn_ty);
@@ -198,6 +199,7 @@ impl TypeChecker {
             params: params.to_vec(),
             ret,
             variadic: true,
+            param_spec: None,
         });
         let sym = self.symbols.define(name.to_string(), SymbolKind::Function);
         self.set_sym_type(sym.0, fn_ty);
@@ -307,6 +309,7 @@ mod tests {
                 params,
                 ret,
                 variadic,
+                ..
             } => {
                 assert_eq!(params.len(), 0); // print(*args)
                 assert_eq!(*ret, tc.tcx.none());

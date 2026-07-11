@@ -1302,6 +1302,7 @@ impl TypeChecker {
             params: param_types,
             ret,
             variadic,
+            param_spec: None,
         });
         self.set_sym_type(symbol.0, function_ty);
         self.function_declaration_types
@@ -2049,6 +2050,7 @@ impl TypeChecker {
                         params: param_types,
                         ret,
                         variadic: is_variadic,
+                        param_spec: None,
                     });
                     self.set_sym_type(sym.0, fn_ty);
                     self.function_declaration_types.insert(sym, fn_ty);
@@ -2303,6 +2305,7 @@ impl TypeChecker {
                             params: param_types,
                             ret: self.tcx.any(),
                             variadic: is_variadic,
+                            param_spec: None,
                         });
                         self.set_sym_type(sym.0, fn_ty);
                         self.function_declaration_types.insert(sym, fn_ty);
@@ -3094,6 +3097,7 @@ impl TypeChecker {
                             params,
                             ret,
                             variadic: false,
+                            param_spec: None,
                         })
                     }
                     "type" if inner.len() == 1 => self.tcx.intern(Ty::TypeObject(inner[0])),
@@ -3173,6 +3177,7 @@ impl TypeChecker {
                     params: param_types,
                     ret: ret_ty,
                     variadic: false,
+                    param_spec: None,
                 })
             }
             TypeExpr::Tuple(types) => {
@@ -3698,24 +3703,58 @@ impl TypeChecker {
             Ty::Fn {
                 params: pe,
                 ret: re,
-                ..
+                variadic: expected_variadic,
+                param_spec: expected_param_spec,
             },
             Ty::Fn {
                 params: pa,
                 ret: ra,
-                ..
+                variadic: actual_variadic,
+                param_spec: actual_param_spec,
             },
         ) = (e, a)
         {
-            let (pe, pa, re, ra) = (pe.clone(), pa.clone(), *re, *ra);
-            if pe.len() != pa.len() {
+            let (pe, pa, re, ra, expected_variadic, actual_variadic) = (
+                pe.clone(),
+                pa.clone(),
+                *re,
+                *ra,
+                *expected_variadic,
+                *actual_variadic,
+            );
+            let (expected_param_spec, actual_param_spec) =
+                (*expected_param_spec, *actual_param_spec);
+            if expected_param_spec.is_some() || actual_param_spec.is_some() {
                 return false;
             }
-            return pe
-                .iter()
-                .zip(pa.iter())
-                .all(|(&te, &ta)| self.types_compatible_inner(ta, te, visiting))
-                && self.types_compatible_inner(re, ra, visiting);
+            if !self.types_compatible_inner(re, ra, visiting) {
+                return false;
+            }
+            if expected_variadic && pe.is_empty() {
+                return true;
+            }
+            let compare_prefix = |this: &mut Self,
+                                  expected: &[TypeId],
+                                  actual: &[TypeId],
+                                  visiting: &mut HashSet<(TypeId, TypeId)>| {
+                expected
+                    .iter()
+                    .zip(actual)
+                    .all(|(&te, &ta)| this.types_compatible_inner(ta, te, visiting))
+            };
+            if expected_variadic {
+                if !actual_variadic && pa.len() < pe.len() {
+                    return false;
+                }
+                return compare_prefix(self, &pe, &pa, visiting);
+            }
+            if actual_variadic {
+                if pa.len() > pe.len() {
+                    return false;
+                }
+                return compare_prefix(self, &pe, &pa, visiting);
+            }
+            return pe.len() == pa.len() && compare_prefix(self, &pe, &pa, visiting);
         }
         if matches!(e, Ty::Fn { .. })
             && matches!(a, Ty::External(ExternalValue::Callable(_)))
@@ -3778,11 +3817,21 @@ impl TypeChecker {
                     .collect();
                 parts.join(" | ")
             }
-            Ty::Fn { params, ret, .. } => {
-                let ps: Vec<_> = params
+            Ty::Fn {
+                params,
+                ret,
+                variadic,
+                param_spec,
+            } => {
+                let mut ps: Vec<_> = params
                     .iter()
                     .map(|p| self.ty_name_inner(*p, visiting))
                     .collect();
+                if let Some(param_spec) = param_spec {
+                    ps.push(format!("{}...", self.tcx.get_type_var(*param_spec).name));
+                } else if *variadic {
+                    ps.push("...".to_string());
+                }
                 format!(
                     "({}) -> {}",
                     ps.join(", "),
@@ -4424,6 +4473,7 @@ mod tests {
             params: vec![tc.tcx.int(), tc.tcx.str()],
             ret: tc.tcx.bool(),
             variadic: false,
+            param_spec: None,
         });
         assert_eq!(tc.ty_name(fn_ty), "(int, str) -> bool");
     }

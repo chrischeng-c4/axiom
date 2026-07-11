@@ -262,6 +262,14 @@ assert all(
     for reason in row["param_reasons"].values()
 )
 
+for key, param in [
+    (("_contextvars", "Context", "run"), "callable"),
+    (("curses", "", "wrapper"), "func"),
+]:
+    row = generic_index[key]
+    assert row["params"][param] == "unsupported", (key, param, row)
+    assert row["param_reasons"][param] == "structured_param_type_unsupported"
+
 property_fixture = module.TYPE_DIR / "std-libs/urllib_request/Request__full_url__value_as_str_wrong.py"
 property_text = property_fixture.read_text(encoding="utf-8")
 assert '# subject = "urllib.request.Request.full_url = (value: str)"' in property_text
