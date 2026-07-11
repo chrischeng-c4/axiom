@@ -17,6 +17,7 @@ pub mod check_alignment;
 pub mod commands;
 pub mod conf;
 pub mod doc_mirror;
+pub mod drift;
 pub mod ec;
 pub mod fillback;
 pub mod generator;

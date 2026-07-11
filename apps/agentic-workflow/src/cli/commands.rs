@@ -6,6 +6,7 @@ use clap::Subcommand;
 use crate::cli::capability;
 use crate::cli::chat;
 use crate::cli::conf;
+use crate::cli::drift;
 use crate::cli::ec;
 use crate::cli::generator;
 use crate::cli::guard;
@@ -74,6 +75,8 @@ pub enum Commands {
 /// Run an Agentic Workflow CLI command
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/commands.md#source
 pub async fn run_command(cmd: Commands) -> Result<()> {
+    drift::check_once(env!("AW_BUILD_VERSION"), env!("AW_GIT_SHA"));
+
     match cmd {
         Commands::New(args) => {
             init::run_new(args).await?;
