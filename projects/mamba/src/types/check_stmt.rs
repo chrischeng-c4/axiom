@@ -1160,6 +1160,7 @@ impl TypeChecker {
                 params: param_types,
                 ret: ret_ty,
                 variadic: is_variadic,
+                param_spec: None,
             })
         };
         self.set_builtin_class_alias(sym, None);

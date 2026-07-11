@@ -147,6 +147,9 @@ pub enum Ty {
         params: Vec<TypeId>,
         ret: TypeId,
         variadic: bool,
+        /// Correlated PEP 612 parameter-list tail for Callable[P, R] and
+        /// Callable[Concatenate[prefix..., P], R].
+        param_spec: Option<TypeVarId>,
     },
     External(ExternalValue),
     /// A boxed Python class object whose constructor produces `TypeId`.
@@ -298,6 +301,7 @@ mod tests {
             params: vec![TypeId(3)],
             ret: TypeId(5),
             variadic: false,
+            param_spec: None,
         };
         assert!(!f.is_numeric());
         assert_eq!(
@@ -305,7 +309,8 @@ mod tests {
             Ty::Fn {
                 params: vec![TypeId(3)],
                 ret: TypeId(5),
-                variadic: false
+                variadic: false,
+                param_spec: None,
             }
         );
         assert_ne!(
@@ -313,7 +318,8 @@ mod tests {
             Ty::Fn {
                 params: vec![TypeId(3)],
                 ret: TypeId(3),
-                variadic: false
+                variadic: false,
+                param_spec: None,
             }
         );
     }
