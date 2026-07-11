@@ -4538,6 +4538,277 @@ fn test_stdlib_module_fn_via_module_attr() {
 }
 
 #[test]
+fn test_stdlib_module_and_nested_callable_aliases_retain_contract() {
+    let errors = check(
+        "import os\n\
+         alias = os.strerror\n\
+         alias(\"x\")\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("argument type mismatch")),
+        "an attribute-derived callable alias must retain its contract: {errors:?}"
+    );
+
+    let errors = check(
+        "import multiprocessing.reduction\n\
+         multiprocessing.reduction.duplicate(\"bad\")\n\
+         duplicate = multiprocessing.reduction.duplicate\n\
+         duplicate(\"bad\")\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .filter(|error| error.contains("argument type mismatch"))
+            .count()
+            >= 2,
+        "loaded nested modules and their aliases must retain contracts: {errors:?}"
+    );
+
+    let errors = check(
+        "import os\n\
+         alias = os.strerror\n\
+         alias = lambda value: value\n\
+         alias(\"x\")\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "rebinding must clear an external callable identity: {errors:?}"
+    );
+}
+
+#[test]
+fn test_stdlib_generated_result_types_propagate_through_chains() {
+    let errors = check(
+        "from pathlib import Path, PurePath\n\
+         p: Path = Path(\"x\")\n\
+         text: str = Path(\"x\").as_posix()\n\
+         resolved: Path = Path(\"x\").resolve(strict=True)\n\
+         current: Path = Path.cwd()\n\
+         name: str = Path(\"x\").name\n\
+         rebound_self: Path = PurePath.with_name(Path(\"x\"), \"y\")\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "constructor, inherited method, Self, classmethod, and property results must propagate: {errors:?}"
+    );
+
+    let errors = check(
+        "from pathlib import Path\n\
+         bad_ctor: int = Path(\"x\")\n\
+         bad_method: int = Path(\"x\").as_posix()\n\
+         bad_classmethod: int = Path.cwd()\n\
+         bad_property: int = Path(\"x\").name\n\
+         Path(\"x\").resolve(strict=\"bad\")\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count()
+            >= 4,
+        "generated result identities must reject incompatible annotations: {errors:?}"
+    );
+    assert!(
+        has_parameter_error(&errors, "strict"),
+        "a chained generated method must enforce its keyword contract: {errors:?}"
+    );
+}
+
+#[test]
+fn test_stdlib_generated_property_setter_enforces_value_type() {
+    let errors = check(
+        "from urllib.request import Request\n\
+         request = Request(\"https://example.com\")\n\
+         request.full_url = \"https://example.org\"\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "a valid generated property setter value must remain accepted: {errors:?}"
+    );
+
+    let errors = check(
+        "from urllib.request import Request\n\
+         request = Request(\"https://example.com\")\n\
+         request.full_url = 42\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("expected `str`, got `int`")),
+        "a generated property setter must reject an incompatible value: {errors:?}"
+    );
+}
+
+#[test]
+fn test_stdlib_external_values_preserve_canonical_and_runtime_nominal_identity() {
+    let errors = check(
+        "from io import StringIO\n\
+         from types import ModuleType\n\
+         import io\n\
+         import os\n\
+         direct: StringIO = StringIO()\n\
+         dotted: io.StringIO = io.StringIO()\n\
+         module: ModuleType = os\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "re-exported classes and external runtime values must retain compatible nominal identities: {errors:?}"
+    );
+
+    let errors = check(
+        "from types import BuiltinFunctionType, BuiltinMethodType, FunctionType\n\
+         from pathlib import Path\n\
+         import inspect\n\
+         import os\n\
+         wrong_python_kind: FunctionType = os.strerror\n\
+         unknown_function_kind: BuiltinFunctionType = inspect.signature\n\
+         unknown_method_kind: BuiltinMethodType = Path.cwd\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .filter(|error| error.contains("type mismatch"))
+            .count()
+            >= 3,
+        "an unproven external callable runtime kind must not satisfy a concrete nominal class: {errors:?}"
+    );
+}
+
+#[test]
+fn test_stdlib_constructor_prefers_direct_contract_before_inherited_fallback() {
+    let errors = check("from ast import Bytes\nBytes(s=b\"x\")\n");
+    assert!(
+        errors.is_empty(),
+        "a direct __new__ contract must win over an inherited broad constructor: {errors:?}"
+    );
+
+    let errors = check("from pathlib import Path\nPath(123)\n");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("argument type mismatch")),
+        "Path's direct __new__ StrPath contract must reject int: {errors:?}"
+    );
+}
+
+#[test]
+fn test_stdlib_inherited_generic_members_project_receiver_type_arguments() {
+    let errors = check(
+        "from queue import LifoQueue, PriorityQueue, Queue\n\
+         queue: Queue[int] = Queue()\n\
+         queue.put(1)\n\
+         direct: int = queue.get()\n\
+         lifo: LifoQueue[int] = LifoQueue()\n\
+         lifo.put(1)\n\
+         inherited: int = lifo.get()\n\
+         priority: PriorityQueue[int] = PriorityQueue()\n\
+         priority.put(1)\n\
+         projected: int = priority.get()\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "direct and inherited generic members must preserve receiver type arguments: {errors:?}"
+    );
+
+    let errors = check(
+        "import queue\n\
+         value: queue.Queue[int] = queue.Queue()\n\
+         value.put(1)\n\
+         result: int = value.get()\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "dotted external generic annotations must retain their arguments: {errors:?}"
+    );
+    let errors = check(
+        "import queue\n\
+         value: queue.Queue[int] = queue.Queue()\n\
+         value.put(\"bad\")\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("type mismatch")),
+        "dotted external generic annotations must enforce their arguments: {errors:?}"
+    );
+    let errors = check(
+        "import concurrent.futures._base\n\
+         future: concurrent.futures._base.Future[int] = concurrent.futures._base.Future()\n\
+         future.set_result(1)\n\
+         result: int = future.result()\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "deep loaded-module prefixes must retain generic annotations: {errors:?}"
+    );
+    let errors = check(
+        "import concurrent.futures._base\n\
+         future: concurrent.futures._base.Future[int] = concurrent.futures._base.Future()\n\
+         future.set_result(\"bad\")\n",
+    );
+    assert!(
+        errors.iter().any(|error| error.contains("type mismatch")),
+        "deep loaded-module prefixes must enforce generic annotations: {errors:?}"
+    );
+
+    for (label, source) in [
+        (
+            "direct parameter",
+            "from queue import Queue\nqueue: Queue[int] = Queue()\nqueue.put(\"bad\")\n",
+        ),
+        (
+            "direct return",
+            "from queue import Queue\nqueue: Queue[int] = Queue()\nbad: str = queue.get()\n",
+        ),
+        (
+            "inherited parameter",
+            "from queue import PriorityQueue\nqueue: PriorityQueue[int] = PriorityQueue()\nqueue.put(\"bad\")\n",
+        ),
+        (
+            "inherited return",
+            "from queue import PriorityQueue\nqueue: PriorityQueue[int] = PriorityQueue()\nbad: str = queue.get()\n",
+        ),
+    ] {
+        let errors = check(source);
+        assert!(
+            errors.iter().any(|error| error.contains("type mismatch")),
+            "{label} must use the concrete receiver argument: {errors:?}"
+        );
+    }
+
+    let errors = check(
+        "from queue import PriorityQueue\n\
+         class _W:\n\
+         \x20   pass\n\
+         invalid: PriorityQueue[_W] = PriorityQueue()\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("bound violation")),
+        "a clearly incompatible external generic bound must still be rejected: {errors:?}"
+    );
+}
+
+#[test]
+fn test_stdlib_generic_property_getter_projects_receiver_type_arguments() {
+    let errors = check(
+        "value: slice[int, int, int] = slice(1, 2, 3)\n\
+         start: int = value.start\n\
+         stop: int = value.stop\n\
+         step: int = value.step\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "generic property getters must preserve receiver type arguments: {errors:?}"
+    );
+
+    let errors = check("value: slice[int, int, int] = slice(1, 2, 3)\nbad: str = value.start\n");
+    assert!(
+        errors.iter().any(|error| error.contains("type mismatch")),
+        "a generic property result must reject an incompatible annotation: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_method_wrong_scalar_rejected() {
     // HTMLParser.handle_entityref(name: str) via object.__new__ instance.
     let errors = check(
@@ -4693,6 +4964,12 @@ fn test_stdlib_set_operator_bare_instance_rejected() {
 
     let errors = check("obj = set()\nobj.__and__(set())\nobj.__ior__(frozenset())\n");
     assert!(errors.is_empty(), "real set operands must remain valid: {errors:?}");
+
+    let errors = check("class _W: pass\nobj = set()\nobj.__ior__(_W())\n");
+    assert!(
+        has_parameter_error(&errors, "value"),
+        "a builtin-inferred set receiver must use the generated contract: {errors:?}"
+    );
 }
 
 #[test]
@@ -5344,6 +5621,16 @@ fn conditional_joins_clear_class_and_stdlib_provenance() {
          else:\n\
          \x20   obj = object.__new__(HTMLParser)\n\
          obj.handle_entityref(12345)\n",
+        "import os\n\
+         alias = os.strerror\n\
+         if True:\n\
+         \x20   alias = os.strerror\n\
+         else:\n\
+         \x20   alias = lambda value: value\n\
+         alias(\"x\")\n",
+        "import os\n\
+         alias = os.strerror if True else (lambda value: value)\n\
+         alias(\"x\")\n",
     ] {
         let errors = check(source);
         assert!(
