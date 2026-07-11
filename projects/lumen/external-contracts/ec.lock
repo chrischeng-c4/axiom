@@ -3,13 +3,13 @@ project = "lumen"
 ir_kind = "ec"
 ec_path = "projects/lumen/external-contracts"
 inventory_path = "projects/lumen/aw.toml"
-generated_at = "2026-07-08T15:22:00.916416+00:00"
-ir_digest = "sha256:8714f3bc72330b3ca28cc91744cd7ec086deffb3645bebfbfa1ec26da7227711"
-source_digest = "sha256:726a7a31512c8aa7735b560c2341adb77597d301068d3b082b586e125c435571"
+generated_at = "2026-07-11T04:37:38.941541+00:00"
+ir_digest = "sha256:89eb2ffd085f7f52e3577ccba47b72c90d827901fcc340044b2661821bf21a62"
+source_digest = "sha256:d9f170abc367ef32e9249cdcd071568a7833d8b60252e566d71927073b86d843"
 
 [[sources]]
 path = "projects/lumen/external-contracts/claim-closure/production-claims.md"
-digest = "sha256:df0958ced488d80e38646837bd1cc2b5109e4ae1d026c69a97ccda7f3add71a1"
+digest = "sha256:8f8aebf9b41a6c1cbb303b62c0444e879b7d9e80fd2465775b36f2ed3dd8f729"
 
 [[sources]]
 path = "projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md"
@@ -352,6 +352,21 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:01c8c365bc17c71a8b4ddbaa333dcb4c631326ad019e04159f25189507f86ca9"
 
 [[cases]]
+id = "lumen-claim-dynamic-reshard-durability"
+capability_id = "dynamic-shard-topology"
+claim_id = "reshard-driver-admin-verb-and-cold-start-migration-durability"
+contract_id = "dynamic-reshard-durability"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-reshard-durability"
+test_path = "projects/lumen/tests/behavior_lumen_claim_dynamic_reshard_durability.rs"
+command = "cargo test -p lumen --features operator --test reshard_driver_e2e -- --nocapture && cargo test -p lumen --test reshard_admin_e2e -- --nocapture && cargo test -p lumen --lib segment_rdb -- --nocapture"
+required_for_production = true
+assertions = ["The checkpointed reshard phase driver (state machine, checkpoint-gated cutover, no-transition guard), the four reshard/backup admin verbs (scoped export, additive apply, source eviction, on-demand checkpoint) including idempotency and auth, and cold-start durability of applied/evicted reshard mutations all pass — keeping the migration-path regression class #1389 fixed under standing gate."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:9b0564b4aaeeb19a262c48611b025db835a905a0309232c20d03ffccaaa64e69"
+
+[[cases]]
 id = "lumen-claim-dynamic-storage-pressure-split-policy"
 capability_id = "dynamic-shard-topology"
 claim_id = "storage-pressure-operator-split-policy"
@@ -361,10 +376,10 @@ source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.
 test_path = "projects/lumen/tests/behavior_lumen_claim_dynamic_storage_pressure_split_policy.rs"
 command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
 required_for_production = true
-assertions = ["The operator exposes storage-pressure reshard recommendations without changing HPA-owned serving scale."]
+assertions = ["The operator render gate proves rendering topology conformance: storage-pressure reshard recommendations compute correctly without changing HPA-owned serving scale (rendering only — reshard driver execution, admin verbs, and migration durability are covered by the dedicated reshard-durability gate)."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:0d5414ffd56175aed8ec59425027be728d4ca1928b015bb355f36db816835c91"
+digest = "sha256:d7f9e75f00f33d1b9d702fa8a0aec413efd5f9f2d1e783ca80ee6e24138de7d5"
 
 [[cases]]
 id = "lumen-claim-dynamic-versioned-virtual-bucket-map"
@@ -556,10 +571,10 @@ source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.
 test_path = "projects/lumen/tests/behavior_lumen_claim_k8s_operator_reconcile.rs"
 command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
 required_for_production = true
-assertions = ["The kube-rs operator render path reconciles Lumen CRD inputs into serving resources, including storage-pressure reshard policy, status phases, and fixed storage topology."]
+assertions = ["The kube-rs operator render path proves rendering topology conformance: Lumen CRD inputs map to serving resources, including storage-pressure reshard policy, status phases, and fixed storage topology (rendering only — the live reconcile loop, reshard driver, and admin verbs are covered by the dedicated reshard-durability gate)."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:102bd7e7189a5a268423df788ea9473c69d8c8b5c2ab34268c488160ffb6877c"
+digest = "sha256:0563712f72253990609225abf39a78ac02ed0b1aa10a279bbce293084e88791b"
 
 [[cases]]
 id = "lumen-claim-k8s-operator-storage-topology-reshard"
@@ -571,10 +586,10 @@ source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.
 test_path = "projects/lumen/tests/behavior_lumen_claim_k8s_operator_storage_topology_reshard.rs"
 command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
 required_for_production = true
-assertions = ["The operator render gate proves fixed StatefulSet storage topology and reshard status exposure."]
+assertions = ["The operator render gate proves rendering topology conformance: fixed StatefulSet storage topology and reshard status exposure (rendering only — reshard driver execution, admin verbs, and migration durability are covered by the dedicated reshard-durability gate)."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:6e641864fc73e48b6c3d264e48787cbbec8303d63ec4e9862c0411c033126cad"
+digest = "sha256:a49428a1e00cc3c8548c332cd3576aff2f3c3d1cd539a3fd1e0afc31d8600a6d"
 
 [[cases]]
 id = "lumen-claim-k8s-stateless-kind"
