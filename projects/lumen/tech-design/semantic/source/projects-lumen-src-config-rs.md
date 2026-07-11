@@ -29,6 +29,8 @@ Public API manifest for `projects/lumen/src/config.rs` generated from AST during
 | `shard_map_from_env` | projects/lumen/src/config.rs | function | pub | 95 | shard_map_from_env(shard_count: u32) -> Result<VirtualBucketShardMap> |
 | `fan_in_shard_count` | projects/lumen/src/config.rs | function | pub | 144 | fan_in_shard_count(explicit: Option<u32>, loaded_dirs: usize) -> u32 |
 | `check_fan_in_shard_count` | projects/lumen/src/config.rs | function | pub | 156 | check_fan_in_shard_count(map: &VirtualBucketShardMap, loaded_dirs: usize) -> Result<()> |
+| `routed_pod_topology` | projects/lumen/src/config.rs | function | pub | 183 | routed_pod_topology(shard_count: u32) -> Result<(String, u32)> |
+| `routed_shard_count_from_env` | projects/lumen/src/config.rs | function | pub | 205 | routed_shard_count_from_env() -> Result<Option<u32>> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -198,6 +200,56 @@ pub fn check_fan_in_shard_count(map: &VirtualBucketShardMap, loaded_dirs: usize)
         );
     }
     Ok(())
+}
+
+/// Derives `(StatefulSet name prefix, this pod's shard index)` from
+/// `POD_NAME` + a caller-supplied `shard_count`, for the routed
+/// (`shardCount > 1`, `replicasPerShard <= 1`) serving topology (#1398 R1).
+///
+/// `ClusterConfig::from_env` can't be used here: it requires the full raft
+/// downward-API quartet (`REPLICAS_PER_SHARD`/`VOTER_COUNT`), which
+/// `operator::render::serving_statefulset` deliberately strips at
+/// `replicasPerShard <= 1` — there is no raft peer identity to derive in
+/// that topology, exactly the one routed mode targets. At
+/// `replicasPerShard <= 1` the StatefulSet has exactly `shard_count` pods
+/// (ordinals `0..shard_count`), so `shard_index = ordinal % shard_count ==
+/// ordinal`; this mirrors `raft_host::cluster::ClusterDims::pod_ordinal`/
+/// `shard_index`'s exact math (same `rsplit_once('-')` + `% shard_count`)
+/// so the two derivations can't drift apart.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
+pub fn routed_pod_topology(shard_count: u32) -> Result<(String, u32)> {
+    if shard_count == 0 {
+        anyhow::bail!("shard_count must be > 0");
+    }
+    let pod_name = std::env::var("POD_NAME").context("POD_NAME not set")?;
+    let (prefix, suffix) = pod_name
+        .rsplit_once('-')
+        .context("POD_NAME has no '-<ordinal>' suffix")?;
+    let ordinal: u32 = suffix
+        .parse()
+        .with_context(|| format!("POD_NAME ordinal '{suffix}' is not a u32"))?;
+    Ok((prefix.to_string(), ordinal % shard_count))
+}
+
+/// `Some(shard_count)` only when the operator-rendered `SHARD_COUNT` env is
+/// present and describes more than one physical shard — the routed serving
+/// topology's activation condition (#1398 R1). `SHARD_COUNT` unset or `<= 1`
+/// (including plain non-k8s `lumen serve`) returns `None`, so single-shard
+/// deployments never build a [`crate::routing_remote::RoutedRouter`] at all
+/// (#1398 AC5: zero forwarding overhead, not just a no-op branch through
+/// one).
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
+pub fn routed_shard_count_from_env() -> Result<Option<u32>> {
+    match std::env::var("SHARD_COUNT") {
+        Ok(raw) => {
+            let n: u32 = raw
+                .trim()
+                .parse()
+                .with_context(|| format!("SHARD_COUNT={raw:?} is not a valid u32"))?;
+            Ok((n > 1).then_some(n))
+        }
+        Err(_) => Ok(None),
+    }
 }
 
 #[cfg(test)]
@@ -460,6 +512,116 @@ mod tests {
             msg.contains('2'),
             "error should name the loaded-dir count: {msg}"
         );
+    }
+
+    // ---- routed_pod_topology / routed_shard_count_from_env (#1398) -----
+
+    #[test]
+    fn routed_pod_topology_derives_prefix_and_shard_index() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("POD_NAME", "search-5");
+        }
+        let (prefix, shard) = routed_pod_topology(4).unwrap();
+        assert_eq!(prefix, "search");
+        assert_eq!(shard, 1); // 5 % 4 == 1
+        unsafe {
+            std::env::remove_var("POD_NAME");
+        }
+    }
+
+    #[test]
+    fn routed_pod_topology_matches_cluster_dims_math() {
+        // Same rsplit_once('-') + `% shard_count` math as
+        // `raft_host::cluster::ClusterDims::pod_ordinal`/`shard_index` —
+        // must never drift apart.
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("POD_NAME", "search-7");
+        }
+        let (_, shard) = routed_pod_topology(3).unwrap();
+        let dims = raft_host::cluster::ClusterDims {
+            shard_count: 3,
+            replicas_per_shard: 1,
+            voter_count: 1,
+            pod_name: "search-7".to_string(),
+        };
+        assert_eq!(shard, dims.shard_index().unwrap());
+        unsafe {
+            std::env::remove_var("POD_NAME");
+        }
+    }
+
+    #[test]
+    fn routed_pod_topology_rejects_missing_pod_name_and_bad_suffix() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::remove_var("POD_NAME");
+        }
+        assert!(routed_pod_topology(4).is_err());
+        unsafe {
+            std::env::set_var("POD_NAME", "search-abc");
+        }
+        assert!(routed_pod_topology(4).is_err());
+        unsafe {
+            std::env::remove_var("POD_NAME");
+        }
+    }
+
+    #[test]
+    fn routed_pod_topology_rejects_zero_shard_count() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("POD_NAME", "search-0");
+        }
+        assert!(routed_pod_topology(0).is_err());
+        unsafe {
+            std::env::remove_var("POD_NAME");
+        }
+    }
+
+    #[test]
+    fn routed_shard_count_from_env_none_when_unset_or_single_shard() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::remove_var("SHARD_COUNT");
+        }
+        assert_eq!(routed_shard_count_from_env().unwrap(), None);
+        unsafe {
+            std::env::set_var("SHARD_COUNT", "1");
+        }
+        assert_eq!(
+            routed_shard_count_from_env().unwrap(),
+            None,
+            "shardCount:1 must never activate routing (#1398 AC5)"
+        );
+        unsafe {
+            std::env::remove_var("SHARD_COUNT");
+        }
+    }
+
+    #[test]
+    fn routed_shard_count_from_env_some_when_multi_shard() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("SHARD_COUNT", "4");
+        }
+        assert_eq!(routed_shard_count_from_env().unwrap(), Some(4));
+        unsafe {
+            std::env::remove_var("SHARD_COUNT");
+        }
+    }
+
+    #[test]
+    fn routed_shard_count_from_env_errors_on_non_u32() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("SHARD_COUNT", "not-a-number");
+        }
+        assert!(routed_shard_count_from_env().is_err());
+        unsafe {
+            std::env::remove_var("SHARD_COUNT");
+        }
     }
 }
 // CODEGEN-END

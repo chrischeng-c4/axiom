@@ -2242,6 +2242,48 @@ async fn serve(args: ServeArgs) -> Result<()> {
             lumen::routing::EngineShardSearch::new_with_shard_map(shards, shard_map),
         ));
     }
+    // #1398 R1: activate cross-pod routing only in the operator/k8s routed
+    // serving topology (`SHARD_COUNT` env > 1 at `replicasPerShard <= 1`) —
+    // `routed_shard_count_from_env` returns `None` for every other
+    // deployment shape (including the `--search-shard-segment-dirs` fan-in
+    // path above, which never sets `SHARD_COUNT` the same way), so
+    // `shardCount:1` serving never even constructs a `RoutedRouter` (AC5).
+    #[cfg(feature = "operator")]
+    if let Some(shard_count) = lumen::config::routed_shard_count_from_env()
+        .context("routed shard count from env (SHARD_COUNT)")?
+    {
+        let shard_map = lumen::config::shard_map_from_env(shard_count).context(
+            "shard map from env (SHARD_MAP_VERSION/SHARD_MAP_ASSIGNMENTS/VIRTUAL_BUCKET_COUNT)",
+        )?;
+        let (prefix, local_shard) = lumen::config::routed_pod_topology(shard_count)
+            .context("routed pod topology from env (POD_NAME)")?;
+        let headless = std::env::var("LUMEN_HEADLESS_SERVICE")
+            .unwrap_or_else(|_| "lumen-headless".to_string());
+        let shard_urls: Vec<String> = (0..shard_count)
+            .map(|shard| {
+                format!(
+                    "http://{}:{}",
+                    lumen::routing::shard_host(&prefix, shard, &headless),
+                    args.port
+                )
+            })
+            .collect();
+        tracing::info!(
+            shard_count,
+            local_shard,
+            shard_map_version = shard_map.version(),
+            "cross-pod shard routing active"
+        );
+        let router = lumen::routing_remote::RoutedRouter::new(
+            engine.clone(),
+            state.write_backend.clone(),
+            shard_map,
+            local_shard,
+            shard_urls,
+        )
+        .context("construct routed shard router")?;
+        state = state.with_routed(Arc::new(router));
+    }
     #[cfg_attr(not(feature = "raft-wal"), allow(unused_mut))]
     let mut app = lumen::api::router(state);
     // Peer raft RPCs (`/raft/*`, `/raftz`) share the h2c serve port.

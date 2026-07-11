@@ -86,6 +86,13 @@ pub struct AppState {
     /// (every write passes through unchanged); the reshard driver arms it
     /// via `POST /admin/reshard:fence`. See [`WriteFence`].
     pub write_fence: WriteFence,
+    /// Cross-pod shard router for operator/k8s serving (#1398 R1-R3).
+    /// `None` for every deployment shape except the routed one (`SHARD_COUNT`
+    /// > 1, `replicasPerShard <= 1`, no `--search-shard-segment-dirs`) — see
+    /// [`RoutedBackend`]. The server binary wires a real
+    /// `routing_remote::RoutedRouter` via [`Self::with_routed`]; tests and
+    /// every other deployment shape leave this `None`.
+    pub routed: Option<Arc<dyn RoutedBackend>>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
@@ -235,6 +242,51 @@ pub trait WriteBackend: Send + Sync {
     async fn drop_field(&self, collection_id: String, field_name: String) -> Result<u32>;
 }
 
+/// Cross-pod shard routing for operator/k8s serving pods (#1398 R1-R3).
+/// `AppState::routed` is `None` for every non-routed deployment (standalone,
+/// primary/replica, and the `--search-shard-segment-dirs` fan-in path) —
+/// handlers consult it first and fall back to `search_backend`/
+/// `write_backend` unchanged when it is absent, so `shardCount:1` serving
+/// never even constructs an implementation (AC5: no forwarding overhead).
+///
+/// Every method takes the inbound request's `headers` verbatim: the sole
+/// concrete implementation ([`crate::routing_remote::RoutedRouter`], behind
+/// the `operator` feature) checks the `x-lumen-forwarded` one-hop guard
+/// first and, when forwarding, carries the caller's `Authorization` bearer
+/// and `x-read-consistency` through unchanged (R3).
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+#[async_trait]
+pub trait RoutedBackend: Send + Sync {
+    async fn search(
+        &self,
+        collection_id: &str,
+        req: SearchRequest,
+        headers: &HeaderMap,
+    ) -> Result<SearchResponse>;
+
+    async fn index(
+        &self,
+        collection_id: String,
+        req: IndexRequest,
+        headers: &HeaderMap,
+    ) -> Result<IndexResponse>;
+
+    async fn replace_docs(
+        &self,
+        collection_id: String,
+        req: ReplaceDocsRequest,
+        headers: &HeaderMap,
+    ) -> Result<ReplaceDocsResponse>;
+
+    async fn delete(
+        &self,
+        collection_id: String,
+        external_id: String,
+        field: Option<String>,
+        headers: &HeaderMap,
+    ) -> Result<()>;
+}
+
 #[derive(Clone)]
 struct LocalEngineSearch {
     engine: Arc<Engine>,
@@ -381,6 +433,7 @@ impl AppState {
             writer,
             checkpoint: Arc::new(NoopCheckpoint),
             write_fence: WriteFence::default(),
+            routed: None,
         }
     }
 
@@ -410,6 +463,15 @@ impl AppState {
     /// control/observe `POST /admin/checkpoint` behavior.
     pub fn with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self {
         self.checkpoint = checkpoint;
+        self
+    }
+
+    /// Wire a [`RoutedBackend`] (#1398) — the server binary calls this only
+    /// in the routed serving topology (`SHARD_COUNT` env > 1 at
+    /// `replicasPerShard <= 1`, no `--search-shard-segment-dirs`); every
+    /// other deployment shape leaves `routed` at its `None` default.
+    pub fn with_routed(mut self, routed: Arc<dyn RoutedBackend>) -> Self {
+        self.routed = Some(routed);
         self
     }
 
@@ -997,6 +1059,7 @@ async fn drop_collection(
 async fn index(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
     Path(collection_id): Path<String>,
     Json(req): Json<IndexRequest>,
 ) -> Result<Json<IndexResponse>, ApiErr> {
@@ -1004,11 +1067,18 @@ async fn index(
     for item in &req.items {
         enforce_write_fence(&state, &collection_id, &item.external_id)?;
     }
-    let resp = state
-        .write_backend
-        .index(collection_id.clone(), req)
-        .await
-        .map_err(ApiErr::from)?;
+    let resp = if let Some(router) = &state.routed {
+        router
+            .index(collection_id.clone(), req, &headers)
+            .await
+            .map_err(ApiErr::from)?
+    } else {
+        state
+            .write_backend
+            .index(collection_id.clone(), req)
+            .await
+            .map_err(ApiErr::from)?
+    };
     Ok(Json(resp))
 }
 
@@ -1031,15 +1101,23 @@ struct DeleteQuery {
 async fn delete_external_id(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
     Path((collection_id, external_id)): Path<(String, String)>,
     Query(q): Query<DeleteQuery>,
 ) -> Result<StatusCode, ApiErr> {
     auth.ensure(&collection_id, Role::Write)?;
-    state
-        .write_backend
-        .delete(collection_id.clone(), external_id, q.field)
-        .await
-        .map_err(ApiErr::from)?;
+    if let Some(router) = &state.routed {
+        router
+            .delete(collection_id.clone(), external_id, q.field, &headers)
+            .await
+            .map_err(ApiErr::from)?;
+    } else {
+        state
+            .write_backend
+            .delete(collection_id.clone(), external_id, q.field)
+            .await
+            .map_err(ApiErr::from)?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1075,6 +1153,7 @@ async fn delete_external_id(
 async fn replace_docs(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
     Path(collection_id): Path<String>,
     Json(req): Json<ReplaceDocsRequest>,
 ) -> Result<Json<ReplaceDocsResponse>, ApiErr> {
@@ -1092,12 +1171,30 @@ async fn replace_docs(
     for doc in &req.docs {
         enforce_write_fence(&state, &collection_id, &doc.external_id)?;
     }
-    let resp = state
-        .write_backend
-        .replace_docs(collection_id.clone(), req)
-        .await
-        .map_err(ApiErr::from)?;
+    let resp = replace_docs_routed_or_local(&state, &headers, collection_id, req).await?;
     Ok(Json(resp))
+}
+
+/// Shared write-backend/router branch for [`replace_docs`] and
+/// [`replace_doc`] (its single-doc sugar).
+async fn replace_docs_routed_or_local(
+    state: &AppState,
+    headers: &HeaderMap,
+    collection_id: String,
+    req: ReplaceDocsRequest,
+) -> Result<ReplaceDocsResponse, ApiErr> {
+    if let Some(router) = &state.routed {
+        router
+            .replace_docs(collection_id, req, headers)
+            .await
+            .map_err(ApiErr::from)
+    } else {
+        state
+            .write_backend
+            .replace_docs(collection_id, req)
+            .await
+            .map_err(ApiErr::from)
+    }
 }
 
 /// Single-resource sugar over `docs:replace`: exactly the one-item batch
@@ -1123,6 +1220,7 @@ async fn replace_docs(
 async fn replace_doc(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
     Path((collection_id, external_id)): Path<(String, String)>,
     Json(body): Json<ReplaceDocBody>,
 ) -> Result<Json<ReplaceDocResult>, ApiErr> {
@@ -1135,11 +1233,7 @@ async fn replace_doc(
             fields: body.fields,
         }],
     };
-    let resp = state
-        .write_backend
-        .replace_docs(collection_id.clone(), req)
-        .await
-        .map_err(ApiErr::from)?;
+    let resp = replace_docs_routed_or_local(&state, &headers, collection_id, req).await?;
     let result = resp.results.into_iter().next().ok_or_else(|| {
         ApiErr::new(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1169,20 +1263,19 @@ async fn search(
     Path(collection_id): Path<String>,
     Json(req): Json<SearchRequest>,
 ) -> Result<Json<SearchResponse>, ApiErr> {
-    Ok(Json(search_core(
-        &state,
-        &auth,
-        &headers,
-        &collection_id,
-        req,
-    )?))
+    Ok(Json(
+        search_core(&state, &auth, &headers, &collection_id, req).await?,
+    ))
 }
 
 /// Shared implementation behind `POST /collections/{collection_id}/search`
 /// and its `QUERY /collections/{collection_id}` twin
 /// ([`collection_id_query_dispatch`], epic #1296 R1: every QUERY endpoint
-/// keeps a POST twin — same handler, identical response).
-fn search_core(
+/// keeps a POST twin — same handler, identical response). Consults
+/// `state.routed` first (#1398 R1) — a routed deployment scatters/forwards
+/// by ownership; every other deployment falls through to `search_backend`
+/// unchanged.
+async fn search_core(
     state: &AppState,
     auth: &AuthContext,
     headers: &HeaderMap,
@@ -1192,6 +1285,12 @@ fn search_core(
     auth.ensure(collection_id, Role::Read)?;
     let consistency = read_consistency_from(headers);
     enforce_read_consistency(state, consistency)?;
+    if let Some(router) = &state.routed {
+        return router
+            .search(collection_id, req, headers)
+            .await
+            .map_err(ApiErr::from);
+    }
     state
         .search_backend
         .search(collection_id, req)
@@ -1252,11 +1351,19 @@ async fn batch_search_core(
     let results = join_all(req.searches.into_iter().map(|item| {
         let state = state.clone();
         let auth = auth.clone();
+        let headers = headers.clone();
         async move {
             if let Err(e) = auth.ensure(&item.collection, Role::Read) {
                 return batch_search_auth_error(e);
             }
-            match state.search_backend.search(&item.collection, item.request) {
+            let result = if let Some(router) = &state.routed {
+                router
+                    .search(&item.collection, item.request, &headers)
+                    .await
+            } else {
+                state.search_backend.search(&item.collection, item.request)
+            };
+            match result {
                 Ok(response) => BatchSearchResult::Ok { response },
                 Err(e) => batch_search_storage_error(e),
             }
@@ -1336,7 +1443,7 @@ async fn collection_id_query_dispatch(
     }
     let headers = request.headers().clone();
     match Json::<SearchRequest>::from_request(request, &state).await {
-        Ok(Json(req)) => match search_core(&state, &auth, &headers, &collection_id, req) {
+        Ok(Json(req)) => match search_core(&state, &auth, &headers, &collection_id, req).await {
             Ok(resp) => Json(resp).into_response(),
             Err(e) => e.into_response(),
         },
@@ -1415,6 +1522,14 @@ fn batch_search_auth_error(e: crate::auth::AuthErr) -> BatchSearchResult {
     request_body = DuplicatesRequest,
     responses((status = 200, description = "Duplicate groups", body = DuplicatesResponse))
 )]
+/// Local-shard only, deliberately not wired to `state.routed` (#1398 known
+/// gap): `Engine::duplicates` filters by `min_group_size` *before* any
+/// cross-shard merge could happen, so scatter-then-merge would silently miss
+/// a true cross-shard group (e.g. one copy per shard under `min_group_size:
+/// 2`) — a correctness regression, not a routing gap. Unchanged from
+/// pre-#1398 behavior (already local-shard-only); a correct cross-shard
+/// implementation needs unfiltered per-shard candidate groups from
+/// `storage.rs`, out of this WI's scope.
 async fn duplicates(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -2103,9 +2218,61 @@ impl ApiErr {
     }
 }
 
+/// One-hop shard-forward failure — the owning shard was unreachable (pod
+/// down/rolling) or its response could not be decoded. Raised via `anyhow`
+/// by `routing_remote::RoutedRouter` so `ApiErr`'s classification stays
+/// centralized here rather than duplicated in the `operator`-gated module;
+/// R2 requires this to surface as a clear, distinctly-kinded retryable
+/// error, never a silent local answer.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+#[derive(Debug)]
+pub struct ShardForwardUnavailable(pub String);
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::fmt::Display for ShardForwardUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::error::Error for ShardForwardUnavailable {}
+
+/// The owning shard was reached and answered, but with a non-2xx status
+/// (e.g. a forwarded write hit `404`/`422`). Re-emitted locally with the
+/// same status so a forwarded error is as legible as a local one; `message`
+/// carries the remote's own `{error, message}` envelope verbatim.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+#[derive(Debug)]
+pub struct ShardForwardRemoteError {
+    pub status: u16,
+    pub message: String,
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::fmt::Display for ShardForwardRemoteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "shard forward error ({}): {}", self.status, self.message)
+    }
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::error::Error for ShardForwardRemoteError {}
+
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl From<anyhow::Error> for ApiErr {
     fn from(e: anyhow::Error) -> Self {
+        if e.downcast_ref::<ShardForwardUnavailable>().is_some() {
+            return Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "shard_forward_unavailable",
+                e.to_string(),
+            );
+        }
+        if let Some(re) = e.downcast_ref::<ShardForwardRemoteError>() {
+            let status = StatusCode::from_u16(re.status).unwrap_or(StatusCode::BAD_GATEWAY);
+            return Self::new(status, "shard_forwarded_error", re.message.clone());
+        }
         if let Some(se) = e.downcast_ref::<StorageError>() {
             return match se {
                 StorageError::CollectionNotFound(_) => {

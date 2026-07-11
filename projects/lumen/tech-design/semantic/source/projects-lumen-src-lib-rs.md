@@ -20,32 +20,33 @@ Public API manifest for `projects/lumen/src/lib.rs` generated from AST during Sc
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `aof` | projects/lumen/src/lib.rs | module | pub | 23 |  |
-| `api` | projects/lumen/src/lib.rs | module | pub | 24 |  |
-| `auth` | projects/lumen/src/lib.rs | module | pub | 25 |  |
+| `aof` | projects/lumen/src/lib.rs | module | pub | 22 |  |
+| `api` | projects/lumen/src/lib.rs | module | pub | 23 |  |
+| `auth` | projects/lumen/src/lib.rs | module | pub | 24 |  |
 | `backup` | projects/lumen/src/lib.rs | module | pub | 33 |  |
-| `backup_sink` | projects/lumen/src/lib.rs | module | pub | 26 |  |
-| `config` | projects/lumen/src/lib.rs | module | pub | 27 |  |
-| `consumer` | projects/lumen/src/lib.rs | module | pub | 28 |  |
-| `coordinator` | projects/lumen/src/lib.rs | module | pub | 29 |  |
-| `log_entry` | projects/lumen/src/lib.rs | module | pub | 31 |  |
-| `metrics` | projects/lumen/src/lib.rs | module | pub | 32 |  |
-| `native_wire` | projects/lumen/src/lib.rs | module | pub | 35 |  |
-| `operator` | projects/lumen/src/lib.rs | module | pub | 40 |  |
-| `raft` | projects/lumen/src/lib.rs | module | pub | 43 |  |
-| `raft_sm` | projects/lumen/src/lib.rs | module | pub | 49 |  |
-| `rdb` | projects/lumen/src/lib.rs | module | pub | 50 |  |
+| `backup_sink` | projects/lumen/src/lib.rs | module | pub | 34 |  |
+| `config` | projects/lumen/src/lib.rs | module | pub | 35 |  |
+| `consumer` | projects/lumen/src/lib.rs | module | pub | 36 |  |
+| `coordinator` | projects/lumen/src/lib.rs | module | pub | 37 |  |
+| `log_entry` | projects/lumen/src/lib.rs | module | pub | 39 |  |
+| `metrics` | projects/lumen/src/lib.rs | module | pub | 40 |  |
+| `native_wire` | projects/lumen/src/lib.rs | module | pub | 43 |  |
+| `operator` | projects/lumen/src/lib.rs | module | pub | 48 |  |
+| `raft` | projects/lumen/src/lib.rs | module | pub | 51 |  |
+| `raft_sm` | projects/lumen/src/lib.rs | module | pub | 57 |  |
+| `rdb` | projects/lumen/src/lib.rs | module | pub | 58 |  |
 | `reshard` | projects/lumen/src/lib.rs | module | pub | 59 |  |
-| `routing` | projects/lumen/src/lib.rs | module | pub | 51 |  |
-| `segment_rdb` | projects/lumen/src/lib.rs | module | pub | 63 |  |
-| `spec` | projects/lumen/src/lib.rs | module | pub | 67 |  |
-| `storage` | projects/lumen/src/lib.rs | module | pub | 68 |  |
-| `tls` | projects/lumen/src/lib.rs | module | pub | 69 |  |
-| `tokenize` | projects/lumen/src/lib.rs | module | pub | 70 |  |
-| `types` | projects/lumen/src/lib.rs | module | pub | 71 |  |
-| `vector_index` | projects/lumen/src/lib.rs | module | pub | 72 |  |
-| `wal` | projects/lumen/src/lib.rs | module | pub | 73 |  |
-| `wal_nats` | projects/lumen/src/lib.rs | module | pub | 74 |  |
+| `routing` | projects/lumen/src/lib.rs | module | pub | 60 |  |
+| `routing_remote` | projects/lumen/src/lib.rs | module | pub | 67 |  |
+| `segment_rdb` | projects/lumen/src/lib.rs | module | pub | 79 |  |
+| `spec` | projects/lumen/src/lib.rs | module | pub | 83 |  |
+| `storage` | projects/lumen/src/lib.rs | module | pub | 84 |  |
+| `tls` | projects/lumen/src/lib.rs | module | pub | 85 |  |
+| `tokenize` | projects/lumen/src/lib.rs | module | pub | 86 |  |
+| `types` | projects/lumen/src/lib.rs | module | pub | 87 |  |
+| `vector_index` | projects/lumen/src/lib.rs | module | pub | 88 |  |
+| `wal` | projects/lumen/src/lib.rs | module | pub | 89 |  |
+| `wal_nats` | projects/lumen/src/lib.rs | module | pub | 90 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -110,6 +111,13 @@ pub mod raft_sm;
 pub mod rdb;
 pub mod reshard;
 pub mod routing;
+/// Cross-pod shard routing for operator/k8s serving pods (#1398 R1-R3): local
+/// reads/writes hit the engine directly, remote-owned buckets forward one hop
+/// over h2c. Behind `operator` because it is the only module that needs
+/// `reqwest` as a directly-nameable type; every real deployment already links
+/// it via `operator`'s `backup` feature, so this adds no new crate.
+#[cfg(feature = "operator")]
+pub mod routing_remote;
 /// Columnar mmap disk segment (Stage 2 disk-tier): a single Number column
 /// for `n_docs` rows at one `applied_seq`, written page-aligned for zero-copy
 /// reads. Compiled by default; the disk tier is selected at runtime
