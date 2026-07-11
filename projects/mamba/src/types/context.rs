@@ -1250,6 +1250,18 @@ mod tests {
         tcx.finish_alias_target_transaction(inner, true);
         assert!(tcx.deferred_alias_target(specialized).is_some());
 
+        let deferred_before_rejection = tcx.deferred_alias_target(specialized).cloned();
+        let rejection = tcx.begin_alias_target_transaction();
+        tcx.reject_alias_target(specialized);
+        assert!(tcx.alias_target_is_rejected(specialized));
+        tcx.finish_alias_target_transaction(rejection, false);
+        assert_eq!(tcx.alias_target(specialized), None);
+        assert_eq!(
+            tcx.deferred_alias_target(specialized),
+            deferred_before_rejection.as_ref()
+        );
+        assert!(!tcx.alias_target_is_rejected(specialized));
+
         let rejection = tcx.begin_alias_target_transaction();
         tcx.reject_alias_target(specialized);
         assert!(tcx.alias_target_is_rejected(specialized));
