@@ -442,6 +442,7 @@ manifest = module.load_generated_typespec_manifest()
 assert module._generated_protocol_status(manifest, "typing", "SupportsIndex") == "supported"
 assert module._generated_protocol_status(manifest, "collections.abc", "Iterable") == "supported"
 assert module._generated_protocol_status(manifest, "os", "PathLike") == "supported"
+assert module._generated_protocol_status(manifest, "_typeshed", "SupportsRead") == "unconstrained"
 assert module._generated_protocol_status(manifest, "_typeshed", "SupportsWrite") == "unconstrained"
 # A callable-level TypeVar that is not owned by the protocol stays unsupported.
 assert module._generated_protocol_status(manifest, "_typeshed", "IdentityFunction") == "unsupported"
@@ -449,6 +450,10 @@ assert module._generated_protocol_status(manifest, "typing", "SupportsRound") ==
 assert module._generated_protocol_status(manifest, "_typeshed", "DataclassInstance") == "unsupported"
 assert module._generated_protocol_status(manifest, "_typeshed", "SupportsFlush") == "unconstrained"
 assert module._generated_protocol_status(manifest, "http.server", "_SSLModule") == "unsupported"
+
+sigs = module.parse_generated_signature_param_index()
+fixture = module.TYPE_DIR / "std-libs/_curses/getwin__file_as_SupportsRead_wrong.py"
+assert module.unenforceable_generated_param_reason(fixture, sigs) is None
 "#;
     let output = Command::new("python3.12")
         .arg("-c")

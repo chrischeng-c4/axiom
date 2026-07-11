@@ -2659,7 +2659,10 @@ impl TypeChecker {
                     }
                     ParamSpecKind::VarPos | ParamSpecKind::VarKw => false,
                 };
-                if !kind_compatible || !name_compatible {
+                let omission_compatible = !required_param.has_default
+                    || actual_param.has_default
+                    || matches!(actual_param.kind, ParamKind::Star | ParamKind::DoubleStar);
+                if !kind_compatible || !name_compatible || !omission_compatible {
                     return StrictRelation::Incompatible;
                 }
                 let required_ty = spec::type_use(required_param.ty).0;
@@ -2672,9 +2675,6 @@ impl TypeChecker {
                     StrictRelation::Compatible => {}
                     StrictRelation::Incompatible => return StrictRelation::Incompatible,
                     StrictRelation::Indeterminate => saw_indeterminate = true,
-                }
-                if required_param.has_default {
-                    saw_indeterminate = true;
                 }
             }
             let Some(required_ret) = self.materialize_stdlib_type(spec::type_use(required.ret).0)
@@ -5647,7 +5647,7 @@ mod tests {
 
     #[test]
     fn unnamed_intrinsic_callable_param_does_not_drop_signature() {
-        let mut checker = TypeChecker::new();
+        let checker = TypeChecker::new();
         let params = intrinsic_function_param_sigs(Some(vec![CallableParam {
             name: None,
             ty: checker.tcx.int(),
@@ -5662,7 +5662,7 @@ mod tests {
 
     #[test]
     fn open_param_pack_keeps_known_forwarded_matches() {
-        let mut checker = TypeChecker::new();
+        let checker = TypeChecker::new();
         let expected = checker.tcx.int();
         let actual = checker.tcx.str();
         let args = vec![CallArg::Positional(sp(Expr::StrLit("bad".to_string())))];

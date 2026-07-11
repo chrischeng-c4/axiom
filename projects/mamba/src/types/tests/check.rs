@@ -5951,6 +5951,53 @@ fn typeshed_protocol_keyword_parameter_names_are_enforced() {
 }
 
 #[test]
+fn typeshed_protocol_defaulted_parameters_are_structural() {
+    let valid = check(
+        "from _curses import getwin\n\
+         class Reader:\n\
+         \x20   def read(self, length: int = -1) -> bytes:\n\
+         \x20       return b\"\"\n\
+         class InheritedReader(Reader):\n\
+         \x20   pass\n\
+         class VariadicReader:\n\
+         \x20   def read(self, *lengths: int) -> bytes:\n\
+         \x20       return b\"\"\n\
+         getwin(Reader())\n\
+         getwin(InheritedReader())\n\
+         getwin(VariadicReader())\n",
+    );
+    assert!(
+        valid.is_empty(),
+        "a protocol default must accept an implementation that preserves omission: {valid:?}"
+    );
+
+    for (label, method) in [
+        (
+            "required implementation parameter",
+            "def read(self, length: int) -> bytes:\n\x20       return b\"\"",
+        ),
+        (
+            "wrong parameter type",
+            "def read(self, length: str = \"\") -> bytes:\n\x20       return b\"\"",
+        ),
+        (
+            "wrong return type",
+            "def read(self, length: int = -1) -> str:\n\x20       return \"\"",
+        ),
+    ] {
+        let errors = check(&format!(
+            "from _curses import getwin\nclass Reader:\n    {method}\ngetwin(Reader())\n"
+        ));
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("argument type mismatch")),
+            "{label} must violate SupportsRead[bytes]: {errors:?}"
+        );
+    }
+}
+
+#[test]
 fn typeshed_protocol_class_type_params_are_substituted_in_members() {
     let valid = check(
         "import json\n\
