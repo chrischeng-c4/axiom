@@ -737,14 +737,6 @@ def parse_generated_signature_param_index(
         key = tuple(strings[callable_row[i]] for i in range(3))
         kind = callable_row[3]
         binding_supported = kind in {"m", "i", "c", "s", "t"}
-        type_param_start, type_param_length = callable_row[5]
-        type_param_ids = manifest["type_param_edges"][
-            type_param_start : type_param_start + type_param_length
-        ]
-        generic_metadata_supported = all(
-            _generated_type_param_status(manifest, item, set()) != "unsupported"
-            for item in type_param_ids
-        )
         start, length = callable_row[4]
         branch: dict[str, str] = {}
         branch_reasons: dict[str, str] = {}
@@ -756,9 +748,6 @@ def parse_generated_signature_param_index(
             if not binding_supported:
                 status = "unsupported"
                 reason = "structured_binding_unsupported"
-            elif not generic_metadata_supported:
-                status = "unsupported"
-                reason = "structured_generic_metadata_unsupported"
             else:
                 status = _generated_typespec_status(manifest, node_id)
                 if status == "unsupported":
@@ -823,7 +812,6 @@ def parse_generated_signature_param_index(
                 }
                 for reason in (
                     "structured_binding_unsupported",
-                    "structured_generic_metadata_unsupported",
                     "structured_param_type_unsupported",
                 ):
                     if reason in reasons:
@@ -1473,7 +1461,6 @@ def _status_for_fixture_call(
         reasons = {target["reason"] for target in unsupported}
         for reason in (
             "structured_binding_unsupported",
-            "structured_generic_metadata_unsupported",
             "structured_param_type_unsupported",
         ):
             if reason in reasons:
