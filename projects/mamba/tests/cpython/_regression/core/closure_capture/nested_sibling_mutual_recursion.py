@@ -11,5 +11,4 @@ def sibling_parity():
 
 print("[closure] nested-sibling-mutual-recursion:", sibling_parity())
 
-<!-- marker: missing-generator:mamba-nested-sibling-recursion-tests path: projects/mamba/tests/cpython/_regression/core/closure_capture/nested_sibling_mutual_recursion.py reason: A one-case CPython oracle fixture must prove both nested siblings resolve the same callable cell after all definitions execute. -->
 # HANDWRITE-END

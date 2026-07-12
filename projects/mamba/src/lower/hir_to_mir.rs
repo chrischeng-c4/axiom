@@ -472,20 +472,16 @@ fn collect_func_def_placeholder_syms(stmts: &[HirStmt], out: &mut HashSet<u32>) 
     }
 }
 
-/// #1053: collect the subset of `cell_override` symbols that get a
-/// `HirStmt::Let` (their own first textual assignment) somewhere in this
-/// function's own body — as opposed to symbols this function only ever
-/// READS as a free variable from ITS OWN enclosing scope (those must never
-/// be pre-vivified/reset by this function; that would clobber a value
-/// already installed by the true enclosing invocation). `Let` is HIR's
-/// marker for a plain assignment's first textual occurrence; augmented
-/// assignment, `Assign` re-bindings, for-loop targets, with-as targets, and
-/// walrus targets all lower through `emit_capture_cell_set` (mutate the
-/// existing cell in place) regardless of ordering, so only `Let` can ever
-/// trigger the reset-creates-a-disconnected-cell hazard this set guards
-/// against. Does not descend into nested `FuncDefPlaceholder` bodies —
-/// those are separate `HirFunction`s lowered independently.
-fn collect_let_target_cell_syms(stmts: &[HirStmt], cell_override: &HashSet<u32>) -> HashSet<u32> {
+// HANDWRITE-BEGIN gap="missing-generator:mamba-nested-sibling-recursion" tracker="#1477" reason="A later nested function binding must reuse the cell captured by an earlier sibling closure."
+/// Collect cell-backed bindings whose first textual execution must mutate a
+/// pre-vivified cell. `Let` handles ordinary first assignment; a nested
+/// `FuncDefPlaceholder` similarly binds its `bind_name` at definition time.
+/// Other rebindings already use `emit_capture_cell_set`, so they cannot replace
+/// a captured cell. Nested function bodies are separate `HirFunction`s.
+fn collect_let_target_cell_syms(
+    stmts: &[HirStmt],
+    cell_override: &HashSet<u32>,
+) -> HashSet<u32> {
     let mut out = HashSet::new();
     collect_let_target_cell_syms_into(stmts, cell_override, &mut out);
     out
@@ -499,6 +495,14 @@ fn collect_let_target_cell_syms_into(
     for stmt in stmts {
         match stmt {
             HirStmt::Let { target, .. } => {
+                if cell_override.contains(&target.0) {
+                    out.insert(target.0);
+                }
+            }
+            HirStmt::FuncDefPlaceholder {
+                bind_name: Some(target),
+                ..
+            } => {
                 if cell_override.contains(&target.0) {
                     out.insert(target.0);
                 }
@@ -549,6 +553,7 @@ fn collect_let_target_cell_syms_into(
         }
     }
 }
+// HANDWRITE-END
 
 /// Lower a complete HIR module to a MIR module.
 pub fn lower_hir_to_mir(hir: &HirModule, tcx: &TypeContext) -> MirModule {
@@ -1680,17 +1685,12 @@ struct HirToMir<'a> {
     /// Capture cells initialized in the current function lowering. First bind
     /// gets a fresh cell for this call; later binds update the same cell.
     initialized_capture_cells: HashSet<u32>,
-    /// #1053: subset of the current function's own `cell_override` symbols
-    /// that get a `HirStmt::Let` (their own first textual assignment)
-    /// somewhere in this function's body. Computed once per function
-    /// lowering right after `cell_override` is populated. A nested closure
-    /// that captures one of these before its `Let` has run this invocation
-    /// must pre-vivify an empty cell (see `emit_capture_cell_reset_empty`)
-    /// so the closure's captured cell handle and the enclosing function's
-    /// own cell stay the SAME object once the real `Let` runs — otherwise
-    /// `Let`'s reset-on-first-occurrence would create a disconnected
-    /// replacement cell and orphan the closure's already-captured handle.
+    /// HANDWRITE-BEGIN gap="missing-generator:mamba-nested-sibling-recursion" tracker="#1477" reason="Nested function definition bindings need the same pre-vivified cell invariant as first local assignments."
+    /// Current-function cell bindings whose first textual execution must reuse
+    /// a pre-vivified cell. This includes first `Let` assignments and nested
+    /// function definition bindings captured by an earlier sibling closure.
     pending_let_cell_syms: HashSet<u32>,
+    /// HANDWRITE-END
     /// SymbolId.0 → ordered parameter TypeIds for each user-defined function.
     /// Used at MirInst::Call sites to selectively box primitive arguments when the
     /// callee declares the parameter as Any/object, so match-subject comparisons via
@@ -13441,6 +13441,26 @@ mod tests {
         assert_eq!(
             crate::runtime::exception::unbound_local_error_message("item"),
             "local variable 'item' referenced before assignment"
+        );
+    }
+    // HANDWRITE-END
+
+    // HANDWRITE-BEGIN gap="missing-generator:mamba-nested-sibling-recursion" tracker="#1477" reason="The pre-vivification inventory must include a captured nested function binding, not only ordinary Let targets."
+    #[test]
+    fn captured_funcdef_binding_is_previvified() {
+        let captured = SymbolId(4_177_002);
+        let stmts = vec![HirStmt::FuncDefPlaceholder {
+            name: SymbolId(4_177_001),
+            bind_name: Some(captured),
+            span: Span::dummy(),
+            redef: true,
+            func_sig: None,
+        }];
+        let cell_override = std::collections::HashSet::from([captured.0]);
+
+        assert_eq!(
+            collect_let_target_cell_syms(&stmts, &cell_override),
+            cell_override
         );
     }
     // HANDWRITE-END
