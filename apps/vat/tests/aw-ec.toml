@@ -29,3 +29,17 @@ command = "cargo build -p vat --no-default-features"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "vat-build-dockerfile-build-via-container-cli"
 description = "default and lean (--no-default-features) build compile after the serde_yaml promotion"
+
+[[test_commands]]
+id = "vat-compose-import-fixtures"
+command = "cargo test -p vat --test vat_compose_import -- --nocapture"
+capability_id = "agent-native-gpu-native-dev-containers"
+claim_id = "vat-compose-bounded-compose-subset-up-down-ps-logs"
+description = "compose import parse/expand shape assertions and per-key hard-reject error text (no container/docker required)"
+
+[[test_commands]]
+id = "vat-compose-full-cycle-gated-smoke"
+command = "cargo test -p vat --test vat_compose -- --nocapture"
+capability_id = "agent-native-gpu-native-dev-containers"
+claim_id = "vat-compose-bounded-compose-subset-up-down-ps-logs"
+description = "Full compose import -> up -d -> ps -> logs -> down cycle against a real Docker backend (skips when docker not available)"
