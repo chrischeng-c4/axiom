@@ -8341,11 +8341,11 @@ impl<'a> HirToMir<'a> {
         });
 
         self.start_block(body_block);
+        // HANDWRITE-BEGIN gap="missing-generator:mamba-pinned-unbound-local-diagnostic" tracker="#1476" reason="Generated comprehensions must use the same pinned diagnostic as ordinary function-local unbound reads."
         if let Some(name) = gen.target_reads_before_bind.first() {
             let type_vreg = self.emit_str_const("UnboundLocalError");
-            let msg_vreg = self.emit_str_const(&format!(
-                "cannot access local variable '{name}' where it is not associated with a value"
-            ));
+            let message = crate::runtime::exception::unbound_local_error_message(name);
+            let msg_vreg = self.emit_str_const(&message);
             self.current_stmts.push(MirInst::CallExtern {
                 dest: None,
                 name: "mb_raise".to_string(),
@@ -8356,6 +8356,7 @@ impl<'a> HirToMir<'a> {
             let dead_block = self.fresh_block();
             self.start_block(dead_block);
         }
+        // HANDWRITE-END
         // Unpack tuple/sequence targets: `for k, v in pairs` or `for (v,) in pairs`.
         if !gen.unpack_target {
             self.sym_to_vreg.insert(gen_var, next_val);
@@ -13433,6 +13434,16 @@ mod tests {
     use crate::source::span::Span;
     use crate::source::FileId;
     use crate::types::TypeChecker;
+
+    // HANDWRITE-BEGIN gap="missing-generator:mamba-pinned-unbound-local-diagnostic" tracker="#1476" reason="The generated-body lowering module asserts its diagnostic source stays coupled to the runtime helper."
+    #[test]
+    fn generated_unbound_local_message_matches_runtime_helper() {
+        assert_eq!(
+            crate::runtime::exception::unbound_local_error_message("item"),
+            "local variable 'item' referenced before assignment"
+        );
+    }
+    // HANDWRITE-END
 
     #[test]
     fn return_abi_classifies_checked_int_edge_as_raw_or_boxed() {

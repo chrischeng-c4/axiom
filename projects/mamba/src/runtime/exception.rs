@@ -628,16 +628,20 @@ pub fn mb_name_error_with_name(name: MbValue) -> MbValue {
     instance
 }
 
+// HANDWRITE-BEGIN gap="missing-generator:mamba-pinned-unbound-local-diagnostic" tracker="#1476" reason="The pinned oracle diagnostic is shared by runtime exception construction and generated-function lowering."
+pub(crate) fn unbound_local_error_message(name: &str) -> String {
+    format!("local variable '{name}' referenced before assignment")
+}
+
 pub fn mb_unbound_local_error_value(name: MbValue) -> MbValue {
     let name_s = extract_str(name).unwrap_or_default();
     mb_raise(
         MbValue::from_ptr(MbObject::new_str("UnboundLocalError".to_string())),
-        MbValue::from_ptr(MbObject::new_str(format!(
-            "cannot access local variable '{name_s}' where it is not associated with a value"
-        ))),
+        MbValue::from_ptr(MbObject::new_str(unbound_local_error_message(&name_s))),
     );
     MbValue::none()
 }
+// HANDWRITE-END
 
 /// Convert a MbException to a MbValue (stored as an Instance object).
 fn store_exception_as_value(exc: MbException) -> MbValue {
@@ -3621,6 +3625,24 @@ mod tests {
             "name 'x' is not defined"
         );
     }
+
+    // HANDWRITE-BEGIN gap="missing-generator:mamba-pinned-unbound-local-diagnostic" tracker="#1476" reason="The precise type, inheritance, and pinned-oracle message need runtime coverage independent of conformance caching."
+    #[test]
+    fn unbound_local_error_matches_pinned_cpython_message() {
+        mb_clear_exception();
+        let value = mb_unbound_local_error_value(MbValue::from_ptr(MbObject::new_str(
+            "item".to_string(),
+        )));
+        assert!(value.is_none());
+        assert_eq!(current_exception_type().as_deref(), Some("UnboundLocalError"));
+        assert!(is_subclass_of("UnboundLocalError", "NameError"));
+        assert_eq!(
+            get_exception_message(mb_get_exception()).as_deref(),
+            Some("local variable 'item' referenced before assignment")
+        );
+        mb_clear_exception();
+    }
+    // HANDWRITE-END
 
     // ── set_current_exception / clear_current_exception (public API) ──
 
