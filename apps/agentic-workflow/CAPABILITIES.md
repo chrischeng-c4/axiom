@@ -67,6 +67,7 @@ Gate Inventory:
 | CLI workflow chain | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid` |
 | Root envelope completion contract | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib create_wi_blocks_on_pending_epicize_artifact` |
 | Parent rollup routing | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib closed_change_outputs_parent_inspection` |
+| Runtime Envelope Backward Compatibility | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib envelope_profile -- --nocapture`; apps/agentic-workflow/tech-design/specs/3903.md |
 
 ### Capability Control Plane
 
@@ -111,6 +112,9 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | Capability to epic planning | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib epicize_artifact_includes_markdown_capability_roots` |
 | Epic to change atomization | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib prioritize_lanes_put_bounded_bug_in_ready_now` |
+| Wi Create Help Smoke | change | - | implemented | verified | smoke | `./target/debug/aw wi create --help`; apps/agentic-workflow/tech-design/specs/3909.md |
+| Wi Create Remote Flag Tests | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib wi_create_remote -- --nocapture`; apps/agentic-workflow/tech-design/specs/3909.md |
+| Wi Remove Agent Estimate Unit Command | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib wi_remove_agent_estimate -- --nocapture`; apps/agentic-workflow/tech-design/specs/3910.md |
 
 ### TD/CB Lifecycle Automation
 
@@ -137,6 +141,10 @@ Gate Inventory:
 | Chain liveness proof | change | #914 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests chain_liveness`; apps/agentic-workflow/tech-design/surface/validate/tests/chain_liveness_test.md; refs #921 |
 | Self-EC fixture-loop gate | change | #1280 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture`; apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_self_ec_fixture_loop_gate.rs; apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md; refs #1279, #1280 |
 | Hand-written implementation evidence gate | change | #1382 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests td_no_merge_test:: -- --nocapture`; every hand-written create/modify path must have a committed diff since its exact Td-Init baseline before terminal code-check can close |
+| Quality Primitive Metadata Contract Test | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib quality_primitives -- --nocapture`; apps/agentic-workflow/tech-design/specs/3905.md |
+| Missing Source Review Fails | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib source_reference_missing_required_source -- --nocapture`; apps/agentic-workflow/tech-design/specs/3907.md |
+| Api Contract Source Passes | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib source_reference_api_contract_source_backed -- --nocapture`; apps/agentic-workflow/tech-design/specs/3907.md |
+| Placeholder Completeness Unit Gate | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib completeness_placeholder -- --nocapture`; apps/agentic-workflow/tech-design/specs/3908.md |
 | td surface convergence (EC-gated terminal, check unification, verb lifecycle policy, fixture-loop self-EC) | epic | #1270 | implemented | passing | smoke | children #1272-#1281 + #858 (rescoped); gates: chain conformance per removal, fixture-loop e2e (#1279), self-EC inventory (#1280) |
 
 ### Project-Local TD and EC Gates
@@ -242,3 +250,9 @@ Gate Inventory:
 | CB and cold verification gates | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib cb_gen_cold_rebuild_targets_include_codegen_changes` |
 | Shared service kit substrate | change | #1241 | planned | planned | none | projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md |
 | Regenerability maturity loop (optional) | epic | - | out_of_scope | none | none | - |
+| Authoritative Fixture Blocks On Regenerability Gap | change | - | implemented | verified | smoke | `bash apps/agentic-workflow/tests/fixtures/regenerability_authority/assert_authoritative_blocker.sh`; apps/agentic-workflow/tech-design/specs/3901.md |
+| External Fixture Reports Advisory Gap | change | - | implemented | verified | smoke | `bash apps/agentic-workflow/tests/fixtures/regenerability_authority/assert_external_advisory.sh`; apps/agentic-workflow/tech-design/specs/3901.md |
+| Project Health No Regression | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib project_health -- --nocapture`; apps/agentic-workflow/tech-design/specs/3903.md |
+| Artifact Preflight Health Rollup | change | - | implemented | verified | smoke | `./target/debug/aw health --project agentic-workflow --verify-tests --json`; apps/agentic-workflow/tech-design/specs/3904.md |
+| Standardize Audit First Contract Test | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib standardize_audit -- --nocapture`; apps/agentic-workflow/tech-design/specs/3906.md |
+| Aw Health Default Full Verification Smoke | change | - | implemented | verified | smoke | `./target/debug/aw health --project agentic-workflow`; apps/agentic-workflow/tech-design/validate/health-defaults-to-streaming-full-verification.md |
