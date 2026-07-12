@@ -1,8 +1,17 @@
 ---
 id: vat-microvm-phase-2-vat-build-dockerfile-build-via-container-cli
-summary: (fill)
+summary: Add `vat build`, a CLI command wrapping Apple's `container build` (real BuildKit, confirmed by the Phase 0 spike #1472) to build a tagged local OCI image from an existing, unmodified Dockerfile, plus a reusable in-process `build_image()` entry point Phase 3's `vat compose` will call directly. Phase 2 of the microVM epic (#1471); Phase 1 (#1474, merged) added `Isolation::MicroVm` for `vat run`.
 fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
+capability_refs:
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: vat-build-dockerfile-build-via-container-cli
+    claim: vat-build-dockerfile-build-via-container-cli
+    coverage: full
+    rationale: "Adds commands/build.rs (Args/BuildReport, exec(), build_image(), container_build_command(), ensure_microvm_available()), the Cmd::Build CLI variant, the additive sandbox/microvm.rs system_up()/ensure_system_started() probes, and the serde_yaml unconditional-dependency promotion — the complete Phase 2 design for the new vat build work root."
 ---
+
+# vat MicroVm Phase 2: vat build (Dockerfile build via container CLI)
 
 ## Logic
 <!-- type: logic lang: mermaid -->
