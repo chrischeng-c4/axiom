@@ -8,43 +8,28 @@ fill_sections: [logic, unit-test]
 <!-- type: logic lang: mermaid -->
 
 ```mermaid
----
-id: mamba-strict-type-object-local-producer-provenance
-entry: emit_object_local_producer
-nodes:
-  emit_object_local_producer: { kind: start, label: "typed Object/AOT local producer" }
-  action: { kind: process, label: "look up canonical producer owner action" }
-  evaluate: { kind: process, label: "evaluate data and owner source before transition" }
-  split: { kind: decision, label: "checked arithmetic or shift split" }
-  merge: { kind: process, label: "merge data and owner as paired phi values" }
-  boundary: { kind: process, label: "publish explicit 1451 or 1452 boundary action" }
-  commit: { kind: process, label: "commit exactly one companion transaction" }
-  done: { kind: terminal, label: "Object local has deterministic provenance" }
-edges:
-  - { from: emit_object_local_producer, to: action }
-  - { from: action, to: evaluate }
-  - { from: evaluate, to: split }
-  - { from: split, to: merge, label: "checked or lshift" }
-  - { from: split, to: boundary, label: "call boundary" }
-  - { from: split, to: commit, label: "ordinary local producer" }
-  - { from: merge, to: commit }
-  - { from: boundary, to: commit }
-  - { from: commit, to: done }
----
 flowchart TD
-    producer([typed Object/AOT local producer]) --> action[canonical owner action]
+    producer([Object/AOT typed Int producer]) --> action[canonical producer action]
     action --> evaluate[evaluate data and owner source]
-    evaluate --> split{split or boundary?}
-    split -- checked or lshift --> merge[paired data and owner phi]
-    split -- 1451 or 1452 --> boundary[explicit deferred boundary]
-    split -- ordinary local --> commit[one post-evaluation transaction]
-    merge --> commit
-    boundary --> commit
+    evaluate --> commit[post-evaluation companion transaction]
     commit --> done([deterministic provenance])
 ```
 
-`mod.rs` consumes the same MIR producer metadata as JIT lowering. It never derives ownership from the physical data register: raw values and compile-time immortals publish `None`; fresh runtime results transfer the owner returned by the runtime sidecar; Copy and pass-through operations retain their named source companion; and unknown call ingress/egress remains an explicit #1451/#1452 boundary. Checked arithmetic and left shift form paired `[data, owner]` merge values on every predecessor before the shared post-evaluation transaction releases the replaced companion.
+Object lowering reads the MIR producer-owner record at each instruction. Ownerless and deferred boundaries explicitly publish `None`; fresh numeric and typed-extern results receive the runtime owner sidecar before replacing the destination; pass-through operations use `SourceCompanion` so retain precedes release. Checked arithmetic and left shift construct paired data/owner merge values before their one commit.
 
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/mamba/src/codegen/cranelift/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-object-local-producer-provenance
+    tracker: "#1463"
+    reason: "Object/AOT producer action lowering, runtime owner sidecars, and paired owner phis require a deterministic Cranelift transaction generator primitive.
+```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
