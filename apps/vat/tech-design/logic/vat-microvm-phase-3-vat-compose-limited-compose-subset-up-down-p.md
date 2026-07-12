@@ -555,3 +555,60 @@ e2e_tests:
       - "AC6: a real, unmodified mainstream docker-compose.yml (one image: service, one build: service, a depends_on entry) succeeds through the full import -> up -d -> ps -> logs -> down cycle, with a clean registry afterward, and the source compose file itself required no edits."
       - "Not part of the cargo test / aw-ec.toml gated surface (no CI-portable fixture repo is bundled for this manual smoke); recorded here as the human verification step named by AC6, run once against a developer-supplied compose file during this WI's own close-out."
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/vat/src/compose.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: "R1-R3/R6: new parse()/expand()/materialize() -- a real YAML compose-subset parser plus a supported-vs-hard-reject key walk that produces the exact per-key error text, a build:-to-image() in-process resolution call, and a depends_on no-bridge-DNS warning. No existing generated module has this parse/validate/expand shape, so the whole file is hand-authored this WI (missing-generator:logic:compose-subset-parser, tracker #1484)."
+  - path: apps/vat/src/commands/compose.rs
+    action: create
+    section: cli
+    impl_mode: hand-written
+    reason: "R8-R10: Cmd dispatch for import/up/down/ps/logs, the ComposeRecord registry read/write at <root>/compose/<project>/project.json, up's foreground poll-thread-plus-in-process-run vs. --detach re-exec-plus-poll divergence, and down's registry-driven libc::kill(pid, SIGTERM) dispatch. This process-orchestration shape (in-process call vs. self-re-exec vs. direct-signal-to-a-known-pid) is genuinely new -- no existing vat command proxies a long-running run in three different ways -- so the whole file is hand-authored this WI (missing-generator:cli:compose-lifecycle-orchestration, tracker #1484), the same class of gap Phase 2's commands/build.rs recorded for its own dual-mode divergence (missing-generator:cli:streamed-subprocess-dual-mode, tracker #1479)."
+  - path: apps/vat/src/commands/mod.rs
+    action: modify
+    section: cli
+    impl_mode: codegen
+    reason: "R1: add `pub mod compose;` -- mechanical module registration, no logic, consistent with this file's existing codegen ownership."
+  - path: apps/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: codegen
+    reason: "R8: add `Cmd::Compose { cmd: ComposeCmd }` and `enum ComposeCmd { Import, Up, Down, Ps, Logs }` plus dispatch to `commands::compose::exec`; mechanical clap variant + dispatch addition, consistent with this file's existing codegen ownership (mirrors Phase 1's `--microvm-image` flag and Phase 2's `Cmd::Build` additions)."
+  - path: apps/vat/src/config.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+    reason: "R4: additive `ServiceRuntime::MicroVm` variant (mirrors the existing `Docker` variant, same clap::ValueEnum derive), additive `ServiceConfig.volumes: Vec<VolumeMount>` field with the new `VolumeMount { name, path }` struct (mirrors existing optional Vec fields), and a widened boolean condition in `validate()` (adds `|| has_image` to the existing preset-required gate) -- pure data-model addition plus a mechanical condition widening, no new control flow shape."
+  - path: apps/vat/src/commands/run.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "R4/R5/R9: new `prepare_microvm_service()`/`container_run_command()`/`ensure_microvm_available()` structurally mirror the existing `prepare_image_service`/`docker_run_command`/`ensure_docker_available` trio, and the `ServicePlan`/`ServiceHandle.microvm_name` fields plus the `stop_services()` teardown branch mirror the existing `docker_name` fields/branch -- but `prepare_service`'s new runtime-dispatch match arm and, especially, `run_configured`'s new early-persist step (writing an interim `RunnerRunRecord` with a live pid into `vat.meta.test_run.runner`/`runners` before the blocking `wait_runner_processes` call, so a concurrent `vat compose down` can read a live pid) are genuine control-flow additions to an existing function, not additive mirrors -- the same class of judgment call Phase 1 made for this identical file (`gpu_satisfied` threaded across preflight checks). Hand-authored this WI (missing-generator:logic:runner-early-persist-and-runtime-dispatch, tracker #1484)."
+  - path: apps/vat/src/state.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+    reason: "R7: additive `RunnerRunRecord.pid: Option<u32>` field (mirrors the existing `ServiceRunRecord.pid` field verbatim, same optional/skip_serializing_if shape) -- pure data-model addition, no control flow."
+  - path: apps/vat/tests/vat_compose_import.rs
+    action: create
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "AC2/AC7: pure fixture-based expansion-shape assertions and one assertion per R3 hard-reject key, requiring no container/docker binary -- new test file, hand-authored per this project's e2e-test convention (mirrors vat_build.rs's split between a pure and a gated test file)."
+  - path: apps/vat/tests/vat_compose.rs
+    action: create
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "AC5: gated full up -d / ps / logs / down cycle test against a real container/docker backend, using a `container_available()` skip helper mirroring `vat_cluster.rs`'s Docker-gated pattern and `vat_sandbox_microvm.rs`'s container-gated tests -- new test file, hand-authored per this project's e2e-test convention."
+  - path: apps/vat/tests/aw-ec.toml
+    action: modify
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "R11: register `vat_compose_import.rs` and `vat_compose.rs`'s EC-gated test command(s) as configured test commands for the agent-native-gpu-native-dev-containers capability, so `aw ec gen --verify` / `aw health --verify-tests` pick them up (mirrors Phase 2's `vat_build.rs` registration)."
+```
