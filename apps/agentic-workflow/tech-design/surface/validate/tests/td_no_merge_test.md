@@ -468,13 +468,21 @@ async fn test_code_check_refuses_dirty_touched_scope_modified_tracked() {
 /// (`[[projects]]`, `path = "."` — this flat single-directory fixture's
 /// source root *is* the repo root, so the same file doubles as the
 /// project-local EC inventory file `resolve_ec_project_context` looks up)
-/// and configures `[aw.ec.generated]` with one case per `(id, command)`
-/// pair. Trivially fast `sh -c` runners (`true` / `false`) stand in for a
-/// real EC command — `terminal_ec_gate_summary`'s `verify_ec_context` call
-/// only cares about exit status, not that the command is `cargo test`
-/// (tier-1b `ec.*` cross-CLI binding validation is a separate `aw ec
-/// check`/`gen` concern `verify_ec_context` never consults).
-fn write_858_ec_configured_aw_toml(root: &std::path::Path, project: &str, cases: &[(&str, &str)]) {
+/// and configures `[aw.ec.generated]` with one case per `(id, command,
+/// required_for_production)` triple. Trivially fast `sh -c` runners (`true` /
+/// `false`) stand in for a real EC command — `terminal_ec_gate_summary`'s
+/// `verify_ec_context` call only cares about exit status, not that the
+/// command is `cargo test` (tier-1b `ec.*` cross-CLI binding validation is a
+/// separate `aw ec check`/`gen` concern `verify_ec_context` never consults).
+/// #1469: the third element lets callers author an advisory
+/// (`required_for_production = false`) case alongside a required one, so the
+/// per-close terminal gate's execution-time filter has a fixture to prove
+/// against.
+fn write_858_ec_configured_aw_toml(
+    root: &std::path::Path,
+    project: &str,
+    cases: &[(&str, &str, bool)],
+) {
     // `[[projects.workspaces]]` is required: the full `Project` model
     // (`resolve_ec_project_context` -> `load_projects`, needed for
     // `ec_bindings`) fails to deserialize a `[[projects]]` row with no
@@ -485,7 +493,7 @@ fn write_858_ec_configured_aw_toml(root: &std::path::Path, project: &str, cases:
          [aw.ec.generated]\nversion = 1\nproject = \"{project}\"\n\
          generated_from_td_digest = \"sha256:test\"\n\n"
     );
-    for (id, command) in cases {
+    for (id, command, required) in cases {
         toml.push_str(&format!(
             "[[aw.ec.generated.cases]]\n\
              id = \"{id}\"\n\
@@ -495,7 +503,7 @@ fn write_858_ec_configured_aw_toml(root: &std::path::Path, project: &str, cases:
              td_ref = \"td.md#{id}\"\n\
              test_path = \"tests/{id}.rs\"\n\
              command = \"{command}\"\n\
-             required_for_production = true\n\
+             required_for_production = {required}\n\
              assertions = []\n\n"
         ));
     }
@@ -579,7 +587,7 @@ async fn test_code_check_refuses_configured_red_ec_gate() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
     init_847_seed_repo(&git, root);
-    write_858_ec_configured_aw_toml(root, "demo", &[("ec-red-case", "false")]);
+    write_858_ec_configured_aw_toml(root, "demo", &[("ec-red-case", "false", true)]);
     write_847_changes_spec(root, &[("src/demo.rs", "create")]);
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(root.join("src/demo.rs"), "// implemented\n").unwrap();
@@ -666,7 +674,7 @@ async fn test_code_check_passes_configured_green_ec_gate_and_records_gates() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
     init_847_seed_repo(&git, root);
-    write_858_ec_configured_aw_toml(root, "demo", &[("ec-green-case", "true")]);
+    write_858_ec_configured_aw_toml(root, "demo", &[("ec-green-case", "true", true)]);
     write_847_changes_spec(root, &[("src/demo.rs", "create")]);
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(root.join("src/demo.rs"), "// implemented\n").unwrap();
@@ -800,6 +808,102 @@ async fn test_code_check_no_ec_inventory_closes_with_advisory_marker() {
         after.phase.as_deref(),
         Some(td_phase::TD_MERGED),
         "the advisory path must still advance phase to td_merged"
+    );
+}
+
+/// #1469: the per-close terminal EC gate's execution-time filter must run
+/// only `required_for_production` cases — an advisory (`required_for_production
+/// = false`) case is never executed (its command is `false`, which would
+/// flip the gate red if it ran) and instead shows up in the success
+/// envelope's `cases` list as `<id> (skipped (advisory))`, with
+/// `commands_consulted` counting only the one executed (required) case.
+#[tokio::test]
+async fn test_code_check_ec_gate_skips_advisory_case_and_records_it() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    write_858_ec_configured_aw_toml(
+        root,
+        "demo",
+        &[
+            ("ec-required-case", "true", true),
+            ("ec-advisory-case", "false", false),
+        ],
+    );
+    write_847_changes_spec(root, &[("src/demo.rs", "create")]);
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/demo.rs"), "// implemented\n").unwrap();
+    commit_all(&git, root);
+
+    let slug = "ec-gate-advisory-skip-test";
+    seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
+
+    let output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "an advisory-only-failing gate should still exit 0:\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("\"action\":\"done\""),
+        "the advisory case's failing command must not block completion \
+         (it is skipped, not executed), got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\"status\":\"passed\""),
+        "success envelope must record the EC gate as passed, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\"commands_consulted\":1"),
+        "commands_consulted must count only the executed (required) case, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("ec-required-case"),
+        "success envelope must record the executed required case id, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\"ec-advisory-case (skipped (advisory))\""),
+        "success envelope must record the advisory case as an auditable \
+         skip entry, got:\n{}",
+        stdout
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend
+        .get(slug)
+        .await
+        .expect("read back issue")
+        .expect("issue still present");
+    assert_eq!(
+        after.phase.as_deref(),
+        Some(td_phase::TD_MERGED),
+        "a gate with only an advisory failure must still advance phase to td_merged"
     );
 }
 

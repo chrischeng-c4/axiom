@@ -3511,6 +3511,21 @@ changes:
       as-yet-unbuilt runner binary) into `ec_binding_warnings`.
       `run_check`'s non-JSON branch prints each warning to stderr regardless
       of `clean`. See `chain.md#changes` for the validator implementation.
+      #1469: `verify_ec_context` gained a `required_only: bool` execution-time
+      filter parameter. When `true`, a `required_for_production: false` case
+      is never executed — it still gets a `status: "skipped"` entry in
+      `EcVerifyCommandResult.results` (`stderr_tail: "skipped (advisory)"`)
+      so the demotion stays auditable — and `command_count`/`passed_count`/
+      `failed_count` (and therefore `clean`) only count executed entries.
+      `terminal_ec_gate_summary` (the #858 per-close terminal EC gate) now
+      calls `verify_ec_context(&ctx, true)`; `EcVerifyArgs` gained a
+      `required_only` flag (`aw ec verify --required-only`) that threads the
+      same `true` into `run_verify`, while the bare `aw ec verify` default
+      stays `verify_ec_context(&ctx, false)` (unchanged, runs everything).
+      Tool-manifest commands have no `required_for_production` concept and
+      always run regardless of the filter. See this file's `cb.rs` entry
+      below for the terminal-gate envelope's `cases` list rendering of
+      skipped entries.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/tasks.rs"
     action: modify
@@ -3529,6 +3544,15 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      #1469: the `terminal_ec_gate_summary` success-envelope branch (issue
+      #858's per-close EC gate, `run_check_lifecycle_terminal`) renders each
+      `EcVerifyCommandResult` whose `status` is `"skipped"` as
+      `"<case_id> (skipped (advisory))"` in the `ec_gate.cases` list instead
+      of the bare case id, so a `required_for_production: false` case the
+      gate's `verify_ec_context(&ctx, true)` filter skipped stays auditable
+      in the envelope; `ec_gate.commands_consulted` is unchanged
+      (`summary.command_count`, which `ec.rs` already restricts to executed
+      cases). See `ec.rs`'s entry above for the filter implementation.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/chat_members.rs"
     action: modify

@@ -4708,11 +4708,21 @@ async fn run_check_lifecycle_terminal(
             Some(summary) => serde_json::json!({
                 "status": "passed",
                 "project": summary.project,
+                // #1469: `command_count` already only counts executed cases
+                // (`verify_ec_context`'s `required_only=true` filter skips
+                // `required_for_production: false` cases entirely); `cases`
+                // below still lists every consulted case, but a skipped one
+                // is labeled `(skipped (advisory))` instead of looking like
+                // it ran, so the demotion stays auditable in this envelope.
                 "commands_consulted": summary.command_count,
                 "cases": summary
                     .results
                     .iter()
-                    .map(|result| result.case_id.clone())
+                    .map(|result| if result.status == "skipped" {
+                        format!("{} (skipped (advisory))", result.case_id)
+                    } else {
+                        result.case_id.clone()
+                    })
                     .collect::<Vec<_>>(),
             }),
             // No resolvable project, or a resolvable project with no
