@@ -200,6 +200,15 @@ pub struct ReshardWorkflowSpec {
     pub phase: ReshardPhase,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_shard_count: Option<u32>,
+    /// `shardMap.version` the reshard driver has confirmed every serving
+    /// pod is `Ready` on (#1458 R1) — the persisted checkpoint
+    /// `reshard_driver::advance_convergence` compares `spec.shardMap.
+    /// version` against to decide whether the post-cutover write-pause
+    /// fence must stay armed. `None` (or a value behind the current
+    /// `shardMap.version`) means convergence for the current map is still
+    /// pending or was never confirmed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub converged_shard_map_version: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]

@@ -557,6 +557,7 @@ fn reshard_status_is_recommendation_only_without_capacity_ceiling() {
     spec.reshard_policy.workflow = ReshardWorkflowSpec {
         phase: ReshardPhase::PrepareSplit,
         target_shard_count: Some(2),
+        ..Default::default()
     };
     let status = spec.reshard_status();
 
@@ -584,6 +585,7 @@ fn reshard_status_tracks_workflow_phases_with_capacity_policy() {
         spec.reshard_policy.workflow = ReshardWorkflowSpec {
             phase,
             target_shard_count: None,
+            ..Default::default()
         };
 
         let status = spec.reshard_status();

@@ -774,4 +774,47 @@ async fn reshard_fence_rejects_out_of_range_ttl_without_poisoning_the_fence() {
         .await
         .assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
 }
+
+/// #1458 R2: `DELETE` on a fenced bucket is fence-covered like every other
+/// write — 503 `bucket_write_paused`, retryable, and the doc survives
+/// (proving the delete never reached the backend). Once the fence is
+/// cleared, the same delete succeeds against the (possibly new) map.
+#[tokio::test]
+async fn reshard_fence_blocks_delete_on_the_fenced_bucket() {
+    let s = server();
+    create_users_collection(&s).await;
+    let fenced_id = (0..)
+        .map(|i| format!("d-{i:03}"))
+        .find(|id| bucket_of("u", id) == 0)
+        .unwrap();
+    index_user(&s, &fenced_id).await;
+    assert!(has_doc(&s, &fenced_id).await);
+
+    s.post("/admin/reshard:fence")
+        .json(&json!({ "virtual_bucket_count": VIRTUAL_BUCKET_COUNT, "buckets": [0], "ttl_secs": 30 }))
+        .await
+        .assert_status_ok();
+
+    let resp = s.delete(&format!("/collections/u/index/{fenced_id}")).await;
+    resp.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    let body: serde_json::Value = resp.json();
+    assert_eq!(body["error"], json!("bucket_write_paused"));
+    assert!(
+        has_doc(&s, &fenced_id).await,
+        "the fenced delete must never reach the backend"
+    );
+
+    // Clear the fence (simulating cutover to a new map) and confirm the
+    // same delete now succeeds.
+    s.post("/admin/reshard:fence")
+        .json(
+            &json!({ "virtual_bucket_count": VIRTUAL_BUCKET_COUNT, "buckets": [], "ttl_secs": 30 }),
+        )
+        .await
+        .assert_status_ok();
+    s.delete(&format!("/collections/u/index/{fenced_id}"))
+        .await
+        .assert_status(axum::http::StatusCode::NO_CONTENT);
+    assert!(!has_doc(&s, &fenced_id).await);
+}
 // CODEGEN-END
