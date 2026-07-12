@@ -1,3 +1,5 @@
+// HANDWRITE-BEGIN gap="missing-generator:cli:compose-lifecycle-orchestration" tracker="#1484" reason="R8-R10: Cmd dispatch for import/up/down/ps/logs, the ComposeRecord registry read/write at <root>/compose/<project>/project.json, up's foreground poll-thread-plus-in-process-run vs. --detach re-exec-plus-poll divergence, and down's registry-driven libc::kill(pid, SIGTERM) dispatch. This process-orchestration shape (in-process call vs. self-re-exec vs. direct-signal-to-a-known-pid) is genuinely new -- no existing vat command proxies a long-running run in three different ways -- so the whole file is hand-authored this WI (missing-generator:cli:compose-lifecycle-orchestration, tracker #1484), the same class of gap Phase 2's commands/build.rs recorded for its own dual-mode divergence (missing-generator:cli:streamed-subprocess-dual-mode, tracker #1479)."
+
 //! Compose lifecycle orchestration: import/up/down/ps/logs for docker-compose projects.
 //!
 //! Manages a registry at `root/compose/<project>/project.json` to track
@@ -356,3 +358,4 @@ fn sanitize_project_name(name: &str) -> String {
         .collect::<String>()
         .to_lowercase()
 }
+// HANDWRITE-END

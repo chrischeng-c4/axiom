@@ -1,3 +1,5 @@
+// HANDWRITE-BEGIN gap="missing-generator:e2e-test:compose-import-fixtures" tracker="#1484" reason="AC2/AC7: pure fixture-based expansion-shape assertions and one assertion per R3 hard-reject key, requiring no container/docker binary -- new test file, hand-authored per this project's e2e-test convention (mirrors vat_build.rs's split between a pure and a gated test file)."
+
 //! Pure fixture-based tests for vat compose import.
 //!
 //! Tests parse/expand/materialize with no container/docker required,
@@ -217,3 +219,4 @@ x-toplevel: custom
         assert!(result.is_ok());
     }
 }
+// HANDWRITE-END
