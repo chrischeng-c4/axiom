@@ -1,0 +1,516 @@
+version = 2
+project = "mamba"
+ir_kind = "td"
+td_path = ".aw/tech-design/projects/mamba"
+generated_at = "2026-07-12T06:41:41.085714+00:00"
+digest = "sha256:14c4ae679b79edd0534021fc29393a4fc6326f68c15b6407e498c0d22c7af87f"
+source_digest = "sha256:14c4ae679b79edd0534021fc29393a4fc6326f68c15b6407e498c0d22c7af87f"
+ir_digest = "sha256:b19a64f6d3b84a447110b2e5ace4d6fd64ba9830ae8fae831393deda66ceb273"
+
+[[files]]
+path = "README.md"
+digest = "sha256:05640b42327b4d8159038f0ebd22734e36bc7702f72e961d5f86dcb1d3793935"
+ir_digest = "sha256:f1cb6ce1d81cba26224c2cca0598cf1bd37d395625db511fa03f17eed237880e"
+section_count = 15
+
+[[files]]
+path = "ROADMAP.md"
+digest = "sha256:2cd51bdc06787236ac942b7cb2abaa9c0b003ebc96443008a24757000a90cf7c"
+ir_digest = "sha256:4410a74e84fd1380aaecbdd28c44ff7feb1a9edc1d13937cd7a91812b93af467"
+section_count = 8
+
+[[files]]
+path = "all-mamba-p0.md"
+digest = "sha256:4f4a7cfa1e0783f61b29a281b2cd54053a58dfcdad173cd0448cc1b8c2711ecb"
+ir_digest = "sha256:4aa87413823e28ee21d48173e961db00a745e2085480774925da67abebe8883c"
+section_count = 7
+
+[[files]]
+path = "conductor-mamba-p0-spec.md"
+digest = "sha256:5b13f043bd339649da550237d9ce9651d09996700773f877df102364439cb4bf"
+ir_digest = "sha256:0e4ecf1a89d11e3dcb0d3908eae256c239484a2d111ffb49ffcb0395694ef0cd"
+section_count = 22
+
+[[files]]
+path = "config/config-schema.md"
+digest = "sha256:170118229b11003aee9cd87c8db23d7fd1731d167ccbec1b11824cbc85f1fc02"
+ir_digest = "sha256:4898afc366a3ce827cf9eb292eb40cd0ee73e25b26b52eaa0b88034959f8163e"
+section_count = 7
+
+[[files]]
+path = "config/mambalibs-mode-2.md"
+digest = "sha256:7208c6cbf4e5fc8a9e803151d1efe57aff73116c39aee375d16bd39fda0dd9b9"
+ir_digest = "sha256:733142d9949e3aefc351ef3f36fd12cc7ab6acfaba8fce16c903948d4676ac51"
+section_count = 20
+
+[[files]]
+path = "ffi/bindings-and-stubs.md"
+digest = "sha256:1e93ea11841475c61da5390cab78b8167094ebfa0e933e91b0d56427801c450b"
+ir_digest = "sha256:1a1cdc017fd42ce344e47fadbd56b54105823d0887fb91a83de656cde0ca31ab"
+section_count = 4
+
+[[files]]
+path = "ffi/c-parser-and-types.md"
+digest = "sha256:3ad43842cfb59d280284241f9232f659effa23992ef3c1b6a8baa5cffd5dec24"
+ir_digest = "sha256:3bbe323bc7def54e8f01456c93f8f55b202c75aa55111c66e3a90dcff4c0243f"
+section_count = 4
+
+[[files]]
+path = "ffi/memory-and-safety.md"
+digest = "sha256:9b32a03dca907e45c84ae819e3de031fe77c9bd88690c43ae0bfdb0ba6a8ac68"
+ir_digest = "sha256:31b3dddcc9ec28d73984155ce4de0e27e958fc7bfa1ed73b793169ff3550b3af"
+section_count = 4
+
+[[files]]
+path = "interfaces/rest/mamba-strict-type-preserve-per-producer-owner-source-contracts.md"
+digest = "sha256:fde97057ba36f6f4a0abb79e42c4a7cd7789b046ee471ec7209ceeb6fdcaadf7"
+ir_digest = "sha256:f6867fdfdbc8e7284360ff868388e1470fdf2b4f3de6d7e712837aa9816e6ac2"
+section_count = 2
+
+[[files]]
+path = "logic/mamba-pkgmanage-remove-implicit-pypi-default-from-add-lock.md"
+digest = "sha256:20cc53f9a053f363af88ea154ad77e3aab592d51c78031d41040fa09e43dcb96"
+ir_digest = "sha256:6cf3dc00069f76a2b26d0c9955e5f9435f3d3f93ecaf2d239cb248929550da34"
+section_count = 3
+
+[[files]]
+path = "lower/ast-to-hir.md"
+digest = "sha256:24236456c7bb69a9b1383827ccc36411a6e1196534c244ff210542c4d774b36e"
+ir_digest = "sha256:b2aaf1ca0ac344c1ae86261404390312c29e76be4de16de10ee13859eae6bbba"
+section_count = 7
+
+[[files]]
+path = "lower/hir-to-mir.md"
+digest = "sha256:bf0681c43a3d16746574bf1119754242e1e9fcee5e22372b3cfd169bc9ead280"
+ir_digest = "sha256:37d6f5b82259a672f0c60420677095ba04404055e40813696722f6dfae734b79"
+section_count = 7
+
+[[files]]
+path = "mamba-all-p1-spec.md"
+digest = "sha256:8768700de5594268ad5cbe07c9fd497686a66da18f26c8570e203f9bc67785d5"
+ir_digest = "sha256:41fafc8cfe7881f7fd4c1fa7c55a40a23c451dd52f2ec48e0d218069007a9407"
+section_count = 2
+
+[[files]]
+path = "mamba-p1-lang-features-spec.md"
+digest = "sha256:81ec743a62dda040c47b7cbdef7c6f305bf674c9cef6b9da277598e6c75ae20c"
+ir_digest = "sha256:70de4dd2fff7dc8a2adf74a98dc53dfd163a8c4bb51231ba3968c369768dc324"
+section_count = 22
+
+[[files]]
+path = "mir/mir.md"
+digest = "sha256:db6c3bcbcda023d92423aa884de749fc77afd4210cc3774ea3e0f0775b3f3d17"
+ir_digest = "sha256:7999012f32279a2bf8268484031ec99c8c36811a6b12146a080cece6e6cf356c"
+section_count = 7
+
+[[files]]
+path = "specs/3885.md"
+digest = "sha256:bbd01b3574cb134c530001b48e78a7319614ea89905effbdfdbc22e046518b3f"
+ir_digest = "sha256:7a1d197b8bfac551af47d0310c67f635e87136d856ba2c65b9f8a1aaf2341ea9"
+section_count = 7
+
+[[files]]
+path = "specs/3952.md"
+digest = "sha256:03070bc4564cb9bb6a14222fd0218c72159552c7ff2986ef9201ce788198c81a"
+ir_digest = "sha256:771ed21f4dfdd670dab07a11cfff943022665561ff248923834d61a87984ef96"
+section_count = 7
+
+[[files]]
+path = "specs/3961.md"
+digest = "sha256:94c680e77169f68b4d5a9d76f22036eda783eebfaf82cea972a9c9c69abc8f11"
+ir_digest = "sha256:6de7e8356996c75aba87bfce969d00b8782a64ba7740f47ac7de7342256cb4b6"
+section_count = 7
+
+[[files]]
+path = "specs/3966.md"
+digest = "sha256:dc757ec16e598d8fed73bd8b6de6ad408d833f3b3a66853d325a6ce31e2cdae7"
+ir_digest = "sha256:8a94f15b52a3c3344b6b19fb6d50d6fc14b42b380d0258035798ee9f7f387445"
+section_count = 7
+
+[[files]]
+path = "specs/3971.md"
+digest = "sha256:d68fc30831cbfb34551e6d78f1a8245baf21c5fb6177a19a76c7e9b03af25ac6"
+ir_digest = "sha256:e9962c9f0ab67edab9c99eaceacdc79160d41eb2c75bce4d365d3f12757253d7"
+section_count = 7
+
+[[files]]
+path = "specs/3993.md"
+digest = "sha256:4cd4958a89c02bf08c7dc392230a4ae72814c26435f4ec929c78a569b16c6c59"
+ir_digest = "sha256:b24ef221199c8cafb64679a4b7cd22b3423fcd618f413e35fccd4cc74eb19ebf"
+section_count = 7
+
+[[files]]
+path = "specs/3997.md"
+digest = "sha256:ad50aaa3ee450f51deaf59d334a09f0d656329865d22df781764aaa38510eeb8"
+ir_digest = "sha256:8a486e3859bfa9915990558258713a050090802ad591f9dc755e86c927a18785"
+section_count = 7
+
+[[files]]
+path = "specs/4001.md"
+digest = "sha256:7e4aac8c057d94a9439d5f9be9d4293c930ad59267d63e32baa0fa86d46ad20f"
+ir_digest = "sha256:622a7014dc4787f94271b35a41c77ec17374a109c6fff243b1c6963c3896336d"
+section_count = 7
+
+[[files]]
+path = "specs/4003.md"
+digest = "sha256:6fc34f73d1e1a5d5b06cfe104e738993df1b2b8666b42bf34c37a47c47bfb03f"
+parse_error = "schema:80-107: section 'schema' at lines 80..107: JSON Schema typed-payload parse error: did not find expected ',' or ']' at line 7 column 90, while parsing a flow sequence at line 7 column 15"
+
+[[files]]
+path = "specs/4006.md"
+digest = "sha256:59df2680d3e1b5bb391675d23ead9477787130f7f9e2023f0f253f6693692e6d"
+ir_digest = "sha256:1800d0942364a61e004ba614fc1525df2e67df81e48cbc6fa5b4b43c6cb5a1aa"
+section_count = 7
+
+[[files]]
+path = "specs/4009.md"
+digest = "sha256:2c2efb0f3e897fe1a6c4b1da670c74343855d188c332194f2fef2a065aae839b"
+ir_digest = "sha256:01f54879ac5a3a96787e88b6f9c6df4035fe113b4eee3cbb3e093b50f930eedc"
+section_count = 7
+
+[[files]]
+path = "specs/4011.md"
+digest = "sha256:2668abcb4a24613de89524a39fbae4ddc8aab9661ad53a60b8d4f8fd0b45d382"
+ir_digest = "sha256:b50e78cf8a229f3f89d420ef1468f29f1a9ac07099254f1396cbb43571078d55"
+section_count = 7
+
+[[files]]
+path = "specs/4013.md"
+digest = "sha256:8d0dac87548aead4c9b6b0be2e75675e08b292fe7b91122c35736ff8a2ddccd9"
+ir_digest = "sha256:861a5abe495c1c3fdc4173e4fad0f3929794ac7632d3fdbd1f0f5184a3d1598b"
+section_count = 7
+
+[[files]]
+path = "specs/4014.md"
+digest = "sha256:2b8d386d41b83fd6bc318dc94e7297363839c0fb7f80f5e5398600f2e881e5d1"
+ir_digest = "sha256:f9ec6850ac808915a896fd6298dc7f55374495708ca95679971d6381ca978a81"
+section_count = 7
+
+[[files]]
+path = "specs/4017.md"
+digest = "sha256:bf74829e3bc343896c646592ca2b7de5d62f2cb10ff8c37483fbd0a27d5d43f8"
+ir_digest = "sha256:67ed464a0527c0252d7ec4c9ebd863b23ca80a7a4715ec9b72e9280398782416"
+section_count = 7
+
+[[files]]
+path = "specs/4019.md"
+digest = "sha256:91c7938a8be6bc579e1a9b741ac013f49b50c4273e28177044ddd8ca5a9a1bc6"
+ir_digest = "sha256:4aa982c7ee2e81c23b1dc9b55ccfd74be434ce9b376c60e815940aa8f8c76ee1"
+section_count = 7
+
+[[files]]
+path = "specs/4021.md"
+digest = "sha256:9a2425323f7d35867a4142a44a159945c89f6ddd3811894a26d3de0e05b3c1da"
+ir_digest = "sha256:496efe4ca50164deea5e87f7054384318dfbd84e050ebecdc86282fb6a7e56c0"
+section_count = 7
+
+[[files]]
+path = "specs/4022.md"
+digest = "sha256:13fd3be5fcf0452e99be4195ccb7c80d41d42ca25ab6bda5f2f95c93635680d1"
+ir_digest = "sha256:f6455db98671798015b1cac345c15903d4c0fc98776adb15fd6dd36d0a1a7328"
+section_count = 7
+
+[[files]]
+path = "specs/4024.md"
+digest = "sha256:9d7e14c9b74b50d73d03f50b3d26e823a848be0d3d73863485394dc221cad8db"
+ir_digest = "sha256:a995bde61ccb1394a0ae05a9fd8c8d3ac1e3ced061f02c7b4747a3d4641a1765"
+section_count = 7
+
+[[files]]
+path = "specs/4026.md"
+digest = "sha256:45f0c84cd5c80d51380040b811acb8cf3669a360163b2b7f83a7d8b9b5c4bd33"
+ir_digest = "sha256:3bc24534d8c3a8325e50309427bd56978f70733fc47dd418fec59c7f147dd320"
+section_count = 7
+
+[[files]]
+path = "specs/4028.md"
+digest = "sha256:8fec5bdb96ff0aeddaa14824804e8b515a316d82f1d8bf4c79a2057ca6aa8530"
+ir_digest = "sha256:4387b75a7fd109ff0535ef346ab4c78a33e173e773cac86632ba06812e9d5750"
+section_count = 7
+
+[[files]]
+path = "specs/4031.md"
+digest = "sha256:d0de4bf66b971654786b8564d10884ca43754164b9c889e095bb58c246b6bb15"
+ir_digest = "sha256:584ecc6b1767b21d115536eeaf6848b19016cb33f0bda895b28ed397adfa44dd"
+section_count = 7
+
+[[files]]
+path = "specs/4033.md"
+digest = "sha256:74db6f2dfdb4e9f96c5fea338876924a4ef9b76b120f38ebdb981187552e947b"
+ir_digest = "sha256:2bac0a27f4b3a8601ce18f36f62e8e37ca666ba965e05cae3e3b145e739cf0d6"
+section_count = 7
+
+[[files]]
+path = "specs/mamba-bug-run-argv-forward.md"
+digest = "sha256:174185359988d0e4f07228873ca6c373e916a6788c4ca81ebcb5d9c797d2a97b"
+ir_digest = "sha256:5696d937aef79e99db3306853c4702e7309390a78e0e2f79c82af3e39ab89e13"
+section_count = 4
+
+[[files]]
+path = "specs/mamba-bug-tuple-unpack-evaluation-order.md"
+digest = "sha256:9591aabf03fee355af1ff946c2424b62095c2973c055d2c2fe3e448db677e4a2"
+ir_digest = "sha256:105da084a5f8edc9748621e3ff233fbcfbc43aa66200a874e5a280f31141ae68"
+section_count = 4
+
+[[files]]
+path = "specs/mamba-perf-specialized-list-t-backing.md"
+digest = "sha256:f7379ce39593f9534c167e748aa84c28f3c530a6a3886dde89f72b54632ebc85"
+ir_digest = "sha256:1d9aaf5470faec7a36a3e580f06ae148b3c4a9fc5334d4b45c100804668a48e1"
+section_count = 4
+
+[[files]]
+path = "stdlib/archive-and-compression.md"
+digest = "sha256:d6eff687bf1539080e53ed78c3925b0c06191849de33da266274898346a0eedc"
+ir_digest = "sha256:7b2a160bd72d140bb60cae73d7919c4484fe9e9ddbe967c82895945c552bf04e"
+section_count = 4
+
+[[files]]
+path = "stdlib/argparse.md"
+digest = "sha256:156cab028dd09dd9ccb5b817353be5182bd11a58ac2e3c89805ca00235a51712"
+ir_digest = "sha256:955fcde237b591d99afe7d14dcaf43ed7e3355179db5a3cfd51f4e155f0089f5"
+section_count = 4
+
+[[files]]
+path = "stdlib/builtins.md"
+digest = "sha256:a75592e745250c609506d6e66a54ca161b006c73e11771ee214b3b67f06b8d42"
+ir_digest = "sha256:4e2ef472ad01144dd5fb83e95896756b2aa0992bbbdeafea4e2020ee533f9f5d"
+section_count = 7
+
+[[files]]
+path = "stdlib/collections.md"
+digest = "sha256:08fca0d7a6b875220dfe3addf46d1b7ffed65a3641a89eb93b5e020b4bf07d68"
+ir_digest = "sha256:54b0d168e8395bcf3d7cd303f7b584d8658e62efed3f2cea5a4fa0942e9baf97"
+section_count = 8
+
+[[files]]
+path = "stdlib/concurrency.md"
+digest = "sha256:1a82c9691e06851c9b6d9c90508e9ca6e338856ca8b5061f18905dff3b22c9bb"
+ir_digest = "sha256:4d26d5b2871f1d2f1140588c24824779c8399a439fb366ef29210459e844809b"
+section_count = 4
+
+[[files]]
+path = "stdlib/database.md"
+digest = "sha256:2942353890bda8c085f007ea2575fd0cb513117c6b6761277b59351496ad49d5"
+ir_digest = "sha256:1c62ca3c875fc51a48103ef05f8a4d081a027b7abd1b52e0f7479060338ce97e"
+section_count = 4
+
+[[files]]
+path = "stdlib/datetime.md"
+digest = "sha256:aafb122cffca21bfd0bea5d9b3325881933cad86e2f59b86b246f269d41d730b"
+ir_digest = "sha256:b7b75e66da8ed048a998cfedaea36d6a289582ac31a46ddd8d6c6a894105d7fc"
+section_count = 5
+
+[[files]]
+path = "stdlib/diagnostics-utils.md"
+digest = "sha256:25d17367697a63d5d960194f6f4fe72d3771030d6886913a22f6f3304e91dfdb"
+ir_digest = "sha256:b243494109877d1c5472251e443d24b9cf80e7bded87477f5242d373124d15ed"
+section_count = 4
+
+[[files]]
+path = "stdlib/enum-and-dataclasses.md"
+digest = "sha256:0d3c091191f4b82b11a7bd5679a9dd78f671909a2cbb4e4d95e3d808558d9193"
+ir_digest = "sha256:806de4ecad83c67e529b20cf0b833fca9ff0b5715e358cfefdbe9d7a2bb3cbd0"
+section_count = 4
+
+[[files]]
+path = "stdlib/fs-utils.md"
+digest = "sha256:1de04f86af2e4c86ceb6f8f31477b8bcd517cec967e5e6e95f9520d171a2e73e"
+ir_digest = "sha256:e771a8b6a75065e7bfed100b1419684ac61beee7930d7ebc30404191716272ad"
+section_count = 5
+
+[[files]]
+path = "stdlib/functools.md"
+digest = "sha256:2699f9148bbac9114d31dfdae0f880917dd8aec67766716181bd76e173d17129"
+ir_digest = "sha256:b9d69cfeafc8e6bdc1554ccfe9407ea7fad0f8f14a0c5908917d758e889feddf"
+section_count = 8
+
+[[files]]
+path = "stdlib/future.md"
+digest = "sha256:c5b5b11a1978581f87dd1cde11cfd21d8c897d6dfdbb1b638a9efbe5bb4f918a"
+ir_digest = "sha256:8d1fa7e7861f32877829ff96d25a912d15d114dd3f4639ffb9a397d90317edb5"
+section_count = 4
+
+[[files]]
+path = "stdlib/hashlib.md"
+digest = "sha256:dfd7c88195f1facded728e9b35433a821495b307fe463d1b516903a77915b4e0"
+ir_digest = "sha256:5d53d4577baaef0368cfb836f6af198a96dc6f2bca3f1f7bd0a51f74218db937"
+section_count = 5
+
+[[files]]
+path = "stdlib/idlelib.md"
+digest = "sha256:2ecff59197210ccd28c364d9259b8df299322d6639c7842b940dd6f0e0f26f2b"
+ir_digest = "sha256:63efe31ae7755a81409e7a08729f32283b04bada1301ed0d3787010bf59cc4f1"
+section_count = 4
+
+[[files]]
+path = "stdlib/io.md"
+digest = "sha256:c94f0e945fd517564b13535a1eb490e3969b881a0d703b644997d7eb3c751415"
+ir_digest = "sha256:ebd8a918586288e89a2b1bf98a2d985dd74ba7fd1c2b8e190460334fdbe13533"
+section_count = 5
+
+[[files]]
+path = "stdlib/itertools.md"
+digest = "sha256:0542634889cb8435bba4fd1193063cd68c04bf97dd6c2e65b0ced245146b9232"
+ir_digest = "sha256:168ee0e07c86be28564c8115c9112ee8d45ec6e837c3a9a76f9d0444e9dcc882"
+section_count = 7
+
+[[files]]
+path = "stdlib/json.md"
+digest = "sha256:139931653adda684d563a10a6d62b1a34dcf15277b67b0d3402e5a548bfa1b20"
+ir_digest = "sha256:c3413270fbb4c21ae047be50003c4a56235bbaebfae3a2bc92b35f206fa61a42"
+section_count = 6
+
+[[files]]
+path = "stdlib/logging.md"
+digest = "sha256:700be8d01af38be7ee6f0767c49ea58eb3b201e8aa95069b9f86f81cfd12a2ac"
+ir_digest = "sha256:5df5feb37d695617de15b6411849fcd84e1b9abbef3fe88b9f73449aab26a503"
+section_count = 4
+
+[[files]]
+path = "stdlib/main.md"
+digest = "sha256:8f844994fc2a1fec51b3b7a57e8bea31655b66064b56e66b1254eaddc5276fdc"
+ir_digest = "sha256:ed46d2f96a47df95c2f4bc8baf5517ad7043845a357bd8df02ef49e69d1ff13f"
+section_count = 4
+
+[[files]]
+path = "stdlib/markup.md"
+digest = "sha256:1b0c8a36b1c92e62853a04d2673661ed60909fcbe2a6c9f6014a6595cd6e1c4f"
+ir_digest = "sha256:5557f74115343144138a2a2c241b00a7d6ab0150b501aa82aca4ec89c584b32b"
+section_count = 4
+
+[[files]]
+path = "stdlib/math.md"
+digest = "sha256:49ea73a94f182619a238051c6b3af3da8309e6421d92d2ce03520d9ba0d18603"
+ir_digest = "sha256:70e438e45c60bda4ac1190ac188c6fada16dfcdcea5a6285f9d3c7497aadc710"
+section_count = 7
+
+[[files]]
+path = "stdlib/native-implementations.md"
+digest = "sha256:a54d46b0946c749766912444072857d8e880254a234f435aa62d8cf509f56e3e"
+ir_digest = "sha256:6ca60f81697032d0a0f7f51ffba4cbd82c00136e3e67b4bad70bd8dea3872044"
+section_count = 5
+
+[[files]]
+path = "stdlib/network.md"
+digest = "sha256:88ae76ca301c69bb8b17be93b99a657a7cfd92b88fcb503a7eb81ed1420035b9"
+ir_digest = "sha256:7b867f8954e6922c66be57d9fcd93ba7abd8849edc7ecb5ee59332cf90998d28"
+section_count = 4
+
+[[files]]
+path = "stdlib/numeric.md"
+digest = "sha256:f1032befc2193427ae40216bcdd920d7431e0a814c8efe4d7b752de25efe9da1"
+ir_digest = "sha256:e00460e987fe6dc403b24c1d06563659baa920f8e56e96f2f825edb69e9445f3"
+section_count = 4
+
+[[files]]
+path = "stdlib/operator-and-copy.md"
+digest = "sha256:b4f5b9853b5bcc389079f05f444dca98d240280dbfd68db758beb4d32339f560"
+ir_digest = "sha256:28b4acd55179a21c7088fd69f630d602a36e8ffe128f4fade0dcfd94f7233563"
+section_count = 7
+
+[[files]]
+path = "stdlib/os.md"
+digest = "sha256:10709e752c1345faec5637ba9c78f376b4570b9e2b604290b442518f66c23caa"
+ir_digest = "sha256:1bcf60585dd054eaee6755fd8bbee7d01ba7cfb5c4863552144c15547758bdaa"
+section_count = 6
+
+[[files]]
+path = "stdlib/pathlib.md"
+digest = "sha256:5f8d6df6871fcb0572d65b57d72b52e346492d049afc809c42a2c3b62813b90d"
+ir_digest = "sha256:c5b89735e8c4655197a390f5a6fd1a4c6bb93a2f920386dd45f8615849e15629"
+section_count = 5
+
+[[files]]
+path = "stdlib/posix.md"
+digest = "sha256:4d7ff61ffed5013e05182ed88febfe4a611580af074e243d0f07c9eef9719462"
+ir_digest = "sha256:1a940a9f786ea1b2305aa1e1c31967d48fce4778439cacbec3409d8b22cfa8dc"
+section_count = 5
+
+[[files]]
+path = "stdlib/random.md"
+digest = "sha256:0c5ce714c627913c26189cd3ab58b10ecfab2fd9a744dd5037c4d92c79efd34a"
+ir_digest = "sha256:f41839d3c886ab297343ca4fec564c8c36f5f80d15d8607e574bf431a79813b9"
+section_count = 5
+
+[[files]]
+path = "stdlib/re.md"
+digest = "sha256:94bd4a1df9e904a114071bdda6d88eb45d417ddb9ea49a0484f6c3a80462a86d"
+ir_digest = "sha256:1dda0f64a65c62252eb7efabebdd48fc4a76501e514277a247352697f4c092dd"
+section_count = 6
+
+[[files]]
+path = "stdlib/struct-and-binary.md"
+digest = "sha256:3be60c0d3ca2d0981329e25d031bbc0734d3280542e4351ec589accf83740c4d"
+ir_digest = "sha256:5ebc1364d9af4620ecb5608130439fe8bd0fa73019b0eb11374100b544e32d0c"
+section_count = 6
+
+[[files]]
+path = "stdlib/sys.md"
+digest = "sha256:f08ec691942c6bd0c8c9cadfb3a1e7359573378642910b33e73d696917ab722f"
+ir_digest = "sha256:59173a45ea4c2e529e5c0f83f6d9ae4ed44740360da89d86897c4bbfdd6cb7a4"
+section_count = 5
+
+[[files]]
+path = "stdlib/testing.md"
+digest = "sha256:32ae8b7dc40b63b497ae89ceb1e0bbee1ef5bda92ac9d6242cad6eaf2c19584a"
+ir_digest = "sha256:63b90ea461fce500f83562f23ed7f272b69c493e1110f47a54c13375a5e56362"
+section_count = 4
+
+[[files]]
+path = "stdlib/text-processing.md"
+digest = "sha256:a24a549936cc3844c60d9a0b0ad426082cb294692609d9d0151ce8098208a588"
+ir_digest = "sha256:8338e01174038dce458c1ff8884815d8ef40874f7699e6321cf37a59c7ade5da"
+section_count = 4
+
+[[files]]
+path = "stdlib/time.md"
+digest = "sha256:3a6dc2c5534c9c7094f0d4c99c9c756db98f7ebfc715f8cf01f604b88d978414"
+ir_digest = "sha256:128ff9c397b6bc04618d14718f1a4782e3fef09fb1aba117112ffeeda723cfb1"
+section_count = 5
+
+[[files]]
+path = "stdlib/typing-and-inspect.md"
+digest = "sha256:f73a817377edd690fa439adafcccb023ec2e68024a762d69a7e44d1cf1c9de48"
+ir_digest = "sha256:80ea57d72d6d3b8662afd19a3926da3f09e983753b5c2041cb3d9bfb3ea213ee"
+section_count = 4
+
+[[files]]
+path = "testing/conformance.md"
+digest = "sha256:02e6fe3b3f5a83edfd8eabe0f775110c3526b9ebc402e303737ee0c5e2d56809"
+ir_digest = "sha256:be8ba91f52c934f86c983e5756a6894623ad33f044b1a2bec7723db4c9e2fa34"
+section_count = 22
+
+[[files]]
+path = "testing/cpython-compliance.md"
+digest = "sha256:82343aae04c48e1fc0d7e748b21b8fd5dd67702daa8d4b8a6017f213f3df2e77"
+ir_digest = "sha256:c93ec1bafc93bd1af3fdc30743e2c3d546f3710183550487eeca47f2fc076c8b"
+section_count = 7
+
+[[files]]
+path = "testing/mamba-binding-tests-spec.md"
+digest = "sha256:e072c06ff7c8cf43667e7ac3a4b5c94dd9d193312fbba49d7d8d08627abc89f7"
+ir_digest = "sha256:28e24d3c9c6cb026760d2d2ffa3ecf8702161fb5536492e54dfe50f33992dcdc"
+section_count = 22
+
+[[files]]
+path = "testing/mamba-py312-conformance.md"
+digest = "sha256:3fe403bb61d4922c85b2df4a2ca168c5167d5be80f6f1f0199ba82171989e97c"
+ir_digest = "sha256:243b6af1355a7be49c3fb0020dd66808afacdbcc76e8869d224149d390acb7a6"
+section_count = 28
+
+[[files]]
+path = "testing/stdlib-coverage-lower.md"
+digest = "sha256:8b95822cce788d2db144daa2c2e29755dd5f4a74f95c193b8a57b4cae0ca74f6"
+ir_digest = "sha256:e78d1e34ee36541eec195c38bcef4a3342be1d554b6b9abcb2ef8a9bb7175f6d"
+section_count = 22
+
+[[files]]
+path = "testing/test-coverage-remaining.md"
+digest = "sha256:fb1db53f8a765b6737fa491e86a91d9e57a8267f694a50e034258c958ec3b591"
+parse_error = "changes:805-909: section 'changes' at lines 805..909: Changes typed-payload parse error: mapping values are not allowed in this context at line 100 column 167"
+
+[[files]]
+path = "testing/test-harness.md"
+digest = "sha256:6966e7241c023e9110f6e2cf00bf0e503d853bb043980a31692adb87b8faa78d"
+ir_digest = "sha256:9f6a2aa0a6781dc9a2834497e74099299f5176e4506d60617513dc00b2543d4e"
+section_count = 4
