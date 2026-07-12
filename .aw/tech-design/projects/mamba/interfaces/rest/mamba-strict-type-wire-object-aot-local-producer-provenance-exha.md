@@ -54,25 +54,25 @@ id: mamba-strict-type-object-local-producer-provenance-verification
 requirements:
   deferred_boundaries:
     id: R4
-    text: "Internal and dynamic Object call results remain explicit #1452 provenance boundaries and never receive payload-derived ownership."
+    text: "Internal and dynamic Object call results remain explicit #1452 provenance boundaries without payload-derived owners."
     kind: functional
     risk: high
     verify: codegen::cranelift::tests::object_companion_owner_call_boundaries_are_explicitly_deferred
   exhaustive_actions:
     id: R1
-    text: "Every Object/AOT raw-or-boxed Int local producer uses exactly one explicit canonical companion action after its data and owner source are evaluated."
+    text: "Every Object/AOT raw-or-boxed Int local producer uses exactly one explicit canonical companion action after data and owner evaluation."
     kind: regression
     risk: high
     verify: codegen::cranelift::tests::object_companion_owner_exhaustive_local_producer_actions
   inventory:
     id: R5
-    text: "The cross-backend producer inventory rejects an Object/AOT raw-or-boxed Int producer without a local action or named #1451/#1452 boundary."
+    text: "The cross-backend producer inventory rejects a producer without a local action or named #1451/#1452 boundary."
     kind: regression
     risk: high
     verify: mir::return_abi::tests::producer_owner_metadata_is_actionable_at_stable_sites
   paired_merges:
     id: R3
-    text: "Object checked arithmetic and left shift carry paired data and owner values through every fast, slow, and missing-helper predecessor."
+    text: "Object checked arithmetic and left shift preserve paired data and owner provenance on all emitted paths."
     kind: regression
     risk: high
     verify: codegen::cranelift::tests::object_companion_owner_checked_and_lshift_merges_pair_data_then_owner
