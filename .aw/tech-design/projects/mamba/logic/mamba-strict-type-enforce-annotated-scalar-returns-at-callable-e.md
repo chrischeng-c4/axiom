@@ -9,41 +9,97 @@ fill_sections: [logic, unit-test]
 
 ```mermaid
 ---
-id: mamba-strict-type-scalar-return-egress
-entry: annotated_return
+id: mamba-strict-type-scalar-return-egress-contract
+entry: return_expression
 nodes:
-  annotated_return: { kind: start, label: "synchronous user return" }
-  lower_return: { kind: process, label: "lower explicit, bare, or implicit return" }
-  resolve_contract: { kind: process, label: "resolve retained scalar contract and source spelling" }
-  strict_scalar: { kind: decision, label: "definite scalar contract?" }
-  existing_abi: { kind: process, label: "use existing return lowering and ABI" }
-  validate_adapt: { kind: process, label: "validate and adapt before ABI crossing" }
-  type_error: { kind: terminal, label: "set catchable TypeError and return error sentinel" }
-  normalized_abi: { kind: process, label: "preserve or adapt raw, boxed, or F64 ABI" }
-  caller: { kind: terminal, label: "direct and dynamic caller observes one result contract" }
+  return_expression: { kind: start, label: "ordinary synchronous return expression or None" }
+  eligible: { kind: decision, label: "retained scalar return contract exists" }
+  legacy: { kind: process, label: "preserve existing lowering and physical ABI" }
+  box: { kind: process, label: "box source value for runtime contract helper" }
+  validate: { kind: process, label: "validate and normalize using resolved scalar contract" }
+  exception: { kind: decision, label: "pending TypeError" }
+  propagate: { kind: terminal, label: "route to current handler or return exception sentinel" }
+  unbox: { kind: process, label: "adapt normalized value to declared return ABI" }
+  return_value: { kind: terminal, label: "publish validated return to every caller" }
 edges:
-  - { from: annotated_return, to: lower_return }
-  - { from: lower_return, to: resolve_contract }
-  - { from: resolve_contract, to: strict_scalar }
-  - { from: strict_scalar, to: existing_abi, label: "unannotated, Any, or unsupported" }
-  - { from: strict_scalar, to: validate_adapt, label: "int, bool, float, str, bytes, or None" }
-  - { from: validate_adapt, to: type_error, label: "mismatch" }
-  - { from: validate_adapt, to: normalized_abi, label: "accepted" }
-  - { from: normalized_abi, to: existing_abi }
-  - { from: existing_abi, to: caller }
+  - { from: return_expression, to: eligible }
+  - { from: eligible, to: legacy, label: "unannotated, Any, or unsupported" }
+  - { from: eligible, to: box, label: "int, bool, float, str, bytes, or None" }
+  - { from: box, to: validate }
+  - { from: validate, to: exception }
+  - { from: exception, to: propagate, label: "yes" }
+  - { from: exception, to: unbox, label: "no" }
+  - { from: unbox, to: return_value }
+  - { from: legacy, to: return_value }
 ---
 flowchart TD
-    annotated_return([synchronous user return]) --> lower_return[lower explicit, bare, or implicit return]
-    lower_return --> resolve_contract[resolve retained scalar contract and source spelling]
-    resolve_contract --> strict_scalar{definite scalar contract?}
-    strict_scalar -- unannotated, Any, or unsupported --> existing_abi[use existing return lowering and ABI]
-    strict_scalar -- int, bool, float, str, bytes, or None --> validate_adapt[validate and adapt before ABI crossing]
-    validate_adapt -- mismatch --> type_error([set catchable TypeError and return error sentinel])
-    validate_adapt -- accepted --> normalized_abi[preserve or adapt raw, boxed, or F64 ABI]
-    normalized_abi --> existing_abi
-    existing_abi --> caller([direct and dynamic caller observes one result contract])
+    return_expression([ordinary synchronous return expression or None]) --> eligible{retained scalar return contract?}
+    eligible -- unannotated, Any, or unsupported --> legacy[preserve existing lowering and physical ABI]
+    eligible -- int, bool, float, str, bytes, or None --> box[box source value for runtime contract helper]
+    box --> validate[validate and normalize using resolved scalar contract]
+    validate --> exception{pending TypeError?}
+    exception -- yes --> propagate([route to current handler or return exception sentinel])
+    exception -- no --> unbox[adapt normalized value to declared return ABI]
+    unbox --> return_value([publish validated return to every caller])
+    legacy --> return_value
 ```
 
+`HirFuncSig.return_annotation` remains the diagnostic source spelling and the enclosing `HirFunction.return_ty` is the already-resolved semantic type. `hir_to_mir` derives a contract only for ordinary, synchronous user functions that have both a source annotation and one of the definite scalar semantic types: `int`, `bool`, `float`, `str`, `bytes`, or `None`. Thus a PEP 695 scalar alias uses its resolved scalar contract while its error retains the user spelling. Methods, async/generator bodies, unannotated functions, explicit `Any`, and unsupported container/generic/union/forward-reference annotations do not construct a contract.
+
+At every ordinary-function return boundary, including explicit `return expr`, bare `return`, and the implicit fallthrough terminator, lowering boxes the candidate exactly once and calls `mb_validate_and_adapt_declared_return(value, contract, annotation, function_name)`. The runtime helper reuses the ingress `strict_scalar_value` compatibility rule: bool is normalized for an `int` contract; int/bool are normalized for `float`; strings, bytes, and None retain identity; and a mismatch raises `TypeError` with function name, source annotation, and actual runtime type. It returns the normalized boxed value only when no exception is pending.
+
+Immediately after the helper, lowering calls the existing exception-propagation path. A rejected return therefore routes to the innermost handler or yields the existing exception sentinel before trace return publication, finally/with unwinding, ABI transfer, or caller code can observe a result. An accepted normalized value is unboxed only through the declared function return type, preserving raw Int/Bool, F64, and boxed physical ABIs. The #1447 provenance contract owns the raw Int unbox/return transfer; this slice does not infer representation from payload bits.
+
+The runtime helper is registered in the normal symbol table so generic `CallExtern` lowering handles JIT and Object paths identically. Runtime unit tests cover diagnostics and normalization; two atomic PEP 723 fixtures prove direct and `Any`-erased dynamic calls, while the accounting gate asserts the exact executable-wall increment.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/mamba/src/lower/hir_to_mir.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-strict-scalar-return-contract
+    tracker: "#1446"
+    reason: "Return contracts require function-local resolved type, source spelling, exception routing, and physical ABI adaptation that the current generator cannot derive."
+  - path: projects/mamba/src/runtime/builtins/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-strict-scalar-return-contract
+    tracker: "#1446"
+    reason: "The runtime owns scalar compatibility, exact TypeError diagnostics, and value normalization for an already-boxed return candidate."
+  - path: projects/mamba/src/runtime/symbols.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-strict-scalar-return-contract
+    tracker: "#1446"
+    reason: "The new callee-egress runtime helper must be visible to both JIT and Object CallExtern lowering."
+  - path: projects/mamba/tests/cpython/type/core/return_annotation/func_int_return_any_str_direct.py
+    action: add
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-strict-scalar-return-fixtures
+    tracker: "#1446"
+    reason: "One atomic fixture proves a direct caller cannot consume an Any-origin scalar-return mismatch."
+  - path: projects/mamba/tests/cpython/type/core/return_annotation/func_int_return_any_str_dynamic.py
+    action: add
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-strict-scalar-return-fixtures
+    tracker: "#1446"
+    reason: "One atomic fixture proves the callee contract applies through an Any-erased dynamic call."
+  - path: projects/mamba/tests/governance/schema_gates/strict_type_accounting_gate_704.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-strict-scalar-return-fixtures
+    tracker: "#1446"
+    reason: "The executable strict-type wall must advance deterministically from 7418 to 7420 when the two fixtures are added."
+```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
