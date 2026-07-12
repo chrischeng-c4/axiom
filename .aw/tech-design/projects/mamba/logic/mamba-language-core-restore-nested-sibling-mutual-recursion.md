@@ -9,34 +9,52 @@ fill_sections: [logic, unit-test]
 
 ```mermaid
 ---
-id: mamba-nested-sibling-recursion-applicability
-entry: nested sibling function call
+id: mamba-nested-sibling-recursion-contract
+entry: nested function definition
 nodes:
-  outer: { kind: start, label: outer invocation }
-  bind: { kind: process, label: allocate sibling bindings in one closure scope }
-  first: { kind: process, label: is_even resolves is_odd }
-  second: { kind: process, label: is_odd resolves is_even }
-  result: { kind: terminal, label: mutual recursion returns CPython equivalent result }
-  reject: { kind: terminal, label: unbound peer must not become None }
+  prescan: { kind: process, label: collect all cell backed binding events }
+  closure: { kind: process, label: closure captures peer cell before textual bind }
+  cell: { kind: process, label: pre vivify empty peer cell }
+  bind: { kind: process, label: later sibling definition mutates same cell }
+  call: { kind: terminal, label: both sibling calls resolve callable peer }
+  boundary: { kind: terminal, label: unrelated free variable reads are unchanged }
 edges:
-  - { from: outer, to: bind }
-  - { from: bind, to: first }
-  - { from: bind, to: second }
-  - { from: first, to: result }
-  - { from: second, to: result }
-  - { from: first, to: reject, label: missing peer binding }
+  - { from: prescan, to: closure }
+  - { from: closure, to: cell }
+  - { from: cell, to: bind }
+  - { from: bind, to: call }
+  - { from: prescan, to: boundary }
 ---
 flowchart TD
-    outer([outer invocation]) --> bind[allocate sibling bindings in one closure scope]
-    bind --> first[is_even resolves is_odd]
-    bind --> second[is_odd resolves is_even]
-    first --> result([mutual recursion returns CPython equivalent result])
-    second --> result
-    first -- missing peer binding --> reject([unbound peer must not become None])
+    prescan[collect all cell backed binding events] --> closure[closure captures peer cell before textual bind]
+    closure --> cell[pre vivify empty peer cell]
+    cell --> bind[later sibling definition mutates same cell]
+    bind --> call([both sibling calls resolve callable peer])
+    prescan --> boundary([unrelated free variable reads are unchanged])
 ```
 
-Applicability is confined to nested function definitions that share an enclosing invocation. The existing closure runtime already supports per-call cells; this slice must prove the lowering creates and wires both sibling placeholders into that same invocation scope before either closure body can resolve its peer. Module-level recursion, class bodies, and general dynamic dispatch are not touched.
+Replace the Let-only pre-vivification inventory in `lower::hir_to_mir` with an inventory of cell-backed binding events. It includes a `FuncDefPlaceholder` bind symbol when that symbol is in `cell_override`, but continues to exclude a nested function body. Before the earlier sibling closure is created, the existing pre-vivification loop creates an empty cell for its later sibling. `bind_runtime_value` then observes an initialized cell and calls `mb_capture_cell_set_id`, preserving the captured handle rather than replacing it. Existing Let, parameter, and nonlocal behavior remains unchanged.
 
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/mamba/src/lower/hir_to_mir.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-nested-sibling-recursion
+    tracker: "#1477"
+    reason: Existing lowering only pre-vivifies captured Let targets and therefore disconnects a closure from a later sibling function binding.
+  - path: projects/mamba/tests/cpython/_regression/core/closure_capture/nested_sibling_mutual_recursion.py
+    action: create
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-nested-sibling-recursion-tests
+    tracker: "#1477"
+    reason: A one-case CPython oracle fixture must prove both nested siblings resolve the same callable cell after all definitions execute.
+```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
