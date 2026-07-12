@@ -216,3 +216,39 @@ flowchart TD
     r9[R9 pick rejects container unavailable] --> vat_sandbox_microvm_fail_closed_container_unavailable_rejected[vat_sandbox_microvm_fail_closed::container_unavailable_rejected]
     r10[R10 run preflight rejects microvm gpu required before clone] --> commands_run_tests_gpu_satisfied_rejects_microvm_required_before_workspace_clone[commands::run::tests::gpu_satisfied_rejects_microvm_required_before_workspace_clone]
 ```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: vat-microvm-fail-closed
+    name: "Isolation::MicroVm rejects every combination it cannot enforce: GPU required, missing image, LocalhostOnly egress, container unavailable"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: microvm-sandbox-backend-for-vat-run
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat --test vat_sandbox_microvm_fail_closed -- --nocapture"
+    assertions:
+      - "AC3: `sandbox::pick(spec)` returns a hard Err (never a silently-degraded backend) for isolation=MicroVm when gpu=GpuRequest::Required, when spec.microvm_image is None, when egress=EgressPolicy::LocalhostOnly, and when microvm::available() is false; the LocalhostOnly error text carries the Phase-0-confirmed gateway-IP reasoning, not a generic 'no bridge exists' message."
+      - "AC4: a dedicated case exercises the run.rs `gpu_satisfied()` preflight helper directly (not just pick()) rejecting `--isolation micro_vm --gpu required` before any workspace clone begins \u2014 proving the dual fail-closed layers are both wired, independently."
+  - id: vat-microvm-smoke
+    name: "container-gated smoke test: a real `container run` executes inside Isolation::MicroVm end to end"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: microvm-sandbox-backend-for-vat-run
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat --test vat_sandbox_microvm -- --nocapture"
+    assertions:
+      - "AC1/R2: `vat run --isolation micro_vm --microvm-image <ref> -- <cmd>` resolves and executes a real `container run` invocation, rootfs bind-mounted at /workspace, workdir honored, env vars visible inside the guest, and `--network none` enforced under EgressPolicy::Deny. Skips cleanly (does not fail) when the `container` CLI is not installed \u2014 mirrors the existing Docker-gated test pattern."
+      - "Registered in `apps/vat/tests/aw-ec.toml` alongside the fail-closed integration test so `aw ec gen --verify` / `aw health --verify-tests` pick both up as configured EC-gated test commands for this capability."
+  - id: vat-microvm-build
+    name: "default + lean build compile"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: microvm-sandbox-backend-for-vat-run
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo build -p vat"
+    assertions:
+      - "AC1: vat compiles cleanly with the new Isolation::MicroVm variant, EnvSpec.microvm_image field, and sandbox/microvm.rs module."
+```
