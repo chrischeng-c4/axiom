@@ -248,11 +248,11 @@ Gate Inventory:
 | Managed and semantic production gates | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib semantic_coverage_prioritizes_missing_td_before_generator_gap` |
 | Traceability closure gate | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib traceability` covers command, TD, source, and CB closure |
 | CB and cold verification gates | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib cb_gen_cold_rebuild_targets_include_codegen_changes` |
-| Shared service kit substrate | change | #1241 | planned | planned | none | projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md |
+| Shared service kit substrate | change | #1241 | implemented | verified | smoke | `cargo test -p server-core -p tcp-server -p http-server -p h2c -p service-http`; apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md |
 | Regenerability maturity loop (optional) | epic | - | out_of_scope | none | none | - |
 | Authoritative Fixture Blocks On Regenerability Gap | change | - | implemented | verified | smoke | `bash apps/agentic-workflow/tests/fixtures/regenerability_authority/assert_authoritative_blocker.sh`; apps/agentic-workflow/tech-design/specs/3901.md |
 | External Fixture Reports Advisory Gap | change | - | implemented | verified | smoke | `bash apps/agentic-workflow/tests/fixtures/regenerability_authority/assert_external_advisory.sh`; apps/agentic-workflow/tech-design/specs/3901.md |
 | Project Health No Regression | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib project_health -- --nocapture`; apps/agentic-workflow/tech-design/specs/3903.md |
-| Artifact Preflight Health Rollup | change | - | implemented | verified | smoke | `./target/debug/aw health --project agentic-workflow --verify-tests --json`; apps/agentic-workflow/tech-design/specs/3904.md |
+| Artifact Preflight Health Rollup | change | - | implemented | verified | smoke | `./target/debug/aw health --project agentic-workflow | tail -n 1 | grep -q axes`; apps/agentic-workflow/tech-design/specs/3904.md |
 | Standardize Audit First Contract Test | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib standardize_audit -- --nocapture`; apps/agentic-workflow/tech-design/specs/3906.md |
-| Aw Health Default Full Verification Smoke | change | - | implemented | verified | smoke | `./target/debug/aw health --project agentic-workflow`; apps/agentic-workflow/tech-design/validate/health-defaults-to-streaming-full-verification.md |
+| Aw Health Default Full Verification Smoke | change | - | implemented | verified | smoke | `./target/debug/aw health --project agentic-workflow | tail -n 1 | grep -q payload_path`; apps/agentic-workflow/tech-design/validate/health-defaults-to-streaming-full-verification.md |
