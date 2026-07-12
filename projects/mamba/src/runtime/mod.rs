@@ -1,5 +1,6 @@
 pub mod async_rt;
 pub mod async_task;
+pub(crate) mod argument_owner;
 pub mod bigint_ops;
 pub mod builtins;
 pub mod bytes_ops;
@@ -62,6 +63,7 @@ pub fn cleanup_all_runtime_state() {
     module::cleanup_all_modules();
     string_ops::cleanup_all_surrogate_strings();
     async_rt::cleanup_all_async();
+    argument_owner::cleanup_argument_owner_frames();
     // Phase 2: Clear GC tracking (objects may already be freed by phase 1 releases).
     gc::gc_clear_all_state();
     // Phase 3: Drop module JIT backend handles last. Imported module values

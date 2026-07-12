@@ -89,6 +89,12 @@ pub(crate) fn consume_matching_argument_owners(values: &[MbValue]) -> Vec<MbValu
     })
 }
 
+/// Discard any abandoned frames during runtime teardown. Frames borrow caller
+/// companions, so clearing this stack never releases a payload itself.
+pub(crate) fn cleanup_argument_owner_frames() {
+    ARGUMENT_OWNER_FRAMES.with(|frames| frames.borrow_mut().clear());
+}
+
 #[cfg(test)]
 pub(crate) fn argument_owner_frame_depth() -> usize {
     ARGUMENT_OWNER_FRAMES.with(|frames| frames.borrow().len())
@@ -96,7 +102,7 @@ pub(crate) fn argument_owner_frame_depth() -> usize {
 
 #[cfg(test)]
 pub(crate) fn clear_argument_owner_frames_for_test() {
-    ARGUMENT_OWNER_FRAMES.with(|frames| frames.borrow_mut().clear());
+    cleanup_argument_owner_frames();
 }
 
 #[cfg(test)]
@@ -130,5 +136,5 @@ mod tests {
     }
 }
 
-<!-- marker: missing-generator:mamba-argument-owner-frame path: projects/mamba/src/runtime/argument_owner.rs reason: Thread-local frame identity, matching, and nested cleanup require a runtime transaction primitive. -->
+// marker: missing-generator:mamba-argument-owner-frame
 // HANDWRITE-END
