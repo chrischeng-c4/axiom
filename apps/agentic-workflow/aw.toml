@@ -5,7 +5,7 @@ name = "agentic-workflow"
 [aw.ec.generated]
 version = 1
 project = "agentic-workflow"
-generated_from_td_digest = "sha256:c311316ece7b26cc682cd2fd697feaec423cdae8e41e79dc020021e310e5407b"
+generated_from_td_digest = "sha256:83fde7b6ce7bcd811ef32990cef251e9ee273224c99fdc61407a511f80d3355a"
 
 [[aw.ec.generated.cases]]
 id = "api-contract-source-passes"
@@ -341,6 +341,18 @@ required_for_production = true
 assertions = ["semantic coverage prioritizes missing TD before generator gaps"]
 
 [[aw.ec.generated.cases]]
+id = "existing-project-standardization-shared-service-kit-substrate"
+capability_id = "existing-project-standardization"
+claim_id = "shared-service-kit-substrate"
+contract_id = "existing-project-standardization-shared-service-kit-substrate"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#existing-project-standardization-shared-service-kit-substrate"
+test_path = "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_substrate.rs"
+command = "cargo test -p server-core -p tcp-server -p http-server -p h2c -p service-http"
+required_for_production = true
+assertions = ["the shared server substrate crates (server-core, tcp-server, http-server, h2c, service-http) build and pass their unit and doc tests (#1241)"]
+
+[[aw.ec.generated.cases]]
 id = "existing-project-standardization-traceability-closure-gate"
 capability_id = "existing-project-standardization"
 claim_id = "traceability-closure-gate"
@@ -578,6 +590,18 @@ assertions = [
 ]
 
 [[aw.ec.generated.cases]]
+id = "td-cb-lifecycle-automation-chain-liveness-proof"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "chain-liveness-proof"
+contract_id = "td-cb-lifecycle-automation-chain-liveness-proof"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#td-cb-lifecycle-automation-chain-liveness-proof"
+test_path = "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_chain_liveness_proof.rs"
+command = "cargo test -p agentic-workflow --test cli_tests chain_liveness -- --nocapture"
+required_for_production = true
+assertions = ["a driven chain never lands on a deadlock phase and code-check terminates and retries within its tick budget (#914, refs"]
+
+[[aw.ec.generated.cases]]
 id = "td-cb-lifecycle-automation-crrr-removal-linear-lifecycle"
 capability_id = "td-cb-lifecycle-automation"
 claim_id = "crrr-removal-linear-lifecycle"
@@ -590,6 +614,30 @@ required_for_production = true
 assertions = ["TD created phase dispatches directly to generation in the linear lifecycle"]
 
 [[aw.ec.generated.cases]]
+id = "td-cb-lifecycle-automation-hand-written-implementation-evidence-gate"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "hand-written-implementation-evidence-gate"
+contract_id = "td-cb-lifecycle-automation-hand-written-implementation-evidence-gate"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#td-cb-lifecycle-automation-hand-written-implementation-evidence-gate"
+test_path = "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_hand_written_implementation_evidence_gate.rs"
+command = "cargo test -p agentic-workflow --test cli_tests td_no_merge_test:: -- --nocapture"
+required_for_production = true
+assertions = ["terminal code-check refuses hand-written create/modify paths with no committed diff since their Td-Init baseline (#1382)"]
+
+[[aw.ec.generated.cases]]
+id = "td-cb-lifecycle-automation-remove-td-merge-command"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "remove-td-merge-command"
+contract_id = "td-cb-lifecycle-automation-remove-td-merge-command"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#td-cb-lifecycle-automation-remove-td-merge-command"
+test_path = "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_remove_td_merge_command.rs"
+command = "cargo test -p agentic-workflow --test cli_tests test_td_merge_subcommand_is_removed -- --nocapture"
+required_for_production = true
+assertions = ["the retired `td merge` subcommand stays absent from the clap tree (#914, refs"]
+
+[[aw.ec.generated.cases]]
 id = "td-cb-lifecycle-automation-self-ec-fixture-loop-gate"
 capability_id = "td-cb-lifecycle-automation"
 claim_id = "self-ec-fixture-loop-gate"
@@ -600,6 +648,18 @@ test_path = "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_sel
 command = "cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture"
 required_for_production = true
 assertions = ["fixture-loop e2e proof (#1279) gates aw's own terminal code-check as a hard, required-for-production EC case"]
+
+[[aw.ec.generated.cases]]
+id = "td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec"
+contract_id = "td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec"
+test_path = "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_td_surface_convergence_ec_gated_terminal_check_unification_verb_lifecycle_policy_fixture_loop_self_ec.rs"
+command = "cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture"
+required_for_production = true
+assertions = ["the epic's terminal EC-gated fixture-loop proof (#1270 children"]
 
 [[aw.ec.generated.cases]]
 id = "wi-create-help-command"

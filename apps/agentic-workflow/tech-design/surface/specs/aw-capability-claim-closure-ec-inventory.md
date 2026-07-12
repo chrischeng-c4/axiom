@@ -112,6 +112,36 @@ e2e_tests:
     command: cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture
     assertions:
       - fixture-loop e2e proof (#1279) gates aw's own terminal code-check as a hard, required-for-production EC case
+  - id: td-cb-lifecycle-automation-remove-td-merge-command
+    capability_id: td-cb-lifecycle-automation
+    claim_id: remove-td-merge-command
+    command: cargo test -p agentic-workflow --test cli_tests test_td_merge_subcommand_is_removed -- --nocapture
+    assertions:
+      - the retired `td merge` subcommand stays absent from the clap tree (#914, refs #851)
+  - id: td-cb-lifecycle-automation-chain-liveness-proof
+    capability_id: td-cb-lifecycle-automation
+    claim_id: chain-liveness-proof
+    command: cargo test -p agentic-workflow --test cli_tests chain_liveness -- --nocapture
+    assertions:
+      - a driven chain never lands on a deadlock phase and code-check terminates and retries within its tick budget (#914, refs #921)
+  - id: td-cb-lifecycle-automation-hand-written-implementation-evidence-gate
+    capability_id: td-cb-lifecycle-automation
+    claim_id: hand-written-implementation-evidence-gate
+    command: "cargo test -p agentic-workflow --test cli_tests td_no_merge_test:: -- --nocapture"
+    assertions:
+      - terminal code-check refuses hand-written create/modify paths with no committed diff since their Td-Init baseline (#1382)
+  - id: td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec
+    capability_id: td-cb-lifecycle-automation
+    claim_id: td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec
+    command: cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture
+    assertions:
+      - the epic's terminal EC-gated fixture-loop proof (#1270 children #1272-#1281, self-EC inventory #1280) stays green as the concrete evidence for the converged verb lifecycle policy
+  - id: existing-project-standardization-shared-service-kit-substrate
+    capability_id: existing-project-standardization
+    claim_id: shared-service-kit-substrate
+    command: cargo test -p server-core -p tcp-server -p http-server -p h2c -p service-http
+    assertions:
+      - the shared server substrate crates (server-core, tcp-server, http-server, h2c, service-http) build and pass their unit and doc tests (#1241)
   - id: project-local-td-and-ec-gates-project-local-td-root-resolver
     capability_id: project-local-td-and-ec-gates
     claim_id: project-local-td-root-resolver
