@@ -28,17 +28,17 @@ Public API manifest for `projects/lumen/src/api.rs` generated from AST during Sc
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 613 |  |
-| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 2333 |  |
+| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 2338 |  |
 | `AppState` | projects/lumen/src/api.rs | struct | pub | 64 |  |
 | `RoutedBackend` | projects/lumen/src/api.rs | trait | pub | 278 | Cross-pod shard routing for operator/k8s serving pods (#1398 R1-R3); `AppState::routed` is `None` for every non-routed deployment. |
-| `ShardForwardMisrouted` | projects/lumen/src/api.rs | struct | pub | 2424 | A forwarded request's one-hop marker claimed this pod, but recomputing ownership disagrees (#1442 R1) — a spoofed or genuinely misrouted forward, rejected rather than honored. |
-| `ShardForwardRemoteError` | projects/lumen/src/api.rs | struct | pub | 2372 | The owning shard was reached and answered, but with a non-2xx status. |
-| `ShardForwardUnavailable` | projects/lumen/src/api.rs | struct | pub | 2354 | One-hop shard-forward failure — the owning shard was unreachable or its response could not be decoded. |
-| `ShardMapVersionMismatch` | projects/lumen/src/api.rs | struct | pub | 2396 | A forwarded request declared a shard-map version that disagrees with this pod's own live map (#1442 R2) — the rolling-restart mixed-map window. |
+| `ShardForwardMisrouted` | projects/lumen/src/api.rs | struct | pub | 2429 | A forwarded request's one-hop marker claimed this pod, but recomputing ownership disagrees (#1442 R1) — a spoofed or genuinely misrouted forward, rejected rather than honored. |
+| `ShardForwardRemoteError` | projects/lumen/src/api.rs | struct | pub | 2377 | The owning shard was reached and answered, but with a non-2xx status. |
+| `ShardForwardUnavailable` | projects/lumen/src/api.rs | struct | pub | 2359 | One-hop shard-forward failure — the owning shard was unreachable or its response could not be decoded. |
+| `ShardMapVersionMismatch` | projects/lumen/src/api.rs | struct | pub | 2401 | A forwarded request declared a shard-map version that disagrees with this pod's own live map (#1442 R2) — the rolling-restart mixed-map window. |
 | `WriteFence` | projects/lumen/src/api.rs | struct | pub | 173 | #1396 R2: bounded write pause on still-moving virtual buckets during a reshard's final `CatchingUp` pass. Armed/cleared via `POST /admin/reshard:fence`; self-expires on its TTL deadline so a crashed driver can never leave a permanent fence. #1443 R3: `arm` now returns `bool` (false on `Instant + Duration` overflow instead of panicking) and the internal mutex is poison-proof (`unwrap_or_else(poisoned -> into_inner)`), so an overflowed/panicked prior caller can never wedge the fence permanently. |
 | `new` | projects/lumen/src/api.rs | function | pub | 461 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
 | `open` | projects/lumen/src/api.rs | function | pub | 499 | open(engine: Arc<Engine>) -> Self |
-| `openapi` | projects/lumen/src/api.rs | function | pub | 2261 | openapi() -> utoipa::openapi::OpenApi |
+| `openapi` | projects/lumen/src/api.rs | function | pub | 2266 | openapi() -> utoipa::openapi::OpenApi |
 | `router` | projects/lumen/src/api.rs | function | pub | 652 | router(state: AppState) -> Router |
 | `with_checkpoint` | projects/lumen/src/api.rs | function | pub | 483 | with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self |
 | `with_cluster` | projects/lumen/src/api.rs | function | pub | 465 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
@@ -774,8 +774,13 @@ pub fn router(state: AppState) -> Router {
         .layer(from_fn_with_state(auth_state, auth_middleware))
         // Bound request bodies: a bulk index is ~MBs (the item cap is the real
         // guard); 8MiB is the broker payload budget. Rejects oversized
-        // bodies with 413 before they hit a handler.
-        .layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024));
+        // bodies with 413 before they hit a handler. Shared with
+        // `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES` (#1444 R2) so the
+        // reshard driver's oversize-batch detection can never drift from the
+        // limit actually enforced here.
+        .layer(axum::extract::DefaultBodyLimit::max(
+            crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES,
+        ));
 
     let metrics: Arc<dyn MetricsProvider> = state.engine.clone();
     let probes = service_http::standard_probe_routes(state.engine.clone(), Some(metrics), openapi);
@@ -2592,6 +2597,7 @@ impl From<crate::auth::AuthErr> for ApiErr {
     }
 }
 // CODEGEN-END
+
 ````
 
 ## Changes
@@ -2684,4 +2690,14 @@ changes:
       `enforce_write_fence`'s doc comment now explains the R2 design choice
       and its one disclosed residual gap (see `reshard.rs`'s changelog
       entry for the full rationale).
+  - path: projects/lumen/src/api.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1444 R2: `router`'s `DefaultBodyLimit::max(..)` now reads
+      `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES` instead of a
+      hand-copied `8 * 1024 * 1024` literal, so this route's actual
+      enforced body limit can never drift from the constant the reshard
+      driver's oversize-batch detection compares against.
 ```

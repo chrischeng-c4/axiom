@@ -20,13 +20,13 @@ Public API manifest for `projects/lumen/src/segment_rdb.rs` generated from AST d
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `SegmentRdbStore` | projects/lumen/src/segment_rdb.rs | struct | pub | 59 |  |
-| `generation_seqs` | projects/lumen/src/segment_rdb.rs | function | pub | 233 | generation_seqs(&self) -> Result<Vec<u64>> |
-| `load_latest` | projects/lumen/src/segment_rdb.rs | function | pub | 184 | load_latest(&self) -> Result<Option<(Arc<Engine>, u64)>> |
-| `new` | projects/lumen/src/segment_rdb.rs | function | pub | 67 | new(root: impl Into<PathBuf>) -> Result<Self> |
-| `prune` | projects/lumen/src/segment_rdb.rs | function | pub | 212 | prune(&self, keep: usize) -> Result<usize> |
-| `reopen_into` | projects/lumen/src/segment_rdb.rs | function | pub | 196 | reopen_into(&self, engine: &Arc<Engine>) -> Result<Option<u64>> |
-| `save` | projects/lumen/src/segment_rdb.rs | function | pub | 146 | save(&self, engine: &Arc<Engine>, up_to_seq: u64) -> Result<()> |
+| `SegmentRdbStore` | projects/lumen/src/segment_rdb.rs | struct | pub | 86 |  |
+| `generation_seqs` | projects/lumen/src/segment_rdb.rs | function | pub | 348 | generation_seqs(&self) -> Result<Vec<u64>> |
+| `load_latest` | projects/lumen/src/segment_rdb.rs | function | pub | 287 | load_latest(&self) -> Result<Option<(Arc<Engine>, u64)>> |
+| `new` | projects/lumen/src/segment_rdb.rs | function | pub | 94 | new(root: impl Into<PathBuf>) -> Result<Self> |
+| `prune` | projects/lumen/src/segment_rdb.rs | function | pub | 326 | prune(&self, keep: usize) -> Result<usize> |
+| `reopen_into` | projects/lumen/src/segment_rdb.rs | function | pub | 305 | reopen_into(&self, engine: &Arc<Engine>) -> Result<Option<u64>> |
+| `save` | projects/lumen/src/segment_rdb.rs | function | pub | 226 | save(&self, engine: &Arc<Engine>, up_to_seq: u64) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -58,6 +58,33 @@ Public API manifest for `projects/lumen/src/segment_rdb.rs` generated from AST d
 //! write. This is exactly [`crate::rdb::LocalFsRdbStore`]'s temp-file+rename model
 //! lifted to a directory. The sequence in the generation name is the total order
 //! — no separate pointer file is needed; the highest `gen-*` is the latest.
+//!
+//! ## Crash-safe same-seq swap (#1444)
+//!
+//! A same-seq re-save (routine: reshard apply/evict mutate engine state
+//! without advancing `applied_seq`, and the periodic snapshotter re-saves
+//! every tick with no skip condition) must replace an ALREADY-COMMITTED
+//! `gen-<seq>/` with the freshly-staged one. Deleting the old generation
+//! before renaming staging in would leave a window where a crash destroys
+//! the only durable copy of the previous good state while the new one is
+//! still hidden under its dot-prefixed staging name. Instead the old
+//! generation is moved ASIDE (`gen-<seq>.old/`) first, the staging dir is
+//! renamed onto `gen-<seq>/` (the same atomic commit point as the
+//! new-seq path), and only then is the aside copy removed:
+//!   1. `gen-<seq>/` -> `gen-<seq>.old/` (rename, cheap, same filesystem),
+//!   2. `.gen-<seq>.tmp/` -> `gen-<seq>/` (the commit point),
+//!   3. remove `gen-<seq>.old/` (best-effort cleanup).
+//! `.old`-suffixed names never parse as a `gen-<seq>` sequence (see
+//! [`SegmentRdbStore::seq_of`]), so they are already invisible to
+//! `generations()`/`load_latest`. [`SegmentRdbStore::reconcile_aside`]
+//! additionally self-heals a crash between steps 1 and 2: if `gen-<seq>/`
+//! is missing but `gen-<seq>.old/` is present, the aside copy is renamed
+//! back — recovering exactly the last successful save's predecessor at
+//! that seq. If both exist (crash after step 2, before step 3), the aside
+//! is stale and is removed. `reconcile_aside` runs under `save_lock`
+//! wherever a generation is committed or read back (`save`, `prune`,
+//! `reopen_into`), so recovery is guaranteed by the time any caller reads
+//! the newest generation, including at cold start.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -117,6 +144,14 @@ impl SegmentRdbStore {
         self.root.join(format!(".gen-{seq}.tmp"))
     }
 
+    /// The aside path a same-seq re-save moves the OLD committed generation
+    /// to before renaming staging onto `gen_path` (#1444). Never parses as a
+    /// sequence via [`Self::seq_of`], so it is invisible to `generations()`
+    /// until [`Self::reconcile_aside`] resolves it.
+    fn aside_path(&self, seq: u64) -> PathBuf {
+        self.root.join(format!("gen-{seq}.old"))
+    }
+
     /// Parse the sequence out of a committed `gen-<seq>` directory name.
     fn seq_of(path: &Path) -> Option<u64> {
         path.file_name()?
@@ -161,6 +196,44 @@ impl SegmentRdbStore {
         }
     }
 
+    /// Resolve any leftover `gen-<seq>.old` aside directories left by a crash
+    /// during a same-seq re-save's swap (#1444, see the module doc's
+    /// "Crash-safe same-seq swap" section). For each `gen-<seq>.old` found:
+    /// if `gen-<seq>` is missing, the commit rename never landed — restore
+    /// the aside by renaming it back, recovering the last successful save's
+    /// predecessor. If `gen-<seq>` exists, the commit already landed and the
+    /// aside is stale cleanup leftover — remove it. Must run under
+    /// `save_lock` (called from `save`/`prune`/`reopen_into`, all of which
+    /// hold it) so it never races a concurrent swap.
+    fn reconcile_aside(&self) {
+        let Ok(rd) = std::fs::read_dir(&self.root) else {
+            return;
+        };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if !p.is_dir() {
+                continue;
+            }
+            let Some(seq_str) = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_prefix("gen-"))
+                .and_then(|n| n.strip_suffix(".old"))
+            else {
+                continue;
+            };
+            if seq_str.parse::<u64>().is_err() {
+                continue;
+            }
+            let committed = self.root.join(format!("gen-{seq_str}"));
+            if committed.exists() {
+                let _ = std::fs::remove_dir_all(&p);
+            } else {
+                let _ = std::fs::rename(&p, &committed);
+            }
+        }
+    }
+
     /// Checkpoint `engine` at `up_to_seq`: stage a full generation under a temp
     /// dir, seal every collection into it via [`Engine::flush_to_segments`], then
     /// atomically rename it to `gen-<up_to_seq>/`. The rename is the commit point
@@ -176,12 +249,20 @@ impl SegmentRdbStore {
     /// caller's `sweep_staging` can never delete this call's in-flight
     /// staging dir, and two saves at the same seq simply run one after the
     /// other instead of interleaving into a torn generation.
+    ///
+    /// The commit itself is crash-safe even when replacing an
+    /// already-committed generation at the same seq (#1444): the old
+    /// generation is moved aside — never deleted — before the new one is
+    /// renamed in, so `load_latest` always finds a complete generation at
+    /// least as new as this save's predecessor at every crash point. See
+    /// the module doc's "Crash-safe same-seq swap" section.
     pub fn save(&self, engine: &Arc<Engine>, up_to_seq: u64) -> Result<()> {
         let _guard = self
             .save_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.sweep_staging();
+        self.reconcile_aside();
         let staging = self.staging_path(up_to_seq);
         // A re-run at the same seq would collide; start from a clean staging dir.
         let _ = std::fs::remove_dir_all(&staging);
@@ -195,17 +276,39 @@ impl SegmentRdbStore {
         }
 
         let committed = self.gen_path(up_to_seq);
-        // A previously-committed generation at the same seq is replaced wholesale;
-        // remove it first so the rename of a directory onto a non-empty directory
-        // does not fail on platforms that reject it.
-        let _ = std::fs::remove_dir_all(&committed);
-        std::fs::rename(&staging, &committed).with_context(|| {
-            format!(
-                "commit checkpoint {} -> {}",
-                staging.display(),
-                committed.display()
-            )
-        })?;
+        if committed.exists() {
+            // A previously-committed generation at the same seq: move it
+            // aside instead of deleting it, so a crash before the commit
+            // rename below still leaves a complete generation recoverable
+            // by `reconcile_aside` — never a window with no good copy.
+            let aside = self.aside_path(up_to_seq);
+            let _ = std::fs::remove_dir_all(&aside);
+            std::fs::rename(&committed, &aside).with_context(|| {
+                format!(
+                    "move superseded checkpoint {} aside to {}",
+                    committed.display(),
+                    aside.display()
+                )
+            })?;
+            std::fs::rename(&staging, &committed).with_context(|| {
+                format!(
+                    "commit checkpoint {} -> {}",
+                    staging.display(),
+                    committed.display()
+                )
+            })?;
+            let _ = std::fs::remove_dir_all(&aside);
+        } else {
+            // No existing generation at this seq: the plain rename is
+            // already the atomic commit point, exactly as for a new seq.
+            std::fs::rename(&staging, &committed).with_context(|| {
+                format!(
+                    "commit checkpoint {} -> {}",
+                    staging.display(),
+                    committed.display()
+                )
+            })?;
+        }
         Ok(())
     }
 
@@ -226,7 +329,18 @@ impl SegmentRdbStore {
     /// `Some(up_to_seq)` or `None` when the store has no committed generation. Used
     /// by the serving binary's cold start so the checkpoint lands in the same
     /// engine the rest of the node (drain hooks, API state) already wraps.
+    ///
+    /// Runs [`Self::reconcile_aside`] under `save_lock` first (#1444): this is
+    /// the real cold-start entry point, so any `gen-<seq>.old` left by a
+    /// crash mid same-seq-swap is resolved before the newest generation is
+    /// picked, guaranteeing `load_latest`/`reopen_into` never miss a
+    /// generation that a completed save actually committed.
     pub fn reopen_into(&self, engine: &Arc<Engine>) -> Result<Option<u64>> {
+        let _guard = self
+            .save_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.reconcile_aside();
         let Some((_, path)) = self.generations()?.into_iter().next_back() else {
             return Ok(None);
         };
@@ -248,6 +362,7 @@ impl SegmentRdbStore {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.sweep_staging();
+        self.reconcile_aside();
         let all = self.generations()?;
         if all.len() <= keep {
             return Ok(0);
@@ -374,6 +489,83 @@ mod tests {
         store.save(&e, 8).unwrap();
         assert!(!dir.path().join(".gen-9.tmp").exists());
         assert_eq!(store.load_latest().unwrap().unwrap().1, 8);
+    }
+
+    /// #1444 AC1: a same-seq re-save's swap has two rename steps (old
+    /// generation moved aside, then staging renamed onto the committed
+    /// path). This structurally — not probabilistically — proves the crash
+    /// window between those two steps is closed: it performs exactly the
+    /// first rename (`gen-<seq>` -> `gen-<seq>.old`) and then a cold start
+    /// (`load_latest`, a fresh store handle, no state carried over) must
+    /// still find a complete generation at `seq` containing the PRE-crash
+    /// (predecessor) committed data — not the never-committed replacement
+    /// staged alongside it, and not nothing.
+    #[test]
+    fn same_seq_resave_crash_between_aside_and_commit_recovers_predecessor() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SegmentRdbStore::new(dir.path()).unwrap();
+
+        // The predecessor: a first successful save at seq 7.
+        let engine_a = Arc::new(Engine::new());
+        engine_a.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine_a, "a1", "a1@x.com");
+        store.save(&engine_a, 7).unwrap();
+        assert_eq!(store.load_latest().unwrap().unwrap().1, 7);
+
+        // A same-seq re-save's replacement generation, staged the way `save`
+        // stages it (flush completes) but never committed.
+        let engine_b = Arc::new(Engine::new());
+        engine_b.create_collection("u", kw_schema()).unwrap();
+        index_kw(&engine_b, "b1", "b1@x.com");
+        index_kw(&engine_b, "b2", "b2@x.com");
+        let staging = store.staging_path(7);
+        std::fs::create_dir_all(&staging).unwrap();
+        engine_b.flush_to_segments(&staging, 7).unwrap();
+
+        // Perform ONLY the swap's first rename — the exact crash point named
+        // by the issue: "between the old-generation removal point and the
+        // commit point". `committed` (gen-7) no longer exists; the aside
+        // (gen-7.old) holds the predecessor; the never-committed staging
+        // dir (.gen-7.tmp) still sits alongside both.
+        let committed = store.gen_path(7);
+        let aside = store.aside_path(7);
+        std::fs::rename(&committed, &aside).unwrap();
+        assert!(!committed.exists(), "commit rename never ran (the crash)");
+        assert!(staging.exists(), "staged replacement is untouched");
+        assert!(aside.exists(), "predecessor survives, just moved aside");
+
+        // Cold start from scratch: a brand-new store handle over the same
+        // root, exactly what a restarted pod does.
+        let cold_store = SegmentRdbStore::new(dir.path()).unwrap();
+        let (reloaded, seq) = cold_store
+            .load_latest()
+            .unwrap()
+            .expect("a complete generation survives the crash window");
+        assert_eq!(seq, 7);
+        assert_eq!(
+            reloaded.stats("u").unwrap().documents_indexed,
+            1,
+            "recovered generation must be the predecessor (1 doc), not the \
+             never-committed replacement (2 docs) or nothing"
+        );
+
+        // Reconciliation also cleaned up: gen-7 is restored, gen-7.old is
+        // gone, and a normal save at 7 still works afterward (the swap
+        // machinery is not left in a wedged state by the recovery).
+        assert!(committed.is_dir());
+        assert!(!aside.exists());
+        cold_store.save(&engine_b, 7).unwrap();
+        assert_eq!(
+            cold_store
+                .load_latest()
+                .unwrap()
+                .unwrap()
+                .0
+                .stats("u")
+                .unwrap()
+                .documents_indexed,
+            2
+        );
     }
 
     /// #1389 AC1: a `reshard:apply` batch applied to a target shard, and a
@@ -505,6 +697,7 @@ mod tests {
     }
 }
 // CODEGEN-END
+
 ````
 
 ## Changes
@@ -530,4 +723,23 @@ changes:
       additive-merge assertions are unaffected). See
       projects-lumen-src-storage-rs.md#source for the full signature
       change.
+  - path: projects/lumen/src/segment_rdb.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1444 R1: crash-safe same-seq checkpoint swap. `save`'s same-seq
+      commit no longer removes the already-committed generation before
+      renaming staging in; it moves the old generation aside
+      (`gen-<seq>.old/`), renames staging onto `gen-<seq>/` (the commit
+      point), then removes the aside. Added `aside_path` and
+      `reconcile_aside` (self-heals a crash between the aside-rename and
+      the commit-rename by restoring the aside, or cleans up a stale aside
+      after a completed commit); `reconcile_aside` now runs under
+      `save_lock` from `save`, `prune`, and `reopen_into` (which now takes
+      the lock itself). Added regression test
+      `same_seq_resave_crash_between_aside_and_commit_recovers_predecessor`
+      that structurally simulates the crash window (performs only the
+      aside rename, then cold-starts a fresh store handle) and asserts the
+      predecessor generation is recovered intact.
 ```

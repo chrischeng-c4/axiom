@@ -20,14 +20,15 @@ Public API manifest for `projects/lumen/src/reshard.rs` generated from AST durin
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `MAX_BATCH_BYTES` | projects/lumen/src/reshard.rs | const | pub | 29 | #1396 R4: upper bound on one batch's serialized `snapshot` payload, well under `api.rs`'s 8 MiB `DefaultBodyLimit` on `/admin/reshard:apply`. |
-| `BucketMove` | projects/lumen/src/reshard.rs | struct | pub | 33 |  |
-| `ReshardBatch` | projects/lumen/src/reshard.rs | struct | pub | 44 | #1380: `Serialize`/`Deserialize` make a batch postable to `POST /admin/reshard:apply` as-is. #1443 R2: gained `virtual_bucket_count` and `replace_ids` (both `#[serde(default)]`), carrying the authoritative-subset-replace scope for a moving bucket's final fenced re-sync pass. |
-| `ReshardBatchReplaceScope` | projects/lumen/src/reshard.rs | struct | pub | 86 | #1443 R2: the authoritative-subset-replace scope one applying shard must enforce for a `bucket`, derived from a `ReshardBatch`'s `virtual_bucket_count`/`replace_ids`. |
-| `bucket_moves` | projects/lumen/src/reshard.rs | function | pub | 96 | bucket_moves(     from: &VirtualBucketShardMap,     to: &VirtualBucketShardMap, ) -> Result<Vec<BucketMove>> |
-| `snapshot_reshard_batches` | projects/lumen/src/reshard.rs | function | pub | 145 | #1396 R4: batches are also byte-capped (`MAX_BATCH_BYTES`), splitting an id-chunk further via `byte_cap_chunk` when its serialized snapshot would exceed the cap. #1443 R2: gained a `replace_mode: bool` parameter — when `true`, every emitted batch's `bucket` also stamps the complete authoritative `virtual_bucket_count`/`replace_ids` for that bucket group, computed once before chunking. snapshot_reshard_batches(     snapshot: &SnapshotV1,     from: &VirtualBucketShardMap,     to: &VirtualBucketShardMap,     max_external_ids_per_batch: usize,     replace_mode: bool, ) -> Result<Vec<ReshardBatch>> |
-| `merge_snapshot_delta` | projects/lumen/src/reshard.rs | function | pub | 276 | merge_snapshot_delta(mut base: SnapshotV1, delta: SnapshotV1) -> Result<SnapshotV1> |
-| `snapshot_bucket_subset` | projects/lumen/src/reshard.rs | function | pub | 304 | #1380 R2: bucket-scoped export subset, routed with the same `route_document` hash `snapshot_reshard_batches` uses. snapshot_bucket_subset(     snapshot: &SnapshotV1,     virtual_bucket_count: u32,     buckets: &BTreeSet<u32>, ) -> Result<SnapshotV1> |
+| `ADMIN_ROUTE_BODY_LIMIT_BYTES` | projects/lumen/src/reshard.rs | const | pub | 28 | #1444 R2: the hard body-size limit `POST /admin/reshard:apply` (and every other admin route) enforces at the HTTP layer via `api.rs`'s `DefaultBodyLimit::max(..)`, shared verbatim so the two can never drift; `crate::operator::reshard_driver`'s oversize-wedge detection also compares against this constant. |
+| `MAX_BATCH_BYTES` | projects/lumen/src/reshard.rs | const | pub | 40 | #1396 R4: upper bound on one batch's serialized `snapshot` payload — half of `ADMIN_ROUTE_BODY_LIMIT_BYTES` (#1444 R2, was a hardcoded `4 * 1024 * 1024`). |
+| `BucketMove` | projects/lumen/src/reshard.rs | struct | pub | 44 |  |
+| `ReshardBatch` | projects/lumen/src/reshard.rs | struct | pub | 55 | #1380: `Serialize`/`Deserialize` make a batch postable to `POST /admin/reshard:apply` as-is. #1443 R2: gained `virtual_bucket_count` and `replace_ids` (both `#[serde(default)]`), carrying the authoritative-subset-replace scope for a moving bucket's final fenced re-sync pass. |
+| `ReshardBatchReplaceScope` | projects/lumen/src/reshard.rs | struct | pub | 97 | #1443 R2: the authoritative-subset-replace scope one applying shard must enforce for a `bucket`, derived from a `ReshardBatch`'s `virtual_bucket_count`/`replace_ids`. |
+| `bucket_moves` | projects/lumen/src/reshard.rs | function | pub | 107 | bucket_moves(     from: &VirtualBucketShardMap,     to: &VirtualBucketShardMap, ) -> Result<Vec<BucketMove>> |
+| `snapshot_reshard_batches` | projects/lumen/src/reshard.rs | function | pub | 156 | #1396 R4: batches are also byte-capped (`MAX_BATCH_BYTES`), splitting an id-chunk further via `byte_cap_chunk` when its serialized snapshot would exceed the cap. #1443 R2: gained a `replace_mode: bool` parameter — when `true`, every emitted batch's `bucket` also stamps the complete authoritative `virtual_bucket_count`/`replace_ids` for that bucket group, computed once before chunking. snapshot_reshard_batches(     snapshot: &SnapshotV1,     from: &VirtualBucketShardMap,     to: &VirtualBucketShardMap,     max_external_ids_per_batch: usize,     replace_mode: bool, ) -> Result<Vec<ReshardBatch>> |
+| `merge_snapshot_delta` | projects/lumen/src/reshard.rs | function | pub | 289 | merge_snapshot_delta(mut base: SnapshotV1, delta: SnapshotV1) -> Result<SnapshotV1> |
+| `snapshot_bucket_subset` | projects/lumen/src/reshard.rs | function | pub | 317 | #1380 R2: bucket-scoped export subset, routed with the same `route_document` hash `snapshot_reshard_batches` uses. snapshot_bucket_subset(     snapshot: &SnapshotV1,     virtual_bucket_count: u32,     buckets: &BTreeSet<u32>, ) -> Result<SnapshotV1> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -50,17 +51,28 @@ use serde::{Deserialize, Serialize};
 use crate::routing::VirtualBucketShardMap;
 use crate::storage::{CollectionSnapshot, FieldIndexSnapshot, SnapshotV1};
 
+/// The hard body-size limit `POST /admin/reshard:apply` (and every other
+/// admin route) enforces at the HTTP layer — `api.rs`'s
+/// `DefaultBodyLimit::max(..)` is built from this exact constant (#1444 R2),
+/// so the two can never drift apart: a batch this crate computes as
+/// "under the limit" is always actually under the limit the route enforces,
+/// and [`crate::operator::reshard_driver`]'s oversize-wedge detection
+/// compares a batch's real wire size against this same number rather than a
+/// second, hand-copied literal.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
+pub const ADMIN_ROUTE_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
+
 /// Upper bound on one batch's serialized `snapshot` payload (#1396 R4):
-/// `api.rs`'s `/admin/reshard:apply` route sits behind an 8 MiB
-/// `DefaultBodyLimit`, but [`snapshot_reshard_batches`] used to cap batches
-/// only by external-id count (`MAX_EXTERNAL_IDS_PER_BATCH`-style caller
-/// constants) — a bucket of large documents (long text fields, vectors,
-/// hashes) can still serialize well past 8 MiB even at a small id count, and
-/// a 413 from an oversized batch is deterministically recomputed identically
-/// every driver tick, wedging the split forever (the confirmed defect).
-/// 4 MiB — half the route limit — leaves comfortable headroom for JSON/wire
-/// overhead and per-item framing above the raw snapshot bytes measured here.
-pub const MAX_BATCH_BYTES: usize = 4 * 1024 * 1024;
+/// [`ADMIN_ROUTE_BODY_LIMIT_BYTES`] is the route's hard 413 cutoff, but
+/// [`snapshot_reshard_batches`] used to cap batches only by external-id count
+/// (`MAX_EXTERNAL_IDS_PER_BATCH`-style caller constants) — a bucket of large
+/// documents (long text fields, vectors, hashes) can still serialize well
+/// past the route limit even at a small id count, and a 413 from an
+/// oversized batch is deterministically recomputed identically every driver
+/// tick, wedging the split forever (the confirmed defect). Half the route
+/// limit leaves comfortable headroom for JSON/wire overhead and per-item
+/// framing above the raw snapshot bytes measured here.
+pub const MAX_BATCH_BYTES: usize = ADMIN_ROUTE_BODY_LIMIT_BYTES / 2;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
@@ -276,8 +288,10 @@ pub fn snapshot_reshard_batches(
 /// is at or under `max_batch_bytes`, or the chunk is down to a single
 /// external_id — one oversized document cannot be split further, so it is
 /// emitted as its own (over-budget) batch rather than looping forever; a
-/// single document that alone exceeds the route's 8 MiB body limit is a
-/// data-modeling problem this splitter cannot solve, not a batching bug.
+/// single document that alone exceeds [`ADMIN_ROUTE_BODY_LIMIT_BYTES`] is a
+/// data-modeling problem this splitter cannot solve, not a batching bug —
+/// [`crate::operator::reshard_driver`] detects and surfaces exactly this
+/// batch shape (#1444 R2) rather than retrying it forever as a generic 413.
 fn byte_cap_chunk(
     snapshot: &SnapshotV1,
     chunk: &[(String, String)],
@@ -919,8 +933,8 @@ mod tests {
         for batch in &batches {
             let wire_bytes = serde_json::to_vec(batch).unwrap().len();
             assert!(
-                wire_bytes < 8 * 1024 * 1024,
-                "batch serialized to {wire_bytes} bytes, over the route's 8 MiB body limit"
+                wire_bytes < ADMIN_ROUTE_BODY_LIMIT_BYTES,
+                "batch serialized to {wire_bytes} bytes, over the route's {ADMIN_ROUTE_BODY_LIMIT_BYTES} byte body limit"
             );
         }
 
@@ -991,6 +1005,7 @@ mod tests {
     }
 }
 // CODEGEN-END
+
 ````
 
 ## Changes
@@ -1037,5 +1052,21 @@ changes:
       `crate::storage::Engine::apply_reshard_batch`'s new pruning step.
       Every non-final pass still uses purely-additive merge
       (`replace_mode: false`, `replace_ids: None`), unchanged.
+    impl_mode: hand-written
+  - path: "projects/lumen/src/reshard.rs"
+    action: modify
+    section: rust-source-unit
+    description: |
+      #1444 R2: named `ADMIN_ROUTE_BODY_LIMIT_BYTES` as the single source
+      of truth for the route's body-size limit, shared verbatim with
+      `api.rs`'s `DefaultBodyLimit::max(..)` (previously a hand-copied `8
+      MiB` literal in `api.rs` and a `4 MiB` (`ADMIN_ROUTE_BODY_LIMIT_BYTES
+      / 2`) literal here) so they can never drift apart. `MAX_BATCH_BYTES`
+      is now defined as `ADMIN_ROUTE_BODY_LIMIT_BYTES / 2` instead of a
+      separate hardcoded `4 * 1024 * 1024`.
+      `crate::operator::reshard_driver` compares a batch's real wire size
+      against this same constant to distinguish the oversize-single-document
+      wedge (`byte_cap_chunk`'s single-id floor case) from any other apply
+      failure.
     impl_mode: hand-written
 ```

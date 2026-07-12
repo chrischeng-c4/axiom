@@ -720,8 +720,13 @@ pub fn router(state: AppState) -> Router {
         .layer(from_fn_with_state(auth_state, auth_middleware))
         // Bound request bodies: a bulk index is ~MBs (the item cap is the real
         // guard); 8MiB is the broker payload budget. Rejects oversized
-        // bodies with 413 before they hit a handler.
-        .layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024));
+        // bodies with 413 before they hit a handler. Shared with
+        // `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES` (#1444 R2) so the
+        // reshard driver's oversize-batch detection can never drift from the
+        // limit actually enforced here.
+        .layer(axum::extract::DefaultBodyLimit::max(
+            crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES,
+        ));
 
     let metrics: Arc<dyn MetricsProvider> = state.engine.clone();
     let probes = service_http::standard_probe_routes(state.engine.clone(), Some(metrics), openapi);
