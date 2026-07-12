@@ -276,8 +276,8 @@ Gate Inventory:
 
 ID: http2-api-list
 Type: RuntimeTool
-Surfaces: CLI: `pgpool spec --format routes|openapi|openapi-yaml|json-schema` - offline admin API inventory and OpenAPI twin.; HTTP: pending served `/openapi.json` and admin routes on the running admin plane.
-EC Dimensions: behavior: `cargo test -p pgpool` - offline route inventory names the standard and pool admin endpoints
+Surfaces: CLI: `pgpool spec --format routes|openapi|openapi-yaml|json-schema` - offline admin API inventory and OpenAPI twin.; HTTP: served `/openapi.json` and admin routes on the running admin plane, matching the offline twin byte-for-byte.
+EC Dimensions: behavior: `cargo test -p pgpool` - offline route inventory names the standard and pool admin endpoints; served-vs-offline conformance proven by `tests/admin_plane.rs`
 Root WI: 1282
 Status: auditing
 Required Verification: smoke
@@ -288,11 +288,12 @@ with the offline `pgpool spec` twin matching the served contract once the
 admin plane runs.
 Gate Inventory:
 - apps/pgpool/src/spec.rs; apps/pgpool/tests/cli_contract.rs
+- apps/pgpool/tests/admin_plane.rs (`served_contract_matches_offline_spec`, AC3)
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | offline-route-and-openapi-inventory | change | - | implemented | passing | smoke | apps/pgpool/src/spec.rs; apps/pgpool/tests/cli_contract.rs |
-| served-contract-matches-offline-spec | epic | 1290 | planned | planned | none | pending: served admin plane conformance gate |
+| served-contract-matches-offline-spec | epic | 1290 | implemented | passing | conformance | apps/pgpool/tests/admin_plane.rs (`served_contract_matches_offline_spec`); apps/pgpool/tech-design/logic/served-admin-plane-with-drain-aware-readiness.md |
 
 ### Kubernetes-Native Deployment
 
@@ -365,8 +366,8 @@ Gate Inventory:
 
 ID: standard-operational-endpoints
 Type: Service
-Surfaces: HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` - one-port operational surface on the admin plane (inventory defined; server pending).; CLI: `pgpool spec` - offline OpenAPI evidence for the same contract when no server is running.
-EC Dimensions: behavior: `cargo test -p pgpool` - offline inventory carries the five standard endpoints; served conformance pending
+Surfaces: HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` - one-port operational surface, served on `RuntimePlan.admin_bind` via `http_server::serve_h2c_with_options`.; CLI: `pgpool spec` - offline OpenAPI evidence for the same contract when no server is running.
+EC Dimensions: behavior: `cargo test -p pgpool` - offline inventory carries the five standard endpoints; served conformance proven by `tests/admin_plane.rs`
 Root WI: 1282
 Status: candidate
 Required Verification: conformance
@@ -376,9 +377,9 @@ probes, metrics scrape, live spec, and Swagger UI stay always-on on the admin
 port, with readiness flipping on drain and `pgpool spec` as the offline twin.
 Gate Inventory:
 - apps/pgpool/src/spec.rs
-- pending: served probe/drain conformance gates
+- apps/pgpool/tests/admin_plane.rs (`all_routes_respond_on_h2c_and_http1` AC1, `drain_flips_readyz_and_process_exits_cleanly` AC2, `metrics_exposes_prometheus_pool_gauges` AC4)
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | offline-standard-endpoint-inventory | change | - | implemented | passing | smoke | apps/pgpool/src/spec.rs |
-| served-probes-and-drain-flip | epic | 1290 | planned | planned | none | pending: served conformance gates |
+| served-probes-and-drain-flip | epic | 1290 | implemented | passing | conformance | apps/pgpool/tests/admin_plane.rs (`all_routes_respond_on_h2c_and_http1`, `drain_flips_readyz_and_process_exits_cleanly`, `metrics_exposes_prometheus_pool_gauges`); apps/pgpool/tech-design/logic/served-admin-plane-with-drain-aware-readiness.md |
