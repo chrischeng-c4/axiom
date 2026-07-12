@@ -300,3 +300,35 @@ properties:
       defaults to auto via ServiceRuntime's existing #[default], applied
       project-wide at import/up time, never per-service.
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+files:
+  - path: apps/vat/src/config.rs
+    changes:
+      - "ServiceRuntime enum gains a MicroVm variant (Auto, Native, Docker, MicroVm), still deriving clap::ValueEnum; existing vat.toml documents accepting runtime = docker or runtime = native today gain a fourth accepted string, runtime = microvm."
+      - "ServiceConfig gains a new optional volumes array-of-tables key (default empty), each entry shaped { name = ..., path = ... } (VolumeMount), serialized/deserialized via a new pub struct VolumeMount { pub name: String, pub path: String }."
+      - "validate()'s existing gate that requires a preset when runtime is not auto is relaxed to also accept an image-backed service (image = ... present) declaring runtime = docker or runtime = microvm explicitly."
+    rationale: >-
+      R2/R4: vat compose import materializes ServiceConfig entries with an
+      explicit runtime it read from the project-wide --runtime flag and named
+      volumes from a compose service's volumes: list; both need a vat.toml
+      shape able to express them so the generated file is a normal,
+      hand-editable vat.toml with no compose-only sidecar format.
+    verification: >-
+      AC2/AC3: a vat.toml produced by vat compose import round-trips through
+      VatConfig::validate() and vat run without any config.rs error, for
+      services carrying runtime = microvm and a non-empty volumes list.
+no_new_top_level_keys: true
+notes: >-
+  vat compose introduces no new top-level vat.toml section (no [compose]
+  table) and no new environment variable. All per-project compose state
+  (project name, runtime selection, live vat_id, service_ids, pid) lives in
+  the new root/compose/project/project.json registry file (see CLI and
+  Changes sections), not in vat.toml or aw.toml. The only vat.toml shape
+  changes are the two additive per-service keys above (runtime = microvm,
+  volumes = [ { name = ..., path = ... } ]), which are optional and backward
+  compatible with every existing vat.toml.
+```
