@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/mamba"
-generated_at = "2026-07-12T07:14:38.041788+00:00"
-digest = "sha256:c3da88615ce10ce8ded9a287043421cf0ffc06f2e6e13f6d47eeeed1a2942b11"
-source_digest = "sha256:c3da88615ce10ce8ded9a287043421cf0ffc06f2e6e13f6d47eeeed1a2942b11"
-ir_digest = "sha256:f4caf2f591ff89d4a91e126a99648438d15f53789d2eae86e118f41c75d7b5d2"
+generated_at = "2026-07-12T07:15:44.882100+00:00"
+digest = "sha256:97fbcabcded6434da468097fbc3238cdb6c0cd66ac69114e3761c921297fb1fe"
+source_digest = "sha256:97fbcabcded6434da468097fbc3238cdb6c0cd66ac69114e3761c921297fb1fe"
+ir_digest = "sha256:9b5a1d0d485d36c1821a06ace7710da2fa8c71a6a0d6eac4595b1c3fae67d912"
 
 [[files]]
 path = "README.md"
@@ -75,9 +75,9 @@ section_count = 3
 
 [[files]]
 path = "logic/mamba-strict-type-make-companion-writes-post-evaluation-transact.md"
-digest = "sha256:fab4a7587245ebd9e271f780aaedaf9622c09a6e170e0ba80c42e0c0d5015c26"
-ir_digest = "sha256:1e3812ff50f818837f5145f4e7be3dad761187934fa9d3559992cb99339ae24b"
-section_count = 2
+digest = "sha256:7f42b4a5d7a893f9ff00cba8b8e6d7923f4c17b645a8dbace098a08f9892cd5e"
+ir_digest = "sha256:a977b2df3a50d7618f05824e70ef30aae54ec392c6ff2e70503e01d63dd8555f"
+section_count = 3
 
 [[files]]
 path = "lower/ast-to-hir.md"
