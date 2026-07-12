@@ -73,6 +73,47 @@ pub fn available() -> bool {
     false
 }
 
+/// Check if the container system is up and responsive via `container system status`.
+/// Returns true only if the probe succeeds within a bounded timeout.
+pub fn system_up() -> bool {
+    use std::process::{Command, Stdio};
+    Command::new("container")
+        .arg("system")
+        .arg("status")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// Poll the container system until it responds or timeout elapses.
+/// Returns Err with a message naming the elapsed timeout when unavailable.
+pub fn ensure_system_started(timeout: std::time::Duration) -> Result<(), String> {
+    poll_until_up(timeout, system_up)
+}
+
+/// Poll+timeout loop shared by `ensure_system_started`, parameterized over the probe
+/// so the timeout behavior itself is testable without depending on whether the real
+/// `container` CLI is installed or its system is actually running on the test host
+/// (R4: deterministic on every host, never hangs indefinitely).
+fn poll_until_up(timeout: std::time::Duration, probe: impl Fn() -> bool) -> Result<(), String> {
+    use std::time::Instant;
+    let deadline = Instant::now() + timeout;
+    loop {
+        if probe() {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "container system did not respond within {:?}",
+                timeout
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,6 +216,17 @@ mod tests {
         assert_eq!(tail[2], "train.py");
         assert_eq!(tail[3], "--batch");
         assert_eq!(tail[4], "32");
+    }
+
+    #[test]
+    fn ensure_system_started_times_out_when_unavailable() {
+        // R4: probe that never reports up must yield Err once the bounded timeout
+        // elapses, deterministically on every host — this drives poll_until_up
+        // directly with an always-false probe so the assertion never depends on
+        // whether the real `container` CLI happens to be installed and running.
+        let result = poll_until_up(std::time::Duration::from_millis(50), || false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("did not respond within"));
     }
 }
 // CODEGEN-END

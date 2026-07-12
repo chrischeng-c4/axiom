@@ -7,6 +7,7 @@
 //! so the binary can propagate a meaningful status (notably: `vat run`
 //! forwards the child's exit code).
 
+pub mod build;
 pub mod capabilities;
 pub mod cluster;
 pub mod diff;
@@ -36,15 +37,5 @@ pub fn print_json<T: serde::Serialize>(value: &T, compact: bool) -> Result<()> {
     };
     println!("{s}");
     Ok(())
-}
-// CODEGEN-END
-// SPEC-MANAGED: apps/vat/tech-design/interfaces/cli/vat-microvm-phase-2-vat-build-dockerfile-build-via-container-cli.md#cli
-// CODEGEN-BEGIN
-#[derive(Subcommand)]
-pub enum Commands {
-    VatBuild,
-
-    VatRunVatCapabilitiesVatDoctorUnaffected,
-
 }
 // CODEGEN-END

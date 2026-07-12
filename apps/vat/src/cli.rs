@@ -200,6 +200,24 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ClusterCmd,
     },
+    /// Build a local OCI image from a Dockerfile using the container CLI.
+    Build {
+        /// Path to Dockerfile (defaults to Dockerfile in context dir).
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// Build context directory (defaults to current directory).
+        #[arg(long)]
+        context: Option<PathBuf>,
+        /// OCI image reference to tag (defaults to <context-dir-basename>:latest).
+        #[arg(long)]
+        tag: Option<String>,
+        /// Build argument K=V (repeatable).
+        #[arg(long)]
+        build_arg: Vec<String>,
+        /// Emit structured JSON instead of streaming output.
+        #[arg(long)]
+        json: bool,
+    },
     /// Internal: run a built-in emulator. vat spawns itself for an emulator
     /// preset service; not intended for direct human use.
     #[command(hide = true)]
@@ -456,6 +474,19 @@ pub fn run() -> Result<ExitCode> {
             ClusterCmd::Kubeconfig { name, json } => commands::cluster::kubeconfig(name, json),
             ClusterCmd::Delete { name, json } => commands::cluster::delete(name, json),
         },
+        Cmd::Build {
+            file,
+            context,
+            tag,
+            build_arg,
+            json,
+        } => commands::build::exec(commands::build::Args {
+            file,
+            context,
+            tag,
+            build_arg,
+            json,
+        }),
         Cmd::Emulator {
             kind,
             host_port,
@@ -610,27 +641,5 @@ fn issue_cmd(_cmd: IssueCmd) -> Result<ExitCode> {
         "this vat build was compiled without issue support; rebuild with \
          default features (the published binary includes it)"
     )
-}
-// CODEGEN-END
-// SPEC-MANAGED: apps/vat/tech-design/logic/vat-microvm-phase-1-isolation-microvm-sandbox-backend-for-vat-ru.md#cli
-// CODEGEN-BEGIN
-#[derive(Subcommand)]
-pub enum Commands {
-    VatRun,
-
-    VatCapabilitiesJson,
-
-    VatDoctor,
-
-}
-// CODEGEN-END
-// SPEC-MANAGED: apps/vat/tech-design/interfaces/cli/vat-microvm-phase-2-vat-build-dockerfile-build-via-container-cli.md#cli
-// CODEGEN-BEGIN
-#[derive(Subcommand)]
-pub enum Commands {
-    VatBuild,
-
-    VatRunVatCapabilitiesVatDoctorUnaffected,
-
 }
 // CODEGEN-END

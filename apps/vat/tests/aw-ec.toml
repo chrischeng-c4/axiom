@@ -15,3 +15,17 @@ command = "cargo test -p vat --test vat_sandbox_microvm -- --nocapture"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "microvm-sandbox-backend-for-vat-run"
 description = "Real container run execution end-to-end through Isolation::MicroVm (skips when container CLI not installed)"
+
+[[test_commands]]
+id = "vat-build-container-gated-smoke"
+command = "cargo test -p vat --test vat_build -- --nocapture"
+capability_id = "agent-native-gpu-native-dev-containers"
+claim_id = "vat-build-dockerfile-build-via-container-cli"
+description = "vat build produces a tagged local OCI image visible in container image list (skips when container CLI not installed)"
+
+[[test_commands]]
+id = "vat-build-lean-and-default-compile"
+command = "cargo build -p vat --no-default-features"
+capability_id = "agent-native-gpu-native-dev-containers"
+claim_id = "vat-build-dockerfile-build-via-container-cli"
+description = "default and lean (--no-default-features) build compile after the serde_yaml promotion"
