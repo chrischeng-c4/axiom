@@ -24,7 +24,7 @@ contract_id = "production-like-integration-scenarios"
 category = "behavior"
 td_ref = "apps/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-failure-keeps-topology-and-logs"
 test_path = "apps/vat/tests/behavior_scenario_failure_keeps_topology_and_logs.rs"
-command = "cargo test -p vat --lib scenario_failure_keeps_topology_and_logs -- --nocapture"
+command = "cargo test -p vat --test vat_toml_runner scenario_failure_keeps_topology_and_logs -- --nocapture"
 required_for_production = true
 assertions = [
     "failing runner forwards its exit code",
@@ -41,7 +41,7 @@ contract_id = "production-like-integration-scenarios"
 category = "behavior"
 td_ref = "apps/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-hermetic-requires-http-mock-service"
 test_path = "apps/vat/tests/behavior_scenario_hermetic_requires_http_mock_service.rs"
-command = "cargo test -p vat --lib scenario_hermetic_requires_http_mock_service -- --nocapture"
+command = "cargo test -p vat --test vat_toml_runner scenario_hermetic_requires_http_mock_service -- --nocapture"
 required_for_production = true
 assertions = [
     "hermetic scenario without http-mock exits non-zero",
@@ -57,7 +57,7 @@ contract_id = "production-like-integration-scenarios"
 category = "behavior"
 td_ref = "apps/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-run-starts-app-dependency-and-runner"
 test_path = "apps/vat/tests/behavior_scenario_run_starts_app_dependency_and_runner.rs"
-command = "cargo test -p vat --lib scenario_run_starts_app_dependency_and_runner -- --nocapture"
+command = "cargo test -p vat --test vat_toml_runner scenario_run_starts_app_dependency_and_runner -- --nocapture"
 required_for_production = true
 assertions = [
     "vat run --scenario prod-like succeeds",

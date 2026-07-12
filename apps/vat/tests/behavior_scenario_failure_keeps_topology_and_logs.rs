@@ -7,7 +7,7 @@
 // @contract production-like-integration-scenarios
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat --lib scenario_failure_keeps_topology_and_logs -- --nocapture
+// @command cargo test -p vat --test vat_toml_runner scenario_failure_keeps_topology_and_logs -- --nocapture
 // AW-EC-END
 
 // Contract: failing runner forwards its exit code
@@ -17,7 +17,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn scenario_failure_keeps_topology_and_logs() {
-    let command = "cargo test -p vat --lib scenario_failure_keeps_topology_and_logs -- --nocapture";
+    let command = "cargo test -p vat --test vat_toml_runner scenario_failure_keeps_topology_and_logs -- --nocapture";
     let id = "scenario-failure-keeps-topology-and-logs";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
