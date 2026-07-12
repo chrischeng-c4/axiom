@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/mamba"
-generated_at = "2026-07-12T07:37:10.172617+00:00"
-digest = "sha256:d2dea70cbe30d60151333b0d629aaa56030b2ba5dc2101ec15421b8375c2b4b2"
-source_digest = "sha256:d2dea70cbe30d60151333b0d629aaa56030b2ba5dc2101ec15421b8375c2b4b2"
-ir_digest = "sha256:2650fd4233a1ebd657947dee1a0a10e80ec16b4ea2bea4a7f89bdcaae07b7d29"
+generated_at = "2026-07-12T08:03:29.550881+00:00"
+digest = "sha256:743de52f93ca6a32edeb19d00e19e167d53f17dfb914474168d292be016f2ff5"
+source_digest = "sha256:743de52f93ca6a32edeb19d00e19e167d53f17dfb914474168d292be016f2ff5"
+ir_digest = "sha256:7550c73ec627201b9ac571bd23ed639ec5cd47f7f048562b7ffb945b0fff3a2d"
 
 [[files]]
 path = "README.md"
@@ -75,8 +75,8 @@ section_count = 3
 
 [[files]]
 path = "logic/mamba-strict-type-expose-runtime-mixed-int-owner-sidecars.md"
-digest = "sha256:59ba6b029f002064776a4126df3a0de516fc48b9105b9a6bb73b7e5a8e8a4a38"
-ir_digest = "sha256:d938fa4af3f9ccf136cf9ef644cb5193ab249a88172460c9c0c83ee3cbcbbea4"
+digest = "sha256:548479e7ddfab54979f545f2979400917fad13249460b8b1227849d5f71af214"
+ir_digest = "sha256:419cc44e5993fa1dba29623a096e5fdec6fbf365dd329969451a3869497bf84d"
 section_count = 3
 
 [[files]]

@@ -16,23 +16,28 @@ nodes:
   contract: { kind: decision, label: "mixed-Int companion contract" }
   fresh: { kind: process, label: "publish fresh BigInt owner or None" }
   pass_through: { kind: process, label: "publish declared argument owner" }
+  typed: { kind: process, label: "require typed-Int projection before owner-out" }
   deferred: { kind: terminal, label: "leave consumer deferred" }
 edges:
   - { from: runtime_symbol, to: contract }
   - { from: contract, to: fresh, label: "FreshResultOrNone" }
   - { from: contract, to: pass_through, label: "ArgumentPassThroughOrNone" }
+  - { from: contract, to: typed, label: "TypedIntProjection" }
   - { from: contract, to: deferred, label: "other" }
 ---
 flowchart TD
     runtime_symbol([runtime symbol lookup]) --> contract{mixed-Int contract}
     contract -- fresh --> fresh[publish fresh BigInt owner or None]
     contract -- pass through --> pass_through[publish declared argument owner]
+    contract -- typed Int proof --> typed[resolve typed projection only]
     contract -- other --> deferred([leave consumer deferred])
 ```
 
-`RuntimeSymbol` owns an optional `IntCompanionContract` sidecar in addition to `ReturnAbi`. `mb_pow_int` and `mb_bigint_{add,sub,mul}` declare `FreshResultOrNone`; `mb_unbox_{int,inline_int}_if_boxed` declares `ArgumentPassThroughOrNone { argument_index: 0 }`. Non-Int and dynamic `Unknown` symbols have no sidecar, so #1452 remains the only owner of dynamic return transport.
+`RuntimeSymbol` owns an optional scoped companion declaration in addition to `ReturnAbi`. `mb_pow_int` and `mb_bigint_{add,sub,mul}` declare a mixed `FreshResultOrNone` sidecar; `mb_unbox_{int,inline_int}_if_boxed` declares mixed `ArgumentPassThroughOrNone { argument_index: 0 }`. Non-Int and dynamic `Unknown` symbols have no mixed sidecar, so #1452 remains the only owner of dynamic return transport.
 
 The owner-out adapter keeps result bits distinct from ownership: helper-created BigInts transfer exactly one fresh owner, while raw, inline, float, and handle results transfer none. Smart-unbox selects only its declared argument companion as `Borrowed`, never by inspecting result bits. The C/JIT ABI remains `i64`; #1462 consumes the sidecar after evaluation.
+
+Polymorphic `mb_floordiv`, `mb_mod`, bitwise, and shift helpers keep their public `Unknown` ABI. They register a separate `TypedIntProjection(FreshResultOrNone)` that is available only through the typed-projection lookup; ordinary and dynamic callers cannot resolve it. This makes the static Int proof an explicit owner-out boundary rather than globally reclassifying polymorphic runtime results.
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
@@ -58,9 +63,16 @@ requirements:
     kind: regression
     risk: high
     verify: runtime::symbols::tests::runtime_mixed_int_companion_contracts_are_explicit
+  typed_projection:
+    id: R4
+    text: "Polymorphic floor/mod/bitwise/shift helpers remain Unknown generally but publish fresh-or-none ownership only through an explicit typed-Int projection."
+    kind: regression
+    risk: high
+    verify: runtime::symbols::tests::runtime_mixed_int_companion_contracts_are_explicit
 ---
 flowchart TD
     r1[R1 registry contract] --> runtime_symbols_tests_runtime_mixed_int_companion_contracts_are_explicit[runtime::symbols::tests::runtime_mixed_int_companion_contracts_are_explicit]
+    r4[R4 typed projection] --> runtime_symbols_tests_runtime_mixed_int_companion_contracts_are_explicit
     r2[R2 fresh transfer] --> runtime_bigint_ops_tests_mixed_int_owner_out_transfers_fresh_bigint_once[runtime::bigint_ops::tests::mixed_int_owner_out_transfers_fresh_bigint_once]
     r3[R3 pass through] --> runtime_builtins_boxing_tests_mixed_int_unbox_owner_out_uses_declared_argument[runtime::builtins::boxing::tests::mixed_int_unbox_owner_out_uses_declared_argument]
 ```

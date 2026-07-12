@@ -19,6 +19,16 @@ pub enum IntCompanionContract {
     ArgumentPassThroughOrNone { argument_index: usize },
 }
 
+/// Scope carried by a runtime owner-sidecar declaration.
+///
+/// Polymorphic helpers retain their `Unknown` public ABI. A consumer may use
+/// their projection only after it has independently proved the call is Int.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeIntCompanionContract {
+    Mixed(IntCompanionContract),
+    TypedIntProjection(IntCompanionContract),
+}
+
 /// Explicit owner sidecar for a mixed integer result.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IntCompanionOwner {
@@ -91,7 +101,7 @@ pub struct RuntimeSymbol {
     /// Explicit physical/ownership contract for an I64-returning producer.
     pub return_abi: Option<ReturnAbi>,
     /// Optional explicit owner-sidecar source for a RawOrBoxedInt result.
-    pub int_companion: Option<IntCompanionContract>,
+    pub int_companion: Option<RuntimeIntCompanionContract>,
 }
 
 // Safety: function pointers to static functions are Send+Sync.
@@ -130,7 +140,28 @@ macro_rules! rt_sym {
             params: &[$($p),*],
             return_type: $ret,
             return_abi: Some(ReturnAbi::new($physical, $ownership)),
-            int_companion: Some($int_companion),
+            int_companion: Some(RuntimeIntCompanionContract::Mixed($int_companion)),
+        }
+    };
+}
+
+/// Register a polymorphic helper's owner sidecar for callers already proven
+/// to operate on Int values. The exported helper remains `Unknown` so generic
+/// callsites never treat a pointer-shaped result as an Int owner.
+macro_rules! rt_typed_int_projection_sym {
+    ($name:expr, $func:expr, [$($p:expr),*], I64) => {
+        RuntimeSymbol {
+            name: $name,
+            addr: $func as *const u8,
+            params: &[$($p),*],
+            return_type: MirType::I64,
+            return_abi: Some(ReturnAbi::new(
+                PhysicalReturn::Unknown,
+                ReturnOwnership::ProvenanceTransfer,
+            )),
+            int_companion: Some(RuntimeIntCompanionContract::TypedIntProjection(
+                IntCompanionContract::FreshResultOrNone,
+            )),
         }
     };
 }
@@ -540,37 +571,37 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64, I64],
             I64
         ),
-        rt_unknown_sym!(
+        rt_typed_int_projection_sym!(
             "mb_mod",
             builtins::mb_mod as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
             I64
         ),
-        rt_unknown_sym!(
+        rt_typed_int_projection_sym!(
             "mb_bitor",
             builtins::mb_bitor as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
             I64
         ),
-        rt_unknown_sym!(
+        rt_typed_int_projection_sym!(
             "mb_bitand",
             builtins::mb_bitand as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
             I64
         ),
-        rt_unknown_sym!(
+        rt_typed_int_projection_sym!(
             "mb_bitxor",
             builtins::mb_bitxor as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
             I64
         ),
-        rt_unknown_sym!(
+        rt_typed_int_projection_sym!(
             "mb_lshift",
             builtins::mb_lshift as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
             I64
         ),
-        rt_unknown_sym!(
+        rt_typed_int_projection_sym!(
             "mb_rshift",
             builtins::mb_rshift as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
@@ -690,7 +721,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64, I64],
             I64
         ),
-        rt_unknown_sym!(
+        rt_typed_int_projection_sym!(
             "mb_floordiv",
             builtins::mb_floordiv as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
@@ -4546,7 +4577,9 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             params: &[I64, I64],
             return_type: I64,
             return_abi: Some(ReturnAbi::new(PhysicalReturn::RawOrBoxedInt, ReturnOwnership::ProvenanceTransfer)),
-            int_companion: Some(IntCompanionContract::FreshResultOrNone),
+            int_companion: Some(RuntimeIntCompanionContract::Mixed(
+                IntCompanionContract::FreshResultOrNone,
+            )),
         },
         RuntimeSymbol {
             name: "mb_bigint_sub",
@@ -4554,7 +4587,9 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             params: &[I64, I64],
             return_type: I64,
             return_abi: Some(ReturnAbi::new(PhysicalReturn::RawOrBoxedInt, ReturnOwnership::ProvenanceTransfer)),
-            int_companion: Some(IntCompanionContract::FreshResultOrNone),
+            int_companion: Some(RuntimeIntCompanionContract::Mixed(
+                IntCompanionContract::FreshResultOrNone,
+            )),
         },
         RuntimeSymbol {
             name: "mb_bigint_mul",
@@ -4562,7 +4597,9 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             params: &[I64, I64],
             return_type: I64,
             return_abi: Some(ReturnAbi::new(PhysicalReturn::RawOrBoxedInt, ReturnOwnership::ProvenanceTransfer)),
-            int_companion: Some(IntCompanionContract::FreshResultOrNone),
+            int_companion: Some(RuntimeIntCompanionContract::Mixed(
+                IntCompanionContract::FreshResultOrNone,
+            )),
         },
         RuntimeSymbol {
             name: "mb_bigint_cmp",
@@ -4902,7 +4939,22 @@ pub fn runtime_int_companion_contract(name: &str) -> Option<IntCompanionContract
     runtime_symbols()
         .into_iter()
         .find(|symbol| symbol.name == name)
-        .and_then(|symbol| symbol.int_companion)
+        .and_then(|symbol| match symbol.int_companion {
+            Some(RuntimeIntCompanionContract::Mixed(contract)) => Some(contract),
+            Some(RuntimeIntCompanionContract::TypedIntProjection(_)) | None => None,
+        })
+}
+
+/// Look up the owner sidecar available only after static lowering has proven
+/// the polymorphic runtime call operates on Int values.
+pub fn runtime_typed_int_companion_contract(name: &str) -> Option<IntCompanionContract> {
+    runtime_symbols()
+        .into_iter()
+        .find(|symbol| symbol.name == name)
+        .and_then(|symbol| match symbol.int_companion {
+            Some(RuntimeIntCompanionContract::TypedIntProjection(contract)) => Some(contract),
+            Some(RuntimeIntCompanionContract::Mixed(_)) | None => None,
+        })
 }
 
 /// Resolve one runtime mixed-Int owner sidecar without inspecting result bits
@@ -4913,6 +4965,18 @@ pub(crate) fn runtime_int_owner_out(
     argument_owners: &[Option<MbValue>],
 ) -> Result<Option<IntOwnerOut>, IntOwnerOutError> {
     runtime_int_companion_contract(name)
+        .map(|contract| contract.owner_out(result_bits, argument_owners))
+        .transpose()
+}
+
+/// Resolve a polymorphic helper's sidecar only at a callsite already proven to
+/// use Int operands. This makes the typed proof an explicit API boundary.
+pub(crate) fn runtime_typed_int_owner_out(
+    name: &str,
+    result_bits: i64,
+    argument_owners: &[Option<MbValue>],
+) -> Result<Option<IntOwnerOut>, IntOwnerOutError> {
+    runtime_typed_int_companion_contract(name)
         .map(|contract| contract.owner_out(result_bits, argument_owners))
         .transpose()
 }
@@ -5068,7 +5132,10 @@ mod tests {
                 })
             ) {
                 assert!(
-                    symbol.int_companion.is_some(),
+                    matches!(
+                        symbol.int_companion,
+                        Some(RuntimeIntCompanionContract::Mixed(_))
+                    ),
                     "{} lacks an explicit mixed-Int companion contract",
                     symbol.name
                 );
@@ -5098,6 +5165,45 @@ mod tests {
             runtime_int_owner_out("mb_unbox_int_if_boxed", 42, &[]),
             Err(IntOwnerOutError::MissingArgumentOwner { argument_index: 0 })
         );
+
+        let typed_results = [
+            ("mb_floordiv", crate::runtime::builtins::mb_floordiv(MbValue::from_int(17), MbValue::from_int(5))),
+            ("mb_mod", crate::runtime::builtins::mb_mod(MbValue::from_int(17), MbValue::from_int(5))),
+            ("mb_bitor", crate::runtime::builtins::mb_bitor(MbValue::from_int(1), MbValue::from_int(2))),
+            ("mb_bitand", crate::runtime::builtins::mb_bitand(MbValue::from_int(7), MbValue::from_int(3))),
+            ("mb_bitxor", crate::runtime::builtins::mb_bitxor(MbValue::from_int(7), MbValue::from_int(3))),
+            ("mb_lshift", crate::runtime::builtins::mb_lshift(MbValue::from_int(3), MbValue::from_int(2))),
+            ("mb_rshift", crate::runtime::builtins::mb_rshift(MbValue::from_int(12), MbValue::from_int(2))),
+        ];
+        for (name, value) in typed_results {
+            assert_eq!(runtime_int_companion_contract(name), None, "{name}");
+            assert_eq!(
+                runtime_typed_int_companion_contract(name),
+                Some(IntCompanionContract::FreshResultOrNone),
+                "{name}"
+            );
+            assert_eq!(
+                runtime_typed_int_owner_out(name, value.to_bits() as i64, &[])
+                    .unwrap()
+                    .expect("typed projection" )
+                    .owner,
+                IntCompanionOwner::None,
+                "{name} raw result"
+            );
+        }
+
+        let overflow = crate::runtime::builtins::mb_lshift(
+            MbValue::from_int((1i64 << 47) - 1),
+            MbValue::from_int(1),
+        );
+        let owner_out = runtime_typed_int_owner_out("mb_lshift", overflow.to_bits() as i64, &[])
+            .unwrap()
+            .expect("typed projection");
+        let IntCompanionOwner::Fresh(owner) = owner_out.owner else {
+            panic!("typed shift overflow must transfer its fresh BigInt owner");
+        };
+        assert_eq!(owner_out.bits, owner.to_bits() as i64);
+        unsafe { crate::runtime::rc::release_if_ptr(owner) };
     }
 
     // Spot-check that critical cross-subsystem runtime symbols the JIT actually
