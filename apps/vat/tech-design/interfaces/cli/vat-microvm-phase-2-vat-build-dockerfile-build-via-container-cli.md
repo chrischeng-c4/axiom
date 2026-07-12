@@ -199,3 +199,45 @@ e2e_tests:
       - "AC1: `cargo build -p vat` succeeds with commands/build.rs, Cmd::Build, and the two new sandbox/microvm.rs functions (system_up, ensure_system_started) present in the default build."
       - "AC6: apps/vat/Cargo.toml's serde_yaml dependency has no `optional = true` and is absent from the `emulator` feature's dep: list; `cargo build -p vat --no-default-features` still succeeds now that serde_yaml is unconditional (same version 0.9, zero new crate)."
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/vat/src/commands/build.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: "R1-R4: new `Args`/`BuildReport` structs, `exec()`, `build_image()`, `container_build_command()`, and `ensure_microvm_available()`. `container_build_command()` is a mechanical argv builder mirroring `sandbox/microvm.rs`'s `resolve()` (itself codegen-owned), and `ensure_microvm_available()` structurally mirrors `run.rs`'s `ensure_docker_available`; but `exec()`'s R3 divergence — streaming build output live (inherited stdio) in human mode vs. capturing output and returning only the structured `BuildReport` in JSON mode — is a genuinely new pattern (no other vat command proxies a long-running streamed subprocess today), so the whole file is hand-authored this WI (missing-generator:cli:streamed-subprocess-dual-mode, tracker #1479)."
+  - path: apps/vat/src/commands/mod.rs
+    action: modify
+    section: cli
+    impl_mode: codegen
+    reason: "R1: add `pub mod build;` — mechanical module registration, no logic, consistent with this file's existing codegen ownership."
+  - path: apps/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: codegen
+    reason: "R6: add `Cmd::Build { file, context, tag, build_arg, json }` and dispatch to `commands::build::exec`; mechanical clap variant + dispatch addition, consistent with this file's existing codegen ownership (mirrors Phase 1's `--microvm-image` flag addition)."
+  - path: apps/vat/src/sandbox/microvm.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+    reason: "R4: additive `pub fn system_up() -> bool` (mirrors `run.rs`'s `docker_daemon_up()`, a simple bounded-timeout subprocess-status probe) and `pub fn ensure_system_started(timeout: Duration) -> Result<(), String>` (mirrors `cluster.rs`'s poll+timeout loop) — both structural mirrors of already codegen-produced functions; no change to `MicroVmBackend`, `resolve()`, or `available()` (Phase 1, merged, untouched)."
+  - path: apps/vat/Cargo.toml
+    action: modify
+    section: config
+    impl_mode: codegen
+    reason: "R5: promote `serde_yaml` from `optional = true` to an unconditional dependency and drop it from the `emulator` feature's dep: list — same version (0.9), zero new crate; mechanical Cargo.toml edit."
+  - path: apps/vat/tests/vat_build.rs
+    action: create
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "R7/AC3/AC4/AC5: `container_available()` skip helper (mirrors `vat_cluster.rs`'s Docker-gated pattern and `vat_sandbox_microvm.rs`'s container-gated tests) plus `build_fails_missing_dockerfile` (no subprocess, always runs) and the container-gated `build_produces_tagged_image_visible_in_container_image_list` test asserting both a successful `BuildReport` and that singular-noun `container image list` (not the plural `container images`, per the Phase 0 spike's R7 finding) shows the built tag."
+  - path: apps/vat/tests/aw-ec.toml
+    action: modify
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "R7: register `vat_build.rs`'s EC-gated test command(s) as configured test commands for the agent-native-gpu-native-dev-containers capability, so `aw ec gen --verify` / `aw health --verify-tests` pick them up."
+```
