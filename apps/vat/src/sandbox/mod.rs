@@ -46,7 +46,7 @@ pub trait Sandbox {
 /// succeeds; the workspace clone still applies regardless of isolation, so a
 /// vat is never *less* isolated than plain `cd` + run on that front.
 /// @spec apps/vat/tech-design/semantic/source/projects-vat-src-sandbox-mod-rs.md#source
-// HANDWRITE-BEGIN gap="missing-generator:logic:pick-fail-closed" tracker="pending-tracker" reason="Logic section edge: pick() must fail closed (return Err) instead of warn-and-continue when the selected backend cannot enforce a non-Open egress policy (isolation=none, or seatbelt requested but unavailable) — hand-written backend-selection logic per issue #1300."
+// HANDWRITE-BEGIN gap="missing-generator:logic:pick-fail-closed" tracker="#1300" reason="Logic section edge: pick() must fail closed (return Err) instead of warn-and-continue when the selected backend cannot enforce a non-Open egress policy (isolation=none, or seatbelt requested but unavailable) — hand-written backend-selection logic per issue #1300."
 pub fn pick(spec: &EnvSpec) -> Result<Box<dyn Sandbox>, String> {
     match spec.isolation {
         Isolation::None => {

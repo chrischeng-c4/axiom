@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:e2e-test:9331bfaa" tracker="pending-tracker" reason="AC1: new container-gated smoke test exercising a real `container run` end to end through Isolation::MicroVm; skips cleanly when the `container` CLI is not installed, mirroring the existing Docker-gated test pattern."
+// HANDWRITE-BEGIN gap="missing-generator:e2e-test:9331bfaa" tracker="#1474" reason="AC1: new container-gated smoke test exercising a real `container run` end to end through Isolation::MicroVm; skips cleanly when the `container` CLI is not installed, mirroring the existing Docker-gated test pattern."
 
 //! Container-gated smoke test for Isolation::MicroVm end-to-end execution.
 //! AC1: Verifies a real `container run` invocation executes inside Isolation::MicroVm
