@@ -9,37 +9,60 @@ fill_sections: [logic, unit-test]
 
 ```mermaid
 ---
-id: mamba-unbound-local-diagnostic-applicability
-entry: function-local read before assignment
+id: mamba-unbound-local-diagnostic-contract
+entry: detected unbound local
 nodes:
-  read: { kind: start, label: "function-local read before assignment" }
-  route: { kind: decision, label: "ordinary or generated-function path" }
-  helper: { kind: process, label: "raise via mb_unbound_local_error_value" }
-  generated: { kind: process, label: "emit generated-body UnboundLocalError" }
-  message: { kind: process, label: "format pinned CPython 3.12 diagnostic" }
-  propagate: { kind: terminal, label: "raise catchable UnboundLocalError" }
-  nameerror: { kind: terminal, label: "deferred NameError route unchanged" }
+  detect: { kind: start, label: "detected function-local read before assignment" }
+  format: { kind: process, label: "centralized pinned diagnostic formatter" }
+  normal: { kind: process, label: "runtime helper raises UnboundLocalError" }
+  generated: { kind: process, label: "generated-body lowering emits same text" }
+  propagate: { kind: terminal, label: "existing exception propagation and catchability" }
+  deferred: { kind: terminal, label: "deferred NameError is unchanged" }
 edges:
-  - { from: read, to: route }
-  - { from: route, to: helper, label: "ordinary function" }
-  - { from: route, to: generated, label: "generated function" }
-  - { from: helper, to: message }
-  - { from: generated, to: message }
-  - { from: message, to: propagate }
-  - { from: read, to: nameerror, label: "unresolved non-local name" }
+  - { from: detect, to: format }
+  - { from: format, to: normal, label: "ordinary function" }
+  - { from: format, to: generated, label: "generated function" }
+  - { from: normal, to: propagate }
+  - { from: generated, to: propagate }
 ---
 flowchart TD
-    read([function-local read before assignment]) --> route{ordinary or generated-function path?}
-    route -- ordinary function --> helper[raise via mb_unbound_local_error_value]
-    route -- generated function --> generated[emit generated-body UnboundLocalError]
-    helper --> message[format pinned CPython 3.12 diagnostic]
-    generated --> message
-    message --> propagate([raise catchable UnboundLocalError])
-    read -- unresolved non-local name --> nameerror([deferred NameError route unchanged])
+    detect([detected function-local read before assignment]) --> format[centralized pinned diagnostic formatter]
+    format -- ordinary function --> normal[runtime helper raises UnboundLocalError]
+    format -- generated function --> generated[generated-body lowering emits same text]
+    normal --> propagate([existing exception propagation and catchability])
+    generated --> propagate
+    deferred([deferred NameError is unchanged])
 ```
 
-The existing scope analysis continues to identify local reads before assignment and retains the `UnboundLocalError` subtype. This slice changes only the diagnostic string emitted by the normal runtime helper and the generated-function pre-bind path, making both emit `local variable '<name>' referenced before assignment`, the wording required by the pinned CPython 3.12 oracle. Deferred unresolved global names continue through `mb_deferred_name_read` and preserve their `NameError` behavior.
+Add a pure `unbound_local_error_message(name)` formatter in `runtime::exception` that returns `local variable '<name>' referenced before assignment`. `mb_unbound_local_error_value` uses this formatter when constructing the existing `UnboundLocalError`. Generated-function lowering calls the same formatter while materializing its pre-bind exception message, so the two exception routes cannot drift. No type, handler, or deferred-name lookup control flow changes.
 
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/mamba/src/runtime/exception.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-pinned-unbound-local-diagnostic
+    tracker: "#1476"
+    reason: "A pure pinned-oracle diagnostic formatter and exact exception unit test are runtime behavior that the current generator cannot derive."
+  - path: projects/mamba/src/lower/hir_to_mir.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-pinned-unbound-local-diagnostic
+    tracker: "#1476"
+    reason: "Generated-body pre-bind lowering must reuse the runtime diagnostic contract instead of embedding a divergent literal."
+  - path: projects/mamba/tests/cpython/_regression/core/scope_resolution/errors.py
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-pinned-unbound-local-diagnostic-tests
+    tracker: "#1476"
+    reason: "The regression fixture needs an explicit stable assertion for the oracle-pinned unbound-local diagnostic while preserving its NameError check."
+```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
