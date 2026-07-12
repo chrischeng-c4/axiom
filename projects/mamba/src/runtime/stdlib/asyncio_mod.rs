@@ -1898,6 +1898,16 @@ mod tests {
         MbValue::from_int(seed.as_int().unwrap_or(0) + work.as_int().unwrap_or(0))
     }
 
+    extern "C" fn test_pseudo_jit_owner_frame(value: MbValue) -> MbValue {
+        let owner = MbValue::from_bits(
+            crate::runtime::argument_owner::mb_argument_owner_frame_take(
+                0,
+                value.to_bits() as i64,
+            ) as u64,
+        );
+        MbValue::from_int(i64::from(owner == value))
+    }
+
     fn make_param(
         name: &str,
         has_default: bool,
@@ -2064,6 +2074,35 @@ mod tests {
         assert_eq!(worker_depth, 0);
         assert_eq!(crate::runtime::argument_owner::argument_owner_frame_depth(), 0);
         unsafe { crate::runtime::rc::release_if_ptr(bigint) };
+    }
+
+    #[test]
+    fn to_thread_forwards_bigint_owner_to_the_worker_entry_frame() {
+        crate::runtime::async_rt::cleanup_all_async();
+        crate::runtime::argument_owner::clear_argument_owner_frames_for_test();
+        exception::mb_clear_exception();
+
+        let addr = test_pseudo_jit_owner_frame as *const () as usize;
+        crate::runtime::module::register_boxed_return_func(addr as u64);
+        let func = MbValue::from_func(addr);
+        let params = MbValue::from_ptr(MbObject::new_list(vec![make_param(
+            "value",
+            false,
+            MbValue::none(),
+            Some("int"),
+        )]));
+        crate::runtime::closure::mb_func_set_params(func, params);
+        let bigint = crate::runtime::bigint_ops::bigint_from_i128(1i128 << 70);
+
+        let args = [func, bigint];
+        let coro = unsafe { dispatch_to_thread(args.as_ptr(), args.len()) };
+        let result = crate::runtime::async_task::mb_await(coro);
+        assert_eq!(result.as_int(), Some(1));
+        assert_eq!(crate::runtime::argument_owner::argument_owner_frame_depth(), 0);
+        assert!(exception::current_exception_type().is_none());
+
+        unsafe { crate::runtime::rc::release_if_ptr(bigint) };
+        crate::runtime::async_rt::cleanup_all_async();
     }
 
     #[test]

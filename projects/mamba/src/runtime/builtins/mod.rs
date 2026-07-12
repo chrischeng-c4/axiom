@@ -5805,6 +5805,10 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
         if !validate_and_adapt_declared_frame(func, &mut items) {
             return MbValue::none();
         }
+        // `items` is now the exact dynamic ABI frame, including defaults and
+        // any keyword binding. Install a nested frame at this boundary so a
+        // typed-Int owner follows the final physical parameter position.
+        let _owner_frame = super::argument_owner::prepare_dynamic_argument_owner_frame(&items);
         // SAFETY: the function was compiled with the matching arity.
         // JIT-compiled functions use SystemV/C calling convention and may return
         // unboxed raw i64 values (CheckedAdd unboxes inline ints for perf),
@@ -6334,6 +6338,10 @@ fn validate_and_adapt_declared_frame(func: MbValue, items: &mut [MbValue]) -> bo
 /// Shared by the variadic spread + kwargs binding paths so the entry ABI
 /// `f(regular_0, .., args_list, kwargs_dict)` is honoured uniformly.
 fn dispatch_jit_frame(raw_addr: usize, items: &[MbValue], is_boxed_ret: bool) -> MbValue {
+    // This is the final dynamic ABI frame after positional/default/keyword
+    // binding. Keep owner provenance aligned with this exact physical order;
+    // outer wrapper frames are intentionally not reused after adaptation.
+    let _owner_frame = super::argument_owner::prepare_dynamic_argument_owner_frame(items);
     let raw_result: MbValue = unsafe {
         match items.len() {
             0 => {
@@ -6981,6 +6989,22 @@ mod tests {
 
     extern "C" fn kwonly_sum_test_fn(a: MbValue, b: MbValue) -> MbValue {
         MbValue::from_int(a.as_int().unwrap() + b.as_int().unwrap())
+    }
+
+    extern "C" fn keyword_owner_frame_test_fn(first: MbValue, second: MbValue) -> MbValue {
+        let first_owner = MbValue::from_bits(
+            super::super::argument_owner::mb_argument_owner_frame_take(
+                0,
+                first.to_bits() as i64,
+            ) as u64,
+        );
+        let second_owner = MbValue::from_bits(
+            super::super::argument_owner::mb_argument_owner_frame_take(
+                1,
+                second.to_bits() as i64,
+            ) as u64,
+        );
+        MbValue::from_int(i64::from(first_owner == first && second_owner == second))
     }
 
     fn param_sig(name: &str, kind: i64) -> MbValue {
@@ -10660,6 +10684,40 @@ def f():
         drop(frame);
         assert_eq!(super::super::argument_owner::argument_owner_frame_depth(), 0);
         unsafe { super::super::rc::release_if_ptr(bigint) };
+    }
+
+    #[test]
+    fn keyword_binding_frames_owners_in_final_parameter_order() {
+        super::super::argument_owner::clear_argument_owner_frames_for_test();
+        let addr = keyword_owner_frame_test_fn as *const () as usize;
+        super::super::module::register_boxed_return_func(addr as u64);
+        let func = MbValue::from_func(addr);
+        let params = MbValue::from_ptr(MbObject::new_list(vec![
+            param_sig("first", 1),
+            param_sig("second", 1),
+        ]));
+        super::super::closure::mb_func_set_params(func, params);
+
+        let first = super::super::bigint_ops::bigint_from_i128(1i128 << 70);
+        let second = super::super::bigint_ops::bigint_from_i128((1i128 << 70) + 1);
+        let pos = MbValue::from_ptr(MbObject::new_list_borrowed(vec![first]));
+        let kwargs = super::super::dict_ops::mb_dict_new();
+        super::super::dict_ops::mb_dict_setitem(
+            kwargs,
+            MbValue::from_ptr(MbObject::new_str("second".to_string())),
+            second,
+        );
+
+        assert_eq!(mb_call_spread_kwargs(func, pos, kwargs).as_int(), Some(1));
+        assert_eq!(super::super::argument_owner::argument_owner_frame_depth(), 0);
+
+        unsafe {
+            super::super::rc::release_if_ptr(pos);
+            super::super::rc::release_if_ptr(kwargs);
+            super::super::rc::release_if_ptr(first);
+            super::super::rc::release_if_ptr(second);
+        }
+        super::super::closure::cleanup_all_closures();
     }
     // HANDWRITE-END
 }

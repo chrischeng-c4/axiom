@@ -3310,7 +3310,8 @@ mod tests {
     use super::*;
     use crate::codegen::CodegenBackend;
     use crate::mir::{
-        BasicBlock, BlockId, MirBody, MirConst, MirInst, MirModule, Terminator, VReg,
+        BasicBlock, BlockId, MirBody, MirConst, MirExtern, MirInst, MirModule, MirType,
+        Terminator, VReg,
     };
     use crate::resolve::SymbolId;
     use crate::runtime::closure::cleanup_all_closures;
@@ -3944,6 +3945,78 @@ mod tests {
         assert_eq!(module_func_call_count(caller, push), 1, "{caller}");
         assert_eq!(module_func_call_count(caller, discard), 1, "{caller}");
         assert_eq!(module_func_call_count(callee, take), 1, "{callee}");
+    }
+
+    extern "C" fn observe_argument_owner_refcount(value_bits: i64) -> i64 {
+        let value = MbValue::from_bits(value_bits as u64);
+        let Some(object) = value.as_ptr() else {
+            return -1;
+        };
+        unsafe { crate::runtime::rc::mb_refcount(object) as i64 }
+    }
+
+    #[test]
+    fn compiled_callee_reads_caller_bigint_owner_frame() {
+        let _guard = acquire_jit_lock();
+        crate::runtime::argument_owner::clear_argument_owner_frames_for_test();
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let callee_id = 14_512;
+        let module = MirModule {
+            bodies: vec![MirBody {
+                name: SymbolId(callee_id),
+                params: vec![(VReg(0), int_ty)],
+                return_ty: int_ty,
+                blocks: vec![BasicBlock {
+                    id: BlockId(0),
+                    stmts: vec![MirInst::CallExtern {
+                        dest: Some(VReg(1)),
+                        name: "test_observe_argument_owner_refcount".to_string(),
+                        args: vec![VReg(0)],
+                        ty: int_ty,
+                    }],
+                    terminator: Terminator::Return(Some(VReg(1))),
+                }],
+            }],
+            externs: vec![MirExtern {
+                name: "test_observe_argument_owner_refcount".to_string(),
+                params: vec![MirType::I64],
+                return_type: MirType::I64,
+                return_abi: None,
+                lib_name: "test".to_string(),
+            }],
+        };
+        let mut backend = CraneliftJitBackend::new_with_externals(&[(
+            "test_observe_argument_owner_refcount",
+            observe_argument_owner_refcount as *const () as *const u8,
+        )])
+        .unwrap();
+        backend.codegen(&module, &tcx).unwrap();
+
+        let bigint = crate::runtime::bigint_ops::bigint_from_i128(1i128 << 70);
+        let object = bigint.as_ptr().unwrap();
+        assert_eq!(unsafe { crate::runtime::rc::mb_refcount(object) }, 1);
+        crate::runtime::argument_owner::mb_argument_owner_frame_begin(1);
+        crate::runtime::argument_owner::mb_argument_owner_frame_push(
+            bigint.to_bits() as i64,
+            bigint.to_bits() as i64,
+        );
+
+        let callee_ptr = backend.get_func_ptr(callee_id).unwrap();
+        let callee: extern "C" fn(i64) -> i64 = unsafe { std::mem::transmute(callee_ptr) };
+        assert_eq!(callee(bigint.to_bits() as i64), 2);
+        assert_eq!(unsafe { crate::runtime::rc::mb_refcount(object) }, 1);
+        assert_eq!(
+            crate::runtime::argument_owner::argument_owner_frame_depth(),
+            1,
+            "callee must read, but caller remains responsible for discarding its frame"
+        );
+        crate::runtime::argument_owner::mb_argument_owner_frame_discard();
+        assert_eq!(
+            crate::runtime::argument_owner::argument_owner_frame_depth(),
+            0
+        );
+        unsafe { crate::runtime::rc::release_if_ptr(bigint) };
     }
 
     #[test]

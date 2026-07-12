@@ -2971,6 +2971,10 @@ fn call_registered_method_addr(addr: u64, args: &[MbValue]) -> MbValue {
 }
 
 fn call_registered_method_value(callable: MbValue, addr: u64, args: &[MbValue]) -> MbValue {
+    // Descriptor and class fast paths call this helper after they have already
+    // prepended receivers and filled defaults. The owner frame must therefore
+    // use this final ABI shape, rather than a pre-binding source list.
+    let _owner_frame = super::argument_owner::prepare_dynamic_argument_owner_frame(args);
     super::closure::with_callable_module(callable, || call_registered_method_addr(addr, args))
 }
 
@@ -15608,6 +15612,8 @@ fn mb_call0_impl(func: MbValue) -> MbValue {
             append_missing_method_defaults(func, &mut all_args, 0);
             if !all_args.is_empty() {
                 let is_boxed = super::module::is_boxed_return_func(addr as u64);
+                let _owner_frame =
+                    super::argument_owner::prepare_dynamic_argument_owner_frame(&all_args);
                 match all_args.len() {
                     1 => {
                         let f: extern "C" fn(MbValue) -> MbValue =
@@ -15656,6 +15662,8 @@ fn mb_call0_impl(func: MbValue) -> MbValue {
                 // arg registers.
                 let defaults = super::closure::closure_defaults(func);
                 if !defaults.is_empty() {
+                    let _owner_frame =
+                        super::argument_owner::prepare_dynamic_argument_owner_frame(&defaults);
                     // REQ: JIT-compiled functions use SystemV/C calling convention.
                     match defaults.len() {
                         1 => {
@@ -16030,6 +16038,8 @@ fn mb_call1_val_impl(func: MbValue, arg: MbValue) -> MbValue {
                 append_missing_method_defaults(func, &mut all_args, 0);
                 if all_args.len() > 1 {
                     let is_boxed = super::module::is_boxed_return_func(addr as u64);
+                    let _owner_frame =
+                        super::argument_owner::prepare_dynamic_argument_owner_frame(&all_args);
                     match all_args.len() {
                         2 => {
                             let f: extern "C" fn(MbValue, MbValue) -> MbValue =
@@ -16091,6 +16101,9 @@ fn mb_call1_val_impl(func: MbValue, arg: MbValue) -> MbValue {
                             2 => {
                                 let f: extern "C" fn(MbValue, MbValue) -> MbValue =
                                     unsafe { std::mem::transmute(addr) };
+                                let _owner_frame = super::argument_owner::prepare_dynamic_argument_owner_frame(&[
+                                    arg, fill[0],
+                                ]);
                                 return super::closure::with_closure_cells(func, || {
                                     finish_call(func, f(arg, fill[0]), is_boxed)
                                 });
@@ -16098,6 +16111,9 @@ fn mb_call1_val_impl(func: MbValue, arg: MbValue) -> MbValue {
                             3 => {
                                 let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
                                     unsafe { std::mem::transmute(addr) };
+                                let _owner_frame = super::argument_owner::prepare_dynamic_argument_owner_frame(&[
+                                    arg, fill[0], fill[1],
+                                ]);
                                 return super::closure::with_closure_cells(func, || {
                                     finish_call(func, f(arg, fill[0], fill[1]), is_boxed)
                                 });
@@ -16109,6 +16125,9 @@ fn mb_call1_val_impl(func: MbValue, arg: MbValue) -> MbValue {
                                     MbValue,
                                     MbValue,
                                 ) -> MbValue = unsafe { std::mem::transmute(addr) };
+                                let _owner_frame = super::argument_owner::prepare_dynamic_argument_owner_frame(&[
+                                    arg, fill[0], fill[1], fill[2],
+                                ]);
                                 return super::closure::with_closure_cells(func, || {
                                     finish_call(func, f(arg, fill[0], fill[1], fill[2]), is_boxed)
                                 });
@@ -20993,6 +21012,78 @@ mod tests {
                 .collect(),
         ));
         super::super::closure::mb_func_set_params(func, params);
+    }
+
+    extern "C" fn registered_method_owner_frame_test_fn(value: MbValue) -> MbValue {
+        let owner = MbValue::from_bits(
+            super::super::argument_owner::mb_argument_owner_frame_take(
+                0,
+                value.to_bits() as i64,
+            ) as u64,
+        );
+        MbValue::from_int(i64::from(owner == value))
+    }
+
+    extern "C" fn closure_default_owner_frame_test_fn(
+        value: MbValue,
+        default: MbValue,
+    ) -> MbValue {
+        let value_owner = MbValue::from_bits(
+            super::super::argument_owner::mb_argument_owner_frame_take(
+                0,
+                value.to_bits() as i64,
+            ) as u64,
+        );
+        let default_owner = MbValue::from_bits(
+            super::super::argument_owner::mb_argument_owner_frame_take(
+                1,
+                default.to_bits() as i64,
+            ) as u64,
+        );
+        MbValue::from_int(i64::from(value_owner == value && default_owner == default))
+    }
+
+    #[test]
+    fn registered_method_fast_path_frames_final_owner_slots() {
+        super::super::argument_owner::clear_argument_owner_frames_for_test();
+        let addr = registered_method_owner_frame_test_fn as *const () as usize;
+        super::super::module::register_boxed_return_func(addr as u64);
+        let callable = MbValue::from_func(addr);
+        let bigint = super::super::bigint_ops::bigint_from_i128(1i128 << 70);
+
+        assert_eq!(
+            call_registered_method_value(callable, addr as u64, &[bigint]).as_int(),
+            Some(1)
+        );
+        assert_eq!(super::super::argument_owner::argument_owner_frame_depth(), 0);
+        unsafe { super::super::rc::release_if_ptr(bigint) };
+    }
+
+    #[test]
+    fn closure_default_fast_path_frames_final_owner_slots() {
+        super::super::argument_owner::clear_argument_owner_frames_for_test();
+        let addr = closure_default_owner_frame_test_fn as *const () as usize;
+        super::super::module::register_boxed_return_func(addr as u64);
+        let func = MbValue::from_func(addr);
+        let captures = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+        let closure = super::super::closure::mb_closure_new(s("owner_closure"), func, captures);
+        unsafe { super::super::rc::release_if_ptr(captures) };
+        super::super::closure::mb_closure_set_arity(closure, MbValue::from_int(2));
+
+        let value = super::super::bigint_ops::bigint_from_i128(1i128 << 70);
+        let default = super::super::bigint_ops::bigint_from_i128((1i128 << 70) + 1);
+        let defaults = MbValue::from_ptr(MbObject::new_list_borrowed(vec![default]));
+        super::super::closure::mb_closure_set_defaults(closure, defaults);
+        unsafe { super::super::rc::release_if_ptr(defaults) };
+
+        assert_eq!(mb_call1_val(closure, value).as_int(), Some(1));
+        assert_eq!(super::super::argument_owner::argument_owner_frame_depth(), 0);
+
+        super::super::closure::mb_closure_release(closure);
+        unsafe {
+            super::super::rc::release_if_ptr(value);
+            super::super::rc::release_if_ptr(default);
+        }
     }
 
     #[test]
