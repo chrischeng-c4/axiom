@@ -370,7 +370,7 @@ mod tests {
         source.create_collection("u", kw_schema()).unwrap();
         index_kw(&source, "migrated-1", "migrated1@x.com");
         let batch = source.snapshot().unwrap();
-        let apply_outcome = target.apply_reshard_batch(batch).unwrap();
+        let apply_outcome = target.apply_reshard_batch(batch, None).unwrap();
         assert_eq!(apply_outcome.documents_upserted, 1);
         assert_eq!(target.stats("u").unwrap().documents_indexed, 2);
 

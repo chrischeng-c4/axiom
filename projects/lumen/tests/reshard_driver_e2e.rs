@@ -15,6 +15,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use axum_test::{TestServer, TestServerConfig, Transport};
@@ -54,10 +55,10 @@ fn spin_up_shard() -> Shard {
     // leaving the default no-op sink, which would now wedge every full-split
     // e2e test at the cutover gate forever.
     let engine = Arc::new(Engine::new());
-    let state = AppState::open(engine).with_checkpoint(Arc::new(ControllableCheckpoint {
-        fail: Arc::new(AtomicBool::new(false)),
-        calls: Arc::new(AtomicI64::new(0)),
-    }));
+    let state = AppState::open(engine).with_checkpoint(Arc::new(ControllableCheckpoint::instant(
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicI64::new(0)),
+    )));
     let app = router(state);
     let server = TestServer::new_with_config(
         app,
@@ -85,12 +86,32 @@ fn spin_up_shard() -> Shard {
 struct ControllableCheckpoint {
     fail: Arc<AtomicBool>,
     calls: Arc<AtomicI64>,
+    /// #1443 AC1: an artificial per-call delay standing in for a real slow
+    /// durable-store write — lets a test make one phase of the fenced
+    /// `CatchingUp` sequence realistically slow without a live disk, so it
+    /// can prove the fence survives longer than a single un-refreshed TTL.
+    /// `Duration::ZERO` (the default via [`Self::instant`]) for every
+    /// pre-#1443 caller — behavior for those is unchanged.
+    delay: Duration,
+}
+
+impl ControllableCheckpoint {
+    fn instant(fail: Arc<AtomicBool>, calls: Arc<AtomicI64>) -> Self {
+        Self {
+            fail,
+            calls,
+            delay: Duration::ZERO,
+        }
+    }
 }
 
 #[async_trait]
 impl CheckpointSink for ControllableCheckpoint {
     async fn checkpoint_now(&self) -> anyhow::Result<bool> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        if !self.delay.is_zero() {
+            tokio::time::sleep(self.delay).await;
+        }
         if self.fail.load(Ordering::SeqCst) {
             anyhow::bail!("simulated checkpoint failure");
         }
@@ -102,9 +123,22 @@ impl CheckpointSink for ControllableCheckpoint {
 /// place of the default no-op, so a test can force `/admin/checkpoint` to
 /// fail on demand.
 fn spin_up_shard_with_checkpoint(fail: Arc<AtomicBool>, calls: Arc<AtomicI64>) -> Shard {
+    spin_up_shard_with_checkpoint_delay(fail, calls, Duration::ZERO)
+}
+
+/// Like [`spin_up_shard_with_checkpoint`], but `/admin/checkpoint` sleeps
+/// `delay` before resolving (#1443 AC1's slow-checkpoint double).
+fn spin_up_shard_with_checkpoint_delay(
+    fail: Arc<AtomicBool>,
+    calls: Arc<AtomicI64>,
+    delay: Duration,
+) -> Shard {
     let engine = Arc::new(Engine::new());
-    let state =
-        AppState::open(engine).with_checkpoint(Arc::new(ControllableCheckpoint { fail, calls }));
+    let state = AppState::open(engine).with_checkpoint(Arc::new(ControllableCheckpoint {
+        fail,
+        calls,
+        delay,
+    }));
     let app = router(state);
     let server = TestServer::new_with_config(
         app,
@@ -137,6 +171,12 @@ async fn index_user(s: &TestServer, external_id: &str) {
         }))
         .await
         .assert_status_ok();
+}
+
+async fn delete_user(s: &TestServer, external_id: &str) {
+    s.delete(&format!("/collections/u/index/{external_id}"))
+        .await
+        .assert_status(axum::http::StatusCode::NO_CONTENT);
 }
 
 async fn total_docs(s: &TestServer) -> u64 {
@@ -253,6 +293,10 @@ struct FakeControl {
     cluster: Arc<Mutex<Lumen>>,
     shard_urls: Vec<String>,
     restart_trigger_calls: AtomicI64,
+    /// #1443 AC1: overrides [`ClusterControl::write_fence_ttl_secs`] when
+    /// set, so a test can arm/re-arm with a short TTL instead of waiting out
+    /// the real 120s production default.
+    fence_ttl_secs: Option<u64>,
 }
 
 impl FakeControl {
@@ -261,7 +305,13 @@ impl FakeControl {
             cluster,
             shard_urls,
             restart_trigger_calls: AtomicI64::new(0),
+            fence_ttl_secs: None,
         }
+    }
+
+    fn with_fence_ttl_secs(mut self, ttl_secs: u64) -> Self {
+        self.fence_ttl_secs = Some(ttl_secs);
+        self
     }
 
     fn snapshot(&self) -> Lumen {
@@ -307,6 +357,11 @@ impl ClusterControl for FakeControl {
 
     fn shard_base_url(&self, _namespace: &str, _name: &str, shard: u32) -> String {
         self.shard_urls[shard as usize].clone()
+    }
+
+    fn write_fence_ttl_secs(&self) -> u64 {
+        self.fence_ttl_secs
+            .unwrap_or_else(lumen::operator::reshard_driver::default_write_fence_ttl_secs)
     }
 }
 
@@ -877,6 +932,156 @@ async fn write_fence_stays_armed_immediately_after_completed_split() {
         503,
         "write fence must still be armed immediately after CompletedSplit, got body: {:?}",
         resp.text()
+    );
+}
+
+/// #1443 R2/AC2: `delete_external_id` stays fence-exempt (it always was, and
+/// still is — deletes racing a split are not rejected), but a DELETE acked on
+/// the still-owning source during `CatchingUp`, strictly after that bucket's
+/// document was already additively copied to the target by an earlier
+/// migration pass, must not resurrect at cutover. The final fenced pass is
+/// authoritative (replace, not merge) for every moving bucket's document set,
+/// so the now-deleted id is absent from the live source snapshot it reads and
+/// gets pruned off the target instead of surviving there as a stale copy.
+#[tokio::test]
+async fn delete_during_split_does_not_resurrect_after_cutover() {
+    let shard0 = spin_up_shard();
+    let shard1 = spin_up_shard();
+    create_users_collection(&shard0.server).await;
+    create_users_collection(&shard1.server).await;
+
+    let ids: Vec<String> = (0..40).map(|i| format!("u-{i:03}")).collect();
+    for id in &ids {
+        index_user(&shard0.server, id).await;
+    }
+    let moving: Vec<&String> = ids.iter().filter(|id| bucket_of(id) < 4).collect();
+    assert!(moving.len() >= 2, "need at least two moving docs");
+
+    let cluster = Arc::new(Mutex::new(initial_lumen(
+        Some(1_000_000_000),
+        Some("urgentThresholdCrossed"),
+    )));
+    let shard_urls = vec![shard0.base_url.clone(), shard1.base_url.clone()];
+    let http = reqwest::Client::new();
+    let control = FakeControl::new(cluster.clone(), shard_urls.clone());
+
+    // Drive to CatchingUp with the initial migration pass already run — the
+    // doc we're about to delete has already been additively copied onto the
+    // target shard by that pass.
+    for _ in 0..3 {
+        let lumen = control.snapshot();
+        drive_tick(&control, &http, &lumen).await;
+    }
+    assert_eq!(
+        control.snapshot().spec.reshard_policy.workflow.phase,
+        ReshardPhase::CatchingUp
+    );
+    let deleted_id = moving[0].clone();
+    assert!(has_doc(&shard1.server, &deleted_id).await, "already copied");
+
+    // The DELETE is acked directly on the source — still the owner of writes
+    // for this bucket until cutover, exactly like the late-write scenario —
+    // and is fence-exempt, so it must succeed even mid-split.
+    delete_user(&shard0.server, &deleted_id).await;
+    assert!(!has_doc(&shard0.server, &deleted_id).await);
+    // Not yet reconciled off the target: the additive copy from the earlier
+    // pass is still sitting there until the final authoritative pass runs.
+    assert!(has_doc(&shard1.server, &deleted_id).await, "not pruned yet");
+
+    // Final CatchingUp -> Complete tick: the authoritative re-sync must not
+    // resurrect the deleted id on the target.
+    let lumen = control.snapshot();
+    let outcome = drive_tick(&control, &http, &lumen).await;
+    assert_eq!(outcome, DriveOutcome::CompletedSplit { new_map_version: 1 });
+
+    assert!(
+        !has_doc(&shard0.server, &deleted_id).await && !has_doc(&shard1.server, &deleted_id).await,
+        "a delete acked mid-split must not resurrect on either shard after cutover"
+    );
+
+    // Every other originally-moved (non-deleted) document still converged
+    // correctly, proving the prune is scoped to exactly the deleted id.
+    for id in moving.iter().skip(1) {
+        assert!(has_doc(&shard1.server, id).await);
+        assert!(!has_doc(&shard0.server, id).await);
+    }
+}
+
+/// #1443 R1/AC1: a single fenced `CatchingUp -> Complete` tick whose own
+/// checkpoint round alone takes longer than one un-refreshed TTL must never
+/// let the fence expire mid-sequence. Proven with a deliberately short 2s
+/// TTL and a 1.5s-per-call artificial checkpoint delay on both shards (the
+/// tick's two sequential checkpoint rounds — target, then sources — alone
+/// sum to ~3s, comfortably past the 2s TTL if it were armed only once at the
+/// start): a write probe fired straight at the source shard ~2.3s into the
+/// tick — after the original single-arm deadline would already have lapsed,
+/// but well inside the window R1's before-each-phase-boundary re-arms keep
+/// open — must still be rejected (503), not silently accepted onto a shard
+/// whose bucket is mid-cutover.
+#[tokio::test]
+async fn write_fence_survives_a_tick_longer_than_a_single_ttl() {
+    let never_fail = Arc::new(AtomicBool::new(false));
+    let source_calls = Arc::new(AtomicI64::new(0));
+    let target_calls = Arc::new(AtomicI64::new(0));
+    let checkpoint_delay = Duration::from_millis(1500);
+    let shard0 =
+        spin_up_shard_with_checkpoint_delay(never_fail.clone(), source_calls, checkpoint_delay);
+    let shard1 = spin_up_shard_with_checkpoint_delay(never_fail, target_calls, checkpoint_delay);
+    create_users_collection(&shard0.server).await;
+    create_users_collection(&shard1.server).await;
+
+    let ids: Vec<String> = (0..40).map(|i| format!("u-{i:03}")).collect();
+    for id in &ids {
+        index_user(&shard0.server, id).await;
+    }
+    let moving: Vec<&String> = ids.iter().filter(|id| bucket_of(id) < 4).collect();
+    assert!(!moving.is_empty());
+
+    let cluster = Arc::new(Mutex::new(initial_lumen(
+        Some(1_000_000_000),
+        Some("urgentThresholdCrossed"),
+    )));
+    let shard_urls = vec![shard0.base_url.clone(), shard1.base_url.clone()];
+    let http = reqwest::Client::new();
+    let control = FakeControl::new(cluster.clone(), shard_urls.clone()).with_fence_ttl_secs(2);
+
+    // Drive to CatchingUp (the initial, unfenced migration pass that lands
+    // this phase transition has no checkpoints in it, so the delayed
+    // checkpoint sinks above are not yet exercised).
+    for _ in 0..3 {
+        let lumen = control.snapshot();
+        drive_tick(&control, &http, &lumen).await;
+    }
+    assert_eq!(
+        control.snapshot().spec.reshard_policy.workflow.phase,
+        ReshardPhase::CatchingUp
+    );
+
+    let moved_id = moving[0].clone();
+    let probe_client = reqwest::Client::new();
+    let probe_url = format!("{}/collections/u/index", shard0.base_url);
+    let probe_body = json!({
+        "items": [{ "external_id": moved_id, "field": "email", "value": "late@x.com" }]
+    });
+
+    // Run the long, checkpoint-delayed final tick concurrently with a probe
+    // write timed to land inside the gap an un-refreshed 2s TTL would have
+    // already missed.
+    let lumen = control.snapshot();
+    let final_tick = drive_tick(&control, &http, &lumen);
+    let probe = async {
+        tokio::time::sleep(Duration::from_millis(2300)).await;
+        probe_client.post(&probe_url).json(&probe_body).send().await
+    };
+    let (outcome, probe_result) = tokio::join!(final_tick, probe);
+    assert_eq!(outcome, DriveOutcome::CompletedSplit { new_map_version: 1 });
+
+    let probe_resp = probe_result.expect("probe request completes");
+    assert_eq!(
+        probe_resp.status(),
+        reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        "write fence must still be armed ~2.3s into a tick whose checkpoints alone take ~3s; a \
+         single un-refreshed 2s TTL would already have expired by then"
     );
 }
 // CODEGEN-END

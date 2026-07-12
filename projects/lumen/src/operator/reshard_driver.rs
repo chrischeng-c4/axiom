@@ -223,6 +223,15 @@ const MAX_EXTERNAL_IDS_PER_BATCH: usize = 2000;
 /// healthy, slow-but-progressing driver never races its own TTL.
 const WRITE_FENCE_TTL_SECS: u64 = 120;
 
+/// The production default [`ClusterControl::write_fence_ttl_secs`] value
+/// (#1443 R1/AC1), exposed so integration tests can fall back to the real
+/// default from a `fence_ttl_secs: Option<u64>`-style override field without
+/// needing [`WRITE_FENCE_TTL_SECS`] itself to be `pub`.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
+pub fn default_write_fence_ttl_secs() -> u64 {
+    WRITE_FENCE_TTL_SECS
+}
+
 /// Everything [`drive_tick`] needs from a live cluster, abstracted so the
 /// state machine is testable without a real k8s API server. [`KubeClusterControl`]
 /// is the production implementation; tests supply an in-memory fake.
@@ -258,6 +267,15 @@ pub trait ClusterControl: Send + Sync {
     /// that lets [`run_migration_pass`] / [`evict_old_shards`] run against
     /// real HTTP servers + real `Engine`s without a live cluster.
     fn shard_base_url(&self, namespace: &str, name: &str, shard: u32) -> String;
+
+    /// TTL (seconds) [`advance_catching_up`]/[`advance_catching_up_fenced`]
+    /// arm/re-arm the write-pause fence with (#1443 R1). Defaults to
+    /// [`WRITE_FENCE_TTL_SECS`] — production behavior is unchanged; this
+    /// exists purely as a test seam so a short-TTL/slow-checkpoint scenario
+    /// can be exercised deterministically without waiting 120 real seconds.
+    fn write_fence_ttl_secs(&self) -> u64 {
+        WRITE_FENCE_TTL_SECS
+    }
 }
 
 /// Production [`ClusterControl`]: real `kube::Client` calls.
@@ -576,6 +594,15 @@ async fn reshard_fence_call(
 /// fence on every shard `current` owns — the live map's current owners,
 /// where writes to a still-moving bucket land until this tick's own cutover
 /// patch flips `spec.shardMap`.
+///
+/// #1443 R4: arming loops over shards sequentially and can fail partway
+/// through (one shard unreachable). A failure used to return immediately via
+/// `?`, leaving every shard armed *before* the failing one fenced with no
+/// caller ever reaching the clear bracket — an indefinite intermittent write
+/// outage on those shards (re-armed every tick) even though the migration
+/// made zero progress. Now tracks which shards actually armed and, on
+/// failure, best-effort clears exactly those before surfacing the original
+/// error, so a partial arm never outlives this call.
 async fn set_write_fence(
     control: &dyn ClusterControl,
     http: &reqwest::Client,
@@ -587,9 +614,10 @@ async fn set_write_fence(
     ttl_secs: u64,
 ) -> Result<()> {
     let token = control.admin_token(namespace, lumen).await?;
+    let mut armed_urls: Vec<String> = Vec::new();
     for shard in 0..current.physical_shard_count() {
         let url = control.shard_base_url(namespace, name, shard);
-        reshard_fence_call(
+        if let Err(err) = reshard_fence_call(
             http,
             &url,
             token.as_deref(),
@@ -597,7 +625,35 @@ async fn set_write_fence(
             buckets,
             ttl_secs,
         )
-        .await?;
+        .await
+        {
+            if !buckets.is_empty() {
+                for armed_url in &armed_urls {
+                    if let Err(clear_err) = reshard_fence_call(
+                        http,
+                        armed_url,
+                        token.as_deref(),
+                        current.virtual_bucket_count(),
+                        &BTreeSet::new(),
+                        0,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            shard_url = %armed_url,
+                            error = %clear_err,
+                            "reshard driver: best-effort fence clear after a partial arm \
+                             failure also failed; this shard stays fenced until its own TTL \
+                             expires"
+                        );
+                    }
+                }
+            }
+            return Err(err);
+        }
+        if !buckets.is_empty() {
+            armed_urls.push(url);
+        }
     }
     Ok(())
 }
@@ -719,6 +775,13 @@ fn map_assignments(map: &VirtualBucketShardMap) -> Vec<u32> {
         .collect()
 }
 
+/// #1443 R1: re-arm the write fence every this-many applied batches inside a
+/// fenced [`run_migration_pass_impl`] loop — a fenced pass with hundreds of
+/// sequential byte-capped batch POSTs plus checkpoints can realistically run
+/// past [`WRITE_FENCE_TTL_SECS`]/[`ClusterControl::write_fence_ttl_secs`]
+/// without this, silently reopening the write window mid-sequence.
+const FENCE_REARM_BATCH_INTERVAL: usize = 20;
+
 /// One migration pass: every bucket [`bucket_moves`] says moved between
 /// `current_shard_map` and [`compute_target_map`], grouped by its old
 /// (`from_shard`) owner, fetched via `POST /admin/backup:scoped` and applied
@@ -734,6 +797,27 @@ pub async fn run_migration_pass(
     namespace: &str,
     name: &str,
     lumen: &Lumen,
+) -> Result<usize> {
+    run_migration_pass_impl(control, http, namespace, name, lumen, false, None).await
+}
+
+/// Shared migration-pass implementation. `replace_mode` (#1443 R2) is `true`
+/// only for the final, fenced `CatchingUp` pass (see
+/// [`snapshot_reshard_batches`]'s `replace_mode` doc); `moving_buckets`
+/// (#1443 R1), when `Some`, marks this pass as running under a write fence
+/// and re-arms it with a fresh [`ClusterControl::write_fence_ttl_secs`]
+/// deadline every [`FENCE_REARM_BATCH_INTERVAL`] applied batches — a re-arm
+/// failure aborts the whole pass immediately (propagated as `Err`, which
+/// every caller already surfaces as `DriveOutcome::Blocked` before eviction
+/// ever runs).
+async fn run_migration_pass_impl(
+    control: &dyn ClusterControl,
+    http: &reqwest::Client,
+    namespace: &str,
+    name: &str,
+    lumen: &Lumen,
+    replace_mode: bool,
+    moving_buckets: Option<&BTreeSet<u32>>,
 ) -> Result<usize> {
     let current = current_shard_map(lumen)?;
     let target = compute_target_map(&current)?;
@@ -762,13 +846,34 @@ pub async fn run_migration_pass(
             &buckets,
         )
         .await?;
-        let batches =
-            snapshot_reshard_batches(&snapshot, &current, &target, MAX_EXTERNAL_IDS_PER_BATCH)?;
+        let batches = snapshot_reshard_batches(
+            &snapshot,
+            &current,
+            &target,
+            MAX_EXTERNAL_IDS_PER_BATCH,
+            replace_mode,
+        )?;
         for batch in &batches {
             let dest_url = control.shard_base_url(namespace, name, batch.to_shard);
             apply_reshard_batch(http, &dest_url, token.as_deref(), batch).await?;
+            total_batches += 1;
+            if let Some(fenced_buckets) = moving_buckets {
+                if !fenced_buckets.is_empty() && total_batches % FENCE_REARM_BATCH_INTERVAL == 0 {
+                    set_write_fence(
+                        control,
+                        http,
+                        namespace,
+                        name,
+                        lumen,
+                        &current,
+                        fenced_buckets,
+                        control.write_fence_ttl_secs(),
+                    )
+                    .await
+                    .context("re-arm write fence mid migration pass")?;
+                }
+            }
         }
-        total_batches += batches.len();
     }
     Ok(total_batches)
 }
@@ -971,7 +1076,7 @@ async fn advance_catching_up(
             lumen,
             &current,
             &moving_buckets,
-            WRITE_FENCE_TTL_SECS,
+            control.write_fence_ttl_secs(),
         )
         .await
         {
@@ -979,8 +1084,17 @@ async fn advance_catching_up(
         }
     }
 
-    let outcome =
-        advance_catching_up_fenced(control, http, namespace, name, lumen, &current, &target).await;
+    let outcome = advance_catching_up_fenced(
+        control,
+        http,
+        namespace,
+        name,
+        lumen,
+        &current,
+        &target,
+        &moving_buckets,
+    )
+    .await;
 
     let completed_split = matches!(outcome, DriveOutcome::CompletedSplit { .. });
     if !moving_buckets.is_empty() && !completed_split {
@@ -1026,6 +1140,16 @@ async fn advance_catching_up(
 /// under [`advance_catching_up`]'s write fence. Split out so the fence's
 /// arm/clear bracket is unconditional (always runs, regardless of which
 /// step below fails) without duplicating the sequence itself.
+///
+/// #1443 R1: this sequence's migration pass is `replace_mode` (R2) and runs
+/// under periodic in-loop re-arming; the fence is additionally re-armed with
+/// a fresh TTL at every phase boundary below (after the migration pass and
+/// before the target checkpoint, again before eviction, and again before the
+/// sources' checkpoint round) so a real pass — hundreds of sequential
+/// batch/checkpoint HTTP round trips — can never silently outlive
+/// [`ClusterControl::write_fence_ttl_secs`] mid-sequence. Any re-arm failure
+/// aborts to [`DriveOutcome::Blocked`] immediately, always strictly before
+/// [`evict_old_shards`] runs.
 async fn advance_catching_up_fenced(
     control: &dyn ClusterControl,
     http: &reqwest::Client,
@@ -1034,9 +1158,39 @@ async fn advance_catching_up_fenced(
     lumen: &Lumen,
     current: &VirtualBucketShardMap,
     target: &VirtualBucketShardMap,
+    moving_buckets: &BTreeSet<u32>,
 ) -> DriveOutcome {
-    if let Err(err) = run_migration_pass(control, http, namespace, name, lumen).await {
+    if let Err(err) = run_migration_pass_impl(
+        control,
+        http,
+        namespace,
+        name,
+        lumen,
+        true,
+        Some(moving_buckets),
+    )
+    .await
+    {
         return DriveOutcome::Blocked(err.to_string());
+    }
+
+    if !moving_buckets.is_empty() {
+        if let Err(err) = set_write_fence(
+            control,
+            http,
+            namespace,
+            name,
+            lumen,
+            current,
+            moving_buckets,
+            control.write_fence_ttl_secs(),
+        )
+        .await
+        {
+            return DriveOutcome::Blocked(format!(
+                "re-arm write fence before target checkpoint: {err}"
+            ));
+        }
     }
 
     // R1: the target/new shard's copy of the just-migrated data must be
@@ -1055,9 +1209,45 @@ async fn advance_catching_up_fenced(
         return DriveOutcome::Blocked(err.to_string());
     }
 
+    if !moving_buckets.is_empty() {
+        if let Err(err) = set_write_fence(
+            control,
+            http,
+            namespace,
+            name,
+            lumen,
+            current,
+            moving_buckets,
+            control.write_fence_ttl_secs(),
+        )
+        .await
+        {
+            return DriveOutcome::Blocked(format!("re-arm write fence before eviction: {err}"));
+        }
+    }
+
     if let Err(err) = evict_old_shards(control, http, namespace, name, lumen, current, target).await
     {
         return DriveOutcome::Blocked(err.to_string());
+    }
+
+    if !moving_buckets.is_empty() {
+        if let Err(err) = set_write_fence(
+            control,
+            http,
+            namespace,
+            name,
+            lumen,
+            current,
+            moving_buckets,
+            control.write_fence_ttl_secs(),
+        )
+        .await
+        {
+            return DriveOutcome::Blocked(format!(
+                "re-arm write fence before sources' checkpoint round: {err}"
+            ));
+        }
     }
 
     // R1: sources' eviction must itself be durable before cutover, same
@@ -1480,6 +1670,101 @@ mod tests {
 
     fn http_client() -> reqwest::Client {
         reqwest::Client::new()
+    }
+
+    // ---- #1443 AC4: set_write_fence partial-arm cleanup -----------------
+
+    /// Minimal control exposing exactly the shard URLs [`set_write_fence`]
+    /// needs; used only by the AC4 test below, which calls `set_write_fence`
+    /// directly rather than driving a full `drive_tick`.
+    struct TwoShardFenceControl {
+        shard_urls: Vec<String>,
+    }
+
+    #[async_trait]
+    impl ClusterControl for TwoShardFenceControl {
+        async fn patch_spec(
+            &self,
+            _ns: &str,
+            _name: &str,
+            _patch: serde_json::Value,
+        ) -> Result<()> {
+            unreachable!("not used by set_write_fence")
+        }
+        async fn statefulset_ready_replicas(&self, _ns: &str, _name: &str) -> Result<i64> {
+            unreachable!("not used by set_write_fence")
+        }
+        async fn trigger_rolling_restart(&self, _ns: &str, _name: &str) -> Result<()> {
+            unreachable!("not used by set_write_fence")
+        }
+        async fn admin_token(&self, _ns: &str, _lumen: &Lumen) -> Result<Option<String>> {
+            Ok(None)
+        }
+        fn shard_base_url(&self, _ns: &str, _name: &str, shard: u32) -> String {
+            self.shard_urls[shard as usize].clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn set_write_fence_clears_already_armed_shards_on_partial_failure() {
+        // Shard A: a real endpoint that records every /admin/reshard:fence
+        // call it receives — both the arm attempt and, if R4 works, the
+        // best-effort clear triggered by shard B's failure.
+        let shard_a = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/admin/reshard:fence"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({})))
+            .mount(&shard_a)
+            .await;
+
+        // Shard B: a bound-then-closed port — nothing listens there, so
+        // every call to it fails outright, simulating an unreachable shard
+        // mid-arm.
+        let dead_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let dead_addr = dead_listener.local_addr().unwrap();
+        drop(dead_listener);
+        let shard_b_url = format!("http://{dead_addr}");
+
+        let control = TwoShardFenceControl {
+            shard_urls: vec![shard_a.uri(), shard_b_url],
+        };
+        let current = VirtualBucketShardMap::balanced(0, 8, 2).unwrap();
+        let mut buckets = BTreeSet::new();
+        buckets.insert(0u32);
+        let lumen = lumen_with(spec(2, 1, None), None);
+
+        let result = set_write_fence(
+            &control,
+            &http_client(),
+            "acme",
+            "search",
+            &lumen,
+            &current,
+            &buckets,
+            30,
+        )
+        .await;
+        assert!(result.is_err(), "arm must surface shard B's failure");
+
+        // Shard A must have received exactly 2 requests: the original arm,
+        // then the best-effort clear triggered by shard B's failure — R4's
+        // whole point is that shard A never stays fenced indefinitely just
+        // because shard B was unreachable.
+        let requests = shard_a
+            .received_requests()
+            .await
+            .expect("wiremock request recording enabled");
+        assert_eq!(
+            requests.len(),
+            2,
+            "shard A must be armed once, then cleared once after shard B's arm failed"
+        );
+        let clear_body: serde_json::Value = requests[1].body_json().unwrap();
+        assert_eq!(
+            clear_body["buckets"].as_array().map(Vec::len),
+            Some(0),
+            "the second call to shard A must be a clear (empty buckets), not another arm"
+        );
     }
 
     // ---- #1396 AC3: checkpoint_shard requires persisted == true --------
