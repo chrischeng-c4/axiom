@@ -2,12 +2,14 @@ use crate::resolve::SymbolId;
 use crate::types::TypeId;
 
 mod escape_analysis;
+pub(crate) mod return_abi;
 
 pub use escape_analysis::{
     analyze_literal_escapes, analyze_typed_list_layouts, LiteralEscapeAnalysis,
     LiteralEscapeClassification, LiteralEscapeInfo, LiteralEscapeKind, TypedListElementKind,
     TypedListLayoutAnalysis, TypedListLayoutInfo,
 };
+pub(crate) use return_abi::{analyze_module_physical_abis, ExternReturnAbi};
 
 /// A virtual register in SSA form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
