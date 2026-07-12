@@ -136,7 +136,6 @@ commands:
     behavior:
       - "Not modified by this WI: no changes to Isolation::MicroVm's resolve() argv shape, pick()'s fail-closed branch, capabilities.rs, or doctor.rs. `container build` reuses the same `container` CLI presence check family (sandbox::microvm::available()) but is otherwise independent of the `vat run` code path."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
