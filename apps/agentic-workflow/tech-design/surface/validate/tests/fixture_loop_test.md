@@ -4,8 +4,8 @@ fill_sections: [overview, changes]
 capability_refs:
   - id: td-cb-lifecycle-automation
     role: primary
-    gap: fixture-loop-e2e-proof
-    claim: fixture-loop-e2e-proof
+    gap: self-ec-fixture-loop-gate
+    claim: self-ec-fixture-loop-gate
     coverage: full
     rationale: "Fixture-loop e2e proof (#1279, epic #1270 R8a) driving a self-contained fixture project through the real `aw` binary as a generic envelope follower, from `aw td fill` through terminal `aw td code-check`, plus an induced-breakage companion naming the first broken hop, plus (#1348) a fixture-only local-backend escape hatch letting `aw wi run`/`aw capability run` reach a literal `completion.workflow_complete=true`."
 ---

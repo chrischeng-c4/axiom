@@ -121,7 +121,7 @@ actors:
   - { id: gate_runner, kind: participant }
   - { id: payload_writer, kind: participant }
 messages:
-  - { from: agent, to: aw_health, name: "aw health agentic-workflow", returns: "progress JSONL" }
+  - { from: agent, to: aw_health, name: "aw health --project agentic-workflow", returns: "progress JSONL" }
   - { from: aw_health, to: gate_runner, name: "run full verification gates", returns: "gate reports" }
   - { from: gate_runner, to: agent, name: "progress event", returns: "bounded line" }
   - { from: aw_health, to: payload_writer, name: "write full report", returns: "payload_path" }
@@ -132,7 +132,7 @@ sequenceDiagram
   participant aw_health
   participant gate_runner
   participant payload_writer
-  agent->>aw_health: aw health agentic-workflow
+  agent->>aw_health: aw health --project agentic-workflow
   aw_health->>gate_runner: run full verification gates
   gate_runner-->>agent: progress event
   gate_runner-->>aw_health: gate reports
@@ -402,7 +402,7 @@ operations:
     action: "rebuild the aw binary after source changes"
     verification:
       - "cargo test -p agentic-workflow project_health -- --nocapture"
-      - "./target/debug/aw health agentic-workflow"
+      - "./target/debug/aw health --project agentic-workflow"
 ```
 ## Contract Unit Test
 <!-- type: unit-test lang: mermaid -->
@@ -443,7 +443,9 @@ requirementDiagram
 e2e_tests:
   - id: aw-health-default-full-verification-smoke
     name: "aw health defaults to full verification"
-    command: "./target/debug/aw health agentic-workflow"
+    capability_id: existing-project-standardization
+    claim_id: aw-health-default-full-verification-smoke
+    command: "./target/debug/aw health --project agentic-workflow"
     assertions:
       - "stdout includes progress JSONL events before the final result when long gates run"
       - "the final result includes payload_path"

@@ -5,7 +5,38 @@ name = "agentic-workflow"
 [aw.ec.generated]
 version = 1
 project = "agentic-workflow"
-generated_from_td_digest = "sha256:256c1e388213aa87732439ff1249a5135c8b737d4349c14aab4dad1ef415bf43"
+generated_from_td_digest = "sha256:a2f0fdb9333c459419668a64e619a069c5419311ebdfefbb0f9ff5aa0bd1406b"
+
+[[aw.ec.generated.cases]]
+id = "api-contract-source-passes"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "api-contract-source-passes"
+contract_id = "api-contract-source-passes"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/specs/3907.md#api-contract-source-passes"
+test_path = "apps/agentic-workflow/tests/behavior_api_contract_source_passes.rs"
+command = "cargo test -p agentic-workflow --lib source_reference_api_contract_source_backed -- --nocapture"
+required_for_production = true
+assertions = [
+    "source_backed is true",
+    "findings is empty",
+]
+
+[[aw.ec.generated.cases]]
+id = "artifact-preflight-health-rollup"
+capability_id = "existing-project-standardization"
+claim_id = "artifact-preflight-health-rollup"
+contract_id = "artifact-preflight-health-rollup"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/specs/3904.md#artifact-preflight-health-rollup"
+test_path = "apps/agentic-workflow/tests/behavior_artifact_preflight_health_rollup.rs"
+command = "./target/debug/aw health --project agentic-workflow --verify-tests --json"
+required_for_production = true
+assertions = [
+    "missing hard evidence appears in production_blockers",
+    "missing advisory evidence appears in quality warnings",
+    "passing evidence keeps production_ready true when no other blockers exist",
+]
 
 [[aw.ec.generated.cases]]
 id = "artifact-quality-fixture-roundtrip"
@@ -16,6 +47,18 @@ category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-artifact-quality-profile.md#artifact-quality-fixture-roundtrip"
 test_path = "apps/agentic-workflow/tests/behavior_artifact_quality_fixture_roundtrip.rs"
 command = "cargo test -p agentic-workflow --lib artifact_quality -- --nocapture"
+required_for_production = true
+assertions = []
+
+[[aw.ec.generated.cases]]
+id = "authoritative-fixture-blocks-on-regenerability-gap"
+capability_id = "existing-project-standardization"
+claim_id = "authoritative-fixture-blocks-on-regenerability-gap"
+contract_id = "authoritative-fixture-blocks-on-regenerability-gap"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/specs/3901.md#authoritative-fixture-blocks-on-regenerability-gap"
+test_path = "apps/agentic-workflow/tests/behavior_authoritative_fixture_blocks_on_regenerability_gap.rs"
+command = "bash apps/agentic-workflow/tests/fixtures/regenerability_authority/assert_authoritative_blocker.sh"
 required_for_production = true
 assertions = []
 
@@ -93,6 +136,22 @@ assertions = [
     "aw ec verify marks a cargo test command failed when the command exits 0 after running zero tests",
     "generated Rust EC wrappers capture stdout and reject the same zero-test false green",
     "ec gen keeps precise cargo test target selectors instead of relying on crate-wide filters when the source contract provides one",
+]
+
+[[aw.ec.generated.cases]]
+id = "aw-health-default-full-verification-smoke"
+capability_id = "existing-project-standardization"
+claim_id = "aw-health-default-full-verification-smoke"
+contract_id = "aw-health-default-full-verification-smoke"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/validate/health-defaults-to-streaming-full-verification.md#aw-health-default-full-verification-smoke"
+test_path = "apps/agentic-workflow/tests/behavior_aw_health_default_full_verification_smoke.rs"
+command = "./target/debug/aw health --project agentic-workflow"
+required_for_production = true
+assertions = [
+    "stdout includes progress JSONL events before the final result when long gates run",
+    "the final result includes payload_path",
+    "the payload file contains complete blocker and command evidence",
 ]
 
 [[aw.ec.generated.cases]]
@@ -294,6 +353,33 @@ required_for_production = true
 assertions = ["traceability tests cover command, TD, source, and CB closure behavior"]
 
 [[aw.ec.generated.cases]]
+id = "external-fixture-reports-advisory-gap"
+capability_id = "existing-project-standardization"
+claim_id = "external-fixture-reports-advisory-gap"
+contract_id = "external-fixture-reports-advisory-gap"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/specs/3901.md#external-fixture-reports-advisory-gap"
+test_path = "apps/agentic-workflow/tests/behavior_external_fixture_reports_advisory_gap.rs"
+command = "bash apps/agentic-workflow/tests/fixtures/regenerability_authority/assert_external_advisory.sh"
+required_for_production = true
+assertions = []
+
+[[aw.ec.generated.cases]]
+id = "jet-health-verification-dedup-smoke"
+capability_id = "existing-project-standardization"
+claim_id = "jet-health-verification-dedup-smoke"
+contract_id = "jet-health-verification-dedup-smoke"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/specs/4124.md#jet-health-verification-dedup-smoke"
+test_path = "apps/agentic-workflow/tests/behavior_jet_health_verification_dedup_smoke.rs"
+command = "./target/debug/aw health --project jet --verify-traceability --verify-cb --verify-cold --verify-tests --json"
+required_for_production = false
+assertions = [
+    "health command succeeds or reports only real project blockers",
+    "duplicate README gate commands do not multiply command execution inside one AW verification pass",
+]
+
+[[aw.ec.generated.cases]]
 id = "manual-evidence-artifacts-generated-manual-ec-evidence-schema"
 capability_id = "manual-evidence-artifacts"
 claim_id = "generated-manual-ec-evidence-schema"
@@ -316,6 +402,49 @@ test_path = "apps/agentic-workflow/tests/behavior_manual_evidence_artifacts_manu
 command = "cargo test -p agentic-workflow --lib ec_doc_gen_writes_manual_from_inventory -- --nocapture"
 required_for_production = true
 assertions = ["EC doc generation writes the manual from inventory"]
+
+[[aw.ec.generated.cases]]
+id = "missing-source-review-fails"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "missing-source-review-fails"
+contract_id = "missing-source-review-fails"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/specs/3907.md#missing-source-review-fails"
+test_path = "apps/agentic-workflow/tests/behavior_missing_source_review_fails.rs"
+command = "cargo test -p agentic-workflow --lib source_reference_missing_required_source -- --nocapture"
+required_for_production = true
+assertions = [
+    "source_backed is false",
+    "finding code is missing_source_reference",
+]
+
+[[aw.ec.generated.cases]]
+id = "placeholder-completeness-unit-gate"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "placeholder-completeness-unit-gate"
+contract_id = "placeholder-completeness-unit-gate"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/specs/3908.md#placeholder-completeness-unit-gate"
+test_path = "apps/agentic-workflow/tests/behavior_placeholder_completeness_unit_gate.rs"
+command = "cargo test -p agentic-workflow --lib completeness_placeholder -- --nocapture"
+required_for_production = true
+assertions = [
+    "placeholder code rejected",
+    "omitted prose rejected",
+    "explicit future TODO allowed",
+]
+
+[[aw.ec.generated.cases]]
+id = "project-health-no-regression"
+capability_id = "existing-project-standardization"
+claim_id = "project-health-no-regression"
+contract_id = "project-health-no-regression"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/specs/3903.md#project-health-no-regression"
+test_path = "apps/agentic-workflow/tests/behavior_project_health_no_regression.rs"
+command = "cargo test -p agentic-workflow --lib project_health -- --nocapture"
+required_for_production = true
+assertions = ["unrelated workflow envelope change does not regress project health reporting"]
 
 [[aw.ec.generated.cases]]
 id = "project-local-td-and-ec-gates-cb-generation-and-standardize-scan-defaults"
@@ -402,6 +531,53 @@ required_for_production = true
 assertions = ["EC context defaults TD roots to the project tech-design directory"]
 
 [[aw.ec.generated.cases]]
+id = "quality-primitive-metadata-contract-test"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "quality-primitive-metadata-contract-test"
+contract_id = "quality-primitive-metadata-contract-test"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/specs/3905.md#quality-primitive-metadata-contract-test"
+test_path = "apps/agentic-workflow/tests/behavior_quality_primitive_metadata_contract_test.rs"
+command = "cargo test -p agentic-workflow --lib quality_primitives -- --nocapture"
+required_for_production = true
+assertions = [
+    "default profiles validate",
+    "selection citation explains a matching primitive",
+    "review finding reports an anti-pattern",
+]
+
+[[aw.ec.generated.cases]]
+id = "runtime-envelope-backward-compatibility"
+capability_id = "workflow-root-runner"
+claim_id = "runtime-envelope-backward-compatibility"
+contract_id = "runtime-envelope-backward-compatibility"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/specs/3903.md#runtime-envelope-backward-compatibility"
+test_path = "apps/agentic-workflow/tests/behavior_runtime_envelope_backward_compatibility.rs"
+command = "cargo test -p agentic-workflow --lib envelope_profile -- --nocapture"
+required_for_production = true
+assertions = [
+    "legacy Dispatch JSON without artifact_quality_profile remains accepted",
+    "Dispatch JSON with artifact_quality_profile roundtrips",
+]
+
+[[aw.ec.generated.cases]]
+id = "standardize-audit-first-contract-test"
+capability_id = "existing-project-standardization"
+claim_id = "standardize-audit-first-contract-test"
+contract_id = "standardize-audit-first-contract-test"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/specs/3906.md#standardize-audit-first-contract-test"
+test_path = "apps/agentic-workflow/tests/behavior_standardize_audit_first_contract_test.rs"
+command = "cargo test -p agentic-workflow --lib standardize_audit -- --nocapture"
+required_for_production = true
+assertions = [
+    "audit_required is true without a preservation baseline",
+    "audit_required is false when a baseline exists",
+    "route and command surfaces are included in the fixture baseline",
+]
+
+[[aw.ec.generated.cases]]
 id = "td-cb-lifecycle-automation-crrr-removal-linear-lifecycle"
 capability_id = "td-cb-lifecycle-automation"
 claim_id = "crrr-removal-linear-lifecycle"
@@ -436,6 +612,34 @@ test_path = "apps/agentic-workflow/tests/behavior_wi_create_help_command.rs"
 command = "./target/debug/aw wi create --help"
 required_for_production = true
 assertions = ["help output does not list --remote"]
+
+[[aw.ec.generated.cases]]
+id = "wi-create-help-smoke"
+capability_id = "work-item-planning"
+claim_id = "wi-create-help-smoke"
+contract_id = "wi-create-help-smoke"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/specs/3909.md#wi-create-help-smoke"
+test_path = "apps/agentic-workflow/tests/behavior_wi_create_help_smoke.rs"
+command = "./target/debug/aw wi create --help"
+required_for_production = true
+assertions = ["stdout does not contain --remote"]
+
+[[aw.ec.generated.cases]]
+id = "wi-create-remote-flag-tests"
+capability_id = "work-item-planning"
+claim_id = "wi-create-remote-flag-tests"
+contract_id = "wi-create-remote-flag-tests"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/specs/3909.md#wi-create-remote-flag-tests"
+test_path = "apps/agentic-workflow/tests/behavior_wi_create_remote_flag_tests.rs"
+command = "cargo test -p agentic-workflow --lib wi_create_remote -- --nocapture"
+required_for_production = true
+assertions = [
+    "create help hides remote flag",
+    "hidden remote compatibility flag parses",
+    "create behavior is config-driven",
+]
 
 [[aw.ec.generated.cases]]
 id = "wi-create-remote-unit-command"
@@ -476,6 +680,22 @@ test_path = "apps/agentic-workflow/tests/behavior_wi_remove_agent_estimate_spec_
 command = "./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-wi-remove-agent-estimate.md"
 required_for_production = true
 assertions = ["the canonical contract remains parseable by td check"]
+
+[[aw.ec.generated.cases]]
+id = "wi-remove-agent-estimate-unit-command"
+capability_id = "work-item-planning"
+claim_id = "wi-remove-agent-estimate-unit-command"
+contract_id = "wi-remove-agent-estimate-unit-command"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/specs/3910.md#wi-remove-agent-estimate-unit-command"
+test_path = "apps/agentic-workflow/tests/behavior_wi_remove_agent_estimate_unit_command.rs"
+command = "cargo test -p agentic-workflow --lib wi_remove_agent_estimate -- --nocapture"
+required_for_production = true
+assertions = [
+    "bounded non-epic validates without estimate section",
+    "legacy estimate section remains parseable",
+    "generated body and planning output omit estimate fields",
+]
 
 [[aw.ec.generated.cases]]
 id = "work-item-planning-epic-to-change-atomization"

@@ -3,22 +3,62 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/aw.toml"
-generated_at = "2026-07-05T05:09:47.656243+00:00"
-ir_digest = "sha256:538b1e7138232b6e4235d92b1db6dbf3b7d720437585c4a8e47a85262d46f0b2"
-source_digest = "sha256:042e2cc2f095bfed1aec9cb891b0a15dc7fb8aaa0f3d4239a88debf8cfa9e907"
+generated_at = "2026-07-12T10:21:48.233133+00:00"
+ir_digest = "sha256:c0be3535aa171135f02debb21c2b7abb0c056dfbdd5f8f745212abdde15b040e"
+source_digest = "sha256:f52adc640927d30117de2b943478d229c91fb7342bef4d835d8bb90117570e7b"
 tool_contracts = []
 
 [[sources]]
+path = "apps/agentic-workflow/tech-design/specs/3901.md"
+digest = "sha256:749c62d79287e1d9b7d3c949a870761bb286c8d30608649234826391b4c9e914"
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/specs/3903.md"
+digest = "sha256:7289d025c0f7c1d59c192f01197a96a45b8b7eb8c69118b062db550c2e679b58"
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/specs/3904.md"
+digest = "sha256:dc4ae44cdc6a92c49a3a2847d5113cb7676e68308c962b839fcec55368feadd9"
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/specs/3905.md"
+digest = "sha256:99c86e3f63e4250c4f6624784934278312f9549ab6f4b8e0e833508fd943aae7"
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/specs/3906.md"
+digest = "sha256:48d06e1ad3f27b962f3659f615e03a6be6723697611499fbec79f1b65596fe87"
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/specs/3907.md"
+digest = "sha256:c3d451e8e981cb6fdb73774be0273a03c65e1952f6d7bbd7d6240c3d0859e0ad"
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/specs/3908.md"
+digest = "sha256:d7a754f5e0a30efaa20afe22f290f360a33105526f2e38f2a3d334851c597fb4"
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/specs/3909.md"
+digest = "sha256:2d2a6b8afce828711694e2db9cb4b77e54cbebfd73867fdbf8f5b1a8078ddcfb"
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/specs/3910.md"
+digest = "sha256:60544171b27df79b8e55ba0994325d605244b7623e75f9dde4598467e47de7b5"
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/specs/4124.md"
+digest = "sha256:2127af316af41b56834682909ce36452ced71c7398bb3157f666e5d553ec360c"
+
+[[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-artifact-quality-profile.md"
-digest = "sha256:d5e43097cbde543eeb89e6668a5c6f47f239163b30007da8586144a2b1c6e14f"
+digest = "sha256:6672b3ac235f7b4431ce32551d88da9fd1cd546554039976eab8faeb87ab09f2"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md"
-digest = "sha256:70b742dbb795276a0eb8d14bcd81988250c43a96d453234a2e15d730f44ef8e4"
+digest = "sha256:bf0b5545333d377ad2ca2809e208a281f7544daeb47d2af85384cc9e2be3fc91"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-completeness-placeholder-gate.md"
-digest = "sha256:dddf8275d31319ee95bf4e0530f65a09ab7483a9a7f0a0aaa9d9a4e126d92d53"
+digest = "sha256:6f2d6ca3e40f61ea6b7262608b1910b8503bd3c0f660eff914b04942ef948544"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-ec-zero-test-false-green.md"
@@ -26,15 +66,56 @@ digest = "sha256:a974a00e9d89a389a17b4beaf911b471a01c5d2b006578ac34b57c6dae911f4
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md"
-digest = "sha256:e2f4ccab28f9eb83d103487a673b9ba56fe5e22070801c2f6af1332612d3264b"
+digest = "sha256:d37c58764f35b998ba9ba401d4c503263966629e6d10fb7f5158cb6e7e428776"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-wi-create-remove-remote-flag.md"
-digest = "sha256:67dae80809cf97105d792e9294d355fb83b533144a3440bc08303a20b444703e"
+digest = "sha256:fb0ccab3becc7bfe1263ddd481807065696cb5383c78ad6e4a5d9bdeedb260d9"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-wi-remove-agent-estimate.md"
-digest = "sha256:0af13df05732a1f4833bc974e43df4bcfd5335419ea88a08d32f9a748ec80104"
+digest = "sha256:b5dcb44c466197cf0924152aea63b2cdfc72c017cfb852315d1bceae23e92913"
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/validate/health-defaults-to-streaming-full-verification.md"
+digest = "sha256:1a80476752c43cc57ea28b05245e29719db2aa6749f94fad1392da0fcecde07f"
+
+[[cases]]
+id = "api-contract-source-passes"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "api-contract-source-passes"
+contract_id = "api-contract-source-passes"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/specs/3907.md#api-contract-source-passes"
+test_path = "apps/agentic-workflow/tests/behavior_api_contract_source_passes.rs"
+command = "cargo test -p agentic-workflow --lib source_reference_api_contract_source_backed -- --nocapture"
+required_for_production = true
+assertions = [
+    "source_backed is true",
+    "findings is empty",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:1a242f01b0c2f31fe89309431101000886dd73c7ec42dd0e5eaa67ba3c5e7043"
+
+[[cases]]
+id = "artifact-preflight-health-rollup"
+capability_id = "existing-project-standardization"
+claim_id = "artifact-preflight-health-rollup"
+contract_id = "artifact-preflight-health-rollup"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/specs/3904.md#artifact-preflight-health-rollup"
+test_path = "apps/agentic-workflow/tests/behavior_artifact_preflight_health_rollup.rs"
+command = "./target/debug/aw health --project agentic-workflow --verify-tests --json"
+required_for_production = true
+assertions = [
+    "missing hard evidence appears in production_blockers",
+    "missing advisory evidence appears in quality warnings",
+    "passing evidence keeps production_ready true when no other blockers exist",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:a3d0ec5263e14235713a634f407ee8e0bca9a1bb2b9f4774e772c9fc69d292e5"
 
 [[cases]]
 id = "artifact-quality-fixture-roundtrip"
@@ -49,7 +130,22 @@ required_for_production = true
 assertions = []
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:2f2977a8854a5d606c6ee58704345d40e3ccaa631e469ff940604282c80f9e2a"
+digest = "sha256:a03c5bd0030ce52521dccc915c9a808fa0dd5008701b756410e280662b3d67e6"
+
+[[cases]]
+id = "authoritative-fixture-blocks-on-regenerability-gap"
+capability_id = "existing-project-standardization"
+claim_id = "authoritative-fixture-blocks-on-regenerability-gap"
+contract_id = "authoritative-fixture-blocks-on-regenerability-gap"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/specs/3901.md#authoritative-fixture-blocks-on-regenerability-gap"
+test_path = "apps/agentic-workflow/tests/behavior_authoritative_fixture_blocks_on_regenerability_gap.rs"
+command = "bash apps/agentic-workflow/tests/fixtures/regenerability_authority/assert_authoritative_blocker.sh"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:caf822666d128c68812c2ad5e3c9704c5a9186a9fbf62d0e248415227389074b"
 
 [[cases]]
 id = "aw-core-client-agent-orientation-surface"
@@ -64,7 +160,7 @@ required_for_production = true
 assertions = ["agent-facing llm outline lists the registered command surface"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:37151c59e1ba54dccc6ffcaa3f3a3941f33329f5644b45563c0b82f2068d2693"
+digest = "sha256:a1a14f1b865aa29d14167c1f630bd577040bcf7a338ba85fde18396b90ee2c25"
 
 [[cases]]
 id = "aw-core-client-client-boundary-model"
@@ -79,7 +175,7 @@ required_for_production = true
 assertions = ["client boundary TD validates as the shared client boundary claim"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:3088a00851cdcd5117fd45781f9616a578d8f4e63ed7a47ab756d07d98553f72"
+digest = "sha256:d410b15152c2afc1d858845d553b88ef72426a39410f149991211d661ed0d04d"
 
 [[cases]]
 id = "aw-core-client-core-concept-model-and-invariants"
@@ -94,7 +190,7 @@ required_for_production = true
 assertions = ["core client model TD validates as the source claim for AW core invariants"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:fe256fc0e5ff030a87292f71ba5dea8d1c9ee7670312a62ff65f30abee7e9adc"
+digest = "sha256:11c99d6e68afecab5cdd625759c1e2b897131318e0b9425e5ec82b0f8a2196d0"
 
 [[cases]]
 id = "aw-core-client-workitem-artifact-admission-gate"
@@ -109,7 +205,7 @@ required_for_production = true
 assertions = ["workitem artifact gate TD validates as the admission gate claim"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:8fa172d129fb5a7260c12850593cb1b224a792e2a7eeebb3d87f836eb95be839"
+digest = "sha256:c860dec21d05145221e51d7727cad6e1000edafa3d004110d3b126dde6be6fda"
 
 [[cases]]
 id = "aw-core-client-workitem-loop-state-model"
@@ -124,7 +220,7 @@ required_for_production = true
 assertions = ["work-item loop state serializes and parses losslessly"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:a0594fc63e4660108d918a157ceefb716d78ed8b2a1914fa92e5ea998acf936a"
+digest = "sha256:8ab4ddc192a234c1351c1e3beb6a1b6cf739119d0ce64bb5b522e368c0ddb1d1"
 
 [[cases]]
 id = "aw-ec-zero-test-false-green"
@@ -143,7 +239,26 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:fc306c8b3105a0cedf0c6a93dbd7cb2387f5d5f9afae206d3cb04dd5d17e6c9b"
+digest = "sha256:eb3564e7a984594f90c8b93da170f3c2e6d1d494e24c79ebaee434897d27b5d3"
+
+[[cases]]
+id = "aw-health-default-full-verification-smoke"
+capability_id = "existing-project-standardization"
+claim_id = "aw-health-default-full-verification-smoke"
+contract_id = "aw-health-default-full-verification-smoke"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/validate/health-defaults-to-streaming-full-verification.md#aw-health-default-full-verification-smoke"
+test_path = "apps/agentic-workflow/tests/behavior_aw_health_default_full_verification_smoke.rs"
+command = "./target/debug/aw health --project agentic-workflow"
+required_for_production = true
+assertions = [
+    "stdout includes progress JSONL events before the final result when long gates run",
+    "the final result includes payload_path",
+    "the payload file contains complete blocker and command evidence",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:303a4932bc93025c6709d3e69c124012cf38f4b8674237f456ef9d7b2028680f"
 
 [[cases]]
 id = "aw-view-repo-app-bundle"
@@ -162,7 +277,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:2f0325b0da7d5897da8344824b05880433d8b960db7dc81e33c89db77bb6fc99"
+digest = "sha256:19368a92e050a59b497c09fbb275033911355ddf91ffdb9b1245533595d5369d"
 
 [[cases]]
 id = "aw-view-repo-check"
@@ -183,7 +298,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:9b6c88c290b8df4f4f70263e627eb934700d86e689d6a6bc13b6c4c2ca05d097"
+digest = "sha256:752c65f265f328a38c6af8e56af3ebbe61ee760fc84a5201a1edac5394690b6b"
 
 [[cases]]
 id = "aw-view-repo-layout-option"
@@ -203,7 +318,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:8834f4a0cbedede1e86db550e8fee54bc485427ad5c05ce46557396fa1c3768c"
+digest = "sha256:0c8addc5f0d82affc090b2fb3a15042b4b923443f6c4cc2bf41c91ae9163912f"
 
 [[cases]]
 id = "aw-view-repo-screenshot"
@@ -222,7 +337,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:66291e90cf9481c1e3af81716bc15516fcd72eaab7ed31cc090762274eb0fe55"
+digest = "sha256:b8a6647ff857919e42a95ed994595d8bb72dafaae580d15f76793d23a5ad2b9d"
 
 [[cases]]
 id = "aw-view-repo-snapshot"
@@ -244,7 +359,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:82009824610afe8315c589882bd83f7418cf485988885e330fa8a2eb8e03c37d"
+digest = "sha256:16592b2eb44cc46a462620ad5548be6a1eaf3e26985ea2927078c418a64a585f"
 
 [[cases]]
 id = "capability-control-plane-capability-project-sweep"
@@ -259,7 +374,7 @@ required_for_production = true
 assertions = ["capability sweep groups project readiness and next actions"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:87a22dc124f67055704f3bd9b5f25338e8deba3ff692dde116bc20d7c09bc936"
+digest = "sha256:8475c719eb2f82391ad60db3561951fa713e2f2ccb914e2f5da12dbcc2bd18b2"
 
 [[cases]]
 id = "capability-control-plane-capability-readiness-reporting"
@@ -274,7 +389,7 @@ required_for_production = true
 assertions = ["required claims can be verified by fixture references"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:62047c4960a2419c3b56b55c838ae5758eaf834f2e48fc96f832d3a0fc871dcf"
+digest = "sha256:702a08bcb6c88f93e9f7d21f916eb9dc547c629e5e76052b077447e96c1afeab"
 
 [[cases]]
 id = "capability-control-plane-markdown-capability-schema"
@@ -289,7 +404,7 @@ required_for_production = true
 assertions = ["canonical field-style capability contracts parse from Markdown"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:46100004e822b6c7e33c4ea5958beb1b43db7ba0e806e6a9e00100d41ae8d096"
+digest = "sha256:1f168d91fb0ccab37efc3995ceb5adae7e566646bb82ceed565ffbcd117c8ec2"
 
 [[cases]]
 id = "capability-control-plane-missing-readme-initialization"
@@ -304,7 +419,7 @@ required_for_production = true
 assertions = ["capability init renders a canonical README shell"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:134b4a176a44ba5d29acd8e26c53064e995f7213a987ffbcdea7f9c2cd0ead61"
+digest = "sha256:839a866a1fa7e4e504512cec262c72c9df63bd50b27b2e983e480fdc4c8fe160"
 
 [[cases]]
 id = "completeness-placeholder-unit-command"
@@ -323,7 +438,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:a76effb5332ef8b1645ea6bfa662cd787c6b0a1ca4f81ab8b7c4feb1fc94f868"
+digest = "sha256:6569adcea5031fa2f5d9070c9bc345e35dc2e7ed3d5d00eefafc2f1c942d9a10"
 
 [[cases]]
 id = "existing-project-standardization-brownfield-takeover-surface"
@@ -338,7 +453,7 @@ required_for_production = true
 assertions = ["standardize command surface is registered for brownfield takeover"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:b3b7497ae853fa594a05b26daf93219135dabcd1767c817023704d9c853ca077"
+digest = "sha256:aa14ca2106a8da6b39b8b1d5dd0b9c15a92ec9705ad0e25527ef24a162785500"
 
 [[cases]]
 id = "existing-project-standardization-cb-and-cold-verification-gates"
@@ -353,7 +468,7 @@ required_for_production = true
 assertions = ["CB cold rebuild targets include codegen changes"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:a11eafb37b6832751b3504d99a4093c50c69a6f18134b546e7f764439596053b"
+digest = "sha256:892280a6b3ae38ee23515a83b1ed8cb686d80d471c6c72695578ababbbe14579"
 
 [[cases]]
 id = "existing-project-standardization-managed-and-semantic-production-gates"
@@ -368,7 +483,7 @@ required_for_production = true
 assertions = ["semantic coverage prioritizes missing TD before generator gaps"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:45761c5c0794cfa5ec7e868a50bbfa344d1bcf723b8fba02445b2c3436d863c8"
+digest = "sha256:980b04d70844ccbcf8b379e33036357f47122352966da0e2de85e28bfbd1e712"
 
 [[cases]]
 id = "existing-project-standardization-traceability-closure-gate"
@@ -383,7 +498,40 @@ required_for_production = true
 assertions = ["traceability tests cover command, TD, source, and CB closure behavior"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:15fe110f43a106acc401c69cd55f1a85528a1572eadffe6154758ebf2df36732"
+digest = "sha256:548d8396c519b3b681e761758763cc1e9de0e5f5d2d5ad1ad34cb0ba52d5a0a9"
+
+[[cases]]
+id = "external-fixture-reports-advisory-gap"
+capability_id = "existing-project-standardization"
+claim_id = "external-fixture-reports-advisory-gap"
+contract_id = "external-fixture-reports-advisory-gap"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/specs/3901.md#external-fixture-reports-advisory-gap"
+test_path = "apps/agentic-workflow/tests/behavior_external_fixture_reports_advisory_gap.rs"
+command = "bash apps/agentic-workflow/tests/fixtures/regenerability_authority/assert_external_advisory.sh"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:cc7b33db2236c000bcaa2a64fd66c0f738e6593fc98d07585451cb02f9598a05"
+
+[[cases]]
+id = "jet-health-verification-dedup-smoke"
+capability_id = "existing-project-standardization"
+claim_id = "jet-health-verification-dedup-smoke"
+contract_id = "jet-health-verification-dedup-smoke"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/specs/4124.md#jet-health-verification-dedup-smoke"
+test_path = "apps/agentic-workflow/tests/behavior_jet_health_verification_dedup_smoke.rs"
+command = "./target/debug/aw health --project jet --verify-traceability --verify-cb --verify-cold --verify-tests --json"
+required_for_production = false
+assertions = [
+    "health command succeeds or reports only real project blockers",
+    "duplicate README gate commands do not multiply command execution inside one AW verification pass",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:2b4d9dc602b11f66e67fb73342d23242e01bc156154276111cadd9136ae9e557"
 
 [[cases]]
 id = "manual-evidence-artifacts-generated-manual-ec-evidence-schema"
@@ -398,7 +546,7 @@ required_for_production = true
 assertions = ["generated manual EC evidence metadata validates"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:632089f564b9e9b474564cdaab92852a97dc33b5e9247238d7801a701fa1b1b3"
+digest = "sha256:8761213912a06dcd20feff7c3a921d7ace85314b06ee141fed784fa4fdb8088f"
 
 [[cases]]
 id = "manual-evidence-artifacts-manual-runner-output-convention"
@@ -413,7 +561,59 @@ required_for_production = true
 assertions = ["EC doc generation writes the manual from inventory"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:9632604c930d1439b60b780fde1e7c0273564d04ec787f4d41c8ab62071882ed"
+digest = "sha256:1deea275474ec834691613646cbcae232b7e00fa7d5cf324a5a2203c2a9adab1"
+
+[[cases]]
+id = "missing-source-review-fails"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "missing-source-review-fails"
+contract_id = "missing-source-review-fails"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/specs/3907.md#missing-source-review-fails"
+test_path = "apps/agentic-workflow/tests/behavior_missing_source_review_fails.rs"
+command = "cargo test -p agentic-workflow --lib source_reference_missing_required_source -- --nocapture"
+required_for_production = true
+assertions = [
+    "source_backed is false",
+    "finding code is missing_source_reference",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:ad95a44ccd26aa0377243bc1dfbf460dd5e73fda3d55a613a64c141bb6b1ff2f"
+
+[[cases]]
+id = "placeholder-completeness-unit-gate"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "placeholder-completeness-unit-gate"
+contract_id = "placeholder-completeness-unit-gate"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/specs/3908.md#placeholder-completeness-unit-gate"
+test_path = "apps/agentic-workflow/tests/behavior_placeholder_completeness_unit_gate.rs"
+command = "cargo test -p agentic-workflow --lib completeness_placeholder -- --nocapture"
+required_for_production = true
+assertions = [
+    "placeholder code rejected",
+    "omitted prose rejected",
+    "explicit future TODO allowed",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:e831ca15edf8f3e5b5424fb887a019d39bd9a8c78dda975cb051a608e2b78359"
+
+[[cases]]
+id = "project-health-no-regression"
+capability_id = "existing-project-standardization"
+claim_id = "project-health-no-regression"
+contract_id = "project-health-no-regression"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/specs/3903.md#project-health-no-regression"
+test_path = "apps/agentic-workflow/tests/behavior_project_health_no_regression.rs"
+command = "cargo test -p agentic-workflow --lib project_health -- --nocapture"
+required_for_production = true
+assertions = ["unrelated workflow envelope change does not regress project health reporting"]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:abcb5cb8661080a6994938c0dc333aaabecec3fa08ee9152f2675e35be7141d0"
 
 [[cases]]
 id = "project-local-td-and-ec-gates-cb-generation-and-standardize-scan-defaults"
@@ -428,7 +628,7 @@ required_for_production = true
 assertions = ["CB force regeneration defaults to project-local tech-design roots"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:cf0e5c44a421abb91be1ddec0ad82105b567c5be5d85f50225cf4843c9ffa30b"
+digest = "sha256:2509a8d363c86a28748959ce67640d250d332d79ed342a91e0ee7878d8ee3eec"
 
 [[cases]]
 id = "project-local-td-and-ec-gates-ec-evidence-documentation"
@@ -443,7 +643,7 @@ required_for_production = true
 assertions = ["EC documentation generation and drift checks are covered"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:fef7f2a2694c7b8d21ac50c2808936c553f7e9f0dbf03fea2f80fbfb4d8a239d"
+digest = "sha256:f8a94ce45e3b3e4618bf4e9e2d4befce72cc9ab24332947b47822930565cd512"
 
 [[cases]]
 id = "project-local-td-and-ec-gates-ec-external-contract-source"
@@ -458,7 +658,7 @@ required_for_production = true
 assertions = ["EC draft and fill Markdown drives inventory generation"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:058d9b8d5feadf55ae5c97d623f866ce7dbcd774b1acd3c8a991b3f579a4d7f4"
+digest = "sha256:dc9ad333beb6b5a1f0d69f3b26057ce94cecbacce3ddb37e5b844c806a6ce96b"
 
 [[cases]]
 id = "project-local-td-and-ec-gates-ec-tool-binding-dispatch"
@@ -473,7 +673,7 @@ required_for_production = true
 assertions = ["EC tool binding commands resolve the configured runner dispatch"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:9feb0980f484946add3bfa4bd7ba8e85ab69d97453a92a7f7154d098b727de97"
+digest = "sha256:bf1de909fa90043100195c8f3e19e78ce75ddd025a37c179bfaf4456a2f0fc18"
 
 [[cases]]
 id = "project-local-td-and-ec-gates-project-dirty-scope-protection"
@@ -488,7 +688,7 @@ required_for_production = true
 assertions = ["semantic coverage excludes generated EC wrappers from dirty source scope"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:50dbc01f896c5a22f25c57987c7e1f547ca3e4a74059b7ff9551b1635fb3496b"
+digest = "sha256:a7cd08adab977f71219ccea59490ba1d499ffbe91e93a30eaf8aa952b1c69e17"
 
 [[cases]]
 id = "project-local-td-and-ec-gates-project-local-td-root-resolver"
@@ -503,7 +703,7 @@ required_for_production = true
 assertions = ["project-local TD root resolution falls back to the project tech-design directory"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:840d2167f61a4ced2c6e6fabc9c7ab60e6d284f9bdcfacbfa84239d92f0d7afb"
+digest = "sha256:e60a1ffdb3ad69426cdbd0576de27e90532d5202a8a4aa07b22f91ec51824afc"
 
 [[cases]]
 id = "project-local-td-and-ec-gates-td-lock-and-external-contract-target-resolution"
@@ -518,7 +718,63 @@ required_for_production = true
 assertions = ["EC context defaults TD roots to the project tech-design directory"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:0803d937f939bb8759cd575a1f4f0217186a63c524aa4fb94c39c3b80fa16347"
+digest = "sha256:07d74605062e129dfc10f812f5f36e16f4e71a53e19bb92873ad0745db580334"
+
+[[cases]]
+id = "quality-primitive-metadata-contract-test"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "quality-primitive-metadata-contract-test"
+contract_id = "quality-primitive-metadata-contract-test"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/specs/3905.md#quality-primitive-metadata-contract-test"
+test_path = "apps/agentic-workflow/tests/behavior_quality_primitive_metadata_contract_test.rs"
+command = "cargo test -p agentic-workflow --lib quality_primitives -- --nocapture"
+required_for_production = true
+assertions = [
+    "default profiles validate",
+    "selection citation explains a matching primitive",
+    "review finding reports an anti-pattern",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:62656d6385beb7910746bd7cd8bf3ec434b68cff15f231a9f4759adfa59113e2"
+
+[[cases]]
+id = "runtime-envelope-backward-compatibility"
+capability_id = "workflow-root-runner"
+claim_id = "runtime-envelope-backward-compatibility"
+contract_id = "runtime-envelope-backward-compatibility"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/specs/3903.md#runtime-envelope-backward-compatibility"
+test_path = "apps/agentic-workflow/tests/behavior_runtime_envelope_backward_compatibility.rs"
+command = "cargo test -p agentic-workflow --lib envelope_profile -- --nocapture"
+required_for_production = true
+assertions = [
+    "legacy Dispatch JSON without artifact_quality_profile remains accepted",
+    "Dispatch JSON with artifact_quality_profile roundtrips",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:71eb3505b81dc27d94c255f13bfa441d066d1fed9803f0db88a218ec65da55aa"
+
+[[cases]]
+id = "standardize-audit-first-contract-test"
+capability_id = "existing-project-standardization"
+claim_id = "standardize-audit-first-contract-test"
+contract_id = "standardize-audit-first-contract-test"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/specs/3906.md#standardize-audit-first-contract-test"
+test_path = "apps/agentic-workflow/tests/behavior_standardize_audit_first_contract_test.rs"
+command = "cargo test -p agentic-workflow --lib standardize_audit -- --nocapture"
+required_for_production = true
+assertions = [
+    "audit_required is true without a preservation baseline",
+    "audit_required is false when a baseline exists",
+    "route and command surfaces are included in the fixture baseline",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:a93eefd1fdc63f8bbc9b4dcb1406eb07dab37842461471a81c01a7a62c90ad55"
 
 [[cases]]
 id = "td-cb-lifecycle-automation-crrr-removal-linear-lifecycle"
@@ -533,7 +789,22 @@ required_for_production = true
 assertions = ["TD created phase dispatches directly to generation in the linear lifecycle"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:52bb731c866f5bbddc8e23998c8c0811ae8db6576578a96149a6a5c3b23d08ae"
+digest = "sha256:8306e64617d378fffc4257095ed3cee71e701451dc962fe705344904574747e8"
+
+[[cases]]
+id = "td-cb-lifecycle-automation-self-ec-fixture-loop-gate"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "self-ec-fixture-loop-gate"
+contract_id = "td-cb-lifecycle-automation-self-ec-fixture-loop-gate"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#td-cb-lifecycle-automation-self-ec-fixture-loop-gate"
+test_path = "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_self_ec_fixture_loop_gate.rs"
+command = "cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture"
+required_for_production = true
+assertions = ["fixture-loop e2e proof (#1279) gates aw's own terminal code-check as a hard, required-for-production EC case"]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:ac89d9792de944037b3f6fd5831de93fe609698733d27f08ad5b62cdf10b7ceb"
 
 [[cases]]
 id = "wi-create-help-command"
@@ -548,7 +819,41 @@ required_for_production = true
 assertions = ["help output does not list --remote"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:2743b6ec0d6a1459a253a10d30ce1ae4e12c386968a9b6bcece062568582b3da"
+digest = "sha256:ae86742a8b8ea8f8aec998f6f5f31b323ec94cd5113ab28bf433023fa1ce208c"
+
+[[cases]]
+id = "wi-create-help-smoke"
+capability_id = "work-item-planning"
+claim_id = "wi-create-help-smoke"
+contract_id = "wi-create-help-smoke"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/specs/3909.md#wi-create-help-smoke"
+test_path = "apps/agentic-workflow/tests/behavior_wi_create_help_smoke.rs"
+command = "./target/debug/aw wi create --help"
+required_for_production = true
+assertions = ["stdout does not contain --remote"]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:365326c338d853f1f4be37231666f2d3e2497c0b4a9303dadd96155922846f4e"
+
+[[cases]]
+id = "wi-create-remote-flag-tests"
+capability_id = "work-item-planning"
+claim_id = "wi-create-remote-flag-tests"
+contract_id = "wi-create-remote-flag-tests"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/specs/3909.md#wi-create-remote-flag-tests"
+test_path = "apps/agentic-workflow/tests/behavior_wi_create_remote_flag_tests.rs"
+command = "cargo test -p agentic-workflow --lib wi_create_remote -- --nocapture"
+required_for_production = true
+assertions = [
+    "create help hides remote flag",
+    "hidden remote compatibility flag parses",
+    "create behavior is config-driven",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b6dfe88a723a660d710776f8f7ca42e7a7b65782e73bb535e232d33d75aa8eee"
 
 [[cases]]
 id = "wi-create-remote-unit-command"
@@ -567,7 +872,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:d5be89035d3c351b1cc3fc9c93ede98132eca12a18ce9bfbef8d69585f49ffa7"
+digest = "sha256:d819d59cbcae83f54102b6c46aecec596b3724749769f23ec714105bde742c06"
 
 [[cases]]
 id = "wi-remove-agent-estimate-build"
@@ -582,7 +887,7 @@ required_for_production = true
 assertions = ["the aw binary builds after removing estimate helpers"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c315400d5d907c1cebad04f61ad9f10697d38513f1d5648f14f3165ffc6ad7db"
+digest = "sha256:7eeb3dd63b6d33ae579f4ba96d5e3a91d9ae0d0617d9e81945da834dc161ed94"
 
 [[cases]]
 id = "wi-remove-agent-estimate-spec-check"
@@ -597,7 +902,26 @@ required_for_production = true
 assertions = ["the canonical contract remains parseable by td check"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:6d04a39fa50033c299f3e9e317b37187f68a6b4dcd0c57196937a5283e2c333e"
+digest = "sha256:db6701a1ce358b1778bf4cc42fbe3514696f32ef4202534da7be9d27fbbf4f4f"
+
+[[cases]]
+id = "wi-remove-agent-estimate-unit-command"
+capability_id = "work-item-planning"
+claim_id = "wi-remove-agent-estimate-unit-command"
+contract_id = "wi-remove-agent-estimate-unit-command"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/specs/3910.md#wi-remove-agent-estimate-unit-command"
+test_path = "apps/agentic-workflow/tests/behavior_wi_remove_agent_estimate_unit_command.rs"
+command = "cargo test -p agentic-workflow --lib wi_remove_agent_estimate -- --nocapture"
+required_for_production = true
+assertions = [
+    "bounded non-epic validates without estimate section",
+    "legacy estimate section remains parseable",
+    "generated body and planning output omit estimate fields",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:a3a17764f758d8ad31f32d5545b64ece0dec52981fe8b570a797e0f24cbbbb16"
 
 [[cases]]
 id = "work-item-planning-epic-to-change-atomization"
@@ -612,7 +936,7 @@ required_for_production = true
 assertions = ["prioritization routes bounded changes into the ready lane"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:97792927c294753eec3331a70b18f522f99b69520777a96ce0c35230048b660e"
+digest = "sha256:c092a9d99ae222d157926752e68eb3cd78a36f97564bec9b41399aa6936d617f"
 
 [[cases]]
 id = "workflow-root-runner-cli-workflow-chain"
@@ -627,7 +951,7 @@ required_for_production = true
 assertions = ["CLI workflow chain emit sites resolve through the real clap tree for capability and work-item roots"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:cddd6f1dee8988928e32ffe62a7edf8765e5ff8757e3eb7bf7e471e232bbc8b5"
+digest = "sha256:da48672459edfd52822fd7b41a5fa94ad7d36b4a45c2f6645030a14ac9438b11"
 
 [[cases]]
 id = "workflow-root-runner-parent-rollup-routing"
@@ -642,7 +966,7 @@ required_for_production = true
 assertions = ["closed change roots route agents to parent inspection"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:45d0e66e3ed24f3af9d72ee87f0525b2ed0a7b3ab35526a2b6a84e05b5f88331"
+digest = "sha256:b13d32da595851d1e976008917ec679401e761dcf0375ef442cfcbbbe3da88c4"
 
 [[cases]]
 id = "workflow-root-runner-root-envelope-completion-contract"
@@ -657,4 +981,4 @@ required_for_production = true
 assertions = ["root envelope blocks on pending epicize artifacts before creating WIs"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:6101d71c2752be8d9f90e54dcac6a0e85c9b3ffdd837450708192e2c58b12ac2"
+digest = "sha256:87e5a340fc00b4f2ec8738920deb8b56a22c90dc7898d03fd9787458c9ea9f2e"
