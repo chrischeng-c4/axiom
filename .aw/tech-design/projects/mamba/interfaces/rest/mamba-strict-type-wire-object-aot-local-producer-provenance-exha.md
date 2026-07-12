@@ -8,6 +8,21 @@ fill_sections: [logic, unit-test]
 <!-- type: logic lang: mermaid -->
 
 ```mermaid
+---
+id: mamba-strict-type-object-local-producer-provenance
+entry: emit_object_local_producer
+nodes:
+  emit_object_local_producer: { kind: start, label: "Object/AOT typed Int producer" }
+  action: { kind: process, label: "read canonical producer owner action" }
+  evaluate: { kind: process, label: "evaluate data and owner source" }
+  commit: { kind: process, label: "post-evaluation companion transaction" }
+  done: { kind: terminal, label: "deterministic provenance" }
+edges:
+  - { from: emit_object_local_producer, to: action }
+  - { from: action, to: evaluate }
+  - { from: evaluate, to: commit }
+  - { from: commit, to: done }
+---
 flowchart TD
     producer([Object/AOT typed Int producer]) --> action[canonical producer action]
     action --> evaluate[evaluate data and owner source]
@@ -28,7 +43,7 @@ changes:
     impl_mode: hand-written
     gap: missing-generator:mamba-object-local-producer-provenance
     tracker: "#1463"
-    reason: "Object/AOT producer action lowering, runtime owner sidecars, and paired owner phis require a deterministic Cranelift transaction generator primitive.
+    reason: "Object/AOT producer action lowering, runtime owner sidecars, and paired owner phis require a deterministic Cranelift transaction generator primitive."
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
