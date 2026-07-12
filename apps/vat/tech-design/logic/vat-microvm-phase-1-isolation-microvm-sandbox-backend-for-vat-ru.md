@@ -98,3 +98,21 @@ properties:
         description: "Checks the `container` binary is resolvable on PATH (mirrors seatbelt::available()'s sandbox-exec check); no real container invocation, no image pull."
 additionalProperties: true
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-microvm-phase1-config.schema.json"
+title: "MicroVm sandbox backend Phase 1: config surface"
+type: object
+properties:
+  note:
+    type: string
+    description: "No new vat.toml key. Isolation::MicroVm is selected the same way Isolation::Seatbelt already is \u2014 via the --isolation flag (Isolation already derives clap::ValueEnum) \u2014 plus the one new --microvm-image flag documented in the CLI section. [network].egress in vat.toml is reused unchanged: EgressPolicy::Open/Deny are enforceable under MicroVm, EgressPolicy::LocalhostOnly is a hard pick() rejection (R3), never a silent downgrade."
+  microvm_image_source:
+    type: string
+    description: "spec.microvm_image is set exclusively from the new --microvm-image CLI flag (R7); there is no vat.toml [runner]/[service] equivalent in Phase 1 \u2014 out of scope per the WI (vat build/vat compose config surface is Phase 2/Phase 3)."
+additionalProperties: true
+```
