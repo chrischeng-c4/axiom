@@ -484,6 +484,105 @@ async fn forward_delete_with_reserved_characters_in_external_id() {
     assert_eq!(after_delete.json::<Value>()["total"], 0);
 }
 
+// #1457 R3: forwarding must also percent-encode the collection_id path
+// segment, not just external_id/field — a collection id containing reserved
+// URL characters must round-trip through a forwarded index, search, and
+// delete instead of corrupting the forward URL (the same class of bug
+// #1442 R4 fixed for external_id/field, now closed for collection_id too).
+#[tokio::test]
+async fn forward_index_search_delete_with_reserved_characters_in_collection_id() {
+    let (shard0, shard1) = spin_up_routed_pair();
+    let hostile_collection_id = "docs weird/id?x=1&y=2";
+    for shard in [&shard0, &shard1] {
+        shard
+            .server
+            .put(&format!(
+                "/collections/{}",
+                urlencoding_for_test(hostile_collection_id)
+            ))
+            .json(&json!({ "fields": { "email": { "type": "keyword" } } }))
+            .await
+            .assert_status_ok();
+    }
+
+    let remote_id = external_id_for_shard(hostile_collection_id, 1);
+
+    // Write through the NON-owning pod (shard0): `RoutedRouter::index` must
+    // forward this one hop to shard1 using a correctly percent-encoded
+    // collection_id path segment.
+    shard0
+        .server
+        .post(&format!(
+            "/collections/{}/index",
+            urlencoding_for_test(hostile_collection_id)
+        ))
+        .json(&json!({
+            "items": [
+                { "external_id": remote_id, "field": "email", "value": "weird@x.com" }
+            ]
+        }))
+        .await
+        .assert_status_ok();
+
+    // Keyed forward-search through the same non-owning pod must also
+    // percent-encode collection_id and find the doc.
+    let search_resp = shard0
+        .server
+        .post(&format!(
+            "/collections/{}/search",
+            urlencoding_for_test(hostile_collection_id)
+        ))
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "weird@x.com" } },
+            "routing_key": remote_id,
+            "limit": 10
+        }))
+        .await;
+    search_resp.assert_status_ok();
+    assert_eq!(search_resp.json::<Value>()["total"], 1);
+
+    // Confirm it truly landed on the owning pod's local engine.
+    let owner_resp = shard1
+        .server
+        .post(&format!(
+            "/collections/{}/search",
+            urlencoding_for_test(hostile_collection_id)
+        ))
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "weird@x.com" } },
+            "limit": 10
+        }))
+        .await;
+    owner_resp.assert_status_ok();
+    assert_eq!(owner_resp.json::<Value>()["total"], 1);
+
+    // Forward-delete through the non-owning pod must also encode
+    // collection_id correctly.
+    shard0
+        .server
+        .delete(&format!(
+            "/collections/{}/index/{}",
+            urlencoding_for_test(hostile_collection_id),
+            urlencoding_for_test(&remote_id)
+        ))
+        .await
+        .assert_status(axum::http::StatusCode::NO_CONTENT);
+
+    let after_delete = shard1
+        .server
+        .post(&format!(
+            "/collections/{}/search",
+            urlencoding_for_test(hostile_collection_id)
+        ))
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "weird@x.com" } },
+            "limit": 10
+        }))
+        .await;
+    after_delete.assert_status_ok();
+    assert_eq!(after_delete.json::<Value>()["total"], 0);
+}
+
 /// Minimal RFC 3986 percent-encoder for this test's own outbound request
 /// path — deliberately independent of `routing_remote`'s
 /// `percent_encode_component` (that function is exercised directly by

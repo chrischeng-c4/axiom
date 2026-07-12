@@ -24,7 +24,7 @@ use std::cmp::Ordering as CmpOrdering;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
@@ -2939,6 +2939,20 @@ pub struct Engine {
     state: RwLock<EngineState>,
     metrics: Metrics,
     draining: AtomicBool,
+    /// #1457 R1: receiver-side accumulator for `POST /admin/reshard:prune`
+    /// chunks, keyed by `(to_map_version, bucket, collection_id,
+    /// total_chunks)`. See [`Engine::apply_reshard_prune_chunk`].
+    prune_accumulator: Mutex<BTreeMap<PruneAccumKey, PruneAccumState>>,
+}
+
+/// `(to_map_version, bucket, collection_id, total_chunks)` — see
+/// [`Engine::apply_reshard_prune_chunk`].
+type PruneAccumKey = (u64, u32, String, u32);
+
+#[derive(Debug, Default)]
+struct PruneAccumState {
+    received_chunks: BTreeSet<u32>,
+    keep_ids: BTreeSet<String>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
@@ -4488,18 +4502,20 @@ impl Engine {
     /// unchanged. Per-field `bytes` size counters are a saturating-add
     /// heuristic and are not strictly idempotent, but they never feed query
     /// results.
-    /// `replace` (#1443 R2): when `Some`, applied *after* the additive merge
-    /// below — for every `(collection_id, keep_ids)` in its `replace_ids`,
-    /// prunes any document this shard currently holds that routes to
-    /// `replace.bucket` (under `replace.virtual_bucket_count`) but is absent
-    /// from `keep_ids`. This is what makes the reshard driver's final,
-    /// fenced `CatchingUp` pass authoritative for the buckets it copies: a
-    /// document deleted on the source during the split is absent from that
-    /// final pass's `replace_ids` and is pruned here rather than surviving
-    /// as a stale copy from an earlier additive pass. Non-final passes never
-    /// set `replace`, so their merge stays purely additive (unchanged
-    /// behavior, and the existing 413-retry idempotency tests never exercise
-    /// this branch).
+    /// `replace` (#1443 R2, reworked #1457 R1): when `Some`, applied *after*
+    /// the additive merge below — for every `(collection_id, keep_ids)` in
+    /// its `replace_ids`, prunes any document this shard currently holds
+    /// that routes to `replace.bucket` (under `replace.virtual_bucket_count`)
+    /// but is absent from `keep_ids`. This is what makes the reshard
+    /// driver's final, fenced `CatchingUp` pass authoritative for the
+    /// buckets it copies: a document deleted on the source during the split
+    /// is absent from the final pass's authoritative keep set and is pruned
+    /// here rather than surviving as a stale copy from an earlier additive
+    /// pass. Non-final passes never call this with `replace` set, so their
+    /// merge stays purely additive. Callers reach this branch through
+    /// [`Self::apply_reshard_prune_chunk`]'s receiver-side chunk
+    /// accumulator, not directly from a wire `ReshardBatch` (#1457 R1 split
+    /// the authoritative-replace scope out of that purely-additive type).
     /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
     pub fn apply_reshard_batch(
         &self,
@@ -4602,6 +4618,80 @@ impl Engine {
             collections_touched,
             documents_upserted,
             documents_pruned,
+        })
+    }
+
+    /// `POST /admin/reshard:prune` (#1457 R1): accumulate one
+    /// [`crate::reshard::ReshardPruneChunk`] of a final migration pass's
+    /// authoritative "keep" set for one `(bucket, collection_id)` pair, and
+    /// prune once every chunk in `0..total_chunks` has arrived.
+    ///
+    /// Chunks are keyed by `(to_map_version, bucket, collection_id,
+    /// total_chunks)`; `keep_ids` are unioned and `chunk_index`es collected
+    /// into a set as each chunk lands. Once the set's length equals
+    /// `total_chunks`, the accumulated key is removed and the union is
+    /// applied via [`Self::apply_reshard_batch`] with an empty additive
+    /// delta and a single-collection [`crate::reshard::ReshardBatchReplaceScope`]
+    /// — reusing that method's already-tested prune logic rather than
+    /// duplicating it.
+    ///
+    /// Idempotent by construction: re-sending any subset of chunks (a 413
+    /// retry, or a network retry) only re-inserts identical set members;
+    /// re-sending *every* chunk of an already-completed group re-runs the
+    /// same accumulate-then-apply sequence from scratch (the completed
+    /// entry was removed) and calls `apply_reshard_batch` with the same
+    /// scope again, which is itself idempotent (pruning against
+    /// already-pruned state is a no-op).
+    /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+    pub fn apply_reshard_prune_chunk(
+        &self,
+        chunk: crate::reshard::ReshardPruneChunk,
+    ) -> Result<ReshardPruneOutcome> {
+        let key: PruneAccumKey = (
+            chunk.to_map_version,
+            chunk.bucket,
+            chunk.collection_id.clone(),
+            chunk.total_chunks,
+        );
+        let ready = {
+            let mut accumulator = self
+                .prune_accumulator
+                .lock()
+                .map_err(|_| anyhow!("prune accumulator poisoned"))?;
+            let entry = accumulator.entry(key.clone()).or_default();
+            entry.received_chunks.insert(chunk.chunk_index);
+            entry.keep_ids.extend(chunk.keep_ids);
+            entry.received_chunks.len() as u32 >= chunk.total_chunks.max(1)
+        };
+        if !ready {
+            return Ok(ReshardPruneOutcome {
+                complete: false,
+                documents_pruned: 0,
+            });
+        }
+        let keep_ids = {
+            let mut accumulator = self
+                .prune_accumulator
+                .lock()
+                .map_err(|_| anyhow!("prune accumulator poisoned"))?;
+            accumulator
+                .remove(&key)
+                .map(|state| state.keep_ids)
+                .unwrap_or_default()
+        };
+        let empty_delta = SnapshotV1 {
+            version: SNAPSHOT_VERSION,
+            collections: BTreeMap::new(),
+        };
+        let scope = crate::reshard::ReshardBatchReplaceScope {
+            bucket: chunk.bucket,
+            virtual_bucket_count: chunk.virtual_bucket_count,
+            replace_ids: BTreeMap::from([(chunk.collection_id, keep_ids)]),
+        };
+        let outcome = self.apply_reshard_batch(empty_delta, Some(scope))?;
+        Ok(ReshardPruneOutcome {
+            complete: true,
+            documents_pruned: outcome.documents_pruned,
         })
     }
 
@@ -8974,6 +9064,18 @@ pub struct ReshardApplyOutcome {
 pub struct ReshardEvictOutcome {
     pub collections_touched: u32,
     pub documents_evicted: u32,
+}
+
+/// Response summary for `POST /admin/reshard:prune` (#1457 R1). `complete`
+/// is `false` while the receiver is still accumulating chunks for this
+/// `(to_map_version, bucket, collection_id, total_chunks)` group (the
+/// common case for every chunk but the last); `documents_pruned` is only
+/// meaningful once `complete` is `true`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+pub struct ReshardPruneOutcome {
+    pub complete: bool,
+    pub documents_pruned: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

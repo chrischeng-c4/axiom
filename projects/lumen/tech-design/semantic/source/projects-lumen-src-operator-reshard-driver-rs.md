@@ -21,18 +21,18 @@ Public API manifest for `projects/lumen/src/operator/reshard_driver.rs`.
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `DriveOutcome` | projects/lumen/src/operator/reshard_driver.rs | enum | pub | 529 |  |
-| `KubeClusterControl` | projects/lumen/src/operator/reshard_driver.rs | struct | pub | 411 |  |
-| `OversizedDocumentBlock` | projects/lumen/src/operator/reshard_driver.rs | struct | pub | 261 | #1444 R2: distinguishes an apply failure caused by exactly one document's batch serializing past `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES` (the `snapshot_reshard_batches`/`byte_cap_chunk` floor case) from any other reason `POST /admin/reshard:apply` can fail — surfaced as a distinct `status.reshard` blocking condition and used to skip re-arming the write-pause fence on a tick already known to fail identically. |
-| `compute_target_map` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 635 | compute_target_map(current: &VirtualBucketShardMap) -> Result<VirtualBucketShardMap> |
-| `current_shard_map` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 620 | current_shard_map(lumen: &Lumen) -> Result<VirtualBucketShardMap> |
-| `default_write_fence_ttl_secs` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 231 | #1443 R1/AC1: the production default [`ClusterControl::write_fence_ttl_secs`] value, exposed so integration tests can fall back to the real default from a `fence_ttl_secs: Option<u64>`-style override field without needing the private `WRITE_FENCE_TTL_SECS` const itself to be `pub`. default_write_fence_ttl_secs() -> u64 |
-| `drive_tick` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 1498 | drive_tick(     control: &dyn ClusterControl,     http: &reqwest::Client,     lumen: &Lumen, ) -> DriveOutcome |
-| `new` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 417 | new(client: Client) -> Self |
-| `oversize_block_condition` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 355 | #1444 R2: the oversized-document block currently recorded for `namespace/name`, if any — read-only, does not affect the skip budget. `reconcile.rs`'s `status_patch` calls this to layer a distinct `status.reshard` blocking condition + remediation message onto the policy/usage-derived status. oversize_block_condition(namespace: &str, name: &str) -> Option<OversizedDocumentBlock> |
-| `run_migration_pass` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 963 | run_migration_pass(     control: &dyn ClusterControl,     http: &reqwest::Client,     namespace: &str,     name: &str,     lumen: &Lumen, ) -> Result<usize> |
-| `should_start_split` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 557 | #1396 R5: also requires `status.reshard.usage_measured_at_map_version == spec.shardMap.version` — a lagging/stale status subresource can never start a split. should_start_split(lumen: &Lumen) -> bool |
-| `spawn_reshard_driver_loop` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 1535 | spawn_reshard_driver_loop(client: Client) |
+| `DriveOutcome` | projects/lumen/src/operator/reshard_driver.rs | enum | pub | 532 |  |
+| `KubeClusterControl` | projects/lumen/src/operator/reshard_driver.rs | struct | pub | 414 |  |
+| `OversizedDocumentBlock` | projects/lumen/src/operator/reshard_driver.rs | struct | pub | 264 | #1444 R2: distinguishes an apply failure caused by exactly one document's batch serializing past `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES` (the `snapshot_reshard_batches`/`byte_cap_chunk` floor case) from any other reason `POST /admin/reshard:apply` can fail — surfaced as a distinct `status.reshard` blocking condition and used to skip re-arming the write-pause fence on a tick already known to fail identically. |
+| `compute_target_map` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 638 | compute_target_map(current: &VirtualBucketShardMap) -> Result<VirtualBucketShardMap> |
+| `current_shard_map` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 623 | current_shard_map(lumen: &Lumen) -> Result<VirtualBucketShardMap> |
+| `default_write_fence_ttl_secs` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 234 | #1443 R1/AC1: the production default [`ClusterControl::write_fence_ttl_secs`] value, exposed so integration tests can fall back to the real default from a `fence_ttl_secs: Option<u64>`-style override field without needing the private `WRITE_FENCE_TTL_SECS` const itself to be `pub`. default_write_fence_ttl_secs() -> u64 |
+| `drive_tick` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 1627 | drive_tick(     control: &dyn ClusterControl,     http: &reqwest::Client,     lumen: &Lumen, ) -> DriveOutcome |
+| `new` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 420 | new(client: Client) -> Self |
+| `oversize_block_condition` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 358 | #1444 R2: the oversized-document block currently recorded for `namespace/name`, if any — read-only, does not affect the skip budget. `reconcile.rs`'s `status_patch` calls this to layer a distinct `status.reshard` blocking condition + remediation message onto the policy/usage-derived status. oversize_block_condition(namespace: &str, name: &str) -> Option<OversizedDocumentBlock> |
+| `run_migration_pass` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 1038 | One migration pass: every bucket `bucket_moves` says moved, fetched via `POST /admin/backup:scoped` and applied to its new owner via `POST /admin/reshard:apply` (`snapshot_reshard_batches` builds the bounded, purely-additive batches — #1457 R1). Thin wrapper over the shared `run_migration_pass_impl(..., final_pass: bool, moving_buckets: Option<&BTreeSet<u32>>)`, called here with `final_pass=false`; the final fenced `CatchingUp` pass calls `run_migration_pass_impl` directly with `final_pass=true` to additionally send each moved bucket's authoritative-replace scope via `POST /admin/reshard:prune` (`snapshot_reshard_prune_chunks`). run_migration_pass(     control: &dyn ClusterControl,     http: &reqwest::Client,     namespace: &str,     name: &str,     lumen: &Lumen, ) -> Result<usize> |
+| `should_start_split` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 560 | #1396 R5: also requires `status.reshard.usage_measured_at_map_version == spec.shardMap.version` — a lagging/stale status subresource can never start a split. should_start_split(lumen: &Lumen) -> bool |
+| `spawn_reshard_driver_loop` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 1664 | spawn_reshard_driver_loop(client: Client) |
 
 Not listed above (matching this project's existing mirrors' convention of
 only capturing top-level `pub` structs/enums/consts/modules and inherent-impl
@@ -70,7 +70,15 @@ mutating cache read/write helpers backing `oversize_block_condition`), and
 `detect_oversized_batch` (pre-flight oversize check called from
 `apply_reshard_batch`, which now returns the downcastable
 `OversizedDocumentBlock` error instead of only a generic `bail!` on both
-the pre-flight miss and a live 413 response).
+the pre-flight miss and a live 413 response). Also not listed (private,
+#1457 R1/R2, new): `run_migration_pass_impl` (the shared `final_pass: bool`
+implementation `run_migration_pass` now wraps), `fetch_all_collection_ids`
+(fetches a source shard's complete `GET /collections` id list independently
+of the bucket-scoped snapshot, so `snapshot_reshard_prune_chunks` can seed
+an empty `keep_ids` scope for a collection a moved bucket emptied entirely
+— #1457 R2), and `apply_reshard_prune_chunk` (this driver's `POST
+/admin/reshard:prune` caller for one `ReshardPruneChunk`, mirroring
+`apply_reshard_batch`'s existing `POST /admin/reshard:apply` caller).
 
 ## Source
 <!-- type: rust-source-unit lang: rust -->
@@ -266,7 +274,10 @@ use serde_json::json;
 use crate::auth::{Role, TokenClaims};
 use crate::operator::crd::{AuthMode, Lumen, ReshardPhase};
 use crate::operator::lease::{self, Election};
-use crate::reshard::{bucket_moves, snapshot_reshard_batches, ReshardBatch};
+use crate::reshard::{
+    bucket_moves, snapshot_reshard_batches, snapshot_reshard_prune_chunks, ReshardBatch,
+    ReshardPruneChunk,
+};
 use crate::routing::VirtualBucketShardMap;
 use crate::storage::SnapshotV1;
 
@@ -742,6 +753,42 @@ async fn fetch_scoped_backup(
         .context("decode backup:scoped response")
 }
 
+/// `GET /collections` (#1457 R2): the full list of collections that exist on
+/// this shard right now, independent of any bucket scope. The reshard
+/// driver's admin token carries wildcard `Role::Admin` on `"*"`, which
+/// already satisfies this data-plane route's per-collection `Role::Read`
+/// filter for every collection id, so no new admin-only endpoint is needed
+/// here. This is deliberately **not** derived from a bucket-scoped
+/// snapshot's own `collections` keys: [`crate::reshard::snapshot_bucket_subset`]
+/// (backing `POST /admin/backup:scoped`) omits a collection entirely from
+/// its output when it has zero matching docs in the requested buckets — a
+/// collection a batch of deletes emptied out of a moved bucket would then be
+/// silently skipped by [`snapshot_reshard_prune_chunks`], leaving its stale
+/// copies on the target unpruned (the exact edge #1443 disclosed and #1457
+/// R2 closes).
+async fn fetch_all_collection_ids(
+    http: &reqwest::Client,
+    base_url: &str,
+    token: Option<&str>,
+) -> Result<BTreeSet<String>> {
+    let mut req = http.get(format!("{base_url}/collections"));
+    if let Some(token) = token {
+        req = req.bearer_auth(token);
+    }
+    let resp = req
+        .send()
+        .await
+        .with_context(|| format!("GET {base_url}/collections"))?;
+    if !resp.status().is_success() {
+        bail!("{base_url}/collections returned {}", resp.status());
+    }
+    let ids: Vec<String> = resp
+        .json()
+        .await
+        .with_context(|| format!("decode {base_url}/collections response"))?;
+    Ok(ids.into_iter().collect())
+}
+
 /// If `batch`'s actual wire payload is over
 /// [`crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES`], name the collection and
 /// external_id to blame (#1444 R2). `snapshot_reshard_batches`'
@@ -801,6 +848,42 @@ async fn apply_reshard_batch(
             }
         }
         bail!("{base_url}/admin/reshard:apply returned {}", resp.status());
+    }
+    Ok(())
+}
+
+/// `POST /admin/reshard:prune` (#1457 R1): send one [`ReshardPruneChunk`] of
+/// the final migration pass's authoritative keep set. Unlike
+/// [`apply_reshard_batch`], a chunk carries only external_id strings (no
+/// document content), so it never needs the same pre-flight/live-413
+/// oversize classification — `snapshot_reshard_prune_chunks`'s recursive
+/// byte-cap halving already keeps every chunk under `max_chunk_bytes` short
+/// of a single id long enough alone to exceed it, an unrealistic edge this
+/// function does not special-case. A failure here
+/// propagates as a generic error, surfaced by every caller as
+/// [`DriveOutcome::Blocked`] the same as any other step; the next tick's
+/// retry recomputes and re-sends the same deterministic chunk set (the final
+/// pass runs under the write fence, so bucket population cannot change
+/// between ticks), converging via [`crate::storage::Engine::
+/// apply_reshard_prune_chunk`]'s idempotent accumulator.
+async fn apply_reshard_prune_chunk(
+    http: &reqwest::Client,
+    base_url: &str,
+    token: Option<&str>,
+    chunk: &ReshardPruneChunk,
+) -> Result<()> {
+    let mut req = http
+        .post(format!("{base_url}/admin/reshard:prune"))
+        .json(chunk);
+    if let Some(token) = token {
+        req = req.bearer_auth(token);
+    }
+    let resp = req
+        .send()
+        .await
+        .with_context(|| format!("POST {base_url}/admin/reshard:prune"))?;
+    if !resp.status().is_success() {
+        bail!("{base_url}/admin/reshard:prune returned {}", resp.status());
     }
     Ok(())
 }
@@ -1048,22 +1131,25 @@ pub async fn run_migration_pass(
     run_migration_pass_impl(control, http, namespace, name, lumen, false, None).await
 }
 
-/// Shared migration-pass implementation. `replace_mode` (#1443 R2) is `true`
-/// only for the final, fenced `CatchingUp` pass (see
-/// [`snapshot_reshard_batches`]'s `replace_mode` doc); `moving_buckets`
-/// (#1443 R1), when `Some`, marks this pass as running under a write fence
-/// and re-arms it with a fresh [`ClusterControl::write_fence_ttl_secs`]
-/// deadline every [`FENCE_REARM_BATCH_INTERVAL`] applied batches — a re-arm
-/// failure aborts the whole pass immediately (propagated as `Err`, which
-/// every caller already surfaces as `DriveOutcome::Blocked` before eviction
-/// ever runs).
+/// Shared migration-pass implementation. `final_pass` is `true` only for the
+/// final, fenced `CatchingUp` pass: every `snapshot_reshard_batches` apply
+/// below stays purely additive regardless (#1457 R1), but a `final_pass`
+/// additionally sends the authoritative-replace scope for every moved bucket
+/// via `POST /admin/reshard:prune` — see [`snapshot_reshard_prune_chunks`].
+/// `moving_buckets` (#1443 R1), when `Some`, marks this pass as running
+/// under a write fence and re-arms it with a fresh
+/// [`ClusterControl::write_fence_ttl_secs`] deadline every
+/// [`FENCE_REARM_BATCH_INTERVAL`] applied batches/chunks — a re-arm failure
+/// aborts the whole pass immediately (propagated as `Err`, which every
+/// caller already surfaces as `DriveOutcome::Blocked` before eviction ever
+/// runs).
 async fn run_migration_pass_impl(
     control: &dyn ClusterControl,
     http: &reqwest::Client,
     namespace: &str,
     name: &str,
     lumen: &Lumen,
-    replace_mode: bool,
+    final_pass: bool,
     moving_buckets: Option<&BTreeSet<u32>>,
 ) -> Result<usize> {
     let current = current_shard_map(lumen)?;
@@ -1074,15 +1160,21 @@ async fn run_migration_pass_impl(
     }
 
     let mut buckets_by_from_shard: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
+    let mut to_shard_by_bucket: BTreeMap<u32, u32> = BTreeMap::new();
     for mv in &moves {
         buckets_by_from_shard
             .entry(mv.from_shard)
             .or_default()
             .insert(mv.bucket);
+        to_shard_by_bucket.insert(mv.bucket, mv.to_shard);
     }
 
     let token = control.admin_token(namespace, lumen).await?;
     let mut total_batches = 0usize;
+    // Counts both applied batches and applied prune chunks — the shared
+    // clock [`FENCE_REARM_BATCH_INTERVAL`] re-arms the fence against,
+    // independent of which of the two loops below is currently running.
+    let mut applied_calls = 0usize;
     for (from_shard, buckets) in buckets_by_from_shard {
         let source_url = control.shard_base_url(namespace, name, from_shard);
         let snapshot = fetch_scoped_backup(
@@ -1093,13 +1185,8 @@ async fn run_migration_pass_impl(
             &buckets,
         )
         .await?;
-        let batches = snapshot_reshard_batches(
-            &snapshot,
-            &current,
-            &target,
-            MAX_EXTERNAL_IDS_PER_BATCH,
-            replace_mode,
-        )?;
+        let batches =
+            snapshot_reshard_batches(&snapshot, &current, &target, MAX_EXTERNAL_IDS_PER_BATCH)?;
         for batch in &batches {
             let dest_url = control.shard_base_url(namespace, name, batch.to_shard);
             if let Err(err) = apply_reshard_batch(http, &dest_url, token.as_deref(), batch).await {
@@ -1114,8 +1201,57 @@ async fn run_migration_pass_impl(
                 return Err(err);
             }
             total_batches += 1;
-            if let Some(fenced_buckets) = moving_buckets {
-                if !fenced_buckets.is_empty() && total_batches % FENCE_REARM_BATCH_INTERVAL == 0 {
+            applied_calls += 1;
+            if let Some(fenced_buckets) = moving_buckets
+                .filter(|b| !b.is_empty() && applied_calls % FENCE_REARM_BATCH_INTERVAL == 0)
+            {
+                set_write_fence(
+                    control,
+                    http,
+                    namespace,
+                    name,
+                    lumen,
+                    &current,
+                    fenced_buckets,
+                    control.write_fence_ttl_secs(),
+                )
+                .await
+                .context("re-arm write fence mid migration pass")?;
+            }
+        }
+
+        // #1457 R1/R2: the final pass's authoritative-replace scope, sent as
+        // its own independently byte-capped `POST /admin/reshard:prune`
+        // chunks rather than stamped onto every `ReshardBatch` above — see
+        // `reshard.rs`'s `ReshardBatch`/`ReshardPruneChunk` docs for why. The
+        // full collection list is fetched from the source shard directly
+        // (#1457 R2) rather than derived from `snapshot`'s own keys, so a
+        // collection a batch of deletes emptied out of these buckets still
+        // gets an (empty) keep scope instead of being silently skipped.
+        if final_pass {
+            let collection_ids = fetch_all_collection_ids(http, &source_url, token.as_deref())
+                .await
+                .context("fetch source shard's full collection list for the final reshard pass")?;
+            let prune_chunks = snapshot_reshard_prune_chunks(
+                &snapshot,
+                &target,
+                &buckets,
+                &collection_ids,
+                crate::reshard::MAX_BATCH_BYTES,
+            )?;
+            for chunk in &prune_chunks {
+                let Some(&to_shard) = to_shard_by_bucket.get(&chunk.bucket) else {
+                    bail!(
+                        "prune chunk for bucket {} has no known destination shard",
+                        chunk.bucket
+                    );
+                };
+                let dest_url = control.shard_base_url(namespace, name, to_shard);
+                apply_reshard_prune_chunk(http, &dest_url, token.as_deref(), chunk).await?;
+                applied_calls += 1;
+                if let Some(fenced_buckets) = moving_buckets
+                    .filter(|b| !b.is_empty() && applied_calls % FENCE_REARM_BATCH_INTERVAL == 0)
+                {
                     set_write_fence(
                         control,
                         http,
@@ -1414,7 +1550,8 @@ async fn advance_catching_up(
 /// arm/clear bracket is unconditional (always runs, regardless of which
 /// step below fails) without duplicating the sequence itself.
 ///
-/// #1443 R1: this sequence's migration pass is `replace_mode` (R2) and runs
+/// #1443 R1: this sequence's migration pass is `final_pass` (R2, reworked
+/// #1457 R1 into a separate `POST /admin/reshard:prune` step) and runs
 /// under periodic in-loop re-arming; the fence is additionally re-armed with
 /// a fresh TTL at every phase boundary below (after the migration pass and
 /// before the target checkpoint, again before eviction, and again before the
@@ -2063,8 +2200,6 @@ mod tests {
                 version: 1,
                 collections: BTreeMap::new(),
             },
-            virtual_bucket_count: 0,
-            replace_ids: None,
         }
     }
 
@@ -2373,7 +2508,6 @@ mod tests {
     }
 }
 // CODEGEN-END
-
 ````
 
 ## Changes

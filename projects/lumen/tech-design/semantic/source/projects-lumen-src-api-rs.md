@@ -27,19 +27,19 @@ Public API manifest for `projects/lumen/src/api.rs` generated from AST during Sc
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 613 |  |
-| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 2338 |  |
+| `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 614 |  |
+| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 2374 |  |
 | `AppState` | projects/lumen/src/api.rs | struct | pub | 64 |  |
 | `RoutedBackend` | projects/lumen/src/api.rs | trait | pub | 278 | Cross-pod shard routing for operator/k8s serving pods (#1398 R1-R3); `AppState::routed` is `None` for every non-routed deployment. |
-| `ShardForwardMisrouted` | projects/lumen/src/api.rs | struct | pub | 2429 | A forwarded request's one-hop marker claimed this pod, but recomputing ownership disagrees (#1442 R1) — a spoofed or genuinely misrouted forward, rejected rather than honored. |
-| `ShardForwardRemoteError` | projects/lumen/src/api.rs | struct | pub | 2377 | The owning shard was reached and answered, but with a non-2xx status. |
-| `ShardForwardUnavailable` | projects/lumen/src/api.rs | struct | pub | 2359 | One-hop shard-forward failure — the owning shard was unreachable or its response could not be decoded. |
-| `ShardMapVersionMismatch` | projects/lumen/src/api.rs | struct | pub | 2401 | A forwarded request declared a shard-map version that disagrees with this pod's own live map (#1442 R2) — the rolling-restart mixed-map window. |
+| `ShardForwardMisrouted` | projects/lumen/src/api.rs | struct | pub | 2465 | A forwarded request's one-hop marker claimed this pod, but recomputing ownership disagrees (#1442 R1) — a spoofed or genuinely misrouted forward, rejected rather than honored. |
+| `ShardForwardRemoteError` | projects/lumen/src/api.rs | struct | pub | 2413 | The owning shard was reached and answered, but with a non-2xx status. |
+| `ShardForwardUnavailable` | projects/lumen/src/api.rs | struct | pub | 2395 | One-hop shard-forward failure — the owning shard was unreachable or its response could not be decoded. |
+| `ShardMapVersionMismatch` | projects/lumen/src/api.rs | struct | pub | 2437 | A forwarded request declared a shard-map version that disagrees with this pod's own live map (#1442 R2) — the rolling-restart mixed-map window. |
 | `WriteFence` | projects/lumen/src/api.rs | struct | pub | 173 | #1396 R2: bounded write pause on still-moving virtual buckets during a reshard's final `CatchingUp` pass. Armed/cleared via `POST /admin/reshard:fence`; self-expires on its TTL deadline so a crashed driver can never leave a permanent fence. #1443 R3: `arm` now returns `bool` (false on `Instant + Duration` overflow instead of panicking) and the internal mutex is poison-proof (`unwrap_or_else(poisoned -> into_inner)`), so an overflowed/panicked prior caller can never wedge the fence permanently. |
 | `new` | projects/lumen/src/api.rs | function | pub | 461 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
 | `open` | projects/lumen/src/api.rs | function | pub | 499 | open(engine: Arc<Engine>) -> Self |
-| `openapi` | projects/lumen/src/api.rs | function | pub | 2266 | openapi() -> utoipa::openapi::OpenApi |
-| `router` | projects/lumen/src/api.rs | function | pub | 652 | router(state: AppState) -> Router |
+| `openapi` | projects/lumen/src/api.rs | function | pub | 2302 | openapi() -> utoipa::openapi::OpenApi |
+| `router` | projects/lumen/src/api.rs | function | pub | 653 | router(state: AppState) -> Router |
 | `with_checkpoint` | projects/lumen/src/api.rs | function | pub | 483 | with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self |
 | `with_cluster` | projects/lumen/src/api.rs | function | pub | 465 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
 | `with_components` | projects/lumen/src/api.rs | function | pub | 437 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<dyn WriteSink>,     ) -> Self |
@@ -596,6 +596,7 @@ impl AppState {
         stats,
         backup_scoped,
         reshard_apply,
+        reshard_prune,
         reshard_evict,
         reshard_fence,
         admin_checkpoint,
@@ -768,6 +769,7 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/backup:scoped", post(backup_scoped))
         .route("/admin/restore", post(restore))
         .route("/admin/reshard:apply", post(reshard_apply))
+        .route("/admin/reshard:prune", post(reshard_prune))
         .route("/admin/reshard:evict", post(reshard_evict))
         .route("/admin/reshard:fence", post(reshard_fence))
         .route("/admin/checkpoint", post(admin_checkpoint))
@@ -1981,12 +1983,14 @@ async fn restore(
 // Reshard admin verbs (#1380): batch-apply, bucket-scoped export, evict.
 // Plus `/admin/checkpoint` (#1389), the on-demand durability step that makes
 // the other three's mutations survive the cutover restart the driver itself
-// triggers.
+// triggers, and `/admin/reshard:prune` (#1457 R1), the final migration
+// pass's independently chunked authoritative-replace scope.
 //
-// `reshard.rs`'s tested primitives (`bucket_moves`, `snapshot_reshard_batches`)
-// emit bounded `ReshardBatch` units for checkpointed migration; the four
-// verbs below are the wire surface that moves one and makes it durable. All
-// four require `Role::Admin` on `*`, same as `/admin/backup`/`/admin/restore`
+// `reshard.rs`'s tested primitives (`bucket_moves`, `snapshot_reshard_batches`,
+// `snapshot_reshard_prune_chunks`) emit bounded `ReshardBatch`/
+// `ReshardPruneChunk` units for checkpointed migration; the five verbs below
+// are the wire surface that moves them and makes them durable. All five
+// require `Role::Admin` on `*`, same as `/admin/backup`/`/admin/restore`
 // above.
 // ---------------------------------------------------------------------------
 
@@ -2011,31 +2015,9 @@ async fn reshard_apply(
     Json(batch): Json<ReshardBatch>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     auth.ensure("*", Role::Admin)?;
-    // #1443 R2: a batch carrying `replace_ids` is the reshard driver's final
-    // fenced pass and is authoritative for `bucket` — `virtual_bucket_count`
-    // must be set so the engine can recompute bucket membership; reject a
-    // malformed combination (present `replace_ids` with no bucket count)
-    // rather than silently falling back to purely-additive merge.
-    let replace = match &batch.replace_ids {
-        Some(replace_ids) => {
-            if batch.virtual_bucket_count == 0 {
-                return Err(ApiErr::new(
-                    StatusCode::BAD_REQUEST,
-                    "invalid_virtual_bucket_count",
-                    "replace_ids requires a non-zero virtual_bucket_count",
-                ));
-            }
-            Some(crate::reshard::ReshardBatchReplaceScope {
-                bucket: batch.bucket,
-                virtual_bucket_count: batch.virtual_bucket_count,
-                replace_ids: replace_ids.clone(),
-            })
-        }
-        None => None,
-    };
     let outcome = state
         .engine
-        .apply_reshard_batch(batch.snapshot, replace)
+        .apply_reshard_batch(batch.snapshot, None)
         .map_err(ApiErr::from)?;
     tracing::info!(
         target: "lumen.audit",
@@ -2053,6 +2035,60 @@ async fn reshard_apply(
     Ok(Json(serde_json::json!({
         "collections_touched": outcome.collections_touched,
         "documents_upserted": outcome.documents_upserted,
+        "documents_pruned": outcome.documents_pruned,
+    })))
+}
+
+/// `POST /admin/reshard:prune`: accumulate one [`ReshardPruneChunk`] of the
+/// final migration pass's authoritative "keep" set for one `(bucket,
+/// collection_id)` pair, and prune once every chunk has arrived (#1457 R1).
+/// Unlike `/admin/reshard:apply` (purely additive), this verb is what makes
+/// the final pass authoritative for the buckets it copies: a document
+/// deleted on the source during the split is absent from the accumulated
+/// keep set and is pruned here instead of surviving as a stale copy from an
+/// earlier additive pass. Idempotent per chunk (safe to retry after a 413)
+/// and as a whole group (safe to re-send every chunk after a driver
+/// restart); see [`Engine::apply_reshard_prune_chunk`].
+#[utoipa::path(
+    post,
+    path = "/admin/reshard:prune",
+    tag = "Admin",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Chunk accumulated; pruned once every chunk of its group has arrived", body = serde_json::Value),
+        (status = 400, description = "Malformed chunk", body = ApiError)
+    )
+)]
+async fn reshard_prune(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Json(chunk): Json<crate::reshard::ReshardPruneChunk>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    auth.ensure("*", Role::Admin)?;
+    let to_map_version = chunk.to_map_version;
+    let bucket = chunk.bucket;
+    let collection_id = chunk.collection_id.clone();
+    let chunk_index = chunk.chunk_index;
+    let total_chunks = chunk.total_chunks;
+    let outcome = state
+        .engine
+        .apply_reshard_prune_chunk(chunk)
+        .map_err(ApiErr::from)?;
+    if outcome.complete {
+        tracing::info!(
+            target: "lumen.audit",
+            event = "reshard_prune_applied",
+            subject = auth.subject().unwrap_or("anonymous"),
+            bucket,
+            to_map_version,
+            collection_id = collection_id.as_str(),
+            chunk_index,
+            total_chunks,
+            documents_pruned = outcome.documents_pruned,
+        );
+    }
+    Ok(Json(serde_json::json!({
+        "complete": outcome.complete,
         "documents_pruned": outcome.documents_pruned,
     })))
 }
@@ -2597,7 +2633,6 @@ impl From<crate::auth::AuthErr> for ApiErr {
     }
 }
 // CODEGEN-END
-
 ````
 
 ## Changes

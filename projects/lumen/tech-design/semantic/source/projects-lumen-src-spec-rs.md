@@ -1024,8 +1024,8 @@ These three routes are the safe procedure for ad hoc or scripted
 snapshot/restore — pull with `GET /admin/backup`, keep the bytes wherever you
 like, push back with `POST /admin/restore` to recover.
 
-### Reshard admin verbs (#1380, #1389)
-Four more `Role::Admin`-gated routes support moving a bounded set of
+### Reshard admin verbs (#1380, #1389, #1457)
+Five more `Role::Admin`-gated routes support moving a bounded set of
 documents between shards during an operator-driven reshard, without a
 full-engine restore:
 
@@ -1046,6 +1046,23 @@ full-engine restore:
   removes exactly the documents whose bucket no longer routes to this
   shard — nothing else. A separate, explicitly-invoked step; never implicit
   in `/admin/reshard:apply` or the backup routes above.
+- `POST /admin/reshard:prune` (#1457 R1) — accumulates one byte-capped
+  `ReshardPruneChunk` of a final migration pass's authoritative "keep" id
+  set for one `(bucket, collection_id)` pair, keyed by `(to_map_version,
+  bucket, collection_id, total_chunks)`, and prunes any document this shard
+  holds that routes to that bucket but is absent from the accumulated set
+  once every chunk has arrived. Unlike `/admin/reshard:apply` (always
+  purely additive), this is what makes the final, fenced `CatchingUp` pass
+  authoritative: a document deleted on the source during the split is
+  absent from the accumulated keep set and is pruned here instead of
+  surviving as a stale copy from an earlier additive pass. Independently
+  byte-capped from `/admin/reshard:apply`'s own batches, so a bucket whose
+  id set alone would exceed the body limit still converges via multiple
+  chunks rather than ever producing an over-limit request. Idempotent both
+  per chunk (safe to retry after a 413) and as a whole group (safe to
+  re-send every chunk after a driver restart — re-running an
+  already-completed group's accumulate-then-apply sequence is a no-op
+  against already-pruned state).
 - `POST /admin/checkpoint` — forces a synchronous, awaited durability
   checkpoint of the live engine state, bypassing the periodic
   `LUMEN_SNAPSHOT_SECS` cadence. `/admin/reshard:apply` and
@@ -1078,7 +1095,7 @@ full-engine restore:
   notion of "already applied" alongside `merge_snapshot_delta`'s own
   idempotent merge semantics.
 
-These four verbs are the data-plane building blocks for a reshard; only
+These five verbs are the data-plane building blocks for a reshard; only
 `/admin/checkpoint`'s ordering relative to cutover is sequenced by the
 operator phase driver — the rest do not sequence a migration end to end or
 decide *when* to cut over.
