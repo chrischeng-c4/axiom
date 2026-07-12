@@ -223,6 +223,141 @@ async fn reshard_apply_is_idempotent_on_retry() {
     assert_eq!(b1["total"], b2["total"]);
 }
 
+/// #1457 R1 AC1: a final pass's prune chunk only prunes once every chunk of
+/// its `(to_map_version, bucket, collection_id, total_chunks)` group has
+/// arrived — partial arrival changes nothing — and the whole protocol is
+/// idempotent: re-sending the already-completed group again re-runs the
+/// same accumulate-then-apply sequence, which is itself a no-op against
+/// already-pruned state (no error, no double-prune).
+#[tokio::test]
+async fn reshard_prune_accumulates_chunks_and_prunes_once_complete() {
+    let b = server();
+    create_users_collection(&b).await;
+    index_user(&b, "b-existing").await;
+    let ids: Vec<String> = (0..8).map(|i| format!("p-{i:02}")).collect();
+    for id in &ids {
+        index_user(&b, id).await;
+    }
+    let bucket = bucket_of("u", &ids[0]);
+    let bucket_ids: Vec<&String> = ids
+        .iter()
+        .filter(|id| bucket_of("u", id) == bucket)
+        .collect();
+    assert!(
+        bucket_ids.len() >= 2,
+        "fixture needs >=2 docs sharing one bucket"
+    );
+
+    // The authoritative "keep" set drops the first bucket doc (as if it had
+    // been deleted on the source mid-split) — every other doc in the bucket
+    // survives.
+    let dropped = bucket_ids[0];
+    let kept = &bucket_ids[1..];
+
+    // Send the keep set split across two chunks.
+    let mid = (kept.len() / 2).max(1);
+    let (first_half, second_half) = kept.split_at(mid.min(kept.len()));
+
+    let chunk0 = json!({
+        "to_map_version": 1,
+        "bucket": bucket,
+        "virtual_bucket_count": VIRTUAL_BUCKET_COUNT,
+        "collection_id": "u",
+        "chunk_index": 0,
+        "total_chunks": 2,
+        "keep_ids": first_half,
+    });
+    let chunk1 = json!({
+        "to_map_version": 1,
+        "bucket": bucket,
+        "virtual_bucket_count": VIRTUAL_BUCKET_COUNT,
+        "collection_id": "u",
+        "chunk_index": 1,
+        "total_chunks": 2,
+        "keep_ids": second_half,
+    });
+
+    // First chunk lands: not complete yet, nothing pruned.
+    let resp = b.post("/admin/reshard:prune").json(&chunk0).await;
+    resp.assert_status_ok();
+    let out: serde_json::Value = resp.json();
+    assert_eq!(out["complete"], json!(false));
+    assert!(
+        has_doc(&b, dropped).await,
+        "must not prune before every chunk of the group lands"
+    );
+
+    // Second (final) chunk completes the group -> prune fires exactly once.
+    let resp = b.post("/admin/reshard:prune").json(&chunk1).await;
+    resp.assert_status_ok();
+    let out: serde_json::Value = resp.json();
+    assert_eq!(out["complete"], json!(true));
+    assert_eq!(out["documents_pruned"], json!(1));
+    assert!(
+        !has_doc(&b, dropped).await,
+        "dropped doc must be pruned once its group completes"
+    );
+    for id in kept {
+        assert!(has_doc(&b, id).await, "kept doc {id} must survive");
+    }
+    assert!(
+        has_doc(&b, "b-existing").await,
+        "docs outside the pruned bucket/collection must be untouched"
+    );
+
+    // Re-sending the whole, already-completed group again is idempotent.
+    b.post("/admin/reshard:prune")
+        .json(&chunk0)
+        .await
+        .assert_status_ok();
+    let resp = b.post("/admin/reshard:prune").json(&chunk1).await;
+    resp.assert_status_ok();
+    let out: serde_json::Value = resp.json();
+    assert_eq!(out["complete"], json!(true));
+    assert_eq!(
+        out["documents_pruned"],
+        json!(0),
+        "already-pruned state has nothing left to prune"
+    );
+    for id in kept {
+        assert!(has_doc(&b, id).await);
+    }
+}
+
+/// #1457 R2 AC2: a moved bucket's collection that a batch of deletes
+/// emptied entirely on the source still gets an authoritative-prune chunk
+/// (empty `keep_ids`) so any stale copy this shard already holds for that
+/// bucket is pruned on cutover — the delete-resurrection edge #1443 left
+/// open for a bucket+collection pair with zero surviving docs.
+#[tokio::test]
+async fn reshard_prune_empty_keep_set_prunes_every_doc_in_the_bucket() {
+    let b = server();
+    create_users_collection(&b).await;
+    index_user(&b, "b-existing").await;
+    index_user(&b, "stale-1").await;
+    let bucket = bucket_of("u", "stale-1");
+
+    let chunk = json!({
+        "to_map_version": 1,
+        "bucket": bucket,
+        "virtual_bucket_count": VIRTUAL_BUCKET_COUNT,
+        "collection_id": "u",
+        "chunk_index": 0,
+        "total_chunks": 1,
+        "keep_ids": [],
+    });
+    let resp = b.post("/admin/reshard:prune").json(&chunk).await;
+    resp.assert_status_ok();
+    let out: serde_json::Value = resp.json();
+    assert_eq!(out["complete"], json!(true));
+    assert_eq!(out["documents_pruned"], json!(1));
+    assert!(!has_doc(&b, "stale-1").await);
+    assert!(
+        has_doc(&b, "b-existing").await,
+        "doc outside the pruned bucket must survive"
+    );
+}
+
 /// AC3: evict removes exactly the documents whose bucket no longer belongs
 /// to the shard under the newer map — nothing else.
 #[tokio::test]
@@ -369,6 +504,17 @@ async fn reshard_admin_verbs_require_admin_auth() {
         "physical_shard_count": 2
     });
     let fence_body = json!({ "virtual_bucket_count": 4, "buckets": [0], "ttl_secs": 5 });
+    // #1457 R1: `POST /admin/reshard:prune` — same admin-gated shape as the
+    // rest of this file's reshard verbs.
+    let prune_body = json!({
+        "to_map_version": 1,
+        "bucket": 0,
+        "virtual_bucket_count": 4,
+        "collection_id": "u",
+        "chunk_index": 0,
+        "total_chunks": 1,
+        "keep_ids": []
+    });
 
     // No bearer token at all -> 401.
     s.post("/admin/backup:scoped")
@@ -388,6 +534,10 @@ async fn reshard_admin_verbs_require_admin_auth() {
         .assert_status_unauthorized();
     s.post("/admin/reshard:fence")
         .json(&fence_body)
+        .await
+        .assert_status_unauthorized();
+    s.post("/admin/reshard:prune")
+        .json(&prune_body)
         .await
         .assert_status_unauthorized();
 
@@ -416,6 +566,11 @@ async fn reshard_admin_verbs_require_admin_auth() {
         .json(&fence_body)
         .await
         .assert_status_forbidden();
+    s.post("/admin/reshard:prune")
+        .add_header("authorization", "Bearer tok-r")
+        .json(&prune_body)
+        .await
+        .assert_status_forbidden();
 }
 
 /// AC4 (openapi half): all four verbs show up in the generated OpenAPI
@@ -433,6 +588,7 @@ async fn reshard_admin_verbs_appear_in_openapi_spec() {
         "/admin/reshard:evict",
         "/admin/checkpoint",
         "/admin/reshard:fence",
+        "/admin/reshard:prune",
     ] {
         assert!(
             paths.contains_key(path),

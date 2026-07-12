@@ -21,8 +21,8 @@ Public API manifest for `projects/lumen/src/routing_remote.rs` generated from AS
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `RoutedRouter` | projects/lumen/src/routing_remote.rs | struct | pub | 74 |  |
-| `new` | projects/lumen/src/routing_remote.rs | function | pub | 90 | new(engine: Arc<Engine>, local_write: Arc<dyn WriteBackend>, shard_map: VirtualBucketShardMap, local_shard: u32, shard_urls: Vec<String>) -> Result<Self> |
+| `RoutedRouter` | projects/lumen/src/routing_remote.rs | struct | pub | 106 |  |
+| `new` | projects/lumen/src/routing_remote.rs | function | pub | 122 | new(engine: Arc<Engine>, local_write: Arc<dyn WriteBackend>, shard_map: VirtualBucketShardMap, local_shard: u32, shard_urls: Vec<String>) -> Result<Self> |
 
 ## Source
 <!-- type: rust-source-unit lang: rust -->
@@ -57,13 +57,19 @@ Public API manifest for `projects/lumen/src/routing_remote.rs` generated from AS
 //! answering locally when this pod isn't actually the owner — a spoofed or
 //! genuinely misrouted forward is rejected, never honored. A forwarded
 //! request still never forwards again, so cross-pod routing remains one hop
-//! deep. Keyless (scatter) sub-requests are the one exception: every shard
-//! is a legitimate scatter participant with no single owner to validate
-//! against, so that path keeps trusting the marker (see `search`'s
-//! `SearchShardTarget::All` arm). A forward carries the caller's
-//! `Authorization` and `x-read-consistency` headers through unchanged (R3)
-//! plus `x-lumen-forwarded: 1` and `x-lumen-map-version: <sender's map
-//! version>` (R2).
+//! deep. Keyless (scatter) sub-requests are exempt from BOTH checks
+//! (#1457 R4, widening the #1442 R1 ownership exemption to the map-version
+//! check too): every shard is a legitimate scatter participant with no
+//! single owner to validate against, and this pod always answers truthfully
+//! for its own local data regardless of which map version the scatter's
+//! originating pod was running — gating a keyless sub-request on map-version
+//! agreement made every scatter search unavailable pod-wide during the
+//! entire rolling-restart window after a completed split, even though no
+//! single sub-answer here actually depended on the sender's map version
+//! (see `search`'s `SearchShardTarget::All` arm). A forward carries the
+//! caller's `Authorization` and `x-read-consistency` headers through
+//! unchanged (R3) plus `x-lumen-forwarded: 1` and `x-lumen-map-version:
+//! <sender's map version>` (R2).
 //!
 //! Behind the `operator` feature only because it is the sole module that
 //! needs `reqwest` as a directly-nameable type — every real deployment that
@@ -207,7 +213,13 @@ impl RoutedRouter {
     /// shard-map version than this pod's live map, with a distinct
     /// retryable error — instead of letting the one-hop guard force a local
     /// answer that may be wrong on either side of a just-completed reshard
-    /// split during a rolling restart's mixed-map window.
+    /// split during a rolling restart's mixed-map window. Callers must skip
+    /// this for keyless (scatter) sub-requests (#1457 R4): those never rely
+    /// on the sender's map version to pick an owner, so gating on agreement
+    /// only starved scatter search availability during a rolling restart
+    /// without protecting anything. Only `search`'s keyed forward arm and
+    /// the deterministic-owner write paths (`index`/`replace_docs`/`delete`)
+    /// call this.
     fn check_forwarded_map_version(&self, headers: &HeaderMap) -> Result<()> {
         if let Some(sender_version) = Self::forwarded_map_version(headers) {
             let local_version = self.shard_map.version();
@@ -363,7 +375,15 @@ impl RoutedRouter {
         shard_req.cursor = None;
         shard_req.limit = offset.saturating_add(limit).min(u32::MAX as usize) as u32;
 
-        let path = format!("/collections/{collection_id}/search");
+        // #1457 R3: percent-encode the caller-controlled collection id —
+        // an unencoded `/`, `%`, or space would otherwise be misparsed as
+        // URL structure (or land as a doubly-decoded literal) by the
+        // remote pod, the same class of bug #1442 R4 fixed for
+        // `external_id`/`field`.
+        let path = format!(
+            "/collections/{}/search",
+            percent_encode_component(collection_id)
+        );
         let mut remote_futures = Vec::new();
         for shard in 0..self.shard_map.physical_shard_count() {
             if shard == self.local_shard {
@@ -448,12 +468,17 @@ impl RoutedBackend for RoutedRouter {
         headers: &HeaderMap,
     ) -> Result<SearchResponse> {
         if Self::already_forwarded(headers) {
-            self.check_forwarded_map_version(headers)?;
-            // #1442 R1: a keyed forward recomputes ownership like every
-            // other deterministic route below; a keyless (scatter)
-            // sub-request has no single owner to validate against and
-            // keeps trusting the marker (see `assert_owns`'s doc comment).
+            // #1457 R4: only a keyed forward has a single owner-of-record to
+            // validate, so only that arm re-checks the sender's map version
+            // (#1442 R2) and recomputes ownership (#1442 R1). A keyless
+            // (scatter) sub-request has no single owner and this pod always
+            // answers truthfully for its own local data regardless of which
+            // map version the scattering pod ran — checking the map version
+            // there only starved scatter search during every rolling
+            // restart after a completed split (see `assert_owns`'s doc
+            // comment and this module's header for the full rationale).
             if let Some(key) = req.routing_key.as_deref() {
+                self.check_forwarded_map_version(headers)?;
                 let route = self.shard_map.route_key(collection_id, key);
                 if route.shard != self.local_shard {
                     return Err(anyhow::Error::new(ShardForwardMisrouted {
@@ -473,7 +498,12 @@ impl RoutedBackend for RoutedRouter {
                 self.engine.search(collection_id, req)
             }
             SearchShardTarget::One(route) => {
-                let path = format!("/collections/{collection_id}/search");
+                // #1457 R3: percent-encode the caller-controlled collection
+                // id (see `scatter_search`'s comment for the rationale).
+                let path = format!(
+                    "/collections/{}/search",
+                    percent_encode_component(collection_id)
+                );
                 self.forward_json(
                     route.shard,
                     reqwest::Method::POST,
@@ -510,7 +540,12 @@ impl RoutedBackend for RoutedRouter {
             shard_items[shard].push(item);
         }
 
-        let path = format!("/collections/{collection_id}/index");
+        // #1457 R3: percent-encode the caller-controlled collection id (see
+        // `scatter_search`'s comment for the rationale).
+        let path = format!(
+            "/collections/{}/index",
+            percent_encode_component(&collection_id)
+        );
         let mut local_resp: Option<IndexResponse> = None;
         let mut remote_futures = Vec::new();
         for (shard, items) in shard_items.into_iter().enumerate() {
@@ -584,7 +619,12 @@ impl RoutedBackend for RoutedRouter {
             shard_docs[shard].push(item);
         }
 
-        let path = format!("/collections/{collection_id}/docs:replace");
+        // #1457 R3: percent-encode the caller-controlled collection id (see
+        // `scatter_search`'s comment for the rationale).
+        let path = format!(
+            "/collections/{}/docs:replace",
+            percent_encode_component(&collection_id)
+        );
         // #1442 R5: `sent` is the exact number of docs handed to each
         // shard, captured before the request body moves — the response
         // below is validated against it so a short/long response (e.g. a
@@ -691,12 +731,14 @@ impl RoutedBackend for RoutedRouter {
                 .delete(collection_id, external_id, field)
                 .await;
         }
-        // #1442 R4: percent-encode the caller-controlled path/query
-        // components — an unencoded `/`, `?`, `#`, or `%` in `external_id`
-        // or `field` would otherwise be misparsed as URL structure (or a
-        // doubly-decoded literal) by the remote pod.
+        // #1442 R4 / #1457 R3: percent-encode every caller-controlled
+        // path/query component — an unencoded `/`, `?`, `#`, or `%` in
+        // `collection_id`, `external_id`, or `field` would otherwise be
+        // misparsed as URL structure (or a doubly-decoded literal) by the
+        // remote pod.
         let mut path = format!(
-            "/collections/{collection_id}/index/{}",
+            "/collections/{}/index/{}",
+            percent_encode_component(&collection_id),
             percent_encode_component(&external_id)
         );
         if let Some(f) = &field {
@@ -886,6 +928,76 @@ mod tests {
         );
         let err = router.check_forwarded_map_version(&headers).unwrap_err();
         assert!(err.downcast_ref::<ShardMapVersionMismatch>().is_some());
+    }
+
+    /// #1457 R4 AC4: a keyless (scatter) sub-request forwarded from a peer
+    /// running a *different* shard-map version must still be answered
+    /// locally, not rejected with `ShardMapVersionMismatch` — the whole
+    /// point of exempting scatter sub-requests from the map-version check.
+    /// A keyed forward under the exact same mismatched-version header must
+    /// still be rejected, proving the exemption is scoped to keyless
+    /// requests only, not a blanket bypass.
+    #[tokio::test]
+    async fn search_already_forwarded_keyless_ignores_map_version_mismatch() {
+        let router = test_router(0);
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "city".to_string(),
+            crate::types::FieldSpec {
+                field_type: crate::types::FieldType::Keyword,
+                analyzer: None,
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        router
+            .engine
+            .create_collection("coll", CreateCollectionRequest { fields })
+            .unwrap();
+
+        let mut headers = HeaderMap::new();
+        headers.insert(FORWARDED_HEADER, "1".parse().unwrap());
+        headers.insert(
+            MAP_VERSION_HEADER,
+            (router.shard_map.version() + 1)
+                .to_string()
+                .parse()
+                .unwrap(),
+        );
+
+        let keyless_req = search_req(None);
+        let resp = router
+            .search("coll", keyless_req, &headers)
+            .await
+            .expect("a keyless scatter sub-request must not be rejected on map-version mismatch");
+        assert_eq!(resp.hits.len(), 0);
+
+        let mut keyed_req = search_req(None);
+        keyed_req.routing_key = Some("some-key".into());
+        let err = router
+            .search("coll", keyed_req, &headers)
+            .await
+            .expect_err("a keyed forward must still enforce the map-version check");
+        assert!(err.downcast_ref::<ShardMapVersionMismatch>().is_some());
+    }
+
+    fn search_req(sort: Option<Vec<crate::types::SortSpec>>) -> SearchRequest {
+        use crate::types::{FieldValue, QueryNode, TermQuery};
+        SearchRequest {
+            query: QueryNode::Term(TermQuery {
+                field: "city".into(),
+                value: FieldValue::String("taipei".into()),
+            }),
+            limit: 10,
+            cursor: None,
+            routing_key: None,
+            sort,
+            track_total: true,
+            collapse: None,
+        }
     }
 
     /// #1442 R1: `assert_owns` must reject a bucket this pod does not own —
