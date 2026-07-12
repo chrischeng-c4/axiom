@@ -107,6 +107,7 @@ pub enum Commands {
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/commands.md#source
 pub async fn run_command(cmd: Commands) -> Result<()> {
     drift::check_once(env!("AW_BUILD_VERSION"), env!("AW_GIT_SHA"));
+    drift::enforce_mutating_verb_gate(env!("AW_BUILD_VERSION"), env!("AW_GIT_SHA"));
 
     match cmd {
         Commands::New(args) => {
@@ -210,4 +211,24 @@ changes:
       Issue #1429: `guard::run` became async (`aw guard pretool` now consults
       the #1428 sanctioned-path resolver before its deny decision), so the
       `Commands::Guard` dispatch arm awaits it: `guard::run(args).await?;`.
+  - path: apps/agentic-workflow/src/cli/commands.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1417: adds a `drift::enforce_mutating_verb_gate` call right
+      after `drift::check_once` at the top of `run_command`. When the
+      installed binary is strictly behind the checkout's source version
+      (#1309 drift detection) AND the invoked verb's
+      `chain::VERB_LIFECYCLE_REGISTRY` entry has `mutates_lifecycle: true`
+      (writes tracked TD/EC/capability/WI lifecycle state), the gate prints
+      an `aw.cli.v1` error envelope to stdout naming both versions and the
+      remediation (`cargo install --path apps/agentic-workflow` / `aw
+      upgrade`) and exits nonzero instead of running the command.
+      Read-only verbs keep only `check_once`'s existing stderr warn. The
+      `AW_ALLOW_STALE_BINARY=1` environment variable is an escape hatch: the
+      run proceeds, but the override is logged to stderr. Dev-suffix
+      (`-dev.<sha>`) binary builds are never behind (per #1309's existing
+      `is_behind` semver-core compare), so a fresh in-checkout debug build
+      never refuses.
 ```

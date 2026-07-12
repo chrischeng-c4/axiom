@@ -387,6 +387,19 @@ pub(crate) enum VerbLifecycleClass {
 struct VerbLifecycle {
     path: &'static str,
     class: VerbLifecycleClass,
+    /// `true` when this verb mutates tracked lifecycle/config state on disk
+    /// (TD/EC/capability/WI artifacts, `aw.toml`'s generated project
+    /// registry block, or a lifecycle-terminal transition) as opposed to
+    /// only reading/reporting it. This is the classification #1417's
+    /// stale-binary skew gate ([`crate::cli::drift::mutating_verb_gate`])
+    /// reads: a binary strictly behind the checkout's source version may
+    /// still run any `false` (read-only) verb with only the existing warn,
+    /// but a `true` verb hard-refuses unless `AW_ALLOW_STALE_BINARY=1` is
+    /// set — a stale binary must not write artifacts in a retired protocol
+    /// shape. Orthogonal to [`VerbLifecycleClass`] (product-loop position);
+    /// e.g. `td.promote`/`td.audit-record` are `Utility`-class but still
+    /// mutate tracked state, so they are `true` here.
+    mutates_lifecycle: bool,
     /// Non-empty only (and always) for `Migration` — the concrete condition
     /// under which this verb may be removed. Empty for `Core`/`Utility`.
     sunset_criterion: &'static str,
@@ -401,224 +414,267 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     VerbLifecycle {
         path: "new",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "view",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "llm",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "upgrade",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "report-issue",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     // -- top-level core -------------------------------------------------
     VerbLifecycle {
         path: "health",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     // -- generator (support: takeover-readiness gap request surface) --------
     VerbLifecycle {
         path: "generator.check",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "generator.request",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     // -- guard (support) ------------------------------------------------
     VerbLifecycle {
         path: "guard.on",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "guard.off",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "guard.pretool",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     // -- conf (core: aw.toml project registry the loop reads from) ------
     VerbLifecycle {
         path: "conf.check",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "conf.sync",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     // -- wi (core loop: work-item inventory, planning, CRRR, run) -------
     VerbLifecycle {
         path: "wi.draft.init",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.draft.fill",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.draft.review",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.draft.validate",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.list",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.show",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.run",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.create",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.update",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.close",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.find",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.plan",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.epicize",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.atomize",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.prioritize",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.enrich",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.validate",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.fill-section",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.review",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "wi.arbitrate",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     // -- chat (support: cross-checkout agent messaging) -----------------
     VerbLifecycle {
         path: "chat.post",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "chat.list",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "chat.read",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "chat.members",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "chat.listen",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     // -- issue (support: CLI-convention trio's issue verb) ---------------
     VerbLifecycle {
         path: "issue.search",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "issue.view",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "issue.create",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "issue.comment",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     // -- td (core LINEAR lifecycle + read-only/debug support verbs) -----
     VerbLifecycle {
         path: "td.create",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     // `td.validate` retired by #1277 (epic #1270 R3): its slug-mode
@@ -629,16 +685,19 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     VerbLifecycle {
         path: "td.check",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "td.ast",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "td.migrate-mermaid",
         class: VerbLifecycleClass::Migration,
+        mutates_lifecycle: false,
         sunset_criterion: "retires once `aw td migrate-mermaid <project-td-root> --check` \
                             reports `legacy_block_count: 0` for every configured project's \
                             tech-design root (no remaining frontmatter-less legacy mermaid \
@@ -647,36 +706,43 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     VerbLifecycle {
         path: "td.lock",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "td.claim",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "td.gen",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "td.gen-source",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "td.code-check",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "td.fill",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "td.promote",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     // #1278 (epic #1270 R7): `aw standardize audit record` rehomed here,
@@ -684,62 +750,74 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     VerbLifecycle {
         path: "td.audit-record",
         class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     // -- ec (core: external-contract lifecycle) --------------------------
     VerbLifecycle {
         path: "ec.draft",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "ec.fill",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "ec.gen",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "ec.check",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "ec.lock",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "ec.review",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "ec.record",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "ec.verify",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "ec.doc.gen",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "ec.doc.check",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "ec.doc.preview",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     // #1278 (epic #1270 R7): `aw standardize` namespace (`standardize.audit.check`
@@ -750,31 +828,37 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     VerbLifecycle {
         path: "capability.report",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "capability.next",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "capability.draft",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "capability.apply-draft",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "capability.run",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "capability.migrate",
         class: VerbLifecycleClass::Migration,
+        mutates_lifecycle: true,
         sunset_criterion: "retires once `aw capability sweep --skip-issue-inventory` reports \
                             zero projects grouped under `next_action_kind: \
                             \"format_migration_required\"` across all configured `cap_path`s \
@@ -784,41 +868,49 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     VerbLifecycle {
         path: "capability.check",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "capability.init",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "capability.sweep",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "capability.set-type",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "capability.set-status",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "capability.set-surface",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "capability.set-ec-dimension",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
         path: "capability.set-wi-ref",
         class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
 ];
@@ -857,6 +949,45 @@ fn leaf_verb_paths() -> Vec<String> {
     let mut out = Vec::new();
     walk(&root, "", &mut out);
     out
+}
+
+/// #1417: look up whether a leaf verb path (dot-joined, e.g. `"td.fill"`,
+/// `"wi.run"` — the same shape [`leaf_verb_paths`] produces) mutates tracked
+/// lifecycle/config state, per [`VERB_LIFECYCLE_REGISTRY`]. `None` when
+/// `path` has no registry entry — the stale-binary gate
+/// ([`crate::cli::drift::enforce_mutating_verb_gate`]) treats an unresolved
+/// verb as "do not refuse" (fail open) rather than blocking an unrecognized
+/// invocation.
+pub(crate) fn verb_mutates_lifecycle(path: &str) -> Option<bool> {
+    VERB_LIFECYCLE_REGISTRY
+        .iter()
+        .find(|entry| entry.path == path)
+        .map(|entry| entry.mutates_lifecycle)
+}
+
+/// #1417: resolve the canonical dot-joined leaf verb path the current
+/// process was actually invoked with (same shape as
+/// [`VERB_LIFECYCLE_REGISTRY`]'s `path` field), by re-parsing `args`
+/// (expected to be `std::env::args().collect()`, program name in `args[0]`,
+/// which clap ignores for subcommand matching) through the real clap tree
+/// ([`TraceabilityCli`] — the same tree [`validate_aw_command_string`]
+/// validates against and [`leaf_verb_paths`] walks). Returns `None` when
+/// `args` doesn't resolve to a leaf subcommand at all (e.g. `aw --version`,
+/// `aw --help`, or an invocation clap itself would reject) — callers must
+/// treat that as "verb unknown", not as evidence the invocation is safe.
+pub(crate) fn resolve_invoked_verb_path(args: &[String]) -> Option<String> {
+    let matches = TraceabilityCli::command().try_get_matches_from(args).ok()?;
+    let mut parts = Vec::new();
+    let mut current = &matches;
+    while let Some((name, sub)) = current.subcommand() {
+        parts.push(name.to_string());
+        current = sub;
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("."))
+    }
 }
 
 /// One known stale/legacy persisted `next_action` string and how to repair
@@ -1214,6 +1345,122 @@ mod tests {
             "non-migration verb(s) carrying a sunset_criterion (only Migration entries should): \
              {non_migration_with_sunset:?}"
         );
+    }
+
+    // #1417: spot-check the `mutates_lifecycle` classification for a
+    // representative sample of each named category from the issue's design
+    // (td/wi/capability/ec/conf/top-level mutating verbs vs. read-only
+    // verbs) — the full registry is total by construction (the struct
+    // literal requires the field), this only guards the *values*.
+    #[test]
+    fn mutates_lifecycle_classification_matches_1417_design() {
+        let mutating = [
+            "new",
+            "conf.sync",
+            "wi.run",
+            "wi.create",
+            "wi.update",
+            "wi.close",
+            "wi.fill-section",
+            "wi.review",
+            "wi.arbitrate",
+            "td.create",
+            "td.gen",
+            "td.fill",
+            "td.claim",
+            "td.promote",
+            "td.audit-record",
+            "td.code-check",
+            "ec.gen",
+            "ec.lock",
+            "capability.run",
+            "capability.apply-draft",
+            "capability.init",
+            "capability.migrate",
+            "capability.set-type",
+            "capability.set-status",
+            "capability.set-surface",
+            "capability.set-ec-dimension",
+            "capability.set-wi-ref",
+        ];
+        for path in mutating {
+            assert_eq!(
+                verb_mutates_lifecycle(path),
+                Some(true),
+                "{path} must be classified mutates_lifecycle: true"
+            );
+        }
+
+        let read_only = [
+            "wi.list",
+            "wi.show",
+            "wi.find",
+            "health",
+            "view",
+            "llm",
+            "upgrade",
+            "td.check",
+            "td.lock",
+            "td.ast",
+            "ec.check",
+            "ec.verify",
+            "capability.report",
+            "capability.next",
+            "capability.check",
+            "conf.check",
+            "chat.list",
+        ];
+        for path in read_only {
+            assert_eq!(
+                verb_mutates_lifecycle(path),
+                Some(false),
+                "{path} must be classified mutates_lifecycle: false"
+            );
+        }
+    }
+
+    #[test]
+    fn verb_mutates_lifecycle_none_for_unknown_path() {
+        assert_eq!(verb_mutates_lifecycle("not.a.real.verb"), None);
+    }
+
+    // #1417: `resolve_invoked_verb_path` must recover the same dot-joined
+    // leaf path `VERB_LIFECYCLE_REGISTRY` and `leaf_verb_paths()` use, from
+    // a raw `std::env::args()`-shaped slice (program name in slot 0).
+    #[test]
+    fn resolve_invoked_verb_path_recovers_leaf_path() {
+        let args: Vec<String> = ["aw", "td", "fill", "some-slug"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            resolve_invoked_verb_path(&args),
+            Some("td.fill".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_invoked_verb_path_recovers_nested_leaf_path() {
+        // `ec doc check` has no required args, unlike `wi draft init`
+        // (`--title`/`--type`) — pick a no-required-arg 3-level leaf so this
+        // test only exercises path resolution, not argument validity.
+        let args: Vec<String> = ["aw", "ec", "doc", "check"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            resolve_invoked_verb_path(&args),
+            Some("ec.doc.check".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_invoked_verb_path_none_for_unrecognized_invocation() {
+        let args: Vec<String> = ["aw", "not-a-real-verb"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(resolve_invoked_verb_path(&args), None);
     }
 
     // #915 AC1/AC3: this is the red-before/green-after regression proof for
