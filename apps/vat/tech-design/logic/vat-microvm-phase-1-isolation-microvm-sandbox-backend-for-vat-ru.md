@@ -212,7 +212,6 @@ flowchart TD
     r9[R9 pick rejects container unavailable] --> vat_sandbox_microvm_fail_closed_container_unavailable_rejected[vat_sandbox_microvm_fail_closed::container_unavailable_rejected]
     r10[R10 run preflight rejects microvm gpu required before clone] --> commands_run_tests_gpu_satisfied_rejects_microvm_required_before_workspace_clone[commands::run::tests::gpu_satisfied_rejects_microvm_required_before_workspace_clone]
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
