@@ -171,3 +171,31 @@ flowchart TD
     ac3[AC3 missing dockerfile clean error] --> vat_build_build_fails_missing_dockerfile[vat_build::build_fails_missing_dockerfile]
     r4[R4 system started bounded timeout] --> sandbox_microvm_tests_ensure_system_started_times_out_when_unavailable[sandbox::microvm::tests::ensure_system_started_times_out_when_unavailable]
 ```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: vat-build-container-gated-smoke
+    name: "container-gated: vat build produces a tagged local OCI image visible in container image list"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: vat-build-dockerfile-build-via-container-cli
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat --test vat_build -- --nocapture"
+    assertions:
+      - "AC4: build_produces_tagged_image_visible_in_container_image_list (gated on the container_available() skip helper, mirroring vat_cluster.rs's Docker-gated pattern and vat_sandbox_microvm.rs's container-gated tests) writes a minimal, valid Dockerfile to a tempdir, runs vat build against it, and asserts both a successful BuildReport and that `container image list` (singular noun — confirmed correct over the incorrect plural `container images` by the Phase 0 spike #1472) shows the tag."
+      - "AC5: the fixture Dockerfile used by this test is a plain, unmodified Dockerfile — vat build never edits, lints, or rewrites the Dockerfile it is given; the same command also succeeds manually against a real, already-existing repo Dockerfile without requiring any edit to it."
+      - "Registered in apps/vat/tests/aw-ec.toml (R7) alongside the container_available() skip helper so `aw ec gen --verify` / `aw health --verify-tests` pick this up as a configured EC-gated test command for the agent-native-gpu-native-dev-containers capability."
+  - id: vat-build-lean-and-default-compile
+    name: "default and lean (--no-default-features) build compile after the serde_yaml promotion"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: vat-build-dockerfile-build-via-container-cli
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo build -p vat --no-default-features"
+    assertions:
+      - "AC1: `cargo build -p vat` succeeds with commands/build.rs, Cmd::Build, and the two new sandbox/microvm.rs functions (system_up, ensure_system_started) present in the default build."
+      - "AC6: apps/vat/Cargo.toml's serde_yaml dependency has no `optional = true` and is absent from the `emulator` feature's dep: list; `cargo build -p vat --no-default-features` still succeeds now that serde_yaml is unconditional (same version 0.9, zero new crate)."
+```
