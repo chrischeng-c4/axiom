@@ -39,3 +39,21 @@ pub fn print_json<T: serde::Serialize>(value: &T, compact: bool) -> Result<()> {
     Ok(())
 }
 // CODEGEN-END
+// SPEC-MANAGED: apps/vat/tech-design/logic/vat-microvm-phase-3-vat-compose-limited-compose-subset-up-down-p.md#cli
+// CODEGEN-BEGIN
+#[derive(Subcommand)]
+pub enum Commands {
+    VatComposeImport,
+
+    VatComposeUp,
+
+    VatComposeDown,
+
+    VatComposePs,
+
+    VatComposeLogs,
+
+    VatRunVatBuildVatClusterUnaffected,
+
+}
+// CODEGEN-END

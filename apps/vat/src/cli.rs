@@ -643,3 +643,21 @@ fn issue_cmd(_cmd: IssueCmd) -> Result<ExitCode> {
     )
 }
 // CODEGEN-END
+// SPEC-MANAGED: apps/vat/tech-design/logic/vat-microvm-phase-3-vat-compose-limited-compose-subset-up-down-p.md#cli
+// CODEGEN-BEGIN
+#[derive(Subcommand)]
+pub enum Commands {
+    VatComposeImport,
+
+    VatComposeUp,
+
+    VatComposeDown,
+
+    VatComposePs,
+
+    VatComposeLogs,
+
+    VatRunVatBuildVatClusterUnaffected,
+
+}
+// CODEGEN-END
