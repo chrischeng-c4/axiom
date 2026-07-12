@@ -55,7 +55,6 @@ edges:
   - { from: construct, to: effect }
 ---
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
