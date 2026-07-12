@@ -332,3 +332,64 @@ notes: >-
   volumes = [ { name = ..., path = ... } ]), which are optional and backward
   compatible with every existing vat.toml.
 ```
+
+## CLI
+<!-- type: cli lang: yaml -->
+
+```yaml
+commands:
+  - name: vat compose import
+    usage: "vat compose import <file> [--project <name>] [--runtime auto|docker|microvm]"
+    new_cmd_variant: "Cmd::Compose { cmd: ComposeCmd::Import { file: PathBuf, project: Option<String>, runtime: ServiceRuntime } }"
+    dispatch: "cli.rs routes Cmd::Compose{cmd} to commands::compose::exec(cmd); ComposeCmd::Import calls compose::parse then compose::expand then compose::materialize"
+    behavior:
+      - "file is the path to an existing, unmodified docker-compose.yml; vat compose never edits, lints, or rewrites it (R1)."
+      - "--project defaults to file's parent directory basename (sanitized the same way container_name() sanitizes) when omitted."
+      - "--runtime defaults to auto (ServiceRuntime's existing default) and is applied project-wide to every expanded service; auto preserves today's Docker-only routing behavior unchanged (R4/R8)."
+      - "compose::parse hard-rejects any top-level or per-service key outside the supported subset (services, volumes, version, x- prefixed keys; per-service image, build, ports, environment, depends_on, volumes) with: compose file {file} service {id} uses unsupported key {key} -- {reason}; remove it or edit the generated vat.toml directly after vat compose import (R2/R3)."
+      - "compose::expand resolves build: entries by calling commands::build::build_image() in-process (R6), converging image: and build: services to one uniform image-shaped ServiceConfig."
+      - "compose::materialize writes a real vat.toml at the project directory: one ServiceConfig per compose service plus one synthesized RunnerConfig (id project.up, cmd sleep infinity, requires every compose service id) so vat run's existing at-least-one-runner requirement is satisfied unmodified (R1)."
+      - "AC1/AC2/AC3: on success prints the written vat.toml path and exits SUCCESS; the file is immediately usable by vat run and by vat compose up."
+  - name: vat compose up
+    usage: "vat compose up [<file>] [--project <name>] [--runtime auto|docker|microvm] [--detach]"
+    new_cmd_variant: "Cmd::Compose { cmd: ComposeCmd::Up { project: Option<String>, detach: bool } }"
+    dispatch: "cli.rs routes to commands::compose::exec(cmd); ComposeCmd::Up reuses the same parse/expand/materialize path as Import"
+    behavior:
+      - "Re-runs parse/expand/materialize (writing or overwriting vat.toml), then constructs a ComposeRecord { project, vat_id: None, service_ids, status: starting, created_at } and persists it to <root>/compose/<project>/project.json before any blocking call (R9/R10)."
+      - "Foreground (no --detach): spawns a background thread polling store::list every 200ms (mirrors cluster::run_capture's poll pattern) to fill the registry's vat_id once the run creates its Vat, then calls commands::run::exec(run::Args { target: run::Target::Runner, runner_ids: [project.up], name: Some(project), .. }) in-process (not a subprocess) -- this call blocks until the run and its teardown complete."
+      - "Detach (--detach): after the same parse/expand/materialize + registry write, re-execs itself via Command::new(current_exe()).args([run, project.up, --name, project]).spawn() (not the in-process call above, since the caller must return before the run ends), then polls store::list for up to about 10s for the new vat_id."
+      - "Inside the run, run_configured's prepare_service dispatches each image-backed ServiceConfig by service.runtime: MicroVm to the new prepare_microvm_service/container_run_command path, everything else unchanged to prepare_image_service/docker_run_command (R4/R5)."
+      - "run_configured persists an interim RunnerRunRecord (status Running, pid Some(child.id())) into vat.meta.test_run.runner/runners immediately after spawning the runner, before the blocking wait_runner_processes call, so vat compose down can read a live pid while the runner is still executing (R9)."
+      - "Foreground exit: propagates the run's ExitCode; on success prints project/vat_id/status started; the registry entry is left in place either way for vat compose down/ps/logs."
+      - "Detach exit: prints project/vat_id/status started and exits SUCCESS once vat_id is observed within the poll window; exits FAILURE with a poll-timeout message if not observed (registry entry left in status starting for a retry or vat compose down)."
+  - name: vat compose down
+    usage: "vat compose down <project>"
+    new_cmd_variant: "Cmd::Compose { cmd: ComposeCmd::Down { project: String } }"
+    dispatch: "cli.rs routes to commands::compose::exec(cmd); reads the ComposeRecord for project from the registry"
+    behavior:
+      - "Hard-errors if the registry has no ComposeRecord for project, or if that record's vat_id's test_run.runner.pid is absent (never started, or already exited) -- registry entry left in place for inspection (R7/R9)."
+      - "Sends libc::kill(pid as i32, SIGTERM) directly to that leaf runner child process (not the outer vat process) (R9)."
+      - "Does not itself wait on the child: the still-running vat run process's blocking child.wait inside wait_runner_processes returns through normal control flow, so the existing stop_services teardown tail (docker rm -f / container rm -f, etc.) runs completely unmodified."
+      - "Removes the <root>/compose/<project>/project.json registry entry and exits SUCCESS (AC5)."
+  - name: vat compose ps
+    usage: "vat compose ps <project>"
+    new_cmd_variant: "Cmd::Compose { cmd: ComposeCmd::Ps { project: String } }"
+    dispatch: "cli.rs routes to commands::compose::exec(cmd)"
+    behavior:
+      - "Reads the ComposeRecord for project (vat_id, service_ids), then store::load(vat_id) for that run's test_run.services."
+      - "Filters test_run.services down to service_ids membership (R10), reusing commands/logs.rs's existing linear-scan-by-id approach."
+      - "Prints the filtered per-service id/runtime/status/port table and exits SUCCESS."
+  - name: vat compose logs
+    usage: "vat compose logs <project> <service>"
+    new_cmd_variant: "Cmd::Compose { cmd: ComposeCmd::Logs { project: String, service: String } }"
+    dispatch: "cli.rs routes to commands::compose::exec(cmd)"
+    behavior:
+      - "Reads the ComposeRecord for project, then store::load(vat_id); locates service among the service_ids-filtered set (R10)."
+      - "Hard-errors with service not found in this compose project's service_ids when the named service is absent from that filtered set."
+      - "On success, prints that service's captured stdout/stderr the same way commands/logs.rs's existing per-source branch does, and exits SUCCESS."
+  - name: "vat run / vat build / vat cluster (unaffected)"
+    usage: "(no change)"
+    behavior:
+      - "Not modified by this WI beyond the additive prepare_service dispatch check and the early RunnerRunRecord persist described above: no change to Isolation::MicroVm's resolve() argv shape (Phase 1) or vat build's container_build_command/build_image (Phase 2); vat cluster's own registry and run_capture poll pattern are read as precedent, not touched."
+      - "Out of scope for this WI: bridge-network DNS simulation for depends_on (a printed warning only), registry push/pull, and any change to the default --runtime auto Docker-only behavior."
+```
