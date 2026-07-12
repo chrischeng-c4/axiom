@@ -55,3 +55,46 @@ edges:
   - { from: construct, to: effect }
 ---
 ```
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-microvm-phase1.schema.json"
+title: "MicroVm sandbox backend Phase 1: data model additions"
+type: object
+properties:
+  isolation_variant:
+    type: object
+    description: "New unit variant on the existing Isolation enum in spec.rs (currently None | Seatbelt, derives clap::ValueEnum). Additive only \u2014 no existing variant renamed or removed."
+    properties:
+      enum: { type: string, const: "Isolation" }
+      new_variant: { type: string, const: "MicroVm" }
+      cli_token: { type: string, const: "micro_vm", description: "clap::ValueEnum rename maps MicroVm to the --isolation micro_vm token, consistent with existing snake_case tokens." }
+  env_spec_field:
+    type: object
+    description: "New optional field on the existing EnvSpec struct in spec.rs, alongside base/workdir/env/setup/isolation/egress/gpu/limits."
+    properties:
+      name: { type: string, const: "microvm_image" }
+      rust_type: { type: string, const: "Option<String>" }
+      default: { type: string, const: "None", description: "No default image is ever guessed; None + Isolation::MicroVm is a hard pick() rejection (R3)." }
+      serde: { type: string, description: "skip_serializing_if = Option::is_none, consistent with EnvSpec's existing optional-field convention." }
+  microvm_backend_struct:
+    type: object
+    description: "New apps/vat/src/sandbox/microvm.rs struct implementing the existing Sandbox trait (same trait seatbelt::SeatbeltBackend and process::ProcessBackend already implement)."
+    properties:
+      name: { type: string, const: "MicroVmBackend" }
+      fields:
+        type: array
+        items: { type: string }
+        description: "egress: EgressPolicy, env: BTreeMap<String,String>, workdir: Option<String>, image: String \u2014 BTreeMap (not HashMap) so resolve()'s -e ordering is deterministic (AC2)."
+      resolve_contract:
+        type: string
+        description: "resolve(rootfs, cmd) -> (\"container\", argv: Vec<String>) shaped: run --rm -v <rootfs>:/workspace -w /workspace/<workdir> -e K=V... [--network none if egress==Deny, omitted if Open] <image> <program> <args...>."
+      available_fn:
+        type: string
+        const: "pub fn available() -> bool"
+        description: "Checks the `container` binary is resolvable on PATH (mirrors seatbelt::available()'s sandbox-exec check); no real container invocation, no image pull."
+additionalProperties: true
+```
