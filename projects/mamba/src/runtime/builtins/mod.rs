@@ -5805,97 +5805,11 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
         if !validate_and_adapt_declared_frame(func, &mut items) {
             return MbValue::none();
         }
-        // `items` is now the exact dynamic ABI frame, including defaults and
-        // any keyword binding. Install a nested frame at this boundary so a
-        // typed-Int owner follows the final physical parameter position.
-        let _owner_frame = super::argument_owner::prepare_dynamic_argument_owner_frame(&items);
-        // SAFETY: the function was compiled with the matching arity.
-        // JIT-compiled functions use SystemV/C calling convention and may return
-        // unboxed raw i64 values (CheckedAdd unboxes inline ints for perf),
-        // so we re-box the result via mb_box_int.
-        // REQ: extern "C" ABI required — JIT emits SystemV, not Rust ABI.
-        let raw_result: MbValue = super::closure::with_closure_cells(func, || unsafe {
-            match items.len() {
-                0 => {
-                    let f: extern "C" fn() -> MbValue = std::mem::transmute(raw_addr);
-                    f()
-                }
-                1 => {
-                    let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(raw_addr);
-                    f(items[0])
-                }
-                2 => {
-                    let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                        std::mem::transmute(raw_addr);
-                    f(items[0], items[1])
-                }
-                3 => {
-                    let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                        std::mem::transmute(raw_addr);
-                    f(items[0], items[1], items[2])
-                }
-                4 => {
-                    let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue =
-                        std::mem::transmute(raw_addr);
-                    f(items[0], items[1], items[2], items[3])
-                }
-                5 => {
-                    let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue, MbValue) -> MbValue =
-                        std::mem::transmute(raw_addr);
-                    f(items[0], items[1], items[2], items[3], items[4])
-                }
-                6 => {
-                    let f: extern "C" fn(
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                    ) -> MbValue = std::mem::transmute(raw_addr);
-                    f(items[0], items[1], items[2], items[3], items[4], items[5])
-                }
-                7 => {
-                    let f: extern "C" fn(
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                    ) -> MbValue = std::mem::transmute(raw_addr);
-                    f(
-                        items[0], items[1], items[2], items[3], items[4], items[5], items[6],
-                    )
-                }
-                8 => {
-                    let f: extern "C" fn(
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                    ) -> MbValue = std::mem::transmute(raw_addr);
-                    f(
-                        items[0], items[1], items[2], items[3], items[4], items[5], items[6],
-                        items[7],
-                    )
-                }
-                _ => MbValue::none(),
-            }
+        // The central gateway owns the final ABI frame, return-owner transfer,
+        // and raw-int reboxing. Keep all dynamic invocation paths on it.
+        let result = super::closure::with_closure_cells(func, || {
+            dispatch_jit_frame(raw_addr, &items, is_boxed_ret)
         });
-        // Re-box primitive returns through mb_box_int. It preserves real
-        // NaN-boxed values but also correctly boxes raw negative i64 values,
-        // whose high bits otherwise look like a NaN-box prefix.
-        let result = if is_boxed_ret {
-            raw_result
-        } else {
-            mb_box_int(raw_result.to_bits() as i64)
-        };
         if super::stdlib::types_mod::is_coroutine_generator(result) {
             result
         } else {
@@ -6337,7 +6251,11 @@ fn validate_and_adapt_declared_frame(func: MbValue, items: &mut [MbValue]) -> bo
 /// reboxing a raw-int return unless the callee is `any`/object-returning.
 /// Shared by the variadic spread + kwargs binding paths so the entry ABI
 /// `f(regular_0, .., args_list, kwargs_dict)` is honoured uniformly.
-fn dispatch_jit_frame(raw_addr: usize, items: &[MbValue], is_boxed_ret: bool) -> MbValue {
+pub(crate) fn dispatch_jit_frame(
+    raw_addr: usize,
+    items: &[MbValue],
+    is_boxed_ret: bool,
+) -> MbValue {
     // This is the final dynamic ABI frame after positional/default/keyword
     // binding. Keep owner provenance aligned with this exact physical order;
     // outer wrapper frames are intentionally not reused after adaptation.
@@ -6414,7 +6332,16 @@ fn dispatch_jit_frame(raw_addr: usize, items: &[MbValue], is_boxed_ret: bool) ->
             _ => MbValue::none(),
         }
     };
-    if is_boxed_ret {
+    finalize_jit_return(raw_result, is_boxed_ret)
+}
+
+/// Finalize a raw JIT result exactly once at every dynamic ABI boundary.
+/// A non-None token owns this exact BigInt result; returning its unchanged data
+/// bits transfers that ownership to the caller without payload inference.
+pub(crate) fn finalize_jit_return(raw_result: MbValue, is_boxed_ret: bool) -> MbValue {
+    // Consume before any rebox or further dynamic work.
+    let owner = super::return_owner::take_matching_return_owner(raw_result);
+    if !owner.is_none() || is_boxed_ret {
         return raw_result;
     }
     mb_box_int(raw_result.to_bits() as i64)
@@ -7005,6 +6932,12 @@ mod tests {
             ) as u64,
         );
         MbValue::from_int(i64::from(first_owner == first && second_owner == second))
+    }
+
+    extern "C" fn return_owner_gateway_test_fn() -> MbValue {
+        let value = super::super::bigint_ops::bigint_from_i128(1i128 << 70);
+        super::super::return_owner::publish_return_owner(value, value);
+        value
     }
 
     fn param_sig(name: &str, kind: i64) -> MbValue {
@@ -10684,6 +10617,19 @@ def f():
         drop(frame);
         assert_eq!(super::super::argument_owner::argument_owner_frame_depth(), 0);
         unsafe { super::super::rc::release_if_ptr(bigint) };
+    }
+
+    #[test]
+    fn jit_return_gateway_consumes_dynamic_owner_once() {
+        super::super::return_owner::clear_return_owner_frames_for_test();
+        let addr = return_owner_gateway_test_fn as *const () as usize;
+
+        let result = dispatch_jit_frame(addr, &[], false);
+        let object = result.as_ptr().expect("gateway must preserve the BigInt");
+        assert_eq!(unsafe { super::super::rc::mb_refcount(object) }, 1);
+        assert_eq!(super::super::return_owner::return_owner_frame_depth(), 0);
+
+        unsafe { super::super::rc::release_if_ptr(result) };
     }
 
     #[test]

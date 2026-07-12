@@ -1459,10 +1459,7 @@ fn call_set_name_if_present(owner_name: &str, attr_name: &str, val: MbValue) {
             if is_registered {
                 let owner = class_type_object(owner_name);
                 let attr_str = MbValue::from_ptr(MbObject::new_str(attr_name.to_string()));
-                // REQ: JIT-compiled functions use SystemV/C calling convention.
-                let func: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                    unsafe { std::mem::transmute(addr as usize) };
-                func(val, owner, attr_str);
+                dispatch_jit_method_for_effect(addr, &[val, owner, attr_str]);
             }
         }
     }
@@ -2882,99 +2879,32 @@ fn method_args_with_receiver_and_defaults(
     MbValue::from_ptr(MbObject::new_list(all_args))
 }
 
-fn rebox_method_result(raw: MbValue, is_boxed: bool) -> MbValue {
-    if is_boxed {
-        return raw;
-    }
-    super::builtins::mb_box_int(raw.to_bits() as i64)
-}
-
-fn call_registered_method_addr(addr: u64, args: &[MbValue]) -> MbValue {
-    let raw: MbValue = unsafe {
-        match args.len() {
-            0 => {
-                let f: extern "C" fn() -> MbValue = std::mem::transmute(addr as usize);
-                f()
-            }
-            1 => {
-                let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(addr as usize);
-                f(args[0])
-            }
-            2 => {
-                let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                    std::mem::transmute(addr as usize);
-                f(args[0], args[1])
-            }
-            3 => {
-                let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                    std::mem::transmute(addr as usize);
-                f(args[0], args[1], args[2])
-            }
-            4 => {
-                let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue =
-                    std::mem::transmute(addr as usize);
-                f(args[0], args[1], args[2], args[3])
-            }
-            5 => {
-                let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue, MbValue) -> MbValue =
-                    std::mem::transmute(addr as usize);
-                f(args[0], args[1], args[2], args[3], args[4])
-            }
-            6 => {
-                let f: extern "C" fn(
-                    MbValue,
-                    MbValue,
-                    MbValue,
-                    MbValue,
-                    MbValue,
-                    MbValue,
-                ) -> MbValue = std::mem::transmute(addr as usize);
-                f(args[0], args[1], args[2], args[3], args[4], args[5])
-            }
-            7 => {
-                let f: extern "C" fn(
-                    MbValue,
-                    MbValue,
-                    MbValue,
-                    MbValue,
-                    MbValue,
-                    MbValue,
-                    MbValue,
-                ) -> MbValue = std::mem::transmute(addr as usize);
-                f(
-                    args[0], args[1], args[2], args[3], args[4], args[5], args[6],
-                )
-            }
-            8 => {
-                let f: extern "C" fn(
-                    MbValue,
-                    MbValue,
-                    MbValue,
-                    MbValue,
-                    MbValue,
-                    MbValue,
-                    MbValue,
-                    MbValue,
-                ) -> MbValue = std::mem::transmute(addr as usize);
-                f(
-                    args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7],
-                )
-            }
-            _ => return MbValue::none(),
-        }
-    };
+/// Dispatch a non-native JIT method through the one return-owner gateway.
+/// Class/descriptor fast paths differ only in how they assemble their ABI
+/// frame; they must never duplicate raw return normalization.
+fn dispatch_jit_method_return(addr: u64, args: &[MbValue]) -> MbValue {
     let is_boxed = super::module::is_boxed_return_func(addr)
         || super::module::is_variadic_func(addr)
         || super::module::is_kwargs_func(addr)
         || super::module::is_native_func(addr);
-    rebox_method_result(raw, is_boxed)
+    super::builtins::dispatch_jit_frame(addr as usize, args, is_boxed)
+}
+
+/// Run a JIT method whose Python result is intentionally ignored while still
+/// consuming its immediate return-owner frame before any later callback.
+fn dispatch_jit_method_for_effect(addr: u64, args: &[MbValue]) {
+    let result = dispatch_jit_method_return(addr, args);
+    unsafe { super::rc::release_if_ptr(result) };
+}
+
+fn call_registered_method_addr(addr: u64, args: &[MbValue]) -> MbValue {
+    dispatch_jit_method_return(addr, args)
 }
 
 fn call_registered_method_value(callable: MbValue, addr: u64, args: &[MbValue]) -> MbValue {
     // Descriptor and class fast paths call this helper after they have already
-    // prepended receivers and filled defaults. The owner frame must therefore
-    // use this final ABI shape, rather than a pre-binding source list.
-    let _owner_frame = super::argument_owner::prepare_dynamic_argument_owner_frame(args);
+    // prepended receivers and filled defaults. `dispatch_jit_frame` installs
+    // the one owner frame for this final ABI shape.
     super::closure::with_callable_module(callable, || call_registered_method_addr(addr, args))
 }
 
@@ -3027,79 +2957,22 @@ fn call_init_with_args(addr: u64, instance: MbValue, args_list: MbValue) {
                 } else {
                     Vec::new()
                 }
-            })
-            .unwrap_or_default();
+        })
+        .unwrap_or_default();
         let list = MbValue::from_ptr(MbObject::new_list(packed));
-        let func: extern "C" fn(MbValue, MbValue) -> MbValue =
-            unsafe { std::mem::transmute(addr as usize) };
-        func(instance, list);
+        dispatch_jit_method_for_effect(addr, &[instance, list]);
         return;
     }
+    let mut frame = vec![instance];
     if let Some(ptr) = args_list.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
-                // Dispatch based on arg count — single lock acquisition for count + values.
-                // REQ: JIT-compiled functions use SystemV/C calling convention.
-                match items.len() {
-                    0 => {
-                        let func: extern "C" fn(MbValue) -> MbValue =
-                            std::mem::transmute(addr as usize);
-                        func(instance);
-                    }
-                    1 => {
-                        let a0 = items[0];
-                        let func: extern "C" fn(MbValue, MbValue) -> MbValue =
-                            std::mem::transmute(addr as usize);
-                        func(instance, a0);
-                    }
-                    2 => {
-                        let a0 = items[0];
-                        let a1 = items[1];
-                        let func: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                            std::mem::transmute(addr as usize);
-                        func(instance, a0, a1);
-                    }
-                    3 => {
-                        let a0 = items[0];
-                        let a1 = items[1];
-                        let a2 = items[2];
-                        let func: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue =
-                            std::mem::transmute(addr as usize);
-                        func(instance, a0, a1, a2);
-                    }
-                    _ => {
-                        // Higher arity: build args vec from the already-held lock.
-                        let mut all_args = Vec::with_capacity(items.len() + 1);
-                        all_args.push(instance);
-                        all_args.extend(items.iter());
-                        drop(items); // Release the lock before calling.
-                        if all_args.len() == 5 {
-                            let func: extern "C" fn(
-                                MbValue,
-                                MbValue,
-                                MbValue,
-                                MbValue,
-                                MbValue,
-                            ) -> MbValue = std::mem::transmute(addr as usize);
-                            func(
-                                all_args[0],
-                                all_args[1],
-                                all_args[2],
-                                all_args[3],
-                                all_args[4],
-                            );
-                        }
-                    }
-                }
-                return;
+                frame.extend(items.iter());
             }
         }
     }
-    // No args list — call with just instance (zero-arg __init__).
-    // REQ: JIT-compiled functions use SystemV/C calling convention.
-    let func: extern "C" fn(MbValue) -> MbValue = unsafe { std::mem::transmute(addr as usize) };
-    func(instance);
+    dispatch_jit_method_for_effect(addr, &frame);
 }
 
 /// Create a new instance of a class and invoke __init__ with args.
@@ -3679,32 +3552,12 @@ fn instance_new_with_init_impl(
                             }
                         }
                     }
-                    // Call metaclass.__call__(cls_name, ...args)
-                    // cls_name is passed as `self` (first arg) for the method.
-                    // REQ: JIT-compiled functions use SystemV/C calling convention.
-                    let result = match ctor_args.len() {
-                        0 => {
-                            let func: extern "C" fn(MbValue) -> MbValue =
-                                unsafe { std::mem::transmute(addr as usize) };
-                            func(class_name)
-                        }
-                        1 => {
-                            let func: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                unsafe { std::mem::transmute(addr as usize) };
-                            func(class_name, ctor_args[0])
-                        }
-                        2 => {
-                            let func: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                                unsafe { std::mem::transmute(addr as usize) };
-                            func(class_name, ctor_args[0], ctor_args[1])
-                        }
-                        3 => {
-                            let func: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue =
-                                unsafe { std::mem::transmute(addr as usize) };
-                            func(class_name, ctor_args[0], ctor_args[1], ctor_args[2])
-                        }
-                        _ => MbValue::none(),
-                    };
+                    // Call metaclass.__call__(cls_name, ...args) through the
+                    // return-owner gateway; the class is its first ABI arg.
+                    let mut frame = Vec::with_capacity(ctor_args.len() + 1);
+                    frame.push(class_name);
+                    frame.extend(ctor_args);
+                    let result = dispatch_jit_method_return(addr, &frame);
                     // If metaclass.__call__ returns a non-None value, use it as the instance.
                     // Otherwise fall through to default creation with __init__.
                     if !result.is_none() {
@@ -5279,9 +5132,7 @@ fn user_abc_subclasshook(parent: &str, child_name: &str) -> Option<bool> {
     // plain str (which would itself answer hasattr("__len__") truthily).
     let cls_obj = MbValue::from_ptr(MbObject::new_str(parent.to_string()));
     let cand_obj = make_type_object(child_name);
-    let func: extern "C" fn(MbValue, MbValue) -> MbValue =
-        unsafe { std::mem::transmute(addr as usize) };
-    let result = func(cls_obj, cand_obj);
+    let result = dispatch_jit_method_return(addr, &[cls_obj, cand_obj]);
     // NotImplemented → fall through.
     if result.is_not_implemented() {
         return None;
@@ -8358,9 +8209,7 @@ fn mb_getattr_impl(
                                 let attr_str = MbValue::from_ptr(super::rc::MbObject::new_str(
                                     attr_name.clone(),
                                 ));
-                                let func: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                    std::mem::transmute(addr);
-                                return func(obj, attr_str);
+                                return dispatch_jit_method_return(addr as u64, &[obj, attr_str]);
                             }
                             // Non-callable stored value (e.g. test stubs): return directly.
                             super::rc::retain_if_ptr(getattr_dunder);
@@ -9212,17 +9061,11 @@ pub(crate) fn call_method_value2(method: MbValue, self_v: MbValue, arg: MbValue)
     if !is_registered {
         return MbValue::none();
     }
-    unsafe {
-        if super::module::is_variadic_func(addr) {
-            let args = MbValue::from_ptr(super::rc::MbObject::new_list(vec![arg]));
-            let f: unsafe extern "C" fn(MbValue, MbValue) -> MbValue =
-                std::mem::transmute(addr as usize);
-            return f(self_v, args);
-        }
-        // REQ: JIT-compiled functions use SystemV/C calling convention.
-        let f: extern "C" fn(MbValue, MbValue) -> MbValue = std::mem::transmute(addr as usize);
-        f(self_v, arg)
+    if super::module::is_variadic_func(addr) {
+        let args = MbValue::from_ptr(super::rc::MbObject::new_list(vec![arg]));
+        return dispatch_jit_method_return(addr, &[self_v, args]);
     }
+    dispatch_jit_method_return(addr, &[self_v, arg])
 }
 
 /// Like [`call_method_value2`] but with an args LIST (`self` + 0..=3 args),
@@ -9248,37 +9091,14 @@ pub(crate) fn call_method_value_with_args(
             }
         }
     }
-    unsafe {
-        if super::module::is_variadic_func(addr) {
-            let packed = MbValue::from_ptr(super::rc::MbObject::new_list(items));
-            let f: unsafe extern "C" fn(MbValue, MbValue) -> MbValue =
-                std::mem::transmute(addr as usize);
-            return f(self_v, packed);
-        }
-        // REQ: JIT-compiled functions use SystemV/C calling convention.
-        match items.len() {
-            0 => {
-                let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(addr as usize);
-                f(self_v)
-            }
-            1 => {
-                let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                    std::mem::transmute(addr as usize);
-                f(self_v, items[0])
-            }
-            2 => {
-                let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                    std::mem::transmute(addr as usize);
-                f(self_v, items[0], items[1])
-            }
-            3 => {
-                let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue =
-                    std::mem::transmute(addr as usize);
-                f(self_v, items[0], items[1], items[2])
-            }
-            _ => MbValue::none(),
-        }
+    if super::module::is_variadic_func(addr) {
+        let packed = MbValue::from_ptr(super::rc::MbObject::new_list(items));
+        return dispatch_jit_method_return(addr, &[self_v, packed]);
     }
+    let mut frame = Vec::with_capacity(items.len() + 1);
+    frame.push(self_v);
+    frame.extend(items);
+    dispatch_jit_method_return(addr, &frame)
 }
 
 /// Check if a value is a descriptor (has __get__).
@@ -9444,10 +9264,7 @@ fn invoke_descriptor_set(desc: MbValue, instance: MbValue, value: MbValue) {
     if let Some(method) = try_get_dunder(desc, "__set__") {
         let addr = extract_func_addr(method);
         if addr != 0 {
-            // REQ: JIT-compiled functions use SystemV/C calling convention.
-            let func: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                unsafe { std::mem::transmute(addr as usize) };
-            func(desc, instance, value);
+            dispatch_jit_method_for_effect(addr, &[desc, instance, value]);
         }
     }
 }
@@ -9487,8 +9304,7 @@ fn invoke_descriptor_delete(desc: MbValue, instance: MbValue) {
                     }
                     if let Some(addr) = deleter.as_func() {
                         if addr > 4096 {
-                            let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(addr);
-                            f(instance);
+                            dispatch_jit_method_for_effect(addr as u64, &[instance]);
                             return;
                         }
                     }
@@ -9496,9 +9312,7 @@ fn invoke_descriptor_delete(desc: MbValue, instance: MbValue) {
                     if addr != 0 {
                         let is_reg = CALLABLE_REGISTRY.with(|r| r.borrow().contains(&addr));
                         if is_reg {
-                            let f: extern "C" fn(MbValue) -> MbValue =
-                                std::mem::transmute(addr as usize);
-                            f(instance);
+                            dispatch_jit_method_for_effect(addr, &[instance]);
                         }
                     }
                     return;
@@ -9510,10 +9324,7 @@ fn invoke_descriptor_delete(desc: MbValue, instance: MbValue) {
     if let Some(method) = try_get_dunder(desc, "__delete__") {
         let addr = extract_func_addr(method);
         if addr != 0 {
-            // REQ: JIT-compiled functions use SystemV/C calling convention.
-            let func: extern "C" fn(MbValue, MbValue) -> MbValue =
-                unsafe { std::mem::transmute(addr as usize) };
-            func(desc, instance);
+            dispatch_jit_method_for_effect(addr, &[desc, instance]);
         }
     }
 }
@@ -12239,9 +12050,7 @@ fn invoke_binop_method(method: MbValue, slf: MbValue, arg: MbValue) -> Option<Mb
     // TAG_FUNC direct address — JIT-compiled class methods.
     if let Some(addr) = method.as_func() {
         if addr > 4096 {
-            let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                unsafe { std::mem::transmute(addr) };
-            return Some(f(slf, arg));
+            return Some(dispatch_jit_method_return(addr as u64, &[slf, arg]));
         }
     }
     // CALLABLE_REGISTRY — heap-backed method values.
@@ -12249,9 +12058,7 @@ fn invoke_binop_method(method: MbValue, slf: MbValue, arg: MbValue) -> Option<Mb
     if addr > 4096 {
         let is_reg = CALLABLE_REGISTRY.with(|r| r.borrow().contains(&addr));
         if is_reg {
-            let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                unsafe { std::mem::transmute(addr as usize) };
-            return Some(f(slf, arg));
+            return Some(dispatch_jit_method_return(addr, &[slf, arg]));
         }
     }
     None
@@ -14090,10 +13897,7 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                                 let is_registered =
                                     CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
                                 if is_registered {
-                                    // REQ: JIT-compiled functions use SystemV/C calling convention.
-                                    let func: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                        std::mem::transmute(addr as usize);
-                                    return func(obj, key);
+                                    return dispatch_jit_method_return(addr, &[obj, key]);
                                 }
                             }
                         }
@@ -14422,9 +14226,7 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                                     if !missing.is_none() {
                                         let addr = extract_func_addr(missing);
                                         if addr > 4096 {
-                                            let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                                std::mem::transmute(addr as usize);
-                                            return f(obj, key);
+                                            return dispatch_jit_method_return(addr, &[obj, key]);
                                         }
                                     }
                                     let key_repr = super::builtins::mb_repr(key);
@@ -15290,10 +15092,7 @@ pub fn mb_context_exit(obj: MbValue, _has_exc: MbValue) -> MbValue {
         if addr != 0 {
             let is_registered = CALLABLE_REGISTRY.with(|r| r.borrow().contains(&addr));
             if is_registered {
-                // __exit__(self, exc_type, exc_val, exc_tb) — 4-arg SystemV call.
-                let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue =
-                    unsafe { std::mem::transmute(addr as usize) };
-                f(obj, exc_type, exc_val, exc_tb)
+                dispatch_jit_method_return(addr, &[obj, exc_type, exc_val, exc_tb])
             } else {
                 // Fallback dispatch for non-registered methods.
                 let method_name = MbValue::from_ptr(MbObject::new_str("__exit__".to_string()));
@@ -15612,35 +15411,18 @@ fn mb_call0_impl(func: MbValue) -> MbValue {
             append_missing_method_defaults(func, &mut all_args, 0);
             if !all_args.is_empty() {
                 let is_boxed = super::module::is_boxed_return_func(addr as u64);
-                let _owner_frame =
-                    super::argument_owner::prepare_dynamic_argument_owner_frame(&all_args);
-                match all_args.len() {
-                    1 => {
-                        let f: extern "C" fn(MbValue) -> MbValue =
-                            unsafe { std::mem::transmute(addr) };
-                        return finish_call(func, f(all_args[0]), is_boxed);
-                    }
-                    2 => {
-                        let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                            unsafe { std::mem::transmute(addr) };
-                        return finish_call(func, f(all_args[0], all_args[1]), is_boxed);
-                    }
-                    3 => {
-                        let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                            unsafe { std::mem::transmute(addr) };
-                        return finish_call(
-                            func,
-                            f(all_args[0], all_args[1], all_args[2]),
-                            is_boxed,
-                        );
-                    }
-                    _ => { /* arity > 3: fall through to plain 0-arg call */ }
-                }
+                return finish_call(
+                    func,
+                    super::builtins::dispatch_jit_frame(addr, &all_args, is_boxed),
+                    true,
+                );
             }
-            // REQ: JIT-compiled functions use SystemV/C calling convention.
             let is_boxed = super::module::is_boxed_return_func(addr as u64);
-            let f: extern "C" fn() -> MbValue = unsafe { std::mem::transmute(addr) };
-            return finish_call(func, f(), is_boxed);
+            return finish_call(
+                func,
+                super::builtins::dispatch_jit_frame(addr, &[], is_boxed),
+                true,
+            );
         }
     }
     // Try closure handle (integer ID → lookup inner function)
@@ -15662,41 +15444,20 @@ fn mb_call0_impl(func: MbValue) -> MbValue {
                 // arg registers.
                 let defaults = super::closure::closure_defaults(func);
                 if !defaults.is_empty() {
-                    let _owner_frame =
-                        super::argument_owner::prepare_dynamic_argument_owner_frame(&defaults);
-                    // REQ: JIT-compiled functions use SystemV/C calling convention.
-                    match defaults.len() {
-                        1 => {
-                            let f: extern "C" fn(MbValue) -> MbValue =
-                                unsafe { std::mem::transmute(addr) };
-                            return super::closure::with_closure_cells(func, || {
-                                finish_call(func, f(defaults[0]), is_boxed)
-                            });
-                        }
-                        2 => {
-                            let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                unsafe { std::mem::transmute(addr) };
-                            return super::closure::with_closure_cells(func, || {
-                                finish_call(func, f(defaults[0], defaults[1]), is_boxed)
-                            });
-                        }
-                        3 => {
-                            let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                                unsafe { std::mem::transmute(addr) };
-                            return super::closure::with_closure_cells(func, || {
-                                finish_call(
-                                    func,
-                                    f(defaults[0], defaults[1], defaults[2]),
-                                    is_boxed,
-                                )
-                            });
-                        }
-                        _ => { /* fall through to 0-arg call */ }
-                    }
+                    return super::closure::with_closure_cells(func, || {
+                        finish_call(
+                            func,
+                            super::builtins::dispatch_jit_frame(addr, &defaults, is_boxed),
+                            true,
+                        )
+                    });
                 }
-                let f: extern "C" fn() -> MbValue = unsafe { std::mem::transmute(addr) };
                 return super::closure::with_closure_cells(func, || {
-                    finish_call(func, f(), is_boxed)
+                    finish_call(
+                        func,
+                        super::builtins::dispatch_jit_frame(addr, &[], is_boxed),
+                        true,
+                    )
                 });
             }
         }
@@ -15794,9 +15555,11 @@ fn mb_call0_impl(func: MbValue) -> MbValue {
                             return mb_call_method(func, method_name, args_list);
                         }
                         let is_boxed = super::module::is_boxed_return_func(addr as u64);
-                        let f: extern "C" fn(MbValue) -> MbValue =
-                            std::mem::transmute(addr as usize);
-                        return rebox(f(func), is_boxed);
+                        return super::builtins::dispatch_jit_frame(
+                            addr as usize,
+                            &[func],
+                            is_boxed,
+                        );
                     }
                 }
             }
@@ -15832,17 +15595,9 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
 
 fn mb_call1_val_impl(func: MbValue, arg: MbValue) -> MbValue {
     super::gc::gc_safepoint();
-    // Direct callable-value dispatch can bypass `mb_call_spread`; keep an
-    // exact one-slot frame around that fast path. Routes that subsequently
-    // repack through spread install their own nested frame instead.
-    let _owner_frame =
-        super::argument_owner::prepare_dynamic_argument_owner_frame(&[arg]);
     // Re-box raw i64 returns from JIT-compiled functions that declared a
-    // primitive (int) return type — mb_call_spread has the same logic.
-    //
-    // Re-box primitive returns through mb_box_int. It preserves real NaN-boxed
-    // values but also correctly boxes raw negative i64 values, whose high bits
-    // otherwise look like a NaN-box prefix.
+    // primitive (int) return type. The central JIT gateway owns the exact
+    // final frame and return-owner transfer before this result is marked.
     fn rebox(raw: MbValue, is_boxed: bool) -> MbValue {
         if is_boxed {
             return raw;
@@ -16038,40 +15793,19 @@ fn mb_call1_val_impl(func: MbValue, arg: MbValue) -> MbValue {
                 append_missing_method_defaults(func, &mut all_args, 0);
                 if all_args.len() > 1 {
                     let is_boxed = super::module::is_boxed_return_func(addr as u64);
-                    let _owner_frame =
-                        super::argument_owner::prepare_dynamic_argument_owner_frame(&all_args);
-                    match all_args.len() {
-                        2 => {
-                            let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                unsafe { std::mem::transmute(addr) };
-                            return finish_call(func, f(all_args[0], all_args[1]), is_boxed);
-                        }
-                        3 => {
-                            let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                                unsafe { std::mem::transmute(addr) };
-                            return finish_call(
-                                func,
-                                f(all_args[0], all_args[1], all_args[2]),
-                                is_boxed,
-                            );
-                        }
-                        4 => {
-                            let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue =
-                                unsafe { std::mem::transmute(addr) };
-                            return finish_call(
-                                func,
-                                f(all_args[0], all_args[1], all_args[2], all_args[3]),
-                                is_boxed,
-                            );
-                        }
-                        _ => { /* arity > 4: fall through to plain 1-arg call */ }
-                    }
+                    return finish_call(
+                        func,
+                        super::builtins::dispatch_jit_frame(addr, &all_args, is_boxed),
+                        true,
+                    );
                 }
             }
-            // REQ: JIT-compiled functions use SystemV/C calling convention.
             let is_boxed = super::module::is_boxed_return_func(addr as u64);
-            let f: extern "C" fn(MbValue) -> MbValue = unsafe { std::mem::transmute(addr) };
-            return finish_call(func, f(arg), is_boxed);
+            return finish_call(
+                func,
+                super::builtins::dispatch_jit_frame(addr, &[arg], is_boxed),
+                true,
+            );
         }
     }
     // Try closure handle (integer ID → lookup inner function)
@@ -16096,50 +15830,24 @@ fn mb_call1_val_impl(func: MbValue, arg: MbValue) -> MbValue {
                     let needed = arity - 1;
                     if defaults.len() >= needed {
                         let take_from = defaults.len() - needed;
-                        let fill = &defaults[take_from..];
-                        match arity {
-                            2 => {
-                                let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                    unsafe { std::mem::transmute(addr) };
-                                let _owner_frame = super::argument_owner::prepare_dynamic_argument_owner_frame(&[
-                                    arg, fill[0],
-                                ]);
-                                return super::closure::with_closure_cells(func, || {
-                                    finish_call(func, f(arg, fill[0]), is_boxed)
-                                });
-                            }
-                            3 => {
-                                let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                                    unsafe { std::mem::transmute(addr) };
-                                let _owner_frame = super::argument_owner::prepare_dynamic_argument_owner_frame(&[
-                                    arg, fill[0], fill[1],
-                                ]);
-                                return super::closure::with_closure_cells(func, || {
-                                    finish_call(func, f(arg, fill[0], fill[1]), is_boxed)
-                                });
-                            }
-                            4 => {
-                                let f: extern "C" fn(
-                                    MbValue,
-                                    MbValue,
-                                    MbValue,
-                                    MbValue,
-                                ) -> MbValue = unsafe { std::mem::transmute(addr) };
-                                let _owner_frame = super::argument_owner::prepare_dynamic_argument_owner_frame(&[
-                                    arg, fill[0], fill[1], fill[2],
-                                ]);
-                                return super::closure::with_closure_cells(func, || {
-                                    finish_call(func, f(arg, fill[0], fill[1], fill[2]), is_boxed)
-                                });
-                            }
-                            _ => { /* arity > 4: fall through to plain 1-arg dispatch */ }
-                        }
+                        let mut frame = Vec::with_capacity(arity);
+                        frame.push(arg);
+                        frame.extend_from_slice(&defaults[take_from..]);
+                        return super::closure::with_closure_cells(func, || {
+                            finish_call(
+                                func,
+                                super::builtins::dispatch_jit_frame(addr, &frame, is_boxed),
+                                true,
+                            )
+                        });
                     }
                 }
-                // REQ: JIT-compiled functions use SystemV/C calling convention.
-                let f: extern "C" fn(MbValue) -> MbValue = unsafe { std::mem::transmute(addr) };
                 return super::closure::with_closure_cells(func, || {
-                    finish_call(func, f(arg), is_boxed)
+                    finish_call(
+                        func,
+                        super::builtins::dispatch_jit_frame(addr, &[arg], is_boxed),
+                        true,
+                    )
                 });
             }
         }
@@ -16478,10 +16186,12 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             let callable = unsafe { getter(getter_args.as_ptr(), getter_args.len()) };
             let callable = MbValue::from_bits(callable.to_bits());
             if let Some(addr) = callable.as_func() {
-                let items = super::builtins::extract_items(args);
-                let f: unsafe extern "C" fn(*const MbValue, usize) -> MbValue =
-                    unsafe { std::mem::transmute(addr) };
-                return unsafe { f(items.as_ptr(), items.len()) };
+                if super::module::is_native_func(addr as u64) {
+                    let items = super::builtins::extract_items(args);
+                    let f: unsafe extern "C" fn(*const MbValue, usize) -> MbValue =
+                        unsafe { std::mem::transmute(addr) };
+                    return unsafe { f(items.as_ptr(), items.len()) };
+                }
             }
             return super::builtins::mb_call_spread(callable, args);
         }
@@ -20651,9 +20361,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     if !getattr_dunder.is_none() {
                         let name_val = MbValue::from_ptr(MbObject::new_str(name.clone()));
                         let resolved = if let Some(addr) = getattr_dunder.as_func() {
-                            let func: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                std::mem::transmute(addr);
-                            func(receiver, name_val)
+                            dispatch_jit_method_return(addr as u64, &[receiver, name_val])
                         } else {
                             super::rc::retain_if_ptr(getattr_dunder);
                             getattr_dunder
@@ -21043,6 +20751,17 @@ mod tests {
         MbValue::from_int(i64::from(value_owner == value && default_owner == default))
     }
 
+    extern "C" fn nested_return_owner_outer_token_test_fn() -> MbValue {
+        let outer = super::super::bigint_ops::bigint_from_i128(1i128 << 70);
+        super::super::return_owner::publish_return_owner(outer, outer);
+        let inner = super::super::bigint_ops::bigint_from_i128((1i128 << 70) + 1);
+        super::super::return_owner::publish_return_owner(inner, inner);
+        let inner_owner = super::super::return_owner::take_matching_return_owner(inner);
+        assert_eq!(inner_owner.to_bits(), inner.to_bits());
+        unsafe { super::super::rc::release_if_ptr(inner_owner) };
+        outer
+    }
+
     #[test]
     fn registered_method_fast_path_frames_final_owner_slots() {
         super::super::argument_owner::clear_argument_owner_frames_for_test();
@@ -21057,6 +20776,21 @@ mod tests {
         );
         assert_eq!(super::super::argument_owner::argument_owner_frame_depth(), 0);
         unsafe { super::super::rc::release_if_ptr(bigint) };
+    }
+
+    #[test]
+    fn nested_return_owner_hooks_preserve_outer_token() {
+        super::super::return_owner::clear_return_owner_frames_for_test();
+        let addr = nested_return_owner_outer_token_test_fn as *const () as usize;
+        let callable = MbValue::from_func(addr);
+        super::super::module::register_boxed_return_func(addr as u64);
+
+        let result = call_registered_method_value(callable, addr as u64, &[]);
+        let object = result.as_ptr().expect("outer BigInt return");
+        assert_eq!(unsafe { super::super::rc::mb_refcount(object) }, 1);
+        assert_eq!(super::super::return_owner::return_owner_frame_depth(), 0);
+
+        unsafe { super::super::rc::release_if_ptr(result) };
     }
 
     #[test]

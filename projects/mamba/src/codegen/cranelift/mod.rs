@@ -17,7 +17,8 @@ use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::mir::return_abi::BodyPhysicalAbiAnalysis;
 use crate::mir::{
     ExternCompanionContract, MirBinOp, MirBody, MirConst, MirExtern, MirInst, MirModule, MirType,
-    OwnerValueSource, ProducerOwnerAction, ProducerOwnerMetadata, ProducerSite, Terminator, VReg,
+    OwnerValueSource, PhysicalReturn, ProducerOwnerAction, ProducerOwnerMetadata, ProducerSite,
+    Terminator, VReg,
 };
 use crate::runtime::rc::MbObject;
 use crate::runtime::value::MbValue;
@@ -968,6 +969,9 @@ pub struct CraneliftBackend {
     internal_funcs: HashMap<u32, FuncId>,
     /// Declared return TypeId per internal function for NaN-boxing promotion
     internal_return_tys: HashMap<u32, TypeId>,
+    /// Internal bodies whose physical ABI can publish a RawOrBoxedInt return
+    /// owner. Callers consume or discard that token before any further work.
+    internal_raw_or_boxed_returns: HashSet<u32>,
 }
 
 impl CraneliftBackend {
@@ -993,6 +997,7 @@ impl CraneliftBackend {
             extern_funcs: HashMap::new(),
             internal_funcs: HashMap::new(),
             internal_return_tys: HashMap::new(),
+            internal_raw_or_boxed_returns: HashSet::new(),
         })
     }
 
@@ -1197,6 +1202,17 @@ impl CraneliftBackend {
         } else {
             None
         };
+        let return_owner_publish_ref = if matches!(
+            physical_abi.return_abi().map(|abi| abi.physical),
+            Some(PhysicalReturn::RawOrBoxedInt)
+        ) {
+            self.extern_funcs
+                .get("mb_return_owner_publish")
+                .copied()
+                .map(|id| self.module().declare_func_in_func(id, builder.func))
+        } else {
+            None
+        };
 
         for (block_idx, block) in body.blocks.iter().enumerate() {
             if block_idx > 0 {
@@ -1223,6 +1239,7 @@ impl CraneliftBackend {
                 &mut vars,
                 release_func_ref,
                 retain_func_ref,
+                return_owner_publish_ref,
                 &param_vregs,
             );
         }
@@ -2122,10 +2139,29 @@ impl CraneliftBackend {
                 None
             };
             let call = builder.ins().call(func_ref, &arg_vals);
+            let callee_publishes_return_owner =
+                self.internal_raw_or_boxed_returns.contains(&sym_id);
+            let destination_captures_return_owner = dest
+                .as_ref()
+                .is_some_and(|dest_vreg| vars.has_companion_owner(*dest_vreg));
             if let Some(dest_vreg) = dest {
                 let cl_type = self.mamba_to_cl_type(tcx.get(*ty));
                 let var = vars.get(*dest_vreg, builder, cl_type);
                 let result = builder.inst_results(call)[0];
+                let returned_owner = if callee_publishes_return_owner
+                    && destination_captures_return_owner
+                {
+                    self.extern_funcs
+                        .get("mb_return_owner_take")
+                        .copied()
+                        .map(|take_id| {
+                            let take_ref = self.module().declare_func_in_func(take_id, builder.func);
+                            let take = builder.ins().call(take_ref, &[result]);
+                            builder.inst_results(take)[0]
+                        })
+                } else {
+                    None
+                };
                 // NaN-box the result when the callee has a primitive return type but
                 // the call-site expects a non-primitive (Dynamic/Any) value.
                 let boxed = if let Some(&callee_ty_id) = self.internal_return_tys.get(&sym_id) {
@@ -2156,6 +2192,22 @@ impl CraneliftBackend {
                     result
                 };
                 builder.def_var(var, boxed);
+                if let Some(owner) = returned_owner {
+                    vars.transition_companion_owner(
+                        CompanionOwnerTransition::ProducerWrite {
+                            dest: *dest_vreg,
+                            owner: Some(owner),
+                        },
+                        builder,
+                    );
+                }
+            }
+            if callee_publishes_return_owner && !destination_captures_return_owner {
+                if let Some(discard_id) = self.extern_funcs.get("mb_return_owner_discard").copied()
+                {
+                    let discard_ref = self.module().declare_func_in_func(discard_id, builder.func);
+                    builder.ins().call(discard_ref, &[]);
+                }
             }
             if let Some(discard_ref) = discard_ref {
                 builder.ins().call(discard_ref, &[]);
@@ -2250,6 +2302,7 @@ fn emit_terminator(
     vars: &mut VarAlloc,
     release_func_ref: Option<cranelift_codegen::ir::FuncRef>,
     retain_func_ref: Option<cranelift_codegen::ir::FuncRef>,
+    return_owner_publish_ref: Option<cranelift_codegen::ir::FuncRef>,
     param_vregs: &HashSet<VReg>,
 ) {
     match term {
@@ -2257,7 +2310,7 @@ fn emit_terminator(
             // Transfer the precise companion out of the local slot before
             // cleanup. #1452 will carry this value across the dynamic call
             // boundary; until then Object producers explicitly write None.
-            vars.transition_companion_owner(
+            let returned_owner = vars.transition_companion_owner(
                 CompanionOwnerTransition::MoveOut { source: *vreg },
                 builder,
             );
@@ -2331,6 +2384,12 @@ fn emit_terminator(
             } else {
                 val
             };
+            // The companion was moved out before cleanup and becomes owned by
+            // the return frame only after every user-code-capable epilogue step.
+            if let Some(publish_ref) = return_owner_publish_ref {
+                let owner = returned_owner.unwrap_or_else(|| VarAlloc::none_companion_owner(builder));
+                builder.ins().call(publish_ref, &[ret_val, owner]);
+            }
             builder.ins().return_(&[ret_val]);
         }
         Terminator::Return(None) => {
@@ -2582,6 +2641,18 @@ impl CodegenBackend for CraneliftBackend {
             .collect();
         let physical_abis =
             crate::mir::analyze_module_physical_abis(&module.bodies, tcx, &extern_abis);
+        self.internal_raw_or_boxed_returns.clear();
+        for body in &module.bodies {
+            if matches!(
+                physical_abis
+                    .body(body.name.0)
+                    .and_then(BodyPhysicalAbiAnalysis::return_abi)
+                    .map(|abi| abi.physical),
+                Some(PhysicalReturn::RawOrBoxedInt)
+            ) {
+                self.internal_raw_or_boxed_returns.insert(body.name.0);
+            }
+        }
         let mixed_int_vregs_by_body: HashMap<u32, HashSet<VReg>> = module
             .bodies
             .iter()
@@ -2629,6 +2700,9 @@ impl CodegenBackend for CraneliftBackend {
             "mb_argument_owner_frame_push",
             "mb_argument_owner_frame_take",
             "mb_argument_owner_frame_discard",
+            "mb_return_owner_publish",
+            "mb_return_owner_take",
+            "mb_return_owner_discard",
             // Ownership sidecar consumed by local producer lowering, not by
             // a MIR CallExtern node, so it must be imported explicitly.
             "mb_typed_int_owner_or_none",
@@ -3345,6 +3419,52 @@ mod tests {
                             },
                         ],
                         terminator: Terminator::Return(Some(VReg(1))),
+                    }],
+                },
+            ],
+            externs: vec![],
+        };
+        let output = CraneliftBackend::new().unwrap().codegen(&module, &tcx).unwrap();
+        assert!(matches!(output, CodegenOutput::ObjectFile(bytes) if !bytes.is_empty()));
+    }
+
+    #[test]
+    fn object_ignored_raw_or_boxed_return_imports_discard_path() {
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let callee_id = 14_514;
+        let module = MirModule {
+            bodies: vec![
+                MirBody {
+                    name: SymbolId(callee_id),
+                    params: vec![(VReg(0), int_ty)],
+                    return_ty: int_ty,
+                    blocks: vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: vec![],
+                        terminator: Terminator::Return(Some(VReg(0))),
+                    }],
+                },
+                MirBody {
+                    name: SymbolId(u32::MAX),
+                    params: vec![],
+                    return_ty: int_ty,
+                    blocks: vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: vec![
+                            MirInst::LoadConst {
+                                dest: VReg(0),
+                                value: MirConst::Int(7),
+                                ty: int_ty,
+                            },
+                            MirInst::Call {
+                                dest: None,
+                                func: SymbolId(callee_id),
+                                args: vec![VReg(0)],
+                                ty: int_ty,
+                            },
+                        ],
+                        terminator: Terminator::Return(None),
                     }],
                 },
             ],

@@ -880,11 +880,7 @@ fn dispatch_thread_jit_frame(raw_addr: usize, items: &[MbValue], is_boxed_ret: b
             _ => MbValue::none(),
         }
     };
-    if is_boxed_ret {
-        raw_result
-    } else {
-        super::super::builtins::mb_box_int(raw_result.to_bits() as i64)
-    }
+    super::super::builtins::finalize_jit_return(raw_result, is_boxed_ret)
 }
 
 fn store_future_result(future: MbValue, result: MbValue) {
@@ -1908,6 +1904,12 @@ mod tests {
         MbValue::from_int(i64::from(owner == value))
     }
 
+    extern "C" fn test_pseudo_jit_return_owner() -> MbValue {
+        let value = crate::runtime::bigint_ops::bigint_from_i128(1i128 << 70);
+        crate::runtime::return_owner::publish_return_owner(value, value);
+        value
+    }
+
     fn make_param(
         name: &str,
         has_default: bool,
@@ -2102,6 +2104,41 @@ mod tests {
         assert!(exception::current_exception_type().is_none());
 
         unsafe { crate::runtime::rc::release_if_ptr(bigint) };
+        crate::runtime::async_rt::cleanup_all_async();
+    }
+
+    #[test]
+    fn to_thread_return_owner_is_worker_scoped() {
+        crate::runtime::async_rt::cleanup_all_async();
+        crate::runtime::return_owner::clear_return_owner_frames_for_test();
+        exception::mb_clear_exception();
+
+        let addr = test_pseudo_jit_return_owner as *const () as usize;
+        let func = MbValue::from_func(addr);
+        let args = [func];
+        let coro = unsafe { dispatch_to_thread(args.as_ptr(), args.len()) };
+        let future = crate::runtime::async_rt::mb_coroutine_get_local(coro, MbValue::from_int(0));
+        assert!(
+            (0..1_000).any(|_| {
+                if future_state(future) != "PENDING" {
+                    true
+                } else {
+                    std::thread::sleep(Duration::from_millis(1));
+                    false
+                }
+            }),
+            "to_thread worker must complete its future before it is awaited"
+        );
+        unsafe { crate::runtime::rc::release_if_ptr(future) };
+        let result = crate::runtime::async_task::mb_await(coro);
+        let object = result.as_ptr().expect("worker must return its BigInt");
+        // `mb_await` deliberately hands the caller a fresh reference while the
+        // completed coroutine and its future retain their own result refs.
+        assert_eq!(unsafe { crate::runtime::rc::mb_refcount(object) }, 3);
+        assert_eq!(crate::runtime::return_owner::return_owner_frame_depth(), 0);
+        assert!(exception::current_exception_type().is_none());
+
+        unsafe { crate::runtime::rc::release_if_ptr(result) };
         crate::runtime::async_rt::cleanup_all_async();
     }
 

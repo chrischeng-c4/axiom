@@ -223,6 +223,7 @@ macro_rules! rt_unknown_sym {
 /// Return all registered runtime symbols.
 pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
     use super::argument_owner;
+    use super::return_owner;
     use super::async_rt;
     use super::builtins;
     use super::class;
@@ -306,6 +307,26 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!(
             "mb_argument_owner_frame_discard",
             argument_owner::mb_argument_owner_frame_discard as extern "C" fn(),
+            [],
+            Void
+        ),
+        // Return-owner frames move a callee companion across the physical
+        // return ABI. They are control-plane state, never MIR data producers.
+        rt_sym!(
+            "mb_return_owner_publish",
+            return_owner::mb_return_owner_publish as extern "C" fn(i64, i64),
+            [I64, I64],
+            Void
+        ),
+        rt_unknown_sym!(
+            "mb_return_owner_take",
+            return_owner::mb_return_owner_take as extern "C" fn(i64) -> i64,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_return_owner_discard",
+            return_owner::mb_return_owner_discard as extern "C" fn(),
             [],
             Void
         ),
