@@ -2,12 +2,17 @@ use crate::resolve::SymbolId;
 use crate::types::TypeId;
 
 mod escape_analysis;
+mod producer_owner;
 pub(crate) mod return_abi;
 
 pub use escape_analysis::{
     analyze_literal_escapes, analyze_typed_list_layouts, LiteralEscapeAnalysis,
     LiteralEscapeClassification, LiteralEscapeInfo, LiteralEscapeKind, TypedListElementKind,
     TypedListLayoutAnalysis, TypedListLayoutInfo,
+};
+pub(crate) use producer_owner::{
+    ExternCompanionContract, OwnerValueSource, ProducerBoundary, ProducerOwnerAction,
+    ProducerOwnerMetadata, ProducerSite,
 };
 pub(crate) use return_abi::{analyze_module_physical_abis, ExternReturnAbi};
 
@@ -188,10 +193,7 @@ pub enum Terminator {
 /// Whether current Cranelift internal-call adaptation treats this body's
 /// result as a native bool even when its semantic return type is nonprimitive.
 /// Keep this producer heuristic shared until return ABI fully replaces it.
-pub fn body_returns_native_bool(
-    body: &MirBody,
-    tcx: &crate::types::TypeContext,
-) -> bool {
+pub fn body_returns_native_bool(body: &MirBody, tcx: &crate::types::TypeContext) -> bool {
     let mut bool_vregs = std::collections::HashSet::new();
     let mut none_vregs = std::collections::HashSet::new();
     for block in &body.blocks {

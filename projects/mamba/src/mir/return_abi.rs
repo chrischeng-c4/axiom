@@ -2,9 +2,11 @@ use std::collections::{HashMap, HashSet};
 
 use crate::types::{Ty, TypeContext, TypeId};
 
+use super::producer_owner::analyze_producer_owners;
 use super::{
     DynamicReturnAdapter, MirBinOp, MirBody, MirConst, MirInst, MirType, MirUnaryOp,
-    PhysicalReturn, ReturnAbi, ReturnOwnership, Terminator, VReg,
+    PhysicalReturn, ProducerOwnerMetadata, ProducerSite, ReturnAbi, ReturnOwnership, Terminator,
+    VReg,
 };
 
 pub(crate) type ExternReturnAbi = (MirType, Option<ReturnAbi>);
@@ -88,6 +90,11 @@ impl PhysicalReturnSet {
         };
         Some(ReturnAbi::new(physical, ownership))
     }
+
+    fn is_int_owner_candidate(self) -> bool {
+        let bits = self.0 & !Self::DEFERRED.0;
+        bits != 0 && bits & !(Self::RAW_INT.0 | Self::BOXED_INT.0 | Self::UNKNOWN.0) == 0
+    }
 }
 
 /// Canonical producer analysis for one MIR body.
@@ -98,6 +105,7 @@ impl PhysicalReturnSet {
 pub(crate) struct BodyPhysicalAbiAnalysis {
     values: HashMap<VReg, PhysicalReturnSet>,
     returned: PhysicalReturnSet,
+    producer_owners: HashMap<ProducerSite, ProducerOwnerMetadata>,
 }
 
 #[derive(Clone)]
@@ -290,6 +298,13 @@ impl BodyPhysicalAbiAnalysis {
             })
             .collect()
     }
+
+    /// Explicit owner source for one parameter or instruction producer.
+    /// Consumers must execute this action instead of reconstructing ownership
+    /// from the producer's data bits.
+    pub(crate) fn producer_owner(&self, site: ProducerSite) -> Option<ProducerOwnerMetadata> {
+        self.producer_owners.get(&site).copied()
+    }
 }
 
 fn parameter_return_set(ty: TypeId, tcx: &TypeContext) -> PhysicalReturnSet {
@@ -303,6 +318,89 @@ fn parameter_return_set(ty: TypeId, tcx: &TypeContext) -> PhysicalReturnSet {
         Ty::Float => PhysicalReturnSet::RAW_FLOAT,
         _ => PhysicalReturnSet::UNKNOWN,
     }
+}
+
+fn producer_owner_relevant_vregs(
+    body: &MirBody,
+    tcx: &TypeContext,
+    values: &HashMap<VReg, PhysicalReturnSet>,
+) -> HashSet<VReg> {
+    let relevant_type = |ty: TypeId| matches!(tcx.get(ty), Ty::Int | Ty::Any);
+    let mut relevant = body
+        .params
+        .iter()
+        .filter_map(|(vreg, ty)| relevant_type(*ty).then_some(*vreg))
+        .collect::<HashSet<_>>();
+    let mut copies = Vec::new();
+
+    for block in &body.blocks {
+        for inst in &block.stmts {
+            let typed_dest = match inst {
+                MirInst::BinOp { dest, ty, .. }
+                | MirInst::CheckedAdd { dest, ty, .. }
+                | MirInst::CheckedSub { dest, ty, .. }
+                | MirInst::CheckedMul { dest, ty, .. }
+                | MirInst::UnaryOp { dest, ty, .. }
+                | MirInst::LoadConst { dest, ty, .. }
+                | MirInst::GetAttr { dest, ty, .. }
+                | MirInst::GetItem { dest, ty, .. }
+                | MirInst::MakeList { dest, ty, .. }
+                | MirInst::MakeDict { dest, ty, .. }
+                | MirInst::MakeTuple { dest, ty, .. }
+                | MirInst::LoadGlobal { dest, ty, .. }
+                | MirInst::LoadCell { dest, ty, .. }
+                | MirInst::MakeCell { dest, ty, .. }
+                | MirInst::LoadCapture { dest, ty, .. } => Some((*dest, *ty)),
+                MirInst::Call {
+                    dest: Some(dest),
+                    ty,
+                    ..
+                }
+                | MirInst::CallExtern {
+                    dest: Some(dest),
+                    ty,
+                    ..
+                } => Some((*dest, *ty)),
+                MirInst::Copy { dest, source } => {
+                    copies.push((*dest, *source));
+                    None
+                }
+                MirInst::Call { dest: None, .. }
+                | MirInst::CallExtern { dest: None, .. }
+                | MirInst::SetAttr { .. }
+                | MirInst::SetItem { .. }
+                | MirInst::Raise { .. }
+                | MirInst::StoreGlobal { .. }
+                | MirInst::DeleteGlobal { .. }
+                | MirInst::StoreCell { .. } => None,
+            };
+            if let Some((dest, ty)) = typed_dest {
+                if relevant_type(ty) {
+                    relevant.insert(dest);
+                }
+            }
+        }
+    }
+
+    for _ in 0..=copies.len() {
+        let mut changed = false;
+        for (dest, source) in &copies {
+            if relevant.contains(source) {
+                changed |= relevant.insert(*dest);
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    relevant.retain(|vreg| {
+        values
+            .get(vreg)
+            .copied()
+            .is_some_and(PhysicalReturnSet::is_int_owner_candidate)
+    });
+    relevant
 }
 
 fn analyze_body_physical_abis(
@@ -480,7 +578,13 @@ fn analyze_body_physical_abis(
             _ => {}
         }
     }
-    BodyPhysicalAbiAnalysis { values, returned }
+    let relevant_owner_vregs = producer_owner_relevant_vregs(body, tcx, &values);
+    let producer_owners = analyze_producer_owners(body, extern_abis, &relevant_owner_vregs);
+    BodyPhysicalAbiAnalysis {
+        values,
+        returned,
+        producer_owners,
+    }
 }
 
 #[cfg(test)]
@@ -818,5 +922,247 @@ mod tests {
             analysis.body(13).unwrap().value_physical(VReg(0)),
             Some(PhysicalReturn::BoxedMbValue)
         );
+    }
+
+    #[test]
+    fn producer_owner_metadata_is_actionable_at_stable_sites() {
+        use crate::mir::{
+            ExternCompanionContract, OwnerValueSource, ProducerBoundary, ProducerOwnerAction,
+            ProducerSite,
+        };
+
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let str_ty = tcx.str();
+        let any_ty = tcx.any();
+        let body = MirBody {
+            name: SymbolId(15),
+            params: vec![(VReg(0), int_ty), (VReg(20), str_ty), (VReg(21), any_ty)],
+            return_ty: int_ty,
+            blocks: vec![BasicBlock {
+                id: BlockId(42),
+                stmts: vec![
+                    MirInst::LoadConst {
+                        dest: VReg(1),
+                        value: MirConst::Int(1),
+                        ty: int_ty,
+                    },
+                    MirInst::LoadConst {
+                        dest: VReg(22),
+                        value: MirConst::Str("not an int producer".into()),
+                        ty: str_ty,
+                    },
+                    MirInst::Copy {
+                        dest: VReg(2),
+                        source: VReg(0),
+                    },
+                    MirInst::CheckedAdd {
+                        dest: VReg(3),
+                        lhs: VReg(0),
+                        rhs: VReg(1),
+                        ty: int_ty,
+                    },
+                    MirInst::Call {
+                        dest: Some(VReg(4)),
+                        func: SymbolId(99),
+                        args: vec![],
+                        ty: int_ty,
+                    },
+                    MirInst::GetAttr {
+                        dest: VReg(5),
+                        object: VReg(0),
+                        attr: "value".into(),
+                        ty: int_ty,
+                    },
+                    MirInst::GetAttr {
+                        dest: VReg(23),
+                        object: VReg(20),
+                        attr: "value".into(),
+                        ty: str_ty,
+                    },
+                    MirInst::GetAttr {
+                        dest: VReg(24),
+                        object: VReg(21),
+                        attr: "value".into(),
+                        ty: any_ty,
+                    },
+                    MirInst::CallExtern {
+                        dest: Some(VReg(6)),
+                        name: "mb_bigint_add".into(),
+                        args: vec![VReg(0), VReg(1)],
+                        ty: int_ty,
+                    },
+                    MirInst::CallExtern {
+                        dest: Some(VReg(7)),
+                        name: "mb_unbox_int_if_boxed".into(),
+                        args: vec![VReg(3)],
+                        ty: int_ty,
+                    },
+                    MirInst::CallExtern {
+                        dest: Some(VReg(8)),
+                        name: "explicit_owner_out".into(),
+                        args: vec![],
+                        ty: int_ty,
+                    },
+                    MirInst::CallExtern {
+                        dest: Some(VReg(9)),
+                        name: "dynamic".into(),
+                        args: vec![],
+                        ty: int_ty,
+                    },
+                    MirInst::CallExtern {
+                        dest: Some(VReg(10)),
+                        name: "missing_abi".into(),
+                        args: vec![],
+                        ty: int_ty,
+                    },
+                    MirInst::CallExtern {
+                        dest: Some(VReg(11)),
+                        name: "undeclared".into(),
+                        args: vec![],
+                        ty: int_ty,
+                    },
+                    MirInst::MakeList {
+                        dest: VReg(25),
+                        elements: vec![],
+                        ty: any_ty,
+                    },
+                ],
+                terminator: Terminator::Return(Some(VReg(3))),
+            }],
+        };
+        let extern_abis = HashMap::from([
+            (
+                "mb_bigint_add".to_owned(),
+                (
+                    MirType::I64,
+                    Some(ReturnAbi::new(
+                        PhysicalReturn::RawOrBoxedInt,
+                        ReturnOwnership::ProvenanceTransfer,
+                    )),
+                ),
+            ),
+            (
+                "mb_unbox_int_if_boxed".to_owned(),
+                (
+                    MirType::I64,
+                    Some(ReturnAbi::new(
+                        PhysicalReturn::RawOrBoxedInt,
+                        ReturnOwnership::ProvenanceTransfer,
+                    )),
+                ),
+            ),
+            (
+                "explicit_owner_out".to_owned(),
+                (
+                    MirType::I64,
+                    Some(ReturnAbi::new(
+                        PhysicalReturn::RawOrBoxedInt,
+                        ReturnOwnership::ProvenanceTransfer,
+                    )),
+                ),
+            ),
+            (
+                "dynamic".to_owned(),
+                (
+                    MirType::I64,
+                    Some(ReturnAbi::new(
+                        PhysicalReturn::Unknown,
+                        ReturnOwnership::ProvenanceTransfer,
+                    )),
+                ),
+            ),
+            ("missing_abi".to_owned(), (MirType::I64, None)),
+        ]);
+        let analysis = analyze_body_physical_abis(
+            &body,
+            &tcx,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashSet::new(),
+            &extern_abis,
+        );
+        let at = |statement_index| {
+            analysis.producer_owner(ProducerSite::Instruction {
+                block: BlockId(42),
+                statement_index,
+            })
+        };
+
+        assert_eq!(
+            analysis
+                .producer_owner(ProducerSite::Parameter { index: 0 })
+                .unwrap(),
+            ProducerOwnerMetadata {
+                dest: VReg(0),
+                action: ProducerOwnerAction::DeferredBoundary(ProducerBoundary::ParameterIngress,),
+            }
+        );
+        assert!(analysis
+            .producer_owner(ProducerSite::Parameter { index: 1 })
+            .is_none());
+        assert_eq!(
+            analysis
+                .producer_owner(ProducerSite::Parameter { index: 2 })
+                .unwrap()
+                .action,
+            ProducerOwnerAction::DeferredBoundary(ProducerBoundary::ParameterIngress),
+        );
+        assert_eq!(
+            at(0).unwrap().action,
+            ProducerOwnerAction::OwnerlessOrImmortal
+        );
+        assert!(at(1).is_none(), "str constant is outside Int owner scope");
+        assert_eq!(
+            at(2).unwrap().action,
+            ProducerOwnerAction::PassThroughOrNone(OwnerValueSource::SourceCompanion(VReg(0)))
+        );
+        assert_eq!(
+            at(3).unwrap().action,
+            ProducerOwnerAction::FreshResultOrNone
+        );
+        assert_eq!(
+            at(4).unwrap().action,
+            ProducerOwnerAction::DeferredBoundary(ProducerBoundary::InternalReturn)
+        );
+        assert_eq!(
+            at(5).unwrap().action,
+            ProducerOwnerAction::DeferredBoundary(ProducerBoundary::DynamicReturn)
+        );
+        assert!(
+            at(6).is_none(),
+            "str dynamic result is outside Int owner scope"
+        );
+        assert_eq!(
+            at(7).unwrap().action,
+            ProducerOwnerAction::DeferredBoundary(ProducerBoundary::DynamicReturn)
+        );
+        assert_eq!(
+            at(8).unwrap().action,
+            ProducerOwnerAction::Extern(ExternCompanionContract::FreshResultOrNone)
+        );
+        assert_eq!(
+            at(9).unwrap().action,
+            ProducerOwnerAction::Extern(ExternCompanionContract::ArgumentPassThroughOrNone {
+                source: VReg(3),
+            })
+        );
+        assert_eq!(
+            at(10).unwrap().action,
+            ProducerOwnerAction::Extern(ExternCompanionContract::ExplicitOwnerOut)
+        );
+        assert_eq!(
+            at(11).unwrap().action,
+            ProducerOwnerAction::Extern(ExternCompanionContract::DeferredRuntimeReturn)
+        );
+        assert_eq!(
+            at(12).unwrap().action,
+            ProducerOwnerAction::Extern(ExternCompanionContract::MissingReturnAbi)
+        );
+        assert_eq!(
+            at(13).unwrap().action,
+            ProducerOwnerAction::Extern(ExternCompanionContract::MissingDeclaration)
+        );
+        assert!(at(14).is_none(), "list producer is outside Int owner scope");
     }
 }
