@@ -5,7 +5,9 @@
 /// code can call them.
 use super::marshal;
 use super::perf_map;
-use super::{emit_binop, emit_terminator, VarAlloc, EMIT_REFCOUNT_CALLS};
+use super::{
+    emit_binop, emit_terminator, CompanionOwnerTransition, VarAlloc, EMIT_REFCOUNT_CALLS,
+};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::mir::{
     analyze_literal_escapes, LiteralEscapeAnalysis, LiteralEscapeClassification, LiteralEscapeKind,
@@ -138,6 +140,8 @@ pub struct CraneliftJitBackend {
     /// Populated only when the env var is set on entry to `compile_function`,
     /// otherwise stays empty so non-profiling runs pay no cost.
     internal_code_sizes: HashMap<u32, u32>,
+    #[cfg(test)]
+    compiled_clif: Option<HashMap<u32, String>>,
 }
 
 /// Drop handler for CraneliftJitBackend.
@@ -219,6 +223,8 @@ impl CraneliftJitBackend {
             internal_param_counts: HashMap::new(),
             compile_time_objects: Vec::new(),
             internal_code_sizes: HashMap::new(),
+            #[cfg(test)]
+            compiled_clif: None,
         })
     }
 
@@ -361,6 +367,7 @@ impl CraneliftJitBackend {
         body: &MirBody,
         tcx: &TypeContext,
         externs: &[MirExtern],
+        mixed_int_vregs: &HashSet<VReg>,
     ) -> crate::error::Result<()> {
         let func_id = self.internal_funcs[&body.name.0];
         let mut sig = Signature::new(CallConv::SystemV);
@@ -440,6 +447,26 @@ impl CraneliftJitBackend {
         } else {
             None
         };
+        let needs_precise_owners = !mixed_int_vregs.is_empty();
+        let precise_owner_release = if needs_precise_owners {
+            release_func_ref.or_else(|| {
+                if EMIT_REFCOUNT_CALLS {
+                    let release_id = self.extern_funcs.get("mb_release_value").copied();
+                    release_id.map(|id| self.module().declare_func_in_func(id, builder.func))
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
+        let precise_owner_retain = needs_precise_owners.then_some(retain_func_ref).flatten();
+        vars.initialize_companion_owners(
+            mixed_int_vregs,
+            precise_owner_retain,
+            precise_owner_release,
+            &mut builder,
+        );
 
         // #1013 / #2111 (Subset A iteration-retention amplifier): pre-seed
         // VRegs written inside a loop body with a harmless `MbValue::none()`
@@ -553,6 +580,10 @@ impl CraneliftJitBackend {
                 ctx.func.display()
             );
         }
+        #[cfg(test)]
+        if let Some(compiled_clif) = self.compiled_clif.as_mut() {
+            compiled_clif.insert(body.name.0, ctx.func.display().to_string());
+        }
         self.module()
             .define_function(func_id, &mut ctx)
             .map_err(|e| {
@@ -638,43 +669,68 @@ impl CraneliftJitBackend {
                 _ => None,
             };
             if let Some(dest) = dest_vreg {
-                // Only release if variable was already declared as I64.
-                // F64 variables never hold heap pointers — skip them.
-                // First-time writes (var not yet declared) are also skipped
-                // (default 0 would be a no-op release anyway).
-                // Skip raw_ints — the previous value is a raw i64, not a
-                // heap pointer, so mb_release_value's as_ptr check would
-                // bail out anyway.
-                // #1018: also skip parameter VRegs. Parameters are borrowed
-                // from the caller (see the `param_vregs` construction above,
-                // and `emit_terminator`'s Return epilogue, which excludes
-                // them from its release sweep for the same reason) — the
-                // callee must never release a param's ORIGINAL value, even
-                // when reassigning the param's own VReg (e.g. `args =
-                // args[1:]`, or a tuple-unpack target that reuses the
-                // param's VReg via `sym_to_vreg`). Without this check, the
-                // first such reassignment released the caller's live
-                // reference out from under it, causing a double free once
-                // the caller (or callee's own later cleanup) released the
-                // same object again — surfacing as nondeterministic heap
-                // corruption (SIGSEGV/SIGBUS/SIGTRAP/capacity-overflow/
-                // wrong-value, depending on what reused the freed memory).
-                if crate::runtime::rc::should_release_local_slot(
-                    crate::runtime::rc::LocalSlotReleaseRule {
-                        declared_i64: vars.is_declared_i64(dest),
-                        raw_value: vars.raw_ints.contains(&dest),
-                        native_bool: vars.native_bools.contains(&dest),
-                        assigned_on_path: true,
-                        borrowed_param: param_vregs.contains(&dest),
-                        return_value: false,
-                    },
-                ) {
-                    if let Some(&release_id) = self.extern_funcs.get("mb_release_value") {
-                        let release_ref =
-                            self.module().declare_func_in_func(release_id, builder.func);
-                        let dv = vars.get(dest, builder, cl_types::I64);
-                        let old_val = builder.use_var(dv);
-                        builder.ins().call(release_ref, &[old_val]);
+                if vars.has_companion_owner(dest) {
+                    let deferred_to_merge = matches!(
+                        inst,
+                        MirInst::CheckedAdd { .. }
+                            | MirInst::CheckedSub { .. }
+                            | MirInst::CheckedMul { .. }
+                    ) || matches!(
+                        inst,
+                        MirInst::BinOp {
+                            op: MirBinOp::LShift,
+                            ty,
+                            ..
+                        } if matches!(tcx.get(*ty), Ty::Int)
+                    );
+                    if !matches!(inst, MirInst::Copy { .. }) && !deferred_to_merge {
+                        vars.transition_companion_owner(
+                            CompanionOwnerTransition::ProducerWrite { dest, owner: None },
+                            builder,
+                        );
+                    }
+                    // Mixed slots are released exclusively through their
+                    // companion owner; their data bits may be raw pointer-like
+                    // integers and must never reach mb_release_value.
+                } else {
+                    // Only release if variable was already declared as I64.
+                    // F64 variables never hold heap pointers — skip them.
+                    // First-time writes (var not yet declared) are also skipped
+                    // (default 0 would be a no-op release anyway).
+                    // Skip raw_ints — the previous value is a raw i64, not a
+                    // heap pointer, so mb_release_value's as_ptr check would
+                    // bail out anyway.
+                    // #1018: also skip parameter VRegs. Parameters are borrowed
+                    // from the caller (see the `param_vregs` construction above,
+                    // and `emit_terminator`'s Return epilogue, which excludes
+                    // them from its release sweep for the same reason) — the
+                    // callee must never release a param's ORIGINAL value, even
+                    // when reassigning the param's own VReg (e.g. `args =
+                    // args[1:]`, or a tuple-unpack target that reuses the
+                    // param's VReg via `sym_to_vreg`). Without this check, the
+                    // first such reassignment released the caller's live
+                    // reference out from under it, causing a double free once
+                    // the caller (or callee's own later cleanup) released the
+                    // same object again — surfacing as nondeterministic heap
+                    // corruption (SIGSEGV/SIGBUS/SIGTRAP/capacity-overflow/
+                    // wrong-value, depending on what reused the freed memory).
+                    if crate::runtime::rc::should_release_local_slot(
+                        crate::runtime::rc::LocalSlotReleaseRule {
+                            declared_i64: vars.is_declared_i64(dest),
+                            raw_value: vars.raw_ints.contains(&dest),
+                            native_bool: vars.native_bools.contains(&dest),
+                            assigned_on_path: true,
+                            borrowed_param: param_vregs.contains(&dest),
+                            return_value: false,
+                        },
+                    ) {
+                        if let Some(&release_id) = self.extern_funcs.get("mb_release_value") {
+                            let release_ref =
+                                self.module().declare_func_in_func(release_id, builder.func);
+                            let dv = vars.get(dest, builder, cl_types::I64);
+                            let old_val = builder.use_var(dv);
+                            builder.ins().call(release_ref, &[old_val]);
+                        }
                     }
                 }
             }
@@ -901,6 +957,13 @@ impl CraneliftJitBackend {
                         self.emit_raw_lshift_with_overflow_check(dest, lhs, rhs, builder, vars);
                     } else {
                         self.emit_checked_bitwise_op(dest, lhs, rhs, "mb_lshift", builder, vars);
+                        vars.transition_companion_owner(
+                            CompanionOwnerTransition::ProducerWrite {
+                                dest: *dest,
+                                owner: None,
+                            },
+                            builder,
+                        );
                     }
                 } else if matches!(op, MirBinOp::RShift) && matches!(resolved_ty, Ty::Int) {
                     // Right shift of a *genuinely* raw inline base always stays
@@ -1023,6 +1086,19 @@ impl CraneliftJitBackend {
                 }
             }
             MirInst::Copy { dest, source } => {
+                let has_companion = vars.has_companion_owner(*dest);
+                if has_companion {
+                    if dest == source {
+                        return;
+                    }
+                    vars.transition_companion_owner(
+                        CompanionOwnerTransition::AliasCopy {
+                            dest: *dest,
+                            source: *source,
+                        },
+                        builder,
+                    );
+                }
                 // Copy with auto-bitcast: source and dest may have different types
                 // (e.g., I64 from runtime call copied into F64 variable, or vice versa).
                 let src_type = vars.declared_type(*source).unwrap_or(cl_types::I64);
@@ -1036,7 +1112,10 @@ impl CraneliftJitBackend {
                 if vars.raw_ints.contains(source) {
                     vars.raw_ints.insert(*dest);
                 }
-                if EMIT_REFCOUNT_CALLS && !vars.raw_ints.contains(source) {
+                if EMIT_REFCOUNT_CALLS
+                    && !has_companion
+                    && !vars.raw_ints.contains(source)
+                {
                     // Retain the new value — Copy is aliasing, both source
                     // and dest now reference the same object (#1129 R2).
                     // Only retain I64 (pointer) values, not F64 (floats).
@@ -1489,6 +1568,13 @@ impl CraneliftJitBackend {
             };
             vars.def_var_cast(*dest, builder, result, cl_types::I64);
         }
+        vars.transition_companion_owner(
+            CompanionOwnerTransition::ProducerWrite {
+                dest: *dest,
+                owner: None,
+            },
+            builder,
+        );
     }
 
     /// Emit raw-int CheckedAdd/Sub/Mul with INT48 overflow detection (#1212 §5b).
@@ -1554,6 +1640,7 @@ impl CraneliftJitBackend {
         let slow_block = builder.create_block();
         let merge_block = builder.create_block();
         let merged_param = builder.append_block_param(merge_block, cl_types::I64);
+        let merged_owner = builder.append_block_param(merge_block, cl_types::I64);
 
         builder
             .ins()
@@ -1562,7 +1649,12 @@ impl CraneliftJitBackend {
         // Fast block: pass native raw_result through.
         builder.switch_to_block(fast_block);
         builder.seal_block(fast_block);
-        builder.ins().jump(merge_block, &[raw_result.into()]);
+        let fast_owner = builder
+            .ins()
+            .iconst(cl_types::I64, MbValue::none().to_bits() as i64);
+        builder
+            .ins()
+            .jump(merge_block, &[raw_result.into(), fast_owner.into()]);
 
         // Slow block: call mb_bigint_*; select inline-unboxed vs boxed bits.
         builder.switch_to_block(slow_block);
@@ -1587,13 +1679,25 @@ impl CraneliftJitBackend {
             // Runtime missing — fall back to wrapping result (legacy behavior).
             raw_result
         };
-        builder.ins().jump(merge_block, &[slow_value.into()]);
+        let slow_owner = builder
+            .ins()
+            .iconst(cl_types::I64, MbValue::none().to_bits() as i64);
+        builder
+            .ins()
+            .jump(merge_block, &[slow_value.into(), slow_owner.into()]);
 
         // Merge block: phi the chosen value into dest.
         builder.switch_to_block(merge_block);
         builder.seal_block(merge_block);
         let dv = vars.get(*dest, builder, cl_types::I64);
         builder.def_var(dv, merged_param);
+        vars.transition_companion_owner(
+            CompanionOwnerTransition::ProducerWrite {
+                dest: *dest,
+                owner: Some(merged_owner),
+            },
+            builder,
+        );
 
         // Keep dest in raw_ints. In the fast path (no overflow) merged_param is a
         // raw INT48; in the slow path the select already unboxes inline returns,
@@ -1740,6 +1844,7 @@ impl CraneliftJitBackend {
         let slow_block = builder.create_block();
         let merge_block = builder.create_block();
         let merged_param = builder.append_block_param(merge_block, cl_types::I64);
+        let merged_owner = builder.append_block_param(merge_block, cl_types::I64);
 
         builder
             .ins()
@@ -1748,7 +1853,12 @@ impl CraneliftJitBackend {
         // Fast block: pass the native shift result through.
         builder.switch_to_block(fast_block);
         builder.seal_block(fast_block);
-        builder.ins().jump(merge_block, &[raw_result.into()]);
+        let fast_owner = builder
+            .ins()
+            .iconst(cl_types::I64, MbValue::none().to_bits() as i64);
+        builder
+            .ins()
+            .jump(merge_block, &[raw_result.into(), fast_owner.into()]);
 
         // Slow block: box operands, call `mb_lshift` (handles arbitrary-
         // precision promotion, e.g. `1 << 64` → BigInt 2**64), unbox an
@@ -1772,7 +1882,12 @@ impl CraneliftJitBackend {
         } else {
             builder.ins().iconst(cl_types::I64, 0)
         };
-        builder.ins().jump(merge_block, &[slow_value.into()]);
+        let slow_owner = builder
+            .ins()
+            .iconst(cl_types::I64, MbValue::none().to_bits() as i64);
+        builder
+            .ins()
+            .jump(merge_block, &[slow_value.into(), slow_owner.into()]);
 
         // Merge block: phi the chosen value into dest. `dest` is
         // intentionally NOT marked raw_ints — the slow path may return a
@@ -1781,6 +1896,13 @@ impl CraneliftJitBackend {
         builder.seal_block(merge_block);
         let dv = vars.get(*dest, builder, cl_types::I64);
         builder.def_var(dv, merged_param);
+        vars.transition_companion_owner(
+            CompanionOwnerTransition::ProducerWrite {
+                dest: *dest,
+                owner: Some(merged_owner),
+            },
+            builder,
+        );
     }
 
     /// #1131: runtime-tag-tested rich comparison for Int/Bool-typed operands.
@@ -2922,6 +3044,12 @@ impl CodegenBackend for CraneliftJitBackend {
             .chain(rt_externs.iter())
             .cloned()
             .collect();
+        let extern_abis: HashMap<String, crate::mir::ExternReturnAbi> = all_externs
+            .iter()
+            .map(|ext| (ext.name.clone(), (ext.return_type, ext.return_abi)))
+            .collect();
+        let physical_abis =
+            crate::mir::analyze_module_physical_abis(&module.bodies, tcx, &extern_abis);
 
         // Phase 1: Declare all extern functions
         for ext in &all_externs {
@@ -2933,7 +3061,11 @@ impl CodegenBackend for CraneliftJitBackend {
         }
         // Phase 3: Compile function bodies
         for body in &module.bodies {
-            self.compile_function(body, tcx, &all_externs)?;
+            let mixed_int_vregs = physical_abis
+                .body(body.name.0)
+                .map(|analysis| analysis.raw_or_boxed_int_vregs())
+                .unwrap_or_default();
+            self.compile_function(body, tcx, &all_externs, &mixed_int_vregs)?;
         }
 
         // Finalize — commit code to executable memory
@@ -3081,6 +3213,510 @@ mod tests {
             return_ty,
             blocks,
         }
+    }
+
+    fn captured_clif(backend: &CraneliftJitBackend, body: u32) -> &str {
+        backend
+            .compiled_clif
+            .as_ref()
+            .expect("CLIF capture not enabled")
+            .get(&body)
+            .map(String::as_str)
+            .unwrap_or_else(|| panic!("missing captured CLIF for body {body}"))
+    }
+
+    fn capturing_backend() -> CraneliftJitBackend {
+        let mut backend = CraneliftJitBackend::new().unwrap();
+        backend.compiled_clif = Some(HashMap::new());
+        backend
+    }
+
+    fn local_func_ref(ir: &str, module_func_id: u32) -> Option<String> {
+        let module_name = format!("u0:{module_func_id}");
+        ir.lines()
+            .find(|line| {
+                let line = line.trim_start();
+                line.starts_with("fn")
+                    && line
+                        .split_whitespace()
+                        .any(|field| field == module_name)
+            })
+            .and_then(|line| line.split_whitespace().next())
+            .map(str::to_string)
+    }
+
+    fn module_func_call_count(ir: &str, module_func_id: u32) -> usize {
+        local_func_ref(ir, module_func_id)
+            .map(|func_ref| ir.matches(&format!("call {func_ref}(")).count())
+            .unwrap_or(0)
+    }
+
+    fn block_text(ir: &str, block: &str) -> String {
+        let with_params = format!("{block}(");
+        let without_params = format!("{block}:");
+        let mut inside = false;
+        let mut out = String::new();
+        for line in ir.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with(&with_params) || trimmed == without_params {
+                inside = true;
+            } else if inside && trimmed.starts_with("block") {
+                break;
+            }
+            if inside {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        assert!(!out.is_empty(), "missing {block}\n{ir}");
+        out
+    }
+
+    fn jump_args<'a>(line: &'a str, block: &str) -> Vec<&'a str> {
+        let prefix = format!("jump {block}(");
+        let start = line
+            .find(&prefix)
+            .unwrap_or_else(|| panic!("missing {prefix:?} in {line:?}"))
+            + prefix.len();
+        let end = line[start..]
+            .find(')')
+            .map(|offset| start + offset)
+            .unwrap_or(line.len());
+        line[start..end]
+            .split(',')
+            .map(str::trim)
+            .filter(|arg| !arg.is_empty())
+            .collect()
+    }
+
+    fn assert_explicit_data_owner_merge(ir: &str) {
+        for line in ir.lines() {
+            let header = line.trim();
+            if !header.starts_with("block") || header.matches(": i64").count() != 2 {
+                continue;
+            }
+            let Some(open) = header.find('(') else {
+                continue;
+            };
+            let block = &header[..open];
+            let jumps: Vec<&str> = ir
+                .lines()
+                .filter(|candidate| candidate.contains(&format!("jump {block}(")))
+                .collect();
+            if jumps.len() != 2 {
+                continue;
+            }
+            let args: Vec<Vec<&str>> = jumps
+                .iter()
+                .map(|jump| jump_args(jump, block))
+                .collect();
+            if args.iter().any(|args| args.len() != 2) {
+                continue;
+            }
+            assert_ne!(args[0][1], args[1][1], "owner edges must be explicit\n{ir}");
+            let owner_defs: Vec<&str> = args
+                .iter()
+                .map(|args| {
+                    ir.lines()
+                        .find(|candidate| {
+                            candidate
+                                .trim_start()
+                                .starts_with(&format!("{} = iconst.i64", args[1]))
+                        })
+                        .unwrap_or_else(|| panic!("owner edge is not an explicit None\n{ir}"))
+                })
+                .collect();
+            let owner_rhs: Vec<&str> = owner_defs
+                .iter()
+                .map(|definition| definition.split_once("iconst.i64").unwrap().1.trim())
+                .collect();
+            assert_eq!(owner_rhs[0], owner_rhs[1], "owner edges disagree\n{ir}");
+            return;
+        }
+        panic!("missing two-predecessor [data, owner] merge\n{ir}");
+    }
+
+    fn predecessor_arity(ir: &str, block: &str) -> usize {
+        let header = ir
+            .lines()
+            .find(|line| line.trim_start().starts_with(&format!("{block}(")))
+            .unwrap_or_else(|| panic!("missing {block}\n{ir}"));
+        let arity = header.matches(": i64").count();
+        let jumps: Vec<&str> = ir
+            .lines()
+            .filter(|line| line.contains(&format!("jump {block}(")))
+            .collect();
+        assert_eq!(jumps.len(), 2, "{ir}");
+        for jump in jumps {
+            assert_eq!(jump_args(jump, block).len(), arity, "{ir}");
+        }
+        arity
+    }
+
+    fn block_params<'a>(ir: &'a str, block: &str) -> Vec<&'a str> {
+        let header = ir
+            .lines()
+            .find(|line| line.trim_start().starts_with(&format!("{block}(")))
+            .unwrap_or_else(|| panic!("missing {block}\n{ir}"));
+        let start = header.find('(').unwrap() + 1;
+        let end = header[start..]
+            .find(')')
+            .map(|offset| start + offset)
+            .unwrap();
+        header[start..end]
+            .split(',')
+            .map(|param| param.trim().split_once(':').unwrap().0.trim())
+            .collect()
+    }
+
+    #[test]
+    fn companion_owner_no_mixed_entry_preserves_legacy_release_shape() {
+        let _guard = acquire_jit_lock();
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let module = MirModule {
+            bodies: vec![entry_zero_arg_body(
+                int_ty,
+                vec![BasicBlock {
+                    id: BlockId(0),
+                    stmts: vec![MirInst::LoadConst {
+                        dest: VReg(0),
+                        value: MirConst::Int(42),
+                        ty: int_ty,
+                    }],
+                    terminator: Terminator::Return(Some(VReg(0))),
+                }],
+            )],
+            externs: vec![],
+        };
+        let mut backend = capturing_backend();
+        backend.codegen(&module, &tcx).unwrap();
+        let release_id = backend.extern_funcs["mb_release_value"].as_u32();
+        let ir = captured_clif(&backend, u32::MAX);
+
+        assert!(local_func_ref(ir, release_id).is_none(), "{ir}");
+    }
+
+    #[test]
+    fn companion_owner_checked_and_lshift_merges_pair_data_then_owner() {
+        let _guard = acquire_jit_lock();
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let checked_id = 14_560;
+        let lshift_id = 14_561;
+        let params = vec![(VReg(0), int_ty), (VReg(1), int_ty)];
+        let module = MirModule {
+            bodies: vec![
+                MirBody {
+                    name: SymbolId(checked_id),
+                    params: params.clone(),
+                    return_ty: int_ty,
+                    blocks: vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: vec![MirInst::CheckedAdd {
+                            dest: VReg(2),
+                            lhs: VReg(0),
+                            rhs: VReg(1),
+                            ty: int_ty,
+                        }],
+                        terminator: Terminator::Return(Some(VReg(2))),
+                    }],
+                },
+                MirBody {
+                    name: SymbolId(lshift_id),
+                    params,
+                    return_ty: int_ty,
+                    blocks: vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: vec![MirInst::BinOp {
+                            dest: VReg(2),
+                            op: MirBinOp::LShift,
+                            lhs: VReg(0),
+                            rhs: VReg(1),
+                            ty: int_ty,
+                        }],
+                        terminator: Terminator::Return(Some(VReg(2))),
+                    }],
+                },
+            ],
+            externs: vec![],
+        };
+        let mut backend = capturing_backend();
+        backend.codegen(&module, &tcx).unwrap();
+
+        let release_id = backend.extern_funcs["mb_release_value"].as_u32();
+        let retain_id = backend.extern_funcs["mb_retain_value"].as_u32();
+        for body in [checked_id, lshift_id] {
+            let ir = captured_clif(&backend, body);
+            assert_explicit_data_owner_merge(ir);
+            assert_eq!(module_func_call_count(ir, release_id), 3, "{ir}");
+            assert_eq!(module_func_call_count(ir, retain_id), 0, "{ir}");
+        }
+    }
+
+    #[test]
+    fn companion_owner_branch_loop_and_parameter_rebind_keep_ssa_aligned() {
+        let _guard = acquire_jit_lock();
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let bool_ty = tcx.bool();
+        let branch_id = 14_562;
+        let loop_id = 14_563;
+        let module = MirModule {
+            bodies: vec![
+                MirBody {
+                    name: SymbolId(branch_id),
+                    params: vec![
+                        (VReg(0), int_ty),
+                        (VReg(1), int_ty),
+                        (VReg(2), bool_ty),
+                    ],
+                    return_ty: int_ty,
+                    blocks: vec![
+                        BasicBlock {
+                            id: BlockId(0),
+                            stmts: vec![],
+                            terminator: Terminator::Branch {
+                                cond: VReg(2),
+                                then_block: BlockId(1),
+                                else_block: BlockId(2),
+                            },
+                        },
+                        BasicBlock {
+                            id: BlockId(1),
+                            stmts: vec![MirInst::Copy {
+                                dest: VReg(0),
+                                source: VReg(1),
+                            }],
+                            terminator: Terminator::Goto(BlockId(3)),
+                        },
+                        BasicBlock {
+                            id: BlockId(2),
+                            stmts: vec![MirInst::LoadConst {
+                                dest: VReg(0),
+                                value: MirConst::Int(7),
+                                ty: int_ty,
+                            }],
+                            terminator: Terminator::Goto(BlockId(3)),
+                        },
+                        BasicBlock {
+                            id: BlockId(3),
+                            stmts: vec![],
+                            terminator: Terminator::Return(Some(VReg(0))),
+                        },
+                    ],
+                },
+                MirBody {
+                    name: SymbolId(loop_id),
+                    params: vec![(VReg(0), int_ty), (VReg(3), bool_ty)],
+                    return_ty: int_ty,
+                    blocks: vec![
+                        BasicBlock {
+                            id: BlockId(0),
+                            stmts: vec![
+                                MirInst::LoadConst {
+                                    dest: VReg(2),
+                                    value: MirConst::Int(1),
+                                    ty: int_ty,
+                                },
+                                MirInst::LoadConst {
+                                    dest: VReg(4),
+                                    value: MirConst::Int(1),
+                                    ty: int_ty,
+                                },
+                            ],
+                            terminator: Terminator::Goto(BlockId(1)),
+                        },
+                        BasicBlock {
+                            id: BlockId(1),
+                            stmts: vec![MirInst::Copy {
+                                dest: VReg(0),
+                                source: VReg(2),
+                            }],
+                            terminator: Terminator::Branch {
+                                cond: VReg(3),
+                                then_block: BlockId(2),
+                                else_block: BlockId(3),
+                            },
+                        },
+                        BasicBlock {
+                            id: BlockId(2),
+                            stmts: vec![MirInst::CheckedAdd {
+                                dest: VReg(2),
+                                lhs: VReg(0),
+                                rhs: VReg(4),
+                                ty: int_ty,
+                            }],
+                            terminator: Terminator::Goto(BlockId(1)),
+                        },
+                        BasicBlock {
+                            id: BlockId(3),
+                            stmts: vec![],
+                            terminator: Terminator::Return(Some(VReg(0))),
+                        },
+                    ],
+                },
+            ],
+            externs: vec![],
+        };
+        let mut backend = capturing_backend();
+        backend.codegen(&module, &tcx).unwrap();
+
+        let branch_ir = captured_clif(&backend, branch_id);
+        assert_eq!(predecessor_arity(branch_ir, "block3"), 2, "{branch_ir}");
+        let retain_id = backend.extern_funcs["mb_retain_value"].as_u32();
+        let release_id = backend.extern_funcs["mb_release_value"].as_u32();
+        let retain_ref = local_func_ref(branch_ir, retain_id).expect("retain FuncRef");
+        let release_ref = local_func_ref(branch_ir, release_id).expect("release FuncRef");
+        let rebind = block_text(branch_ir, "block1");
+        let retain = rebind.find(&format!("call {retain_ref}(")).expect("retain");
+        let release = rebind
+            .find(&format!("call {release_ref}("))
+            .expect("release");
+        assert!(retain < release, "parameter rebind released before retain\n{rebind}");
+
+        let loop_ir = captured_clif(&backend, loop_id);
+        assert_eq!(predecessor_arity(loop_ir, "block1"), 5, "{loop_ir}");
+        let loop_owner = block_params(loop_ir, "block1")[0];
+        let loop_retain_ref = local_func_ref(loop_ir, retain_id).expect("loop retain FuncRef");
+        assert!(
+            block_text(loop_ir, "block1")
+                .contains(&format!("call {loop_retain_ref}({loop_owner})")),
+            "loop header owner is not the retained alias source\n{loop_ir}"
+        );
+        let owner_edges: Vec<&str> = loop_ir
+            .lines()
+            .filter(|line| line.contains("jump block1("))
+            .map(|line| jump_args(line, "block1")[0])
+            .collect();
+        assert_eq!(owner_edges.len(), 2, "{loop_ir}");
+        assert_ne!(owner_edges[0], owner_edges[1], "{loop_ir}");
+    }
+
+    #[test]
+    fn companion_owner_self_copy_collision_and_entry_cleanup_match_shared_contract() {
+        let _guard = acquire_jit_lock();
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let baseline_id = 14_564;
+        let self_copy_id = 14_565;
+        let collision_id = 14_566;
+        let big = "170141183460469231731687303715884105727".to_string();
+        let mixed_stmts = || {
+            vec![
+                MirInst::LoadConst {
+                    dest: VReg(0),
+                    value: MirConst::BigInt(big.clone()),
+                    ty: int_ty,
+                },
+                MirInst::LoadConst {
+                    dest: VReg(0),
+                    value: MirConst::Int(42),
+                    ty: int_ty,
+                },
+            ]
+        };
+        let module = MirModule {
+            bodies: vec![
+                MirBody {
+                    name: SymbolId(baseline_id),
+                    params: vec![],
+                    return_ty: int_ty,
+                    blocks: vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: mixed_stmts(),
+                        terminator: Terminator::Return(Some(VReg(0))),
+                    }],
+                },
+                MirBody {
+                    name: SymbolId(self_copy_id),
+                    params: vec![],
+                    return_ty: int_ty,
+                    blocks: vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: {
+                            let mut stmts = mixed_stmts();
+                            stmts.push(MirInst::Copy {
+                                dest: VReg(0),
+                                source: VReg(0),
+                            });
+                            stmts
+                        },
+                        terminator: Terminator::Return(Some(VReg(0))),
+                    }],
+                },
+                MirBody {
+                    name: SymbolId(collision_id),
+                    params: vec![],
+                    return_ty: int_ty,
+                    blocks: vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: vec![
+                            MirInst::LoadConst {
+                                dest: VReg(0),
+                                value: MirConst::BigInt(big.clone()),
+                                ty: int_ty,
+                            },
+                            MirInst::LoadConst {
+                                dest: VReg(0),
+                                value: MirConst::Int(-(1_i64 << 51) + 16),
+                                ty: int_ty,
+                            },
+                            MirInst::LoadConst {
+                                dest: VReg(0),
+                                value: MirConst::Int(7),
+                                ty: int_ty,
+                            },
+                        ],
+                        terminator: Terminator::Return(Some(VReg(0))),
+                    }],
+                },
+                entry_zero_arg_body(
+                    int_ty,
+                    vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: vec![
+                            MirInst::LoadConst {
+                                dest: VReg(0),
+                                value: MirConst::BigInt(big),
+                                ty: int_ty,
+                            },
+                            MirInst::LoadConst {
+                                dest: VReg(0),
+                                value: MirConst::Int(9),
+                                ty: int_ty,
+                            },
+                        ],
+                        terminator: Terminator::Return(None),
+                    }],
+                ),
+            ],
+            externs: vec![],
+        };
+        let mut backend = capturing_backend();
+        backend.codegen(&module, &tcx).unwrap();
+
+        let baseline_ptr = backend.get_func_ptr(baseline_id).unwrap();
+        let self_copy_ptr = backend.get_func_ptr(self_copy_id).unwrap();
+        let collision_ptr = backend.get_func_ptr(collision_id).unwrap();
+        let baseline: extern "C" fn() -> i64 = unsafe { std::mem::transmute(baseline_ptr) };
+        let self_copy: extern "C" fn() -> i64 = unsafe { std::mem::transmute(self_copy_ptr) };
+        let collision: extern "C" fn() -> i64 = unsafe { std::mem::transmute(collision_ptr) };
+        assert_eq!(baseline(), 42);
+        assert_eq!(self_copy(), 42);
+        assert_eq!(collision(), 7);
+
+        let release_id = backend.extern_funcs["mb_release_value"].as_u32();
+        let retain_id = backend.extern_funcs["mb_retain_value"].as_u32();
+        let rc_calls = |body| {
+            let ir = captured_clif(&backend, body);
+            module_func_call_count(ir, release_id) + module_func_call_count(ir, retain_id)
+        };
+        assert_eq!(rc_calls(baseline_id), 2);
+        assert_eq!(rc_calls(self_copy_id), rc_calls(baseline_id));
+        assert_eq!(module_func_call_count(captured_clif(&backend, collision_id), release_id), 3);
+        assert_eq!(module_func_call_count(captured_clif(&backend, collision_id), retain_id), 0);
+        assert_eq!(module_func_call_count(captured_clif(&backend, u32::MAX), release_id), 3);
     }
 
     /// S2/R1: JIT_LOCK exists and is acquirable from external callers.
