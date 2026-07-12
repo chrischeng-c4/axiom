@@ -76,6 +76,7 @@ pub enum Commands {
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/commands.md#source
 pub async fn run_command(cmd: Commands) -> Result<()> {
     drift::check_once(env!("AW_BUILD_VERSION"), env!("AW_GIT_SHA"));
+    drift::enforce_mutating_verb_gate(env!("AW_BUILD_VERSION"), env!("AW_GIT_SHA"));
 
     match cmd {
         Commands::New(args) => {
