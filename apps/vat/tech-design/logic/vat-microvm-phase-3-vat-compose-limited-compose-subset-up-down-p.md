@@ -1,8 +1,17 @@
 ---
 id: vat-microvm-phase-3-vat-compose-limited-compose-subset-up-down-p
-summary: (fill)
+summary: Add `vat compose`, a bounded importer/runner for an existing, unmodified `docker-compose.yml` — expand its supported subset (services/volumes/version; per-service image/build/ports/environment/depends_on/volumes) into a real `vat.toml` and drive `up`/`down`/`ps`/`logs` for the resulting services via Apple's `container` CLI or Docker (project-wide `--runtime auto|docker|microvm`). Phase 3 (final) of the microVM epic (#1471); Phase 1 (#1474, merged) added `Isolation::MicroVm` for `vat run`, Phase 2 (#1479, merged) added `vat build`.
 fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
+capability_refs:
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: vat-compose-bounded-compose-subset-up-down-ps-logs
+    claim: vat-compose-bounded-compose-subset-up-down-ps-logs
+    coverage: full
+    rationale: "Adds compose.rs (parse/expand/materialize), commands/compose.rs (Import/Up/Down/Ps/Logs verbs, the ComposeRecord registry, up's foreground-poll vs. --detach re-exec-poll paths, down's registry-driven SIGTERM), the Cmd::Compose CLI variant, ServiceRuntime::MicroVm plus ServiceConfig.volumes in config.rs, prepare_microvm_service()/container_run_command() plus the runtime-dispatch and early-persist changes in run.rs, and RunnerRunRecord.pid in state.rs — the complete Phase 3 design for the new vat compose work root."
 ---
+
+# vat MicroVm Phase 3: vat compose (limited compose subset + up/down/ps/logs)
 
 ## Logic
 <!-- type: logic lang: mermaid -->
