@@ -85,7 +85,7 @@ changes:
 
 ```mermaid
 ---
-id: mamba-strict-type-argument-owner-frame-verification
+id: mamba-strict-type-argument-owner-frame-contract-verification
 requirements:
   callee_entry:
     id: R2
