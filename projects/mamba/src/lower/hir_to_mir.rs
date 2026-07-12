@@ -1637,6 +1637,13 @@ struct HirToMir<'a> {
     /// Return type of the currently-lowering function.
     /// Used in Return lowering to unbox `any`-typed values when function declares int/bool/float.
     current_return_ty: TypeId,
+    // HANDWRITE-BEGIN gap="missing-generator:mamba-strict-scalar-return-contract" tracker="#1446" reason="The return egress contract combines resolved HIR type information with function-local control-flow and ABI conversion."
+    /// Resolved scalar contract and source annotation for the current ordinary
+    /// user function. `None` deliberately preserves existing fail-open return
+    /// behavior for unannotated, Any, unsupported, async, generator, method,
+    /// and decorated functions.
+    current_return_contract: Option<(String, String)>,
+    // HANDWRITE-END
     /// Counter for allocating synthetic lambda SymbolIds (starts at 4_000_000).
     next_lambda_id: u32,
     /// Pending decorator applications: (impl_func_sym, decorators_in_order, per-def signature).
@@ -1820,6 +1827,7 @@ impl<'a> HirToMir<'a> {
             sym_types: HashMap::new(),
             sym_names: HashMap::new(),
             current_return_ty: int_ty,
+            current_return_contract: None,
             next_lambda_id: 0,
             pending_decorators: Vec::new(),
             decorated_func_syms: HashSet::new(),
@@ -2132,6 +2140,7 @@ impl<'a> HirToMir<'a> {
             sym_types: HashMap::new(),
             sym_names: HashMap::new(),
             current_return_ty: int_ty,
+            current_return_contract: None,
             next_lambda_id: 0,
             pending_decorators: Vec::new(),
             decorated_func_syms: HashSet::new(),
@@ -2203,6 +2212,7 @@ impl<'a> HirToMir<'a> {
         self.in_module_scope = false;
         self.current_func_src_line = None;
         self.current_func_name = None;
+        self.current_return_contract = None;
         self.traceback_frame_active = false;
         self.recursion_frame_active = false;
     }
@@ -2270,6 +2280,11 @@ impl<'a> HirToMir<'a> {
         // entry. This allows `@lru_cache`-style identity decorators to work
         // without corrupting primitive args.
         let is_decorated = self.decorated_func_syms.contains(&func.name.0);
+        // HANDWRITE-BEGIN gap="missing-generator:mamba-strict-scalar-return-contract" tracker="#1446" reason="Only an ordinary synchronous function can enforce its retained scalar return contract before ABI transfer."
+        self.current_return_contract = (!self.is_class_method && !is_decorated)
+            .then(|| self.resolved_scalar_return_contract(func))
+            .flatten();
+        // HANDWRITE-END
         let any_ty = self.tcx.any();
         let int_ty = self.tcx.int();
         let bool_ty = self.tcx.bool();
@@ -2363,9 +2378,19 @@ impl<'a> HirToMir<'a> {
             self.lower_stmt(stmt);
         }
 
-        // Finish any open block with an implicit Return(None)
+        // Finish any open block with an implicit Return(None). A retained
+        // scalar contract treats that implicit None exactly like `return`.
         if self.current_block_id.is_some() {
-            self.finish_block(Terminator::Return(None));
+            // HANDWRITE-BEGIN gap="missing-generator:mamba-strict-scalar-return-contract" tracker="#1446" reason="Implicit fallthrough must not bypass a declared non-None scalar return contract."
+            if self.current_return_contract.is_some() {
+                let none = self.emit_none();
+                let (validated, _) =
+                    self.enforce_declared_scalar_return(none, self.tcx.none());
+                self.finish_block(Terminator::Return(Some(validated)));
+            } else {
+                self.finish_block(Terminator::Return(None));
+            }
+            // HANDWRITE-END
         }
 
         MirBody {
@@ -3968,18 +3993,26 @@ impl<'a> HirToMir<'a> {
                     self.emit_handler_region_restores();
                     self.finish_block(Terminator::Return(Some(ret_vreg)));
                 } else {
-                    let ret_vreg = value.as_ref().map(|v| {
-                        self.lower_expr(v)
-                        // Do NOT unbox the return value based on the declared
-                        // return type.  The declared type may be int_ty (the
-                        // default for unannotated functions) while the runtime
-                        // value is a NaN-boxed string, list, etc.  Unboxing
-                        // would destroy non-int NaN-boxed values (mb_unbox_int
-                        // on a string pointer → 0).
-                        // Instead, callers use mb_box_int which already guards
-                        // against double-boxing: NaN-boxed values pass through
-                        // unchanged, raw ints get properly NaN-boxed.
-                    });
+                    // HANDWRITE-BEGIN gap="missing-generator:mamba-strict-scalar-return-contract" tracker="#1446" reason="Callee return enforcement must run before return ABI transfer and preserve the existing exception/finally path."
+                    let (ret_vreg, trace_ty) = if let Some(v) = value.as_ref() {
+                        let raw = self.lower_expr(v);
+                        // Do NOT unbox an ordinary return merely from its
+                        // declared type: unannotated functions may return any
+                        // NaN-boxed runtime value. `enforce_declared_scalar_return`
+                        // is the only path that proves a scalar contract first.
+                        let (validated, ty) = self.enforce_declared_scalar_return(raw, v.ty());
+                        (Some(validated), ty)
+                    } else if self.current_return_contract.is_some() {
+                        // Bare return is an explicit None candidate for a
+                        // scalar contract; non-None contracts must reject it.
+                        let none = self.emit_none();
+                        let (validated, ty) =
+                            self.enforce_declared_scalar_return(none, self.tcx.none());
+                        (Some(validated), ty)
+                    } else {
+                        (None, self.tcx.none())
+                    };
+                    // HANDWRITE-END
                     // `return <expr>` where <expr> raised — route through the
                     // enclosing try handler instead of returning so try/except
                     // catches the exception. Without this, `return int("abc")`
@@ -4001,10 +4034,9 @@ impl<'a> HirToMir<'a> {
                         });
                         self.start_block(return_block);
                     }
-                    self.pending_trace_return_arg = Some(match (value.as_ref(), ret_vreg) {
-                        (Some(v), Some(raw)) => self.box_operand(raw, v.ty()),
-                        (None, _) => self.emit_none(),
-                        (Some(_), None) => unreachable!("return expr should produce a vreg"),
+                    self.pending_trace_return_arg = Some(match ret_vreg {
+                        Some(raw) => self.box_operand(raw, trace_ty),
+                        None => self.emit_none(),
                     });
                     // If inside try blocks with non-empty finally bodies, inline them
                     // before returning so `finally` always runs on early exit.
@@ -11403,6 +11435,7 @@ impl<'a> HirToMir<'a> {
                 let saved_with_exit = std::mem::take(&mut self.with_exit_stack);
                 let saved_with_ctx = std::mem::take(&mut self.with_ctx_stack);
                 let saved_return_ty = self.current_return_ty;
+                let saved_return_contract = self.current_return_contract.take();
                 let saved_traceback_frame_active = self.traceback_frame_active;
                 let saved_recursion_frame_active = self.recursion_frame_active;
                 let saved_cell_override = std::mem::take(&mut self.cell_override);
@@ -11419,6 +11452,7 @@ impl<'a> HirToMir<'a> {
                 self.async_coro_vreg = None;
                 self.is_gen_body = false;
                 self.current_return_ty = any_ty;
+                self.current_return_contract = None;
                 self.traceback_frame_active = false;
                 self.recursion_frame_active = false;
 
@@ -11473,6 +11507,7 @@ impl<'a> HirToMir<'a> {
                 self.with_exit_stack = saved_with_exit;
                 self.with_ctx_stack = saved_with_ctx;
                 self.current_return_ty = saved_return_ty;
+                self.current_return_contract = saved_return_contract;
                 self.traceback_frame_active = saved_traceback_frame_active;
                 self.recursion_frame_active = saved_recursion_frame_active;
                 self.cell_override = saved_cell_override;
@@ -13177,6 +13212,78 @@ impl<'a> HirToMir<'a> {
 
         self.start_block(continue_block);
     }
+
+    // HANDWRITE-BEGIN gap="missing-generator:mamba-strict-scalar-return-contract" tracker="#1446" reason="Return egress must bind resolved scalar type, source spelling, exception propagation, and physical ABI in one function-local lowering path."
+    fn resolved_scalar_return_contract(&self, func: &HirFunction) -> Option<(String, String)> {
+        let annotation = func.func_sig.as_ref()?.return_annotation.clone()?;
+        let contract = match self.tcx.semantic_ty_or_error(func.return_ty) {
+            crate::types::Ty::Int => "int",
+            crate::types::Ty::Bool => "bool",
+            crate::types::Ty::Float => "float",
+            crate::types::Ty::Str => "str",
+            crate::types::Ty::None => "None",
+            crate::types::Ty::Class {
+                role: crate::types::ty::ClassRole::Instance,
+                external: Some(ext),
+                ..
+            } if ext.module == "builtins" && ext.name == "bytes" => "bytes",
+            _ => return None,
+        };
+        Some((contract.to_string(), annotation))
+    }
+
+    /// Enforce an ordinary function's scalar return contract before a value
+    /// enters its physical return ABI.
+    fn enforce_declared_scalar_return(
+        &mut self,
+        candidate: VReg,
+        candidate_ty: TypeId,
+    ) -> (VReg, TypeId) {
+        let Some((contract, annotation)) = self.current_return_contract.clone() else {
+            return (candidate, candidate_ty);
+        };
+
+        self.emit_exception_propagate();
+        let boxed = self.box_operand(candidate, candidate_ty);
+        let contract_vreg = self.emit_str_const(&contract);
+        let annotation_vreg = self.emit_str_const(&annotation);
+        let function_name = self
+            .current_func_name
+            .clone()
+            .unwrap_or_else(|| "<function>".to_string());
+        let function_vreg = self.emit_str_const(&function_name);
+        let normalized = self.fresh_vreg();
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: Some(normalized),
+            name: "mb_validate_and_adapt_declared_return".to_string(),
+            args: vec![boxed, contract_vreg, annotation_vreg, function_vreg],
+            ty: self.tcx.any(),
+        });
+        self.emit_exception_propagate();
+
+        let return_ty = self.current_return_ty;
+        let unbox_name = match self.tcx.get(return_ty) {
+            crate::types::Ty::Int => Some("mb_unbox_int_if_boxed"),
+            crate::types::Ty::Bool => Some("mb_unbox_bool"),
+            crate::types::Ty::Float => Some("mb_unbox_float"),
+            _ => None,
+        };
+        let adapted = match unbox_name {
+            Some(name) => {
+                let dest = self.fresh_vreg();
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: Some(dest),
+                    name: name.to_string(),
+                    args: vec![normalized],
+                    ty: return_ty,
+                });
+                dest
+            }
+            None => normalized,
+        };
+        (adapted, return_ty)
+    }
+    // HANDWRITE-END
 
     /// Box a primitive operand for runtime dispatch.
     fn box_operand(&mut self, vreg: VReg, ty_id: TypeId) -> VReg {

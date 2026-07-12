@@ -355,6 +355,18 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             return_abi: Some(ReturnAbi::new(PhysicalReturn::BoxedMbValue, ReturnOwnership::NewlyOwnedBoxed)),
             int_companion: None,
         },
+        // HANDWRITE-BEGIN gap="missing-generator:mamba-strict-scalar-return-contract" tracker="#1446" reason="The runtime symbol declaration couples Cranelift ABI metadata to the new callee-egress helper."
+        // #1446: accepted heap values are retained for the returned owner.
+        rt_sym!(
+            "mb_validate_and_adapt_declared_return",
+            builtins::mb_validate_and_adapt_declared_return
+                as fn(super::MbValue, super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64, I64],
+            I64,
+            PhysicalReturn::BoxedMbValue,
+            ReturnOwnership::NewlyOwnedBoxed
+        ),
+        // HANDWRITE-END
         // ── Unboxing (NaN-boxed MbValue → raw primitive) for nested capture bindings (#827) ──
         rt_sym!(
             "mb_unbox_int",

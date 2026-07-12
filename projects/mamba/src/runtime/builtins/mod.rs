@@ -6247,6 +6247,48 @@ fn validate_and_adapt_declared_frame(func: MbValue, items: &mut [MbValue]) -> bo
     true
 }
 
+// HANDWRITE-BEGIN gap="missing-generator:mamba-strict-scalar-return-contract" tracker="#1446" reason="Return egress requires runtime scalar normalization and an exact diagnostic after lowering has boxed the candidate."
+fn declared_return_contract_text(value: MbValue) -> Option<String> {
+    value.as_ptr().and_then(|ptr| unsafe {
+        match &(*ptr).data {
+            ObjData::Str(text) => Some(text.clone()),
+            _ => None,
+        }
+    })
+}
+
+/// Validate a boxed return candidate against a lowering-resolved scalar
+/// contract. Unknown contracts intentionally remain fail-open.
+pub fn mb_validate_and_adapt_declared_return(
+    value: MbValue,
+    contract: MbValue,
+    annotation: MbValue,
+    function_name: MbValue,
+) -> MbValue {
+    let Some(contract) =
+        declared_return_contract_text(contract).and_then(|name| runtime_scalar_contract(&name))
+    else {
+        return value;
+    };
+    if let Some(adapted) = strict_scalar_value(value, contract) {
+        // The result is consumed as a new value by the MIR return path. Keep a
+        // distinct owner when normalization preserves a heap-backed input;
+        // immediates are a no-op.
+        unsafe { super::rc::mb_retain_value(adapted.to_bits()) };
+        return adapted;
+    }
+
+    let annotation = declared_return_contract_text(annotation).unwrap_or_else(|| "object".to_string());
+    let function_name =
+        declared_return_contract_text(function_name).unwrap_or_else(|| "<function>".to_string());
+    raise_type_error(format!(
+        "{function_name}() return expected {annotation}, got {}",
+        value_type_name(value)
+    ));
+    MbValue::none()
+}
+// HANDWRITE-END
+
 /// Dispatch a JIT-compiled function by its exact frame arity (SystemV/C ABI),
 /// reboxing a raw-int return unless the callee is `any`/object-returning.
 /// Shared by the variadic spread + kwargs binding paths so the entry ABI
@@ -6973,6 +7015,86 @@ mod tests {
             contract,
         ]))
     }
+
+    // HANDWRITE-BEGIN gap="missing-generator:mamba-strict-scalar-return-contract" tracker="#1446" reason="Runtime unit coverage must pin scalar normalization, diagnostics, and fail-open contract boundaries independently of the JIT fixtures."
+    #[test]
+    fn declared_return_scalar_contract_normalizes_compatible_values() {
+        super::super::exception::mb_clear_exception();
+        let function = MbValue::from_ptr(MbObject::new_str("typed_return".to_string()));
+        let int_contract = MbValue::from_ptr(MbObject::new_str("int".to_string()));
+        let float_contract = MbValue::from_ptr(MbObject::new_str("float".to_string()));
+        let int_annotation = MbValue::from_ptr(MbObject::new_str("Count".to_string()));
+        let float_annotation = MbValue::from_ptr(MbObject::new_str("float".to_string()));
+
+        let int_value = mb_validate_and_adapt_declared_return(
+            MbValue::from_bool(true),
+            int_contract,
+            int_annotation,
+            function,
+        );
+        assert_eq!(int_value.as_int(), Some(1));
+        let float_value = mb_validate_and_adapt_declared_return(
+            MbValue::from_bool(true),
+            float_contract,
+            float_annotation,
+            function,
+        );
+        assert_eq!(float_value.as_float(), Some(1.0));
+        assert!(super::super::exception::current_exception_type().is_none());
+    }
+
+    #[test]
+    fn declared_return_scalar_contract_rejects_invalid_forms() {
+        super::super::exception::mb_clear_exception();
+        let rejected = mb_validate_and_adapt_declared_return(
+            MbValue::from_ptr(MbObject::new_str("wrong".to_string())),
+            MbValue::from_ptr(MbObject::new_str("int".to_string())),
+            MbValue::from_ptr(MbObject::new_str("Count".to_string())),
+            MbValue::from_ptr(MbObject::new_str("bad_return".to_string())),
+        );
+        assert!(rejected.is_none());
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        let exception = super::super::exception::mb_get_exception();
+        assert_eq!(
+            super::super::exception::get_exception_message_pub(exception).as_deref(),
+            Some("bad_return() return expected Count, got str")
+        );
+        super::super::exception::mb_clear_exception();
+
+        let bare = mb_validate_and_adapt_declared_return(
+            MbValue::none(),
+            MbValue::from_ptr(MbObject::new_str("int".to_string())),
+            MbValue::from_ptr(MbObject::new_str("int".to_string())),
+            MbValue::from_ptr(MbObject::new_str("bare_return".to_string())),
+        );
+        assert!(bare.is_none());
+        assert_eq!(
+            super::super::exception::get_exception_message_pub(
+                super::super::exception::mb_get_exception()
+            )
+            .as_deref(),
+            Some("bare_return() return expected int, got NoneType")
+        );
+        super::super::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn declared_return_scalar_contract_leaves_unknown_annotations_open() {
+        super::super::exception::mb_clear_exception();
+        let value = MbValue::from_int(7);
+        let accepted = mb_validate_and_adapt_declared_return(
+            value,
+            MbValue::from_ptr(MbObject::new_str("list".to_string())),
+            MbValue::from_ptr(MbObject::new_str("list[int]".to_string())),
+            MbValue::from_ptr(MbObject::new_str("open_return".to_string())),
+        );
+        assert_eq!(accepted.to_bits(), value.to_bits());
+        assert!(super::super::exception::current_exception_type().is_none());
+    }
+    // HANDWRITE-END
 
     #[test]
     fn test_dynamic_ingress_contract_and_abi_are_independent() {
