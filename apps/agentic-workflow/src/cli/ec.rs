@@ -190,6 +190,10 @@ pub struct EcVerifyArgs {
     /// Emit JSON instead of human-readable output.
     #[arg(long)]
     pub json: bool,
+    /// Run only required_for_production cases (matches the per-close
+    /// terminal EC gate's filter); default runs every configured case.
+    #[arg(long)]
+    pub required_only: bool,
 }
 
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -1433,7 +1437,7 @@ fn run_record(args: EcRecordArgs) -> Result<()> {
 fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
-    let summary = verify_ec_context(&ctx)?;
+    let summary = verify_ec_context(&ctx, args.required_only)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&summary)?);
     } else if summary.clean {
@@ -3677,7 +3681,20 @@ fn check_ec_doc_context(ctx: &EcProjectContext) -> Result<EcDocCheckSummary> {
     })
 }
 
-fn verify_ec_context(ctx: &EcProjectContext) -> Result<EcVerifySummary> {
+/// #1469: `required_only` is the execution-time filter behind both the
+/// per-close terminal EC gate (`terminal_ec_gate_summary`, always `true`)
+/// and `aw ec verify --required-only` (opt-in; the bare `aw ec verify`
+/// default stays `false`, unaffected). A case whose
+/// `required_for_production` is `false` is never executed when the filter is
+/// on — `required_for_production` used to only gate claim-closure
+/// accounting, not execution — but it still gets a `"skipped"`-status entry
+/// in `results` (command left empty, no command run) so callers can render
+/// an explicit `skipped (advisory)` marker instead of silently dropping the
+/// case from the recorded gate list. `command_count`/`passed_count`/
+/// `failed_count` (and therefore `clean`) only ever count executed entries,
+/// so a demoted advisory case can never taint `clean`. Tool-manifest
+/// commands have no `required_for_production` concept and always run.
+fn verify_ec_context(ctx: &EcProjectContext, required_only: bool) -> Result<EcVerifySummary> {
     let Some((inventory_path, manifest)) = load_ec_manifest(ctx)? else {
         bail!(
             "EC inventory missing in {}; run `aw ec gen --project {}` first",
@@ -3688,6 +3705,20 @@ fn verify_ec_context(ctx: &EcProjectContext) -> Result<EcVerifySummary> {
     let mut results = Vec::new();
     let mut seen_commands = BTreeSet::new();
     for case in &manifest.cases {
+        if required_only && !case.required_for_production {
+            results.push(EcVerifyCommandResult {
+                case_id: case.id.clone(),
+                capability_id: case.capability_id.clone(),
+                claim_id: case.claim_id.clone(),
+                category: case.category.clone(),
+                command: case.command.clone(),
+                status: "skipped".to_string(),
+                exit_code: None,
+                stdout_tail: String::new(),
+                stderr_tail: "skipped (advisory)".to_string(),
+            });
+            continue;
+        }
         if !case.command.trim().is_empty() && !seen_commands.insert(case.command.trim().to_string())
         {
             continue;
@@ -3708,17 +3739,20 @@ fn verify_ec_context(ctx: &EcProjectContext) -> Result<EcVerifySummary> {
         }
         results.push(run_ec_tool_manifest_command(tool, &ctx.project_root));
     }
-    let command_count = results.len();
+    let executed_count = results
+        .iter()
+        .filter(|result| result.status != "skipped")
+        .count();
     let passed_count = results
         .iter()
         .filter(|result| result.status == "passed")
         .count();
-    let failed_count = command_count.saturating_sub(passed_count);
+    let failed_count = executed_count.saturating_sub(passed_count);
     Ok(EcVerifySummary {
         project: ctx.project.clone(),
         inventory_path: relative_to(&ctx.project_root, &inventory_path),
         clean: failed_count == 0,
-        command_count,
+        command_count: executed_count,
         passed_count,
         failed_count,
         results,
@@ -3750,7 +3784,10 @@ pub(crate) fn terminal_ec_gate_summary(
     // "no inventory configured" advisory case (never a silent pass, but
     // never a spurious command run either).
     load_ec_manifest(&ctx).ok()??;
-    verify_ec_context(&ctx).ok()
+    // #1469: the per-close gate runs required_for_production cases only —
+    // advisory cases are recorded as skipped, not executed, keeping wall
+    // clock proportional to what production actually requires.
+    verify_ec_context(&ctx, true).ok()
 }
 
 fn run_ec_tool_manifest_command(
@@ -5470,12 +5507,82 @@ e2e_tests:
             write_generated_ec_test(&path, &content).unwrap();
         }
 
-        let summary = verify_ec_context(&ctx).unwrap();
+        let summary = verify_ec_context(&ctx, false).unwrap();
 
         assert!(summary.clean, "{:?}", summary.results);
         assert_eq!(summary.command_count, 1);
         assert_eq!(summary.passed_count, 1);
         assert_eq!(summary.results[0].claim_id, "demo-smoke");
+    }
+
+    /// #1469: `required_only=true` (the per-close terminal gate's filter)
+    /// must never execute a `required_for_production: false` case — proven
+    /// here by giving the advisory case a command (`false`) that would flip
+    /// `clean` to red if it ran — while still recording it in `results` as
+    /// `status: "skipped"` so the caller can render an auditable
+    /// `skipped (advisory)` entry. `required_only=false` (the `aw ec verify`
+    /// default) must still execute both.
+    #[test]
+    fn ec_verify_required_only_skips_advisory_cases() {
+        let (tmp, ctx) = write_demo_repo();
+        fs::create_dir_all(tmp.path().join("projects/demo/external-contracts/behavior")).unwrap();
+        fs::write(
+            tmp.path()
+                .join("projects/demo/external-contracts/behavior/smoke.md"),
+            r#"
+## Smoke
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: required-case
+    capability_id: demo
+    claim_id: demo-required
+    command: "true"
+  - id: advisory-case
+    capability_id: demo
+    claim_id: demo-advisory
+    command: "false"
+    required_for_production: false
+```
+"#,
+        )
+        .unwrap();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_manifest(&ctx, &manifest).unwrap();
+        for (path, content) in generated_ec_test_files(&ctx, &manifest) {
+            write_generated_ec_test(&path, &content).unwrap();
+        }
+
+        let filtered = verify_ec_context(&ctx, true).unwrap();
+        assert!(filtered.clean, "{:?}", filtered.results);
+        assert_eq!(
+            filtered.command_count, 1,
+            "only the required_for_production case executes"
+        );
+        assert_eq!(filtered.passed_count, 1);
+        assert_eq!(
+            filtered.results.len(),
+            2,
+            "the advisory case still gets a recorded (skipped) entry"
+        );
+        let skipped = filtered
+            .results
+            .iter()
+            .find(|result| result.case_id == "advisory-case")
+            .expect("advisory case present in results");
+        assert_eq!(skipped.status, "skipped");
+        assert_eq!(skipped.stderr_tail, "skipped (advisory)");
+
+        let unfiltered = verify_ec_context(&ctx, false).unwrap();
+        assert_eq!(
+            unfiltered.command_count, 2,
+            "required_only=false (aw ec verify default) still runs everything"
+        );
+        assert!(
+            !unfiltered.clean,
+            "the advisory case's failing command is not skipped when required_only is off"
+        );
     }
 
     #[test]
@@ -5526,7 +5633,7 @@ e2e_tests:
         let manifest = build_expected_manifest(&ctx).unwrap();
         write_ec_manifest(&ctx, &manifest).unwrap();
 
-        let summary = verify_ec_context(&ctx).unwrap();
+        let summary = verify_ec_context(&ctx, false).unwrap();
 
         assert!(!summary.clean, "{:?}", summary.results);
         assert_eq!(summary.command_count, 1);
@@ -5573,7 +5680,7 @@ tool_contracts:
         let manifest = build_expected_manifest(&ctx).unwrap();
         write_ec_manifest(&ctx, &manifest).unwrap();
 
-        let summary = verify_ec_context(&ctx).unwrap();
+        let summary = verify_ec_context(&ctx, false).unwrap();
 
         assert!(summary.clean, "{:?}", summary.results);
         assert_eq!(summary.command_count, 2);
@@ -5622,7 +5729,7 @@ tool_contracts:
         let manifest = build_expected_manifest(&ctx).unwrap();
         write_ec_manifest(&ctx, &manifest).unwrap();
 
-        let summary = verify_ec_context(&ctx).unwrap();
+        let summary = verify_ec_context(&ctx, false).unwrap();
 
         assert!(summary.clean, "{:?}", summary.results);
         assert_eq!(summary.command_count, 1);
@@ -5657,7 +5764,7 @@ tool_contracts:
         let manifest = build_expected_manifest(&ctx).unwrap();
         write_ec_manifest(&ctx, &manifest).unwrap();
 
-        let summary = verify_ec_context(&ctx).unwrap();
+        let summary = verify_ec_context(&ctx, false).unwrap();
 
         assert!(!summary.clean);
         assert_eq!(summary.command_count, 1);
