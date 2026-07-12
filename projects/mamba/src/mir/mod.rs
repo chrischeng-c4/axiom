@@ -183,6 +183,70 @@ pub enum Terminator {
     Unreachable,
 }
 
+/// Whether current Cranelift internal-call adaptation treats this body's
+/// result as a native bool even when its semantic return type is nonprimitive.
+/// Keep this producer heuristic shared until return ABI fully replaces it.
+pub fn body_returns_native_bool(
+    body: &MirBody,
+    tcx: &crate::types::TypeContext,
+) -> bool {
+    let mut bool_vregs = std::collections::HashSet::new();
+    let mut none_vregs = std::collections::HashSet::new();
+    for block in &body.blocks {
+        for inst in &block.stmts {
+            match inst {
+                MirInst::LoadConst {
+                    dest,
+                    value: MirConst::Bool(_),
+                    ..
+                } => {
+                    bool_vregs.insert(*dest);
+                }
+                MirInst::LoadConst {
+                    dest,
+                    value: MirConst::None,
+                    ..
+                } => {
+                    none_vregs.insert(*dest);
+                }
+                MirInst::BinOp { dest, ty, .. }
+                | MirInst::UnaryOp { dest, ty, .. }
+                | MirInst::CallExtern {
+                    dest: Some(dest),
+                    ty,
+                    ..
+                }
+                | MirInst::Call {
+                    dest: Some(dest),
+                    ty,
+                    ..
+                } if matches!(tcx.get(*ty), crate::types::Ty::Bool) => {
+                    bool_vregs.insert(*dest);
+                }
+                MirInst::Copy { dest, source } if bool_vregs.contains(source) => {
+                    bool_vregs.insert(*dest);
+                }
+                MirInst::Copy { dest, source } if none_vregs.contains(source) => {
+                    none_vregs.insert(*dest);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut saw_bool_return = false;
+    for block in &body.blocks {
+        if let Terminator::Return(Some(vreg)) = &block.terminator {
+            if bool_vregs.contains(vreg) {
+                saw_bool_return = true;
+            } else if !none_vregs.contains(vreg) {
+                return false;
+            }
+        }
+    }
+    saw_bool_return
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum MirBinOp {
     Add,
@@ -265,6 +329,94 @@ pub enum MirType {
     Void,
 }
 
+/// Physical representation promised by a producer at the ABI boundary.
+///
+/// This deliberately does not follow the semantic `TypeId`: an `Int` can be
+/// a native i64 on one path and a boxed BigInt on another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PhysicalReturn {
+    RawInt,
+    RawBool,
+    RawFloat,
+    BoxedMbValue,
+    /// Internal JIT return edges may merge an IEEE float bit-pattern with a
+    /// tagged/pointer MbValue. Both are complete dynamic-value bits, but the
+    /// producer is not physically always boxed.
+    BoxedOrRawFloat,
+    RawOrBoxedInt,
+    /// The producer set is real but cannot be represented by a narrower ABI
+    /// contract yet. Consumers must not infer representation from this value.
+    Unknown,
+}
+
+/// Ownership/transfer promise attached to a physical return value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReturnOwnership {
+    NoHeapOwner,
+    BorrowedBoxed,
+    NewlyOwnedBoxed,
+    ProvenanceTransfer,
+}
+
+/// Frozen adapter choice for the legacy dynamic JIT dispatcher.
+///
+/// This is intentionally separate from physical representation: an
+/// `Unknown` ABI must stay honest while #1452 migrates dispatch off the old
+/// boolean "box as raw int or bypass" decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DynamicReturnAdapter {
+    BoxRawInt,
+    BypassIntBoxing,
+}
+
+/// The single canonical return-ABI record shared by runtime externs, SymbolId
+/// metadata, and finalized JIT addresses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ReturnAbi {
+    pub physical: PhysicalReturn,
+    pub ownership: ReturnOwnership,
+    pub dynamic_adapter: DynamicReturnAdapter,
+}
+
+impl ReturnAbi {
+    pub const fn new(physical: PhysicalReturn, ownership: ReturnOwnership) -> Self {
+        let dynamic_adapter = match physical {
+            PhysicalReturn::RawFloat
+            | PhysicalReturn::BoxedMbValue
+            | PhysicalReturn::BoxedOrRawFloat => DynamicReturnAdapter::BypassIntBoxing,
+            PhysicalReturn::RawInt
+            | PhysicalReturn::RawBool
+            | PhysicalReturn::RawOrBoxedInt
+            | PhysicalReturn::Unknown => DynamicReturnAdapter::BoxRawInt,
+        };
+        Self {
+            physical,
+            ownership,
+            dynamic_adapter,
+        }
+    }
+
+    pub const fn with_dynamic_adapter(mut self, dynamic_adapter: DynamicReturnAdapter) -> Self {
+        self.dynamic_adapter = dynamic_adapter;
+        self
+    }
+
+    /// Whether the producer always returns a logical boxed `MbValue`.
+    pub const fn is_always_boxed(self) -> bool {
+        matches!(self.physical, PhysicalReturn::BoxedMbValue)
+    }
+
+    /// Compatibility projection for the current dynamic JIT dispatcher.
+    ///
+    /// JIT float VRegs carry their `MbValue` IEEE bits in the integer return
+    /// register, so both boxed values and raw-float bits must bypass the
+    /// dispatcher's legacy raw-int boxing step. Runtime F64 extern calls do
+    /// not use this address-keyed projection.
+    pub const fn bypasses_dynamic_int_boxing(self) -> bool {
+        matches!(self.dynamic_adapter, DynamicReturnAdapter::BypassIntBoxing)
+    }
+}
+
 /// Extern function declaration for FFI imports (#261).
 #[derive(Debug, Clone)]
 pub struct MirExtern {
@@ -274,6 +426,8 @@ pub struct MirExtern {
     pub params: Vec<MirType>,
     /// Return type in C ABI
     pub return_type: MirType,
+    /// Explicit producer ABI contract; never infer this from `return_type`.
+    pub return_abi: Option<ReturnAbi>,
     /// Which dynamic library contains this function
     pub lib_name: String,
 }
@@ -448,6 +602,7 @@ mod tests {
             name: "puts".to_string(),
             params: vec![MirType::Ptr],
             return_type: MirType::I32,
+            return_abi: None,
             lib_name: "libc".to_string(),
         };
         assert_eq!(ext.name, "puts");

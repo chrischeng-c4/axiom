@@ -107,6 +107,7 @@ fn test_codegen_with_extern() {
             name: "ext_add".into(),
             params: vec![MirType::I64, MirType::I64],
             return_type: MirType::I64,
+            return_abi: None,
             lib_name: "libext".into(),
         }],
     };
@@ -300,6 +301,7 @@ fn test_codegen_extern_with_marshaling() {
             name: "c_abs".into(),
             params: vec![MirType::I32],
             return_type: MirType::I32,
+            return_abi: None,
             lib_name: "libc".into(),
         }],
     };

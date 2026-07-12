@@ -1059,6 +1059,7 @@ mod tests {
                 name: "mb_print".to_string(),
                 params: vec![MirType::I64],
                 return_type: MirType::Void,
+                return_abi: None,
                 lib_name: "runtime".to_string(),
             }],
         };

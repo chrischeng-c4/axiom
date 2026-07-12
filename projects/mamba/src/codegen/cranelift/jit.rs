@@ -226,64 +226,6 @@ impl CraneliftJitBackend {
         self.module.as_mut().expect("module already consumed")
     }
 
-    fn body_returns_native_bool(body: &MirBody, tcx: &TypeContext) -> bool {
-        let mut bool_vregs = HashSet::new();
-        let mut none_vregs = HashSet::new();
-        for block in &body.blocks {
-            for inst in &block.stmts {
-                match inst {
-                    MirInst::LoadConst {
-                        dest,
-                        value: MirConst::Bool(_),
-                        ..
-                    } => {
-                        bool_vregs.insert(*dest);
-                    }
-                    MirInst::LoadConst {
-                        dest,
-                        value: MirConst::None,
-                        ..
-                    } => {
-                        none_vregs.insert(*dest);
-                    }
-                    MirInst::BinOp { dest, ty, .. }
-                    | MirInst::UnaryOp { dest, ty, .. }
-                    | MirInst::CallExtern {
-                        dest: Some(dest),
-                        ty,
-                        ..
-                    }
-                    | MirInst::Call {
-                        dest: Some(dest),
-                        ty,
-                        ..
-                    } if matches!(tcx.get(*ty), Ty::Bool) => {
-                        bool_vregs.insert(*dest);
-                    }
-                    MirInst::Copy { dest, source } if bool_vregs.contains(source) => {
-                        bool_vregs.insert(*dest);
-                    }
-                    MirInst::Copy { dest, source } if none_vregs.contains(source) => {
-                        none_vregs.insert(*dest);
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        let mut saw_bool_return = false;
-        for block in &body.blocks {
-            if let crate::mir::Terminator::Return(Some(vreg)) = &block.terminator {
-                if bool_vregs.contains(vreg) {
-                    saw_bool_return = true;
-                } else if !none_vregs.contains(vreg) {
-                    return false;
-                }
-            }
-        }
-        saw_bool_return
-    }
-
     /// Get the finalized function pointer for an internal function by SymbolId (#1190).
     ///
     /// Returns the raw function pointer if the function was compiled and finalized,
@@ -406,7 +348,7 @@ impl CraneliftJitBackend {
             .map_err(|e| crate::error::MambaError::codegen(format!("declare: {e}")))?;
         self.internal_funcs.insert(body.name.0, func_id);
         self.internal_return_tys.insert(body.name.0, body.return_ty);
-        if Self::body_returns_native_bool(body, tcx) {
+        if crate::mir::body_returns_native_bool(body, tcx) {
             self.internal_native_bool_returns.insert(body.name.0);
         }
         self.internal_param_counts
@@ -3015,8 +2957,8 @@ impl CodegenBackend for CraneliftJitBackend {
                 if crate::runtime::module::is_kwargs_symbol(body.name.0) {
                     crate::runtime::module::register_kwargs_func(ptr as u64);
                 }
-                if crate::runtime::module::is_boxed_return_symbol(body.name.0) {
-                    crate::runtime::module::register_boxed_return_func(ptr as u64);
+                if let Some(abi) = crate::runtime::module::return_abi_symbol(body.name.0) {
+                    crate::runtime::module::register_return_abi_func(body.name.0, ptr as u64, abi);
                 }
                 if perf_map_on {
                     let size = self

@@ -1,5 +1,6 @@
 use super::rc::{MbObject, ObjData};
 use super::value::MbValue;
+use crate::mir::{PhysicalReturn, ReturnAbi, ReturnOwnership};
 /// Module import system for the Mamba runtime (#292, #1190).
 ///
 /// Implements Python-compatible module loading with:
@@ -65,20 +66,13 @@ thread_local! {
     /// Used alongside `VARIADIC_FUNC_ADDRS` to dispatch `f(args_list, kwargs_dict)`.
     pub(crate) static KWARGS_FUNC_ADDRS: std::cell::RefCell<HashSet<u64>> =
         std::cell::RefCell::new(HashSet::new());
-    /// SymbolId.0 for user functions whose inferred RETURN TYPE is `any`/`object`
-    /// (a guaranteed already-boxed MbValue, returned in the integer register).
-    /// Populated during HIR→MIR. The dynamic-call `rebox` re-boxes raw unboxed
-    /// ints (int fast-path returns) into MbValues by detecting the absence of a
-    /// NaN-prefix — but a `float` MbValue ALSO lacks the prefix, so an
-    /// any-returning callee that hands back a float (e.g. `lambda v: v*2.0` used
-    /// as a map/filter callback) would be mis-boxed as an int. These addresses
-    /// tell `rebox` to pass the value through untouched.
-    pub(crate) static BOXED_RETURN_SYMBOL_IDS: std::cell::RefCell<HashSet<u32>> =
-        std::cell::RefCell::new(HashSet::new());
-    /// JIT function pointer addresses for any/object-returning functions.
-    /// Populated post-finalize from `BOXED_RETURN_SYMBOL_IDS`.
-    pub(crate) static BOXED_RETURN_FUNC_ADDRS: std::cell::RefCell<HashSet<u64>> =
-        std::cell::RefCell::new(HashSet::new());
+    /// Canonical internal return ABI registry. Both SymbolIds and finalized
+    /// JIT addresses project from these records; no set independently guesses
+    /// that I64 or `Any` means boxed.
+    pub(crate) static RETURN_ABI_SYMBOLS: std::cell::RefCell<HashMap<u32, ReturnAbi>> =
+        std::cell::RefCell::new(HashMap::new());
+    pub(crate) static RETURN_ABI_ADDRS: std::cell::RefCell<HashMap<u64, ReturnAbi>> =
+        std::cell::RefCell::new(HashMap::new());
     /// JIT backends for imported file-based modules (#1190).
     /// Kept alive so that function pointers from compiled modules remain valid.
     /// Key = module name, Value = boxed JIT backend.
@@ -1209,30 +1203,55 @@ pub fn is_kwargs_func(addr: u64) -> bool {
     KWARGS_FUNC_ADDRS.with(|addrs| addrs.borrow().contains(&addr))
 }
 
-/// Register a SymbolId as belonging to an `any`/`object`-returning function.
-pub fn register_boxed_return_symbol(sym_id: u32) {
-    BOXED_RETURN_SYMBOL_IDS.with(|ids| {
-        ids.borrow_mut().insert(sym_id);
+/// Replace the canonical ABI metadata for a SymbolId.
+pub fn register_return_abi_symbol(sym_id: u32, abi: ReturnAbi) {
+    RETURN_ABI_SYMBOLS.with(|records| {
+        records.borrow_mut().insert(sym_id, abi);
     });
 }
 
-/// Check if a SymbolId belongs to an any/object-returning function.
+pub fn return_abi_symbol(sym_id: u32) -> Option<ReturnAbi> {
+    RETURN_ABI_SYMBOLS.with(|records| records.borrow().get(&sym_id).copied())
+}
+
+/// Compatibility projection retained while dynamic dispatch migrates.
 pub fn is_boxed_return_symbol(sym_id: u32) -> bool {
-    BOXED_RETURN_SYMBOL_IDS.with(|ids| ids.borrow().contains(&sym_id))
+    return_abi_symbol(sym_id).is_some_and(ReturnAbi::bypasses_dynamic_int_boxing)
 }
 
-/// Register a JIT function pointer address as an any/object-returning function.
-pub fn register_boxed_return_func(addr: u64) {
-    BOXED_RETURN_FUNC_ADDRS.with(|addrs| {
-        addrs.borrow_mut().insert(addr);
+/// Record a finalized address for a SymbolId.
+///
+/// SymbolIds are local to each independently lowered module, while imported
+/// JIT backends and their addresses remain live together. Reusing a SymbolId
+/// therefore replaces only the SymbolId lookup; each live address keeps its
+/// own canonical record. Reusing an address naturally replaces that record.
+pub fn register_return_abi_func(sym_id: u32, addr: u64, abi: ReturnAbi) {
+    RETURN_ABI_SYMBOLS.with(|records| {
+        records.borrow_mut().insert(sym_id, abi);
+    });
+    RETURN_ABI_ADDRS.with(|records| {
+        records.borrow_mut().insert(addr, abi);
     });
 }
 
-/// Check if the given function address returns an already-boxed MbValue
-/// (`any`/`object` return). The dynamic-call `rebox` passes such a value
-/// through untouched instead of re-boxing a no-NaN-prefix float as an int.
+pub fn return_abi_func(addr: u64) -> Option<ReturnAbi> {
+    RETURN_ABI_ADDRS.with(|records| records.borrow().get(&addr).copied())
+}
+
+/// Compatibility projection retained while dynamic dispatch migrates.
 pub fn is_boxed_return_func(addr: u64) -> bool {
-    BOXED_RETURN_FUNC_ADDRS.with(|addrs| addrs.borrow().contains(&addr))
+    return_abi_func(addr).is_some_and(ReturnAbi::bypasses_dynamic_int_boxing)
+}
+
+/// Legacy registration sites produce a caller-owned MbValue. New code must
+/// call `register_return_abi_func` with its SymbolId instead.
+pub fn register_boxed_return_func(addr: u64) {
+    RETURN_ABI_ADDRS.with(|records| {
+        records.borrow_mut().insert(
+            addr,
+            ReturnAbi::new(PhysicalReturn::BoxedMbValue, ReturnOwnership::NewlyOwnedBoxed),
+        );
+    });
 }
 
 // ── Built-in Module Registration ──
@@ -1984,8 +2003,8 @@ pub(crate) fn cleanup_all_modules() {
     let _ = VARIADIC_FUNC_ADDRS.with(|c| c.try_borrow_mut().map(|mut s| s.clear()));
     let _ = KWARGS_SYMBOL_IDS.with(|c| c.try_borrow_mut().map(|mut s| s.clear()));
     let _ = KWARGS_FUNC_ADDRS.with(|c| c.try_borrow_mut().map(|mut s| s.clear()));
-    let _ = BOXED_RETURN_SYMBOL_IDS.with(|c| c.try_borrow_mut().map(|mut s| s.clear()));
-    let _ = BOXED_RETURN_FUNC_ADDRS.with(|c| c.try_borrow_mut().map(|mut s| s.clear()));
+    let _ = RETURN_ABI_SYMBOLS.with(|c| c.try_borrow_mut().map(|mut s| s.clear()));
+    let _ = RETURN_ABI_ADDRS.with(|c| c.try_borrow_mut().map(|mut s| s.clear()));
     // NOTE: MODULE_JIT_BACKENDS is cleared separately by cleanup_module_jit_backends().
     // GC must run between this call and backend cleanup so that containers are
     // swept while compile-time objects (owned by backends) are still valid.
@@ -3848,5 +3867,38 @@ mod tests {
     #[test]
     fn test_is_native_func_unknown_addr_false() {
         assert!(!is_native_func(0xFFFF_FFFF_FFFF_0000));
+    }
+
+    #[test]
+    fn return_abi_keeps_live_module_addresses_and_replaces_reused_keys() {
+        let symbol = 4_144_800;
+        let old_addr = 0x1448;
+        let new_addr = 0x1449;
+        let boxed = ReturnAbi::new(
+            PhysicalReturn::BoxedMbValue,
+            ReturnOwnership::NewlyOwnedBoxed,
+        );
+        let raw = ReturnAbi::new(PhysicalReturn::RawInt, ReturnOwnership::NoHeapOwner);
+        register_return_abi_func(symbol, old_addr, boxed);
+        assert!(is_boxed_return_symbol(symbol));
+        assert!(is_boxed_return_func(old_addr));
+        register_return_abi_func(symbol, new_addr, raw);
+        assert_eq!(return_abi_symbol(symbol), Some(raw));
+        assert_eq!(return_abi_func(old_addr), Some(boxed));
+        assert_eq!(return_abi_func(new_addr), Some(raw));
+        assert!(!is_boxed_return_symbol(symbol));
+        assert!(!is_boxed_return_func(new_addr));
+
+        register_return_abi_func(symbol + 1, new_addr, boxed);
+        assert_eq!(return_abi_func(new_addr), Some(boxed));
+        assert!(is_boxed_return_func(new_addr));
+
+        let unknown = ReturnAbi::new(
+            PhysicalReturn::Unknown,
+            ReturnOwnership::ProvenanceTransfer,
+        );
+        register_return_abi_symbol(symbol, unknown);
+        assert_eq!(return_abi_symbol(symbol), Some(unknown));
+        assert!(!is_boxed_return_symbol(symbol));
     }
 }

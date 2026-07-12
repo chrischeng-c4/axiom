@@ -209,96 +209,438 @@ fn dedup_bodies_keep_last(bodies: Vec<crate::mir::MirBody>) -> Vec<crate::mir::M
         .collect()
 }
 
-/// Register the SymbolId of every body whose return type is `any`/`object` — a
-/// guaranteed already-boxed MbValue returned in the integer register. The
-/// dynamic-call `rebox` (mb_call1_val / mb_call0 / mb_call_spread) re-boxes raw
-/// unboxed ints (int fast-path returns, which lack a NaN-prefix) into MbValues;
-/// but a `float` MbValue also lacks the prefix, so an any-returning callee that
-/// returns a float (e.g. `lambda v: v*2.0` used as a map/filter callback) would
-/// be mis-boxed as a giant int. Marking these addresses lets `rebox` pass their
-/// result through untouched. Int/Bool returns stay unregistered and keep the
-/// raw→box behavior; Float returns use the F64/xmm0 ABI and are out of scope
-/// here. Mirrors the VARIADIC_SYMBOL_IDS / register_variadic_symbol pattern.
-fn register_boxed_return_bodies(bodies: &[crate::mir::MirBody], tcx: &TypeContext) {
-    use crate::mir::{MirInst, Terminator};
-    use crate::types::Ty;
-    for b in bodies {
-        // Classify by the type of the VALUE the body actually returns, NOT the
-        // function's declared return_ty: a decorated `-> int` function can carry
-        // return_ty=Any yet still return a raw unboxed int (its body's `a+b` is
-        // Int-typed) — that MUST stay reboxed. We register skip-rebox only when
-        // every return value is provably NOT a raw primitive (Int/Bool), i.e. a
-        // float or an already-boxed MbValue, which rebox would otherwise mis-box.
-        let mut vreg_ty: std::collections::HashMap<u32, TypeId> = std::collections::HashMap::new();
-        let mut copy_src: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
-        for (vr, ty) in &b.params {
-            vreg_ty.insert(vr.0, *ty);
+/// Producer-level lattice used to classify physical return ABI across every
+/// CFG edge. `BOXED_INT` stays separate from general boxed values so the only
+/// mixed primitive contract we publish is the real raw-or-BigInt case.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct PhysicalReturnSet(u8);
+
+impl PhysicalReturnSet {
+    const RAW_INT: Self = Self(1 << 0);
+    const RAW_BOOL: Self = Self(1 << 1);
+    const RAW_FLOAT: Self = Self(1 << 2);
+    const BOXED_INT: Self = Self(1 << 3);
+    const BOXED_VALUE: Self = Self(1 << 4);
+    const UNKNOWN: Self = Self(1 << 5);
+    const DEFERRED: Self = Self(1 << 6);
+
+    fn insert(&mut self, other: Self) -> bool {
+        let old = self.0;
+        self.0 |= other.0;
+        old != self.0
+    }
+
+    fn boxed_for_type(ty: TypeId, tcx: &TypeContext) -> Self {
+        if matches!(tcx.get(ty), crate::types::Ty::Int) {
+            Self::BOXED_INT
+        } else {
+            Self::BOXED_VALUE
         }
-        for blk in &b.blocks {
-            for inst in &blk.stmts {
-                match inst {
-                    MirInst::BinOp { dest, ty, .. }
-                    | MirInst::CheckedAdd { dest, ty, .. }
-                    | MirInst::CheckedSub { dest, ty, .. }
-                    | MirInst::CheckedMul { dest, ty, .. }
-                    | MirInst::UnaryOp { dest, ty, .. }
-                    | MirInst::LoadConst { dest, ty, .. }
-                    | MirInst::GetAttr { dest, ty, .. }
-                    | MirInst::GetItem { dest, ty, .. }
-                    | MirInst::MakeList { dest, ty, .. }
-                    | MirInst::MakeDict { dest, ty, .. }
-                    | MirInst::MakeTuple { dest, ty, .. }
-                    | MirInst::LoadGlobal { dest, ty, .. }
-                    | MirInst::LoadCell { dest, ty, .. }
-                    | MirInst::MakeCell { dest, ty, .. }
-                    | MirInst::LoadCapture { dest, ty, .. } => {
-                        vreg_ty.insert(dest.0, *ty);
+    }
+
+    fn from_abi(abi: crate::mir::ReturnAbi, ty: TypeId, tcx: &TypeContext) -> Self {
+        use crate::mir::PhysicalReturn;
+        match abi.physical {
+            PhysicalReturn::RawInt => Self::RAW_INT,
+            PhysicalReturn::RawBool => Self::RAW_BOOL,
+            PhysicalReturn::RawFloat => Self::RAW_FLOAT,
+            PhysicalReturn::BoxedMbValue => Self::boxed_for_type(ty, tcx),
+            PhysicalReturn::BoxedOrRawFloat => {
+                Self(Self::RAW_FLOAT.0 | Self::BOXED_VALUE.0)
+            }
+            PhysicalReturn::RawOrBoxedInt => Self(Self::RAW_INT.0 | Self::BOXED_INT.0),
+            PhysicalReturn::Unknown => Self::UNKNOWN,
+        }
+    }
+
+    fn into_abi(self) -> Option<crate::mir::ReturnAbi> {
+        use crate::mir::{PhysicalReturn, ReturnAbi, ReturnOwnership};
+        let bits = self.0 & !Self::DEFERRED.0;
+        if bits == 0 {
+            return None;
+        }
+        let boxed = Self::BOXED_INT.0 | Self::BOXED_VALUE.0;
+        let physical = match bits {
+            bits if bits & Self::UNKNOWN.0 != 0 => PhysicalReturn::Unknown,
+            bits if bits == Self::RAW_INT.0 => PhysicalReturn::RawInt,
+            bits if bits == Self::RAW_BOOL.0 => PhysicalReturn::RawBool,
+            bits if bits == Self::RAW_FLOAT.0 => PhysicalReturn::RawFloat,
+            bits if bits & !boxed == 0 => PhysicalReturn::BoxedMbValue,
+            bits if bits & Self::RAW_INT.0 != 0
+                && bits & !(Self::RAW_INT.0 | Self::BOXED_INT.0) == 0 =>
+            {
+                PhysicalReturn::RawOrBoxedInt
+            }
+            // Internal float bits and boxed values are both complete MbValue
+            // bit patterns in the JIT's I64 return register.
+            bits if bits & (Self::RAW_INT.0 | Self::RAW_BOOL.0) == 0
+                && bits & Self::RAW_FLOAT.0 != 0
+                && bits & boxed != 0 =>
+            {
+                PhysicalReturn::BoxedOrRawFloat
+            }
+            _ => PhysicalReturn::Unknown,
+        };
+        let ownership = match physical {
+            PhysicalReturn::RawInt | PhysicalReturn::RawBool | PhysicalReturn::RawFloat => {
+                ReturnOwnership::NoHeapOwner
+            }
+            PhysicalReturn::BoxedMbValue => ReturnOwnership::NewlyOwnedBoxed,
+            PhysicalReturn::BoxedOrRawFloat
+            | PhysicalReturn::RawOrBoxedInt
+            | PhysicalReturn::Unknown => {
+                ReturnOwnership::ProvenanceTransfer
+            }
+        };
+        Some(ReturnAbi::new(physical, ownership))
+    }
+}
+
+fn parameter_return_set(ty: TypeId, tcx: &TypeContext) -> PhysicalReturnSet {
+    // Primitive entry types carry their current JIT ABI. Nonprimitive params
+    // remain unknown until #1451 owns argument adaptation: an Any-typed value
+    // can already contain raw bits that static call boxing cannot recognize.
+    match tcx.get(ty) {
+        // Raw-int entry adaptation preserves an out-of-range boxed BigInt.
+        crate::types::Ty::Int => PhysicalReturnSet(
+            PhysicalReturnSet::RAW_INT.0 | PhysicalReturnSet::BOXED_INT.0,
+        ),
+        crate::types::Ty::Bool => PhysicalReturnSet::RAW_BOOL,
+        crate::types::Ty::Float => PhysicalReturnSet::RAW_FLOAT,
+        _ => PhysicalReturnSet::UNKNOWN,
+    }
+}
+
+fn classify_return_body(
+    body: &crate::mir::MirBody,
+    tcx: &TypeContext,
+    body_abis: &std::collections::HashMap<u32, crate::mir::ReturnAbi>,
+    body_return_tys: &std::collections::HashMap<u32, TypeId>,
+    native_bool_bodies: &std::collections::HashSet<u32>,
+    extern_abis: &std::collections::HashMap<
+        &'static str,
+        (crate::mir::MirType, Option<crate::mir::ReturnAbi>),
+    >,
+) -> Option<crate::mir::ReturnAbi> {
+    use crate::mir::{MirBinOp, MirConst, MirInst, MirUnaryOp, Terminator};
+    use crate::types::Ty;
+
+    let mut values: std::collections::HashMap<u32, PhysicalReturnSet> =
+        std::collections::HashMap::new();
+    for (vreg, ty) in &body.params {
+        values.entry(vreg.0).or_default().insert(parameter_return_set(*ty, tcx));
+    }
+
+    let instruction_count = body.blocks.iter().map(|block| block.stmts.len()).sum::<usize>();
+    for _ in 0..=instruction_count {
+        let mut changed = false;
+        for block in &body.blocks {
+            for inst in &block.stmts {
+                let produced = match inst {
+                    MirInst::LoadConst { dest, value, .. } => Some((
+                        *dest,
+                        match value {
+                            MirConst::Int(_) => PhysicalReturnSet::RAW_INT,
+                            MirConst::BigInt(_) => PhysicalReturnSet::BOXED_INT,
+                            MirConst::Float(_) => PhysicalReturnSet::RAW_FLOAT,
+                            MirConst::Bool(_) => PhysicalReturnSet::RAW_BOOL,
+                            _ => PhysicalReturnSet::BOXED_VALUE,
+                        },
+                    )),
+                    MirInst::CheckedAdd { dest, .. }
+                    | MirInst::CheckedSub { dest, .. }
+                    | MirInst::CheckedMul { dest, .. } => Some((
+                        *dest,
+                        PhysicalReturnSet(
+                            PhysicalReturnSet::RAW_INT.0 | PhysicalReturnSet::BOXED_INT.0,
+                        ),
+                    )),
+                    MirInst::BinOp { dest, op, ty, .. } => {
+                        let set = if matches!(op, MirBinOp::In | MirBinOp::NotIn) {
+                            // User __contains__ dispatch can forward raw JIT
+                            // bits; NotIn only toggles bit zero afterward.
+                            PhysicalReturnSet::UNKNOWN
+                        } else if matches!(
+                            op,
+                            MirBinOp::Eq
+                                | MirBinOp::NotEq
+                                | MirBinOp::Lt
+                                | MirBinOp::Gt
+                                | MirBinOp::LtEq
+                                | MirBinOp::GtEq
+                                | MirBinOp::Is
+                                | MirBinOp::IsNot
+                        ) {
+                            PhysicalReturnSet::RAW_BOOL
+                        } else {
+                            match tcx.get(*ty) {
+                                Ty::Int => PhysicalReturnSet(
+                                    PhysicalReturnSet::RAW_INT.0
+                                        | PhysicalReturnSet::BOXED_INT.0,
+                                ),
+                                Ty::Bool => PhysicalReturnSet::RAW_BOOL,
+                                Ty::Float => PhysicalReturnSet::RAW_FLOAT,
+                                _ => PhysicalReturnSet::UNKNOWN,
+                            }
+                        };
+                        Some((*dest, set))
+                    }
+                    MirInst::UnaryOp { dest, op, ty, .. } => {
+                        let set = if matches!(op, MirUnaryOp::Not) {
+                            PhysicalReturnSet::RAW_BOOL
+                        } else {
+                            match tcx.get(*ty) {
+                                Ty::Int => PhysicalReturnSet(
+                                    PhysicalReturnSet::RAW_INT.0
+                                        | PhysicalReturnSet::BOXED_INT.0,
+                                ),
+                                Ty::Bool => PhysicalReturnSet::RAW_BOOL,
+                                Ty::Float => PhysicalReturnSet::RAW_FLOAT,
+                                _ => PhysicalReturnSet::UNKNOWN,
+                            }
+                        };
+                        Some((*dest, set))
                     }
                     MirInst::Call {
-                        dest: Some(d), ty, ..
-                    }
-                    | MirInst::CallExtern {
-                        dest: Some(d), ty, ..
+                        dest: Some(dest),
+                        func,
+                        ty,
+                        ..
                     } => {
-                        vreg_ty.insert(d.0, *ty);
+                        let abi = body_abis.get(&func.0).copied();
+                        let callsite_is_nonprimitive = !matches!(
+                            tcx.get(*ty),
+                            Ty::Int | Ty::Bool | Ty::Float
+                        );
+                        let set = if abi.is_none() && body_return_tys.contains_key(&func.0) {
+                            PhysicalReturnSet::DEFERRED
+                        } else if callsite_is_nonprimitive {
+                            match body_return_tys.get(&func.0).map(|ty| tcx.get(*ty)) {
+                                Some(Ty::Int) => PhysicalReturnSet::BOXED_INT,
+                                Some(Ty::Bool) => PhysicalReturnSet::BOXED_VALUE,
+                                Some(Ty::Float) => abi
+                                    .map(|abi| PhysicalReturnSet::from_abi(abi, *ty, tcx))
+                                    .unwrap_or(PhysicalReturnSet::UNKNOWN),
+                                _ if native_bool_bodies.contains(&func.0) => {
+                                    PhysicalReturnSet::BOXED_VALUE
+                                }
+                                _ => abi
+                                    .map(|abi| PhysicalReturnSet::from_abi(abi, *ty, tcx))
+                                    .unwrap_or(PhysicalReturnSet::UNKNOWN),
+                            }
+                        } else {
+                            abi.map(|abi| PhysicalReturnSet::from_abi(abi, *ty, tcx))
+                                .unwrap_or(PhysicalReturnSet::UNKNOWN)
+                        };
+                        Some((*dest, set))
+                    }
+                    MirInst::CallExtern {
+                        dest: Some(dest),
+                        name,
+                        ty,
+                        ..
+                    } => {
+                        let set = match extern_abis.get(name.as_str()).copied() {
+                            Some((crate::mir::MirType::Void, _)) => {
+                                PhysicalReturnSet::BOXED_VALUE
+                            }
+                            Some((_, Some(abi))) => {
+                                PhysicalReturnSet::from_abi(abi, *ty, tcx)
+                            }
+                            _ => PhysicalReturnSet::UNKNOWN,
+                        };
+                        Some((*dest, set))
                     }
                     MirInst::Copy { dest, source } => {
-                        copy_src.insert(dest.0, source.0);
+                        values.get(&source.0).copied().map(|set| (*dest, set))
                     }
-                    _ => {}
-                }
-            }
-        }
-        let resolve = |mut v: u32| -> Option<TypeId> {
-            for _ in 0..64 {
-                if let Some(t) = vreg_ty.get(&v) {
-                    return Some(*t);
-                }
-                match copy_src.get(&v) {
-                    Some(&s) => v = s,
-                    None => return None,
-                }
-            }
-            None
-        };
-        let mut returns_value = false;
-        let mut all_boxed = true;
-        for blk in &b.blocks {
-            if let Terminator::Return(Some(vr)) = &blk.terminator {
-                returns_value = true;
-                match resolve(vr.0).map(|t| tcx.get(t)) {
-                    // Provably a raw primitive, or undeterminable → keep reboxing.
-                    Some(Ty::Int) | Some(Ty::Bool) | None => {
-                        all_boxed = false;
-                        break;
+                    MirInst::GetAttr { dest, .. }
+                    | MirInst::GetItem { dest, .. }
+                    | MirInst::LoadGlobal { dest, .. }
+                    | MirInst::LoadCell { dest, .. }
+                    | MirInst::LoadCapture { dest, .. } => {
+                        Some((*dest, PhysicalReturnSet::UNKNOWN))
                     }
-                    _ => {}
+                    MirInst::MakeList { dest, .. }
+                    | MirInst::MakeDict { dest, .. }
+                    | MirInst::MakeTuple { dest, .. }
+                    | MirInst::MakeCell { dest, .. } => {
+                        Some((*dest, PhysicalReturnSet::BOXED_VALUE))
+                    }
+                    _ => None,
+                };
+                if let Some((dest, set)) = produced {
+                    changed |= values.entry(dest.0).or_default().insert(set);
                 }
             }
         }
-        if returns_value && all_boxed {
-            crate::runtime::module::register_boxed_return_symbol(b.name.0);
+        if !changed {
+            break;
         }
+    }
+
+    let mut returned = PhysicalReturnSet::default();
+    for block in &body.blocks {
+        match &block.terminator {
+            Terminator::Return(Some(vreg)) => {
+                returned.insert(
+                    values
+                        .get(&vreg.0)
+                        .copied()
+                        .unwrap_or(PhysicalReturnSet::UNKNOWN),
+                );
+            }
+            Terminator::Return(None) => {
+                returned.insert(PhysicalReturnSet::BOXED_VALUE);
+            }
+            _ => {}
+        }
+    }
+    returned.into_abi()
+}
+
+fn legacy_dynamic_return_adapter(
+    body: &crate::mir::MirBody,
+    tcx: &TypeContext,
+) -> crate::mir::DynamicReturnAdapter {
+    use crate::mir::{DynamicReturnAdapter, MirInst, Terminator};
+    use crate::types::Ty;
+
+    // Freeze the pre-#1448 dynamic-dispatch decision while the canonical
+    // physical ABI replaces its semantic approximation. #1452 owns removing
+    // this adapter when dispatch can consume full provenance.
+    let mut vreg_ty: std::collections::HashMap<u32, TypeId> =
+        std::collections::HashMap::new();
+    let mut copy_src: std::collections::HashMap<u32, u32> =
+        std::collections::HashMap::new();
+    for (vreg, ty) in &body.params {
+        vreg_ty.insert(vreg.0, *ty);
+    }
+    for block in &body.blocks {
+        for inst in &block.stmts {
+            match inst {
+                MirInst::BinOp { dest, ty, .. }
+                | MirInst::CheckedAdd { dest, ty, .. }
+                | MirInst::CheckedSub { dest, ty, .. }
+                | MirInst::CheckedMul { dest, ty, .. }
+                | MirInst::UnaryOp { dest, ty, .. }
+                | MirInst::LoadConst { dest, ty, .. }
+                | MirInst::GetAttr { dest, ty, .. }
+                | MirInst::GetItem { dest, ty, .. }
+                | MirInst::MakeList { dest, ty, .. }
+                | MirInst::MakeDict { dest, ty, .. }
+                | MirInst::MakeTuple { dest, ty, .. }
+                | MirInst::LoadGlobal { dest, ty, .. }
+                | MirInst::LoadCell { dest, ty, .. }
+                | MirInst::MakeCell { dest, ty, .. }
+                | MirInst::LoadCapture { dest, ty, .. } => {
+                    vreg_ty.insert(dest.0, *ty);
+                }
+                MirInst::Call {
+                    dest: Some(dest),
+                    ty,
+                    ..
+                }
+                | MirInst::CallExtern {
+                    dest: Some(dest),
+                    ty,
+                    ..
+                } => {
+                    vreg_ty.insert(dest.0, *ty);
+                }
+                MirInst::Copy { dest, source } => {
+                    copy_src.insert(dest.0, source.0);
+                }
+                _ => {}
+            }
+        }
+    }
+    let resolve = |mut vreg: u32| -> Option<TypeId> {
+        for _ in 0..64 {
+            if let Some(ty) = vreg_ty.get(&vreg) {
+                return Some(*ty);
+            }
+            vreg = *copy_src.get(&vreg)?;
+        }
+        None
+    };
+
+    let mut returns_value = false;
+    for block in &body.blocks {
+        if let Terminator::Return(Some(vreg)) = &block.terminator {
+            returns_value = true;
+            if matches!(
+                resolve(vreg.0).map(|ty| tcx.get(ty)),
+                Some(Ty::Int) | Some(Ty::Bool) | None
+            ) {
+                return DynamicReturnAdapter::BoxRawInt;
+            }
+        }
+    }
+    if returns_value {
+        DynamicReturnAdapter::BypassIntBoxing
+    } else {
+        DynamicReturnAdapter::BoxRawInt
+    }
+}
+
+fn register_return_abi_bodies(bodies: &[crate::mir::MirBody], tcx: &TypeContext) {
+    use crate::mir::{PhysicalReturn, ReturnAbi, ReturnOwnership};
+
+    let extern_abis: std::collections::HashMap<
+        &'static str,
+        (crate::mir::MirType, Option<ReturnAbi>),
+    > =
+        crate::runtime::symbols::runtime_symbols()
+            .into_iter()
+            .map(|symbol| (symbol.name, (symbol.return_type, symbol.return_abi)))
+            .collect();
+    let body_return_tys: std::collections::HashMap<u32, TypeId> = bodies
+        .iter()
+        .map(|body| (body.name.0, body.return_ty))
+        .collect();
+    let native_bool_bodies: std::collections::HashSet<u32> = bodies
+        .iter()
+        .filter(|body| crate::mir::body_returns_native_bool(body, tcx))
+        .map(|body| body.name.0)
+        .collect();
+    let mut body_abis: std::collections::HashMap<u32, ReturnAbi> =
+        std::collections::HashMap::new();
+
+    // Calls can target bodies declared later. Iterate over a stable snapshot so
+    // forward aliases and mutually-referential bodies converge without using a
+    // declared semantic return type as a physical guess.
+    for _ in 0..=bodies.len() {
+        let mut next = body_abis.clone();
+        for body in bodies {
+            if let Some(abi) =
+                classify_return_body(
+                    body,
+                    tcx,
+                    &body_abis,
+                    &body_return_tys,
+                    &native_bool_bodies,
+                    &extern_abis,
+                )
+            {
+                next.insert(
+                    body.name.0,
+                    abi.with_dynamic_adapter(legacy_dynamic_return_adapter(body, tcx)),
+                );
+            }
+        }
+        if next == body_abis {
+            break;
+        }
+        body_abis = next;
+    }
+
+    for body in bodies {
+        let abi = body_abis.get(&body.name.0).copied().unwrap_or_else(|| {
+            ReturnAbi::new(PhysicalReturn::Unknown, ReturnOwnership::ProvenanceTransfer)
+                .with_dynamic_adapter(legacy_dynamic_return_adapter(body, tcx))
+        });
+        crate::runtime::module::register_return_abi_symbol(body.name.0, abi);
     }
 }
 
@@ -694,7 +1036,7 @@ pub fn lower_hir_to_mir(hir: &HirModule, tcx: &TypeContext) -> MirModule {
         lowerer.bodies.push(main_body);
     }
     let bodies = dedup_bodies_keep_last(lowerer.bodies);
-    register_boxed_return_bodies(&bodies, tcx);
+    register_return_abi_bodies(&bodies, tcx);
     MirModule {
         bodies,
         externs: Vec::new(),
@@ -1441,7 +1783,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
         lowerer.bodies.push(main_body);
     }
     let bodies = dedup_bodies_keep_last(lowerer.bodies);
-    register_boxed_return_bodies(&bodies, tcx);
+    register_return_abi_bodies(&bodies, tcx);
     MirModule {
         bodies,
         externs: Vec::new(),
@@ -1555,7 +1897,7 @@ pub fn lower_hir_to_mir_repl(
         lowerer.lower_top_level_repl(&hir.top_level, &hir.sym_names, &hir.sym_types, prev_globals);
     lowerer.bodies.push(body);
     let bodies = dedup_bodies_keep_last(lowerer.bodies);
-    register_boxed_return_bodies(&bodies, tcx);
+    register_return_abi_bodies(&bodies, tcx);
     let mir = MirModule {
         bodies,
         externs: Vec::new(),
@@ -13393,10 +13735,568 @@ fn lower_mir_unaryop(op: HirUnaryOp) -> MirUnaryOp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mir::{BasicBlock, MirBody, MirConst, MirInst, Terminator, VReg};
     use crate::lower::lower_module;
     use crate::source::span::Span;
     use crate::source::FileId;
     use crate::types::TypeChecker;
+
+    #[test]
+    fn return_abi_classifies_checked_int_edge_as_raw_or_boxed() {
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let body = MirBody {
+            name: SymbolId(4_144_801),
+            params: vec![],
+            return_ty: int_ty,
+            blocks: vec![
+                BasicBlock {
+                    id: crate::mir::BlockId(0),
+                    stmts: vec![
+                        MirInst::LoadConst { dest: VReg(0), value: MirConst::Int(1), ty: int_ty },
+                        MirInst::CheckedAdd { dest: VReg(1), lhs: VReg(0), rhs: VReg(0), ty: int_ty },
+                    ],
+                    terminator: Terminator::Return(Some(VReg(0))),
+                },
+                BasicBlock { id: crate::mir::BlockId(1), stmts: vec![], terminator: Terminator::Return(Some(VReg(1))) },
+            ],
+        };
+        register_return_abi_bodies(&[body], &tcx);
+        let abi = crate::runtime::module::return_abi_symbol(4_144_801).unwrap();
+        assert_eq!(abi.physical, crate::mir::PhysicalReturn::RawOrBoxedInt);
+        assert_eq!(abi.ownership, crate::mir::ReturnOwnership::ProvenanceTransfer);
+    }
+
+    #[test]
+    fn return_abi_follows_checked_int_through_copy_alias() {
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let body = MirBody {
+            name: SymbolId(4_144_802),
+            params: vec![],
+            return_ty: int_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![
+                    MirInst::LoadConst {
+                        dest: VReg(0),
+                        value: MirConst::Int(1),
+                        ty: int_ty,
+                    },
+                    MirInst::CheckedAdd {
+                        dest: VReg(1),
+                        lhs: VReg(0),
+                        rhs: VReg(0),
+                        ty: int_ty,
+                    },
+                    MirInst::Copy {
+                        dest: VReg(2),
+                        source: VReg(1),
+                    },
+                ],
+                terminator: Terminator::Return(Some(VReg(2))),
+            }],
+        };
+        register_return_abi_bodies(&[body], &tcx);
+        let abi = crate::runtime::module::return_abi_symbol(4_144_802).unwrap();
+        assert_eq!(abi.physical, crate::mir::PhysicalReturn::RawOrBoxedInt);
+    }
+
+    #[test]
+    fn return_abi_uses_forward_call_producer_not_any_annotation() {
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let int_ty = tcx.int();
+        let caller = MirBody {
+            name: SymbolId(4_144_803),
+            params: vec![],
+            return_ty: any_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![MirInst::Call {
+                    dest: Some(VReg(0)),
+                    func: SymbolId(4_144_804),
+                    args: vec![],
+                    ty: any_ty,
+                }],
+                terminator: Terminator::Return(Some(VReg(0))),
+            }],
+        };
+        let callee = MirBody {
+            name: SymbolId(4_144_804),
+            params: vec![],
+            return_ty: int_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![MirInst::LoadConst {
+                    dest: VReg(0),
+                    value: MirConst::BigInt("9000000000000000000".to_string()),
+                    ty: int_ty,
+                }],
+                terminator: Terminator::Return(Some(VReg(0))),
+            }],
+        };
+        register_return_abi_bodies(&[caller, callee], &tcx);
+        let abi = crate::runtime::module::return_abi_symbol(4_144_803).unwrap();
+        assert_eq!(abi.physical, crate::mir::PhysicalReturn::BoxedMbValue);
+        assert_eq!(abi.ownership, crate::mir::ReturnOwnership::NewlyOwnedBoxed);
+    }
+
+    #[test]
+    fn return_abi_does_not_promote_any_typed_raw_producer_to_boxed() {
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let body = MirBody {
+            name: SymbolId(4_144_805),
+            params: vec![],
+            return_ty: any_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![MirInst::LoadConst {
+                    dest: VReg(0),
+                    value: MirConst::Int(7),
+                    ty: any_ty,
+                }],
+                terminator: Terminator::Return(Some(VReg(0))),
+            }],
+        };
+        register_return_abi_bodies(&[body], &tcx);
+        let abi = crate::runtime::module::return_abi_symbol(4_144_805).unwrap();
+        assert_eq!(abi.physical, crate::mir::PhysicalReturn::RawInt);
+        assert!(!abi.is_always_boxed());
+        assert!(abi.bypasses_dynamic_int_boxing());
+    }
+
+    #[test]
+    fn return_abi_classifies_membership_result_as_unknown() {
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let bool_ty = tcx.bool();
+        let body = MirBody {
+            name: SymbolId(4_144_812),
+            params: vec![],
+            return_ty: bool_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![
+                    MirInst::LoadConst {
+                        dest: VReg(0),
+                        value: MirConst::Int(1),
+                        ty: any_ty,
+                    },
+                    MirInst::LoadConst {
+                        dest: VReg(1),
+                        value: MirConst::None,
+                        ty: any_ty,
+                    },
+                    MirInst::BinOp {
+                        dest: VReg(2),
+                        op: crate::mir::MirBinOp::In,
+                        lhs: VReg(0),
+                        rhs: VReg(1),
+                        ty: bool_ty,
+                    },
+                ],
+                terminator: Terminator::Return(Some(VReg(2))),
+            }],
+        };
+        register_return_abi_bodies(&[body], &tcx);
+        let abi = crate::runtime::module::return_abi_symbol(4_144_812).unwrap();
+        assert_eq!(abi.physical, crate::mir::PhysicalReturn::Unknown);
+        assert_eq!(abi.ownership, crate::mir::ReturnOwnership::ProvenanceTransfer);
+    }
+
+    #[test]
+    fn return_abi_keeps_declared_any_forward_raw_call_raw() {
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let caller = MirBody {
+            name: SymbolId(4_144_806),
+            params: vec![],
+            return_ty: any_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![MirInst::Call {
+                    dest: Some(VReg(0)),
+                    func: SymbolId(4_144_807),
+                    args: vec![],
+                    ty: any_ty,
+                }],
+                terminator: Terminator::Return(Some(VReg(0))),
+            }],
+        };
+        let callee = MirBody {
+            name: SymbolId(4_144_807),
+            params: vec![],
+            return_ty: any_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![MirInst::LoadConst {
+                    dest: VReg(0),
+                    value: MirConst::Int(7),
+                    ty: any_ty,
+                }],
+                terminator: Terminator::Return(Some(VReg(0))),
+            }],
+        };
+        register_return_abi_bodies(&[caller, callee], &tcx);
+        let abi = crate::runtime::module::return_abi_symbol(4_144_806).unwrap();
+        assert_eq!(abi.physical, crate::mir::PhysicalReturn::RawInt);
+    }
+
+    #[test]
+    fn return_abi_mirrors_native_bool_call_adaptation() {
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let bool_ty = tcx.bool();
+        let callee_symbol = SymbolId(4_144_816);
+        let caller = MirBody {
+            name: SymbolId(4_144_815),
+            params: vec![],
+            return_ty: any_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![MirInst::Call {
+                    dest: Some(VReg(0)),
+                    func: callee_symbol,
+                    args: vec![VReg(1)],
+                    ty: any_ty,
+                }],
+                terminator: Terminator::Return(Some(VReg(0))),
+            }],
+        };
+        let callee = MirBody {
+            name: callee_symbol,
+            params: vec![(VReg(0), bool_ty)],
+            return_ty: any_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![],
+                terminator: Terminator::Return(Some(VReg(0))),
+            }],
+        };
+        assert!(!crate::mir::body_returns_native_bool(&callee, &tcx));
+        register_return_abi_bodies(&[caller, callee], &tcx);
+        let abi = crate::runtime::module::return_abi_symbol(4_144_815).unwrap();
+        assert_eq!(abi.physical, crate::mir::PhysicalReturn::RawBool);
+    }
+
+    #[test]
+    fn return_abi_marks_unrepresentable_edges_unknown() {
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let body = MirBody {
+            name: SymbolId(4_144_808),
+            params: vec![],
+            return_ty: any_ty,
+            blocks: vec![
+                BasicBlock {
+                    id: crate::mir::BlockId(0),
+                    stmts: vec![MirInst::LoadConst {
+                        dest: VReg(0),
+                        value: MirConst::Int(7),
+                        ty: any_ty,
+                    }],
+                    terminator: Terminator::Return(Some(VReg(0))),
+                },
+                BasicBlock {
+                    id: crate::mir::BlockId(1),
+                    stmts: vec![MirInst::LoadConst {
+                        dest: VReg(1),
+                        value: MirConst::Str("value".to_string()),
+                        ty: any_ty,
+                    }],
+                    terminator: Terminator::Return(Some(VReg(1))),
+                },
+            ],
+        };
+        register_return_abi_bodies(&[body], &tcx);
+        let abi = crate::runtime::module::return_abi_symbol(4_144_808).unwrap();
+        assert_eq!(abi.physical, crate::mir::PhysicalReturn::Unknown);
+        assert!(abi.bypasses_dynamic_int_boxing());
+    }
+
+    #[test]
+    fn return_abi_preserves_float_or_boxed_dispatch_projection() {
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let float_ty = tcx.float();
+        let body = MirBody {
+            name: SymbolId(4_144_809),
+            params: vec![],
+            return_ty: any_ty,
+            blocks: vec![
+                BasicBlock {
+                    id: crate::mir::BlockId(0),
+                    stmts: vec![MirInst::LoadConst {
+                        dest: VReg(0),
+                        value: MirConst::Float(1.5),
+                        ty: float_ty,
+                    }],
+                    terminator: Terminator::Return(Some(VReg(0))),
+                },
+                BasicBlock {
+                    id: crate::mir::BlockId(1),
+                    stmts: vec![MirInst::LoadConst {
+                        dest: VReg(1),
+                        value: MirConst::Str("value".to_string()),
+                        ty: any_ty,
+                    }],
+                    terminator: Terminator::Return(Some(VReg(1))),
+                },
+            ],
+        };
+        register_return_abi_bodies(&[body], &tcx);
+        let abi = crate::runtime::module::return_abi_symbol(4_144_809).unwrap();
+        assert_eq!(abi.physical, crate::mir::PhysicalReturn::BoxedOrRawFloat);
+        assert!(!abi.is_always_boxed());
+        assert!(abi.bypasses_dynamic_int_boxing());
+    }
+
+    #[test]
+    fn return_abi_unknown_extern_is_not_inferred_from_any() {
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let body = MirBody {
+            name: SymbolId(4_144_810),
+            params: vec![],
+            return_ty: any_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![MirInst::CallExtern {
+                    dest: Some(VReg(0)),
+                    name: "not_a_registered_runtime_symbol".to_string(),
+                    args: vec![],
+                    ty: any_ty,
+                }],
+                terminator: Terminator::Return(Some(VReg(0))),
+            }],
+        };
+        register_return_abi_bodies(&[body], &tcx);
+        let abi = crate::runtime::module::return_abi_symbol(4_144_810).unwrap();
+        assert_eq!(abi.physical, crate::mir::PhysicalReturn::Unknown);
+        assert!(!abi.is_always_boxed());
+        assert!(abi.bypasses_dynamic_int_boxing());
+    }
+
+    #[test]
+    fn return_abi_propagates_dynamic_call_boundary_unknown() {
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let body = MirBody {
+            name: SymbolId(4_144_817),
+            params: vec![],
+            return_ty: any_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![MirInst::CallExtern {
+                    dest: Some(VReg(0)),
+                    name: "mb_call1_val".to_string(),
+                    args: vec![VReg(1), VReg(2)],
+                    ty: any_ty,
+                }],
+                terminator: Terminator::Return(Some(VReg(0))),
+            }],
+        };
+        register_return_abi_bodies(&[body], &tcx);
+        let abi = crate::runtime::module::return_abi_symbol(4_144_817).unwrap();
+        assert_eq!(abi.physical, crate::mir::PhysicalReturn::Unknown);
+        assert_eq!(abi.ownership, crate::mir::ReturnOwnership::ProvenanceTransfer);
+        assert!(abi.bypasses_dynamic_int_boxing());
+    }
+
+    #[test]
+    fn return_abi_keeps_dynamic_load_producers_unknown() {
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let attr_body = MirBody {
+            name: SymbolId(4_144_818),
+            params: vec![],
+            return_ty: any_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![MirInst::GetAttr {
+                    dest: VReg(0),
+                    object: VReg(1),
+                    attr: "value".to_string(),
+                    ty: any_ty,
+                }],
+                terminator: Terminator::Return(Some(VReg(0))),
+            }],
+        };
+        let item_body = MirBody {
+            name: SymbolId(4_144_819),
+            params: vec![],
+            return_ty: any_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![MirInst::GetItem {
+                    dest: VReg(0),
+                    object: VReg(1),
+                    index: VReg(2),
+                    ty: any_ty,
+                }],
+                terminator: Terminator::Return(Some(VReg(0))),
+            }],
+        };
+        let global_body = MirBody {
+            name: SymbolId(4_144_820),
+            params: vec![],
+            return_ty: any_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![MirInst::LoadGlobal {
+                    dest: VReg(0),
+                    name: SymbolId(99),
+                    ty: any_ty,
+                }],
+                terminator: Terminator::Return(Some(VReg(0))),
+            }],
+        };
+        register_return_abi_bodies(&[attr_body, item_body, global_body], &tcx);
+        for symbol in [4_144_818, 4_144_819, 4_144_820] {
+            let abi = crate::runtime::module::return_abi_symbol(symbol).unwrap();
+            assert_eq!(abi.physical, crate::mir::PhysicalReturn::Unknown);
+        }
+    }
+
+    #[test]
+    fn return_abi_keeps_any_parameter_unknown() {
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let body = MirBody {
+            name: SymbolId(4_144_821),
+            params: vec![(VReg(0), any_ty)],
+            return_ty: any_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![],
+                terminator: Terminator::Return(Some(VReg(0))),
+            }],
+        };
+        register_return_abi_bodies(&[body], &tcx);
+        let abi = crate::runtime::module::return_abi_symbol(4_144_821).unwrap();
+        assert_eq!(abi.physical, crate::mir::PhysicalReturn::Unknown);
+        assert!(abi.bypasses_dynamic_int_boxing());
+    }
+
+    #[test]
+    fn return_abi_does_not_infer_raw_float_from_callee_semantics() {
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let float_ty = tcx.float();
+        let caller = MirBody {
+            name: SymbolId(4_144_822),
+            params: vec![],
+            return_ty: any_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![MirInst::Call {
+                    dest: Some(VReg(0)),
+                    func: SymbolId(4_144_823),
+                    args: vec![],
+                    ty: any_ty,
+                }],
+                terminator: Terminator::Return(Some(VReg(0))),
+            }],
+        };
+        let callee = MirBody {
+            name: SymbolId(4_144_823),
+            params: vec![],
+            return_ty: float_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![MirInst::CallExtern {
+                    dest: Some(VReg(0)),
+                    name: "unknown_float_producer".to_string(),
+                    args: vec![],
+                    ty: float_ty,
+                }],
+                terminator: Terminator::Return(Some(VReg(0))),
+            }],
+        };
+        register_return_abi_bodies(&[caller, callee], &tcx);
+        let abi = crate::runtime::module::return_abi_symbol(4_144_822).unwrap();
+        assert_eq!(abi.physical, crate::mir::PhysicalReturn::Unknown);
+    }
+
+    #[test]
+    fn return_abi_recursive_edge_converges_from_concrete_base() {
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let symbol = SymbolId(4_144_811);
+        let body = MirBody {
+            name: symbol,
+            params: vec![],
+            return_ty: int_ty,
+            blocks: vec![
+                BasicBlock {
+                    id: crate::mir::BlockId(0),
+                    stmts: vec![MirInst::LoadConst {
+                        dest: VReg(0),
+                        value: MirConst::Int(1),
+                        ty: int_ty,
+                    }],
+                    terminator: Terminator::Return(Some(VReg(0))),
+                },
+                BasicBlock {
+                    id: crate::mir::BlockId(1),
+                    stmts: vec![MirInst::Call {
+                        dest: Some(VReg(1)),
+                        func: symbol,
+                        args: vec![],
+                        ty: int_ty,
+                    }],
+                    terminator: Terminator::Return(Some(VReg(1))),
+                },
+            ],
+        };
+        register_return_abi_bodies(&[body], &tcx);
+        let abi = crate::runtime::module::return_abi_symbol(symbol.0).unwrap();
+        assert_eq!(abi.physical, crate::mir::PhysicalReturn::RawInt);
+    }
+
+    #[test]
+    fn return_abi_classifies_int_parameter_as_raw_or_boxed() {
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let body = MirBody {
+            name: SymbolId(4_144_813),
+            params: vec![(VReg(0), int_ty)],
+            return_ty: int_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![],
+                terminator: Terminator::Return(Some(VReg(0))),
+            }],
+        };
+        register_return_abi_bodies(&[body], &tcx);
+        let abi = crate::runtime::module::return_abi_symbol(4_144_813).unwrap();
+        assert_eq!(abi.physical, crate::mir::PhysicalReturn::RawOrBoxedInt);
+        assert_eq!(abi.ownership, crate::mir::ReturnOwnership::ProvenanceTransfer);
+        assert!(!abi.bypasses_dynamic_int_boxing());
+    }
+
+    #[test]
+    fn return_abi_classifies_bare_return_as_boxed_none() {
+        let tcx = TypeContext::new();
+        let none_ty = tcx.none();
+        let body = MirBody {
+            name: SymbolId(4_144_814),
+            params: vec![],
+            return_ty: none_ty,
+            blocks: vec![BasicBlock {
+                id: crate::mir::BlockId(0),
+                stmts: vec![],
+                terminator: Terminator::Return(None),
+            }],
+        };
+        register_return_abi_bodies(&[body], &tcx);
+        let abi = crate::runtime::module::return_abi_symbol(4_144_814).unwrap();
+        assert_eq!(abi.physical, crate::mir::PhysicalReturn::BoxedMbValue);
+        assert_eq!(abi.ownership, crate::mir::ReturnOwnership::NewlyOwnedBoxed);
+        assert!(!abi.bypasses_dynamic_int_boxing());
+    }
 
     #[test]
     fn test_lower_simple_function() {
