@@ -109,6 +109,23 @@ pub struct ReshardBatchReplaceScope {
 /// every collection that exists on the source shard, even one a batch of
 /// deletes emptied entirely (#1457 R2 / #1443's disclosed edge), so the
 /// bucket's copies of that collection are still pruned on cutover.
+///
+/// #1467 R2 ordering contract: the sender
+/// (`run_migration_pass_impl`/`snapshot_reshard_prune_chunks` in
+/// `src/operator/reshard_driver.rs`) always emits every chunk for one
+/// `(bucket, collection_id, total_chunks)` key strictly in `chunk_index`
+/// order (`0..total_chunks`, awaited sequentially, one HTTP round trip per
+/// chunk) within a single migration pass, and never starts a second pass
+/// for the same key before the first either completes or the driver gives
+/// up on it entirely. The receiver relies on this: `chunk_index == 0`
+/// unambiguously marks the start of a fresh pass and resets any stale
+/// partial left by an earlier, never-completed pass for the same key
+/// instead of unioning into it (see
+/// [`crate::storage::Engine::apply_reshard_prune_chunk`]'s R2 doc comment).
+/// If a future sender ever needs to send chunks for one key out of order or
+/// interleaved across concurrent passes, this ordering contract — and the
+/// receiver's chunk-0 reset — must change together (e.g. to a per-pass
+/// nonce field on this struct).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
 pub struct ReshardPruneChunk {

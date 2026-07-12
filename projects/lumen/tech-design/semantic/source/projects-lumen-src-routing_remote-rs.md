@@ -21,8 +21,8 @@ Public API manifest for `projects/lumen/src/routing_remote.rs` generated from AS
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `RoutedRouter` | projects/lumen/src/routing_remote.rs | struct | pub | 106 |  |
-| `new` | projects/lumen/src/routing_remote.rs | function | pub | 122 | new(engine: Arc<Engine>, local_write: Arc<dyn WriteBackend>, shard_map: VirtualBucketShardMap, local_shard: u32, shard_urls: Vec<String>) -> Result<Self> |
+| `RoutedRouter` | projects/lumen/src/routing_remote.rs | struct | pub | 118 |  |
+| `new` | projects/lumen/src/routing_remote.rs | function | pub | 134 | new(engine: Arc<Engine>, local_write: Arc<dyn WriteBackend>, shard_map: VirtualBucketShardMap, local_shard: u32, shard_urls: Vec<String>) -> Result<Self> |
 
 ## Source
 <!-- type: rust-source-unit lang: rust -->
@@ -66,7 +66,19 @@ Public API manifest for `projects/lumen/src/routing_remote.rs` generated from AS
 //! agreement made every scatter search unavailable pod-wide during the
 //! entire rolling-restart window after a completed split, even though no
 //! single sub-answer here actually depended on the sender's map version
-//! (see `search`'s `SearchShardTarget::All` arm). A forward carries the
+//! (see `search`'s `SearchShardTarget::All` arm). This is a deliberate
+//! availability-over-completeness tradeoff (#1467 R6): a scatter search
+//! answered mid-rolling-restart, with sub-responses spanning two map
+//! versions, can silently miss or double-count buckets that moved between
+//! those versions rather than failing loudly. Because the correctness gap
+//! is silent, the exemption is paired with an observable signal instead of
+//! only a doc comment: the responding pod compares the sender's declared
+//! `x-lumen-map-version` against its own live map on every scattered
+//! sub-request and, on a mismatch, increments
+//! `lumen_scatter_map_version_mismatches_total` (`src/metrics.rs`) and logs
+//! a `tracing::warn!` — non-fatal, so a spike there is a signal for
+//! operators to correlate with an in-flight rollout, not an outage. A
+//! forward carries the
 //! caller's `Authorization` and `x-read-consistency` headers through
 //! unchanged (R3) plus `x-lumen-forwarded: 1` and `x-lumen-map-version:
 //! <sender's map version>` (R2).
@@ -486,6 +498,28 @@ impl RoutedBackend for RoutedRouter {
                         owner_shard: route.shard,
                         local_shard: self.local_shard,
                     }));
+                }
+            } else if let Some(sender_version) = Self::forwarded_map_version(headers) {
+                // #1467 R6: a keyless (scatter) sub-request is still exempt
+                // from the hard `check_forwarded_map_version` rejection above
+                // — availability over completeness, see this module's header
+                // doc — but a disagreement here means the scattering pod's
+                // view of the topology and this pod's are momentarily out of
+                // sync (a mixed-map rolling-restart window), which can make a
+                // scatter search's result set silently incomplete or
+                // overlapping rather than merely stale. Surface that
+                // non-fatally instead of staying invisible.
+                let local_version = self.shard_map.version();
+                if sender_version != local_version {
+                    self.engine.metrics().incr_scatter_map_version_mismatch();
+                    tracing::warn!(
+                        collection_id,
+                        sender_version,
+                        local_version,
+                        "routed scatter search: responding pod's shard-map version differs \
+                         from the scattering pod's declared version; result set may be \
+                         momentarily incomplete during a rolling restart"
+                    );
                 }
             }
             return self.engine.search(collection_id, req);
@@ -984,6 +1018,88 @@ mod tests {
         assert!(err.downcast_ref::<ShardMapVersionMismatch>().is_some());
     }
 
+    /// #1467 R6/AC6: the availability-over-completeness exemption above is
+    /// paired with an observable signal — a keyless (scatter) sub-request
+    /// whose sender declared a different map version than this pod's live
+    /// one must still answer locally (never rejected), but must also
+    /// increment `lumen_scatter_map_version_mismatches_total` exactly once
+    /// per mismatched sub-request. A matching-version scatter sub-request
+    /// must not increment it at all.
+    #[tokio::test]
+    async fn search_already_forwarded_keyless_mismatch_increments_scatter_metric() {
+        let router = test_router(0);
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "city".to_string(),
+            crate::types::FieldSpec {
+                field_type: crate::types::FieldType::Keyword,
+                analyzer: None,
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        router
+            .engine
+            .create_collection("coll", CreateCollectionRequest { fields })
+            .unwrap();
+
+        let before = router
+            .engine
+            .metrics()
+            .scatter_map_version_mismatches_total
+            .get();
+
+        // Matching version: no mismatch, counter untouched.
+        let mut matching_headers = HeaderMap::new();
+        matching_headers.insert(FORWARDED_HEADER, "1".parse().unwrap());
+        matching_headers.insert(
+            MAP_VERSION_HEADER,
+            router.shard_map.version().to_string().parse().unwrap(),
+        );
+        router
+            .search("coll", search_req(None), &matching_headers)
+            .await
+            .expect("matching-version scatter sub-request must succeed");
+        assert_eq!(
+            router
+                .engine
+                .metrics()
+                .scatter_map_version_mismatches_total
+                .get(),
+            before,
+            "a matching declared map version must not increment the mismatch counter"
+        );
+
+        // Mismatched version: answers locally (per the existing exemption
+        // test above) but must now also increment the mismatch counter.
+        let mut mismatched_headers = HeaderMap::new();
+        mismatched_headers.insert(FORWARDED_HEADER, "1".parse().unwrap());
+        mismatched_headers.insert(
+            MAP_VERSION_HEADER,
+            (router.shard_map.version() + 1)
+                .to_string()
+                .parse()
+                .unwrap(),
+        );
+        router
+            .search("coll", search_req(None), &mismatched_headers)
+            .await
+            .expect("a keyless scatter sub-request must not be rejected on map-version mismatch");
+        assert_eq!(
+            router
+                .engine
+                .metrics()
+                .scatter_map_version_mismatches_total
+                .get(),
+            before + 1,
+            "a mismatched declared map version on a keyless scatter sub-request must \
+             increment lumen_scatter_map_version_mismatches_total exactly once"
+        );
+    }
+
     fn search_req(sort: Option<Vec<crate::types::SortSpec>>) -> SearchRequest {
         use crate::types::{FieldValue, QueryNode, TermQuery};
         SearchRequest {
@@ -1071,4 +1187,22 @@ changes:
       classified `ShardForwardRemoteError`. `delete`'s remote-forward URL
       (R4) now percent-encodes `external_id`/`field` via the new
       `percent_encode_component` helper instead of interpolating them raw.
+  - path: "projects/lumen/src/routing_remote.rs"
+    action: update
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1467 R6: keyless (scatter) sub-requests remain exempt from the hard
+      `check_forwarded_map_version` rejection — availability over
+      completeness during a rolling restart's mixed-map window, now
+      documented explicitly in the module header doc — but the exemption
+      is paired with an observable signal: on a keyless forwarded
+      sub-request, the responding pod compares the sender's declared
+      `x-lumen-map-version` against its own live map and, on a mismatch,
+      increments `lumen_scatter_map_version_mismatches_total`
+      (`src/metrics.rs`) and logs a non-fatal `tracing::warn!` naming the
+      collection and both versions. New unit test
+      `search_already_forwarded_keyless_mismatch_increments_scatter_metric`
+      proves the counter increments exactly once on a mismatched scatter
+      sub-request and stays untouched on a matching one.
 ```

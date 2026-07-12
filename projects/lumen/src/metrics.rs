@@ -42,6 +42,24 @@ pub struct Metrics {
     /// (no posting-list rewrite, no HNSW tombstone/reinsert). Distinct from
     /// `index_writes_total`, which only ever counts fields actually written.
     pub replace_fields_skipped_total: Counter,
+    /// #1467 R5: this pod's live routed shard-map version, `0` for every
+    /// non-routed deployment shape (standalone, primary/replica, no
+    /// `operator` feature) that never sets it. The reshard driver's
+    /// `advance_convergence` scrapes this over `/metrics` — the same
+    /// admin-reachable surface its usage loop already polls — to require
+    /// every serving pod to actually report the new map version, not just
+    /// that its StatefulSet rollout finished (rollout completion alone does
+    /// not prove the ConfigMap write each pod reads its map from has
+    /// propagated to every pod).
+    pub shard_map_version: Gauge,
+    /// #1467 R6: count of scatter (routing-key-less) search sub-requests
+    /// where the responding pod's live shard-map version differed from the
+    /// scattering pod's own declared version. Signal for a mixed-map
+    /// rolling-restart window landing a scatter search mid-flight;
+    /// non-fatal by design (see `routing_remote.rs`'s scatter exemption
+    /// doc — availability over completeness). `0` outside routed
+    /// deployments.
+    pub scatter_map_version_mismatches_total: Counter,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-metrics-rs.md#source
@@ -77,6 +95,17 @@ impl Metrics {
 
     pub fn set_storage_bytes(&self, bytes: u64) {
         self.storage_bytes.set(bytes);
+    }
+
+    /// #1467 R5: record this pod's live routed shard-map version.
+    pub fn set_shard_map_version(&self, version: u64) {
+        self.shard_map_version.set(version);
+    }
+
+    /// #1467 R6: record one scatter sub-response whose responding pod's map
+    /// version differed from the scattering pod's own declared version.
+    pub fn incr_scatter_map_version_mismatch(&self) {
+        self.scatter_map_version_mismatches_total.incr();
     }
 
     /// Prometheus text format (0.0.4 compatible). Always emits the same
@@ -155,6 +184,19 @@ impl Metrics {
                 "Total docs:replace fields skipped as unchanged no-ops.",
                 self.replace_fields_skipped_total.get(),
             ),
+            Sample::new(
+                "lumen_shard_map_version",
+                "gauge",
+                "This pod's live routed shard-map version (0 outside routed deployments).",
+                self.shard_map_version.get(),
+            ),
+            Sample::new(
+                "lumen_scatter_map_version_mismatches_total",
+                "counter",
+                "Scatter search sub-responses whose responding pod's map version differed \
+                 from the sender's.",
+                self.scatter_map_version_mismatches_total.get(),
+            ),
         ];
         service_metrics::render(&samples)
     }
@@ -176,6 +218,8 @@ mod tests {
             "lumen_storage_bytes",
             "lumen_posting_cache_hits_total",
             "lumen_replace_fields_skipped_total",
+            "lumen_shard_map_version",
+            "lumen_scatter_map_version_mismatches_total",
         ] {
             assert!(out.contains(name), "expected {name} in:\n{out}");
         }
@@ -197,6 +241,8 @@ mod tests {
         m.posting_cache_hits_total.add(5);
         m.posting_cache_misses_total.add(2);
         m.incr_replace_skipped(6);
+        m.set_shard_map_version(3);
+        m.incr_scatter_map_version_mismatch();
         let out = m.render();
         let golden = "# HELP lumen_index_writes_total Total index items applied.\n\
 # TYPE lumen_index_writes_total counter\n\
@@ -233,10 +279,17 @@ lumen_posting_cache_hits_total 5\n\
 lumen_posting_cache_misses_total 2\n\
 # HELP lumen_replace_fields_skipped_total Total docs:replace fields skipped as unchanged no-ops.\n\
 # TYPE lumen_replace_fields_skipped_total counter\n\
-lumen_replace_fields_skipped_total 6\n";
+lumen_replace_fields_skipped_total 6\n\
+# HELP lumen_shard_map_version This pod's live routed shard-map version (0 outside routed deployments).\n\
+# TYPE lumen_shard_map_version gauge\n\
+lumen_shard_map_version 3\n\
+# HELP lumen_scatter_map_version_mismatches_total Scatter search sub-responses whose responding pod's map version differed from the sender's.\n\
+# TYPE lumen_scatter_map_version_mismatches_total counter\n\
+lumen_scatter_map_version_mismatches_total 1\n";
         assert_eq!(
             out, golden,
-            "render() diverged from the pre-refactor capture (#1293 added lumen_replace_fields_skipped_total)"
+            "render() diverged from the pre-refactor capture (#1467 added lumen_shard_map_version \
+             + lumen_scatter_map_version_mismatches_total)"
         );
     }
 }

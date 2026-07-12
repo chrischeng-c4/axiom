@@ -209,6 +209,19 @@ pub struct ReshardWorkflowSpec {
     /// pending or was never confirmed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub converged_shard_map_version: Option<u64>,
+    /// `shardMap.version` the reshard driver's own cutover last patched
+    /// into `spec.shardMap.version` (#1467 R7), stamped in the exact same
+    /// `advance_catching_up_fenced` patch call that sets `shardMap.
+    /// version`/`phase: Complete`. The ONLY writer of this field — a
+    /// hand-authored or backup-restored `spec.shardMap` never sets it, so
+    /// it stays behind (usually `None`) forever for such a CR.
+    /// `advance_convergence` requires this to equal the current
+    /// `shardMap.version` before engaging the post-cutover write-pause
+    /// fence loop at all, closing the gap where convergence would
+    /// otherwise fence indefinitely over a topology the driver never
+    /// actually changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_cutover_shard_map_version: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]

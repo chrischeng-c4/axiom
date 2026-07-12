@@ -25,12 +25,12 @@ Public API manifest for `projects/lumen/src/reshard.rs` generated from AST durin
 | `BucketMove` | projects/lumen/src/reshard.rs | struct | pub | 44 |  |
 | `ReshardBatch` | projects/lumen/src/reshard.rs | struct | pub | 68 | #1380: `Serialize`/`Deserialize` make a batch postable to `POST /admin/reshard:apply` as-is. #1457 R1: reverted to purely additive (`from_map_version, to_map_version, bucket, from_shard, to_shard, external_ids, snapshot`) — the #1443 R2 `virtual_bucket_count`/`replace_ids` fields moved to the independently-chunked `ReshardPruneChunk`. |
 | `ReshardBatchReplaceScope` | projects/lumen/src/reshard.rs | struct | pub | 90 | #1443 R2 / #1457 R1: the authoritative-subset-replace scope one applying shard must enforce for a `bucket`+collection, now derived from one or more `ReshardPruneChunk`s accumulated by `crate::storage::Engine::apply_reshard_prune_chunk` rather than stamped directly onto a `ReshardBatch`. |
-| `ReshardPruneChunk` | projects/lumen/src/reshard.rs | struct | pub | 114 | #1457 R1: one byte-capped chunk of the authoritative "keep" id set for a single `(bucket, collection_id)` pair under the final migration pass's `to` map; receiver accumulates by `(to_map_version, bucket, collection_id, total_chunks)` and prunes once every `chunk_index` has arrived. |
-| `bucket_moves` | projects/lumen/src/reshard.rs | function | pub | 128 | bucket_moves(     from: &VirtualBucketShardMap,     to: &VirtualBucketShardMap, ) -> Result<Vec<BucketMove>> |
-| `snapshot_reshard_batches` | projects/lumen/src/reshard.rs | function | pub | 170 | #1396 R4: batches are also byte-capped (`MAX_BATCH_BYTES`), splitting an id-chunk further via `byte_cap_chunk` when its serialized snapshot would exceed the cap. #1457 R1: dropped the #1443 R2 `replace_mode: bool` parameter — every pass, including the final `CatchingUp` pass, is now purely additive; the authoritative prune scope is emitted separately by `snapshot_reshard_prune_chunks`. snapshot_reshard_batches(     snapshot: &SnapshotV1,     from: &VirtualBucketShardMap,     to: &VirtualBucketShardMap,     max_external_ids_per_batch: usize, ) -> Result<Vec<ReshardBatch>> |
-| `snapshot_reshard_prune_chunks` | projects/lumen/src/reshard.rs | function | pub | 271 | #1457 R1/R2: builds the final migration pass's authoritative "keep" chunks for every `(bucket, collection_id)` pair in `buckets` × `collection_ids`, byte-capped independently per pair via the private `chunk_ids_by_bytes` helper; a pair with zero matching docs still emits exactly one chunk with empty `keep_ids` (closes the #1443-disclosed delete-resurrection edge on an emptied collection). snapshot_reshard_prune_chunks(     snapshot: &SnapshotV1,     to: &VirtualBucketShardMap,     buckets: &BTreeSet<u32>,     collection_ids: &BTreeSet<String>,     max_chunk_bytes: usize, ) -> Result<Vec<ReshardPruneChunk>> |
-| `merge_snapshot_delta` | projects/lumen/src/reshard.rs | function | pub | 383 | merge_snapshot_delta(mut base: SnapshotV1, delta: SnapshotV1) -> Result<SnapshotV1> |
-| `snapshot_bucket_subset` | projects/lumen/src/reshard.rs | function | pub | 411 | #1380 R2: bucket-scoped export subset, routed with the same `route_document` hash `snapshot_reshard_batches` uses. snapshot_bucket_subset(     snapshot: &SnapshotV1,     virtual_bucket_count: u32,     buckets: &BTreeSet<u32>, ) -> Result<SnapshotV1> |
+| `ReshardPruneChunk` | projects/lumen/src/reshard.rs | struct | pub | 131 | #1457 R1: one byte-capped chunk of the authoritative "keep" id set for a single `(bucket, collection_id)` pair under the final migration pass's `to` map; receiver accumulates by `(to_map_version, bucket, collection_id, total_chunks)` and prunes once every `chunk_index` has arrived. |
+| `bucket_moves` | projects/lumen/src/reshard.rs | function | pub | 145 | bucket_moves(     from: &VirtualBucketShardMap,     to: &VirtualBucketShardMap, ) -> Result<Vec<BucketMove>> |
+| `snapshot_reshard_batches` | projects/lumen/src/reshard.rs | function | pub | 187 | #1396 R4: batches are also byte-capped (`MAX_BATCH_BYTES`), splitting an id-chunk further via `byte_cap_chunk` when its serialized snapshot would exceed the cap. #1457 R1: dropped the #1443 R2 `replace_mode: bool` parameter — every pass, including the final `CatchingUp` pass, is now purely additive; the authoritative prune scope is emitted separately by `snapshot_reshard_prune_chunks`. snapshot_reshard_batches(     snapshot: &SnapshotV1,     from: &VirtualBucketShardMap,     to: &VirtualBucketShardMap,     max_external_ids_per_batch: usize, ) -> Result<Vec<ReshardBatch>> |
+| `snapshot_reshard_prune_chunks` | projects/lumen/src/reshard.rs | function | pub | 288 | #1457 R1/R2: builds the final migration pass's authoritative "keep" chunks for every `(bucket, collection_id)` pair in `buckets` × `collection_ids`, byte-capped independently per pair via the private `chunk_ids_by_bytes` helper; a pair with zero matching docs still emits exactly one chunk with empty `keep_ids` (closes the #1443-disclosed delete-resurrection edge on an emptied collection). snapshot_reshard_prune_chunks(     snapshot: &SnapshotV1,     to: &VirtualBucketShardMap,     buckets: &BTreeSet<u32>,     collection_ids: &BTreeSet<String>,     max_chunk_bytes: usize, ) -> Result<Vec<ReshardPruneChunk>> |
+| `merge_snapshot_delta` | projects/lumen/src/reshard.rs | function | pub | 400 | merge_snapshot_delta(mut base: SnapshotV1, delta: SnapshotV1) -> Result<SnapshotV1> |
+| `snapshot_bucket_subset` | projects/lumen/src/reshard.rs | function | pub | 428 | #1380 R2: bucket-scoped export subset, routed with the same `route_document` hash `snapshot_reshard_batches` uses. snapshot_bucket_subset(     snapshot: &SnapshotV1,     virtual_bucket_count: u32,     buckets: &BTreeSet<u32>, ) -> Result<SnapshotV1> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -146,6 +146,23 @@ pub struct ReshardBatchReplaceScope {
 /// every collection that exists on the source shard, even one a batch of
 /// deletes emptied entirely (#1457 R2 / #1443's disclosed edge), so the
 /// bucket's copies of that collection are still pruned on cutover.
+///
+/// #1467 R2 ordering contract: the sender
+/// (`run_migration_pass_impl`/`snapshot_reshard_prune_chunks` in
+/// `src/operator/reshard_driver.rs`) always emits every chunk for one
+/// `(bucket, collection_id, total_chunks)` key strictly in `chunk_index`
+/// order (`0..total_chunks`, awaited sequentially, one HTTP round trip per
+/// chunk) within a single migration pass, and never starts a second pass
+/// for the same key before the first either completes or the driver gives
+/// up on it entirely. The receiver relies on this: `chunk_index == 0`
+/// unambiguously marks the start of a fresh pass and resets any stale
+/// partial left by an earlier, never-completed pass for the same key
+/// instead of unioning into it (see
+/// [`crate::storage::Engine::apply_reshard_prune_chunk`]'s R2 doc comment).
+/// If a future sender ever needs to send chunks for one key out of order or
+/// interleaved across concurrent passes, this ordering contract — and the
+/// receiver's chunk-0 reset — must change together (e.g. to a per-pass
+/// nonce field on this struct).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
 pub struct ReshardPruneChunk {
@@ -1353,4 +1370,19 @@ changes:
       closing the #1443-disclosed delete-resurrection edge (#1443's own
       fix only prunes ids that *do* appear in the final snapshot).
     impl_mode: hand-written
+  - path: projects/lumen/src/reshard.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1467 R2: doc-comment-only addition on `ReshardPruneChunk` recording
+      the ordering contract the receiver-side stale-partial-reset fix
+      depends on — the sender always emits every chunk for one
+      `(bucket, collection_id, total_chunks)` key strictly in
+      `chunk_index` order within a single migration pass, and never
+      starts a second pass for the same key before the first completes
+      or is abandoned, so `chunk_index == 0` unambiguously marks the
+      start of a fresh pass for
+      `crate::storage::Engine::apply_reshard_prune_chunk` to reset
+      against instead of unioning into a stale partial.
 ```

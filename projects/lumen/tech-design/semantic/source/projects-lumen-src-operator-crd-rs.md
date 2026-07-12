@@ -20,26 +20,26 @@ Public API manifest for `projects/lumen/src/operator/crd.rs` generated from AST 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AuthMode` | projects/lumen/src/operator/crd.rs | enum | pub | 273 |  |
-| `Autoscaling` | projects/lumen/src/operator/crd.rs | struct | pub | 414 |  |
-| `LogFormat` | projects/lumen/src/operator/crd.rs | enum | pub | 250 |  |
-| `LumenReshardStatus` | projects/lumen/src/operator/crd.rs | struct | pub | 466 |  |
+| `AuthMode` | projects/lumen/src/operator/crd.rs | enum | pub | 286 |  |
+| `Autoscaling` | projects/lumen/src/operator/crd.rs | struct | pub | 427 |  |
+| `LogFormat` | projects/lumen/src/operator/crd.rs | enum | pub | 263 |  |
+| `LumenReshardStatus` | projects/lumen/src/operator/crd.rs | struct | pub | 479 |  |
 | `LumenSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 39 |  |
-| `LumenStatus` | projects/lumen/src/operator/crd.rs | struct | pub | 438 |  |
-| `ReshardPhase` | projects/lumen/src/operator/crd.rs | enum | pub | 217 |  |
+| `LumenStatus` | projects/lumen/src/operator/crd.rs | struct | pub | 451 |  |
+| `ReshardPhase` | projects/lumen/src/operator/crd.rs | enum | pub | 230 |  |
 | `ReshardPolicy` | projects/lumen/src/operator/crd.rs | struct | pub | 163 |  |
-| `ReshardWorkflowSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 198 | adds `converged_shard_map_version: Option<u64>` (#1458 R1) |
-| `ServingBackupSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 391 |  |
-| `ServingBootstrapSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 368 |  |
-| `ServingSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 300 |  |
+| `ReshardWorkflowSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 198 | adds `converged_shard_map_version: Option<u64>` (#1458 R1); adds `last_cutover_shard_map_version: Option<u64>` (#1467 R7) |
+| `ServingBackupSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 404 |  |
+| `ServingBootstrapSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 381 |  |
+| `ServingSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 313 |  |
 | `ShardMapSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 135 |  |
-| `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 261 | as_env(self) -> &'static str |
-| `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 288 | as_env(self) -> &'static str |
-| `as_str` | projects/lumen/src/operator/crd.rs | function | pub | 227 | as_str(self) -> &'static str |
-| `progress_percent` | projects/lumen/src/operator/crd.rs | function | pub | 236 | progress_percent(self) -> u8 |
-| `reshard_status` | projects/lumen/src/operator/crd.rs | function | pub | 531 | reshard_status(&self) -> LumenReshardStatus |
-| `reshard_status_with_usage` | projects/lumen/src/operator/crd.rs | function | pub | 610 | reshard_status_with_usage(&self, shard_usage_bytes: &BTreeMap<u32, u64>, measured_at_map_version: u64) -> LumenReshardStatus |
-| `storage_pod_count` | projects/lumen/src/operator/crd.rs | function | pub | 512 | storage_pod_count(&self) -> i32 |
+| `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 274 | as_env(self) -> &'static str |
+| `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 301 | as_env(self) -> &'static str |
+| `as_str` | projects/lumen/src/operator/crd.rs | function | pub | 240 | as_str(self) -> &'static str |
+| `progress_percent` | projects/lumen/src/operator/crd.rs | function | pub | 249 | progress_percent(self) -> u8 |
+| `reshard_status` | projects/lumen/src/operator/crd.rs | function | pub | 544 | reshard_status(&self) -> LumenReshardStatus |
+| `reshard_status_with_usage` | projects/lumen/src/operator/crd.rs | function | pub | 623 | reshard_status_with_usage(&self, shard_usage_bytes: &BTreeMap<u32, u64>, measured_at_map_version: u64) -> LumenReshardStatus |
+| `storage_pod_count` | projects/lumen/src/operator/crd.rs | function | pub | 525 | storage_pod_count(&self) -> i32 |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -255,6 +255,19 @@ pub struct ReshardWorkflowSpec {
     /// pending or was never confirmed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub converged_shard_map_version: Option<u64>,
+    /// `shardMap.version` the reshard driver's own cutover last patched
+    /// into `spec.shardMap.version` (#1467 R7), stamped in the exact same
+    /// `advance_catching_up_fenced` patch call that sets `shardMap.
+    /// version`/`phase: Complete`. The ONLY writer of this field — a
+    /// hand-authored or backup-restored `spec.shardMap` never sets it, so
+    /// it stays behind (usually `None`) forever for such a CR.
+    /// `advance_convergence` requires this to equal the current
+    /// `shardMap.version` before engaging the post-cutover write-pause
+    /// fence loop at all, closing the gap where convergence would
+    /// otherwise fence indefinitely over a topology the driver never
+    /// actually changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_cutover_shard_map_version: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -807,4 +820,18 @@ changes:
       `spec.shardMap.version` to decide whether the post-cutover
       write-pause fence must stay armed, resumable across a driver
       restart since it derives purely from this field, not driver memory.
+  - path: projects/lumen/src/operator/crd.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1467 R7: added `ReshardWorkflowSpec.last_cutover_shard_map_version:
+      Option<u64>` — stamped by the reshard driver's own cutover in the
+      exact same `advance_catching_up_fenced` patch call that sets
+      `shardMap.version` / `phase: Complete`. `advance_convergence` now
+      requires this field to equal the current `shardMap.version` before
+      engaging the post-cutover write-pause fence loop at all, so a
+      manually-authored or backup-restored `shardMap` (which never sets
+      this field) no longer causes convergence to fence indefinitely over
+      a topology the driver never actually changed.
 ```
