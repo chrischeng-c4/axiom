@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/mamba"
-generated_at = "2026-07-12T09:41:32.496317+00:00"
-digest = "sha256:5939683b290eed451c64dbf1bee781ddc97f80451a1e9e6c2c0447311fb54807"
-source_digest = "sha256:5939683b290eed451c64dbf1bee781ddc97f80451a1e9e6c2c0447311fb54807"
-ir_digest = "sha256:db0b35d74b7c6e6d9ff0e863481eba7f7b9deafacc8b4a112ba2ab9223112a63"
+generated_at = "2026-07-12T09:44:54.054699+00:00"
+digest = "sha256:196ee3118773755b07aeb111f7b030ef2c9bc69d5d6229474a1b827b92480fec"
+source_digest = "sha256:196ee3118773755b07aeb111f7b030ef2c9bc69d5d6229474a1b827b92480fec"
+ir_digest = "sha256:9099e9e403343e91ff5ee879907241ce5c3cfada77cb38f7f923d10b58576fc0"
 
 [[files]]
 path = "README.md"
@@ -75,8 +75,8 @@ section_count = 3
 
 [[files]]
 path = "interfaces/rest/mamba-strict-type-wire-object-aot-local-producer-provenance-exha.md"
-digest = "sha256:3632f711ac44c9c469ddbe5d6286131113621aac0c75bbf0064ffe2484e41f7c"
-ir_digest = "sha256:03d270f0ca8e60fcc30a154ae6385e1c7235fc1125751ddb114114f93d5fbf65"
+digest = "sha256:80bca5e456bf2dd07d37c6d65e9404981dd3b169adab69551143f7d35d65a65f"
+ir_digest = "sha256:c68493fb2e2b480773a32b2a74a3cc7eea6036f57f846adc2d144d7b116c0f67"
 section_count = 3
 
 [[files]]
