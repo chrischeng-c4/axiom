@@ -308,6 +308,17 @@ struct FakeControl {
     /// `fence_arm_calls`/HTTP mocks, re-armed) on repeated ticks rather than
     /// caching a stale answer in-process.
     convergence_check_calls: AtomicI64,
+    /// #1467 R5/AC5: overrides [`ClusterControl::serving_pods_report_map_version`]
+    /// when set — standing in for a rolling restart whose StatefulSet-level
+    /// rollout has already finished (`topology_converged` true) but whose
+    /// pods have not all actually loaded the new shard map yet. `None` (the
+    /// default) matches the trait's own default `Ok(true)`, so every
+    /// pre-#1467 caller of this fake is unaffected.
+    pods_report_map_version: Option<Arc<AtomicBool>>,
+    /// #1467 R5/AC5: counts calls to `serving_pods_report_map_version`, so a
+    /// test can assert it is only scraped once StatefulSet-level rollout
+    /// convergence is already true (never wastefully mid-rollout).
+    pods_report_map_version_calls: AtomicI64,
 }
 
 impl FakeControl {
@@ -319,6 +330,8 @@ impl FakeControl {
             fence_ttl_secs: None,
             topology_converged: None,
             convergence_check_calls: AtomicI64::new(0),
+            pods_report_map_version: None,
+            pods_report_map_version_calls: AtomicI64::new(0),
         }
     }
 
@@ -329,6 +342,11 @@ impl FakeControl {
 
     fn with_topology_converged(mut self, converged: Arc<AtomicBool>) -> Self {
         self.topology_converged = Some(converged);
+        self
+    }
+
+    fn with_pods_report_map_version(mut self, reported: Arc<AtomicBool>) -> Self {
+        self.pods_report_map_version = Some(reported);
         self
     }
 
@@ -391,6 +409,23 @@ impl ClusterControl for FakeControl {
         self.convergence_check_calls.fetch_add(1, Ordering::SeqCst);
         Ok(self
             .topology_converged
+            .as_ref()
+            .map(|flag| flag.load(Ordering::SeqCst))
+            .unwrap_or(true))
+    }
+
+    async fn serving_pods_report_map_version(
+        &self,
+        _http: &reqwest::Client,
+        _namespace: &str,
+        _name: &str,
+        _shard_count: u32,
+        _map_version: u64,
+    ) -> anyhow::Result<bool> {
+        self.pods_report_map_version_calls
+            .fetch_add(1, Ordering::SeqCst);
+        Ok(self
+            .pods_report_map_version
             .as_ref()
             .map(|flag| flag.load(Ordering::SeqCst))
             .unwrap_or(true))
@@ -1273,5 +1308,249 @@ async fn fence_stays_armed_across_ticks_until_topology_convergence_confirmed() {
     let lumen = restarted.snapshot();
     let outcome = drive_tick(&restarted, &http, &lumen).await;
     assert!(matches!(outcome, DriveOutcome::NoOp(_)));
+}
+
+/// #1467 R5/AC5: StatefulSet-level rollout convergence
+/// (`serving_topology_converged`) alone must not clear the write-pause
+/// fence — every serving pod must also be observed actually reporting the
+/// new shard map version (`serving_pods_report_map_version`) before
+/// convergence is confirmed. Proves both directions: (1) rollout converged
+/// but pods not yet reporting the new map keeps `AwaitingTopologyConvergence`
+/// and the fence armed, and the pod-report scrape is only even attempted
+/// once the rollout itself is converged (never wasted mid-rollout); (2) once
+/// pods catch up, the very next tick clears the fence exactly like the
+/// StatefulSet-only check did before #1467.
+#[tokio::test]
+async fn topology_convergence_requires_every_pod_to_report_the_new_map_version() {
+    let shard0 = spin_up_shard();
+    let shard1 = spin_up_shard();
+    create_users_collection(&shard0.server).await;
+    create_users_collection(&shard1.server).await;
+
+    let ids: Vec<String> = (0..40).map(|i| format!("u-{i:03}")).collect();
+    for id in &ids {
+        index_user(&shard0.server, id).await;
+    }
+    let moving: Vec<&String> = ids.iter().filter(|id| bucket_of(id) < 4).collect();
+    assert!(!moving.is_empty());
+
+    let cluster = Arc::new(Mutex::new(initial_lumen(
+        Some(1_000_000_000),
+        Some("urgentThresholdCrossed"),
+    )));
+    let shard_urls = vec![shard0.base_url.clone(), shard1.base_url.clone()];
+    let http = reqwest::Client::new();
+    // StatefulSet rollout itself is instantly converged (the trait/fake
+    // default), but the pods have not yet all loaded the new map.
+    let pods_report = Arc::new(AtomicBool::new(false));
+    let control = FakeControl::new(cluster.clone(), shard_urls.clone())
+        .with_pods_report_map_version(pods_report.clone());
+
+    // Drive Complete -> PrepareSplit -> Splitting -> CatchingUp -> Complete.
+    for _ in 0..4 {
+        let lumen = control.snapshot();
+        drive_tick(&control, &http, &lumen).await;
+    }
+    assert_eq!(
+        control.snapshot().spec.reshard_policy.workflow.phase,
+        ReshardPhase::Complete
+    );
+    assert_eq!(control.snapshot().spec.shard_map.version, 1);
+
+    let moved_id = moving[0];
+    let probe = || async {
+        shard0
+            .server
+            .post("/collections/u/index")
+            .json(&json!({
+                "items": [{
+                    "external_id": moved_id,
+                    "field": "email",
+                    "value": "late@x.com",
+                }]
+            }))
+            .await
+    };
+
+    // Rollout is converged but pods aren't reporting the new map yet: must
+    // stay AwaitingTopologyConvergence, fence stays armed, and the pod-report
+    // scrape is actually being invoked (rollout-converged gate lets it
+    // through) even though it reports false.
+    let lumen = control.snapshot();
+    let outcome = drive_tick(&control, &http, &lumen).await;
+    assert_eq!(
+        outcome,
+        DriveOutcome::AwaitingTopologyConvergence { map_version: 1 }
+    );
+    assert_eq!(
+        probe().await.status_code(),
+        503,
+        "fence must stay armed while pods have not confirmed the new map version"
+    );
+    assert!(
+        control.pods_report_map_version_calls.load(Ordering::SeqCst) >= 1,
+        "the pod-level scrape must actually run once the StatefulSet-level rollout is \
+         already converged"
+    );
+    assert_eq!(
+        control
+            .snapshot()
+            .spec
+            .reshard_policy
+            .workflow
+            .converged_shard_map_version,
+        None,
+        "rollout convergence alone must not persist convergedShardMapVersion"
+    );
+
+    // Pods catch up: the very next tick must clear the fence and persist
+    // convergedShardMapVersion, exactly like the pre-#1467 StatefulSet-only
+    // check did once its own signal flipped true.
+    pods_report.store(true, Ordering::SeqCst);
+    let lumen = control.snapshot();
+    let outcome = drive_tick(&control, &http, &lumen).await;
+    assert_eq!(outcome, DriveOutcome::TopologyConverged { map_version: 1 });
+    assert_eq!(
+        control
+            .snapshot()
+            .spec
+            .reshard_policy
+            .workflow
+            .converged_shard_map_version,
+        Some(1)
+    );
+    assert_eq!(
+        probe().await.status_code(),
+        200,
+        "fence must clear once every pod is confirmed on the new map version"
+    );
+}
+
+/// #1467 R7/AC7: a `shardMap.version` the driver never itself cut over to
+/// (a manually-authored/edited value, or one left over from a workflow the
+/// driver never actually drove — `lastCutoverShardMapVersion` absent or
+/// stale) must never engage the convergence-await loop at all — no
+/// `AwaitingTopologyConvergence`, no fence re-arm, no
+/// `serving_topology_converged`/`serving_pods_report_map_version` calls —
+/// since nothing durable in the workflow's own history claims responsibility
+/// for having moved data to that version.
+#[tokio::test]
+async fn convergence_never_engages_for_a_shard_map_version_the_driver_never_cut_over_to() {
+    let mut lumen = initial_lumen(None, None);
+    // Simulate a manually-edited/foreign shardMap.version: bumped directly,
+    // with no matching lastCutoverShardMapVersion ever stamped (the driver's
+    // own cutover patch always sets both fields together in the same call —
+    // see `advance_catching_up_fenced`).
+    lumen.spec.shard_map.version = 5;
+    let cluster = Arc::new(Mutex::new(lumen));
+    let control = FakeControl::new(cluster.clone(), vec!["http://unused.invalid".to_string()]);
+    let http = reqwest::Client::new();
+
+    for _ in 0..3 {
+        let lumen = control.snapshot();
+        let outcome = drive_tick(&control, &http, &lumen).await;
+        assert!(
+            matches!(outcome, DriveOutcome::NoOp(_)),
+            "a shardMap.version with no matching lastCutoverShardMapVersion must never \
+             engage convergence, got {outcome:?}"
+        );
+    }
+    assert_eq!(
+        control.convergence_check_calls.load(Ordering::SeqCst),
+        0,
+        "serving_topology_converged must never be called for an uncut-over map version"
+    );
+    assert_eq!(
+        control.pods_report_map_version_calls.load(Ordering::SeqCst),
+        0,
+        "serving_pods_report_map_version must never be called for an uncut-over map version"
+    );
+    assert_eq!(
+        control
+            .snapshot()
+            .spec
+            .reshard_policy
+            .workflow
+            .converged_shard_map_version,
+        None
+    );
+}
+
+/// #1467 R7/AC7: bounded escalation, driver half — a topology convergence
+/// wait that runs for far longer than `CONVERGENCE_STALL_TICKS` (30, private
+/// to `reshard_driver`; this test drives 35 ticks) must never silently drop
+/// the write-pause fence or stop re-checking — every tick keeps reporting
+/// `AwaitingTopologyConvergence` and keeps writes to the moved bucket
+/// rejected, no matter how long the wait runs. The status-side half (a
+/// distinct `topologyConvergenceStalled` condition once the budget is
+/// exceeded) is covered by `reconcile.rs`'s own
+/// `status_patch_surfaces_topology_convergence_stall_as_distinct_condition`,
+/// which reads the same driver-side stall cache (`record_convergence_await`)
+/// this loop updates every tick.
+#[tokio::test]
+async fn convergence_stall_never_drops_the_fence_across_an_extended_wait() {
+    let shard0 = spin_up_shard();
+    let shard1 = spin_up_shard();
+    create_users_collection(&shard0.server).await;
+    create_users_collection(&shard1.server).await;
+
+    let ids: Vec<String> = (0..40).map(|i| format!("u-{i:03}")).collect();
+    for id in &ids {
+        index_user(&shard0.server, id).await;
+    }
+    let moving: Vec<&String> = ids.iter().filter(|id| bucket_of(id) < 4).collect();
+    assert!(!moving.is_empty());
+
+    let cluster = Arc::new(Mutex::new(initial_lumen(
+        Some(1_000_000_000),
+        Some("urgentThresholdCrossed"),
+    )));
+    let shard_urls = vec![shard0.base_url.clone(), shard1.base_url.clone()];
+    let http = reqwest::Client::new();
+    // Never converges: StatefulSet rollout itself never finishes.
+    let converged = Arc::new(AtomicBool::new(false));
+    let control =
+        FakeControl::new(cluster.clone(), shard_urls.clone()).with_topology_converged(converged);
+
+    // Drive Complete -> PrepareSplit -> Splitting -> CatchingUp -> Complete.
+    for _ in 0..4 {
+        let lumen = control.snapshot();
+        drive_tick(&control, &http, &lumen).await;
+    }
+    assert_eq!(control.snapshot().spec.shard_map.version, 1);
+
+    let moved_id = moving[0];
+    let probe = || async {
+        shard0
+            .server
+            .post("/collections/u/index")
+            .json(&json!({
+                "items": [{
+                    "external_id": moved_id,
+                    "field": "email",
+                    "value": "late@x.com",
+                }]
+            }))
+            .await
+    };
+
+    // Drive well past CONVERGENCE_STALL_TICKS (30) — every tick must keep
+    // reporting AwaitingTopologyConvergence and keep the fence armed no
+    // matter how long the wait runs; the driver never gives up and never
+    // silently drops the fence just because a budget was exceeded.
+    for _ in 0..35 {
+        let lumen = control.snapshot();
+        let outcome = drive_tick(&control, &http, &lumen).await;
+        assert_eq!(
+            outcome,
+            DriveOutcome::AwaitingTopologyConvergence { map_version: 1 }
+        );
+        assert_eq!(
+            probe().await.status_code(),
+            503,
+            "fence must stay armed through the entire stalled wait, well past the stall \
+             escalation budget"
+        );
+    }
 }
 // CODEGEN-END

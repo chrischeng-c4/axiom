@@ -21,14 +21,16 @@ Public API manifest for `projects/lumen/src/metrics.rs` generated from AST durin
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `Metrics` | projects/lumen/src/metrics.rs | struct | pub | 28 |  |
-| `incr_collection_created` | projects/lumen/src/metrics.rs | function | pub | 73 | incr_collection_created(&self, fields: u64) |
-| `incr_duplicates` | projects/lumen/src/metrics.rs | function | pub | 64 | incr_duplicates(&self) |
-| `incr_index` | projects/lumen/src/metrics.rs | function | pub | 53 | incr_index(&self, items: u64, bytes: u64) |
-| `incr_replace_skipped` | projects/lumen/src/metrics.rs | function | pub | 69 | incr_replace_skipped(&self, fields: u64) |
-| `new` | projects/lumen/src/metrics.rs | function | pub | 49 | new() -> Self |
-| `observe_search` | projects/lumen/src/metrics.rs | function | pub | 58 | observe_search(&self, latency_ms: u64) |
-| `render` | projects/lumen/src/metrics.rs | function | pub | 84 | render(&self) -> String |
-| `set_storage_bytes` | projects/lumen/src/metrics.rs | function | pub | 78 | set_storage_bytes(&self, bytes: u64) |
+| `incr_collection_created` | projects/lumen/src/metrics.rs | function | pub | 91 | incr_collection_created(&self, fields: u64) |
+| `incr_duplicates` | projects/lumen/src/metrics.rs | function | pub | 82 | incr_duplicates(&self) |
+| `incr_index` | projects/lumen/src/metrics.rs | function | pub | 71 | incr_index(&self, items: u64, bytes: u64) |
+| `incr_replace_skipped` | projects/lumen/src/metrics.rs | function | pub | 87 | incr_replace_skipped(&self, fields: u64) |
+| `incr_scatter_map_version_mismatch` | projects/lumen/src/metrics.rs | function | pub | 107 | #1467 R6: increments the scatter map-version-mismatch counter when a keyless scatter sub-request's forwarded map version disagrees with this pod's own live shard map — an availability-over-completeness signal, not a rejection. incr_scatter_map_version_mismatch(&self) |
+| `new` | projects/lumen/src/metrics.rs | function | pub | 67 | new() -> Self |
+| `observe_search` | projects/lumen/src/metrics.rs | function | pub | 76 | observe_search(&self, latency_ms: u64) |
+| `render` | projects/lumen/src/metrics.rs | function | pub | 113 | render(&self) -> String |
+| `set_shard_map_version` | projects/lumen/src/metrics.rs | function | pub | 101 | #1467 R5: publishes this pod's live shard-map version onto the `lumen_shard_map_version` gauge so the reshard driver's convergence check can scrape it and require every serving pod to report the new version before declaring topology converged, not just the StatefulSet's rollout status. set_shard_map_version(&self, version: u64) |
+| `set_storage_bytes` | projects/lumen/src/metrics.rs | function | pub | 96 | set_storage_bytes(&self, bytes: u64) |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -77,6 +79,24 @@ pub struct Metrics {
     /// (no posting-list rewrite, no HNSW tombstone/reinsert). Distinct from
     /// `index_writes_total`, which only ever counts fields actually written.
     pub replace_fields_skipped_total: Counter,
+    /// #1467 R5: this pod's live routed shard-map version, `0` for every
+    /// non-routed deployment shape (standalone, primary/replica, no
+    /// `operator` feature) that never sets it. The reshard driver's
+    /// `advance_convergence` scrapes this over `/metrics` — the same
+    /// admin-reachable surface its usage loop already polls — to require
+    /// every serving pod to actually report the new map version, not just
+    /// that its StatefulSet rollout finished (rollout completion alone does
+    /// not prove the ConfigMap write each pod reads its map from has
+    /// propagated to every pod).
+    pub shard_map_version: Gauge,
+    /// #1467 R6: count of scatter (routing-key-less) search sub-requests
+    /// where the responding pod's live shard-map version differed from the
+    /// scattering pod's own declared version. Signal for a mixed-map
+    /// rolling-restart window landing a scatter search mid-flight;
+    /// non-fatal by design (see `routing_remote.rs`'s scatter exemption
+    /// doc — availability over completeness). `0` outside routed
+    /// deployments.
+    pub scatter_map_version_mismatches_total: Counter,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-metrics-rs.md#source
@@ -112,6 +132,17 @@ impl Metrics {
 
     pub fn set_storage_bytes(&self, bytes: u64) {
         self.storage_bytes.set(bytes);
+    }
+
+    /// #1467 R5: record this pod's live routed shard-map version.
+    pub fn set_shard_map_version(&self, version: u64) {
+        self.shard_map_version.set(version);
+    }
+
+    /// #1467 R6: record one scatter sub-response whose responding pod's map
+    /// version differed from the scattering pod's own declared version.
+    pub fn incr_scatter_map_version_mismatch(&self) {
+        self.scatter_map_version_mismatches_total.incr();
     }
 
     /// Prometheus text format (0.0.4 compatible). Always emits the same
@@ -190,6 +221,19 @@ impl Metrics {
                 "Total docs:replace fields skipped as unchanged no-ops.",
                 self.replace_fields_skipped_total.get(),
             ),
+            Sample::new(
+                "lumen_shard_map_version",
+                "gauge",
+                "This pod's live routed shard-map version (0 outside routed deployments).",
+                self.shard_map_version.get(),
+            ),
+            Sample::new(
+                "lumen_scatter_map_version_mismatches_total",
+                "counter",
+                "Scatter search sub-responses whose responding pod's map version differed \
+                 from the sender's.",
+                self.scatter_map_version_mismatches_total.get(),
+            ),
         ];
         service_metrics::render(&samples)
     }
@@ -211,6 +255,8 @@ mod tests {
             "lumen_storage_bytes",
             "lumen_posting_cache_hits_total",
             "lumen_replace_fields_skipped_total",
+            "lumen_shard_map_version",
+            "lumen_scatter_map_version_mismatches_total",
         ] {
             assert!(out.contains(name), "expected {name} in:\n{out}");
         }
@@ -232,6 +278,8 @@ mod tests {
         m.posting_cache_hits_total.add(5);
         m.posting_cache_misses_total.add(2);
         m.incr_replace_skipped(6);
+        m.set_shard_map_version(3);
+        m.incr_scatter_map_version_mismatch();
         let out = m.render();
         let golden = "# HELP lumen_index_writes_total Total index items applied.\n\
 # TYPE lumen_index_writes_total counter\n\
@@ -268,10 +316,17 @@ lumen_posting_cache_hits_total 5\n\
 lumen_posting_cache_misses_total 2\n\
 # HELP lumen_replace_fields_skipped_total Total docs:replace fields skipped as unchanged no-ops.\n\
 # TYPE lumen_replace_fields_skipped_total counter\n\
-lumen_replace_fields_skipped_total 6\n";
+lumen_replace_fields_skipped_total 6\n\
+# HELP lumen_shard_map_version This pod's live routed shard-map version (0 outside routed deployments).\n\
+# TYPE lumen_shard_map_version gauge\n\
+lumen_shard_map_version 3\n\
+# HELP lumen_scatter_map_version_mismatches_total Scatter search sub-responses whose responding pod's map version differed from the sender's.\n\
+# TYPE lumen_scatter_map_version_mismatches_total counter\n\
+lumen_scatter_map_version_mismatches_total 1\n";
         assert_eq!(
             out, golden,
-            "render() diverged from the pre-refactor capture (#1293 added lumen_replace_fields_skipped_total)"
+            "render() diverged from the pre-refactor capture (#1467 added lumen_shard_map_version \
+             + lumen_scatter_map_version_mismatches_total)"
         );
     }
 }
@@ -290,4 +345,23 @@ changes:
     description: |
       rust-source-unit (td_ast) source for `projects/lumen/src/metrics.rs` captured during lumen
       standardization onto the per-file codegen ladder.
+  - path: projects/lumen/src/metrics.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1467 R5/R6: two new metric fields + methods. `shard_map_version`
+      (gauge) + `set_shard_map_version` publish this pod's live routed
+      shard-map version so the reshard driver's `advance_convergence` can
+      scrape `/metrics` on every serving pod and require each to actually
+      report the new map version before declaring topology converged --
+      StatefulSet rollout completion alone does not prove the ConfigMap
+      write each pod reads its map from has propagated everywhere.
+      `scatter_map_version_mismatches_total` (counter) +
+      `incr_scatter_map_version_mismatch` count keyless scatter
+      sub-requests whose responding pod's map version disagreed with the
+      scattering pod's own -- a non-fatal, availability-over-completeness
+      signal for a mixed-map rolling-restart window (see
+      `routing_remote.rs`'s changelog entry). `render()`'s golden-output
+      test updated to include both new lines.
 ```

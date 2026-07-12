@@ -138,8 +138,11 @@ fn cache_key(lumen: &Lumen) -> String {
 /// Parse one gauge's value out of Prometheus text exposition (see
 /// `crate::metrics::Registry::render`, e.g. `"lumen_storage_bytes 2048\n"`).
 /// Ignores comment (`#`) and blank lines; returns `None` if `metric` is not
-/// present or its value does not parse.
-fn parse_metric(body: &str, metric: &str) -> Option<u64> {
+/// present or its value does not parse. `pub(crate)` (#1467 R5) so
+/// `reshard_driver::KubeClusterControl::serving_pods_report_map_version` can
+/// reuse it to parse `lumen_shard_map_version` off the same `/metrics`
+/// exposition this module already scrapes for `lumen_storage_bytes`.
+pub(crate) fn parse_metric(body: &str, metric: &str) -> Option<u64> {
     body.lines().find_map(|line| {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -503,15 +506,20 @@ impl ManagedService for Lumen {
         // `reshard_driver::advance_convergence` runs each tick, so this
         // needs no driver-side cache read. Only sets the message if a more
         // severe oversize wedge did not already claim it above.
+        //
+        // #1467 R7: also require `workflow.lastCutoverShardMapVersion ==
+        // shardMap.version` — the same gate `advance_convergence` itself
+        // uses to decide whether to engage the fence loop at all. Without
+        // this, a manually-authored/edited `shardMap.version` (one the
+        // driver never cut over to, so it never arms a fence or advances
+        // convergence) would report `awaitingTopologyConvergence` forever,
+        // even though nothing is actually blocking writes.
         let map_version = self.spec.shard_map.version;
-        if map_version > 0
-            && self
-                .spec
-                .reshard_policy
-                .workflow
-                .converged_shard_map_version
-                != Some(map_version)
-        {
+        let workflow = &self.spec.reshard_policy.workflow;
+        let awaiting_convergence = map_version > 0
+            && workflow.converged_shard_map_version != Some(map_version)
+            && workflow.last_cutover_shard_map_version == Some(map_version);
+        if awaiting_convergence {
             reshard
                 .blocking_conditions
                 .push("awaitingTopologyConvergence".to_string());
@@ -522,6 +530,35 @@ impl ManagedService for Lumen {
                 reshard.message = format!(
                     "waiting for every serving pod to become Ready on shardMap version \
                      {map_version} before the post-cutover write-pause fence is cleared"
+                );
+            }
+        }
+        // #1467 R7: distinct, named condition once the wait above has
+        // exceeded `CONVERGENCE_STALL_TICKS` re-arms — the driver keeps
+        // re-arming the fence (never silently drops it), but operators need
+        // a visible signal that convergence has been pending unusually
+        // long, not just that it's pending. Reads the driver's own live
+        // stall-tracking cache (`record_convergence_await`), matching the
+        // `oversize_block_condition` pattern above.
+        if awaiting_convergence
+            && crate::operator::reshard_driver::convergence_stall_condition(
+                &namespace,
+                &name,
+                &uid,
+                map_version,
+            )
+        {
+            reshard
+                .blocking_conditions
+                .push("topologyConvergenceStalled".to_string());
+            if !reshard
+                .blocking_conditions
+                .contains(&"reshardOversizedDocument".to_string())
+            {
+                reshard.message = format!(
+                    "topology convergence on shardMap version {map_version} has not been \
+                     confirmed after an extended wait; the write-pause fence remains armed \
+                     and is being kept re-armed"
                 );
             }
         }
@@ -799,6 +836,129 @@ mod tests {
         );
 
         crate::operator::reshard_driver::clear_oversize_block(namespace, name);
+    }
+
+    // ---- #1467 R7: bounded topology-convergence stall escalation ----------
+
+    /// A `shardMap.version` the workflow actually cut over to
+    /// (`lastCutoverShardMapVersion == shardMap.version`), still unconverged
+    /// (`convergedShardMapVersion` absent): the shape `status_patch`'s
+    /// `awaitingTopologyConvergence` gate requires.
+    fn cutover_pending_convergence_lumen(name: &str, ns: &str, map_version: u64) -> Lumen {
+        let mut lumen = hpa_test_lumen(name, ns, 2, 1);
+        lumen.spec.shard_map.version = map_version;
+        lumen
+            .spec
+            .reshard_policy
+            .workflow
+            .last_cutover_shard_map_version = Some(map_version);
+        lumen
+    }
+
+    #[test]
+    fn status_patch_reports_awaiting_convergence_without_a_stall_condition_before_the_budget() {
+        let lumen = cutover_pending_convergence_lumen("search", "acme-convergence-fresh", 1);
+        let ready = ReadyFacts {
+            ready: std::collections::HashMap::new(),
+        };
+        let patch = lumen.status_patch(&ready);
+        let reshard = &patch["status"]["reshard"];
+        let blocking = reshard["blockingConditions"]
+            .as_array()
+            .expect("blockingConditions must be present");
+        assert!(
+            blocking
+                .iter()
+                .any(|c| c.as_str() == Some("awaitingTopologyConvergence")),
+            "got: {reshard}"
+        );
+        assert!(
+            !blocking
+                .iter()
+                .any(|c| c.as_str() == Some("topologyConvergenceStalled")),
+            "a freshly-awaiting convergence (no recorded stall ticks yet) must not report the \
+             stalled condition, got: {reshard}"
+        );
+    }
+
+    #[test]
+    fn status_patch_surfaces_topology_convergence_stall_as_distinct_condition() {
+        let namespace = "acme-convergence-stalled";
+        let name = "search";
+        let map_version = 1u64;
+        let lumen = cutover_pending_convergence_lumen(name, namespace, map_version);
+        let uid = lumen.metadata.uid.clone().unwrap_or_default();
+
+        // Drive the driver-side stall cache past CONVERGENCE_STALL_TICKS the
+        // same way `advance_convergence` does every tick it stays unconverged
+        // (private to `reshard_driver`, so replicate it via the same
+        // `pub(crate)` helper rather than driving 30+ real ticks here).
+        let mut stalled = false;
+        for _ in 0..40 {
+            stalled = crate::operator::reshard_driver::record_convergence_await(
+                namespace,
+                name,
+                &uid,
+                map_version,
+            );
+        }
+        assert!(
+            stalled,
+            "record_convergence_await must report stalled after enough consecutive ticks"
+        );
+
+        let ready = ReadyFacts {
+            ready: std::collections::HashMap::new(),
+        };
+        let patch = lumen.status_patch(&ready);
+        let reshard = &patch["status"]["reshard"];
+        let blocking = reshard["blockingConditions"]
+            .as_array()
+            .expect("blockingConditions must be present");
+        assert!(
+            blocking
+                .iter()
+                .any(|c| c.as_str() == Some("awaitingTopologyConvergence")),
+            "topologyConvergenceStalled must be layered on top of, not instead of, \
+             awaitingTopologyConvergence, got: {reshard}"
+        );
+        assert!(
+            blocking
+                .iter()
+                .any(|c| c.as_str() == Some("topologyConvergenceStalled")),
+            "expected a distinct topologyConvergenceStalled condition once the stall budget \
+             is exceeded, got: {reshard}"
+        );
+    }
+
+    #[test]
+    fn status_patch_never_reports_awaiting_convergence_for_a_manually_authored_map_version() {
+        // #1467 R7: a shardMap.version the driver never itself cut over to
+        // (lastCutoverShardMapVersion absent/stale) must not report
+        // awaitingTopologyConvergence at all — status_patch uses the same
+        // gate advance_convergence does, so a manually-edited map version
+        // never wedges status forever waiting on a fence the driver never
+        // armed.
+        let mut lumen = hpa_test_lumen("search", "acme-convergence-manual", 2, 1);
+        lumen.spec.shard_map.version = 5;
+        // last_cutover_shard_map_version left at its default (None).
+        let ready = ReadyFacts {
+            ready: std::collections::HashMap::new(),
+        };
+        let patch = lumen.status_patch(&ready);
+        let reshard = &patch["status"]["reshard"];
+        let blocking = reshard["blockingConditions"].as_array();
+        let has_condition = blocking
+            .map(|arr| {
+                arr.iter()
+                    .any(|c| c.as_str() == Some("awaitingTopologyConvergence"))
+            })
+            .unwrap_or(false);
+        assert!(
+            !has_condition,
+            "a shardMap.version with no matching lastCutoverShardMapVersion must not report \
+             awaitingTopologyConvergence, got: {reshard}"
+        );
     }
 
     // ---- HPA topology-transition handoff (#1385, AC1) ----------------------

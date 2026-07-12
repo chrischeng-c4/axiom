@@ -409,6 +409,105 @@ pub fn oversize_block_condition(
         .map(|(_, block, _)| block.clone())
 }
 
+/// #1467 R7: bounded escalation budget for [`advance_convergence`] — after
+/// this many consecutive `AwaitingTopologyConvergence` ticks for the same
+/// `(uid, map_version)` pair without observing convergence, the driver
+/// raises a distinct `topologyConvergenceStalled` status condition. The
+/// fence itself is NEVER dropped when this budget is exceeded — re-arming
+/// continues every tick exactly as before — this only makes an
+/// abnormally-long convergence wait observable to operators.
+/// `DRIVER_POLL_INTERVAL * CONVERGENCE_STALL_TICKS` = 10 minutes at the
+/// current 20s poll interval, the same order of magnitude as
+/// `OVERSIZE_RECHECK_TICKS`'s ~5 minutes.
+const CONVERGENCE_STALL_TICKS: u32 = 30;
+
+/// `"<namespace>/<name>" -> (uid, map_version being awaited, consecutive
+/// awaiting ticks)` — tracks how long [`advance_convergence`] has been
+/// waiting for [`ClusterControl::serving_topology_converged`] to confirm
+/// one particular `map_version`, for the R7 stall escalation. Mirrors
+/// [`OversizeBlockCache`]'s shape and `uid`-scoping rationale (a
+/// namespace/name pair is not stable identity across delete-and-recreate).
+type ConvergenceStallCache = std::sync::Mutex<BTreeMap<String, (String, u64, u32)>>;
+
+fn convergence_stall_cache() -> &'static ConvergenceStallCache {
+    static CACHE: std::sync::OnceLock<ConvergenceStallCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(BTreeMap::new()))
+}
+
+fn convergence_stall_key(namespace: &str, name: &str) -> String {
+    format!("{namespace}/{name}")
+}
+
+/// Bump (or start) `namespace/name`'s consecutive-awaiting-ticks counter
+/// for `map_version` and return `true` once [`CONVERGENCE_STALL_TICKS`] has
+/// been exceeded (this tick should report the stalled condition). A
+/// `uid`/`map_version` change (a delete-and-recreate, or a fresh split
+/// starting a new convergence wait before the prior one finished) resets
+/// the counter rather than carrying over an unrelated wait's budget.
+/// `pub(crate)` for the same test-seam reason as
+/// [`record_oversize_block`].
+pub(crate) fn record_convergence_await(
+    namespace: &str,
+    name: &str,
+    uid: &str,
+    map_version: u64,
+) -> bool {
+    let mut cache = convergence_stall_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let entry = cache
+        .entry(convergence_stall_key(namespace, name))
+        .or_insert_with(|| (uid.to_string(), map_version, 0));
+    if entry.0 != uid || entry.1 != map_version {
+        *entry = (uid.to_string(), map_version, 0);
+    }
+    entry.2 = entry.2.saturating_add(1);
+    entry.2 > CONVERGENCE_STALL_TICKS
+}
+
+/// Clear `namespace/name`'s convergence-stall tracker — called once
+/// convergence is observed (or the workflow is no longer awaiting it), so a
+/// resolved wait never leaves the next, unrelated wait starting from a
+/// stale budget. `pub(crate)` for the same test-seam reason as
+/// [`clear_oversize_block`].
+pub(crate) fn clear_convergence_stall(namespace: &str, name: &str) {
+    convergence_stall_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&convergence_stall_key(namespace, name));
+}
+
+/// Drop every cached convergence-stall entry whose `uid` is not in
+/// `live_uids` — the [`prune_oversize_cache`] counterpart for this cache,
+/// called from the same poll loop with the same already-listed live-CR set.
+pub(crate) fn prune_convergence_stall_cache(live_uids: &BTreeSet<String>) {
+    convergence_stall_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .retain(|_, (uid, _, _)| live_uids.contains(uid));
+}
+
+/// Whether `namespace/name`'s current `uid`+`map_version` pairing is
+/// currently past the [`CONVERGENCE_STALL_TICKS`] budget, for `reconcile.
+/// rs`'s `status_patch` to layer a `topologyConvergenceStalled` blocking
+/// condition onto the policy/usage-derived status. A cached entry belonging
+/// to a different `uid` or `map_version` is treated as not stalled.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
+pub fn convergence_stall_condition(
+    namespace: &str,
+    name: &str,
+    uid: &str,
+    map_version: u64,
+) -> bool {
+    convergence_stall_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&convergence_stall_key(namespace, name))
+        .is_some_and(|(cached_uid, cached_version, ticks)| {
+            cached_uid == uid && *cached_version == map_version && *ticks > CONVERGENCE_STALL_TICKS
+        })
+}
+
 /// Everything [`drive_tick`] needs from a live cluster, abstracted so the
 /// state machine is testable without a real k8s API server. [`KubeClusterControl`]
 /// is the production implementation; tests supply an in-memory fake.
@@ -469,6 +568,31 @@ pub trait ClusterControl: Send + Sync {
         _namespace: &str,
         _name: &str,
         _desired_replicas: i64,
+    ) -> Result<bool> {
+        Ok(true)
+    }
+
+    /// #1467 R5: whether every serving pod (`0..shard_count`, one pod per
+    /// shard — the reshard driver's admin plane already assumes
+    /// `replicas_per_shard <= 1` in the routed topology it operates over,
+    /// same as [`Self::shard_base_url`]) reports `lumen_shard_map_version
+    /// == map_version` on its `/metrics` endpoint. [`Self::
+    /// serving_topology_converged`] alone only proves the StatefulSet
+    /// rollout *finished* (every pod `Ready` on the latest pod template) —
+    /// not that each pod's process actually holds `map_version`, since the
+    /// shard map itself is read from a ConfigMap the pod loads at startup,
+    /// and a ConfigMap write racing a rollout's pod-recreate order is not
+    /// something StatefulSet status observes at all. Defaults to `Ok(true)`
+    /// for the same test-seam reason as `serving_topology_converged` —
+    /// every test double that does not override this keeps its prior
+    /// "instantly converged" behavior.
+    async fn serving_pods_report_map_version(
+        &self,
+        _http: &reqwest::Client,
+        _namespace: &str,
+        _name: &str,
+        _shard_count: u32,
+        _map_version: u64,
     ) -> Result<bool> {
         Ok(true)
     }
@@ -619,6 +743,37 @@ impl ClusterControl for KubeClusterControl {
         Ok(revisions_converged
             && ready_replicas >= desired_replicas
             && updated_replicas >= desired_replicas)
+    }
+
+    async fn serving_pods_report_map_version(
+        &self,
+        http: &reqwest::Client,
+        namespace: &str,
+        name: &str,
+        shard_count: u32,
+        map_version: u64,
+    ) -> Result<bool> {
+        for shard in 0..shard_count {
+            let url = format!("{}/metrics", self.shard_base_url(namespace, name, shard));
+            // An unreachable pod (mid-rollout, mid-restart) or a decode
+            // failure is "not converged yet", not an error — the caller
+            // just keeps the fence armed and retries next tick, exactly
+            // like an unready StatefulSet replica.
+            let Ok(resp) = http.get(&url).send().await else {
+                return Ok(false);
+            };
+            if !resp.status().is_success() {
+                return Ok(false);
+            }
+            let Ok(body) = resp.text().await else {
+                return Ok(false);
+            };
+            if super::reconcile::parse_metric(&body, "lumen_shard_map_version") != Some(map_version)
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }
 
@@ -1393,6 +1548,14 @@ async fn run_migration_pass_impl(
 /// Post-cutover eviction (idempotent, #1380) on every **old** shard, using
 /// only the already-committed target map — the driver never needs to retain
 /// the old map across a restart.
+///
+/// `moving_buckets`/`last_armed_at` (#1467 R3) thread the same
+/// [`maybe_rearm_fence`] time-based re-arm [`checkpoint_shards`] already
+/// has into this loop: eviction round-trips one HTTP call per **old**
+/// physical shard, and a slow round (many old shards, a slow network) could
+/// otherwise outlive the fence TTL mid-eviction with no re-arm to catch it
+/// — the caller's unconditional phase-boundary re-arm immediately before
+/// this call only covers the moment the loop starts.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
 async fn evict_old_shards(
     control: &dyn ClusterControl,
@@ -1402,10 +1565,23 @@ async fn evict_old_shards(
     lumen: &Lumen,
     current: &VirtualBucketShardMap,
     target: &VirtualBucketShardMap,
+    moving_buckets: Option<&BTreeSet<u32>>,
+    last_armed_at: &mut Instant,
 ) -> Result<()> {
     let token = control.admin_token(namespace, lumen).await?;
     let assignments = map_assignments(target);
     for shard in 0..current.physical_shard_count() {
+        maybe_rearm_fence(
+            control,
+            http,
+            namespace,
+            name,
+            lumen,
+            current,
+            moving_buckets,
+            last_armed_at,
+        )
+        .await?;
         let url = control.shard_base_url(namespace, name, shard);
         evict_shard(
             http,
@@ -1766,7 +1942,18 @@ async fn advance_catching_up_fenced(
         last_armed_at = Instant::now();
     }
 
-    if let Err(err) = evict_old_shards(control, http, namespace, name, lumen, current, target).await
+    if let Err(err) = evict_old_shards(
+        control,
+        http,
+        namespace,
+        name,
+        lumen,
+        current,
+        target,
+        fence_buckets,
+        &mut last_armed_at,
+    )
+    .await
     {
         return DriveOutcome::Blocked(err.to_string());
     }
@@ -1821,6 +2008,11 @@ async fn advance_catching_up_fenced(
                 "workflow": {
                     "phase": "Complete",
                     "targetShardCount": null,
+                    // #1467 R7: stamped in the SAME patch as `shardMap.
+                    // version` — proof this cutover, and not a hand-authored
+                    // or restored `shardMap`, is what produced this map
+                    // version, gating `advance_convergence`'s engagement.
+                    "lastCutoverShardMapVersion": target.version(),
                 }
             }
         }
@@ -1866,8 +2058,24 @@ async fn advance_catching_up_fenced(
 ///
 /// Returns `None` when convergence is not pending — either `shard_map.
 /// version == 0` (a CR that has never resharded; no cutover has ever run
-/// to converge from) or the current version is already recorded converged
-/// — letting the caller fall through to [`should_start_split`].
+/// to converge from), the current version is already recorded converged, or
+/// (#1467 R7) `workflow.lastCutoverShardMapVersion` does not equal the
+/// current `shard_map.version` — letting the caller fall through to
+/// [`should_start_split`].
+///
+/// #1467 R7: the `lastCutoverShardMapVersion` check is what keeps this
+/// function from ever engaging the write-pause fence for a CR whose
+/// `spec.shardMap` was hand-authored (or restored from a backup/migration)
+/// rather than reached via a cutover this driver actually ran —
+/// `advance_catching_up_fenced`'s cutover patch is the ONLY writer of
+/// `lastCutoverShardMapVersion`, and it always sets it to the exact
+/// `target.version()` it patches into `shardMap.version` in the same call,
+/// so the two fields are equal immediately after every real cutover. A
+/// manually-set `shardMap.version` therefore leaves
+/// `lastCutoverShardMapVersion` unequal (usually `None`) forever, and this
+/// function never engages for it — closing the gap where convergence would
+/// otherwise fence indefinitely over a topology the driver never actually
+/// changed.
 async fn advance_convergence(
     control: &dyn ClusterControl,
     http: &reqwest::Client,
@@ -1876,14 +2084,12 @@ async fn advance_convergence(
     lumen: &Lumen,
 ) -> Option<DriveOutcome> {
     let map_version = lumen.spec.shard_map.version;
+    let workflow = &lumen.spec.reshard_policy.workflow;
     if map_version == 0
-        || lumen
-            .spec
-            .reshard_policy
-            .workflow
-            .converged_shard_map_version
-            == Some(map_version)
+        || workflow.converged_shard_map_version == Some(map_version)
+        || workflow.last_cutover_shard_map_version != Some(map_version)
     {
+        clear_convergence_stall(namespace, name);
         return None;
     }
 
@@ -1894,7 +2100,7 @@ async fn advance_convergence(
     let moving_buckets = buckets_on_newest_shard(&current);
     let desired_replicas = lumen.spec.storage_pod_count() as i64;
 
-    let converged = match control
+    let rollout_converged = match control
         .serving_topology_converged(namespace, name, desired_replicas)
         .await
     {
@@ -1902,7 +2108,44 @@ async fn advance_convergence(
         Err(err) => return Some(DriveOutcome::Blocked(err.to_string())),
     };
 
+    // #1467 R5: StatefulSet rollout completion alone doesn't prove every
+    // serving pod actually holds the new shard map — it only proves the
+    // pod template/generation converged. Require every pod to also report
+    // the new map version on its own `/metrics` before treating topology
+    // as converged. Gated behind `rollout_converged` so we don't scrape
+    // every shard on every tick while a rollout is still in flight.
+    let converged = if rollout_converged {
+        match control
+            .serving_pods_report_map_version(
+                http,
+                namespace,
+                name,
+                current.physical_shard_count(),
+                map_version,
+            )
+            .await
+        {
+            Ok(reported) => reported,
+            Err(err) => return Some(DriveOutcome::Blocked(err.to_string())),
+        }
+    } else {
+        false
+    };
+
     if converged {
+        // #1467 R7: convergence resolved — clear the stall tracker so a
+        // future, unrelated wait (a later split's own convergence) starts
+        // from a fresh budget instead of inheriting this one's tick count.
+        //
+        // #1467 R5: once every serving pod has been observed reporting
+        // `map_version` on `/metrics`, the fence is cleared below. A
+        // *subsequent* rollout that only changes the pod template (image,
+        // resources, env — not the shard map) is safe by construction:
+        // every pod already holds `map_version` before that rollout
+        // starts, so no re-arm or re-verification is needed for it. Only a
+        // *new* cutover (which bumps `shardMap.version` again and re-stamps
+        // `lastCutoverShardMapVersion`) re-engages this convergence gate.
+        clear_convergence_stall(namespace, name);
         if !moving_buckets.is_empty() {
             if let Err(err) = set_write_fence(
                 control,
@@ -1936,6 +2179,29 @@ async fn advance_convergence(
             return Some(DriveOutcome::Blocked(err.to_string()));
         }
         return Some(DriveOutcome::TopologyConverged { map_version });
+    }
+
+    // #1467 R7: bounded escalation — bump this map_version's
+    // consecutive-awaiting-ticks counter. The fence keeps re-arming below
+    // regardless of the outcome (never silently dropped); once the budget
+    // is exceeded, `reconcile.rs`'s `status_patch` layers a distinct
+    // `topologyConvergenceStalled` condition via `convergence_stall_
+    // condition` so operators see it instead of an indefinitely-quiet wait.
+    let stalled = record_convergence_await(
+        namespace,
+        name,
+        &lumen.uid().unwrap_or_default(),
+        map_version,
+    );
+    if stalled {
+        tracing::warn!(
+            namespace,
+            name,
+            map_version,
+            "reshard driver: topology convergence has not been confirmed after \
+             CONVERGENCE_STALL_TICKS ticks; fence stays armed, raising \
+             topologyConvergenceStalled"
+        );
     }
 
     if !moving_buckets.is_empty() {
@@ -2048,6 +2314,9 @@ pub fn spawn_reshard_driver_loop(client: Client) {
                         let live_uids: BTreeSet<String> =
                             list.items.iter().filter_map(|l| l.uid()).collect();
                         prune_oversize_cache(&live_uids);
+                        // #1467 R7: same already-listed live-CR set bounds
+                        // the convergence-stall cache too.
+                        prune_convergence_stall_cache(&live_uids);
                         for lumen in list.items {
                             let outcome = drive_tick(&control, &http, &lumen).await;
                             if !matches!(outcome, DriveOutcome::NoOp(_)) {
@@ -2445,6 +2714,139 @@ mod tests {
             clear_body["buckets"].as_array().map(Vec::len),
             Some(0),
             "the second call to shard A must be a clear (empty buckets), not another arm"
+        );
+    }
+
+    // ---- #1467 R3: evict_old_shards's in-loop fence re-arm --------------
+
+    /// A [`ClusterControl`] over a fixed list of already-bound shard URLs
+    /// with a test-controlled `write_fence_ttl_secs` — everything
+    /// [`evict_old_shards`]/[`maybe_rearm_fence`] needs, nothing more.
+    struct FenceRearmControl {
+        shard_urls: Vec<String>,
+        ttl_secs: u64,
+    }
+
+    #[async_trait]
+    impl ClusterControl for FenceRearmControl {
+        async fn patch_spec(
+            &self,
+            _ns: &str,
+            _name: &str,
+            _patch: serde_json::Value,
+        ) -> Result<()> {
+            unreachable!("not used by evict_old_shards")
+        }
+        async fn statefulset_ready_replicas(&self, _ns: &str, _name: &str) -> Result<i64> {
+            unreachable!("not used by evict_old_shards")
+        }
+        async fn trigger_rolling_restart(&self, _ns: &str, _name: &str) -> Result<()> {
+            unreachable!("not used by evict_old_shards")
+        }
+        async fn admin_token(&self, _ns: &str, _lumen: &Lumen) -> Result<Option<String>> {
+            Ok(None)
+        }
+        fn shard_base_url(&self, _ns: &str, _name: &str, shard: u32) -> String {
+            self.shard_urls[shard as usize].clone()
+        }
+        fn write_fence_ttl_secs(&self) -> u64 {
+            self.ttl_secs
+        }
+    }
+
+    /// #1467 R3: a slow, multi-shard eviction round (many old physical
+    /// shards, each `POST /admin/reshard:evict` round-trip taking real time)
+    /// must not run on a single fence arm taken once before the loop starts
+    /// — [`evict_old_shards`] re-checks/re-arms via [`maybe_rearm_fence`]
+    /// before *every* shard's evict call, not just at the phase boundary
+    /// immediately before this function is invoked. Proven by driving 3 old
+    /// shards through a real (mocked) eviction round with a tiny fence TTL
+    /// and an artificial per-call delay large enough that the un-refreshed
+    /// TTL fraction would already have lapsed by the final shard — the
+    /// number of `/admin/reshard:fence` arm requests observed across all 3
+    /// shards must reflect more than the single caller-side arm.
+    #[tokio::test]
+    async fn evict_old_shards_rearms_fence_mid_loop_across_slow_multi_shard_round() {
+        let mut mock_shards = Vec::new();
+        for _ in 0..3 {
+            let mock = wiremock::MockServer::start().await;
+            wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .and(wiremock::matchers::path("/admin/reshard:fence"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({})))
+                .mount(&mock)
+                .await;
+            wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .and(wiremock::matchers::path("/admin/reshard:evict"))
+                .respond_with(
+                    wiremock::ResponseTemplate::new(200)
+                        .set_body_json(json!({}))
+                        .set_delay(Duration::from_millis(150)),
+                )
+                .mount(&mock)
+                .await;
+            mock_shards.push(mock);
+        }
+        let shard_urls: Vec<String> = mock_shards.iter().map(|m| m.uri()).collect();
+
+        // ttl_secs=1 -> rearm_after = 250ms (FENCE_REARM_FRACTION=4).
+        // `last_armed_at` starts at "just now" (as if the caller armed it
+        // immediately before this call, matching the real phase-boundary
+        // arm) so the first two iterations' pre-checks (elapsed ~0ms, then
+        // ~150ms) skip re-arming, but by the third iteration's pre-check
+        // (elapsed ~300ms) the 250ms fraction has lapsed and an in-loop
+        // rearm must fire — proving it is *evict_old_shards's own loop*,
+        // not just the caller, keeping the fence fresh across a slow round.
+        let control = FenceRearmControl {
+            shard_urls,
+            ttl_secs: 1,
+        };
+        let current = VirtualBucketShardMap::balanced(0, 8, 3).unwrap();
+        let target = VirtualBucketShardMap::balanced(1, 8, 3).unwrap();
+        let mut moving_buckets = BTreeSet::new();
+        moving_buckets.insert(0u32);
+        let lumen = lumen_with(spec(3, 1, None), None);
+        let mut last_armed_at = Instant::now();
+
+        evict_old_shards(
+            &control,
+            &http_client(),
+            "acme",
+            "search",
+            &lumen,
+            &current,
+            &target,
+            Some(&moving_buckets),
+            &mut last_armed_at,
+        )
+        .await
+        .unwrap();
+
+        let mut total_fence_calls = 0usize;
+        let mut total_evict_calls = 0usize;
+        for mock in &mock_shards {
+            let requests = mock
+                .received_requests()
+                .await
+                .expect("wiremock request recording enabled");
+            total_fence_calls += requests
+                .iter()
+                .filter(|r| r.url.path() == "/admin/reshard:fence")
+                .count();
+            total_evict_calls += requests
+                .iter()
+                .filter(|r| r.url.path() == "/admin/reshard:evict")
+                .count();
+        }
+        assert_eq!(
+            total_evict_calls, 3,
+            "every one of the 3 old shards must be evicted exactly once"
+        );
+        assert!(
+            total_fence_calls > 0 && total_fence_calls % 3 == 0,
+            "evict_old_shards's own loop must have re-armed at least once (a full arm round \
+             is 3 fence calls, one per old shard) — this test never arms the fence itself \
+             before calling evict_old_shards, so any fence calls observed at all are proof \
+             of the in-loop rearm, got {total_fence_calls}"
         );
     }
 

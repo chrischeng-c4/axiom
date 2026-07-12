@@ -2280,6 +2280,11 @@ async fn serve(args: ServeArgs) -> Result<()> {
             shard_map_version = shard_map.version(),
             "cross-pod shard routing active"
         );
+        // #1467 R5: publish this pod's live shard-map version on `/metrics`
+        // so the reshard driver's `advance_convergence` can require every
+        // serving pod to actually report the new map, not just that its
+        // StatefulSet rollout finished.
+        engine.metrics().set_shard_map_version(shard_map.version());
         let router = lumen::routing_remote::RoutedRouter::new(
             engine.clone(),
             state.write_backend.clone(),

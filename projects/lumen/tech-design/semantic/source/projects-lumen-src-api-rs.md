@@ -28,17 +28,17 @@ Public API manifest for `projects/lumen/src/api.rs` generated from AST during Sc
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 614 |  |
-| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 2366 |  |
+| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 2368 |  |
 | `AppState` | projects/lumen/src/api.rs | struct | pub | 64 |  |
 | `RoutedBackend` | projects/lumen/src/api.rs | trait | pub | 278 | Cross-pod shard routing for operator/k8s serving pods (#1398 R1-R3); `AppState::routed` is `None` for every non-routed deployment. |
-| `ShardForwardMisrouted` | projects/lumen/src/api.rs | struct | pub | 2457 | A forwarded request's one-hop marker claimed this pod, but recomputing ownership disagrees (#1442 R1) — a spoofed or genuinely misrouted forward, rejected rather than honored. |
-| `ShardForwardRemoteError` | projects/lumen/src/api.rs | struct | pub | 2405 | The owning shard was reached and answered, but with a non-2xx status. |
-| `ShardForwardUnavailable` | projects/lumen/src/api.rs | struct | pub | 2387 | One-hop shard-forward failure — the owning shard was unreachable or its response could not be decoded. |
-| `ShardMapVersionMismatch` | projects/lumen/src/api.rs | struct | pub | 2429 | A forwarded request declared a shard-map version that disagrees with this pod's own live map (#1442 R2) — the rolling-restart mixed-map window. |
+| `ShardForwardMisrouted` | projects/lumen/src/api.rs | struct | pub | 2459 | A forwarded request's one-hop marker claimed this pod, but recomputing ownership disagrees (#1442 R1) — a spoofed or genuinely misrouted forward, rejected rather than honored. |
+| `ShardForwardRemoteError` | projects/lumen/src/api.rs | struct | pub | 2407 | The owning shard was reached and answered, but with a non-2xx status. |
+| `ShardForwardUnavailable` | projects/lumen/src/api.rs | struct | pub | 2389 | One-hop shard-forward failure — the owning shard was unreachable or its response could not be decoded. |
+| `ShardMapVersionMismatch` | projects/lumen/src/api.rs | struct | pub | 2431 | A forwarded request declared a shard-map version that disagrees with this pod's own live map (#1442 R2) — the rolling-restart mixed-map window. |
 | `WriteFence` | projects/lumen/src/api.rs | struct | pub | 173 | #1396 R2: bounded write pause on still-moving virtual buckets during a reshard's final `CatchingUp` pass. Armed/cleared via `POST /admin/reshard:fence`; self-expires on its TTL deadline so a crashed driver can never leave a permanent fence. #1443 R3: `arm` now returns `bool` (false on `Instant + Duration` overflow instead of panicking) and the internal mutex is poison-proof (`unwrap_or_else(poisoned -> into_inner)`), so an overflowed/panicked prior caller can never wedge the fence permanently. |
 | `new` | projects/lumen/src/api.rs | function | pub | 461 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
 | `open` | projects/lumen/src/api.rs | function | pub | 499 | open(engine: Arc<Engine>) -> Self |
-| `openapi` | projects/lumen/src/api.rs | function | pub | 2294 | openapi() -> utoipa::openapi::OpenApi |
+| `openapi` | projects/lumen/src/api.rs | function | pub | 2296 | openapi() -> utoipa::openapi::OpenApi |
 | `router` | projects/lumen/src/api.rs | function | pub | 653 | router(state: AppState) -> Router |
 | `with_checkpoint` | projects/lumen/src/api.rs | function | pub | 483 | with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self |
 | `with_cluster` | projects/lumen/src/api.rs | function | pub | 465 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
@@ -1580,6 +1580,8 @@ fn batch_search_storage_error(e: anyhow::Error) -> BatchSearchResult {
         Some(StorageError::QueryTooComplex(_)) => "query_too_complex",
         Some(StorageError::Gone(_)) => "gone",
         Some(StorageError::UnsupportedSort(_)) => "unsupported_sort",
+        Some(StorageError::InvalidPruneChunk { .. }) => "invalid_prune_chunk",
+        Some(StorageError::PruneAccumulatorFull { .. }) => "prune_accumulator_full",
         None => "bad_request",
     };
     BatchSearchResult::Error {
@@ -2595,6 +2597,22 @@ impl From<anyhow::Error> for ApiErr {
                 StorageError::UnsupportedSort(_) => {
                     Self::new(StatusCode::BAD_REQUEST, "unsupported_sort", e.to_string())
                 }
+                // #1467 R4: caller-declared `total_chunks` failed the sanity
+                // cap — a client/protocol error, not a transient one.
+                StorageError::InvalidPruneChunk { .. } => Self::new(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_prune_chunk",
+                    e.to_string(),
+                ),
+                // #1467 R4: the prune accumulator is at its entry cap — a
+                // 429-class signal (retryable once the driver's other,
+                // presumably-stuck passes GC out or complete) rather than a
+                // permanent 4xx.
+                StorageError::PruneAccumulatorFull { .. } => Self::new(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "prune_accumulator_full",
+                    e.to_string(),
+                ),
             };
         }
         Self::new(StatusCode::BAD_REQUEST, "bad_request", e.to_string())
@@ -2739,4 +2757,19 @@ changes:
       rejected with a retryable 503 `bucket_write_paused` instead of being
       silently accepted. `enforce_write_fence`'s doc comment updated to
       match.
+  - path: projects/lumen/src/api.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1467 R4: error mapping for the two new `apply_reshard_prune_chunk`
+      accumulator-hardening errors. `StorageError::InvalidPruneChunk`
+      (caller-declared `total_chunks` of `0` or beyond the sanity cap) maps
+      to `400 invalid_prune_chunk` -- a client/protocol error, not
+      transient. `StorageError::PruneAccumulatorFull` (the receiver's
+      bounded in-flight-group accumulator is at capacity) maps to
+      `429 prune_accumulator_full` -- a retryable signal once the driver's
+      other stuck/abandoned passes age-GC out or complete, distinct from a
+      permanent 4xx. `batch_search_storage_error`'s reason-string mapping
+      updated to match for parity with the single-search error path.
 ```

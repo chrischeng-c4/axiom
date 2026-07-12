@@ -1526,6 +1526,8 @@ fn batch_search_storage_error(e: anyhow::Error) -> BatchSearchResult {
         Some(StorageError::QueryTooComplex(_)) => "query_too_complex",
         Some(StorageError::Gone(_)) => "gone",
         Some(StorageError::UnsupportedSort(_)) => "unsupported_sort",
+        Some(StorageError::InvalidPruneChunk { .. }) => "invalid_prune_chunk",
+        Some(StorageError::PruneAccumulatorFull { .. }) => "prune_accumulator_full",
         None => "bad_request",
     };
     BatchSearchResult::Error {
@@ -2541,6 +2543,22 @@ impl From<anyhow::Error> for ApiErr {
                 StorageError::UnsupportedSort(_) => {
                     Self::new(StatusCode::BAD_REQUEST, "unsupported_sort", e.to_string())
                 }
+                // #1467 R4: caller-declared `total_chunks` failed the sanity
+                // cap — a client/protocol error, not a transient one.
+                StorageError::InvalidPruneChunk { .. } => Self::new(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_prune_chunk",
+                    e.to_string(),
+                ),
+                // #1467 R4: the prune accumulator is at its entry cap — a
+                // 429-class signal (retryable once the driver's other,
+                // presumably-stuck passes GC out or complete) rather than a
+                // permanent 4xx.
+                StorageError::PruneAccumulatorFull { .. } => Self::new(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "prune_accumulator_full",
+                    e.to_string(),
+                ),
             };
         }
         Self::new(StatusCode::BAD_REQUEST, "bad_request", e.to_string())
