@@ -74,29 +74,29 @@ changes:
 
 ```mermaid
 ---
-id: mamba-closure-call-hot-applicability-verification
+id: mamba-closure-call-hot-contract-verification
 requirements:
-  cell_semantics:
-    id: R2
-    text: "Closure capture identity and nested sibling recursion remain at CPython parity after hot-path changes."
-    kind: regression
-    risk: high
-    verify: conformance::_regression/core/closure_capture/closure_late_binding.py
-  release_measurement:
+  cached_context:
     id: R1
-    text: "The release closure hot workload emits an internal CPU marker and is measured against the recorded CPython baseline."
+    text: "A closure callable-context lookup reads cached metadata without allocating MbValue metadata objects."
+    kind: unit
+    risk: high
+    verify: runtime::closure::tests::closure_callable_context_uses_cached_metadata
+  perf_gate:
+    id: R3
+    text: "The release closure workload has a real internal-time CPU/RSS pin result."
     kind: performance
     risk: high
     verify: perf_pin::closure_call_hot_1478
-  surface_behavior:
-    id: R3
-    text: "Closure surface and behavior contracts remain green."
+  semantics:
+    id: R2
+    text: "Nested closure capture and module context behavior remain CPython-conformant."
     kind: regression
-    risk: medium
+    risk: high
     verify: conformance::_regression/core/language/closures/behavior.py
 ---
 flowchart TD
-    r1[R1 release measurement] --> perf_pin_closure_call_hot_1478[perf_pin::closure_call_hot_1478]
-    r2[R2 cell semantics] --> conformance_regression_core_closure_capture_closure_late_binding_py[conformance::_regression/core/closure_capture/closure_late_binding.py]
-    r3[R3 surface behavior] --> conformance_regression_core_language_closures_behavior_py[conformance::_regression/core/language/closures/behavior.py]
+    r1[R1 cached context] --> runtime_closure_tests_closure_callable_context_uses_cached_metadata[runtime::closure::tests::closure_callable_context_uses_cached_metadata]
+    r2[R2 semantics] --> conformance_regression_core_language_closures_behavior_py[conformance::_regression/core/language/closures/behavior.py]
+    r3[R3 perf gate] --> perf_pin_closure_call_hot_1478[perf_pin::closure_call_hot_1478]
 ```
