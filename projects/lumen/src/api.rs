@@ -874,30 +874,21 @@ fn enforce_read_consistency(state: &AppState, consistency: ReadConsistency) -> R
 
 /// Reject a write whose `(collection_id, external_id)` routes to a
 /// currently-fenced virtual bucket (#1396 R2). Checked in [`index`],
-/// [`replace_docs`], and [`replace_doc`] — the write paths a reshard's final
-/// migration pass must observe a converged snapshot of.
+/// [`replace_docs`], [`replace_doc`], and [`delete_external_id`] — every
+/// write path a reshard's final migration pass must observe a converged
+/// snapshot of.
 ///
-/// `delete_external_id` is deliberately still not fenced (#1443 R2
-/// re-review): the earlier rationale here — "safe to lose, the document
-/// either already migrated or didn't" — was wrong, because
-/// `apply_reshard_batch`'s ordinary merge is additive-only, so a DELETE
-/// acked on the source anywhere during `Splitting` could resurrect at
-/// cutover once the (now-stale) already-copied target copy was never told
-/// to drop it. #1443 closes that gap on the other side instead: the
-/// reshard driver's final `CatchingUp` pass (the one this fence guards) now
-/// carries an authoritative-subset `replace_ids` scope for every bucket it
-/// copies (see [`crate::reshard::snapshot_reshard_batches`]'s `replace_mode`
-/// and [`crate::storage::Engine::apply_reshard_batch`]'s `replace`
-/// parameter) — a document deleted on the source before that final pass is
-/// simply absent from its authoritative id set and gets pruned from the
-/// target, without needing DELETE itself to observe the fence. This closes
-/// the resurrection gap for any delete that lands and is acked *before* that
-/// final fenced pass's scoped-backup read; a delete racing strictly inside
-/// the sub-window between that read and this same pass's eviction is not
-/// covered (fencing DELETE too would close it fully, at the cost of
-/// rejecting a much more common write shape during the whole split, not
-/// just the final pass) — see the module's #1396 R2 write-fence doc on
-/// [`WriteFence`].
+/// `delete_external_id` is fenced too (#1458 R2): an earlier revision left
+/// DELETE exempt on the theory that `apply_reshard_batch`'s
+/// authoritative-subset `replace_ids` scoping (see
+/// [`crate::reshard::snapshot_reshard_batches`]'s `replace_mode` and
+/// [`crate::storage::Engine::apply_reshard_batch`]'s `replace` parameter)
+/// already closes the resurrection gap for a delete acked *before* the
+/// final pass's scoped-backup read. That leaves a delete racing strictly
+/// inside the sub-window between that read and the same pass's eviction
+/// uncovered — fencing DELETE like every other write closes it fully, at
+/// the ordinary cost (a retryable 503) of any write to a fenced bucket. See
+/// the module's #1396 R2 write-fence doc on [`WriteFence`].
 fn enforce_write_fence(
     state: &AppState,
     collection_id: &str,
@@ -1149,6 +1140,7 @@ async fn delete_external_id(
     Query(q): Query<DeleteQuery>,
 ) -> Result<StatusCode, ApiErr> {
     auth.ensure(&collection_id, Role::Write)?;
+    enforce_write_fence(&state, &collection_id, &external_id)?;
     if let Some(router) = &state.routed {
         router
             .delete(collection_id.clone(), external_id, q.field, &headers)

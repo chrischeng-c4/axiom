@@ -177,7 +177,7 @@
 //! ConfigMap — no separate watch/poll loop is needed.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
@@ -287,14 +287,24 @@ impl std::fmt::Display for OversizedDocumentBlock {
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
 impl std::error::Error for OversizedDocumentBlock {}
 
-/// `"<namespace>/<name>" -> (block, ticks skipped on it so far)`, written by
-/// [`run_migration_pass_impl`] and consumed by [`advance_catching_up`]
-/// (mutating, to decide/count a skip) and [`oversize_block_condition`]
-/// (read-only, for `reconcile.rs`'s `status_patch`) — #1444 R2. Mirrors
-/// `reconcile.rs`'s own `ShardUsageCache` pattern: a synchronous status
-/// projection reads a cache a background loop writes, rather than doing I/O
-/// itself.
-type OversizeBlockCache = std::sync::Mutex<BTreeMap<String, (OversizedDocumentBlock, u32)>>;
+/// `"<namespace>/<name>" -> (owning CR's metadata.uid, block, ticks skipped
+/// on it so far)`, written by [`run_migration_pass_impl`] and consumed by
+/// [`advance_catching_up`] (mutating, to decide/count a skip) and
+/// [`oversize_block_condition`] (read-only, for `reconcile.rs`'s
+/// `status_patch`) — #1444 R2. Mirrors `reconcile.rs`'s own
+/// `ShardUsageCache` pattern: a synchronous status projection reads a cache
+/// a background loop writes, rather than doing I/O itself.
+///
+/// Keyed by `namespace/name` (not `uid`, which is not stable input for a
+/// lookup before an object exists) but every entry carries the `uid` of the
+/// CR it was recorded for (#1458 R4): a namespace/name pair is not a stable
+/// identity across a delete-and-recreate — the new CR gets a fresh `uid`
+/// from the API server — so every read compares the stored `uid` against
+/// the caller's current one and treats a mismatch as no entry, giving a
+/// recreated CR a clean `status.reshard` immediately rather than inheriting
+/// a stale wedge left by the deleted CR's last tick. [`prune_oversize_cache`]
+/// bounds the map by dropping entries whose `uid` is no longer live.
+type OversizeBlockCache = std::sync::Mutex<BTreeMap<String, (String, OversizedDocumentBlock, u32)>>;
 
 fn oversize_block_cache() -> &'static OversizeBlockCache {
     static CACHE: std::sync::OnceLock<OversizeBlockCache> = std::sync::OnceLock::new();
@@ -305,24 +315,33 @@ fn oversize_cache_key(namespace: &str, name: &str) -> String {
     format!("{namespace}/{name}")
 }
 
-/// Record (or refresh) a discovered oversize wedge for `namespace/name`,
-/// resetting its skip counter — a fresh discovery, whether this is the first
-/// tick to hit it or a periodic recheck (#1444 R2, see
+/// Record (or refresh) a discovered oversize wedge for `namespace/name`'s
+/// `uid`, resetting its skip counter — a fresh discovery, whether this is
+/// the first tick to hit it or a periodic recheck (#1444 R2, see
 /// [`OVERSIZE_RECHECK_TICKS`]) that hit the same wedge again. `pub(crate)`
 /// rather than private so `reconcile.rs`'s `status_patch` tests can drive the
 /// exact cache [`oversize_block_condition`] reads, without widening this past
 /// crate-internal visibility.
-pub(crate) fn record_oversize_block(namespace: &str, name: &str, block: OversizedDocumentBlock) {
+pub(crate) fn record_oversize_block(
+    namespace: &str,
+    name: &str,
+    uid: &str,
+    block: OversizedDocumentBlock,
+) {
     oversize_block_cache()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(oversize_cache_key(namespace, name), (block, 0));
+        .insert(
+            oversize_cache_key(namespace, name),
+            (uid.to_string(), block, 0),
+        );
 }
 
-/// Clear any recorded oversize wedge for `namespace/name` — called whenever
-/// a migration pass for it completes without hitting one, meaning whatever
-/// was wedged is resolved. `pub(crate)` for the same test-seam reason as
-/// [`record_oversize_block`].
+/// Clear any recorded oversize wedge for `namespace/name`, regardless of
+/// which `uid` recorded it — called whenever a migration pass for it
+/// completes without hitting one (whatever was wedged is resolved) and when
+/// the workflow returns to phase `Complete` (#1458 R4). `pub(crate)` for the
+/// same test-seam reason as [`record_oversize_block`].
 pub(crate) fn clear_oversize_block(namespace: &str, name: &str) {
     oversize_block_cache()
         .lock()
@@ -330,37 +349,64 @@ pub(crate) fn clear_oversize_block(namespace: &str, name: &str) {
         .remove(&oversize_cache_key(namespace, name));
 }
 
-/// If `namespace/name` has a recorded oversize wedge AND has not yet used up
-/// its [`OVERSIZE_RECHECK_TICKS`] skip budget, bump its skip counter and
-/// return it — the caller ([`advance_catching_up`]) should short-circuit to
-/// [`DriveOutcome::Blocked`] without arming the write-pause fence. Returns
-/// `None` (no skip) once the budget is exhausted, letting the next real
-/// attempt either clear the wedge (if fixed) or re-record it with a fresh
-/// budget.
-fn should_skip_for_oversize(namespace: &str, name: &str) -> Option<OversizedDocumentBlock> {
+/// Drop every cached entry whose `uid` is not in `live_uids` (#1458 R4) —
+/// called once per [`spawn_reshard_driver_loop`] poll, which already lists
+/// every live `Lumen` CR cluster-wide, so this needs no extra k8s API call.
+/// Bounds the cache's growth across an unbounded number of past
+/// delete-and-recreate cycles on the same `namespace/name`.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
+pub(crate) fn prune_oversize_cache(live_uids: &BTreeSet<String>) {
+    oversize_block_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .retain(|_, (uid, _, _)| live_uids.contains(uid));
+}
+
+/// If `namespace/name`'s current `uid` has a recorded oversize wedge AND has
+/// not yet used up its [`OVERSIZE_RECHECK_TICKS`] skip budget, bump its skip
+/// counter and return it — the caller ([`advance_catching_up`]) should
+/// short-circuit to [`DriveOutcome::Blocked`] without arming the
+/// write-pause fence. Returns `None` (no skip) once the budget is exhausted
+/// or the cached entry belongs to a different `uid` (#1458 R4 — a stale
+/// entry from a deleted-and-recreated CR), letting the next real attempt
+/// either clear the wedge (if fixed) or re-record it with a fresh budget.
+fn should_skip_for_oversize(
+    namespace: &str,
+    name: &str,
+    uid: &str,
+) -> Option<OversizedDocumentBlock> {
     let mut cache = oversize_block_cache()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let (block, ticks) = cache.get_mut(&oversize_cache_key(namespace, name))?;
-    if *ticks >= OVERSIZE_RECHECK_TICKS {
+    let (cached_uid, block, ticks) = cache.get_mut(&oversize_cache_key(namespace, name))?;
+    if cached_uid != uid || *ticks >= OVERSIZE_RECHECK_TICKS {
         return None;
     }
     *ticks += 1;
     Some(block.clone())
 }
 
-/// The oversized-document block currently recorded for `namespace/name`, if
-/// any (#1444 R2) — read-only, does not affect [`should_skip_for_oversize`]'s
-/// skip budget. `reconcile.rs`'s `status_patch` calls this to layer a
-/// distinct `status.reshard` blocking condition + remediation message onto
-/// the policy/usage-derived status.
+/// The oversized-document block currently recorded for `namespace/name`'s
+/// current `uid`, if any (#1444 R2; `uid`-scoped by #1458 R4) — read-only,
+/// does not affect [`should_skip_for_oversize`]'s skip budget. `reconcile.
+/// rs`'s `status_patch` calls this to layer a distinct `status.reshard`
+/// blocking condition + remediation message onto the policy/usage-derived
+/// status. A cached entry belonging to a different `uid` (a deleted-and-
+/// recreated CR under the same `namespace/name`) is treated as no entry, so
+/// the recreated CR's status is clean immediately rather than waiting for
+/// [`prune_oversize_cache`]'s next poll.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-pub fn oversize_block_condition(namespace: &str, name: &str) -> Option<OversizedDocumentBlock> {
+pub fn oversize_block_condition(
+    namespace: &str,
+    name: &str,
+    uid: &str,
+) -> Option<OversizedDocumentBlock> {
     oversize_block_cache()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(&oversize_cache_key(namespace, name))
-        .map(|(block, _)| block.clone())
+        .filter(|(cached_uid, _, _)| cached_uid == uid)
+        .map(|(_, block, _)| block.clone())
 }
 
 /// Everything [`drive_tick`] needs from a live cluster, abstracted so the
@@ -406,6 +452,25 @@ pub trait ClusterControl: Send + Sync {
     /// can be exercised deterministically without waiting 120 real seconds.
     fn write_fence_ttl_secs(&self) -> u64 {
         WRITE_FENCE_TTL_SECS
+    }
+
+    /// Whether every serving pod is confirmed `Ready` on the serving
+    /// StatefulSet's current rollout (#1458 R1) — the same k8s "rollout
+    /// status" pattern `kubectl rollout status` checks:
+    /// `.status.updateRevision == .status.currentRevision` (no rollout
+    /// in-flight) and `.status.readyReplicas == desired_replicas`. Reuses
+    /// [`advance_prepare_split`]'s existing readiness-polling seam rather
+    /// than adding a new one. Defaults to `Ok(true)` — production behavior
+    /// only changes once [`KubeClusterControl`]'s override actually observes
+    /// an in-progress rollout; every test double that does not override this
+    /// keeps its prior "instantly converged" behavior.
+    async fn serving_topology_converged(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _desired_replicas: i64,
+    ) -> Result<bool> {
+        Ok(true)
     }
 }
 
@@ -522,6 +587,39 @@ impl ClusterControl for KubeClusterControl {
     fn shard_base_url(&self, namespace: &str, name: &str, shard: u32) -> String {
         format!("http://{name}-{shard}.{name}-headless.{namespace}.svc.cluster.local:{CLIENT_PORT}")
     }
+
+    async fn serving_topology_converged(
+        &self,
+        namespace: &str,
+        name: &str,
+        desired_replicas: i64,
+    ) -> Result<bool> {
+        let ar = statefulset_api_resource();
+        let api: Api<DynamicObject> = Api::namespaced_with(self.client.clone(), namespace, &ar);
+        let Some(sts) = api
+            .get_opt(name)
+            .await
+            .context("read serving StatefulSet for topology convergence")?
+        else {
+            // No StatefulSet yet is not "converged" — the caller keeps
+            // treating this as pending rather than assuming success.
+            return Ok(false);
+        };
+        let status = &sts.data["status"];
+        let ready_replicas = status["readyReplicas"].as_i64().unwrap_or(0);
+        let updated_replicas = status["updatedReplicas"].as_i64().unwrap_or(0);
+        // A rollout still in flight has distinct current/update revisions;
+        // once it completes, k8s converges them onto the same value. Absent
+        // fields (any StatefulSet old enough not to report them) fail this
+        // check open on the safe side — never assumed identical.
+        let current_revision = status["currentRevision"].as_str();
+        let update_revision = status["updateRevision"].as_str();
+        let revisions_converged =
+            matches!((current_revision, update_revision), (Some(c), Some(u)) if c == u);
+        Ok(revisions_converged
+            && ready_replicas >= desired_replicas
+            && updated_replicas >= desired_replicas)
+    }
 }
 
 /// What one [`drive_tick`] call did, for logging/tests. Never panics; a
@@ -548,6 +646,15 @@ pub enum DriveOutcome {
     /// `CatchingUp -> Complete`: re-sync pass ran, old shards evicted, and
     /// `shardMap` flipped to the new version.
     CompletedSplit { new_map_version: u64 },
+    /// #1458 R1: `Complete`, but not every serving pod is confirmed `Ready`
+    /// on `map_version` yet — the write-pause fence over the buckets that
+    /// moved into `map_version` was re-armed this tick, and
+    /// `awaitingTopologyConvergence` should surface in `status.reshard`.
+    AwaitingTopologyConvergence { map_version: u64 },
+    /// #1458 R1: `Complete`, and every serving pod just got confirmed
+    /// `Ready` on `map_version` — `workflow.convergedShardMapVersion` was
+    /// patched to `map_version` and the write-pause fence was cleared.
+    TopologyConverged { map_version: u64 },
     /// A step failed; phase unchanged, safe to retry next tick.
     Blocked(String),
 }
@@ -996,6 +1103,13 @@ async fn checkpoint_shard(
 /// leaves the workflow in `CatchingUp` — resumable, never mid-cutover with
 /// undurable data — and the next tick retries the same idempotent
 /// migration/checkpoint/eviction/checkpoint sequence.
+///
+/// `moving_buckets`/`last_armed_at` (#1458 R3) thread the same
+/// [`maybe_rearm_fence`] time-based re-arm into this loop: a real cutover
+/// can checkpoint many source shards sequentially, and the caller's
+/// unconditional phase-boundary re-arm (immediately before this call) only
+/// covers the moment this loop starts, not however long the loop itself
+/// takes.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
 async fn checkpoint_shards(
     control: &dyn ClusterControl,
@@ -1004,9 +1118,23 @@ async fn checkpoint_shards(
     name: &str,
     lumen: &Lumen,
     shards: impl Iterator<Item = u32>,
+    current: &VirtualBucketShardMap,
+    moving_buckets: Option<&BTreeSet<u32>>,
+    last_armed_at: &mut Instant,
 ) -> Result<()> {
     let token = control.admin_token(namespace, lumen).await?;
     for shard in shards {
+        maybe_rearm_fence(
+            control,
+            http,
+            namespace,
+            name,
+            lumen,
+            current,
+            moving_buckets,
+            last_armed_at,
+        )
+        .await?;
         let url = control.shard_base_url(namespace, name, shard);
         checkpoint_shard(http, &url, token.as_deref()).await?;
     }
@@ -1019,12 +1147,67 @@ fn map_assignments(map: &VirtualBucketShardMap) -> Vec<u32> {
         .collect()
 }
 
-/// #1443 R1: re-arm the write fence every this-many applied batches inside a
-/// fenced [`run_migration_pass_impl`] loop — a fenced pass with hundreds of
-/// sequential byte-capped batch POSTs plus checkpoints can realistically run
-/// past [`WRITE_FENCE_TTL_SECS`]/[`ClusterControl::write_fence_ttl_secs`]
-/// without this, silently reopening the write window mid-sequence.
-const FENCE_REARM_BATCH_INTERVAL: usize = 20;
+/// Every virtual bucket currently assigned to `map`'s highest-index
+/// (newest) physical shard (#1458 R1). [`VirtualBucketShardMap::
+/// split_one_shard`] only ever moves a bucket directly into the new shard
+/// it appends — never between two pre-existing shards — so immediately
+/// after a cutover to `map`, this is exactly the set of buckets that just
+/// moved, recoverable purely from the already-persisted `spec.shardMap`
+/// with no separate bookkeeping. [`advance_convergence`] re-fences this same
+/// set every tick until every serving pod is confirmed Ready on `map`.
+fn buckets_on_newest_shard(map: &VirtualBucketShardMap) -> BTreeSet<u32> {
+    let newest = map.physical_shard_count().saturating_sub(1);
+    (0..map.virtual_bucket_count())
+        .filter(|&bucket| map.assignment_for_bucket(bucket) == Some(newest))
+        .collect()
+}
+
+/// #1458 R3: re-arm the write fence once more than
+/// `write_fence_ttl_secs() / FENCE_REARM_FRACTION` has elapsed since the
+/// last arm. Replaces the earlier fixed-count re-arm (#1443 R1, every
+/// `FENCE_REARM_BATCH_INTERVAL = 20` applied batches/chunks): a count-based
+/// clock can still be outrun by a sequence whose batches are individually
+/// slow (a large scoped-backup fetch, a slow network, or a handful of huge
+/// byte-capped batches) even though few *batches* have been applied — a
+/// time-based clock, checked between every batch/chunk apply and around
+/// each fetch/prune step, cannot.
+const FENCE_REARM_FRACTION: u32 = 4;
+
+/// Re-arm the write-pause fence if more than `write_fence_ttl_secs() /
+/// [`FENCE_REARM_FRACTION`]` has elapsed since `*last_armed_at` (#1458 R3).
+/// No-op — and leaves `*last_armed_at` untouched — when `moving_buckets` is
+/// `None`/empty (this pass/step is not running under a fence) or the
+/// fraction has not yet elapsed. A re-arm failure propagates as `Err`,
+/// which every caller already surfaces as [`DriveOutcome::Blocked`] before
+/// eviction ever runs (R3's "a failed re-arm still aborts to `Blocked`
+/// before eviction").
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
+async fn maybe_rearm_fence(
+    control: &dyn ClusterControl,
+    http: &reqwest::Client,
+    namespace: &str,
+    name: &str,
+    lumen: &Lumen,
+    current: &VirtualBucketShardMap,
+    moving_buckets: Option<&BTreeSet<u32>>,
+    last_armed_at: &mut Instant,
+) -> Result<()> {
+    let Some(buckets) = moving_buckets.filter(|b| !b.is_empty()) else {
+        return Ok(());
+    };
+    let ttl_secs = control.write_fence_ttl_secs();
+    let rearm_after = Duration::from_secs(ttl_secs) / FENCE_REARM_FRACTION;
+    if last_armed_at.elapsed() < rearm_after {
+        return Ok(());
+    }
+    set_write_fence(
+        control, http, namespace, name, lumen, current, buckets, ttl_secs,
+    )
+    .await
+    .context("re-arm write fence mid migration pass")?;
+    *last_armed_at = Instant::now();
+    Ok(())
+}
 
 /// One migration pass: every bucket [`bucket_moves`] says moved between
 /// `current_shard_map` and [`compute_target_map`], grouped by its old
@@ -1052,11 +1235,11 @@ pub async fn run_migration_pass(
 /// via `POST /admin/reshard:prune` — see [`snapshot_reshard_prune_chunks`].
 /// `moving_buckets` (#1443 R1), when `Some`, marks this pass as running
 /// under a write fence and re-arms it with a fresh
-/// [`ClusterControl::write_fence_ttl_secs`] deadline every
-/// [`FENCE_REARM_BATCH_INTERVAL`] applied batches/chunks — a re-arm failure
-/// aborts the whole pass immediately (propagated as `Err`, which every
-/// caller already surfaces as `DriveOutcome::Blocked` before eviction ever
-/// runs).
+/// [`ClusterControl::write_fence_ttl_secs`] deadline via [`maybe_rearm_fence`]
+/// (#1458 R3: time-based, checked around every fetch/apply/prune step, not
+/// a fixed applied-batch count) — a re-arm failure aborts the whole pass
+/// immediately (propagated as `Err`, which every caller already surfaces as
+/// `DriveOutcome::Blocked` before eviction ever runs).
 async fn run_migration_pass_impl(
     control: &dyn ClusterControl,
     http: &reqwest::Client,
@@ -1085,11 +1268,24 @@ async fn run_migration_pass_impl(
 
     let token = control.admin_token(namespace, lumen).await?;
     let mut total_batches = 0usize;
-    // Counts both applied batches and applied prune chunks — the shared
-    // clock [`FENCE_REARM_BATCH_INTERVAL`] re-arms the fence against,
-    // independent of which of the two loops below is currently running.
-    let mut applied_calls = 0usize;
+    // #1458 R3: the fence was armed by the caller immediately before this
+    // call, so `Instant::now()` here is that arm's timestamp — the clock
+    // [`maybe_rearm_fence`] measures elapsed time against at every
+    // fetch/apply/prune step below, independent of which of the two loops
+    // is currently running or how many calls each has made.
+    let mut last_armed_at = Instant::now();
     for (from_shard, buckets) in buckets_by_from_shard {
+        maybe_rearm_fence(
+            control,
+            http,
+            namespace,
+            name,
+            lumen,
+            &current,
+            moving_buckets,
+            &mut last_armed_at,
+        )
+        .await?;
         let source_url = control.shard_base_url(namespace, name, from_shard);
         let snapshot = fetch_scoped_backup(
             http,
@@ -1110,28 +1306,27 @@ async fn run_migration_pass_impl(
                 // and for `advance_catching_up`'s fence-skip check, even
                 // though the `Err` itself stays a generic message.
                 if let Some(oversized) = err.downcast_ref::<OversizedDocumentBlock>() {
-                    record_oversize_block(namespace, name, oversized.clone());
+                    record_oversize_block(
+                        namespace,
+                        name,
+                        &lumen.uid().unwrap_or_default(),
+                        oversized.clone(),
+                    );
                 }
                 return Err(err);
             }
             total_batches += 1;
-            applied_calls += 1;
-            if let Some(fenced_buckets) = moving_buckets
-                .filter(|b| !b.is_empty() && applied_calls % FENCE_REARM_BATCH_INTERVAL == 0)
-            {
-                set_write_fence(
-                    control,
-                    http,
-                    namespace,
-                    name,
-                    lumen,
-                    &current,
-                    fenced_buckets,
-                    control.write_fence_ttl_secs(),
-                )
-                .await
-                .context("re-arm write fence mid migration pass")?;
-            }
+            maybe_rearm_fence(
+                control,
+                http,
+                namespace,
+                name,
+                lumen,
+                &current,
+                moving_buckets,
+                &mut last_armed_at,
+            )
+            .await?;
         }
 
         // #1457 R1/R2: the final pass's authoritative-replace scope, sent as
@@ -1146,6 +1341,17 @@ async fn run_migration_pass_impl(
             let collection_ids = fetch_all_collection_ids(http, &source_url, token.as_deref())
                 .await
                 .context("fetch source shard's full collection list for the final reshard pass")?;
+            maybe_rearm_fence(
+                control,
+                http,
+                namespace,
+                name,
+                lumen,
+                &current,
+                moving_buckets,
+                &mut last_armed_at,
+            )
+            .await?;
             let prune_chunks = snapshot_reshard_prune_chunks(
                 &snapshot,
                 &target,
@@ -1162,23 +1368,17 @@ async fn run_migration_pass_impl(
                 };
                 let dest_url = control.shard_base_url(namespace, name, to_shard);
                 apply_reshard_prune_chunk(http, &dest_url, token.as_deref(), chunk).await?;
-                applied_calls += 1;
-                if let Some(fenced_buckets) = moving_buckets
-                    .filter(|b| !b.is_empty() && applied_calls % FENCE_REARM_BATCH_INTERVAL == 0)
-                {
-                    set_write_fence(
-                        control,
-                        http,
-                        namespace,
-                        name,
-                        lumen,
-                        &current,
-                        fenced_buckets,
-                        control.write_fence_ttl_secs(),
-                    )
-                    .await
-                    .context("re-arm write fence mid migration pass")?;
-                }
+                maybe_rearm_fence(
+                    control,
+                    http,
+                    namespace,
+                    name,
+                    lumen,
+                    &current,
+                    moving_buckets,
+                    &mut last_armed_at,
+                )
+                .await?;
             }
         }
     }
@@ -1386,7 +1586,8 @@ async fn advance_catching_up(
     // recurring every tick's `WRITE_FENCE_TTL_SECS` window for no benefit.
     // `should_skip_for_oversize` still periodically lets a real attempt
     // through (`OVERSIZE_RECHECK_TICKS`) so a fixed document self-heals.
-    if let Some(block) = should_skip_for_oversize(namespace, name) {
+    if let Some(block) = should_skip_for_oversize(namespace, name, &lumen.uid().unwrap_or_default())
+    {
         return DriveOutcome::Blocked(block.to_string());
     }
 
@@ -1466,14 +1667,17 @@ async fn advance_catching_up(
 ///
 /// #1443 R1: this sequence's migration pass is `final_pass` (R2, reworked
 /// #1457 R1 into a separate `POST /admin/reshard:prune` step) and runs
-/// under periodic in-loop re-arming; the fence is additionally re-armed with
-/// a fresh TTL at every phase boundary below (after the migration pass and
-/// before the target checkpoint, again before eviction, and again before the
-/// sources' checkpoint round) so a real pass — hundreds of sequential
-/// batch/checkpoint HTTP round trips — can never silently outlive
-/// [`ClusterControl::write_fence_ttl_secs`] mid-sequence. Any re-arm failure
-/// aborts to [`DriveOutcome::Blocked`] immediately, always strictly before
-/// [`evict_old_shards`] runs.
+/// under time-based in-loop re-arming (#1458 R3); the fence is additionally
+/// re-armed with a fresh TTL at every phase boundary below (after the
+/// migration pass and before the target checkpoint, again before eviction,
+/// and again before the sources' checkpoint round) so a real pass —
+/// hundreds of sequential batch/checkpoint HTTP round trips — can never
+/// silently outlive [`ClusterControl::write_fence_ttl_secs`] mid-sequence.
+/// [`checkpoint_shards`] itself also re-arms on the same TTL/4 clock between
+/// individual shard checkpoints (#1458 R3), so a slow multi-shard
+/// checkpoint round is covered too, not just the boundary before it. Any
+/// re-arm failure aborts to [`DriveOutcome::Blocked`] immediately, always
+/// strictly before [`evict_old_shards`] runs.
 async fn advance_catching_up_fenced(
     control: &dyn ClusterControl,
     http: &reqwest::Client,
@@ -1498,6 +1702,13 @@ async fn advance_catching_up_fenced(
         return DriveOutcome::Blocked(err.to_string());
     }
 
+    // #1458 R3: re-armed (unconditionally) at every phase boundary below;
+    // reset alongside each one so `checkpoint_shards`' own in-loop
+    // time-based re-arm measures elapsed time from the boundary that
+    // actually just armed the fence, not from this sequence's start.
+    let mut last_armed_at = Instant::now();
+    let fence_buckets = (!moving_buckets.is_empty()).then_some(moving_buckets);
+
     if !moving_buckets.is_empty() {
         if let Err(err) = set_write_fence(
             control,
@@ -1515,6 +1726,7 @@ async fn advance_catching_up_fenced(
                 "re-arm write fence before target checkpoint: {err}"
             ));
         }
+        last_armed_at = Instant::now();
     }
 
     // R1: the target/new shard's copy of the just-migrated data must be
@@ -1527,6 +1739,9 @@ async fn advance_catching_up_fenced(
         name,
         lumen,
         std::iter::once(new_shard),
+        current,
+        fence_buckets,
+        &mut last_armed_at,
     )
     .await
     {
@@ -1548,6 +1763,7 @@ async fn advance_catching_up_fenced(
         {
             return DriveOutcome::Blocked(format!("re-arm write fence before eviction: {err}"));
         }
+        last_armed_at = Instant::now();
     }
 
     if let Err(err) = evict_old_shards(control, http, namespace, name, lumen, current, target).await
@@ -1572,6 +1788,7 @@ async fn advance_catching_up_fenced(
                 "re-arm write fence before sources' checkpoint round: {err}"
             ));
         }
+        last_armed_at = Instant::now();
     }
 
     // R1: sources' eviction must itself be durable before cutover, same
@@ -1584,6 +1801,9 @@ async fn advance_catching_up_fenced(
         name,
         lumen,
         0..current.physical_shard_count(),
+        current,
+        fence_buckets,
+        &mut last_armed_at,
     )
     .await
     {
@@ -1619,6 +1839,126 @@ async fn advance_catching_up_fenced(
     }
 }
 
+/// #1458 R1: `Complete`-phase convergence step, checked ahead of
+/// [`should_start_split`] so a CR is never allowed to start a *new* split
+/// while a prior one's serving pods have not all confirmed `Ready` on the
+/// map that prior split cutover to. Keeps the write-pause fence armed over
+/// [`buckets_on_newest_shard`] — the buckets that moved into the current
+/// `spec.shardMap` — re-arming it every tick this returns `Some(
+/// AwaitingTopologyConvergence)`, until [`ClusterControl::
+/// serving_topology_converged`] confirms every serving pod is `Ready` on
+/// the new topology, at which point the fence is cleared and
+/// `workflow.convergedShardMapVersion` is patched to the converged version.
+///
+/// "Converging" is derived purely from persisted state (`spec.shardMap.
+/// version` compared against `workflow.convergedShardMapVersion`), not
+/// driver memory, so this resumes correctly across a driver restart:
+/// [`buckets_on_newest_shard`] recomputes the exact same bucket set from
+/// `spec.shardMap` alone (see that function's doc for the invariant this
+/// relies on), and [`ClusterControl::serving_topology_converged`] reuses
+/// the same StatefulSet readiness plumbing [`advance_prepare_split`]
+/// already polls rather than adding a new seam.
+///
+/// This replaces #1442 R2's "leave the fence armed once for a fixed
+/// [`WRITE_FENCE_TTL_SECS`]" behavior: a slow rolling restart across many
+/// pods could outlive that single fixed TTL, silently reopening the
+/// mixed-map write-loss window the fence exists to close.
+///
+/// Returns `None` when convergence is not pending — either `shard_map.
+/// version == 0` (a CR that has never resharded; no cutover has ever run
+/// to converge from) or the current version is already recorded converged
+/// — letting the caller fall through to [`should_start_split`].
+async fn advance_convergence(
+    control: &dyn ClusterControl,
+    http: &reqwest::Client,
+    namespace: &str,
+    name: &str,
+    lumen: &Lumen,
+) -> Option<DriveOutcome> {
+    let map_version = lumen.spec.shard_map.version;
+    if map_version == 0
+        || lumen
+            .spec
+            .reshard_policy
+            .workflow
+            .converged_shard_map_version
+            == Some(map_version)
+    {
+        return None;
+    }
+
+    let current = match current_shard_map(lumen) {
+        Ok(m) => m,
+        Err(err) => return Some(DriveOutcome::Blocked(err.to_string())),
+    };
+    let moving_buckets = buckets_on_newest_shard(&current);
+    let desired_replicas = lumen.spec.storage_pod_count() as i64;
+
+    let converged = match control
+        .serving_topology_converged(namespace, name, desired_replicas)
+        .await
+    {
+        Ok(converged) => converged,
+        Err(err) => return Some(DriveOutcome::Blocked(err.to_string())),
+    };
+
+    if converged {
+        if !moving_buckets.is_empty() {
+            if let Err(err) = set_write_fence(
+                control,
+                http,
+                namespace,
+                name,
+                lumen,
+                &current,
+                &BTreeSet::new(),
+                0,
+            )
+            .await
+            {
+                tracing::warn!(
+                    error = %err,
+                    "reshard driver: failed to clear write fence after topology convergence; \
+                     bounded by WRITE_FENCE_TTL_SECS"
+                );
+            }
+        }
+        let patch = json!({
+            "spec": {
+                "reshardPolicy": {
+                    "workflow": {
+                        "convergedShardMapVersion": map_version,
+                    }
+                }
+            }
+        });
+        if let Err(err) = control.patch_spec(namespace, name, patch).await {
+            return Some(DriveOutcome::Blocked(err.to_string()));
+        }
+        return Some(DriveOutcome::TopologyConverged { map_version });
+    }
+
+    if !moving_buckets.is_empty() {
+        if let Err(err) = set_write_fence(
+            control,
+            http,
+            namespace,
+            name,
+            lumen,
+            &current,
+            &moving_buckets,
+            control.write_fence_ttl_secs(),
+        )
+        .await
+        {
+            return Some(DriveOutcome::Blocked(format!(
+                "re-arm write fence while awaiting topology convergence: {err}"
+            )));
+        }
+    }
+    Some(DriveOutcome::AwaitingTopologyConvergence { map_version })
+}
+
 /// One phase-driver tick for `lumen`: dispatches on `spec.reshardPolicy.
 /// workflow.phase` and performs at most one state transition's worth of
 /// work. Safe to call every [`DRIVER_POLL_INTERVAL`] forever — a `Complete`
@@ -1636,7 +1976,17 @@ pub async fn drive_tick(
 
     match lumen.spec.reshard_policy.workflow.phase {
         ReshardPhase::Complete => {
-            if should_start_split(lumen) {
+            // #1458 R4: a workflow back at `Complete` has no legitimate
+            // oversize wedge left to report — clear defensively (idempotent
+            // if already clear from `run_migration_pass_impl`'s own
+            // end-of-pass clear) so a manually-forced phase reset never
+            // leaves a stale condition behind.
+            clear_oversize_block(&namespace, &name);
+            if let Some(outcome) =
+                advance_convergence(control, http, &namespace, &name, lumen).await
+            {
+                outcome
+            } else if should_start_split(lumen) {
                 start_split(control, &namespace, &name, lumen).await
             } else {
                 DriveOutcome::NoOp(
@@ -1692,6 +2042,12 @@ pub fn spawn_reshard_driver_loop(client: Client) {
             {
                 match api.list(&Default::default()).await {
                     Ok(list) => {
+                        // #1458 R4: this list is already the authoritative
+                        // live-CR set, so pruning stale oversize-cache
+                        // entries here needs no extra k8s API call.
+                        let live_uids: BTreeSet<String> =
+                            list.items.iter().filter_map(|l| l.uid()).collect();
+                        prune_oversize_cache(&live_uids);
                         for lumen in list.items {
                             let outcome = drive_tick(&control, &http, &lumen).await;
                             if !matches!(outcome, DriveOutcome::NoOp(_)) {
@@ -1815,6 +2171,7 @@ mod tests {
         s.reshard_policy.workflow = ReshardWorkflowSpec {
             phase: ReshardPhase::Splitting,
             target_shard_count: Some(2),
+            ..Default::default()
         };
         let lumen = lumen_with(s, Some(status_with_blocking("urgentThresholdCrossed")));
         assert!(!should_start_split(&lumen));
@@ -2174,12 +2531,13 @@ mod tests {
         // interference under parallel execution.
         let namespace = "ac2-cache-ns";
         let name = "ac2-cache-name";
+        let uid = "ac2-cache-uid";
         assert!(
-            oversize_block_condition(namespace, name).is_none(),
+            oversize_block_condition(namespace, name, uid).is_none(),
             "no wedge recorded yet"
         );
         assert!(
-            should_skip_for_oversize(namespace, name).is_none(),
+            should_skip_for_oversize(namespace, name, uid).is_none(),
             "nothing to skip before a wedge is ever recorded"
         );
 
@@ -2188,9 +2546,9 @@ mod tests {
             external_id: "abc".to_string(),
             bytes: crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES + 1,
         };
-        record_oversize_block(namespace, name, block.clone());
+        record_oversize_block(namespace, name, uid, block.clone());
         assert_eq!(
-            oversize_block_condition(namespace, name),
+            oversize_block_condition(namespace, name, uid),
             Some(block.clone()),
             "the recorded wedge must be readable without affecting the skip budget"
         );
@@ -2199,19 +2557,19 @@ mod tests {
         // by the read-only `oversize_block_condition` above.
         for _ in 0..OVERSIZE_RECHECK_TICKS {
             assert_eq!(
-                should_skip_for_oversize(namespace, name),
+                should_skip_for_oversize(namespace, name, uid),
                 Some(block.clone()),
                 "every tick within the recheck budget must skip on the same wedge"
             );
         }
         assert!(
-            should_skip_for_oversize(namespace, name).is_none(),
+            should_skip_for_oversize(namespace, name, uid).is_none(),
             "once the recheck budget is exhausted, the next tick must be let through"
         );
 
         clear_oversize_block(namespace, name);
         assert!(
-            oversize_block_condition(namespace, name).is_none(),
+            oversize_block_condition(namespace, name, uid).is_none(),
             "clearing must remove the wedge entirely"
         );
     }
@@ -2227,6 +2585,7 @@ mod tests {
         record_oversize_block(
             namespace,
             name,
+            "",
             OversizedDocumentBlock {
                 collection: "widgets".to_string(),
                 external_id: "abc".to_string(),
@@ -2356,6 +2715,7 @@ mod tests {
         s.reshard_policy.workflow = ReshardWorkflowSpec {
             phase: ReshardPhase::PrepareSplit,
             target_shard_count: Some(3),
+            ..Default::default()
         };
         let lumen = lumen_with(s, None);
         // Only 2 of the 3 desired pods are ready yet.
@@ -2376,6 +2736,7 @@ mod tests {
         s.reshard_policy.workflow = ReshardWorkflowSpec {
             phase: ReshardPhase::PrepareSplit,
             target_shard_count: Some(3),
+            ..Default::default()
         };
         let lumen = lumen_with(s, None);
         let control = FakeControl::new(3);
@@ -2399,6 +2760,7 @@ mod tests {
         s.reshard_policy.workflow = ReshardWorkflowSpec {
             phase: ReshardPhase::PrepareSplit,
             target_shard_count: Some(3),
+            ..Default::default()
         };
         let lumen = lumen_with(s, None);
 

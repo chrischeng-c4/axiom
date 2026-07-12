@@ -28,17 +28,17 @@ Public API manifest for `projects/lumen/src/api.rs` generated from AST during Sc
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 614 |  |
-| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 2374 |  |
+| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 2366 |  |
 | `AppState` | projects/lumen/src/api.rs | struct | pub | 64 |  |
 | `RoutedBackend` | projects/lumen/src/api.rs | trait | pub | 278 | Cross-pod shard routing for operator/k8s serving pods (#1398 R1-R3); `AppState::routed` is `None` for every non-routed deployment. |
-| `ShardForwardMisrouted` | projects/lumen/src/api.rs | struct | pub | 2465 | A forwarded request's one-hop marker claimed this pod, but recomputing ownership disagrees (#1442 R1) — a spoofed or genuinely misrouted forward, rejected rather than honored. |
-| `ShardForwardRemoteError` | projects/lumen/src/api.rs | struct | pub | 2413 | The owning shard was reached and answered, but with a non-2xx status. |
-| `ShardForwardUnavailable` | projects/lumen/src/api.rs | struct | pub | 2395 | One-hop shard-forward failure — the owning shard was unreachable or its response could not be decoded. |
-| `ShardMapVersionMismatch` | projects/lumen/src/api.rs | struct | pub | 2437 | A forwarded request declared a shard-map version that disagrees with this pod's own live map (#1442 R2) — the rolling-restart mixed-map window. |
+| `ShardForwardMisrouted` | projects/lumen/src/api.rs | struct | pub | 2457 | A forwarded request's one-hop marker claimed this pod, but recomputing ownership disagrees (#1442 R1) — a spoofed or genuinely misrouted forward, rejected rather than honored. |
+| `ShardForwardRemoteError` | projects/lumen/src/api.rs | struct | pub | 2405 | The owning shard was reached and answered, but with a non-2xx status. |
+| `ShardForwardUnavailable` | projects/lumen/src/api.rs | struct | pub | 2387 | One-hop shard-forward failure — the owning shard was unreachable or its response could not be decoded. |
+| `ShardMapVersionMismatch` | projects/lumen/src/api.rs | struct | pub | 2429 | A forwarded request declared a shard-map version that disagrees with this pod's own live map (#1442 R2) — the rolling-restart mixed-map window. |
 | `WriteFence` | projects/lumen/src/api.rs | struct | pub | 173 | #1396 R2: bounded write pause on still-moving virtual buckets during a reshard's final `CatchingUp` pass. Armed/cleared via `POST /admin/reshard:fence`; self-expires on its TTL deadline so a crashed driver can never leave a permanent fence. #1443 R3: `arm` now returns `bool` (false on `Instant + Duration` overflow instead of panicking) and the internal mutex is poison-proof (`unwrap_or_else(poisoned -> into_inner)`), so an overflowed/panicked prior caller can never wedge the fence permanently. |
 | `new` | projects/lumen/src/api.rs | function | pub | 461 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
 | `open` | projects/lumen/src/api.rs | function | pub | 499 | open(engine: Arc<Engine>) -> Self |
-| `openapi` | projects/lumen/src/api.rs | function | pub | 2302 | openapi() -> utoipa::openapi::OpenApi |
+| `openapi` | projects/lumen/src/api.rs | function | pub | 2294 | openapi() -> utoipa::openapi::OpenApi |
 | `router` | projects/lumen/src/api.rs | function | pub | 653 | router(state: AppState) -> Router |
 | `with_checkpoint` | projects/lumen/src/api.rs | function | pub | 483 | with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self |
 | `with_cluster` | projects/lumen/src/api.rs | function | pub | 465 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
@@ -928,30 +928,21 @@ fn enforce_read_consistency(state: &AppState, consistency: ReadConsistency) -> R
 
 /// Reject a write whose `(collection_id, external_id)` routes to a
 /// currently-fenced virtual bucket (#1396 R2). Checked in [`index`],
-/// [`replace_docs`], and [`replace_doc`] — the write paths a reshard's final
-/// migration pass must observe a converged snapshot of.
+/// [`replace_docs`], [`replace_doc`], and [`delete_external_id`] — every
+/// write path a reshard's final migration pass must observe a converged
+/// snapshot of.
 ///
-/// `delete_external_id` is deliberately still not fenced (#1443 R2
-/// re-review): the earlier rationale here — "safe to lose, the document
-/// either already migrated or didn't" — was wrong, because
-/// `apply_reshard_batch`'s ordinary merge is additive-only, so a DELETE
-/// acked on the source anywhere during `Splitting` could resurrect at
-/// cutover once the (now-stale) already-copied target copy was never told
-/// to drop it. #1443 closes that gap on the other side instead: the
-/// reshard driver's final `CatchingUp` pass (the one this fence guards) now
-/// carries an authoritative-subset `replace_ids` scope for every bucket it
-/// copies (see [`crate::reshard::snapshot_reshard_batches`]'s `replace_mode`
-/// and [`crate::storage::Engine::apply_reshard_batch`]'s `replace`
-/// parameter) — a document deleted on the source before that final pass is
-/// simply absent from its authoritative id set and gets pruned from the
-/// target, without needing DELETE itself to observe the fence. This closes
-/// the resurrection gap for any delete that lands and is acked *before* that
-/// final fenced pass's scoped-backup read; a delete racing strictly inside
-/// the sub-window between that read and this same pass's eviction is not
-/// covered (fencing DELETE too would close it fully, at the cost of
-/// rejecting a much more common write shape during the whole split, not
-/// just the final pass) — see the module's #1396 R2 write-fence doc on
-/// [`WriteFence`].
+/// `delete_external_id` is fenced too (#1458 R2): an earlier revision left
+/// DELETE exempt on the theory that `apply_reshard_batch`'s
+/// authoritative-subset `replace_ids` scoping (see
+/// [`crate::reshard::snapshot_reshard_batches`]'s `replace_mode` and
+/// [`crate::storage::Engine::apply_reshard_batch`]'s `replace` parameter)
+/// already closes the resurrection gap for a delete acked *before* the
+/// final pass's scoped-backup read. That leaves a delete racing strictly
+/// inside the sub-window between that read and the same pass's eviction
+/// uncovered — fencing DELETE like every other write closes it fully, at
+/// the ordinary cost (a retryable 503) of any write to a fenced bucket. See
+/// the module's #1396 R2 write-fence doc on [`WriteFence`].
 fn enforce_write_fence(
     state: &AppState,
     collection_id: &str,
@@ -1203,6 +1194,7 @@ async fn delete_external_id(
     Query(q): Query<DeleteQuery>,
 ) -> Result<StatusCode, ApiErr> {
     auth.ensure(&collection_id, Role::Write)?;
+    enforce_write_fence(&state, &collection_id, &external_id)?;
     if let Some(router) = &state.routed {
         router
             .delete(collection_id.clone(), external_id, q.field, &headers)
@@ -2735,4 +2727,16 @@ changes:
       hand-copied `8 * 1024 * 1024` literal, so this route's actual
       enforced body limit can never drift from the constant the reshard
       driver's oversize-batch detection compares against.
+  - path: projects/lumen/src/api.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1458 R2: `delete_external_id` now calls `enforce_write_fence` like
+      every other write path, replacing the earlier deliberate DELETE
+      exemption — a delete racing strictly inside the sub-window between a
+      final fenced pass's scoped-backup read and its eviction is now
+      rejected with a retryable 503 `bucket_write_paused` instead of being
+      silently accepted. `enforce_write_fence`'s doc comment updated to
+      match.
 ```

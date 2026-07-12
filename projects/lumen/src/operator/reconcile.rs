@@ -488,13 +488,42 @@ impl ManagedService for Lumen {
         // rather than inside `LumenSpec::reshard_status*` because it comes
         // from the driver's own live apply attempts, not from spec/usage.
         let namespace = self.namespace().unwrap_or_else(|| "default".to_string());
+        let uid = self.uid().unwrap_or_default();
         if let Some(block) =
-            crate::operator::reshard_driver::oversize_block_condition(&namespace, &name)
+            crate::operator::reshard_driver::oversize_block_condition(&namespace, &name, &uid)
         {
             reshard
                 .blocking_conditions
                 .push("reshardOversizedDocument".to_string());
             reshard.message = block.to_string();
+        }
+        // #1458 R1: post-cutover topology-convergence pending — derived
+        // purely from persisted spec state (`shardMap.version` vs
+        // `workflow.convergedShardMapVersion`), the same check
+        // `reshard_driver::advance_convergence` runs each tick, so this
+        // needs no driver-side cache read. Only sets the message if a more
+        // severe oversize wedge did not already claim it above.
+        let map_version = self.spec.shard_map.version;
+        if map_version > 0
+            && self
+                .spec
+                .reshard_policy
+                .workflow
+                .converged_shard_map_version
+                != Some(map_version)
+        {
+            reshard
+                .blocking_conditions
+                .push("awaitingTopologyConvergence".to_string());
+            if !reshard
+                .blocking_conditions
+                .contains(&"reshardOversizedDocument".to_string())
+            {
+                reshard.message = format!(
+                    "waiting for every serving pod to become Ready on shardMap version \
+                     {map_version} before the post-cutover write-pause fence is cleared"
+                );
+            }
         }
         let phase = if serving_ready >= desired {
             "Ready"
@@ -675,6 +704,7 @@ mod tests {
         crate::operator::reshard_driver::record_oversize_block(
             namespace,
             name,
+            "",
             crate::operator::reshard_driver::OversizedDocumentBlock {
                 collection: "widgets".to_string(),
                 external_id: "doc-42".to_string(),
@@ -725,6 +755,50 @@ mod tests {
             "no oversize wedge was recorded for this namespace/name; \
              status.reshard.blockingConditions must not report one, got: {reshard}"
         );
+    }
+
+    /// #1458 R4/AC4: a CR recorded an oversize wedge under `uid` "old-uid";
+    /// a deleted-and-recreated CR under the *same* namespace/name gets a
+    /// fresh `uid` from the API server, so its status must be clean
+    /// immediately — not wait for `prune_oversize_cache`'s next poll to
+    /// catch up with the driver-loop's live-CR listing.
+    #[test]
+    fn status_patch_is_clean_for_a_recreated_cr_with_a_stale_cached_uid() {
+        let namespace = "acme-status-recreated";
+        let name = "search";
+        crate::operator::reshard_driver::record_oversize_block(
+            namespace,
+            name,
+            "old-uid",
+            crate::operator::reshard_driver::OversizedDocumentBlock {
+                collection: "widgets".to_string(),
+                external_id: "doc-42".to_string(),
+                bytes: 9_000_000,
+            },
+        );
+
+        let mut lumen = hpa_test_lumen(name, namespace, 2, 1);
+        lumen.metadata.uid = Some("new-uid".to_string());
+
+        let ready = ReadyFacts {
+            ready: std::collections::HashMap::new(),
+        };
+        let patch = lumen.status_patch(&ready);
+        let reshard = &patch["status"]["reshard"];
+        let blocking = reshard["blockingConditions"].as_array();
+        let has_condition = blocking
+            .map(|arr| {
+                arr.iter()
+                    .any(|c| c.as_str() == Some("reshardOversizedDocument"))
+            })
+            .unwrap_or(false);
+        assert!(
+            !has_condition,
+            "a recreated CR (new uid) must not inherit the deleted CR's stale oversize wedge \
+             cached under the old uid, got: {reshard}"
+        );
+
+        crate::operator::reshard_driver::clear_oversize_block(namespace, name);
     }
 
     // ---- HPA topology-transition handoff (#1385, AC1) ----------------------

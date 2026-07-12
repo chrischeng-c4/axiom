@@ -297,6 +297,17 @@ struct FakeControl {
     /// set, so a test can arm/re-arm with a short TTL instead of waiting out
     /// the real 120s production default.
     fence_ttl_secs: Option<u64>,
+    /// #1458 R1/AC1: overrides [`ClusterControl::serving_topology_converged`]
+    /// when set, standing in for a StatefulSet rollout that has not (or has
+    /// just) finished reaching every pod `Ready` on the new topology —
+    /// `None` (the default) means "converged", matching the trait's default
+    /// `Ok(true)` so every pre-#1458 caller of this fake is unaffected.
+    topology_converged: Option<Arc<AtomicBool>>,
+    /// #1458 R1/AC1: counts calls to `serving_topology_converged`, so a test
+    /// can assert the driver actually re-checked (and, via
+    /// `fence_arm_calls`/HTTP mocks, re-armed) on repeated ticks rather than
+    /// caching a stale answer in-process.
+    convergence_check_calls: AtomicI64,
 }
 
 impl FakeControl {
@@ -306,11 +317,18 @@ impl FakeControl {
             shard_urls,
             restart_trigger_calls: AtomicI64::new(0),
             fence_ttl_secs: None,
+            topology_converged: None,
+            convergence_check_calls: AtomicI64::new(0),
         }
     }
 
     fn with_fence_ttl_secs(mut self, ttl_secs: u64) -> Self {
         self.fence_ttl_secs = Some(ttl_secs);
+        self
+    }
+
+    fn with_topology_converged(mut self, converged: Arc<AtomicBool>) -> Self {
+        self.topology_converged = Some(converged);
         self
     }
 
@@ -362,6 +380,20 @@ impl ClusterControl for FakeControl {
     fn write_fence_ttl_secs(&self) -> u64 {
         self.fence_ttl_secs
             .unwrap_or_else(lumen::operator::reshard_driver::default_write_fence_ttl_secs)
+    }
+
+    async fn serving_topology_converged(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _desired_replicas: i64,
+    ) -> anyhow::Result<bool> {
+        self.convergence_check_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(self
+            .topology_converged
+            .as_ref()
+            .map(|flag| flag.load(Ordering::SeqCst))
+            .unwrap_or(true))
     }
 }
 
@@ -513,10 +545,28 @@ async fn full_split_resumes_after_restart_and_reaches_complete() {
     assert_eq!(total_docs(&shard0.server).await, staying.len() as u64);
     assert_eq!(total_docs(&shard1.server).await, moving.len() as u64);
 
-    // Re-running the driver on an already-`Complete` workflow with a
-    // cleared threshold (what the separate live-usage loop would report
-    // now that capacity has doubled) is a no-op: it does not loop forever
-    // re-driving a workflow that has nothing left to do.
+    // Tick 5 (#1458 R1): `Complete` with `shardMap.version` freshly bumped
+    // and no `convergedShardMapVersion` recorded yet must run the
+    // topology-convergence step before anything else — this `FakeControl`
+    // reports every StatefulSet instantly ready (the trait default), so
+    // convergence is confirmed on the very next tick.
+    let lumen = control.snapshot();
+    let outcome = drive_tick(&control, &http, &lumen).await;
+    assert_eq!(outcome, DriveOutcome::TopologyConverged { map_version: 1 });
+    assert_eq!(
+        control
+            .snapshot()
+            .spec
+            .reshard_policy
+            .workflow
+            .converged_shard_map_version,
+        Some(1)
+    );
+
+    // Re-running the driver on an already-`Complete`, already-converged
+    // workflow with a cleared threshold (what the separate live-usage loop
+    // would report now that capacity has doubled) is a no-op: it does not
+    // loop forever re-driving a workflow that has nothing left to do.
     control
         .cluster
         .lock()
@@ -935,14 +985,21 @@ async fn write_fence_stays_armed_immediately_after_completed_split() {
     );
 }
 
-/// #1443 R2/AC2: `delete_external_id` stays fence-exempt (it always was, and
-/// still is — deletes racing a split are not rejected), but a DELETE acked on
-/// the still-owning source during `CatchingUp`, strictly after that bucket's
-/// document was already additively copied to the target by an earlier
-/// migration pass, must not resurrect at cutover. The final fenced pass is
-/// authoritative (replace, not merge) for every moving bucket's document set,
-/// so the now-deleted id is absent from the live source snapshot it reads and
-/// gets pruned off the target instead of surviving there as a stale copy.
+/// #1443 R2/AC2: a DELETE acked on the still-owning source during
+/// `CatchingUp`, strictly after that bucket's document was already
+/// additively copied to the target by an earlier migration pass, must not
+/// resurrect at cutover. The final fenced pass is authoritative (replace,
+/// not merge) for every moving bucket's document set, so the now-deleted id
+/// is absent from the live source snapshot it reads and gets pruned off the
+/// target instead of surviving there as a stale copy.
+///
+/// #1458 R2: `delete_external_id` is fence-covered like every other write
+/// now (a DELETE landing on a fenced bucket gets 503 `bucket_write_paused`,
+/// see `reshard_admin_e2e.rs`'s `reshard_fence_blocks_delete_on_the_fenced_
+/// bucket`) — this scenario stays green unchanged because `advance_catching_
+/// up` clears the fence at the end of every non-final `CatchingUp` tick
+/// (before this test's `delete_user` call runs), so the bucket is unfenced
+/// at the moment of this particular delete.
 #[tokio::test]
 async fn delete_during_split_does_not_resurrect_after_cutover() {
     let shard0 = spin_up_shard();
@@ -1083,5 +1140,138 @@ async fn write_fence_survives_a_tick_longer_than_a_single_ttl() {
         "write fence must still be armed ~2.3s into a tick whose checkpoints alone take ~3s; a \
          single un-refreshed 2s TTL would already have expired by then"
     );
+}
+
+/// #1458 R1/AC1: after `CompletedSplit`, the driver must keep re-arming the
+/// write-pause fence over the buckets that just moved — and keep reporting
+/// `AwaitingTopologyConvergence` — every tick the rolling restart has not
+/// yet reached every serving pod, deriving "converging" purely from
+/// persisted `spec.shardMap.version` vs `workflow.convergedShardMapVersion`
+/// (not driver memory: a fresh `FakeControl` over the same `cluster`
+/// mid-test simulates a driver restart). Only once
+/// [`ClusterControl::serving_topology_converged`] reports `true` does the
+/// fence actually clear and `convergedShardMapVersion` get persisted.
+#[tokio::test]
+async fn fence_stays_armed_across_ticks_until_topology_convergence_confirmed() {
+    let shard0 = spin_up_shard();
+    let shard1 = spin_up_shard();
+    create_users_collection(&shard0.server).await;
+    create_users_collection(&shard1.server).await;
+
+    let ids: Vec<String> = (0..40).map(|i| format!("u-{i:03}")).collect();
+    for id in &ids {
+        index_user(&shard0.server, id).await;
+    }
+    let moving: Vec<&String> = ids.iter().filter(|id| bucket_of(id) < 4).collect();
+    assert!(!moving.is_empty());
+
+    let cluster = Arc::new(Mutex::new(initial_lumen(
+        Some(1_000_000_000),
+        Some("urgentThresholdCrossed"),
+    )));
+    let shard_urls = vec![shard0.base_url.clone(), shard1.base_url.clone()];
+    let http = reqwest::Client::new();
+    let converged = Arc::new(AtomicBool::new(false));
+    let control = FakeControl::new(cluster.clone(), shard_urls.clone())
+        .with_topology_converged(converged.clone());
+
+    // Drive Complete -> PrepareSplit -> Splitting -> CatchingUp -> Complete.
+    for _ in 0..4 {
+        let lumen = control.snapshot();
+        drive_tick(&control, &http, &lumen).await;
+    }
+    let after_cutover = control.snapshot();
+    assert_eq!(
+        after_cutover.spec.reshard_policy.workflow.phase,
+        ReshardPhase::Complete
+    );
+    assert_eq!(after_cutover.spec.shard_map.version, 1);
+    assert_eq!(
+        after_cutover
+            .spec
+            .reshard_policy
+            .workflow
+            .converged_shard_map_version,
+        None,
+        "cutover itself must not claim convergence — only a confirmed-Ready poll may"
+    );
+
+    let moved_id = moving[0];
+    let probe = || async {
+        shard0
+            .server
+            .post("/collections/u/index")
+            .json(&json!({
+                "items": [{
+                    "external_id": moved_id,
+                    "field": "email",
+                    "value": "late@x.com",
+                }]
+            }))
+            .await
+    };
+
+    // Topology not converged yet: repeated ticks must keep re-arming the
+    // fence (writes to the moved bucket stay paused) and keep reporting
+    // AwaitingTopologyConvergence, no matter how many ticks run.
+    for _ in 0..3 {
+        let lumen = control.snapshot();
+        let outcome = drive_tick(&control, &http, &lumen).await;
+        assert_eq!(
+            outcome,
+            DriveOutcome::AwaitingTopologyConvergence { map_version: 1 }
+        );
+        assert_eq!(
+            probe().await.status_code(),
+            503,
+            "the fence must stay re-armed every tick topology has not converged"
+        );
+    }
+    assert!(
+        control.convergence_check_calls.load(Ordering::SeqCst) >= 3,
+        "serving_topology_converged must be re-checked every tick, not cached in-process"
+    );
+
+    // #1458 R1/AC2: resumable across a simulated driver restart — a brand
+    // new `FakeControl` over the same persisted `cluster` (zero in-process
+    // state carried over) must derive the same still-converging decision
+    // purely from `spec.shardMap.version` vs `workflow.
+    // convergedShardMapVersion`.
+    let restarted = FakeControl::new(cluster.clone(), shard_urls.clone())
+        .with_topology_converged(converged.clone());
+    let lumen = restarted.snapshot();
+    let outcome = drive_tick(&restarted, &http, &lumen).await;
+    assert_eq!(
+        outcome,
+        DriveOutcome::AwaitingTopologyConvergence { map_version: 1 }
+    );
+    assert_eq!(probe().await.status_code(), 503);
+
+    // Topology now converged: the very next tick must clear the fence and
+    // persist convergedShardMapVersion.
+    converged.store(true, Ordering::SeqCst);
+    let lumen = restarted.snapshot();
+    let outcome = drive_tick(&restarted, &http, &lumen).await;
+    assert_eq!(outcome, DriveOutcome::TopologyConverged { map_version: 1 });
+    assert_eq!(
+        restarted
+            .snapshot()
+            .spec
+            .reshard_policy
+            .workflow
+            .converged_shard_map_version,
+        Some(1)
+    );
+    assert_eq!(
+        probe().await.status_code(),
+        200,
+        "the fence must be cleared once topology convergence is confirmed"
+    );
+
+    // And a further tick is a clean no-op — no repeated fence churn once
+    // convergence is already recorded.
+    let lumen = restarted.snapshot();
+    let outcome = drive_tick(&restarted, &http, &lumen).await;
+    assert!(matches!(outcome, DriveOutcome::NoOp(_)));
 }
 // CODEGEN-END
