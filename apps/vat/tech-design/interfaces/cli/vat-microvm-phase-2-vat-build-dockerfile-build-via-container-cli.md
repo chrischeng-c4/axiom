@@ -111,7 +111,6 @@ notes: >
   take their bounded timeout as a plain Duration argument from the caller
   (ensure_microvm_available in commands/build.rs), not from a config file.
 ```
-
 ## CLI
 <!-- type: cli lang: yaml -->
 
