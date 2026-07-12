@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:mamba-closure-perf-pin" tracker="#1478" reason="The closure hot path needs an executable CPU and RSS perf gate."
+// TODO: hand-write content for `projects/mamba/tests/harness/cpython/config/perf/pins/closure_call_hot_1478.toml`.
+// HANDWRITE-END
