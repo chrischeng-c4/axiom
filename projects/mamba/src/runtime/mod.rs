@@ -18,6 +18,8 @@ pub mod list_ops;
 pub mod module;
 pub mod output;
 pub mod pep695;
+#[cfg(test)]
+pub(crate) mod provenance_inventory;
 pub mod rc;
 pub mod registry_bridge;
 pub mod repr_guard;

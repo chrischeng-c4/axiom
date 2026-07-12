@@ -2,6 +2,8 @@ pub mod aot;
 pub mod jit;
 pub mod marshal;
 pub mod perf_map;
+#[cfg(test)]
+mod provenance_matrix;
 
 /// Enable JIT-emitted retain/release calls (#1129).
 ///

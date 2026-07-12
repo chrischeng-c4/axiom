@@ -113,6 +113,9 @@ mod no_xfail_no_skip_promotion_gate_703;
 #[path = "schema_gates/strict_type_accounting_gate_704.rs"]
 mod strict_type_accounting_gate_704;
 
+#[path = "schema_gates/strict_type_provenance_gate_1453.rs"]
+mod strict_type_provenance_gate_1453;
+
 #[path = "schema_gates/platform_readiness_gate_710.rs"]
 mod platform_readiness_gate_710;
 
