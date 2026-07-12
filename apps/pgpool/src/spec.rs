@@ -91,7 +91,7 @@ pub const fn llm_boundaries_md() -> &'static str {
 "#
 }
 
-fn openapi() -> Value {
+pub fn openapi() -> Value {
     json!({
         "openapi": "3.1.0",
         "info": {
