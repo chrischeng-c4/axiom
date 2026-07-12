@@ -516,3 +516,42 @@ flowchart TD
     r9[R9 runner early persist writes live pid] --> commands_run_tests_run_configured_persists_runner_pid_before_wait[commands::run::tests::run_configured_persists_runner_pid_before_wait]
     r10[R10 ps logs filter by service ids] --> commands_compose_tests_ps_and_logs_filter_by_service_ids[commands::compose::tests::ps_and_logs_filter_by_service_ids]
 ```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: vat-compose-import-pure-fixture-shape
+    name: "pure fixture: vat compose import expands services + runner + hard-reject keys with no container/docker required"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: vat-compose-bounded-compose-subset-up-down-ps-logs
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat --test vat_compose_import -- --nocapture"
+    assertions:
+      - "AC2: expansion-shape assertions over a fixture compose file -- one ServiceConfig per compose service, the synthesized project.up runner with requires listing every service id in expand()'s order, environment injected onto ServiceConfig.image_env, and ports mapped per R2's H:C / bare C rules. Runs with no container/docker binary on PATH (compose::parse/expand/materialize are pure)."
+      - "R3: one assertion per hard-reject key (deploy, secrets, configs, extends, networks, profiles, healthcheck, command/entrypoint override, bind-mount-form volumes) asserting compose::parse returns the exact error text naming file/service/key."
+      - "AC7: feeding a fixture containing deploy: or healthcheck: into vat compose import fails with an error naming the exact file, service, and key."
+  - id: vat-compose-container-gated-full-cycle
+    name: "container-gated: up -d / ps / logs / down full lifecycle against one image: and one build: service"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: vat-compose-bounded-compose-subset-up-down-ps-logs
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat --test vat_compose -- --nocapture"
+    assertions:
+      - "AC5: gated on a container_available() skip helper (mirroring vat_cluster.rs's Docker-gated pattern and vat_sandbox_microvm.rs's container-gated tests): compose up -d against a fixture with one image: service and one build: service, then compose ps shows both with Running/Ready status, compose logs <project> <service> returns non-empty captured output for each, and compose down removes both the registry entry (<root>/compose/<project>/project.json) and the backing runner/service processes."
+      - "R9: down's SIGTERM path is exercised end to end -- the runner process observed via test_run.runner.pid is still alive when down is invoked (up -d has already returned), and the process is gone after down returns."
+      - "Registered in apps/vat/tests/aw-ec.toml (R11) alongside vat_compose_import.rs's pure test, so aw ec gen --verify / aw health --verify-tests pick both up as configured EC-gated test commands for the agent-native-gpu-native-dev-containers capability."
+  - id: vat-compose-mainstream-manual-smoke
+    name: "manual smoke: a real unmodified mainstream docker-compose.yml round-trips import -> up -d -> ps -> logs -> down"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: vat-compose-bounded-compose-subset-up-down-ps-logs
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "vat compose import ./docker-compose.yml && vat compose up -d --project demo && vat compose ps demo && vat compose logs demo web && vat compose down demo"
+    assertions:
+      - "AC6: a real, unmodified mainstream docker-compose.yml (one image: service, one build: service, a depends_on entry) succeeds through the full import -> up -d -> ps -> logs -> down cycle, with a clean registry afterward, and the source compose file itself required no edits."
+      - "Not part of the cargo test / aw-ec.toml gated surface (no CI-portable fixture repo is bundled for this manual smoke); recorded here as the human verification step named by AC6, run once against a developer-supplied compose file during this WI's own close-out."
+```
