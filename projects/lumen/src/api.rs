@@ -41,7 +41,7 @@ use axum::http::HeaderMap;
 
 use crate::auth::{auth_middleware, AuthConfig, AuthContext, LumenVerifier, Role};
 use crate::backup_sink::{BackupSink, LocalFsSink};
-use crate::coordinator::{WriteCoordinator, WriteSink};
+use crate::coordinator::{SubmitStalled, WriteCoordinator, WriteSink};
 use crate::log_entry::RaftLogEntry;
 use crate::raft::{ClusterStateView, RaftRole, ReadConsistency};
 use crate::reshard::ReshardBatch;
@@ -2480,6 +2480,18 @@ impl std::error::Error for ShardForwardMisrouted {}
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl From<anyhow::Error> for ApiErr {
     fn from(e: anyhow::Error) -> Self {
+        // #1486 R2: a write waiter released without a genuine apply outcome
+        // (dedup-guard skip or a bounded submit() timeout) is transient —
+        // surface it as a retryable 503, never the generic 400 fallback
+        // below (which would misreport it as a bad request) and never a
+        // silent hang (the original defect).
+        if e.downcast_ref::<SubmitStalled>().is_some() {
+            return Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "write_stalled",
+                e.to_string(),
+            );
+        }
         if e.downcast_ref::<ShardForwardUnavailable>().is_some() {
             return Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,

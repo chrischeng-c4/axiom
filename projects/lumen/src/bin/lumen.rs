@@ -1988,7 +1988,13 @@ async fn serve(args: ServeArgs) -> Result<()> {
         WalBackend::Auto => unreachable!("auto is resolved by resolve_wal_backend"),
         WalBackend::Embedded => {
             tracing::info!("wal=embedded (in-process; single-node)");
-            Some(Arc::new(MemWal::new()))
+            // Constructed below (#1486), once the final restore watermark
+            // (`start_seq`, after any checkpoint + AOF-tail replay) is
+            // known — an embedded `MemWal` must start its sequence domain
+            // above that watermark, not at 0, or the apply loop's
+            // redelivery-dedup guard silently strands the first N
+            // post-restart writes.
+            None
         }
         WalBackend::Nats => {
             tracing::info!(url = %args.nats_url, "wal=nats (JetStream)");
@@ -2162,6 +2168,16 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
     } else {
         None
+    };
+
+    // Embedded backend: build the `MemWal` now that `start_seq` reflects the
+    // final restore watermark (checkpoint restore, then AOF-tail replay if
+    // any — whichever is higher). Every other backend either owns its own
+    // sequence domain externally (NATS) or bypasses `wal` entirely (raft)
+    // (#1486).
+    let wal: Option<SharedWal> = match backend {
+        WalBackend::Embedded => Some(Arc::new(MemWal::starting_at(start_seq))),
+        _ => wal,
     };
 
     // (c) Start the apply loop. In segment mode with an AOF, the loop appends
