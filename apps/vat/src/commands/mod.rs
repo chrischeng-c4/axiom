@@ -10,6 +10,7 @@
 pub mod build;
 pub mod capabilities;
 pub mod cluster;
+pub mod compose;
 pub mod diff;
 pub mod doctor;
 pub mod emulator;
@@ -41,19 +42,5 @@ pub fn print_json<T: serde::Serialize>(value: &T, compact: bool) -> Result<()> {
 // CODEGEN-END
 // SPEC-MANAGED: apps/vat/tech-design/logic/vat-microvm-phase-3-vat-compose-limited-compose-subset-up-down-p.md#cli
 // CODEGEN-BEGIN
-#[derive(Subcommand)]
-pub enum Commands {
-    VatComposeImport,
-
-    VatComposeUp,
-
-    VatComposeDown,
-
-    VatComposePs,
-
-    VatComposeLogs,
-
-    VatRunVatBuildVatClusterUnaffected,
-
-}
+// Module registration and dispatch live in cli.rs
 // CODEGEN-END

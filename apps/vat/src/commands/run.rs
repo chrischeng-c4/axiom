@@ -23,7 +23,7 @@ use walkdir::WalkDir;
 use crate::cluster::{self, ClusterSpec, ResolvedBackend};
 use crate::config::{
     self, ClusterBackend, PortSpec, RetentionPolicy, RunnerConfig, ScenarioConfig,
-    ScenarioNetworkMode, ServiceConfig, ServicePreset, ServiceRuntime, VatConfig,
+    ScenarioNetworkMode, ServiceConfig, ServicePreset, ServiceRuntime, VatConfig, VolumeMount,
 };
 use crate::event::{Event, EventKind};
 use crate::gpu;
@@ -877,6 +877,32 @@ fn run_configured(
             }
         }
     }
+    // Persist an interim RunnerRunRecord carrying each spawned runner's live
+    // pid BEFORE the blocking wait below — mirrors persist_services()'s
+    // early-write pattern for services. Required so a concurrent reader
+    // (`vat compose down`) can observe a live pid while the runner is still
+    // executing; without this, test_run.runner.pid is only ever populated
+    // after wait_runner_processes returns, i.e. after the runner has already
+    // exited (R9).
+    let interim_records: Vec<RunnerRunRecord> = procs
+        .iter()
+        .map(|proc| RunnerRunRecord {
+            id: proc.runner.id.clone(),
+            command: proc.runner.cmd.clone(),
+            status: ProcessStatus::Running,
+            exit_code: None,
+            duration_ms: None,
+            pid: Some(proc.child.id()),
+            stdout_log: proc.stdout_log.clone(),
+            stderr_log: proc.stderr_log.clone(),
+        })
+        .collect();
+    if let Some(test_run) = vat.meta.test_run.as_mut() {
+        test_run.runner = interim_records.first().cloned();
+        test_run.runners = interim_records.clone();
+    }
+    vat.save()?;
+
     let records = wait_runner_processes(procs)?;
 
     // Worst-wins exit: any negative (timeout/kill) is worst, else max code.
@@ -1148,6 +1174,7 @@ fn wait_runner_processes(mut procs: Vec<RunnerProc>) -> Result<Vec<RunnerRunReco
                     status: ProcessStatus::Exited,
                     exit_code: Some(status.code().unwrap_or(-1)),
                     duration_ms: Some(proc.started.elapsed().as_millis() as u64),
+                    pid: None,
                     stdout_log: proc.stdout_log.clone(),
                     stderr_log: proc.stderr_log.clone(),
                 });
@@ -1163,6 +1190,7 @@ fn wait_runner_processes(mut procs: Vec<RunnerProc>) -> Result<Vec<RunnerRunReco
                         status: ProcessStatus::Exited,
                         exit_code: Some(-1),
                         duration_ms: Some(proc.started.elapsed().as_millis() as u64),
+                        pid: None,
                         stdout_log: proc.stdout_log.clone(),
                         stderr_log: proc.stderr_log.clone(),
                     });
@@ -1221,6 +1249,10 @@ struct ServicePlan {
     /// Set when the service runs as a Docker container; carries the
     /// `--name` so teardown can force-remove the container with no orphans.
     docker_name: Option<String>,
+    /// Set when the service runs via Apple's `container` CLI (MicroVM
+    /// isolation); carries the `--name` so teardown can force-remove it,
+    /// parallel to `docker_name`.
+    microvm_name: Option<String>,
     /// The Docker image, when this service runs as a container.
     image: Option<String>,
     /// Set when the service is a local Kubernetes cluster; carries the cluster
@@ -1246,6 +1278,9 @@ struct ServiceHandle {
     ready_probe: ReadyProbe,
     /// `docker --name` when the service is a container; force-removed on stop.
     docker_name: Option<String>,
+    /// `container --name` when the service runs via Apple's `container` CLI
+    /// (MicroVM isolation); force-removed on stop, parallel to `docker_name`.
+    microvm_name: Option<String>,
     /// Cluster evidence when the service is a local Kubernetes cluster; the
     /// cluster is deleted on stop subject to the `keep` policy.
     cluster: Option<ClusterRunRecord>,
@@ -1263,9 +1298,14 @@ fn prepare_service(
         // Created here in the prepare phase; the runner reaches it via KUBECONFIG.
         prepare_cluster_service(vat, service, backend)?
     } else if let Some(image) = &service.image {
-        // Explicit image: a Docker-only service (e.g. AlloyDB) with no native
-        // equivalent. Always a container.
-        prepare_image_service(vat, service, image)?
+        // Explicit image: a container-backed service (e.g. AlloyDB) with no
+        // native equivalent. `runtime: microvm` routes to Apple's `container`
+        // CLI; every other runtime (Auto, Docker, Native) keeps today's
+        // `docker run` path unchanged (R4/R5).
+        match service.runtime {
+            ServiceRuntime::MicroVm => prepare_microvm_service(vat, service, image)?,
+            _ => prepare_image_service(vat, service, image)?,
+        }
     } else if service.external.is_some() {
         prepare_external_service(service)?
     } else if service.preset == Some(ServicePreset::Firebase) {
@@ -1322,6 +1362,7 @@ fn prepare_service(
             exported_env: sorted_keys(&env),
             env,
             docker_name: None,
+            microvm_name: None,
             image: None,
             cluster: None,
             owned_by_vat: true,
@@ -1333,10 +1374,13 @@ fn prepare_service(
     // `prepare_cluster_service`; the container/preset note below does not apply.
     if plan.prepare_mode != "direct_start" && plan.cluster.is_none() {
         let is_docker = plan.docker_name.is_some();
+        let is_microvm = plan.microvm_name.is_some();
         let runtime = if !plan.owned_by_vat {
             "external"
         } else if is_docker {
             "docker"
+        } else if is_microvm {
+            "microvm"
         } else {
             "native"
         };
@@ -1344,6 +1388,8 @@ fn prepare_service(
             "using external service endpoint (not started or stopped by vat)"
         } else if is_docker {
             "running service via `docker run` (ephemeral, --rm)"
+        } else if is_microvm {
+            "running service via `container run` (ephemeral, --rm, MicroVM isolation)"
         } else if plan.prepare_mode == "cold_build" {
             "first run slower; cached for future runs"
         } else {
@@ -1478,6 +1524,7 @@ fn prepare_cluster_service(
         exported_env: sorted_keys(&env),
         env,
         docker_name: None,
+        microvm_name: None,
         image: None,
         cluster: Some(record),
         owned_by_vat: true,
@@ -1562,6 +1609,7 @@ fn start_service(
         timeout_s: plan.timeout_s,
         ready_probe: plan.ready_probe.clone(),
         docker_name: plan.docker_name.clone(),
+        microvm_name: plan.microvm_name.clone(),
         cluster: plan.cluster.clone(),
     })
 }
@@ -1619,6 +1667,7 @@ fn prepare_external_service(service: &ServiceConfig) -> Result<ServicePlan> {
         exported_env: sorted_keys(&env),
         env,
         docker_name: None,
+        microvm_name: None,
         image: None,
         cluster: None,
         owned_by_vat: false,
@@ -1706,6 +1755,7 @@ fn prepare_preset_service(
         exported_env: sorted_keys(&env),
         env,
         docker_name: None,
+        microvm_name: None,
         image: None,
         cluster: None,
         owned_by_vat: true,
@@ -1731,6 +1781,10 @@ fn resolve_preset_runtime(
     match service.runtime {
         ServiceRuntime::Native => Ok(ResolvedRuntime::Native),
         ServiceRuntime::Docker => Ok(ResolvedRuntime::Docker),
+        ServiceRuntime::MicroVm => {
+            // TODO: MicroVm support beyond compose import; for now treat as Docker
+            Ok(ResolvedRuntime::Docker)
+        }
         // A preset with a built-in Rust emulator runs vat's own server under
         // `auto` — always available, no external tooling.
         ServiceRuntime::Auto if preset.is_builtin() => Ok(ResolvedRuntime::Builtin),
@@ -1816,6 +1870,7 @@ fn prepare_preset_docker_service(
         exported_env: sorted_keys(&env),
         env,
         docker_name: Some(name),
+        microvm_name: None,
         image: Some(image),
         cluster: None,
         owned_by_vat: true,
@@ -1911,6 +1966,7 @@ fn prepare_firebase_service(
         exported_env: sorted_keys(&env),
         env,
         docker_name: None,
+        microvm_name: None,
         image: None,
         cluster: None,
         owned_by_vat: true,
@@ -2119,6 +2175,7 @@ fn prepare_builtin_service(
         exported_env: sorted_keys(&env),
         env,
         docker_name: None,
+        microvm_name: None,
         image: None,
         cluster: None,
         owned_by_vat: true,
@@ -2189,6 +2246,55 @@ fn prepare_image_service(
         exported_env: sorted_keys(&env),
         env,
         docker_name: Some(name),
+        microvm_name: None,
+        image: Some(image.to_string()),
+        cluster: None,
+        owned_by_vat: true,
+    })
+}
+
+/// Run an image-backed service via Apple's `container` CLI (MicroVM
+/// isolation) instead of Docker. Structurally mirrors `prepare_image_service`
+/// line for line: `ensure_microvm_available` replaces `ensure_docker_available`,
+/// `container_run_command` replaces `docker_run_command`, and the returned
+/// plan carries `microvm_name: Some(name)` (`docker_name` stays `None`) so
+/// teardown force-removes the right container kind (R4/R5).
+fn prepare_microvm_service(
+    vat: &store::Vat,
+    service: &ServiceConfig,
+    image: &str,
+) -> Result<ServicePlan> {
+    ensure_microvm_available()?;
+    let host_port = resolve_service_port(&service.port)?;
+    let container_port = service
+        .container_port
+        .context("image service missing container_port (validated earlier)")?;
+    let name = container_name(&vat.meta.id, &service.id);
+    let command = container_run_command(
+        &name,
+        image,
+        host_port,
+        container_port,
+        &service.image_env,
+        &service.volumes,
+    );
+    let env = image_exports(service, host_port);
+    Ok(ServicePlan {
+        id: service.id.clone(),
+        command,
+        host: Some("127.0.0.1".to_string()),
+        ready_http: service.ready_http.clone(),
+        ready_probe: docker_ready_probe(service, host_port),
+        timeout_s: service.timeout_s,
+        preset: None,
+        port: Some(host_port),
+        prepare_mode: "container_run".to_string(),
+        cache_key: None,
+        prepare_duration_ms: 0,
+        exported_env: sorted_keys(&env),
+        env,
+        docker_name: None,
+        microvm_name: Some(name),
         image: Some(image.to_string()),
         cluster: None,
         owned_by_vat: true,
@@ -2215,6 +2321,42 @@ fn docker_run_command(
         "-p".to_string(),
         format!("127.0.0.1:{host_port}:{container_port}"),
     ];
+    for (key, value) in container_env {
+        cmd.push("-e".to_string());
+        cmd.push(format!("{key}={value}"));
+    }
+    cmd.push(image.to_string());
+    cmd
+}
+
+/// Build a foreground `container run` argv (Apple's `container` CLI, MicroVM
+/// isolation). Structurally mirrors `docker_run_command`: `--rm` makes the
+/// container ephemeral, `--name` is deterministic so teardown can
+/// force-remove it, the port is bound to loopback only, then one `-v
+/// name:path` per named-volume entry (compose `volumes:`, R2/R4), then one
+/// `-e key=value` per sorted env entry — both volumes and env iterate in
+/// deterministic order, matching `docker_run_command`'s guarantee (R5).
+fn container_run_command(
+    name: &str,
+    image: &str,
+    host_port: u16,
+    container_port: u16,
+    container_env: &BTreeMap<String, String>,
+    volumes: &[VolumeMount],
+) -> Vec<String> {
+    let mut cmd = vec![
+        "container".to_string(),
+        "run".to_string(),
+        "--rm".to_string(),
+        "--name".to_string(),
+        name.to_string(),
+        "-p".to_string(),
+        format!("127.0.0.1:{host_port}:{container_port}"),
+    ];
+    for volume in volumes {
+        cmd.push("-v".to_string());
+        cmd.push(format!("{}:{}", volume.name, volume.path));
+    }
     for (key, value) in container_env {
         cmd.push("-e".to_string());
         cmd.push(format!("{key}={value}"));
@@ -2433,6 +2575,32 @@ fn ensure_docker_available(service: &ServiceConfig) -> Result<()> {
             "service `{}` needs Docker but the daemon is not reachable (`docker info` failed)",
             service.id
         );
+    }
+    Ok(())
+}
+
+/// Gate a `container`-backed (MicroVM) service on the `container` CLI plus a
+/// running container system, emitting the structured `container_unavailable`
+/// error (never a panic) when it is not, mirroring `ensure_docker_available`'s
+/// `docker_unavailable` shape (R5).
+fn ensure_microvm_available() -> Result<()> {
+    if !sandbox::microvm::available() {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "container_unavailable",
+            "reason": "container binary not found on PATH",
+        }))?;
+        bail!("service needs Apple's `container` CLI but the `container` binary was not found on PATH");
+    }
+    if !sandbox::microvm::system_up() {
+        if let Err(err) = sandbox::microvm::ensure_system_started(Duration::from_secs(30)) {
+            emit_jsonl(serde_json::json!({
+                "type": "error",
+                "code": "container_unavailable",
+                "reason": err.as_str(),
+            }))?;
+            bail!("service needs the `container` system running but it did not start in time: {err}");
+        }
     }
     Ok(())
 }
@@ -3378,6 +3546,7 @@ fn record_runner_failure(
             status: ProcessStatus::Failed,
             exit_code: Some(-1),
             duration_ms: None,
+            pid: None,
             stdout_log: logs_dir
                 .join("runner.stdout.log")
                 .to_string_lossy()
@@ -3413,6 +3582,15 @@ fn stop_services(services: &mut [ServiceHandle], delete_clusters: bool) {
         // fared — a detached or wedged container must never outlive the run.
         if let Some(name) = &service.docker_name {
             let _ = Command::new("docker")
+                .args(["rm", "-f", name])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+        // Same force-removal guarantee for a `container run` (MicroVM) child,
+        // parallel to the docker_name branch above (R5).
+        if let Some(name) = &service.microvm_name {
+            let _ = Command::new("container")
                 .args(["rm", "-f", name])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -3680,6 +3858,7 @@ mod tests {
             env: BTreeMap::new(),
             exported_env: Vec::new(),
             docker_name: None,
+            microvm_name: None,
             image: None,
             cluster: None,
             owned_by_vat: true,
@@ -4019,6 +4198,7 @@ mod tests {
             ready_http: None,
             ready_cmd: Vec::new(),
             timeout_s: 60,
+            volumes: Vec::new(),
         }
     }
 
@@ -4044,6 +4224,7 @@ mod tests {
             ready_http: None,
             ready_cmd: Vec::new(),
             timeout_s: 60,
+            volumes: Vec::new(),
         }
     }
 
@@ -4473,6 +4654,7 @@ mod tests {
             timeout_s: 1,
             ready_probe: ReadyProbe::None,
             docker_name: None,
+            microvm_name: None,
             cluster: None,
         }
     }

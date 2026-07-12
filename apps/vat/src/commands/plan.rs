@@ -377,6 +377,7 @@ fn service_runtime(service: &ServiceConfig) -> Option<String> {
                 ServiceRuntime::Auto => "auto",
                 ServiceRuntime::Native => "native",
                 ServiceRuntime::Docker => "docker",
+                ServiceRuntime::MicroVm => "microvm",
             }
             .to_string(),
         );

@@ -33,6 +33,7 @@
 
 pub mod cluster;
 pub mod commands;
+pub mod compose;
 pub mod config;
 #[cfg(feature = "emulator")]
 pub mod emulator;

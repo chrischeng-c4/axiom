@@ -244,6 +244,11 @@ enum Cmd {
         #[arg(long)]
         no_forward: bool,
     },
+    /// Import and run docker-compose.yml services as vat.toml runners.
+    Compose {
+        #[command(subcommand)]
+        cmd: ComposeCmd,
+    },
 }
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
@@ -348,6 +353,48 @@ enum ClusterCmd {
         name: String,
         #[arg(long)]
         json: bool,
+    },
+}
+
+/// `vat compose` subcommands: import/up/down/ps/logs for docker-compose.yml.
+#[derive(Subcommand)]
+pub enum ComposeCmd {
+    /// Import a docker-compose.yml as a vat.toml project.
+    Import {
+        /// Path to the docker-compose.yml file.
+        file: PathBuf,
+        /// Project name (defaults to compose file's parent directory basename).
+        #[arg(long)]
+        project: Option<String>,
+        /// Runtime backend (auto, docker, or microvm).
+        #[arg(long, value_enum, default_value_t = crate::config::ServiceRuntime::Auto)]
+        runtime: crate::config::ServiceRuntime,
+    },
+    /// Start services from an imported compose project in foreground or detach.
+    Up {
+        /// Project name.
+        #[arg(long)]
+        project: Option<String>,
+        /// Run in background.
+        #[arg(long)]
+        detach: bool,
+    },
+    /// Stop a running compose project.
+    Down {
+        /// Project name.
+        project: String,
+    },
+    /// List running services in a compose project.
+    Ps {
+        /// Project name.
+        project: String,
+    },
+    /// Print captured logs from a service in a compose project.
+    Logs {
+        /// Project name.
+        project: String,
+        /// Service name.
+        service: String,
     },
 }
 
@@ -504,6 +551,7 @@ pub fn run() -> Result<ExitCode> {
             route,
             no_forward,
         ),
+        Cmd::Compose { cmd } => commands::compose::exec(cmd),
     }
 }
 
@@ -645,19 +693,5 @@ fn issue_cmd(_cmd: IssueCmd) -> Result<ExitCode> {
 // CODEGEN-END
 // SPEC-MANAGED: apps/vat/tech-design/logic/vat-microvm-phase-3-vat-compose-limited-compose-subset-up-down-p.md#cli
 // CODEGEN-BEGIN
-#[derive(Subcommand)]
-pub enum Commands {
-    VatComposeImport,
-
-    VatComposeUp,
-
-    VatComposeDown,
-
-    VatComposePs,
-
-    VatComposeLogs,
-
-    VatRunVatBuildVatClusterUnaffected,
-
-}
+// ComposeCmd enum defined above; dispatch in run() match statement
 // CODEGEN-END

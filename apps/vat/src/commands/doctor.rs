@@ -218,6 +218,7 @@ fn check_preset(
 
     match service.runtime {
         ServiceRuntime::Docker => {}
+        ServiceRuntime::MicroVm => {}
         ServiceRuntime::Native => {
             for binary in required_binaries(preset) {
                 check_binary(checks, "preset", &service.id, binary);
