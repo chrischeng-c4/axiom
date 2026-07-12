@@ -175,6 +175,182 @@ pub fn check_once(binary_version: &str, binary_sha: &str) {
     );
 }
 
+// ---------------------------------------------------------------------------
+// #1417: hard-gate lifecycle-mutating verbs on stale-binary skew.
+//
+// [`check_once`] above is (and remains) warn-only for every verb — that
+// covers the general "you're about to talk to a stale protocol" signal.
+// This layer adds a second, narrower gate: when the installed binary is
+// strictly behind the checkout's source version AND the invoked verb WRITES
+// tracked lifecycle/config state (per `chain::VERB_LIFECYCLE_REGISTRY`'s
+// `mutates_lifecycle` bit — #1417), a stale binary could write artifacts in
+// a retired protocol shape, so the command hard-refuses instead of merely
+// warning. Read-only verbs (list/show/report/check/verify/health/...) are
+// unaffected — they keep going through `check_once`'s warn only. The escape
+// hatch is the `AW_ALLOW_STALE_BINARY=1` environment variable: an allowed
+// run proceeds, but the override is still logged (stderr) so it's visible.
+// ---------------------------------------------------------------------------
+
+/// Outcome of the stale-binary lifecycle-mutation gate for one invocation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StaleBinaryGate {
+    /// Not behind (equal/ahead/unparseable/dev-suffix binary), or not
+    /// running inside an axiom checkout at all: never refuse.
+    Proceed,
+    /// Behind, but the invoked verb doesn't mutate lifecycle state (or the
+    /// verb couldn't be resolved at all): [`check_once`]'s warn already
+    /// covers this — proceed without any additional gate action.
+    WarnOnly,
+    /// Behind, the invoked verb mutates lifecycle state, but
+    /// `AW_ALLOW_STALE_BINARY=1` overrode the refusal (AC2): proceed, but
+    /// the caller must log the override.
+    Overridden {
+        source_version: String,
+        verb_path: String,
+    },
+    /// Behind, the invoked verb mutates lifecycle state, no escape hatch:
+    /// hard refuse.
+    Refuse {
+        source_version: String,
+        verb_path: String,
+    },
+}
+
+/// Pure decision function (cwd/source-version resolution reads disk, but no
+/// process env / stdio / exit) — the testable core of the gate, mirroring
+/// [`check_once_at`]'s injected-inputs shape. `verb_path` is the already
+/// -resolved dot-joined leaf verb (see
+/// [`super::chain::resolve_invoked_verb_path`]), and `allow_stale_binary_env`
+/// is the raw `AW_ALLOW_STALE_BINARY` value (`None` if unset) — both passed
+/// in rather than read from ambient state so tests can inject them cheaply.
+fn gate_decision_at(
+    cwd: &Path,
+    binary_version: &str,
+    verb_path: Option<&str>,
+    allow_stale_binary_env: Option<&str>,
+) -> StaleBinaryGate {
+    let Some(repo_root) = find_axiom_repo_root(cwd) else {
+        return StaleBinaryGate::Proceed;
+    };
+    let Some(source_version) = resolve_source_version(&repo_root) else {
+        return StaleBinaryGate::Proceed;
+    };
+    if !is_behind(binary_version, &source_version) {
+        return StaleBinaryGate::Proceed;
+    }
+    let mutates = verb_path
+        .and_then(super::chain::verb_mutates_lifecycle)
+        .unwrap_or(false);
+    if !mutates {
+        return StaleBinaryGate::WarnOnly;
+    }
+    let verb_path = verb_path.unwrap_or("<unknown>").to_string();
+    if allow_stale_binary_env == Some("1") {
+        return StaleBinaryGate::Overridden {
+            source_version,
+            verb_path,
+        };
+    }
+    StaleBinaryGate::Refuse {
+        source_version,
+        verb_path,
+    }
+}
+
+/// Build the `aw.cli.v1` error envelope for a hard refusal
+/// ([`StaleBinaryGate::Refuse`]) — pure, independently testable. The only
+/// caller that prints it, [`print_refusal_envelope`], writes it to stdout.
+fn build_refusal_envelope(
+    binary_version: &str,
+    binary_sha: &str,
+    source_version: &str,
+    verb_path: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "aw.cli.v1",
+        "action": "error",
+        "message": format!(
+            "aw: refused — installed binary v{binary_version} (sha {binary_sha}) is behind this \
+             checkout's source v{source_version} (apps/agentic-workflow) and `aw {verb_path}` \
+             mutates tracked lifecycle state; a stale binary must not write artifacts in a \
+             retired protocol shape."
+        ),
+        "next": {
+            "kind": "remediation",
+            "command": "cargo install --path apps/agentic-workflow",
+            "reason": format!(
+                "resync the installed binary to source v{source_version} (or run `aw upgrade`), \
+                 then re-run `aw {verb_path}`"
+            ),
+            "requires_hitl": false,
+            "payload_path": serde_json::Value::Null,
+        },
+        "escape_hatch": {
+            "env": "AW_ALLOW_STALE_BINARY=1",
+            "note": "intentional old-binary use only; the override is logged to stderr when used",
+        },
+    })
+}
+
+/// Print [`build_refusal_envelope`]'s `aw.cli.v1` error envelope to stdout.
+/// This is the ONE place in this module that prints to stdout (stdout is
+/// the protocol channel; see
+/// `stdout_output_is_scoped_to_the_stale_binary_refusal_envelope` below).
+fn print_refusal_envelope(
+    binary_version: &str,
+    binary_sha: &str,
+    source_version: &str,
+    verb_path: &str,
+) {
+    let envelope = build_refusal_envelope(binary_version, binary_sha, source_version, verb_path);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| envelope.to_string())
+    );
+}
+
+/// Entry point: hard-gate lifecycle-mutating verbs on stale-binary skew
+/// (#1417). Resolves the invoked verb path from `std::env::args()`, the
+/// axiom-repo + source version from the process CWD (same detection as
+/// [`check_once`]), and the escape hatch from the `AW_ALLOW_STALE_BINARY`
+/// environment variable, then acts on [`gate_decision_at`]'s outcome:
+/// `Refuse` prints the remediation envelope to stdout and exits nonzero
+/// (this call does not return); `Overridden` logs the override to stderr;
+/// `WarnOnly`/`Proceed` do nothing (the general warn is `check_once`'s job).
+pub fn enforce_mutating_verb_gate(binary_version: &str, binary_sha: &str) {
+    let Ok(cwd) = std::env::current_dir() else {
+        return;
+    };
+    let args: Vec<String> = std::env::args().collect();
+    let verb_path = super::chain::resolve_invoked_verb_path(&args);
+    let allow_env = std::env::var("AW_ALLOW_STALE_BINARY").ok();
+    match gate_decision_at(
+        &cwd,
+        binary_version,
+        verb_path.as_deref(),
+        allow_env.as_deref(),
+    ) {
+        StaleBinaryGate::Refuse {
+            source_version,
+            verb_path,
+        } => {
+            print_refusal_envelope(binary_version, binary_sha, &source_version, &verb_path);
+            std::process::exit(2);
+        }
+        StaleBinaryGate::Overridden {
+            source_version,
+            verb_path,
+        } => {
+            eprintln!(
+                "aw: warning: AW_ALLOW_STALE_BINARY=1 overrode the stale-binary refusal for \
+                 `aw {verb_path}` (installed v{binary_version} behind checkout source \
+                 v{source_version}) — proceeding anyway."
+            );
+        }
+        StaleBinaryGate::WarnOnly | StaleBinaryGate::Proceed => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,6 +561,136 @@ mod tests {
         assert!(marker_dir.join("drift-warn-0.4.4.stamp").exists());
     }
 
+    // -- stale-binary mutating-verb gate (#1417) -----------------------------
+
+    fn write_fixture_repo(tmp: &Path, source_version: &str) -> PathBuf {
+        let repo = tmp.join("repo");
+        let aw_dir = repo.join("apps/agentic-workflow");
+        std::fs::create_dir_all(&aw_dir).unwrap();
+        std::fs::write(
+            aw_dir.join("Cargo.toml"),
+            format!("[package]\nname = \"agentic-workflow\"\nversion = \"{source_version}\"\n"),
+        )
+        .unwrap();
+        repo
+    }
+
+    #[test]
+    fn gate_decision_refuses_when_behind_and_verb_mutates() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = write_fixture_repo(tmp.path(), "9.9.9");
+        let decision = gate_decision_at(&repo, "0.4.4", Some("td.fill"), None);
+        assert_eq!(
+            decision,
+            StaleBinaryGate::Refuse {
+                source_version: "9.9.9".to_string(),
+                verb_path: "td.fill".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn gate_decision_warn_only_when_behind_and_verb_read_only() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = write_fixture_repo(tmp.path(), "9.9.9");
+        let decision = gate_decision_at(&repo, "0.4.4", Some("wi.list"), None);
+        assert_eq!(decision, StaleBinaryGate::WarnOnly);
+    }
+
+    #[test]
+    fn gate_decision_warn_only_when_behind_and_verb_unresolved() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = write_fixture_repo(tmp.path(), "9.9.9");
+        let decision = gate_decision_at(&repo, "0.4.4", None, None);
+        assert_eq!(decision, StaleBinaryGate::WarnOnly);
+    }
+
+    #[test]
+    fn gate_decision_proceeds_when_versions_equal() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = write_fixture_repo(tmp.path(), "0.4.4");
+        let decision = gate_decision_at(&repo, "0.4.4", Some("td.fill"), None);
+        assert_eq!(decision, StaleBinaryGate::Proceed);
+    }
+
+    #[test]
+    fn gate_decision_proceeds_when_binary_ahead() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = write_fixture_repo(tmp.path(), "0.4.4");
+        let decision = gate_decision_at(&repo, "0.4.5", Some("td.fill"), None);
+        assert_eq!(decision, StaleBinaryGate::Proceed);
+    }
+
+    #[test]
+    fn gate_decision_never_refuses_dev_suffix_binary() {
+        // AC3: a fresh in-checkout debug build (next patch + `-dev.<sha>`)
+        // must never refuse, even for a mutating verb.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = write_fixture_repo(tmp.path(), "0.4.4");
+        let decision = gate_decision_at(&repo, "0.4.5-dev.abcd1234", Some("td.fill"), None);
+        assert_eq!(decision, StaleBinaryGate::Proceed);
+    }
+
+    #[test]
+    fn gate_decision_proceeds_outside_axiom_checkout() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let elsewhere = tmp.path().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let decision = gate_decision_at(&elsewhere, "0.1.0", Some("td.fill"), None);
+        assert_eq!(decision, StaleBinaryGate::Proceed);
+    }
+
+    #[test]
+    fn gate_decision_escape_hatch_overrides_refusal() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = write_fixture_repo(tmp.path(), "9.9.9");
+        let decision = gate_decision_at(&repo, "0.4.4", Some("td.fill"), Some("1"));
+        assert_eq!(
+            decision,
+            StaleBinaryGate::Overridden {
+                source_version: "9.9.9".to_string(),
+                verb_path: "td.fill".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn gate_decision_ignores_non_1_escape_hatch_values() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = write_fixture_repo(tmp.path(), "9.9.9");
+        let decision = gate_decision_at(&repo, "0.4.4", Some("td.fill"), Some("true"));
+        assert_eq!(
+            decision,
+            StaleBinaryGate::Refuse {
+                source_version: "9.9.9".to_string(),
+                verb_path: "td.fill".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn refusal_envelope_names_versions_verb_and_remediation() {
+        let envelope = build_refusal_envelope("0.4.3", "deadbeef", "0.4.4", "td.fill");
+        assert_eq!(envelope["schema_version"], "aw.cli.v1");
+        assert_eq!(envelope["action"], "error");
+        let message = envelope["message"].as_str().unwrap();
+        assert!(message.contains("0.4.3"), "must name the installed version");
+        assert!(message.contains("0.4.4"), "must name the checkout version");
+        assert!(message.contains("td.fill"), "must name the invoked verb");
+        assert_eq!(
+            envelope["next"]["command"],
+            "cargo install --path apps/agentic-workflow"
+        );
+        assert!(
+            envelope["next"]["reason"]
+                .as_str()
+                .unwrap()
+                .contains("aw upgrade"),
+            "remediation must also name `aw upgrade`"
+        );
+        assert_eq!(envelope["escape_hatch"]["env"], "AW_ALLOW_STALE_BINARY=1");
+    }
+
     // -- warning text + stderr-only invariant --------------------------------
 
     #[test]
@@ -408,16 +714,27 @@ mod tests {
     }
 
     #[test]
-    fn warning_is_never_written_to_stdout() {
-        // Guard the stdout-is-protocol invariant directly on source text:
-        // this module must never call `println!` outside test code — the
-        // only output path is `eprintln!` in `warn_stale_binary`.
+    fn stdout_output_is_scoped_to_the_stale_binary_refusal_envelope() {
+        // Guard the stdout-is-protocol invariant directly on source text.
+        // The warn-only path (`warn_stale_binary`) must remain stderr-only
+        // (`eprintln!`) — but #1417's mutating-verb hard-refusal path is a
+        // genuine protocol-channel (stdout) envelope by design: stdout
+        // carries `next.command` for the agent. This asserts exactly one
+        // `println!` call exists in non-test code (the refusal envelope
+        // print in `print_refusal_envelope`) so stdout usage here stays
+        // scoped and doesn't silently sprawl to other paths.
         let source = include_str!("drift.rs");
         let non_test = source.split("#[cfg(test)]").next().unwrap();
+        // `"eprintln!("` contains `"println!("` as a substring, so strip
+        // `eprintln!(` occurrences first — otherwise every `eprintln!` call
+        // would double-count as a `println!` match too.
         let without_eprintln = non_test.replace("eprintln!(", "");
-        assert!(
-            !without_eprintln.contains("println!("),
-            "drift.rs must never call println! outside #[cfg(test)] — stdout is protocol"
+        let println_count = without_eprintln.matches("println!(").count();
+        assert_eq!(
+            println_count, 1,
+            "drift.rs must have exactly one println! call — the stale-binary refusal envelope \
+             (stdout is the aw.cli.v1 protocol channel); any other output must go through \
+             eprintln!"
         );
         assert!(non_test.contains("eprintln!("));
     }
