@@ -49,6 +49,7 @@ pub struct Args {
     pub name: Option<String>,
     pub isolation: Isolation,
     pub gpu: GpuRequest,
+    pub microvm_image: Option<String>,
     /// Direct mode prints full VatState JSON instead of a human summary.
     pub json: bool,
     /// Opaque upstream execution plan to copy into the vat and expose to the runner.
@@ -74,6 +75,15 @@ pub enum Target {
 
 /// @spec apps/vat/tech-design/semantic/source/projects-vat-src-commands-run-rs.md#source
 /// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
+fn gpu_satisfied(_gpu: GpuRequest, isolation: Isolation, info: &gpu::GpuInfo) -> bool {
+    // GPU is only accessible in None and Seatbelt isolation modes.
+    // MicroVm categorically cannot reach the host GPU.
+    // _gpu is present for documentation (caller has already checked GpuRequest::Required).
+    info.accessible && isolation != Isolation::MicroVm
+}
+
+/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-commands-run-rs.md#source
+/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
 pub fn exec(args: Args) -> Result<ExitCode> {
     let Args {
         target,
@@ -82,6 +92,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
         name,
         isolation,
         gpu,
+        microvm_image,
         json,
         plan,
         keep,
@@ -98,6 +109,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
             name,
             isolation,
             gpu,
+            microvm_image,
             json,
             plan,
         }),
@@ -107,6 +119,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
             name,
             isolation,
             gpu,
+            microvm_image,
             runner_ids,
             plan,
             keep,
@@ -117,6 +130,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
             name,
             isolation,
             gpu,
+            microvm_image,
             scenario_id,
             plan,
             keep,
@@ -130,6 +144,7 @@ struct RunnerArgs {
     name: Option<String>,
     isolation: Isolation,
     gpu: GpuRequest,
+    microvm_image: Option<String>,
     runner_ids: Vec<String>,
     plan: Option<PathBuf>,
     keep: Option<RetentionPolicy>,
@@ -143,6 +158,7 @@ struct DirectArgs {
     name: Option<String>,
     isolation: Isolation,
     gpu: GpuRequest,
+    microvm_image: Option<String>,
     json: bool,
     plan: Option<PathBuf>,
 }
@@ -153,6 +169,7 @@ struct ScenarioArgs {
     name: Option<String>,
     isolation: Isolation,
     gpu: GpuRequest,
+    microvm_image: Option<String>,
     scenario_id: String,
     plan: Option<PathBuf>,
     keep: Option<RetentionPolicy>,
@@ -160,10 +177,14 @@ struct ScenarioArgs {
 
 fn exec_direct(args: DirectArgs) -> Result<ExitCode> {
     let gpu_info = gpu::detect();
-    if args.gpu == GpuRequest::Required && !gpu_info.accessible {
+    if args.gpu == GpuRequest::Required && !gpu_satisfied(args.gpu, args.isolation, &gpu_info) {
         bail!(
-            "spec requires a GPU but none is accessible on this host ({})",
-            gpu_info.note
+            "spec requires a GPU but {}",
+            if args.isolation == Isolation::MicroVm {
+                "GPU is categorically unreachable in an Apple Silicon microVM (Virtualization.framework constraint)".to_string()
+            } else {
+                format!("none is accessible on this host ({})", gpu_info.note)
+            }
         );
     }
 
@@ -199,6 +220,7 @@ fn exec_direct(args: DirectArgs) -> Result<ExitCode> {
         isolation: args.isolation,
         egress,
         gpu: args.gpu,
+        microvm_image: args.microvm_image.clone(),
         ..EnvSpec::default()
     };
 
@@ -331,15 +353,24 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         "reason": selection_reason,
     }))?;
     let gpu_info = gpu::detect();
-    if args.gpu == GpuRequest::Required && !gpu_info.accessible {
+    if args.gpu == GpuRequest::Required && !gpu_satisfied(args.gpu, args.isolation, &gpu_info) {
+        let error_msg = if args.isolation == Isolation::MicroVm {
+            "GPU is categorically unreachable in an Apple Silicon microVM".to_string()
+        } else {
+            gpu_info.note.clone()
+        };
         emit_jsonl(serde_json::json!({
             "type": "error",
             "code": "gpu_required",
-            "message": gpu_info.note.as_str(),
+            "message": error_msg.as_str(),
         }))?;
         bail!(
-            "spec requires a GPU but none is accessible on this host ({})",
-            gpu_info.note
+            "spec requires a GPU but {}",
+            if args.isolation == Isolation::MicroVm {
+                "GPU is categorically unreachable in an Apple Silicon microVM".to_string()
+            } else {
+                format!("none is accessible on this host ({})", gpu_info.note)
+            }
         );
     }
 
@@ -358,6 +389,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         isolation: args.isolation,
         egress: cfg.network.as_ref().map(|n| n.egress).unwrap_or_default(),
         gpu: args.gpu,
+        microvm_image: args.microvm_image.clone(),
         ..EnvSpec::default()
     };
 
@@ -515,15 +547,25 @@ fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
     }))?;
 
     let gpu_info = gpu::detect();
-    if args.gpu == GpuRequest::Required && !gpu_info.accessible {
+    // Note: The isolation override below happens AFTER this check, so we need to use args.isolation here.
+    if args.gpu == GpuRequest::Required && !gpu_satisfied(args.gpu, args.isolation, &gpu_info) {
+        let error_msg = if args.isolation == Isolation::MicroVm {
+            "GPU is categorically unreachable in an Apple Silicon microVM".to_string()
+        } else {
+            gpu_info.note.clone()
+        };
         emit_jsonl(serde_json::json!({
             "type": "error",
             "code": "gpu_required",
-            "message": gpu_info.note.as_str(),
+            "message": error_msg.as_str(),
         }))?;
         bail!(
-            "spec requires a GPU but none is accessible on this host ({})",
-            gpu_info.note
+            "spec requires a GPU but {}",
+            if args.isolation == Isolation::MicroVm {
+                "GPU is categorically unreachable in an Apple Silicon microVM".to_string()
+            } else {
+                format!("none is accessible on this host ({})", gpu_info.note)
+            }
         );
     }
 
@@ -553,6 +595,7 @@ fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
         isolation,
         egress,
         gpu: args.gpu,
+        microvm_image: args.microvm_image.clone(),
         ..EnvSpec::default()
     };
 
@@ -3404,6 +3447,54 @@ mod tests {
     use super::*;
 
     use crate::config::ExternalServiceConfig;
+
+    /// R10/AC4: the run.rs `gpu_satisfied()` preflight helper — the second,
+    /// independent fail-closed layer alongside `sandbox::pick()` — must
+    /// reject `--isolation micro_vm --gpu required` even when the host GPU
+    /// is genuinely accessible. Before this helper existed, the three
+    /// preflight call sites in `exec_direct`/`exec_runner`/`exec_scenario`
+    /// checked only `gpu_info.accessible`, so on a real Apple Silicon host
+    /// (accessible=true) `--isolation micro_vm --gpu required` would
+    /// silently pass preflight and only fail later inside `pick()` — after
+    /// EnvSpec construction, i.e. much closer to (and per the TD, "before
+    /// any workspace clone begins" is the guarantee this test pins down).
+    #[test]
+    fn gpu_satisfied_rejects_microvm_required_before_workspace_clone() {
+        let accessible_info = gpu::GpuInfo {
+            vendor: "apple".to_string(),
+            chip: Some("Apple M-series".to_string()),
+            backends: vec!["metal".to_string()],
+            accessible: true,
+            note: "GPU is accessible".to_string(),
+        };
+
+        // Host genuinely has a GPU, but MicroVm isolation can never reach it:
+        // gpu_satisfied() must say "not satisfied" independent of pick().
+        assert!(
+            !gpu_satisfied(GpuRequest::Required, Isolation::MicroVm, &accessible_info),
+            "gpu_satisfied() must reject MicroVm even when the host GPU is accessible"
+        );
+
+        // Sanity: the same accessible info still satisfies non-MicroVm
+        // isolation modes (no regression on the existing None/Seatbelt path).
+        assert!(gpu_satisfied(GpuRequest::Required, Isolation::None, &accessible_info));
+        assert!(gpu_satisfied(GpuRequest::Required, Isolation::Seatbelt, &accessible_info));
+
+        // And when the host genuinely has no GPU, MicroVm is still rejected
+        // (not a special case — just categorically never satisfied).
+        let inaccessible_info = gpu::GpuInfo {
+            vendor: "none".to_string(),
+            chip: None,
+            backends: vec![],
+            accessible: false,
+            note: "no GPU".to_string(),
+        };
+        assert!(!gpu_satisfied(
+            GpuRequest::Required,
+            Isolation::MicroVm,
+            &inaccessible_info
+        ));
+    }
 
     #[test]
     fn sandbox_wrap_wraps_runner_under_seatbelt_passthrough_under_none() {

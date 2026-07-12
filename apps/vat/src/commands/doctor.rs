@@ -98,7 +98,8 @@ fn check_network_isolation(
         return;
     }
     let enforceable = capabilities::isolation_available(capabilities, "macos-seatbelt")
-        || capabilities::isolation_available(capabilities, "linux-netns");
+        || capabilities::isolation_available(capabilities, "linux-netns")
+        || capabilities::isolation_available(capabilities, "vm");
     push_check(
         checks,
         "isolation",

@@ -185,15 +185,22 @@ fn isolation_capabilities() -> Vec<IsolationCapability> {
         },
     });
 
+    let microvm_available = crate::sandbox::microvm::available();
     capabilities.push(IsolationCapability {
         id: "vm".to_string(),
-        implemented: false,
-        available: false,
+        implemented: true,
+        available: microvm_available,
         gpu_native: false,
         write_confinement: true,
-        network_egress: true,
-        reason: "out of scope unless a run explicitly trades native GPU access for VM isolation"
-            .to_string(),
+        network_egress: microvm_available,
+        reason: if microvm_available {
+            "MicroVm isolation available (container CLI detected); Open and Deny egress enforceable; \
+             LocalhostOnly not yet supported (guest 127.0.0.1 unreachable via per-network gateway IP)."
+                .to_string()
+        } else {
+            "MicroVm isolation requires the container CLI to be installed."
+                .to_string()
+        },
     });
 
     capabilities

@@ -56,6 +56,9 @@ enum Cmd {
         /// GPU expectation.
         #[arg(long, value_enum, default_value = "auto")]
         gpu: GpuRequest,
+        /// OCI image reference for MicroVm isolation (required when --isolation micro_vm).
+        #[arg(long)]
+        microvm_image: Option<String>,
         /// Agent runner mode already emits compact JSONL. Direct mode uses this for full VatState JSON.
         #[arg(long)]
         json: bool,
@@ -344,6 +347,7 @@ pub fn run() -> Result<ExitCode> {
             name,
             isolation,
             gpu,
+            microvm_image,
             json,
             plan,
             keep,
@@ -364,6 +368,7 @@ pub fn run() -> Result<ExitCode> {
                     name,
                     isolation,
                     gpu,
+                    microvm_image,
                     json,
                     plan,
                     keep,
@@ -387,6 +392,7 @@ pub fn run() -> Result<ExitCode> {
                 name,
                 isolation,
                 gpu,
+                microvm_image,
                 json,
                 plan,
                 keep,

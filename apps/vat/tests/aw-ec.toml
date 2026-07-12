@@ -1,0 +1,17 @@
+# External contract test registry for vat.
+# Tests configured here are picked up by `aw ec gen --verify` and `aw health --verify-tests`
+# for capability EC gate verification.
+
+[[test_commands]]
+id = "vat-microvm-fail-closed"
+command = "cargo test -p vat --test vat_sandbox_microvm_fail_closed -- --nocapture"
+capability_id = "agent-native-gpu-native-dev-containers"
+claim_id = "microvm-sandbox-backend-for-vat-run"
+description = "Isolation::MicroVm rejects GPU required, missing image, LocalhostOnly egress, and unavailable container CLI"
+
+[[test_commands]]
+id = "vat-microvm-smoke"
+command = "cargo test -p vat --test vat_sandbox_microvm -- --nocapture"
+capability_id = "agent-native-gpu-native-dev-containers"
+claim_id = "microvm-sandbox-backend-for-vat-run"
+description = "Real container run execution end-to-end through Isolation::MicroVm (skips when container CLI not installed)"
