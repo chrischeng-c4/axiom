@@ -82,3 +82,34 @@ properties:
     description: "apps/vat/Cargo.toml: serde_yaml (version 0.9, unchanged) loses `optional = true` and becomes an unconditional dependency; removed from the `emulator` feature's `dep:serde_yaml` list. Zero new crate, needed unconditionally ahead of Phase 3's compose YAML parsing (not used by this WI's own code)."
 additionalProperties: true
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+files:
+  - path: apps/vat/Cargo.toml
+    changes:
+      - "serde_yaml dependency (version 0.9, unchanged) loses `optional = true` and becomes an unconditional dependency of the vat crate."
+      - "serde_yaml is removed from the `emulator` feature's `dep:` list (it stops being feature-gated); the emulator feature retains its other deps unchanged."
+    rationale: >
+      R5: Phase 3's `vat compose` will parse a compose YAML file unconditionally
+      (not behind the emulator feature), and this WI is the point in the
+      rollout where that dependency shift is made — ahead of Phase 3 actually
+      using it. Zero new crate: serde_yaml is already vendored/locked at 0.9
+      from the emulator feature today, so this is a Cargo.toml-only edit with
+      no Cargo.lock churn beyond the feature-unification.
+    verification: >
+      AC6: `cargo build -p vat` (default features) and
+      `cargo build -p vat --no-default-features` both succeed after the
+      promotion — the lean, no-default-features build must still compile
+      cleanly now that serde_yaml is unconditional.
+no_new_config_keys: true
+notes: >
+  vat build introduces no new vat.toml configuration key and no new
+  environment variable. All new behavior is CLI-flag-driven
+  (--file/--context/--tag/--build-arg/--json on `vat build`, see the CLI
+  section) plus the two additive sandbox/microvm.rs probe functions, which
+  take their bounded timeout as a plain Duration argument from the caller
+  (ensure_microvm_available in commands/build.rs), not from a config file.
+```
