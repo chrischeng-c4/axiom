@@ -14,8 +14,10 @@ pub mod perf_map;
 const EMIT_REFCOUNT_CALLS: bool = true;
 
 use crate::codegen::{CodegenBackend, CodegenOutput};
+use crate::mir::return_abi::BodyPhysicalAbiAnalysis;
 use crate::mir::{
-    MirBinOp, MirBody, MirConst, MirExtern, MirInst, MirModule, MirType, Terminator, VReg,
+    ExternCompanionContract, MirBinOp, MirBody, MirConst, MirExtern, MirInst, MirModule, MirType,
+    OwnerValueSource, ProducerOwnerAction, ProducerOwnerMetadata, ProducerSite, Terminator, VReg,
 };
 use crate::runtime::rc::MbObject;
 use crate::runtime::value::MbValue;
@@ -1086,7 +1088,7 @@ impl CraneliftBackend {
         body: &MirBody,
         tcx: &TypeContext,
         externs: &[MirExtern],
-        mixed_int_vregs: &HashSet<VReg>,
+        physical_abi: &BodyPhysicalAbiAnalysis,
         precise_owner_retain_id: Option<FuncId>,
         precise_owner_release_id: Option<FuncId>,
     ) -> crate::error::Result<()> {
@@ -1131,8 +1133,9 @@ impl CraneliftBackend {
             .map(|id| self.module().declare_func_in_func(id, builder.func));
         let precise_owner_release = precise_owner_release_id
             .map(|id| self.module().declare_func_in_func(id, builder.func));
+        let mixed_int_vregs = physical_abi.raw_or_boxed_int_vregs();
         vars.initialize_companion_owners(
-            mixed_int_vregs,
+            &mixed_int_vregs,
             precise_owner_retain,
             precise_owner_release,
             &mut builder,
@@ -1175,8 +1178,18 @@ impl CraneliftBackend {
             if block_idx > 0 {
                 builder.switch_to_block(cl_blocks[&block.id.0]);
             }
-            for inst in &block.stmts {
-                self.emit_inst(inst, tcx, externs, &mut builder, &mut vars);
+            for (statement_index, inst) in block.stmts.iter().enumerate() {
+                self.emit_inst(
+                    inst,
+                    physical_abi.producer_owner(ProducerSite::Instruction {
+                        block: block.id,
+                        statement_index,
+                    }),
+                    tcx,
+                    externs,
+                    &mut builder,
+                    &mut vars,
+                );
             }
             emit_terminator(
                 &block.terminator,
@@ -1204,6 +1217,7 @@ impl CraneliftBackend {
     fn emit_inst(
         &mut self,
         inst: &MirInst,
+        producer_owner: Option<ProducerOwnerMetadata>,
         tcx: &TypeContext,
         externs: &[MirExtern],
         builder: &mut FunctionBuilder,
@@ -1367,6 +1381,44 @@ impl CraneliftBackend {
                         let zero = builder.ins().iconst(cl_types::I64, 0);
                         vars.def_var_cast(*dest, builder, zero, cl_types::I64);
                     }
+                } else if matches!(resolved_ty, Ty::Int)
+                    && matches!(
+                        op,
+                        MirBinOp::BitAnd
+                            | MirBinOp::BitOr
+                            | MirBinOp::BitXor
+                            | MirBinOp::LShift
+                            | MirBinOp::RShift
+                    )
+                {
+                    // These operators may consume an already-promoted Int or,
+                    // for LShift, create a new BigInt even from two inline
+                    // inputs. Route all of them through the tag-aware runtime;
+                    // native bit operations on a pointer-shaped payload would
+                    // silently corrupt its value and companion provenance.
+                    let helper_name = match op {
+                        MirBinOp::BitAnd => "mb_bitand",
+                        MirBinOp::BitOr => "mb_bitor",
+                        MirBinOp::BitXor => "mb_bitxor",
+                        MirBinOp::LShift => "mb_lshift",
+                        MirBinOp::RShift => "mb_rshift",
+                        _ => unreachable!("filtered to typed Int bit operations"),
+                    };
+                    self.emit_checked_bitwise_op(dest, lhs, rhs, helper_name, builder, vars);
+                } else if matches!(op, MirBinOp::Pow) && matches!(resolved_ty, Ty::Int) {
+                    // `mb_pow_int` consumes raw-or-boxed Int register values
+                    // directly and returns the same representation.
+                    let l = vars.use_as_i64(*lhs, builder);
+                    let r = vars.use_as_i64(*rhs, builder);
+                    if let Some(&func_id) = self.extern_funcs.get("mb_pow_int") {
+                        let func_ref = self.module().declare_func_in_func(func_id, builder.func);
+                        let call = builder.ins().call(func_ref, &[l, r]);
+                        let result = builder.inst_results(call)[0];
+                        vars.def_var_cast(*dest, builder, result, cl_types::I64);
+                    } else {
+                        let zero = builder.ins().iconst(cl_types::I64, 0);
+                        vars.def_var_cast(*dest, builder, zero, cl_types::I64);
+                    }
                 } else if use_primitive {
                     let cl_type = self.mamba_to_cl_type(resolved_ty);
                     let lv = vars.get(*lhs, builder, cl_type);
@@ -1415,26 +1467,13 @@ impl CraneliftBackend {
                 }
             }
             MirInst::Copy { dest, source } => {
-                if vars.has_companion_owner(*dest) {
-                    if dest == source {
-                        return;
-                    }
-                    vars.transition_companion_owner(
-                        CompanionOwnerTransition::Commit {
-                            dest: *dest,
-                            input: CompanionOwnerInput::SourceCompanion(*source),
-                        },
-                        builder,
-                    );
-                    let sv = vars.get(*source, builder, cl_types::I64);
-                    let val = builder.use_var(sv);
-                    let dv = vars.get(*dest, builder, cl_types::I64);
-                    builder.def_var(dv, val);
+                if dest == source {
                     return;
                 }
                 let sv = vars.get(*source, builder, cl_types::I64);
                 let dv = vars.get(*dest, builder, cl_types::I64);
-                if EMIT_REFCOUNT_CALLS {
+                let has_companion = vars.has_companion_owner(*dest);
+                if EMIT_REFCOUNT_CALLS && !has_companion {
                     // Release old value of dest before overwriting (#1129 R2).
                     if let Some(&release_id) = self.extern_funcs.get("mb_release_value") {
                         let release_ref =
@@ -1445,7 +1484,7 @@ impl CraneliftBackend {
                 }
                 let val = builder.use_var(sv);
                 builder.def_var(dv, val);
-                if EMIT_REFCOUNT_CALLS {
+                if EMIT_REFCOUNT_CALLS && !has_companion {
                     // Retain the new value after copy (#1129 R2).
                     if let Some(&retain_id) = self.extern_funcs.get("mb_retain_value") {
                         let retain_ref =
@@ -1813,38 +1852,203 @@ impl CraneliftBackend {
                     builder.def_var(dv, result);
                 }
             }
-            // AOT backend: fall back to wrapping arithmetic (no BigInt promotion).
-            MirInst::CheckedAdd { dest, lhs, rhs, ty } => {
-                let lv = vars.get(*lhs, builder, cl_types::I64);
-                let rv = vars.get(*rhs, builder, cl_types::I64);
-                let l = builder.use_var(lv);
-                let r = builder.use_var(rv);
-                let result = builder.ins().iadd(l, r);
-                let cl_type = self.mamba_to_cl_type(tcx.get(*ty));
-                let dv = vars.get(*dest, builder, cl_type);
-                builder.def_var(dv, result);
+            // Checked operations use the raw-or-boxed Int runtime ABI. The
+            // generic post-write companion commit below reads the resulting
+            // owner through `mb_typed_int_owner_or_none`.
+            MirInst::CheckedAdd {
+                dest,
+                lhs,
+                rhs,
+                ty: _,
+            } => {
+                self.emit_checked_int_op(dest, lhs, rhs, "mb_bigint_add", builder, vars);
             }
-            MirInst::CheckedSub { dest, lhs, rhs, ty } => {
-                let lv = vars.get(*lhs, builder, cl_types::I64);
-                let rv = vars.get(*rhs, builder, cl_types::I64);
-                let l = builder.use_var(lv);
-                let r = builder.use_var(rv);
-                let result = builder.ins().isub(l, r);
-                let cl_type = self.mamba_to_cl_type(tcx.get(*ty));
-                let dv = vars.get(*dest, builder, cl_type);
-                builder.def_var(dv, result);
+            MirInst::CheckedSub {
+                dest,
+                lhs,
+                rhs,
+                ty: _,
+            } => {
+                self.emit_checked_int_op(dest, lhs, rhs, "mb_bigint_sub", builder, vars);
             }
-            MirInst::CheckedMul { dest, lhs, rhs, ty } => {
-                let lv = vars.get(*lhs, builder, cl_types::I64);
-                let rv = vars.get(*rhs, builder, cl_types::I64);
-                let l = builder.use_var(lv);
-                let r = builder.use_var(rv);
-                let result = builder.ins().imul(l, r);
-                let cl_type = self.mamba_to_cl_type(tcx.get(*ty));
-                let dv = vars.get(*dest, builder, cl_type);
-                builder.def_var(dv, result);
+            MirInst::CheckedMul {
+                dest,
+                lhs,
+                rhs,
+                ty: _,
+            } => {
+                self.emit_checked_int_op(dest, lhs, rhs, "mb_bigint_mul", builder, vars);
             }
         }
+
+        self.commit_declared_companion_owner(inst, producer_owner, builder, vars);
+    }
+
+    /// Emit an arithmetic operation through the raw-or-boxed Int runtime ABI.
+    /// Inline results return to raw form; BigInt results remain encoded so the
+    /// following operation and the companion sidecar see the same value.
+    fn emit_checked_int_op(
+        &mut self,
+        dest: &VReg,
+        lhs: &VReg,
+        rhs: &VReg,
+        func_name: &str,
+        builder: &mut FunctionBuilder,
+        vars: &mut VarAlloc,
+    ) {
+        let l = vars.use_as_i64(*lhs, builder);
+        let r = vars.use_as_i64(*rhs, builder);
+        if let Some(&func_id) = self.extern_funcs.get(func_name) {
+            let func_ref = self.module().declare_func_in_func(func_id, builder.func);
+            let call = builder.ins().call(func_ref, &[l, r]);
+            let result_bits = builder.inst_results(call)[0];
+            let result = Self::unbox_if_inline(builder, result_bits);
+            vars.def_var_cast(*dest, builder, result, cl_types::I64);
+        } else {
+            // Keep the legacy arithmetic fallback only for a missing runtime
+            // declaration; production Object lowering always imports these
+            // helpers below.
+            let result = match func_name {
+                "mb_bigint_sub" => builder.ins().isub(l, r),
+                "mb_bigint_mul" => builder.ins().imul(l, r),
+                _ => builder.ins().iadd(l, r),
+            };
+            vars.def_var_cast(*dest, builder, result, cl_types::I64);
+        }
+    }
+
+    /// Emit a BigInt-aware bitwise operation. `mb_box_int` is idempotent for
+    /// already boxed Int values, so this is correct for both raw operands and
+    /// promoted BigInts without inspecting payload bits in generated code.
+    fn emit_checked_bitwise_op(
+        &mut self,
+        dest: &VReg,
+        lhs: &VReg,
+        rhs: &VReg,
+        func_name: &str,
+        builder: &mut FunctionBuilder,
+        vars: &mut VarAlloc,
+    ) {
+        let l = vars.use_as_i64(*lhs, builder);
+        let r = vars.use_as_i64(*rhs, builder);
+        let (l_boxed, r_boxed) = if let Some(&box_id) = self.extern_funcs.get("mb_box_int") {
+            let box_ref = self.module().declare_func_in_func(box_id, builder.func);
+            let l_call = builder.ins().call(box_ref, &[l]);
+            let r_call = builder.ins().call(box_ref, &[r]);
+            (
+                builder.inst_results(l_call)[0],
+                builder.inst_results(r_call)[0],
+            )
+        } else {
+            (l, r)
+        };
+
+        if let Some(&func_id) = self.extern_funcs.get(func_name) {
+            let func_ref = self.module().declare_func_in_func(func_id, builder.func);
+            let call = builder.ins().call(func_ref, &[l_boxed, r_boxed]);
+            let result_bits = builder.inst_results(call)[0];
+            let result = Self::unbox_if_inline(builder, result_bits);
+            vars.def_var_cast(*dest, builder, result, cl_types::I64);
+        } else {
+            let zero = builder.ins().iconst(cl_types::I64, 0);
+            vars.def_var_cast(*dest, builder, zero, cl_types::I64);
+        }
+    }
+
+    /// Convert only an inline NaN-boxed integer to the raw register form. A
+    /// BigInt result is intentionally left untouched and is classified only by
+    /// `mb_typed_int_owner_or_none` after its data write.
+    fn unbox_if_inline(builder: &mut FunctionBuilder, result_bits: Value) -> Value {
+        let tag_raw = builder.ins().ushr_imm(result_bits, 48);
+        let tag = builder.ins().band_imm(tag_raw, 7);
+        let tag_int = builder.ins().iconst(cl_types::I64, 1);
+        let is_inline = builder.ins().icmp(IntCC::Equal, tag, tag_int);
+        let payload_mask = builder
+            .ins()
+            .iconst(cl_types::I64, 0x0000_FFFF_FFFF_FFFFi64);
+        let payload = builder.ins().band(result_bits, payload_mask);
+        let shifted = builder.ins().ishl_imm(payload, 16);
+        let unboxed = builder.ins().sshr_imm(shifted, 16);
+        builder.ins().select(is_inline, unboxed, result_bits)
+    }
+
+    /// Classify a typed Int result at the runtime boundary. Object lowering
+    /// never recovers ownership from pointer-shaped payload bits or tags.
+    fn typed_int_owner_or_none(&mut self, value: Value, builder: &mut FunctionBuilder) -> Value {
+        if let Some(&func_id) = self.extern_funcs.get("mb_typed_int_owner_or_none") {
+            let func_ref = self.module().declare_func_in_func(func_id, builder.func);
+            let call = builder.ins().call(func_ref, &[value]);
+            builder.inst_results(call)[0]
+        } else {
+            builder
+                .ins()
+                .iconst(cl_types::I64, MbValue::none().to_bits() as i64)
+        }
+    }
+
+    /// Commit the canonical owner action only after the instruction has
+    /// written its data result. Deferred #1451/#1452 boundaries deliberately
+    /// publish `None` until their transport work owns the companion channel.
+    fn commit_declared_companion_owner(
+        &mut self,
+        inst: &MirInst,
+        producer_owner: Option<ProducerOwnerMetadata>,
+        builder: &mut FunctionBuilder,
+        vars: &mut VarAlloc,
+    ) {
+        let Some(producer_owner) = producer_owner else {
+            return;
+        };
+        let dest = producer_owner.dest;
+        if !vars.has_companion_owner(dest) {
+            return;
+        }
+
+        // Object code embeds BigInt literals as compile-time immortals. They
+        // are never releaseable local owners even though their data is a live
+        // BigInt-shaped MbValue.
+        if matches!(
+            inst,
+            MirInst::LoadConst {
+                value: MirConst::BigInt(_),
+                ..
+            }
+        ) {
+            vars.transition_companion_owner(
+                CompanionOwnerTransition::Commit {
+                    dest,
+                    input: CompanionOwnerInput::Ownerless,
+                },
+                builder,
+            );
+            return;
+        }
+
+        let input = match producer_owner.action {
+            ProducerOwnerAction::OwnerlessOrImmortal
+            | ProducerOwnerAction::DeferredBoundary(_)
+            | ProducerOwnerAction::Extern(
+                ExternCompanionContract::OwnerlessOrImmortal
+                | ExternCompanionContract::DeferredRuntimeReturn
+                | ExternCompanionContract::MissingDeclaration
+                | ExternCompanionContract::MissingReturnAbi
+                | ExternCompanionContract::MissingArgument { .. }
+                | ExternCompanionContract::Invalid { .. },
+            ) => CompanionOwnerInput::Ownerless,
+            ProducerOwnerAction::PassThroughOrNone(OwnerValueSource::SourceCompanion(source))
+            | ProducerOwnerAction::Extern(ExternCompanionContract::ArgumentPassThroughOrNone {
+                source,
+            }) => CompanionOwnerInput::SourceCompanion(source),
+            ProducerOwnerAction::FreshResultOrNone
+            | ProducerOwnerAction::ExplicitOwnerOut
+            | ProducerOwnerAction::Extern(ExternCompanionContract::FreshResultOrNone)
+            | ProducerOwnerAction::Extern(ExternCompanionContract::ExplicitOwnerOut) => {
+                let data = vars.get(dest, builder, cl_types::I64);
+                let data = builder.use_var(data);
+                CompanionOwnerInput::Fresh(self.typed_int_owner_or_none(data, builder))
+            }
+        };
+        vars.transition_companion_owner(CompanionOwnerTransition::Commit { dest, input }, builder);
     }
 
     /// Emit an internal function call (#262).
@@ -2359,6 +2563,18 @@ impl CodegenBackend for CraneliftBackend {
             "mb_box_float",
             "mb_mod",
             "mb_floordiv",
+            "mb_bigint_add",
+            "mb_bigint_sub",
+            "mb_bigint_mul",
+            "mb_bitand",
+            "mb_bitor",
+            "mb_bitxor",
+            "mb_lshift",
+            "mb_rshift",
+            "mb_pow_int",
+            // Ownership sidecar consumed by local producer lowering, not by
+            // a MIR CallExtern node, so it must be imported explicitly.
+            "mb_typed_int_owner_or_none",
         ];
         for ext in &all_externs {
             if always_declare.contains(&ext.name.as_str())
@@ -2398,12 +2614,14 @@ impl CodegenBackend for CraneliftBackend {
         }
         // Phase 3: Compile function bodies
         for body in &module.bodies {
-            let mixed_int_vregs = &mixed_int_vregs_by_body[&body.name.0];
+            let physical_abi = physical_abis
+                .body(body.name.0)
+                .expect("physical ABI analysis must contain every MIR body");
             self.compile_function(
                 body,
                 tcx,
                 &all_externs,
-                mixed_int_vregs,
+                physical_abi,
                 precise_owner_retain_id,
                 precise_owner_release_id,
             )?;
@@ -2789,6 +3007,251 @@ mod tests {
     }
 
     #[test]
+    fn object_companion_owner_exhaustive_local_producer_actions() {
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let body = MirBody {
+            name: SymbolId(14_630),
+            params: vec![],
+            return_ty: int_ty,
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    MirInst::LoadConst {
+                        dest: VReg(0),
+                        value: MirConst::Int(1),
+                        ty: int_ty,
+                    },
+                    MirInst::Copy {
+                        dest: VReg(1),
+                        source: VReg(0),
+                    },
+                    MirInst::CheckedAdd {
+                        dest: VReg(2),
+                        lhs: VReg(0),
+                        rhs: VReg(1),
+                        ty: int_ty,
+                    },
+                    MirInst::BinOp {
+                        dest: VReg(3),
+                        op: MirBinOp::Add,
+                        lhs: VReg(0),
+                        rhs: VReg(1),
+                        ty: int_ty,
+                    },
+                    MirInst::UnaryOp {
+                        dest: VReg(4),
+                        op: crate::mir::MirUnaryOp::Pos,
+                        operand: VReg(3),
+                        ty: int_ty,
+                    },
+                    MirInst::Call {
+                        dest: Some(VReg(5)),
+                        func: SymbolId(88_101),
+                        args: vec![],
+                        ty: int_ty,
+                    },
+                    MirInst::CallExtern {
+                        dest: Some(VReg(6)),
+                        name: "mb_pow_int".to_string(),
+                        args: vec![VReg(0), VReg(1)],
+                        ty: int_ty,
+                    },
+                ],
+                terminator: Terminator::Return(Some(VReg(6))),
+            }],
+        };
+        let extern_abis = crate::runtime::symbols::runtime_externs()
+            .into_iter()
+            .map(|ext| (ext.name, (ext.return_type, ext.return_abi)))
+            .collect();
+        let analysis = crate::mir::analyze_module_physical_abis(
+            std::slice::from_ref(&body),
+            &tcx,
+            &extern_abis,
+        );
+        let owner_action = |statement_index| {
+            analysis
+                .body(14_630)
+                .unwrap()
+                .producer_owner(ProducerSite::Instruction {
+                    block: BlockId(0),
+                    statement_index,
+                })
+                .unwrap()
+                .action
+        };
+
+        assert!(matches!(
+            owner_action(0),
+            ProducerOwnerAction::OwnerlessOrImmortal
+        ));
+        assert!(matches!(
+            owner_action(1),
+            ProducerOwnerAction::PassThroughOrNone(OwnerValueSource::SourceCompanion(VReg(0)))
+        ));
+        assert!(matches!(
+            owner_action(2),
+            ProducerOwnerAction::FreshResultOrNone
+        ));
+        assert!(matches!(
+            owner_action(3),
+            ProducerOwnerAction::ExplicitOwnerOut
+        ));
+        assert!(matches!(
+            owner_action(4),
+            ProducerOwnerAction::PassThroughOrNone(OwnerValueSource::SourceCompanion(VReg(3)))
+        ));
+        assert!(matches!(
+            owner_action(5),
+            ProducerOwnerAction::DeferredBoundary(crate::mir::ProducerBoundary::InternalReturn)
+        ));
+        assert!(matches!(
+            owner_action(6),
+            ProducerOwnerAction::Extern(ExternCompanionContract::FreshResultOrNone)
+        ));
+    }
+
+    #[test]
+    fn object_companion_owner_checked_and_lshift_merges_pair_data_then_owner() {
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let module = MirModule {
+            bodies: vec![MirBody {
+                name: SymbolId(14_631),
+                params: vec![(VReg(0), int_ty), (VReg(1), int_ty)],
+                return_ty: int_ty,
+                blocks: vec![BasicBlock {
+                    id: BlockId(0),
+                    stmts: vec![
+                        MirInst::CheckedAdd {
+                            dest: VReg(2),
+                            lhs: VReg(0),
+                            rhs: VReg(1),
+                            ty: int_ty,
+                        },
+                        MirInst::BinOp {
+                            dest: VReg(3),
+                            op: MirBinOp::LShift,
+                            lhs: VReg(2),
+                            rhs: VReg(1),
+                            ty: int_ty,
+                        },
+                    ],
+                    terminator: Terminator::Return(Some(VReg(3))),
+                }],
+            }],
+            externs: vec![],
+        };
+        let analysis =
+            crate::mir::analyze_module_physical_abis(&module.bodies, &tcx, &HashMap::new());
+        let owners = analysis.body(14_631).unwrap();
+        for statement_index in [0, 1] {
+            assert!(matches!(
+                owners
+                    .producer_owner(ProducerSite::Instruction {
+                        block: BlockId(0),
+                        statement_index,
+                    })
+                    .unwrap()
+                    .action,
+                ProducerOwnerAction::FreshResultOrNone | ProducerOwnerAction::ExplicitOwnerOut
+            ));
+        }
+
+        // Object lowering has no inline fast/slow edge for these operations:
+        // each runtime result is written first, then the shared post-write
+        // sidecar transaction establishes the paired owner.
+        let output = CraneliftBackend::new()
+            .unwrap()
+            .codegen(&module, &tcx)
+            .unwrap();
+        assert!(matches!(output, CodegenOutput::ObjectFile(bytes) if !bytes.is_empty()));
+    }
+
+    #[test]
+    fn object_companion_owner_raw_collision_and_bigint_refcounts() {
+        let pointer_shaped_raw = MbValue::from_bits(0x0000_7fff_dead_beef);
+        assert!(crate::runtime::symbols::mb_typed_int_owner_or_none(pointer_shaped_raw).is_none());
+
+        let bigint = crate::runtime::bigint_ops::bigint_from_i128(1i128 << 70);
+        assert_eq!(
+            crate::runtime::symbols::mb_typed_int_owner_or_none(bigint),
+            bigint
+        );
+        let object = bigint.as_ptr().expect("BigInt allocation");
+        unsafe {
+            assert_eq!(crate::runtime::rc::mb_refcount(object), 1);
+            crate::runtime::rc::release_if_ptr(bigint);
+        }
+    }
+
+    #[test]
+    fn object_companion_owner_call_boundaries_are_explicitly_deferred() {
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let body = MirBody {
+            name: SymbolId(14_632),
+            params: vec![],
+            return_ty: int_ty,
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    MirInst::Call {
+                        dest: Some(VReg(0)),
+                        func: SymbolId(88_102),
+                        args: vec![],
+                        ty: int_ty,
+                    },
+                    MirInst::CallExtern {
+                        dest: Some(VReg(1)),
+                        name: "dynamic_typed_result".to_string(),
+                        args: vec![],
+                        ty: int_ty,
+                    },
+                ],
+                terminator: Terminator::Return(Some(VReg(1))),
+            }],
+        };
+        let extern_abis = HashMap::from([(
+            "dynamic_typed_result".to_string(),
+            (
+                MirType::I64,
+                Some(crate::mir::ReturnAbi::new(
+                    crate::mir::PhysicalReturn::Unknown,
+                    crate::mir::ReturnOwnership::ProvenanceTransfer,
+                )),
+            ),
+        )]);
+        let analysis = crate::mir::analyze_module_physical_abis(
+            std::slice::from_ref(&body),
+            &tcx,
+            &extern_abis,
+        );
+        let owners = analysis.body(14_632).unwrap();
+        assert!(matches!(
+            owners
+                .producer_owner(ProducerSite::Instruction {
+                    block: BlockId(0),
+                    statement_index: 0,
+                })
+                .unwrap()
+                .action,
+            ProducerOwnerAction::DeferredBoundary(crate::mir::ProducerBoundary::InternalReturn)
+        ));
+        assert!(matches!(
+            owners
+                .producer_owner(ProducerSite::Instruction {
+                    block: BlockId(0),
+                    statement_index: 1,
+                })
+                .unwrap()
+                .action,
+            ProducerOwnerAction::Extern(ExternCompanionContract::DeferredRuntimeReturn)
+        ));
+    }
+
+    #[test]
     fn companion_owner_self_copy_has_zero_transitions() {
         let tcx = tcx();
         let data_before = std::cell::Cell::new(None);
@@ -2820,6 +3283,7 @@ mod tests {
                     dest: VReg(0),
                     source: VReg(0),
                 },
+                None,
                 &tcx,
                 &[],
                 builder,
@@ -2845,12 +3309,12 @@ mod tests {
                 builder.def_var(source_owner, owned);
                 assert!(vars
                     .transition_companion_owner(
-                    CompanionOwnerTransition::Commit {
-                        dest: VReg(1),
-                        input: CompanionOwnerInput::SourceCompanion(VReg(0)),
-                    },
-                    builder,
-                )
+                        CompanionOwnerTransition::Commit {
+                            dest: VReg(1),
+                            input: CompanionOwnerInput::SourceCompanion(VReg(0)),
+                        },
+                        builder,
+                    )
                     .is_some());
                 assert!(vars
                     .transition_companion_owner(
