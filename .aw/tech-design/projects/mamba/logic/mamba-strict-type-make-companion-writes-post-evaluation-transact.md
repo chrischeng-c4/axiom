@@ -9,56 +9,59 @@ fill_sections: [logic, unit-test]
 
 ```mermaid
 ---
-id: mamba-strict-type-post-evaluation-companion-transaction
-entry: evaluate
+id: mamba-strict-type-companion-transaction-contract
+entry: evaluated_input
 nodes:
-  evaluate: { kind: start, label: "evaluate producer data and obtain owner input" }
-  classify: { kind: decision, label: "ownerless, fresh, borrowed, or source companion" }
-  self_alias: { kind: decision, label: "destination aliases source" }
-  retain: { kind: process, label: "retain borrowed or source-companion input" }
-  release: { kind: process, label: "release old destination companion exactly once" }
-  install: { kind: process, label: "install new companion exactly once" }
-  done: { kind: terminal, label: "post-evaluation transaction complete" }
+  evaluated_input: { kind: start, label: "producer has evaluated data and owner input" }
+  input: { kind: decision, label: "CompanionOwnerInput variant" }
+  source: { kind: process, label: "read source companion before touching destination" }
+  retain: { kind: process, label: "retain Borrowed or SourceCompanion input" }
+  old: { kind: process, label: "read and release old destination owner once" }
+  install: { kind: process, label: "define destination owner to incoming value" }
+  no_op: { kind: terminal, label: "self source/destination alias is unchanged" }
+  done: { kind: terminal, label: "transaction committed" }
 edges:
-  - { from: evaluate, to: classify }
-  - { from: classify, to: self_alias, label: "source-companion" }
-  - { from: classify, to: retain, label: "borrowed" }
-  - { from: classify, to: release, label: "ownerless or fresh" }
-  - { from: self_alias, to: done, label: "same vreg: no-op" }
-  - { from: self_alias, to: retain, label: "distinct vregs" }
-  - { from: retain, to: release }
-  - { from: release, to: install }
+  - { from: evaluated_input, to: input }
+  - { from: input, to: old, label: "Ownerless or Fresh" }
+  - { from: input, to: retain, label: "Borrowed" }
+  - { from: input, to: source, label: "SourceCompanion" }
+  - { from: source, to: no_op, label: "dest == source" }
+  - { from: source, to: retain, label: "distinct" }
+  - { from: retain, to: old }
+  - { from: old, to: install }
   - { from: install, to: done }
 ---
 flowchart TD
-    evaluate([evaluate data and owner input]) --> classify{owner input}
-    classify -- ownerless or fresh --> release[release old destination companion]
-    classify -- borrowed --> retain[retain incoming owner]
-    classify -- source companion --> self_alias{dest equals source}
-    self_alias -- yes --> done([no-op])
-    self_alias -- no --> retain
-    retain --> release
-    release --> install[install incoming owner]
-    install --> done
+    evaluated_input([data and owner are evaluated]) --> input{CompanionOwnerInput}
+    input -- Ownerless --> old[release old owner once]
+    input -- Fresh --> old
+    input -- Borrowed --> retain[retain incoming owner]
+    input -- SourceCompanion --> source[read source owner]
+    source -- dest equals source --> no_op([no transition])
+    source -- distinct --> retain
+    retain --> old
+    old --> install[install incoming owner]
+    install --> done([committed])
 ```
 
-The shared Cranelift companion API is a two-step contract: the producer evaluates
-data and obtains its owner input before it calls the transaction, then the
-transaction performs retain-if-borrowed, release-old, and install-new in that
-order. `Fresh(Value)` transfers ownership without a retain; `Borrowed(Value)`
-and `SourceCompanion(VReg)` retain before the old destination is released; and
-`Ownerless` installs the canonical `None` companion. A self source/destination
-alias is a no-op. The transaction never derives ownership from data bits, tags,
-or semantic type.
+`VarAlloc` exposes a shared commit API with an explicit `CompanionOwnerInput`:
+`Ownerless`, `Fresh(Value)`, `Borrowed(Value)`, or `SourceCompanion(VReg)`.
+Callers evaluate the producer's data and construct this input before invoking the
+commit API. The API reads a source companion, when present, before it reads or
+releases the destination; returns without transition for `dest == source`;
+retains only borrowed/source inputs; releases the old destination exactly once;
+and defines the destination to the incoming owner exactly once.
 
-`ProducerWrite` is replaced by an explicit incoming-owner form so no caller can
-release a destination before it has evaluated the replacement data and owner.
-`MoveOut` and cleanup remain transfer/teardown operations, not producer writes.
-This slice changes only the shared `VarAlloc` transaction region and its
-colocated structural tests. JIT/Object producer match arms, runtime sidecars,
-argument ingress, and return transport remain deferred to #1461, #1462, #1463,
-#1451, and #1452 respectively.
+Fresh runtime results are transferred without a duplicate retain. Ownerless
+results install the canonical `MbValue::none()` companion. A pure boxed source
+bridges to a mixed destination through `Borrowed(Value)`, never through a data
+bit/tag inference. `MoveOut` and cleanup retain their current ownership-transfer
+semantics and are outside the producer transaction.
 
+The generic pre-evaluation `ProducerWrite` preamble is removed from the shared
+Object backend path. This TD does not migrate JIT/Object producer-specific arms,
+runtime sidecars, parameter frames, or return transport; those are the declared
+responsibility of #1461, #1462, #1463, #1451, and #1452.
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
