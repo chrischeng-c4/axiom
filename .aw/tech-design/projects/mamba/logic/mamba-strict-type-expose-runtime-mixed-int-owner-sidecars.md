@@ -14,51 +14,25 @@ entry: runtime_symbol
 nodes:
   runtime_symbol: { kind: start, label: "runtime symbol lookup" }
   contract: { kind: decision, label: "mixed-Int companion contract" }
-  fresh_result: { kind: process, label: "compute fresh-result-or-none sidecar" }
-  bigint: { kind: decision, label: "result is fresh BigInt" }
-  transfer: { kind: process, label: "publish one fresh MbValue owner" }
-  raw: { kind: process, label: "publish no owner sidecar" }
-  argument: { kind: process, label: "select declared argument companion" }
-  borrowed: { kind: process, label: "publish borrowed companion" }
+  fresh: { kind: process, label: "publish fresh BigInt owner or None" }
+  pass_through: { kind: process, label: "publish declared argument owner" }
   deferred: { kind: terminal, label: "leave consumer deferred" }
 edges:
   - { from: runtime_symbol, to: contract }
-  - { from: contract, to: fresh_result, label: "FreshResultOrNone" }
-  - { from: fresh_result, to: bigint }
-  - { from: bigint, to: transfer, label: "yes" }
-  - { from: bigint, to: raw, label: "no" }
-  - { from: contract, to: argument, label: "ArgumentPassThroughOrNone" }
-  - { from: argument, to: borrowed, label: "owner present" }
-  - { from: argument, to: raw, label: "owner absent" }
-  - { from: contract, to: deferred, label: "non-Int, dynamic, or unregistered" }
+  - { from: contract, to: fresh, label: "FreshResultOrNone" }
+  - { from: contract, to: pass_through, label: "ArgumentPassThroughOrNone" }
+  - { from: contract, to: deferred, label: "other" }
 ---
 flowchart TD
     runtime_symbol([runtime symbol lookup]) --> contract{mixed-Int contract}
-    contract -- FreshResultOrNone --> fresh_result[compute mixed-Int result]
-    fresh_result --> bigint{fresh BigInt?}
-    bigint -- yes --> transfer[publish one fresh owner]
-    bigint -- no --> raw[publish no owner]
-    contract -- ArgumentPassThroughOrNone --> argument[read declared argument owner]
-    argument -- owner --> borrowed[publish borrowed owner]
-    argument -- none --> raw
+    contract -- fresh --> fresh[publish fresh BigInt owner or None]
+    contract -- pass through --> pass_through[publish declared argument owner]
     contract -- other --> deferred([leave consumer deferred])
 ```
 
-`RuntimeSymbol` owns an optional `IntCompanionContract` sidecar in addition to
-its physical `ReturnAbi`. The only `RawOrBoxedInt` registrations are explicit:
-`mb_pow_int` and `mb_bigint_{add,sub,mul}` declare `FreshResultOrNone`, while
-`mb_unbox_{int,inline_int}_if_boxed` declares
-`ArgumentPassThroughOrNone { argument_index: 0 }`. Normal typed symbols and
-dynamic `Unknown` producers have no mixed-Int contract, so dynamic dispatch
-remains deferred for #1452 instead of gaining a bit-derived fallback.
+`RuntimeSymbol` owns an optional `IntCompanionContract` sidecar in addition to `ReturnAbi`. `mb_pow_int` and `mb_bigint_{add,sub,mul}` declare `FreshResultOrNone`; `mb_unbox_{int,inline_int}_if_boxed` declares `ArgumentPassThroughOrNone { argument_index: 0 }`. Non-Int and dynamic `Unknown` symbols have no sidecar, so #1452 remains the only owner of dynamic return transport.
 
-The runtime owner-out adapter carries data bits separately from ownership. A
-fresh arithmetic result yields `Fresh(MbValue)` only when the helper itself
-created a BigInt; raw, inline, float, and handle results yield `None`. It
-transfers that one owner without retaining it. Smart-unbox adapters select only
-the declared input companion and report it as `Borrowed`; they do not inspect
-result bits or object tags to infer provenance. The C/JIT result ABI remains an
-`i64`; #1462 consumes this sidecar in JIT producer arms after evaluation.
+The owner-out adapter keeps result bits distinct from ownership: helper-created BigInts transfer exactly one fresh owner, while raw, inline, float, and handle results transfer none. Smart-unbox selects only its declared argument companion as `Borrowed`, never by inspecting result bits. The C/JIT ABI remains `i64`; #1462 consumes the sidecar after evaluation.
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
