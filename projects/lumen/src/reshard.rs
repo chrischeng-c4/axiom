@@ -16,17 +16,28 @@ use serde::{Deserialize, Serialize};
 use crate::routing::VirtualBucketShardMap;
 use crate::storage::{CollectionSnapshot, FieldIndexSnapshot, SnapshotV1};
 
+/// The hard body-size limit `POST /admin/reshard:apply` (and every other
+/// admin route) enforces at the HTTP layer — `api.rs`'s
+/// `DefaultBodyLimit::max(..)` is built from this exact constant (#1444 R2),
+/// so the two can never drift apart: a batch this crate computes as
+/// "under the limit" is always actually under the limit the route enforces,
+/// and [`crate::operator::reshard_driver`]'s oversize-wedge detection
+/// compares a batch's real wire size against this same number rather than a
+/// second, hand-copied literal.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
+pub const ADMIN_ROUTE_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
+
 /// Upper bound on one batch's serialized `snapshot` payload (#1396 R4):
-/// `api.rs`'s `/admin/reshard:apply` route sits behind an 8 MiB
-/// `DefaultBodyLimit`, but [`snapshot_reshard_batches`] used to cap batches
-/// only by external-id count (`MAX_EXTERNAL_IDS_PER_BATCH`-style caller
-/// constants) — a bucket of large documents (long text fields, vectors,
-/// hashes) can still serialize well past 8 MiB even at a small id count, and
-/// a 413 from an oversized batch is deterministically recomputed identically
-/// every driver tick, wedging the split forever (the confirmed defect).
-/// 4 MiB — half the route limit — leaves comfortable headroom for JSON/wire
-/// overhead and per-item framing above the raw snapshot bytes measured here.
-pub const MAX_BATCH_BYTES: usize = 4 * 1024 * 1024;
+/// [`ADMIN_ROUTE_BODY_LIMIT_BYTES`] is the route's hard 413 cutoff, but
+/// [`snapshot_reshard_batches`] used to cap batches only by external-id count
+/// (`MAX_EXTERNAL_IDS_PER_BATCH`-style caller constants) — a bucket of large
+/// documents (long text fields, vectors, hashes) can still serialize well
+/// past the route limit even at a small id count, and a 413 from an
+/// oversized batch is deterministically recomputed identically every driver
+/// tick, wedging the split forever (the confirmed defect). Half the route
+/// limit leaves comfortable headroom for JSON/wire overhead and per-item
+/// framing above the raw snapshot bytes measured here.
+pub const MAX_BATCH_BYTES: usize = ADMIN_ROUTE_BODY_LIMIT_BYTES / 2;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
@@ -242,8 +253,10 @@ pub fn snapshot_reshard_batches(
 /// is at or under `max_batch_bytes`, or the chunk is down to a single
 /// external_id — one oversized document cannot be split further, so it is
 /// emitted as its own (over-budget) batch rather than looping forever; a
-/// single document that alone exceeds the route's 8 MiB body limit is a
-/// data-modeling problem this splitter cannot solve, not a batching bug.
+/// single document that alone exceeds [`ADMIN_ROUTE_BODY_LIMIT_BYTES`] is a
+/// data-modeling problem this splitter cannot solve, not a batching bug —
+/// [`crate::operator::reshard_driver`] detects and surfaces exactly this
+/// batch shape (#1444 R2) rather than retrying it forever as a generic 413.
 fn byte_cap_chunk(
     snapshot: &SnapshotV1,
     chunk: &[(String, String)],
@@ -885,8 +898,8 @@ mod tests {
         for batch in &batches {
             let wire_bytes = serde_json::to_vec(batch).unwrap().len();
             assert!(
-                wire_bytes < 8 * 1024 * 1024,
-                "batch serialized to {wire_bytes} bytes, over the route's 8 MiB body limit"
+                wire_bytes < ADMIN_ROUTE_BODY_LIMIT_BYTES,
+                "batch serialized to {wire_bytes} bytes, over the route's {ADMIN_ROUTE_BODY_LIMIT_BYTES} byte body limit"
             );
         }
 

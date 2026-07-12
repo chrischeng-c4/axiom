@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "projects/lumen/tech-design"
-generated_at = "2026-07-12T02:47:52.785415+00:00"
-digest = "sha256:c2e49448e21044aa105630dd6606bc7584ce6e8c6fbde5d82366f12e0b25033e"
-source_digest = "sha256:c2e49448e21044aa105630dd6606bc7584ce6e8c6fbde5d82366f12e0b25033e"
-ir_digest = "sha256:6b4da71fde3286cb20c4f93eddf6a317d7908561a2595aad3623e329af2811a7"
+generated_at = "2026-07-12T04:53:57.085193+00:00"
+digest = "sha256:0b2938cfc2befb9c218685671ebef2cf76c0f95573731ab53f28b63396d918d0"
+source_digest = "sha256:0b2938cfc2befb9c218685671ebef2cf76c0f95573731ab53f28b63396d918d0"
+ir_digest = "sha256:dc12400b8243ba7b6ef60efa393c752b13b956e8e97088ca18b04810420f7849"
 
 [[files]]
 path = "interfaces/cli/cli-connect-query-k8s-agent-workflow.md"
@@ -297,8 +297,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-lumen-src-api-rs.md"
-digest = "sha256:80855c7f26cb45ebecf9c946a5a888467f5c355737f9f86be2810af9d15ee874"
-ir_digest = "sha256:724f9af7832a8582f121bc29595ca9ff005c0ff5b52239778de28f0c4b29ee16"
+digest = "sha256:5748bff52606f316eb13ae0855f35b1423b43c2feddaace99aeb771a0c400af0"
+ir_digest = "sha256:b7843dcdf60d5f7c2d191aefe0289c79cdc76edd1bc55d5b327ca6a3efbdef3b"
 section_count = 3
 
 [[files]]
@@ -393,8 +393,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-lumen-src-operator-reconcile-rs.md"
-digest = "sha256:31257f4642e16b4fa91d87d9931baf28e47578cf53ce48ec923e45af07da9282"
-ir_digest = "sha256:41bf5b57be5c11a5f82865ad2d759436566e821bce9bdc26ceb43e81f55e016a"
+digest = "sha256:e122fadb278e545f9422e9ae844562b3acb323e96c73986b6f614f2820d25d9b"
+ir_digest = "sha256:21ea51fd6cf4efd91a66bc26aef0d3a8f44bb2aabd238aa5901507ff65f63ecd"
 section_count = 3
 
 [[files]]
@@ -405,8 +405,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-lumen-src-operator-reshard-driver-rs.md"
-digest = "sha256:ec9b119d6c0ffbce0aaf0b7fc52c7a730622eb7b2aada7e4b8e1f4ee6eac16b8"
-ir_digest = "sha256:f40cd95b023c81a62ac2a0ed4c1b49e7f5081e88bce54ab0010764740d890bda"
+digest = "sha256:eb33f3fa6b08f9fa43b05812104416a812b257e5c589b31a473acc03f680d241"
+ir_digest = "sha256:260362f49328b0f32aa9c68d8201b65271c5c7240154b36f27d1f40f342a6033"
 section_count = 3
 
 [[files]]
@@ -435,8 +435,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-lumen-src-reshard-rs.md"
-digest = "sha256:2e72c702d411e70e6e2faeaf939f413e0552ecd6c55b648be9f4f0e0b7f281c5"
-ir_digest = "sha256:fde2e3207314c0683309d225d16ae0757ed95b06d67f134461ad572e2deb34d8"
+digest = "sha256:e1830c7277757978532c35b145903e6b1d20b33080a2c16045f8771c76a2086e"
+ir_digest = "sha256:e6c5c4c3d736acba761102f35dfc82f207969ddb600cf94911170c5d4c3c46dd"
 section_count = 3
 
 [[files]]
@@ -459,8 +459,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-lumen-src-segment_rdb-rs.md"
-digest = "sha256:56923950e9746fe2b8da310f8ec36511bcde94f5170e5338460af045ceccb6d7"
-ir_digest = "sha256:b39d1dd190422a08bc4c1778bd202dc933a17d826329e208303b7d27e6bc7ebf"
+digest = "sha256:38905f2781da07fb08bd2e72a9db6d8f9d17ff3d1967ccb22973beeb521b2dd6"
+ir_digest = "sha256:aad87503540c260a654a92a5ac2a31deb38b5bf425ac50bde9adc9e6f4975300"
 section_count = 3
 
 [[files]]

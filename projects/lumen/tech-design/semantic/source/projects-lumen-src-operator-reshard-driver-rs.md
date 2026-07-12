@@ -21,16 +21,18 @@ Public API manifest for `projects/lumen/src/operator/reshard_driver.rs`.
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `DriveOutcome` | projects/lumen/src/operator/reshard_driver.rs | enum | pub | 401 |  |
-| `KubeClusterControl` | projects/lumen/src/operator/reshard_driver.rs | struct | pub | 283 |  |
-| `compute_target_map` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 507 | compute_target_map(current: &VirtualBucketShardMap) -> Result<VirtualBucketShardMap> |
-| `current_shard_map` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 492 | current_shard_map(lumen: &Lumen) -> Result<VirtualBucketShardMap> |
+| `DriveOutcome` | projects/lumen/src/operator/reshard_driver.rs | enum | pub | 529 |  |
+| `KubeClusterControl` | projects/lumen/src/operator/reshard_driver.rs | struct | pub | 411 |  |
+| `OversizedDocumentBlock` | projects/lumen/src/operator/reshard_driver.rs | struct | pub | 261 | #1444 R2: distinguishes an apply failure caused by exactly one document's batch serializing past `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES` (the `snapshot_reshard_batches`/`byte_cap_chunk` floor case) from any other reason `POST /admin/reshard:apply` can fail — surfaced as a distinct `status.reshard` blocking condition and used to skip re-arming the write-pause fence on a tick already known to fail identically. |
+| `compute_target_map` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 635 | compute_target_map(current: &VirtualBucketShardMap) -> Result<VirtualBucketShardMap> |
+| `current_shard_map` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 620 | current_shard_map(lumen: &Lumen) -> Result<VirtualBucketShardMap> |
 | `default_write_fence_ttl_secs` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 231 | #1443 R1/AC1: the production default [`ClusterControl::write_fence_ttl_secs`] value, exposed so integration tests can fall back to the real default from a `fence_ttl_secs: Option<u64>`-style override field without needing the private `WRITE_FENCE_TTL_SECS` const itself to be `pub`. default_write_fence_ttl_secs() -> u64 |
-| `drive_tick` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 1303 | drive_tick(     control: &dyn ClusterControl,     http: &reqwest::Client,     lumen: &Lumen, ) -> DriveOutcome |
-| `new` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 289 | new(client: Client) -> Self |
-| `run_migration_pass` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 794 | run_migration_pass(     control: &dyn ClusterControl,     http: &reqwest::Client,     namespace: &str,     name: &str,     lumen: &Lumen, ) -> Result<usize> |
-| `should_start_split` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 429 | #1396 R5: also requires `status.reshard.usage_measured_at_map_version == spec.shardMap.version` — a lagging/stale status subresource can never start a split. should_start_split(lumen: &Lumen) -> bool |
-| `spawn_reshard_driver_loop` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 1340 | spawn_reshard_driver_loop(client: Client) |
+| `drive_tick` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 1498 | drive_tick(     control: &dyn ClusterControl,     http: &reqwest::Client,     lumen: &Lumen, ) -> DriveOutcome |
+| `new` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 417 | new(client: Client) -> Self |
+| `oversize_block_condition` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 355 | #1444 R2: the oversized-document block currently recorded for `namespace/name`, if any — read-only, does not affect the skip budget. `reconcile.rs`'s `status_patch` calls this to layer a distinct `status.reshard` blocking condition + remediation message onto the policy/usage-derived status. oversize_block_condition(namespace: &str, name: &str) -> Option<OversizedDocumentBlock> |
+| `run_migration_pass` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 963 | run_migration_pass(     control: &dyn ClusterControl,     http: &reqwest::Client,     namespace: &str,     name: &str,     lumen: &Lumen, ) -> Result<usize> |
+| `should_start_split` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 557 | #1396 R5: also requires `status.reshard.usage_measured_at_map_version == spec.shardMap.version` — a lagging/stale status subresource can never start a split. should_start_split(lumen: &Lumen) -> bool |
+| `spawn_reshard_driver_loop` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 1535 | spawn_reshard_driver_loop(client: Client) |
 
 Not listed above (matching this project's existing mirrors' convention of
 only capturing top-level `pub` structs/enums/consts/modules and inherent-impl
@@ -57,6 +59,18 @@ never outlives a single TTL window, and a failed re-arm aborts to `Blocked`
 before the next step runs rather than silently reopening the write window).
 Also not listed (private, new): `FENCE_REARM_BATCH_INTERVAL` const and the
 `default_write_fence_ttl_secs`-backing `WRITE_FENCE_TTL_SECS` const itself.
+Also not listed (private/`pub(crate)`, #1444 R2): `OVERSIZE_RECHECK_TICKS`
+const, the `OversizeBlockCache` type alias, `oversize_block_cache`,
+`oversize_cache_key` (private), `record_oversize_block` and
+`clear_oversize_block` (`pub(crate)` rather than private so
+`reconcile.rs`'s `status_patch` tests can drive the exact cache
+`oversize_block_condition` reads, without widening either past
+crate-internal visibility), `should_skip_for_oversize` (private; the
+mutating cache read/write helpers backing `oversize_block_condition`), and
+`detect_oversized_batch` (pre-flight oversize check called from
+`apply_reshard_batch`, which now returns the downcastable
+`OversizedDocumentBlock` error instead of only a generic `bail!` on both
+the pre-flight miss and a live 413 response).
 
 ## Source
 <!-- type: rust-source-unit lang: rust -->
@@ -294,6 +308,134 @@ const WRITE_FENCE_TTL_SECS: u64 = 120;
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
 pub fn default_write_fence_ttl_secs() -> u64 {
     WRITE_FENCE_TTL_SECS
+}
+
+/// How many consecutive [`advance_catching_up`] ticks short-circuit on a
+/// recorded [`OversizedDocumentBlock`] (#1444 R2) before attempting the full
+/// fenced migration pass again. Bounds how long a document an operator has
+/// since fixed (deleted or shrunk) stays wedged after the fix without
+/// re-arming the write-pause fence — and reopening the recurring 503 window
+/// the fix closes — on every single tick while the condition is genuinely
+/// unchanged. `DRIVER_POLL_INTERVAL * OVERSIZE_RECHECK_TICKS` (5 minutes at
+/// the current 20s poll interval) is the same order of magnitude as
+/// [`WRITE_FENCE_TTL_SECS`]/`SHARD_USAGE_POLL_INTERVAL`-style bounds
+/// elsewhere in this driver.
+const OVERSIZE_RECHECK_TICKS: u32 = 15;
+
+/// Distinguishes an apply failure caused by exactly one document's batch
+/// serializing past [`crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES`] — the
+/// `snapshot_reshard_batches`/`byte_cap_chunk` floor case
+/// (`crate::reshard`'s module doc's "one document cannot be split further")
+/// — from any other reason `POST /admin/reshard:apply` can fail (#1444 R2).
+/// Deterministic every retry (nothing about the data or the byte cap changes
+/// tick to tick), unlike a transient network/5xx error, so this is surfaced
+/// as a distinct `status.reshard` blocking condition (see
+/// [`oversize_block_condition`]) instead of the generic
+/// [`DriveOutcome::Blocked`] message every other failure produces, and used
+/// to skip re-arming the write-pause fence on a tick already known to fail
+/// identically (see [`advance_catching_up`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
+pub struct OversizedDocumentBlock {
+    pub collection: String,
+    pub external_id: String,
+    pub bytes: usize,
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
+impl std::fmt::Display for OversizedDocumentBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "reshard blocked: collection `{}` document `{}` serializes to {} bytes, over the \
+             {} byte /admin/reshard:apply body limit; this single document cannot be split into \
+             a smaller batch — shrink or remove its large field values (long text, vectors, \
+             hashes), or exclude it from the collection, before this split can continue",
+            self.collection,
+            self.external_id,
+            self.bytes,
+            crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES
+        )
+    }
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
+impl std::error::Error for OversizedDocumentBlock {}
+
+/// `"<namespace>/<name>" -> (block, ticks skipped on it so far)`, written by
+/// [`run_migration_pass_impl`] and consumed by [`advance_catching_up`]
+/// (mutating, to decide/count a skip) and [`oversize_block_condition`]
+/// (read-only, for `reconcile.rs`'s `status_patch`) — #1444 R2. Mirrors
+/// `reconcile.rs`'s own `ShardUsageCache` pattern: a synchronous status
+/// projection reads a cache a background loop writes, rather than doing I/O
+/// itself.
+type OversizeBlockCache = std::sync::Mutex<BTreeMap<String, (OversizedDocumentBlock, u32)>>;
+
+fn oversize_block_cache() -> &'static OversizeBlockCache {
+    static CACHE: std::sync::OnceLock<OversizeBlockCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(BTreeMap::new()))
+}
+
+fn oversize_cache_key(namespace: &str, name: &str) -> String {
+    format!("{namespace}/{name}")
+}
+
+/// Record (or refresh) a discovered oversize wedge for `namespace/name`,
+/// resetting its skip counter — a fresh discovery, whether this is the first
+/// tick to hit it or a periodic recheck (#1444 R2, see
+/// [`OVERSIZE_RECHECK_TICKS`]) that hit the same wedge again. `pub(crate)`
+/// rather than private so `reconcile.rs`'s `status_patch` tests can drive the
+/// exact cache [`oversize_block_condition`] reads, without widening this past
+/// crate-internal visibility.
+pub(crate) fn record_oversize_block(namespace: &str, name: &str, block: OversizedDocumentBlock) {
+    oversize_block_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(oversize_cache_key(namespace, name), (block, 0));
+}
+
+/// Clear any recorded oversize wedge for `namespace/name` — called whenever
+/// a migration pass for it completes without hitting one, meaning whatever
+/// was wedged is resolved. `pub(crate)` for the same test-seam reason as
+/// [`record_oversize_block`].
+pub(crate) fn clear_oversize_block(namespace: &str, name: &str) {
+    oversize_block_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&oversize_cache_key(namespace, name));
+}
+
+/// If `namespace/name` has a recorded oversize wedge AND has not yet used up
+/// its [`OVERSIZE_RECHECK_TICKS`] skip budget, bump its skip counter and
+/// return it — the caller ([`advance_catching_up`]) should short-circuit to
+/// [`DriveOutcome::Blocked`] without arming the write-pause fence. Returns
+/// `None` (no skip) once the budget is exhausted, letting the next real
+/// attempt either clear the wedge (if fixed) or re-record it with a fresh
+/// budget.
+fn should_skip_for_oversize(namespace: &str, name: &str) -> Option<OversizedDocumentBlock> {
+    let mut cache = oversize_block_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (block, ticks) = cache.get_mut(&oversize_cache_key(namespace, name))?;
+    if *ticks >= OVERSIZE_RECHECK_TICKS {
+        return None;
+    }
+    *ticks += 1;
+    Some(block.clone())
+}
+
+/// The oversized-document block currently recorded for `namespace/name`, if
+/// any (#1444 R2) — read-only, does not affect [`should_skip_for_oversize`]'s
+/// skip budget. `reconcile.rs`'s `status_patch` calls this to layer a
+/// distinct `status.reshard` blocking condition + remediation message onto
+/// the policy/usage-derived status.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
+pub fn oversize_block_condition(namespace: &str, name: &str) -> Option<OversizedDocumentBlock> {
+    oversize_block_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&oversize_cache_key(namespace, name))
+        .map(|(block, _)| block.clone())
 }
 
 /// Everything [`drive_tick`] needs from a live cluster, abstracted so the
@@ -600,12 +742,45 @@ async fn fetch_scoped_backup(
         .context("decode backup:scoped response")
 }
 
+/// If `batch`'s actual wire payload is over
+/// [`crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES`], name the collection and
+/// external_id to blame (#1444 R2). `snapshot_reshard_batches`'
+/// `byte_cap_chunk` only ever emits an over-the-limit batch when it floored
+/// at a single external_id (a bucket group's byte cap already keeps every
+/// multi-id batch under half the route limit), so the first id found in
+/// `external_ids` is that one document.
+fn detect_oversized_batch(batch: &ReshardBatch) -> Option<OversizedDocumentBlock> {
+    let bytes = serde_json::to_vec(batch)
+        .map(|bytes| bytes.len())
+        .unwrap_or(usize::MAX);
+    if bytes <= crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES {
+        return None;
+    }
+    let (collection, external_id) = batch.external_ids.iter().find_map(|(collection, ids)| {
+        ids.iter()
+            .next()
+            .map(|external_id| (collection.clone(), external_id.clone()))
+    })?;
+    Some(OversizedDocumentBlock {
+        collection,
+        external_id,
+        bytes,
+    })
+}
+
 async fn apply_reshard_batch(
     http: &reqwest::Client,
     base_url: &str,
     token: Option<&str>,
     batch: &ReshardBatch,
 ) -> Result<()> {
+    // Pre-flight (#1444 R2): a batch this crate can already tell is over the
+    // route's body limit is skipped rather than sent — no wasted round trip,
+    // and the classification never depends on how a given HTTP stack renders
+    // its own 413.
+    if let Some(oversized) = detect_oversized_batch(batch) {
+        return Err(oversized.into());
+    }
     let mut req = http
         .post(format!("{base_url}/admin/reshard:apply"))
         .json(batch);
@@ -617,6 +792,14 @@ async fn apply_reshard_batch(
         .await
         .with_context(|| format!("POST {base_url}/admin/reshard:apply"))?;
     if !resp.status().is_success() {
+        // Defense in depth: even if the pre-flight estimate above missed it
+        // (e.g. framing/compression skew), classify a live 413 on this exact
+        // batch shape the same way rather than a generic Blocked message.
+        if resp.status() == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
+            if let Some(oversized) = detect_oversized_batch(batch) {
+                return Err(oversized.into());
+            }
+        }
         bail!("{base_url}/admin/reshard:apply returned {}", resp.status());
     }
     Ok(())
@@ -919,7 +1102,17 @@ async fn run_migration_pass_impl(
         )?;
         for batch in &batches {
             let dest_url = control.shard_base_url(namespace, name, batch.to_shard);
-            apply_reshard_batch(http, &dest_url, token.as_deref(), batch).await?;
+            if let Err(err) = apply_reshard_batch(http, &dest_url, token.as_deref(), batch).await {
+                // #1444 R2: record the wedge distinctly before propagating, so
+                // callers that turn this `Err` into `DriveOutcome::Blocked`
+                // still leave a structured trace behind for `status.reshard`
+                // and for `advance_catching_up`'s fence-skip check, even
+                // though the `Err` itself stays a generic message.
+                if let Some(oversized) = err.downcast_ref::<OversizedDocumentBlock>() {
+                    record_oversize_block(namespace, name, oversized.clone());
+                }
+                return Err(err);
+            }
             total_batches += 1;
             if let Some(fenced_buckets) = moving_buckets {
                 if !fenced_buckets.is_empty() && total_batches % FENCE_REARM_BATCH_INTERVAL == 0 {
@@ -939,6 +1132,11 @@ async fn run_migration_pass_impl(
             }
         }
     }
+    // A full pass completed without hitting the oversize wedge (whether or
+    // not one was ever recorded) — clear any stale block so a fixed document
+    // doesn't leave `status.reshard` reporting a condition that no longer
+    // applies.
+    clear_oversize_block(namespace, name);
     Ok(total_batches)
 }
 
@@ -1130,6 +1328,17 @@ async fn advance_catching_up(
         Err(err) => return DriveOutcome::Blocked(err.to_string()),
     };
     let moving_buckets: BTreeSet<u32> = moves.iter().map(|m| m.bucket).collect();
+
+    // #1444 R2: a tick already known-wedged on an oversized single-document
+    // batch is a permanent no-progress condition until the document shrinks
+    // (see [`OversizedDocumentBlock`]) — arming the write fence anyway would
+    // pause writes to these buckets for a pass that cannot possibly finish,
+    // recurring every tick's `WRITE_FENCE_TTL_SECS` window for no benefit.
+    // `should_skip_for_oversize` still periodically lets a real attempt
+    // through (`OVERSIZE_RECHECK_TICKS`) so a fixed document self-heals.
+    if let Some(block) = should_skip_for_oversize(namespace, name) {
+        return DriveOutcome::Blocked(block.to_string());
+    }
 
     if !moving_buckets.is_empty() {
         if let Err(err) = set_write_fence(
@@ -1831,6 +2040,172 @@ mod tests {
         );
     }
 
+    // ---- #1444 R2: oversized-doc reshard remediation --------------------
+
+    /// A minimal, otherwise-empty [`ReshardBatch`] whose `external_ids` holds
+    /// one collection/id pair with an `external_id` long enough on its own to
+    /// push the batch's serialized size over
+    /// [`crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES`] — the exact shape
+    /// `byte_cap_chunk` produces when it floors at a single oversized id.
+    fn oversized_batch(collection: &str, external_id_len: usize) -> ReshardBatch {
+        let mut external_ids = BTreeMap::new();
+        let mut ids = BTreeSet::new();
+        ids.insert("x".repeat(external_id_len));
+        external_ids.insert(collection.to_string(), ids);
+        ReshardBatch {
+            from_map_version: 1,
+            to_map_version: 2,
+            bucket: 0,
+            from_shard: 0,
+            to_shard: 1,
+            external_ids,
+            snapshot: SnapshotV1 {
+                version: 1,
+                collections: BTreeMap::new(),
+            },
+            virtual_bucket_count: 0,
+            replace_ids: None,
+        }
+    }
+
+    #[test]
+    fn detect_oversized_batch_none_when_under_limit() {
+        let batch = oversized_batch("widgets", 64);
+        assert!(
+            detect_oversized_batch(&batch).is_none(),
+            "a small batch must not be classified as oversized"
+        );
+    }
+
+    #[test]
+    fn detect_oversized_batch_some_when_over_limit_names_first_id() {
+        let batch = oversized_batch(
+            "widgets",
+            crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES + 1024,
+        );
+        let block = detect_oversized_batch(&batch)
+            .expect("a batch over ADMIN_ROUTE_BODY_LIMIT_BYTES must be classified as oversized");
+        assert_eq!(block.collection, "widgets");
+        assert_eq!(
+            block.external_id.len(),
+            crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES + 1024
+        );
+        assert!(block.bytes > crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES);
+    }
+
+    #[tokio::test]
+    async fn apply_reshard_batch_rejects_oversized_batch_without_sending_request() {
+        // #1444 R2 AC2: the pre-flight check in `apply_reshard_batch` must
+        // reject an oversized batch itself — no HTTP round trip at all, let
+        // alone one that could 413. `.expect(0)` on the mount makes wiremock
+        // panic if the driver ever calls out.
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/admin/reshard:apply"))
+            .respond_with(wiremock::ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let batch = oversized_batch(
+            "widgets",
+            crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES + 1024,
+        );
+        let result = apply_reshard_batch(&http_client(), &server.uri(), None, &batch).await;
+        let err = result.expect_err("an oversized batch must be rejected pre-flight");
+        assert!(
+            err.downcast_ref::<OversizedDocumentBlock>().is_some(),
+            "the error must downcast to OversizedDocumentBlock, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn oversize_block_cache_records_skips_then_exhausts_recheck_budget() {
+        // Each test in this crate shares the process-global oversize cache,
+        // so use a namespace/name unique to this test to avoid cross-test
+        // interference under parallel execution.
+        let namespace = "ac2-cache-ns";
+        let name = "ac2-cache-name";
+        assert!(
+            oversize_block_condition(namespace, name).is_none(),
+            "no wedge recorded yet"
+        );
+        assert!(
+            should_skip_for_oversize(namespace, name).is_none(),
+            "nothing to skip before a wedge is ever recorded"
+        );
+
+        let block = OversizedDocumentBlock {
+            collection: "widgets".to_string(),
+            external_id: "abc".to_string(),
+            bytes: crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES + 1,
+        };
+        record_oversize_block(namespace, name, block.clone());
+        assert_eq!(
+            oversize_block_condition(namespace, name),
+            Some(block.clone()),
+            "the recorded wedge must be readable without affecting the skip budget"
+        );
+
+        // The recheck budget is consumed by `should_skip_for_oversize`, not
+        // by the read-only `oversize_block_condition` above.
+        for _ in 0..OVERSIZE_RECHECK_TICKS {
+            assert_eq!(
+                should_skip_for_oversize(namespace, name),
+                Some(block.clone()),
+                "every tick within the recheck budget must skip on the same wedge"
+            );
+        }
+        assert!(
+            should_skip_for_oversize(namespace, name).is_none(),
+            "once the recheck budget is exhausted, the next tick must be let through"
+        );
+
+        clear_oversize_block(namespace, name);
+        assert!(
+            oversize_block_condition(namespace, name).is_none(),
+            "clearing must remove the wedge entirely"
+        );
+    }
+
+    #[tokio::test]
+    async fn advance_catching_up_skips_fence_arm_when_oversize_wedge_recorded() {
+        // #1444 R2 AC2: a tick already known-wedged on an oversized document
+        // must short-circuit to `Blocked` before arming the write fence —
+        // `.expect(0)` on the fence-route mount makes wiremock panic if the
+        // driver ever arms it.
+        let namespace = "ac2-fence-ns";
+        let name = "ac2-fence-name";
+        record_oversize_block(
+            namespace,
+            name,
+            OversizedDocumentBlock {
+                collection: "widgets".to_string(),
+                external_id: "abc".to_string(),
+                bytes: crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES + 1,
+            },
+        );
+
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/admin/reshard:fence"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({})))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let control = TwoShardFenceControl {
+            shard_urls: vec![server.uri()],
+        };
+        let lumen = lumen_with(spec(2, 1, None), None);
+
+        let outcome = advance_catching_up(&control, &http_client(), namespace, name, &lumen).await;
+        assert!(
+            matches!(outcome, DriveOutcome::Blocked(_)),
+            "a known-wedged tick must report Blocked, got: {outcome:?}"
+        );
+
+        clear_oversize_block(namespace, name);
+    }
+
     // ---- #1396 AC3: checkpoint_shard requires persisted == true --------
 
     #[tokio::test]
@@ -1998,6 +2373,7 @@ mod tests {
     }
 }
 // CODEGEN-END
+
 ````
 
 ## Changes
@@ -2128,4 +2504,54 @@ changes:
       `tests/reshard_driver_e2e.rs` proves a fenced pass whose two sequential
       checkpoint calls together exceed a short TTL never lets a write through
       mid-pass.
+  - path: "projects/lumen/src/operator/reshard_driver.rs"
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1444 R2: an oversized single-document batch (`byte_cap_chunk`'s
+      single-id floor case in `reshard.rs`, over
+      `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES`) no longer wedges the
+      split as a silent, permanently-recurring generic `Blocked` failure
+      with a fence armed every tick. New `detect_oversized_batch` helper
+      pre-flight-checks a batch's real wire size before `apply_reshard_batch`
+      sends it (and as a defense-in-depth fallback on a live 413 response),
+      returning a new `OversizedDocumentBlock` error (public struct,
+      `Display`+`Error`, names the collection/external_id/byte count and
+      carries remediation text). `run_migration_pass_impl` downcasts an
+      `apply_reshard_batch` failure to `OversizedDocumentBlock` and records
+      it (namespace/name-keyed, in-process `OversizeBlockCache`, mirroring
+      `reconcile.rs`'s `ShardUsageCache` pattern) before propagating the
+      error, and clears any recorded block on a pass that completes without
+      hitting one (self-healing once an operator fixes the document).
+      `advance_catching_up` now checks `should_skip_for_oversize` before
+      arming the write-pause fence: a tick with a currently-recorded block
+      short-circuits to `DriveOutcome::Blocked` without arming the fence,
+      closing the recurring 503 write-window regression; a bounded
+      `OVERSIZE_RECHECK_TICKS` budget still lets a real attempt through
+      periodically so a since-fixed document is rediscovered. New public
+      `oversize_block_condition(namespace, name)` read accessor lets
+      `reconcile.rs`'s `status_patch` layer a distinct
+      `"reshardOversizedDocument"` `status.reshard.blockingConditions`
+      entry + remediation `message` onto the policy/usage-derived status.
+  - path: "projects/lumen/src/operator/reshard_driver.rs"
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1444 R2 AC2 test coverage: `record_oversize_block` and
+      `clear_oversize_block` widened from private to `pub(crate)` (still not
+      part of the crate's public API) so `reconcile.rs`'s `status_patch`
+      tests can drive the exact `oversize_block_condition` cache. New unit
+      tests: `detect_oversized_batch_none_when_under_limit` and
+      `detect_oversized_batch_some_when_over_limit_names_first_id` prove the
+      pre-flight size classification and first-offender selection;
+      `apply_reshard_batch_rejects_oversized_batch_without_sending_request`
+      proves the pre-flight check short-circuits before any HTTP call
+      (`wiremock` `.expect(0)`); `oversize_block_cache_records_skips_then_
+      exhausts_recheck_budget` proves the record/read/skip/exhaust/clear
+      cache lifecycle end to end; `advance_catching_up_skips_fence_arm_when_
+      oversize_wedge_recorded` proves a known-wedged tick reports `Blocked`
+      without ever calling the fence route (`wiremock` `.expect(0)` on
+      `/admin/reshard:fence`).
 ```

@@ -475,12 +475,27 @@ impl ManagedService for Lumen {
             .lock()
             .ok()
             .and_then(|cache| cache.get(&cache_key(self)).cloned());
-        let reshard = match usage {
+        let mut reshard = match usage {
             Some(snapshot) if !snapshot.usage.is_empty() => self
                 .spec
                 .reshard_status_with_usage(&snapshot.usage, snapshot.measured_at_map_version),
             _ => self.spec.reshard_status(),
         };
+        // #1444 R2: an oversized single-document batch the reshard driver
+        // cannot apply is a distinct, named blocking condition (not the
+        // generic threshold/policy conditions `reshard_status*` already
+        // computes above) with its own remediation text — layered on here
+        // rather than inside `LumenSpec::reshard_status*` because it comes
+        // from the driver's own live apply attempts, not from spec/usage.
+        let namespace = self.namespace().unwrap_or_else(|| "default".to_string());
+        if let Some(block) =
+            crate::operator::reshard_driver::oversize_block_condition(&namespace, &name)
+        {
+            reshard
+                .blocking_conditions
+                .push("reshardOversizedDocument".to_string());
+            reshard.message = block.to_string();
+        }
         let phase = if serving_ready >= desired {
             "Ready"
         } else if serving_ready > 0 {
@@ -648,6 +663,68 @@ mod tests {
             1,
             "http://search-3.search-headless.acme.svc.cluster.local:7373/metrics".to_string()
         )));
+    }
+
+    // ---- #1444 R2: oversized-doc blocking condition in status.reshard -----
+
+    #[test]
+    fn status_patch_surfaces_oversize_block_as_distinct_reshard_condition() {
+        let lumen = hpa_test_lumen("search", "acme-status-oversize", 2, 1);
+        let namespace = "acme-status-oversize";
+        let name = "search";
+        crate::operator::reshard_driver::record_oversize_block(
+            namespace,
+            name,
+            crate::operator::reshard_driver::OversizedDocumentBlock {
+                collection: "widgets".to_string(),
+                external_id: "doc-42".to_string(),
+                bytes: 9_000_000,
+            },
+        );
+
+        let ready = ReadyFacts {
+            ready: std::collections::HashMap::new(),
+        };
+        let patch = lumen.status_patch(&ready);
+        let reshard = &patch["status"]["reshard"];
+        let blocking = reshard["blockingConditions"]
+            .as_array()
+            .expect("blockingConditions must be present");
+        assert!(
+            blocking
+                .iter()
+                .any(|c| c.as_str() == Some("reshardOversizedDocument")),
+            "status.reshard.blockingConditions must include reshardOversizedDocument, got: {reshard}"
+        );
+        let message = reshard["message"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("widgets") && message.contains("doc-42"),
+            "status.reshard.message must name the collection and external_id, got: {message}"
+        );
+
+        crate::operator::reshard_driver::clear_oversize_block(namespace, name);
+    }
+
+    #[test]
+    fn status_patch_has_no_oversize_condition_when_none_recorded() {
+        let lumen = hpa_test_lumen("search", "acme-status-clean", 2, 1);
+        let ready = ReadyFacts {
+            ready: std::collections::HashMap::new(),
+        };
+        let patch = lumen.status_patch(&ready);
+        let reshard = &patch["status"]["reshard"];
+        let blocking = reshard["blockingConditions"].as_array();
+        let has_condition = blocking
+            .map(|arr| {
+                arr.iter()
+                    .any(|c| c.as_str() == Some("reshardOversizedDocument"))
+            })
+            .unwrap_or(false);
+        assert!(
+            !has_condition,
+            "no oversize wedge was recorded for this namespace/name; \
+             status.reshard.blockingConditions must not report one, got: {reshard}"
+        );
     }
 
     // ---- HPA topology-transition handoff (#1385, AC1) ----------------------
