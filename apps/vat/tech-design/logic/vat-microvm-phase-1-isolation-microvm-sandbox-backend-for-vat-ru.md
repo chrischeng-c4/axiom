@@ -1,8 +1,17 @@
 ---
 id: vat-microvm-phase-1-isolation-microvm-sandbox-backend-for-vat-ru
-summary: (fill)
+summary: Add an additive `Isolation::MicroVm` sandbox backend to `vat run`, built on Apple's `container` CLI, that runs a workload inside an ephemeral microVM and fails closed whenever it cannot satisfy the requested GPU or egress policy. Phase 1 of the microVM epic (#1471); Phase 0 (#1472) already verified the `container` CLI mechanics with a "go" verdict.
 fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
+capability_refs:
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: microvm-sandbox-backend-for-vat-run
+    claim: microvm-sandbox-backend-for-vat-run
+    coverage: full
+    rationale: "Adds the Isolation::MicroVm variant, sandbox/microvm.rs (MicroVmBackend), the fail-closed pick() branch, the run.rs GPU-preflight bug fix (dual fail-closed layer per #1300 precedent), capabilities.rs/doctor.rs probing, and the --microvm-image CLI flag — the complete Phase 1 design for the new MicroVm sandbox backend work root."
 ---
+
+# vat MicroVm Phase 1: Isolation::MicroVm sandbox backend for vat run
 
 ## Logic
 <!-- type: logic lang: mermaid -->
