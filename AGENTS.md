@@ -445,11 +445,13 @@ Follow [`CONTRIBUTING.md`'s test iteration contract](CONTRIBUTING.md#test-iterat
 For Mamba type work, always select the lib target before filtering:
 `cargo test -q -p mamba --lib <filter>`. Use a fully-qualified test name with
 `--exact` and verify that stdout ran a nonzero test count. Keep only one Cargo
-build active per worktree. After a successful build, direct artifact reruns are
-allowed only while the artifact is newer than every relevant input. Validate in
-layers: exact test, affected type module, fast broad `types::` excluding
-`types::stdlib_sigs::tests::`, then generated signatures, accounting gates,
-full `types::`, and release build at slice completion.
+build active per worktree; if Cargo is active, poll it instead of relaunching.
+After a successful build, reuse only the emitted libtest or current Mamba
+binary, and only while it is newer than every relevant input. Validate exact
+test -> affected modules -> broad `types::` excluding
+`types::stdlib_sigs::tests::` -> generated signatures -> strict accounting ->
+full `types::` -> focused fixtures with modest parallelism -> generated
+freshness -> release build.
 
 - **Real services over mocks**: Use real Docker/Homebrew services for integration tests. vat ships built-in Rust emulators for the GCP/Firebase surface (Pub/Sub, Firebase Auth, Cloud Tasks, Cloud Scheduler, Cloud Workflows, Cloud Storage) plus a transparent HTTP stub + record/replay proxy (`preset = "http-mock"`) for arbitrary third-party APIs — prefer those over hand-rolled mocks. Reach for a mock only when no real service or emulator exists.
 - **Local services**: `brew services start redis` (Redis), `brew services start nats-server` (NATS). Tests skip gracefully if unavailable.

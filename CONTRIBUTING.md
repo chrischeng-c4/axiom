@@ -830,17 +830,17 @@ PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH" \
   --skip types::stdlib_sigs::tests::
 ```
 
-At slice completion, run the generated-signature layer, the full type suite,
-and the dedicated accounting target:
+At slice completion, run the generated-signature layer, the dedicated
+accounting target, and then the full type suite:
 
 ```bash
 PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH" \
   cargo test -q -p mamba --lib types::stdlib_sigs::tests::
 PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH" \
-  cargo test -q -p mamba --lib types::
-PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH" \
   cargo test -q -p mamba --test schema_gates \
   'strict_type_accounting_gate_704::' -- --test-threads=16
+PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH" \
+  cargo test -q -p mamba --lib types::
 ```
 
 Once the current libtest executable has been built successfully, direct
@@ -849,6 +849,16 @@ executable path Cargo just emitted rather than hard-coding its hash. Likewise,
 run focused static fixtures through the current `target/debug/mamba check`
 binary, with modest process parallelism for a path list. Sampled accounting
 runs are development diagnostics, not a green replacement gate.
+
+After focused fixtures pass, finish the slice with an explicit generated-input
+freshness check and the release binary build:
+
+```bash
+python3.12 \
+  projects/mamba/tests/harness/cpython/tools/type_wall_gen.py --check-rust
+PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH" \
+  cargo build -q --release -p mamba --bin mamba
+```
 
 ## Project build and release contract
 
