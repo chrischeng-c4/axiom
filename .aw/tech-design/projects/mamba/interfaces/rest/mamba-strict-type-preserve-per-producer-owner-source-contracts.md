@@ -58,3 +58,49 @@ flowchart TD
     inventory --> verify[run metadata and runtime-symbol tests]
     verify --> done([MIR contract ready])
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: mamba-strict-type-per-producer-owner-source-verification
+requirements:
+  deferred_boundaries:
+    id: R4
+    text: "Parameters and call results are recorded as the named #1451 and #1452 boundaries instead of receiving local ownership transfer behavior."
+    kind: functional
+    risk: medium
+    verify: mir::return_abi::tests::parameter_and_call_owner_sources_remain_deferred_boundaries
+  physical_independence:
+    id: R2
+    text: "Owner-source metadata remains distinct from raw-only, boxed-only, and mixed physical ABI classification."
+    kind: functional
+    risk: high
+    verify: mir::return_abi::tests::owner_source_is_independent_of_physical_abi
+  producer_inventory:
+    id: R1
+    text: "Every raw-or-boxed Int MIR producer has one explicit owner-source action, and adding an unclassified producer fails the inventory gate."
+    kind: regression
+    risk: high
+    verify: mir::return_abi::tests::all_raw_or_boxed_producers_have_explicit_owner_source
+  producer_location:
+    id: R5
+    text: "Producer metadata records the originating MIR instruction location and source category for downstream transaction and codegen consumers."
+    kind: functional
+    risk: medium
+    verify: mir::return_abi::tests::producer_metadata_retains_mir_location_and_source
+  runtime_extern_contracts:
+    id: R3
+    text: "The six raw-or-boxed runtime symbols expose exact fresh-result or argument-pass-through companion contracts without payload or semantic-TypeId inference."
+    kind: regression
+    risk: high
+    verify: mir::return_abi::tests::raw_or_boxed_runtime_extern_contracts_are_exhaustive
+---
+flowchart TD
+    r1[R1 producer inventory] --> mir_return_abi_tests_all_raw_or_boxed_producers_have_explicit_owner_source[mir::return_abi::tests::all_raw_or_boxed_producers_have_explicit_owner_source]
+    r2[R2 physical independence] --> mir_return_abi_tests_owner_source_is_independent_of_physical_abi[mir::return_abi::tests::owner_source_is_independent_of_physical_abi]
+    r3[R3 runtime extern contracts] --> mir_return_abi_tests_raw_or_boxed_runtime_extern_contracts_are_exhaustive[mir::return_abi::tests::raw_or_boxed_runtime_extern_contracts_are_exhaustive]
+    r4[R4 deferred boundaries] --> mir_return_abi_tests_parameter_and_call_owner_sources_remain_deferred_boundaries[mir::return_abi::tests::parameter_and_call_owner_sources_remain_deferred_boundaries]
+    r5[R5 producer location] --> mir_return_abi_tests_producer_metadata_retains_mir_location_and_source[mir::return_abi::tests::producer_metadata_retains_mir_location_and_source]
+```
