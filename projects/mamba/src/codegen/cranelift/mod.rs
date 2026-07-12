@@ -599,12 +599,34 @@ fn compute_loop_carried_vregs(body: &MirBody, tcx: &TypeContext) -> HashSet<VReg
     out
 }
 
+/// Owner input prepared by a producer before it replaces a companion slot.
+///
+/// `Fresh` transfers an already-owned value. `Borrowed` and
+/// `SourceCompanion` are retained by the transaction before the old
+/// destination owner can be released. This keeps data/owner evaluation out of
+/// the destructive half of the transition (#1460).
+#[derive(Clone, Copy, Debug)]
+enum CompanionOwnerInput {
+    Ownerless,
+    Fresh(Value),
+    Borrowed(Value),
+    SourceCompanion(VReg),
+}
+
 #[derive(Clone, Copy, Debug)]
 enum CompanionOwnerTransition {
+    Commit {
+        dest: VReg,
+        input: CompanionOwnerInput,
+    },
+    /// Compatibility adapter for producer paths owned by #1462/#1463. New
+    /// shared/Object code must construct `Commit` only after evaluation.
     ProducerWrite {
         dest: VReg,
         owner: Option<Value>,
     },
+    /// Compatibility adapter for existing JIT copy emission. New shared/Object
+    /// code uses `Commit { input: SourceCompanion(..) }`.
     AliasCopy {
         dest: VReg,
         source: VReg,
@@ -695,52 +717,81 @@ impl VarAlloc {
         self.companion_owners.contains_key(&vreg)
     }
 
+    fn none_companion_owner(builder: &mut FunctionBuilder) -> Value {
+        builder
+            .ins()
+            .iconst(cl_types::I64, MbValue::none().to_bits() as i64)
+    }
+
+    fn retain_companion_owner(&self, owner: Value, builder: &mut FunctionBuilder) {
+        if let Some(retain) = self.precise_owner_retain {
+            builder.ins().call(retain, &[owner]);
+        }
+    }
+
+    fn release_companion_owner(&self, owner: Value, builder: &mut FunctionBuilder) {
+        if let Some(release) = self.precise_owner_release {
+            builder.ins().call(release, &[owner]);
+        }
+    }
+
+    /// Commit a producer owner after its data and owner input are fully
+    /// evaluated. The incoming owner is retained before the old destination is
+    /// released whenever it is borrowed or read from another companion slot.
+    fn commit_companion_owner(
+        &mut self,
+        dest: VReg,
+        input: CompanionOwnerInput,
+        builder: &mut FunctionBuilder,
+    ) -> Option<Value> {
+        let dest_owner = self.companion_owners.get(&dest).copied()?;
+        let incoming = match input {
+            CompanionOwnerInput::Ownerless => Self::none_companion_owner(builder),
+            CompanionOwnerInput::Fresh(owner) => owner,
+            CompanionOwnerInput::Borrowed(owner) => {
+                self.retain_companion_owner(owner, builder);
+                owner
+            }
+            CompanionOwnerInput::SourceCompanion(source) => {
+                if dest == source {
+                    return None;
+                }
+                let owner = self
+                    .companion_owners
+                    .get(&source)
+                    .copied()
+                    .map(|owner| builder.use_var(owner))
+                    .unwrap_or_else(|| Self::none_companion_owner(builder));
+                self.retain_companion_owner(owner, builder);
+                owner
+            }
+        };
+
+        let old_owner = builder.use_var(dest_owner);
+        self.release_companion_owner(old_owner, builder);
+        builder.def_var(dest_owner, incoming);
+        Some(incoming)
+    }
+
     fn transition_companion_owner(
         &mut self,
         transition: CompanionOwnerTransition,
         builder: &mut FunctionBuilder,
     ) -> Option<Value> {
         match transition {
+            CompanionOwnerTransition::Commit { dest, input } => {
+                self.commit_companion_owner(dest, input, builder)
+            }
             CompanionOwnerTransition::ProducerWrite { dest, owner } => {
-                let owner_var = self.companion_owners.get(&dest).copied()?;
-                let old_owner = builder.use_var(owner_var);
-                if let Some(release) = self.precise_owner_release {
-                    builder.ins().call(release, &[old_owner]);
-                }
-                let owner = owner.unwrap_or_else(|| {
-                    builder
-                        .ins()
-                        .iconst(cl_types::I64, MbValue::none().to_bits() as i64)
-                });
-                builder.def_var(owner_var, owner);
-                Some(owner)
+                let input = owner.map_or(CompanionOwnerInput::Ownerless, CompanionOwnerInput::Fresh);
+                self.commit_companion_owner(dest, input, builder)
             }
             CompanionOwnerTransition::AliasCopy { dest, source } => {
-                if dest == source {
-                    return None;
-                }
-                let dest_owner = self.companion_owners.get(&dest).copied()?;
-                let source_owner = self
-                    .companion_owners
-                    .get(&source)
-                    .copied()
-                    .map(|owner| builder.use_var(owner))
-                    .unwrap_or_else(|| {
-                        builder
-                            .ins()
-                            .iconst(cl_types::I64, MbValue::none().to_bits() as i64)
-                    });
-                // Retain first: dest and source may currently alias the same
-                // object, so releasing dest before retaining source can free it.
-                if let Some(retain) = self.precise_owner_retain {
-                    builder.ins().call(retain, &[source_owner]);
-                }
-                let old_owner = builder.use_var(dest_owner);
-                if let Some(release) = self.precise_owner_release {
-                    builder.ins().call(release, &[old_owner]);
-                }
-                builder.def_var(dest_owner, source_owner);
-                Some(source_owner)
+                self.commit_companion_owner(
+                    dest,
+                    CompanionOwnerInput::SourceCompanion(source),
+                    builder,
+                )
             }
             CompanionOwnerTransition::MoveOut { source } => {
                 let owner_var = self.companion_owners.get(&source).copied()?;
@@ -754,12 +805,8 @@ impl VarAlloc {
             CompanionOwnerTransition::Cleanup { vreg } => {
                 let owner_var = self.companion_owners.get(&vreg).copied()?;
                 let owner = builder.use_var(owner_var);
-                if let Some(release) = self.precise_owner_release {
-                    builder.ins().call(release, &[owner]);
-                }
-                let none = builder
-                    .ins()
-                    .iconst(cl_types::I64, MbValue::none().to_bits() as i64);
+                self.release_companion_owner(owner, builder);
+                let none = Self::none_companion_owner(builder);
                 builder.def_var(owner_var, none);
                 Some(owner)
             }
@@ -1162,14 +1209,6 @@ impl CraneliftBackend {
         builder: &mut FunctionBuilder,
         vars: &mut VarAlloc,
     ) {
-        if !matches!(inst, MirInst::Copy { .. }) {
-            if let Some(dest) = mir_inst_dest(inst) {
-                vars.transition_companion_owner(
-                    CompanionOwnerTransition::ProducerWrite { dest, owner: None },
-                    builder,
-                );
-            }
-        }
         match inst {
             MirInst::LoadConst { dest, value, ty } => {
                 let cl_type = self.mamba_to_cl_type(tcx.get(*ty));
@@ -1381,9 +1420,9 @@ impl CraneliftBackend {
                         return;
                     }
                     vars.transition_companion_owner(
-                        CompanionOwnerTransition::AliasCopy {
+                        CompanionOwnerTransition::Commit {
                             dest: *dest,
-                            source: *source,
+                            input: CompanionOwnerInput::SourceCompanion(*source),
                         },
                         builder,
                     );
@@ -2797,25 +2836,38 @@ mod tests {
     }
 
     #[test]
-    fn companion_owner_alias_retains_before_releasing_destination() {
+    fn companion_transaction_source_alias_is_safe() {
         let (ir, _) = companion_owner_test_ir(
             HashSet::from([VReg(0), VReg(1)]),
             |vars, builder| {
                 let source_owner = vars.companion_owners[&VReg(0)];
                 let owned = builder.ins().iconst(cl_types::I64, 0x1234);
                 builder.def_var(source_owner, owned);
-                vars.transition_companion_owner(
-                    CompanionOwnerTransition::AliasCopy {
+                assert!(vars
+                    .transition_companion_owner(
+                    CompanionOwnerTransition::Commit {
                         dest: VReg(1),
-                        source: VReg(0),
+                        input: CompanionOwnerInput::SourceCompanion(VReg(0)),
                     },
                     builder,
-                );
+                )
+                    .is_some());
+                assert!(vars
+                    .transition_companion_owner(
+                        CompanionOwnerTransition::Commit {
+                            dest: VReg(0),
+                            input: CompanionOwnerInput::SourceCompanion(VReg(0)),
+                        },
+                        builder,
+                    )
+                    .is_none());
             },
         );
         let retain = ir.find("call fn0").expect("retain call");
         let release = ir.find("call fn1").expect("release call");
         assert!(retain < release, "retain must precede destination release\n{ir}");
+        assert_eq!(ir.matches("call fn0").count(), 1, "self alias retained\n{ir}");
+        assert_eq!(ir.matches("call fn1").count(), 1, "self alias released\n{ir}");
     }
 
     #[test]
@@ -2873,16 +2925,16 @@ mod tests {
     }
 
     #[test]
-    fn companion_owner_overwrite_and_cleanup_never_release_data_bits() {
+    fn companion_transaction_ownerless_overwrite_is_precise() {
         let collision = -(1_i64 << 51) + 16;
         let (ir, vars) = companion_owner_test_ir(HashSet::from([VReg(0)]), |vars, builder| {
             let data = builder.ins().iconst(cl_types::I64, collision);
             let data_var = vars.get(VReg(0), builder, cl_types::I64);
             builder.def_var(data_var, data);
             vars.transition_companion_owner(
-                CompanionOwnerTransition::ProducerWrite {
+                CompanionOwnerTransition::Commit {
                     dest: VReg(0),
-                    owner: None,
+                    input: CompanionOwnerInput::Ownerless,
                 },
                 builder,
             );
@@ -2897,6 +2949,73 @@ mod tests {
         assert!(vars
             .releasable_i64_vregs(&HashSet::new(), None)
             .is_empty());
+    }
+
+    #[test]
+    fn companion_transaction_fresh_owner_does_not_retain() {
+        let (ir, _) = companion_owner_test_ir(HashSet::from([VReg(0)]), |vars, builder| {
+            // This value is deliberately materialized before the transaction:
+            // a fresh producer must finish evaluation before it can release an
+            // old destination companion.
+            let fresh = builder.ins().iconst(cl_types::I64, 0x4321);
+            vars.transition_companion_owner(
+                CompanionOwnerTransition::Commit {
+                    dest: VReg(0),
+                    input: CompanionOwnerInput::Fresh(fresh),
+                },
+                builder,
+            );
+        });
+
+        let fresh = ir.find("iconst.i64 0x4321").expect("fresh value");
+        let release = ir.find("call fn1").expect("old owner release");
+        assert!(fresh < release, "fresh value must be evaluated first\n{ir}");
+        assert!(!ir.contains("call fn0"), "fresh transfer retained twice\n{ir}");
+        assert_eq!(ir.matches("call fn1").count(), 1, "{ir}");
+    }
+
+    #[test]
+    fn companion_transaction_borrowed_retains_before_release() {
+        let (ir, _) = companion_owner_test_ir(HashSet::from([VReg(0)]), |vars, builder| {
+            let borrowed = builder.ins().iconst(cl_types::I64, 0x9876);
+            vars.transition_companion_owner(
+                CompanionOwnerTransition::Commit {
+                    dest: VReg(0),
+                    input: CompanionOwnerInput::Borrowed(borrowed),
+                },
+                builder,
+            );
+        });
+
+        let retain = ir.find("call fn0").expect("borrowed retain");
+        let release = ir.find("call fn1").expect("old owner release");
+        assert!(retain < release, "retain must precede release\n{ir}");
+        assert_eq!(ir.matches("call fn0").count(), 1, "{ir}");
+        assert_eq!(ir.matches("call fn1").count(), 1, "{ir}");
+    }
+
+    #[test]
+    fn companion_transaction_borrowed_boxed_bridge_retains() {
+        let installed = std::cell::Cell::new(None);
+        let (ir, _) = companion_owner_test_ir(HashSet::from([VReg(0)]), |vars, builder| {
+            let boxed_source = builder.ins().iconst(cl_types::I64, 0xfeed);
+            let dest_owner = vars.companion_owners[&VReg(0)];
+            let transferred = vars
+                .transition_companion_owner(
+                    CompanionOwnerTransition::Commit {
+                        dest: VReg(0),
+                        input: CompanionOwnerInput::Borrowed(boxed_source),
+                    },
+                    builder,
+                )
+                .expect("mixed destination has a companion slot");
+            installed.set(Some(builder.use_var(dest_owner)));
+            assert_eq!(installed.get(), Some(transferred));
+        });
+
+        let retain = ir.find("call fn0").expect("boxed bridge retain");
+        let release = ir.find("call fn1").expect("old owner release");
+        assert!(retain < release, "boxed bridge must retain first\n{ir}");
     }
 
     #[test]
