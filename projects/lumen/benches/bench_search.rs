@@ -176,6 +176,7 @@ fn build_corpus() -> Engine {
                 external_id: format!("u{j}"),
                 field: "bio".into(),
                 value: FieldValue::String(sentence(&mut text_rng)),
+                version: None,
             });
             tier.push(IndexItem {
                 external_id: format!("u{j}"),
@@ -183,6 +184,7 @@ fn build_corpus() -> Engine {
                 value: FieldValue::String(
                     KEYWORDS[(kw_rng.next_u32() as usize) % KEYWORDS.len()].to_string(),
                 ),
+                version: None,
             });
         }
         engine
@@ -220,6 +222,7 @@ fn bench_search(c: &mut Criterion) {
     group.bench_function("match_single/100k", |b| {
         b.iter_batched(
             || SearchRequest {
+                routing_key: None,
                 query: QueryNode::Match(MatchQuery {
                     field: "bio".into(),
                     text: "rust".into(),
@@ -241,6 +244,7 @@ fn bench_search(c: &mut Criterion) {
     group.bench_function("match_and_3/100k", |b| {
         b.iter_batched(
             || SearchRequest {
+                routing_key: None,
                 query: QueryNode::Match(MatchQuery {
                     field: "bio".into(),
                     text: "rust engineer system".into(),
@@ -262,6 +266,7 @@ fn bench_search(c: &mut Criterion) {
     group.bench_function("term_keyword/100k", |b| {
         b.iter_batched(
             || SearchRequest {
+                routing_key: None,
                 query: QueryNode::Term(TermQuery {
                     field: "tier".into(),
                     value: FieldValue::String("alpha".into()),
