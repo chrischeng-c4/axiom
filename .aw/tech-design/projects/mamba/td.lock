@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/mamba"
-generated_at = "2026-07-12T12:28:42.929974+00:00"
-digest = "sha256:f2432d09eade58fa1d3141a4137cb6675fc8f76b6e87791cf4a13716ae02452c"
-source_digest = "sha256:f2432d09eade58fa1d3141a4137cb6675fc8f76b6e87791cf4a13716ae02452c"
-ir_digest = "sha256:eecf86c76b92e5f86f335597382e96c0b0dc345daac07ad7375d317759f346b6"
+generated_at = "2026-07-12T13:23:36.790613+00:00"
+digest = "sha256:8b293a2f1d8b0c018d5208288e05913391c1cd85f0ca16013ca8b701000280f9"
+source_digest = "sha256:8b293a2f1d8b0c018d5208288e05913391c1cd85f0ca16013ca8b701000280f9"
+ir_digest = "sha256:c8cc861b87da75faa473e00d67859dec50daeed2abca37c7a909a720ffafa601"
 
 [[files]]
 path = "README.md"
@@ -87,8 +87,14 @@ section_count = 3
 
 [[files]]
 path = "logic/mamba-strict-type-carry-raw-int-argument-owners-across-call-boun.md"
-digest = "sha256:b45c265da44dc669c4a455176880fdadbbfe0ad1574484b68a0d30d52ab63f6f"
-ir_digest = "sha256:00ebb9ae13207ecc73b2a3f5090c158a00fa0110e6a9183f668c3f91bd73b0c7"
+digest = "sha256:5f3f22574a4f46b0ef3aa32a688e574eba1811f8ec9c7111fb4a71ae180bade9"
+ir_digest = "sha256:1682e2158573e1f1f379c1103a651e9aa8043d27b50b5cb89a2ed17e9782ad9d"
+section_count = 3
+
+[[files]]
+path = "logic/mamba-strict-type-enforce-annotated-scalar-returns-at-callable-e.md"
+digest = "sha256:07a4c3d81c0a589ca2b4720418820f5054dc8778c40b9694d5e90dfdaa795985"
+ir_digest = "sha256:448a5e242965c437b37f9db90592000bdce1c512b2831f7e424fd774b44a12f9"
 section_count = 3
 
 [[files]]
