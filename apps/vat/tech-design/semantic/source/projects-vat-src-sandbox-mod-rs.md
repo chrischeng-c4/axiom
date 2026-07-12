@@ -22,7 +22,7 @@ Public API manifest for `apps/vat/src/sandbox/mod.rs` generated from AST during 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `pick` | apps/vat/src/sandbox/mod.rs | function | pub | 46 | pick(spec: &EnvSpec) -> Box<dyn Sandbox> |
+| `pick` | apps/vat/src/sandbox/mod.rs | function | pub | 49 | pick(spec: &EnvSpec) -> Result<Box<dyn Sandbox>, String> |
 | `process` | apps/vat/src/sandbox/mod.rs | module | pub | 20 |  |
 | `seatbelt` | apps/vat/src/sandbox/mod.rs | module | pub | 21 |  |
 ## Source
@@ -69,43 +69,50 @@ pub trait Sandbox {
     fn resolve(&self, rootfs: &Path, program: &str, args: &[String]) -> (String, Vec<String>);
 }
 
-/// Pick a backend for a spec. Falls back to the process backend on any
-/// platform that doesn't support the requested isolation, after warning —
-/// the workspace clone still applies, so the vat is never *less* isolated than
-/// plain `cd` + run.
+/// Pick a backend for a spec. Fails closed: if the selected backend cannot
+/// actually enforce a non-`Open` egress policy, this returns `Err` instead of
+/// silently downgrading to unrestricted network access. `Isolation::None` +
+/// `EgressPolicy::Open` (today's common case) is unaffected and always
+/// succeeds; the workspace clone still applies regardless of isolation, so a
+/// vat is never *less* isolated than plain `cd` + run on that front.
 /// @spec apps/vat/tech-design/semantic/source/projects-vat-src-sandbox-mod-rs.md#source
-pub fn pick(spec: &EnvSpec) -> Box<dyn Sandbox> {
+// HANDWRITE-BEGIN gap="missing-generator:logic:pick-fail-closed" tracker="pending-tracker" reason="Logic section edge: pick() must fail closed (return Err) instead of warn-and-continue when the selected backend cannot enforce a non-Open egress policy (isolation=none, or seatbelt requested but unavailable) — hand-written backend-selection logic per issue #1300."
+pub fn pick(spec: &EnvSpec) -> Result<Box<dyn Sandbox>, String> {
     match spec.isolation {
         Isolation::None => {
             if spec.egress != EgressPolicy::Open {
-                eprintln!(
-                    "vat: warning: [network].egress confinement requires --isolation seatbelt; \
-                     running without egress enforcement."
-                );
+                return Err(format!(
+                    "[network].egress is set to {:?}, but --isolation none cannot enforce it \
+                     (no sandbox backend confines egress); use --isolation seatbelt or set \
+                     egress to open.",
+                    spec.egress
+                ));
             }
-            Box::new(process::ProcessBackend)
+            Ok(Box::new(process::ProcessBackend))
         }
         Isolation::Seatbelt => {
             if cfg!(target_os = "macos") && seatbelt::available() {
-                Box::new(seatbelt::SeatbeltBackend {
+                Ok(Box::new(seatbelt::SeatbeltBackend {
                     egress: spec.egress,
-                })
+                }))
+            } else if spec.egress != EgressPolicy::Open {
+                Err(format!(
+                    "--isolation seatbelt was requested with [network].egress set to {:?}, \
+                     but sandbox-exec is unavailable on this host; falling back to the process \
+                     backend would silently drop egress enforcement, so refusing to run.",
+                    spec.egress
+                ))
             } else {
-                if spec.egress != EgressPolicy::Open {
-                    eprintln!(
-                        "vat: warning: seatbelt unavailable; [network].egress confinement \
-                         is not enforced."
-                    );
-                }
                 eprintln!(
                     "vat: seatbelt isolation requested but unavailable on this host; \
                      using process backend (workspace is still copy-on-write)."
                 );
-                Box::new(process::ProcessBackend)
+                Ok(Box::new(process::ProcessBackend))
             }
         }
     }
 }
+// HANDWRITE-END
 // CODEGEN-END
 ````
 
@@ -120,4 +127,19 @@ changes:
     impl_mode: codegen
     description: |
       rust-source-unit (td_ast) source for `apps/vat/src/sandbox/mod.rs` captured during #39 vat standardization.
+  - path: apps/vat/tech-design/semantic/source/projects-vat-src-sandbox-mod-rs.md
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1474 AC6: this doc had drifted stale — it still described the pre-#1300
+      warn-and-fallback `pick(spec: &EnvSpec) -> Box<dyn Sandbox>` (unconditional
+      return, eprintln!-and-continue on an unenforceable egress policy) instead
+      of the fail-closed `pick(spec: &EnvSpec) -> Result<Box<dyn Sandbox>, String>`
+      that has been the real source since #1300 (hard `Err` when a non-`Open`
+      egress policy cannot be enforced). Overview symbols table and Source section
+      corrected to match `apps/vat/src/sandbox/mod.rs` exactly, HANDWRITE markers
+      included. Phase 1 of the microVM epic (#1471) adds an `Isolation::MicroVm`
+      branch to this same `pick()` on top of this corrected baseline (see WI
+      #1474's own TD `changes:` section for that follow-on edit).
 ```
