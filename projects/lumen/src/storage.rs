@@ -4488,8 +4488,24 @@ impl Engine {
     /// unchanged. Per-field `bytes` size counters are a saturating-add
     /// heuristic and are not strictly idempotent, but they never feed query
     /// results.
+    /// `replace` (#1443 R2): when `Some`, applied *after* the additive merge
+    /// below — for every `(collection_id, keep_ids)` in its `replace_ids`,
+    /// prunes any document this shard currently holds that routes to
+    /// `replace.bucket` (under `replace.virtual_bucket_count`) but is absent
+    /// from `keep_ids`. This is what makes the reshard driver's final,
+    /// fenced `CatchingUp` pass authoritative for the buckets it copies: a
+    /// document deleted on the source during the split is absent from that
+    /// final pass's `replace_ids` and is pruned here rather than surviving
+    /// as a stale copy from an earlier additive pass. Non-final passes never
+    /// set `replace`, so their merge stays purely additive (unchanged
+    /// behavior, and the existing 413-retry idempotency tests never exercise
+    /// this branch).
     /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
-    pub fn apply_reshard_batch(&self, delta: SnapshotV1) -> Result<ReshardApplyOutcome> {
+    pub fn apply_reshard_batch(
+        &self,
+        delta: SnapshotV1,
+        replace: Option<crate::reshard::ReshardBatchReplaceScope>,
+    ) -> Result<ReshardApplyOutcome> {
         if delta.version != SNAPSHOT_VERSION {
             bail!(
                 "reshard batch snapshot version mismatch: got {}, supported {}",
@@ -4529,9 +4545,63 @@ impl Engine {
                 .insert(collection_id, Collection::from_snapshot(merged_collection)?);
             collections_touched += 1;
         }
+
+        let mut documents_pruned = 0u32;
+        if let Some(scope) = replace {
+            let bucket_map = VirtualBucketShardMap::balanced(0, scope.virtual_bucket_count, 1)?;
+            for (collection_id, keep_ids) in &scope.replace_ids {
+                let Some(coll) = state.collections.get_mut(collection_id) else {
+                    continue;
+                };
+                if coll.deleted_at.is_some() {
+                    continue;
+                }
+                let to_prune: Vec<(u32, String)> = coll
+                    .eid_fields
+                    .keys()
+                    .filter_map(|&id| {
+                        let external_id = coll.interner.resolve(id).to_string();
+                        let route = bucket_map
+                            .route_document(collection_id, None, &external_id)
+                            .bucket;
+                        (route == scope.bucket && !keep_ids.contains(&external_id))
+                            .then_some((id, external_id))
+                    })
+                    .collect();
+                if to_prune.is_empty() {
+                    continue;
+                }
+                coll.clear_search_cache();
+                coll.clear_number_filter_caches();
+                for (id, external_id) in &to_prune {
+                    let fields: Vec<String> = coll
+                        .eid_fields
+                        .get(id)
+                        .map(|s| s.iter().cloned().collect())
+                        .unwrap_or_default();
+                    for f in fields {
+                        if let Some(fi) = coll.fields.get_mut(&f) {
+                            fi.drop_eid(*id, external_id);
+                        }
+                    }
+                    coll.eid_fields.remove(id);
+                }
+                documents_pruned = documents_pruned.saturating_add(to_prune.len() as u32);
+            }
+            let total_bytes: u64 = state
+                .collections
+                .values()
+                .filter(|c| c.deleted_at.is_none())
+                .flat_map(|c| c.fields.values())
+                .map(|fi| fi.bytes())
+                .sum();
+            self.metrics.set_storage_bytes(total_bytes);
+        }
+
         Ok(ReshardApplyOutcome {
             collections_touched,
             documents_upserted,
+            documents_pruned,
         })
     }
 
@@ -8892,6 +8962,10 @@ pub struct CollectionSnapshot {
 pub struct ReshardApplyOutcome {
     pub collections_touched: u32,
     pub documents_upserted: u32,
+    /// #1443 R2: documents pruned by an authoritative-subset `replace`
+    /// scope, `0` when the batch carried none.
+    #[serde(default)]
+    pub documents_pruned: u32,
 }
 
 /// Response summary for `POST /admin/reshard:evict` (#1380 R3).

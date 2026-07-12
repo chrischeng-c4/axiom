@@ -403,7 +403,7 @@ mod tests {
         source.create_collection("u", kw_schema()).unwrap();
         index_kw(&source, "migrated-1", "migrated1@x.com");
         let batch = source.snapshot().unwrap();
-        let apply_outcome = target.apply_reshard_batch(batch).unwrap();
+        let apply_outcome = target.apply_reshard_batch(batch, None).unwrap();
         assert_eq!(apply_outcome.documents_upserted, 1);
         assert_eq!(target.stats("u").unwrap().documents_indexed, 2);
 
@@ -505,7 +505,6 @@ mod tests {
     }
 }
 // CODEGEN-END
-
 ````
 
 ## Changes
@@ -520,4 +519,15 @@ changes:
     description: |
       rust-source-unit (td_ast) source for `projects/lumen/src/segment_rdb.rs` captured during lumen
       standardization onto the per-file codegen ladder.
+  - path: projects/lumen/src/segment_rdb.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1443 R2: updated this file's test call site for `Engine::
+      apply_reshard_batch`'s new `replace: Option<crate::reshard::
+      ReshardBatchReplaceScope>` parameter — passes `None` (this test's
+      additive-merge assertions are unaffected). See
+      projects-lumen-src-storage-rs.md#source for the full signature
+      change.
 ```

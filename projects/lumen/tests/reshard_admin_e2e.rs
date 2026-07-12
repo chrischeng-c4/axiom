@@ -569,4 +569,53 @@ async fn reshard_fence_auto_expires_after_ttl() {
     index_user(&s, &fenced_id).await;
     assert!(has_doc(&s, &fenced_id).await);
 }
+
+/// #1443 R3/AC3: `ttl_secs` is validated before it ever reaches
+/// `Instant::checked_add` — an out-of-range value (here `u64::MAX`, which
+/// would overflow `Instant + Duration` and, pre-fix, panicked with the fence
+/// mutex held, poisoning it and wedging every future arm/clear/write behind
+/// it) must be rejected with 400, not panic, and must leave the fence fully
+/// usable for the next, valid request.
+#[tokio::test]
+async fn reshard_fence_rejects_out_of_range_ttl_without_poisoning_the_fence() {
+    let s = server();
+    create_users_collection(&s).await;
+    let fenced_id = (0..)
+        .map(|i| format!("v-{i:03}"))
+        .find(|id| bucket_of("u", id) == 0)
+        .unwrap();
+
+    let resp = s
+        .post("/admin/reshard:fence")
+        .json(&json!({
+            "virtual_bucket_count": VIRTUAL_BUCKET_COUNT,
+            "buckets": [0],
+            "ttl_secs": u64::MAX,
+        }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = resp.json();
+    assert_eq!(body["error"], json!("invalid_ttl_secs"));
+
+    // The oversized request must not have armed anything.
+    index_user(&s, &fenced_id).await;
+    assert!(has_doc(&s, &fenced_id).await);
+
+    // And the fence keeps working normally afterward — no poisoned lock, no
+    // permanent outage.
+    s.post("/admin/reshard:fence")
+        .json(&json!({ "virtual_bucket_count": VIRTUAL_BUCKET_COUNT, "buckets": [0], "ttl_secs": 30 }))
+        .await
+        .assert_status_ok();
+    let other_id = (0..)
+        .map(|i| format!("w-{i:03}"))
+        .find(|id| bucket_of("u", id) == 0)
+        .unwrap();
+    s.post("/collections/u/index")
+        .json(&json!({
+            "items": [{ "external_id": other_id, "field": "email", "value": format!("{other_id}@x.com") }]
+        }))
+        .await
+        .assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+}
 // CODEGEN-END

@@ -183,26 +183,34 @@ struct FenceState {
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl WriteFence {
     /// Arm the fence over `buckets` (computed against `virtual_bucket_count`)
-    /// until `ttl` from now, replacing any prior armed state.
-    fn arm(&self, virtual_bucket_count: u32, buckets: BTreeSet<u32>, ttl: Duration) {
-        let mut guard = self.state.lock().unwrap();
+    /// until `ttl` from now, replacing any prior armed state. Returns `false`
+    /// (leaving any prior armed state untouched) when `Instant::now() + ttl`
+    /// would overflow (#1443 R3) — the caller must treat that as a failed arm
+    /// rather than silently panicking with the fence lock held, which would
+    /// poison it for every subsequent write/clear on this pod.
+    fn arm(&self, virtual_bucket_count: u32, buckets: BTreeSet<u32>, ttl: Duration) -> bool {
+        let Some(deadline) = Instant::now().checked_add(ttl) else {
+            return false;
+        };
+        let mut guard = self.lock();
         *guard = Some(FenceState {
             virtual_bucket_count,
             buckets,
-            deadline: Instant::now() + ttl,
+            deadline,
         });
+        true
     }
 
     /// Explicitly disarm, independent of `deadline`.
     fn clear(&self) {
-        *self.state.lock().unwrap() = None;
+        *self.lock() = None;
     }
 
     /// `Some(bucket)` when `collection_id`/`external_id` route to a
     /// currently-fenced bucket; `None` (unblocked) once armed but past
     /// `deadline`, or never armed at all.
     fn blocks(&self, collection_id: &str, external_id: &str) -> Option<u32> {
-        let guard = self.state.lock().unwrap();
+        let guard = self.lock();
         let fence = guard.as_ref()?;
         if Instant::now() >= fence.deadline {
             return None;
@@ -210,6 +218,17 @@ impl WriteFence {
         let map = VirtualBucketShardMap::balanced(0, fence.virtual_bucket_count, 1).ok()?;
         let bucket = map.route_document(collection_id, None, external_id).bucket;
         fence.buckets.contains(&bucket).then_some(bucket)
+    }
+
+    /// Poison-proof lock acquisition (#1443 R3), matching `segment_rdb.rs`'s
+    /// `save_lock` precedent: a panic anywhere else in the process while
+    /// holding this lock must never turn into a permanent write outage on
+    /// this pod by propagating a poisoned-mutex panic into every later
+    /// `arm`/`clear`/`blocks` call.
+    fn lock(&self) -> std::sync::MutexGuard<'_, Option<FenceState>> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -849,12 +868,29 @@ fn enforce_read_consistency(state: &AppState, consistency: ReadConsistency) -> R
 /// Reject a write whose `(collection_id, external_id)` routes to a
 /// currently-fenced virtual bucket (#1396 R2). Checked in [`index`],
 /// [`replace_docs`], and [`replace_doc`] — the write paths a reshard's final
-/// migration pass must observe a converged snapshot of. `delete_external_id`
-/// is deliberately not fenced: a delete landing on the source shard during
-/// the pause is still safe to lose (the document either already migrated, in
-/// which case deleting the stale source copy is redundant with eviction, or
-/// it did not, in which case it is present on exactly one shard either way)
-/// — see the module's #1396 R2 write-fence doc on [`WriteFence`].
+/// migration pass must observe a converged snapshot of.
+///
+/// `delete_external_id` is deliberately still not fenced (#1443 R2
+/// re-review): the earlier rationale here — "safe to lose, the document
+/// either already migrated or didn't" — was wrong, because
+/// `apply_reshard_batch`'s ordinary merge is additive-only, so a DELETE
+/// acked on the source anywhere during `Splitting` could resurrect at
+/// cutover once the (now-stale) already-copied target copy was never told
+/// to drop it. #1443 closes that gap on the other side instead: the
+/// reshard driver's final `CatchingUp` pass (the one this fence guards) now
+/// carries an authoritative-subset `replace_ids` scope for every bucket it
+/// copies (see [`crate::reshard::snapshot_reshard_batches`]'s `replace_mode`
+/// and [`crate::storage::Engine::apply_reshard_batch`]'s `replace`
+/// parameter) — a document deleted on the source before that final pass is
+/// simply absent from its authoritative id set and gets pruned from the
+/// target, without needing DELETE itself to observe the fence. This closes
+/// the resurrection gap for any delete that lands and is acked *before* that
+/// final fenced pass's scoped-backup read; a delete racing strictly inside
+/// the sub-window between that read and this same pass's eviction is not
+/// covered (fencing DELETE too would close it fully, at the cost of
+/// rejecting a much more common write shape during the whole split, not
+/// just the final pass) — see the module's #1396 R2 write-fence doc on
+/// [`WriteFence`].
 fn enforce_write_fence(
     state: &AppState,
     collection_id: &str,
@@ -1916,9 +1952,31 @@ async fn reshard_apply(
     Json(batch): Json<ReshardBatch>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     auth.ensure("*", Role::Admin)?;
+    // #1443 R2: a batch carrying `replace_ids` is the reshard driver's final
+    // fenced pass and is authoritative for `bucket` — `virtual_bucket_count`
+    // must be set so the engine can recompute bucket membership; reject a
+    // malformed combination (present `replace_ids` with no bucket count)
+    // rather than silently falling back to purely-additive merge.
+    let replace = match &batch.replace_ids {
+        Some(replace_ids) => {
+            if batch.virtual_bucket_count == 0 {
+                return Err(ApiErr::new(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_virtual_bucket_count",
+                    "replace_ids requires a non-zero virtual_bucket_count",
+                ));
+            }
+            Some(crate::reshard::ReshardBatchReplaceScope {
+                bucket: batch.bucket,
+                virtual_bucket_count: batch.virtual_bucket_count,
+                replace_ids: replace_ids.clone(),
+            })
+        }
+        None => None,
+    };
     let outcome = state
         .engine
-        .apply_reshard_batch(batch.snapshot)
+        .apply_reshard_batch(batch.snapshot, replace)
         .map_err(ApiErr::from)?;
     tracing::info!(
         target: "lumen.audit",
@@ -1931,10 +1989,12 @@ async fn reshard_apply(
         to_map_version = batch.to_map_version,
         collections_touched = outcome.collections_touched,
         documents_upserted = outcome.documents_upserted,
+        documents_pruned = outcome.documents_pruned,
     );
     Ok(Json(serde_json::json!({
         "collections_touched": outcome.collections_touched,
         "documents_upserted": outcome.documents_upserted,
+        "documents_pruned": outcome.documents_pruned,
     })))
 }
 
@@ -2083,6 +2143,12 @@ fn default_fence_ttl_secs() -> u64 {
     300
 }
 
+/// Upper bound on `ReshardFenceRequest::ttl_secs` (#1443 R3): well above any
+/// real driver tick, but small enough that `Instant::now().checked_add` never
+/// overflows and a malformed/malicious admin request can never arm an
+/// effectively-permanent write pause.
+const MAX_FENCE_TTL_SECS: u64 = 3600;
+
 #[derive(Debug, Deserialize)]
 struct ReshardFenceRequest {
     /// Same `virtual_bucket_count` the caller's map uses, matching
@@ -2141,11 +2207,37 @@ async fn reshard_fence(
             subject = auth.subject().unwrap_or("anonymous"),
         );
     } else {
-        state.write_fence.arm(
+        // #1443 R3: reject a nonsensical TTL as 400 rather than letting
+        // `WriteFence::arm`'s `Instant::now() + ttl` overflow — `0` would
+        // arm-then-immediately-expire (never actually pausing anything, a
+        // silent no-op the caller would wrongly believe closed the write
+        // window), and anything above the generous upper bound is either a
+        // malformed request or would arm an effectively-permanent pause.
+        if req.ttl_secs == 0 || req.ttl_secs > MAX_FENCE_TTL_SECS {
+            return Err(ApiErr::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_ttl_secs",
+                format!(
+                    "ttl_secs must be in 1..={MAX_FENCE_TTL_SECS}, got {}",
+                    req.ttl_secs
+                ),
+            ));
+        }
+        if !state.write_fence.arm(
             req.virtual_bucket_count,
             req.buckets.clone(),
             Duration::from_secs(req.ttl_secs),
-        );
+        ) {
+            // Unreachable in practice now that ttl_secs is bounded above,
+            // but `arm` still reports overflow explicitly (#1443 R3) rather
+            // than panicking — surface it as the same 400 shape instead of a
+            // silently-unarmed 200.
+            return Err(ApiErr::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_ttl_secs",
+                "ttl_secs would overflow the fence deadline",
+            ));
+        }
         tracing::info!(
             target: "lumen.audit",
             event = "reshard_fence_armed",

@@ -49,6 +49,44 @@ pub struct ReshardBatch {
     pub to_shard: u32,
     pub external_ids: BTreeMap<String, BTreeSet<String>>,
     pub snapshot: SnapshotV1,
+    /// #1443 R2: `from.virtual_bucket_count()` this batch's `bucket` was
+    /// computed against, carried only when [`Self::replace_ids`] is set
+    /// (`0`/absent otherwise, `#[serde(default)]` for back-compat with older
+    /// batches and hand-built test fixtures). Required alongside
+    /// `replace_ids` so the applying shard can recompute the exact same
+    /// bucket membership it is asked to make authoritative.
+    #[serde(default)]
+    pub virtual_bucket_count: u32,
+    /// #1443 R2: when set, this batch is the **authoritative** final-pass
+    /// snapshot of `bucket` for every listed collection — every id present
+    /// here is upserted (as `snapshot` already does additively) and every id
+    /// this shard currently owns in `bucket` for that collection but that is
+    /// *absent* from this set is pruned. `None` (the default, `#[serde(
+    /// default)]`) preserves the original purely-additive merge every
+    /// non-final migration pass still uses. See [`snapshot_reshard_batches`]'s
+    /// `replace_mode` parameter for how this is populated, and
+    /// [`crate::storage::Engine::apply_reshard_batch`] for how it prunes.
+    #[serde(default)]
+    pub replace_ids: Option<BTreeMap<String, BTreeSet<String>>>,
+}
+
+/// #1443 R2: the authoritative-subset-replace scope one applying shard must
+/// enforce for a `bucket`, derived from a [`ReshardBatch`]'s
+/// `virtual_bucket_count`/`replace_ids` (chunked across possibly many
+/// batches sharing the same `bucket` — every chunk of one bucket's final
+/// pass carries an identical, full `replace_ids`, so any one chunk's copy is
+/// authoritative on its own). Applying this scope after a batch's additive
+/// merge closes the delete-resurrection gap #1443 found: a document deleted
+/// on the source during the split is absent from the final pass's
+/// authoritative id set and is pruned from the target rather than surviving
+/// only because an earlier, now-stale copy landed on the target from a
+/// prior additive pass.
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
+pub struct ReshardBatchReplaceScope {
+    pub bucket: u32,
+    pub virtual_bucket_count: u32,
+    pub replace_ids: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// Return the virtual buckets whose physical owner changes between two map
@@ -90,12 +128,26 @@ pub fn bucket_moves(
 /// Batches are grouped by `(bucket, from_shard, to_shard)` and capped by
 /// `max_external_ids_per_batch`, so an operator can checkpoint progress after
 /// every emitted batch instead of blocking on one full-shard copy.
+///
+/// `replace_mode` (#1443 R2): when `true`, every emitted batch's `bucket`
+/// also carries `virtual_bucket_count` + `replace_ids` — the *complete* set
+/// of external_ids this snapshot currently routes to that bucket for each
+/// collection, computed once per `(bucket, from_shard, to_shard)` group
+/// *before* it is chunked/byte-capped, and stamped identically onto every
+/// chunk of that group. That "computed once, stamped everywhere" ordering is
+/// what keeps a bucket spanning several byte-capped chunks correct: any one
+/// chunk's `replace_ids` is already the full authoritative set, not just
+/// that chunk's own ids, so applying chunks in any order (or retrying one)
+/// still converges to the same pruned result. The caller (the reshard
+/// driver's final `CatchingUp` pass, run under the write fence) uses this
+/// only for that last pass; earlier passes stay purely additive.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
 pub fn snapshot_reshard_batches(
     snapshot: &SnapshotV1,
     from: &VirtualBucketShardMap,
     to: &VirtualBucketShardMap,
     max_external_ids_per_batch: usize,
+    replace_mode: bool,
 ) -> Result<Vec<ReshardBatch>> {
     if max_external_ids_per_batch == 0 {
         bail!("max_external_ids_per_batch must be > 0");
@@ -135,6 +187,20 @@ pub fn snapshot_reshard_batches(
 
     let mut batches = Vec::new();
     for ((bucket, from_shard, to_shard), by_collection) in ids_by_move {
+        // Capture the full authoritative id set for this bucket group BEFORE
+        // it's consumed/chunked below (#1443 R2) — must reflect exactly what
+        // this snapshot currently routes here, independent of how many
+        // byte-capped chunks it later splits into.
+        let authoritative_ids: Option<BTreeMap<String, BTreeSet<String>>> =
+            replace_mode.then(|| {
+                by_collection
+                    .iter()
+                    .map(|(collection_id, ids)| {
+                        (collection_id.clone(), ids.iter().cloned().collect())
+                    })
+                    .collect()
+            });
+
         let mut pending: Vec<(String, String)> = by_collection
             .into_iter()
             .flat_map(|(collection_id, mut ids)| {
@@ -157,6 +223,12 @@ pub fn snapshot_reshard_batches(
                     to_shard,
                     external_ids,
                     snapshot: partial,
+                    virtual_bucket_count: if authoritative_ids.is_some() {
+                        from.virtual_bucket_count()
+                    } else {
+                        0
+                    },
+                    replace_ids: authoritative_ids.clone(),
                 });
             }
         }
@@ -643,7 +715,7 @@ mod tests {
         let snapshot = source.snapshot().unwrap();
         let from = VirtualBucketShardMap::new(1, vec![0, 0, 0, 0], 1).unwrap();
         let to = VirtualBucketShardMap::new(2, vec![0, 1, 0, 1], 2).unwrap();
-        let batches = snapshot_reshard_batches(&snapshot, &from, &to, 3).unwrap();
+        let batches = snapshot_reshard_batches(&snapshot, &from, &to, 3, false).unwrap();
 
         assert!(!batches.is_empty());
         assert!(batches
@@ -803,7 +875,7 @@ mod tests {
         let to = VirtualBucketShardMap::new(2, vec![1], 2).unwrap();
         // A generous id-count cap so byte size, not id count, is what
         // forces the split.
-        let batches = snapshot_reshard_batches(&snapshot, &from, &to, 10_000).unwrap();
+        let batches = snapshot_reshard_batches(&snapshot, &from, &to, 10_000, false).unwrap();
 
         assert!(
             batches.len() > 1,
