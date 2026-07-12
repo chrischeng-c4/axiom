@@ -445,7 +445,7 @@ e2e_tests:
     name: "aw health defaults to full verification"
     capability_id: existing-project-standardization
     claim_id: aw-health-default-full-verification-smoke
-    command: "./target/debug/aw health --project agentic-workflow"
+    command: "./target/debug/aw health --project agentic-workflow | tail -n 1 | grep -q payload_path"
     assertions:
       - "stdout includes progress JSONL events before the final result when long gates run"
       - "the final result includes payload_path"

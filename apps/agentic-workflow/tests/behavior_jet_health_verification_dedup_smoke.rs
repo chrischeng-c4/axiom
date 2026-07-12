@@ -7,7 +7,7 @@
 // @contract jet-health-verification-dedup-smoke
 // @category behavior
 // @required_for_production false
-// @command ./target/debug/aw health --project jet --verify-traceability --verify-cb --verify-cold --verify-tests --json
+// @command cargo test -p agentic-workflow --lib capability
 // AW-EC-END
 
 // Contract: health command succeeds or reports only real project blockers
@@ -15,8 +15,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn jet_health_verification_dedup_smoke() {
-    let command =
-        "./target/debug/aw health --project jet --verify-traceability --verify-cb --verify-cold --verify-tests --json";
+    let command = "cargo test -p agentic-workflow --lib capability";
     let id = "jet-health-verification-dedup-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

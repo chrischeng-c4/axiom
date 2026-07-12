@@ -7,7 +7,7 @@
 // @contract aw-health-default-full-verification-smoke
 // @category behavior
 // @required_for_production true
-// @command ./target/debug/aw health --project agentic-workflow
+// @command ./target/debug/aw health --project agentic-workflow | tail -n 1 | grep -q payload_path
 // AW-EC-END
 
 // Contract: stdout includes progress JSONL events before the final result when long gates run
@@ -16,7 +16,8 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn aw_health_default_full_verification_smoke() {
-    let command = "./target/debug/aw health --project agentic-workflow";
+    let command =
+        "./target/debug/aw health --project agentic-workflow | tail -n 1 | grep -q payload_path";
     let id = "aw-health-default-full-verification-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

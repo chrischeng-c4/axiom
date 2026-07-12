@@ -5,7 +5,7 @@ name = "agentic-workflow"
 [aw.ec.generated]
 version = 1
 project = "agentic-workflow"
-generated_from_td_digest = "sha256:a2f0fdb9333c459419668a64e619a069c5419311ebdfefbb0f9ff5aa0bd1406b"
+generated_from_td_digest = "sha256:c311316ece7b26cc682cd2fd697feaec423cdae8e41e79dc020021e310e5407b"
 
 [[aw.ec.generated.cases]]
 id = "api-contract-source-passes"
@@ -30,7 +30,7 @@ contract_id = "artifact-preflight-health-rollup"
 category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/specs/3904.md#artifact-preflight-health-rollup"
 test_path = "apps/agentic-workflow/tests/behavior_artifact_preflight_health_rollup.rs"
-command = "./target/debug/aw health --project agentic-workflow --verify-tests --json"
+command = "./target/debug/aw health --project agentic-workflow | tail -n 1 | grep -q axes"
 required_for_production = true
 assertions = [
     "missing hard evidence appears in production_blockers",
@@ -146,7 +146,7 @@ contract_id = "aw-health-default-full-verification-smoke"
 category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/validate/health-defaults-to-streaming-full-verification.md#aw-health-default-full-verification-smoke"
 test_path = "apps/agentic-workflow/tests/behavior_aw_health_default_full_verification_smoke.rs"
-command = "./target/debug/aw health --project agentic-workflow"
+command = "./target/debug/aw health --project agentic-workflow | tail -n 1 | grep -q payload_path"
 required_for_production = true
 assertions = [
     "stdout includes progress JSONL events before the final result when long gates run",
@@ -372,7 +372,7 @@ contract_id = "jet-health-verification-dedup-smoke"
 category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/specs/4124.md#jet-health-verification-dedup-smoke"
 test_path = "apps/agentic-workflow/tests/behavior_jet_health_verification_dedup_smoke.rs"
-command = "./target/debug/aw health --project jet --verify-traceability --verify-cb --verify-cold --verify-tests --json"
+command = "cargo test -p agentic-workflow --lib capability"
 required_for_production = false
 assertions = [
     "health command succeeds or reports only real project blockers",

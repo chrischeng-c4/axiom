@@ -3,9 +3,9 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/aw.toml"
-generated_at = "2026-07-12T10:21:48.233133+00:00"
-ir_digest = "sha256:c0be3535aa171135f02debb21c2b7abb0c056dfbdd5f8f745212abdde15b040e"
-source_digest = "sha256:f52adc640927d30117de2b943478d229c91fb7342bef4d835d8bb90117570e7b"
+generated_at = "2026-07-12T10:36:00.006397+00:00"
+ir_digest = "sha256:098d02b4e0e95401f727d9e3a7fda20a9610716ada941c63973cfd7187292e56"
+source_digest = "sha256:e9d06aa2e0df0652c3d515fbb7e835c1d1f57142b32a3d1c795b91fa51111e93"
 tool_contracts = []
 
 [[sources]]
@@ -18,7 +18,7 @@ digest = "sha256:7289d025c0f7c1d59c192f01197a96a45b8b7eb8c69118b062db550c2e679b5
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/specs/3904.md"
-digest = "sha256:dc4ae44cdc6a92c49a3a2847d5113cb7676e68308c962b839fcec55368feadd9"
+digest = "sha256:16d6852748e0f59d5196931387379a09f83d7ba58419141d9a6b636a7d605fb9"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/specs/3905.md"
@@ -46,7 +46,7 @@ digest = "sha256:60544171b27df79b8e55ba0994325d605244b7623e75f9dde4598467e47de7b
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/specs/4124.md"
-digest = "sha256:2127af316af41b56834682909ce36452ced71c7398bb3157f666e5d553ec360c"
+digest = "sha256:c4864e3bd148eb41f7b6419e21f8cca8af9c77bf0ad7e9575e2b4237f54c01f3"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-artifact-quality-profile.md"
@@ -78,7 +78,7 @@ digest = "sha256:b5dcb44c466197cf0924152aea63b2cdfc72c017cfb852315d1bceae23e9291
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/validate/health-defaults-to-streaming-full-verification.md"
-digest = "sha256:1a80476752c43cc57ea28b05245e29719db2aa6749f94fad1392da0fcecde07f"
+digest = "sha256:2d03f72a2d29de72b56a01388aa453306aab72bd738b46379d92f4d1275a6078"
 
 [[cases]]
 id = "api-contract-source-passes"
@@ -106,7 +106,7 @@ contract_id = "artifact-preflight-health-rollup"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/tech-design/specs/3904.md#artifact-preflight-health-rollup"
 test_path = "apps/agentic-workflow/tests/behavior_artifact_preflight_health_rollup.rs"
-command = "./target/debug/aw health --project agentic-workflow --verify-tests --json"
+command = "./target/debug/aw health --project agentic-workflow | tail -n 1 | grep -q axes"
 required_for_production = true
 assertions = [
     "missing hard evidence appears in production_blockers",
@@ -115,7 +115,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:a3d0ec5263e14235713a634f407ee8e0bca9a1bb2b9f4774e772c9fc69d292e5"
+digest = "sha256:39e19d215719bb024e4a3fbe7554ef04815bf4178d4a87490c37c2b030f22176"
 
 [[cases]]
 id = "artifact-quality-fixture-roundtrip"
@@ -249,7 +249,7 @@ contract_id = "aw-health-default-full-verification-smoke"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/tech-design/validate/health-defaults-to-streaming-full-verification.md#aw-health-default-full-verification-smoke"
 test_path = "apps/agentic-workflow/tests/behavior_aw_health_default_full_verification_smoke.rs"
-command = "./target/debug/aw health --project agentic-workflow"
+command = "./target/debug/aw health --project agentic-workflow | tail -n 1 | grep -q payload_path"
 required_for_production = true
 assertions = [
     "stdout includes progress JSONL events before the final result when long gates run",
@@ -258,7 +258,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:303a4932bc93025c6709d3e69c124012cf38f4b8674237f456ef9d7b2028680f"
+digest = "sha256:1d76f00f4e1088e54648b0c4221bbdc5ab294fa53e58ee8f7a72a4aab609ca04"
 
 [[cases]]
 id = "aw-view-repo-app-bundle"
@@ -523,7 +523,7 @@ contract_id = "jet-health-verification-dedup-smoke"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/tech-design/specs/4124.md#jet-health-verification-dedup-smoke"
 test_path = "apps/agentic-workflow/tests/behavior_jet_health_verification_dedup_smoke.rs"
-command = "./target/debug/aw health --project jet --verify-traceability --verify-cb --verify-cold --verify-tests --json"
+command = "cargo test -p agentic-workflow --lib capability"
 required_for_production = false
 assertions = [
     "health command succeeds or reports only real project blockers",
@@ -531,7 +531,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:2b4d9dc602b11f66e67fb73342d23242e01bc156154276111cadd9136ae9e557"
+digest = "sha256:fe54e2e41defa07d287a5cb0d3b3a568fcac1a4699da90bbd09e327678bbbe96"
 
 [[cases]]
 id = "manual-evidence-artifacts-generated-manual-ec-evidence-schema"

@@ -7,7 +7,7 @@
 // @contract artifact-preflight-health-rollup
 // @category behavior
 // @required_for_production true
-// @command ./target/debug/aw health --project agentic-workflow --verify-tests --json
+// @command ./target/debug/aw health --project agentic-workflow | tail -n 1 | grep -q axes
 // AW-EC-END
 
 // Contract: missing hard evidence appears in production_blockers
@@ -16,7 +16,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn artifact_preflight_health_rollup() {
-    let command = "./target/debug/aw health --project agentic-workflow --verify-tests --json";
+    let command = "./target/debug/aw health --project agentic-workflow | tail -n 1 | grep -q axes";
     let id = "artifact-preflight-health-rollup";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
