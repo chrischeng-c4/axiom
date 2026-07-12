@@ -9,35 +9,66 @@ fill_sections: [logic, unit-test]
 
 ```mermaid
 ---
-id: mamba-closure-call-hot-applicability
-entry: closure_call_hot release workload
+id: mamba-closure-call-hot-contract
+entry: dynamic closure call
 nodes:
-  call: { kind: start, label: closure call with one captured integer }
-  module: { kind: process, label: callable module context dispatch }
-  safepoint: { kind: process, label: gc safepoint and dynamic call checks }
-  cells: { kind: process, label: install captured cell context }
-  jit: { kind: process, label: invoke JIT frame }
-  gate: { kind: terminal, label: CPU and RSS perf pin against CPython baseline }
-  preserve: { kind: terminal, label: closure semantics and ownership preserved }
+  handle: { kind: start, label: closure handle }
+  cached: { kind: process, label: read cached closure module and qualname metadata }
+  context: { kind: process, label: install semantic module and qualname context only when required }
+  cells: { kind: process, label: install capture cells }
+  dispatch: { kind: process, label: dispatch JIT frame }
+  result: { kind: terminal, label: preserve result exception and ownership semantics }
 edges:
-  - { from: call, to: module }
-  - { from: module, to: safepoint }
-  - { from: safepoint, to: cells }
-  - { from: cells, to: jit }
-  - { from: jit, to: gate }
-  - { from: cells, to: preserve }
+  - { from: handle, to: cached }
+  - { from: cached, to: context }
+  - { from: context, to: cells }
+  - { from: cells, to: dispatch }
+  - { from: dispatch, to: result }
 ---
 flowchart TD
-    call([closure call with one captured integer]) --> module[callable module context dispatch]
-    module --> safepoint[gc safepoint and dynamic call checks]
-    safepoint --> cells[install captured cell context]
-    cells --> jit[invoke JIT frame]
-    jit --> gate([CPU and RSS perf pin against CPython baseline])
-    cells --> preserve([closure semantics and ownership preserved])
+    handle([closure handle]) --> cached[read cached closure module and qualname metadata]
+    cached --> context[install semantic module and qualname context only when required]
+    context --> cells[install capture cells]
+    cells --> dispatch[dispatch JIT frame]
+    dispatch --> result([preserve result exception and ownership semantics])
 ```
 
-Applicability is confined to release-mode repeated calls of a stable closure. The observed release workload is 3.96 user seconds for Mamba versus 0.10 for CPython. The candidate hot path is `mb_call1_val` plus `with_closure_cells`: it traverses module context, safepoint, closure lookup, and active-cell map setup for every call. The contract must measure and remove only redundant work while retaining per-call capture identity, exception behavior, and ownership.
+For a closure handle, `with_callable_module` must read `MbClosure.module`, `MbClosure.qualname`, and `MbClosure.name` directly through the closure registry rather than allocating temporary MbValue strings through `mb_func_get_module`, `mb_func_get_qualname`, and `mb_func_get_name`. It must retain the existing push/pop behavior whenever module or qualname context is needed, preserving nested definition qualification, traceback state, and module isolation. Non-closure callables retain the current path. This is the first measured dispatch optimization; the release perf pin remains the terminal contract and requires further specialization if the measured ratio is still below its floor.
 
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/mamba/src/runtime/closure.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-closure-call-context-fastpath
+    tracker: "#1478"
+    reason: Closure metadata and invocation context require runtime ownership and reentrancy judgement not derivable by the current generator.
+  - path: projects/mamba/src/runtime/class/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-closure-call-context-fastpath
+    tracker: "#1478"
+    reason: Dynamic closure dispatch must route through the cached context path without changing non-closure semantics.
+  - path: projects/mamba/tests/cpython/_regression/core/language/closures/bench/closure_call_hot.py
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-closure-perf-pin
+    tracker: "#1478"
+    reason: Perf pin measurement requires the canonical internal-time marker.
+  - path: projects/mamba/tests/harness/cpython/config/perf/pins/closure_call_hot_1478.toml
+    action: create
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-closure-perf-pin
+    tracker: "#1478"
+    reason: The closure hot path needs an executable CPU and RSS perf gate.
+```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
