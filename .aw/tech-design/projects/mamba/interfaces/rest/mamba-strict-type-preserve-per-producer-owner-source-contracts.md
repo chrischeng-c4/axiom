@@ -9,56 +9,60 @@ fill_sections: [logic, unit-test]
 
 ```mermaid
 ---
-id: mamba-strict-type-per-producer-owner-source-logic
-entry: start
+id: mamba-strict-type-owner-source-contract-logic
+entry: producer
 nodes:
-  start: { kind: start, label: "MIR producer has a raw-or-boxed Int result" }
-  physical: { kind: process, label: "retain existing physical ABI analysis" }
-  owner_kind: { kind: decision, label: "select exact owner source independently" }
-  ownerless: { kind: process, label: "record ownerless or immortal companion action" }
-  fresh: { kind: process, label: "record fresh-result companion action" }
-  passthrough: { kind: process, label: "record argument pass-through companion action" }
-  explicit_out: { kind: process, label: "record explicit owner-out companion action" }
-  boundary: { kind: process, label: "record named #1451 or #1452 boundary action" }
-  extern: { kind: process, label: "attach runtime extern Int projection metadata" }
-  inventory: { kind: process, label: "require one action for every producer family" }
-  verify: { kind: process, label: "run metadata and runtime-symbol unit tests" }
-  done: { kind: terminal, label: "MIR owner-source contract ready for later consumers" }
+  producer: { kind: start, label: "MIR producer writes raw-or-boxed Int" }
+  abi: { kind: process, label: "read canonical #1448 physical return ABI" }
+  site: { kind: process, label: "record producer kind and MIR block/instruction site" }
+  local: { kind: decision, label: "is this a local producer rather than a call boundary" }
+  static_ownerless: { kind: process, label: "classify raw constants and immortal values as ownerless" }
+  fresh: { kind: process, label: "classify allocating numeric results as fresh owner" }
+  passthrough: { kind: process, label: "classify unbox projection from argument as pass-through owner" }
+  explicit_out: { kind: process, label: "classify runtime explicit owner-out result" }
+  ingress: { kind: process, label: "record parameter as #1451 argument-ingress boundary" }
+  return_channel: { kind: process, label: "record internal or dynamic call as #1452 return-channel boundary" }
+  extern: { kind: process, label: "map six raw-or-boxed runtime symbols to exact ownership contracts" }
+  inventory: { kind: process, label: "reject missing owner-source actions in exhaustive inventory" }
+  done: { kind: terminal, label: "metadata is ready; later slices consume it without bit inference" }
 edges:
-  - { from: start, to: physical }
-  - { from: physical, to: owner_kind }
-  - { from: owner_kind, to: ownerless, label: "ownerless or immortal" }
-  - { from: owner_kind, to: fresh, label: "fresh runtime result" }
-  - { from: owner_kind, to: passthrough, label: "argument pass-through" }
-  - { from: owner_kind, to: explicit_out, label: "explicit owner-out" }
-  - { from: owner_kind, to: boundary, label: "call boundary" }
-  - { from: ownerless, to: extern }
+  - { from: producer, to: abi }
+  - { from: abi, to: site }
+  - { from: site, to: local }
+  - { from: local, to: ingress, label: "parameter" }
+  - { from: local, to: return_channel, label: "internal or dynamic call" }
+  - { from: local, to: static_ownerless, label: "constant or immortal local" }
+  - { from: local, to: fresh, label: "fresh numeric local" }
+  - { from: local, to: passthrough, label: "unbox projection" }
+  - { from: local, to: explicit_out, label: "explicit runtime owner-out" }
+  - { from: static_ownerless, to: extern }
   - { from: fresh, to: extern }
   - { from: passthrough, to: extern }
   - { from: explicit_out, to: extern }
-  - { from: boundary, to: extern }
+  - { from: ingress, to: inventory }
+  - { from: return_channel, to: inventory }
   - { from: extern, to: inventory }
-  - { from: inventory, to: verify }
-  - { from: verify, to: done }
+  - { from: inventory, to: done }
 ---
 flowchart TD
-    start([raw-or-boxed Int producer]) --> physical[retain physical ABI analysis]
-    physical --> owner_kind{exact owner source}
-    owner_kind -- ownerless or immortal --> ownerless[record ownerless companion action]
-    owner_kind -- fresh runtime result --> fresh[record fresh-result companion action]
-    owner_kind -- argument pass-through --> passthrough[record pass-through companion action]
-    owner_kind -- explicit owner-out --> explicit_out[record owner-out companion action]
-    owner_kind -- call boundary --> boundary[record #1451 or #1452 boundary action]
-    ownerless --> extern[attach runtime extern metadata]
+    producer([raw-or-boxed Int MIR producer]) --> abi[read canonical physical ABI]
+    abi --> site[record producer kind and MIR site]
+    site --> local{local producer}
+    local -- parameter --> ingress[defer to #1451 argument ingress]
+    local -- call result --> return_channel[defer to #1452 return channel]
+    local -- constant or immortal --> static_ownerless[ownerless action]
+    local -- allocating numeric result --> fresh[fresh-result owner action]
+    local -- unbox projection --> passthrough[argument pass-through action]
+    local -- explicit owner out --> explicit_out[explicit owner-out action]
+    static_ownerless --> extern[map six runtime symbols]
     fresh --> extern
     passthrough --> extern
     explicit_out --> extern
-    boundary --> extern
-    extern --> inventory[require exhaustive producer action]
-    inventory --> verify[run metadata and runtime-symbol tests]
-    verify --> done([MIR contract ready])
+    ingress --> inventory[exhaustive owner-source inventory]
+    return_channel --> inventory
+    extern --> inventory
+    inventory --> done([no bit or semantic-TypeId inference])
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
