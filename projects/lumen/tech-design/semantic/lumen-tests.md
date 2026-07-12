@@ -393,6 +393,18 @@ semantic_domain:
           - name: "openapi_json_declares_3_2_and_describes_query_twins"
             kind: "function"
             public: false
+          - name: "openapi_committed_snapshot_matches_live_generation"
+            kind: "function"
+            public: false
+          - name: "llm_storage_documents_reshard_fence_admin_verb"
+            kind: "function"
+            public: false
+          - name: "llm_workflow_discloses_routed_mode_retry_contract"
+            kind: "function"
+            public: false
+          - name: "llm_deployment_documents_reshard_convergence_observability"
+            kind: "function"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"

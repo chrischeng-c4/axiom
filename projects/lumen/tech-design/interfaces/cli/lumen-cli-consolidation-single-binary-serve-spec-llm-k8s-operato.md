@@ -50,19 +50,19 @@ capability_refs:
     claim: "offline-spec-openapi-list"
     coverage: full
     rationale: "Publishes the offline HTTP API list through the `lumen spec` command."
-  - id: "agent-offline-integration"
+  - id: "developer-agent-experience"
     role: primary
     gap: "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
     claim: "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
     coverage: full
     rationale: "Provides offline machine schemas for agent integration."
-  - id: "agent-offline-integration"
+  - id: "developer-agent-experience"
     role: primary
     gap: "query-shape-cookbook-field-analyzer-catalog"
     claim: "query-shape-cookbook-field-analyzer-catalog"
     coverage: full
     rationale: "Provides offline query-shape and field/analyzer catalog context for agents."
-  - id: "agent-offline-integration"
+  - id: "developer-agent-experience"
     role: primary
     gap: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
     claim: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"

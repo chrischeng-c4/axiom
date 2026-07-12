@@ -61,6 +61,36 @@
         }
       }
     },
+    "/admin/checkpoint": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "`POST /admin/checkpoint` (#1389): force a synchronous durability",
+        "description": "checkpoint of the live engine state and return only once it is committed.\nThe reshard driver's cutover calls this on every shard it just migrated\ndata into or evicted data from, so `/admin/reshard:apply`/`:evict`'s\nmutations — which bypass `WriteCoordinator`/the AOF — reach durability\nbefore the driver triggers the cutover rolling restart, instead of\ndepending on the next periodic `LUMEN_SNAPSHOT_SECS` tick. `persisted:\nfalse` means no durable store is configured on this node (nothing to\nlose on restart, e.g. dev mode); a production/operator deployment with\nsegment persistence configured always reports `true` on success. See\n[`CheckpointSink`].",
+        "operationId": "admin_checkpoint",
+        "responses": {
+          "200": {
+            "description": "Checkpoint committed (or vacuously satisfied if no durable store is configured)",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Checkpoint write failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/reshard:apply": {
       "post": {
         "tags": [
@@ -126,6 +156,82 @@
           },
           "400": {
             "description": "Invalid virtual bucket map",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/reshard:fence": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "`POST /admin/reshard:fence`: arm or clear a bounded write pause on a set",
+        "description": "of virtual buckets (#1396 R2). The reshard driver's cutover\n(`operator::reshard_driver::advance_catching_up`) arms this over exactly\nthe buckets its final `CatchingUp` migration pass is about to copy,\nimmediately before that pass, and clears it (`buckets: []`) once the\npass/evict/checkpoint/cutover sequence finishes — on success or on\n`Blocked`. A write to a fenced bucket is rejected with `503\nbucket_write_paused` rather than silently dropped or applied against a\nmap that is about to change; see [`WriteFence`] for the crash-safety\n(TTL) argument.",
+        "operationId": "reshard_fence",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Fence armed or cleared",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid virtual_bucket_count",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/reshard:prune": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "`POST /admin/reshard:prune`: accumulate one [`ReshardPruneChunk`] of the",
+        "description": "final migration pass's authoritative \"keep\" set for one `(bucket,\ncollection_id)` pair, and prune once every chunk has arrived (#1457 R1).\nUnlike `/admin/reshard:apply` (purely additive), this verb is what makes\nthe final pass authoritative for the buckets it copies: a document\ndeleted on the source during the split is absent from the accumulated\nkeep set and is pruned here instead of surviving as a stale copy from an\nearlier additive pass. Idempotent per chunk (safe to retry after a 413)\nand as a whole group (safe to re-send every chunk after a driver\nrestart); see [`Engine::apply_reshard_prune_chunk`].",
+        "operationId": "reshard_prune",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Chunk accumulated; pruned once every chunk of its group has arrived",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed chunk",
             "content": {
               "application/json": {
                 "schema": {
@@ -450,6 +556,8 @@
         "tags": [
           "Query"
         ],
+        "summary": "Local-shard only, deliberately not wired to `state.routed` (#1398 known",
+        "description": "gap, #1442 R6): `Engine::duplicates` filters by `min_group_size` *before*\nany cross-shard merge could happen, so scatter-then-merge would silently\nmiss a true cross-shard group (e.g. one copy per shard under\n`min_group_size: 2`) — a correctness regression, not a routing gap. A\ncorrect cross-shard implementation needs unfiltered per-shard candidate\ngroups from `storage.rs`, out of scope here. #1442 R6 closes the \"silent\nwrong answer\" gap this left in routed multi-shard mode: rather than\nunchanged pre-#1398 behavior (silently answering from local-shard data\nonly, missing cross-shard duplicate groups with no indication), a routed\ndeployment now rejects with a distinct, non-retryable error so a caller\ncan tell \"not supported here\" from \"no duplicates found\".",
         "operationId": "duplicates",
         "parameters": [
           {

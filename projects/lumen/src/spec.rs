@@ -354,6 +354,39 @@ routing key can target the owning shard. Do not auto-split when the max shard
 size or max shard count is unknown; surface the condition to the operator
 instead.
 
+## Reshard/convergence observability (#1467)
+Beyond the `blockingConditions`/`message` fields on `status.reshard` covered
+above, watch these signals during and after a split:
+
+- `lumen_shard_map_version` (gauge) — each serving pod's own live routed
+  shard-map version, `0` outside routed deployments. The reshard driver's
+  `advance_convergence` scrapes this over every serving pod's `/metrics`
+  (the same admin-reachable surface its usage-polling loop already uses) to
+  require every pod to actually report the new map version before clearing
+  the post-cutover write-pause fence — a rollout that completed but whose
+  ConfigMap write has not yet propagated to every pod is not treated as
+  converged.
+- `lumen_scatter_map_version_mismatches_total` (counter) — count of scatter
+  (routing-key-less) search sub-requests where the responding pod's live
+  shard-map version disagreed with the scattering pod's own declared
+  version. This is an expected, non-fatal signal during a mixed-map rolling
+  restart window, not an error: lumen accepts availability over
+  completeness for a scatter search mid-flight during a rollout rather than
+  fail the whole search. A sustained non-zero rate outside an active reshard
+  points at a stuck rollout.
+- `awaitingTopologyConvergence` (`status.reshard.blockingConditions`) — the
+  post-cutover write-pause fence is armed and waiting for every serving pod
+  to confirm the new `shardMap.version`; expected and bounded during a
+  cutover, not itself an error.
+- `topologyConvergenceStalled` (`status.reshard.blockingConditions`) —
+  layered on top of `awaitingTopologyConvergence` once convergence has been
+  pending for an extended, bounded number of driver ticks
+  (`CONVERGENCE_STALL_TICKS`) without clearing. The write-pause fence is
+  never silently dropped when this budget is exceeded — the driver keeps
+  re-arming it — so this condition is the operator-visible signal that the
+  wait is abnormally long and needs investigation, not proof writes have
+  resumed.
+
 ## Empty-PVC bootstrap
 Existing pods restart from their PVC: local raft state, snapshots, and WAL are
 authoritative. A replacement pod with an empty PVC should seed from an exact
@@ -627,6 +660,38 @@ per shard, so every level trivially holds.
   rather than risk serving a stale read. Until real follower lag reporting
   ships, `bounded(<ms>)` behaves like `leader` with an extra
   follower-rejection path — do not rely on it to read from a follower.
+
+## Routed multi-shard mode: client retry contract
+Only applies to a routed multi-shard deployment (`SHARD_COUNT > 1`,
+`replicasPerShard <= 1`, cross-pod forwarding — see `lumen llm --topic
+deployment`); a standalone or single-shard deployment never returns these
+codes. Every code below is a `503`, safe to retry with backoff — a client
+that treats them as retryable rather than fatal handles a reshard split or a
+rolling restart transparently:
+
+| `code` | Meaning | Client behavior |
+|--------|---------|------------------|
+| `bucket_write_paused` | The write's virtual bucket is fenced for an in-progress reshard cutover's final migration pass (`POST /admin/reshard:fence`, bounded TTL). | Retry shortly; the pause is always bounded — splits/rollouts complete or the fence TTL lapses on its own. |
+| `shard_forward_unavailable` | This pod forwarded the request one hop to the owning shard, but that shard was unreachable (pod down/rolling). | Retry with backoff; expected during a rolling restart. |
+| `shard_map_version_mismatch` | The forwarded request declared a shard-map version that disagrees with the receiving pod's own live map — a bounded window where pods in a rolling restart are on two different `SHARD_MAP_*` env snapshots (pods only read env at boot). | Retry with backoff; wait for the rollout to converge rather than trusting either side's answer. |
+
+None of the three above indicate data loss or a wrong answer — each is the
+router refusing to give a potentially-wrong answer instead of guessing, in
+favor of a retryable rejection.
+
+Two verbs are rejected outright (not retryable) in routed multi-shard mode,
+each with a documented alternative:
+
+- `POST /collections/{id}/duplicates` → `501 duplicates_not_routed`.
+  Duplicate detection is local-shard-only (filters by `min_group_size`
+  before any cross-shard merge could happen) and does not support routed
+  multi-shard mode; there is no cross-shard alternative today. Do not retry.
+- `POST /collections/{id}/reindex/stream` → `501 reindex_stream_not_routed`.
+  The streaming bulk-reindex path bypasses per-item shard ownership and the
+  write fence; not supported in routed multi-shard mode. Use `POST
+  /collections/{id}/index` instead — it is routed per item and observes the
+  write fence like every other write path. Do not retry the stream endpoint
+  itself.
 
 ## Connection
 HTTP/1.1 or HTTP/2 cleartext on `:7373` — any REST client, no driver. HTTP/1.1
@@ -983,8 +1048,8 @@ These three routes are the safe procedure for ad hoc or scripted
 snapshot/restore — pull with `GET /admin/backup`, keep the bytes wherever you
 like, push back with `POST /admin/restore` to recover.
 
-### Reshard admin verbs (#1380, #1389, #1457)
-Five more `Role::Admin`-gated routes support moving a bounded set of
+### Reshard admin verbs (#1380, #1389, #1396, #1457)
+Six more `Role::Admin`-gated routes support moving a bounded set of
 documents between shards during an operator-driven reshard, without a
 full-engine restore:
 
@@ -1005,6 +1070,25 @@ full-engine restore:
   removes exactly the documents whose bucket no longer routes to this
   shard — nothing else. A separate, explicitly-invoked step; never implicit
   in `/admin/reshard:apply` or the backup routes above.
+- `POST /admin/reshard:fence` (#1396 R2) — arms or clears a bounded write
+  pause on a set of virtual buckets: `{"virtual_bucket_count": N, "buckets":
+  [0, 3, ...], "ttl_secs": 300}`; an empty `buckets` array clears the fence
+  instead of arming it. A write routed to a currently-fenced bucket is
+  rejected with a retryable `503 bucket_write_paused` rather than being
+  silently dropped or applied against a map that is about to change. `ttl_secs`
+  defaults to 300 and is capped at 3600 (a request outside `1..=3600` is
+  rejected with `400 invalid_ttl_secs`); expiry is enforced on the *serving*
+  pod independent of the caller, so a caller that dies between arming and
+  clearing can never leave a bucket permanently unwritable. This is a
+  **driver-owned** verb: the reshard driver (`operator::reshard_driver::
+  advance_catching_up`) arms it over exactly the buckets its final
+  `CatchingUp` migration pass is about to copy, immediately before that pass,
+  and always clears it (`buckets: []`) on every exit path of that tick —
+  success or `Blocked` — re-arming a fresh deadline every tick it still needs
+  one (`reshard_driver::WRITE_FENCE_TTL_SECS`, 120s). Calling it manually
+  outside driver-orchestrated cutover risks a real write outage: an operator
+  who arms it and forgets to clear it (or races the driver's own arm/clear
+  cycle) pauses writes to those buckets until the TTL lapses.
 - `POST /admin/reshard:prune` (#1457 R1) — accumulates one byte-capped
   `ReshardPruneChunk` of a final migration pass's authoritative "keep" id
   set for one `(bucket, collection_id)` pair, keyed by `(to_map_version,
@@ -1054,10 +1138,12 @@ full-engine restore:
   notion of "already applied" alongside `merge_snapshot_delta`'s own
   idempotent merge semantics.
 
-These five verbs are the data-plane building blocks for a reshard; only
+These six verbs are the data-plane building blocks for a reshard; only
 `/admin/checkpoint`'s ordering relative to cutover is sequenced by the
 operator phase driver — the rest do not sequence a migration end to end or
-decide *when* to cut over.
+decide *when* to cut over. `/admin/reshard:fence` is armed/cleared by that
+same driver around the `CatchingUp` pass — it is not an independent step an
+operator sequences by hand.
 
 ### Direct CLI data movement: `dump` / `export` / `load` / `import`
 For ad hoc SnapshotV1 movement from a shell, use the direct CLI wrappers:
