@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/mamba"
-generated_at = "2026-07-12T13:23:36.790613+00:00"
-digest = "sha256:8b293a2f1d8b0c018d5208288e05913391c1cd85f0ca16013ca8b701000280f9"
-source_digest = "sha256:8b293a2f1d8b0c018d5208288e05913391c1cd85f0ca16013ca8b701000280f9"
-ir_digest = "sha256:c8cc861b87da75faa473e00d67859dec50daeed2abca37c7a909a720ffafa601"
+generated_at = "2026-07-12T14:21:35.953971+00:00"
+digest = "sha256:211c9da5e241394b3f544f7fb702206a6325bc175a647b89881813390611846d"
+source_digest = "sha256:211c9da5e241394b3f544f7fb702206a6325bc175a647b89881813390611846d"
+ir_digest = "sha256:b6569de098e5a0299e111dd8f8341dba66f97216c35645519bfeb3564febdafa"
 
 [[files]]
 path = "README.md"
@@ -77,6 +77,12 @@ section_count = 3
 path = "interfaces/rest/mamba-strict-type-wire-object-aot-local-producer-provenance-exha.md"
 digest = "sha256:80bca5e456bf2dd07d37c6d65e9404981dd3b169adab69551143f7d35d65a65f"
 ir_digest = "sha256:c68493fb2e2b480773a32b2a74a3cc7eea6036f57f846adc2d144d7b116c0f67"
+section_count = 3
+
+[[files]]
+path = "logic/mamba-language-core-match-pinned-unboundlocalerror-diagnostics.md"
+digest = "sha256:75f317ffbb526fc2ac07085f3ae90eb1087e649b8ef4b61da66e842d1b7fb608"
+ir_digest = "sha256:6c27e4e10521f7638f4ec32a12ba404c60260e7c7f1414d4474b27d0671fc407"
 section_count = 3
 
 [[files]]
