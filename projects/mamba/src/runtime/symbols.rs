@@ -1418,7 +1418,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64, I64],
             Void
         ),
-        rt_unknown_sym!(
+        rt_typed_int_projection_sym!(
             "mb_list_getitem",
             list_ops::mb_list_getitem as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
@@ -1474,7 +1474,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             PhysicalReturn::RawInt,
             ReturnOwnership::NoHeapOwner
         ),
-        rt_unknown_sym!(
+        rt_typed_int_projection_sym!(
             "mb_seq_getitem",
             list_ops::mb_seq_getitem as fn(super::MbValue, i64) -> super::MbValue,
             [I64, I64],
@@ -1609,7 +1609,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64, I64, I64],
             Void
         ),
-        rt_unknown_sym!(
+        rt_typed_int_projection_sym!(
             "mb_dict_getitem",
             dict_ops::mb_dict_getitem as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
@@ -1858,7 +1858,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64],
             I64
         ),
-        rt_unknown_sym!(
+        rt_typed_int_projection_sym!(
             "mb_tuple_getitem",
             tuple_ops::mb_tuple_getitem as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
@@ -2036,7 +2036,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         // ── Class ──
-        rt_unknown_sym!(
+        rt_typed_int_projection_sym!(
             "mb_getattr",
             class::mb_getattr as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
@@ -5204,6 +5204,32 @@ mod tests {
         };
         assert_eq!(owner_out.bits, owner.to_bits() as i64);
         unsafe { crate::runtime::rc::release_if_ptr(owner) };
+    }
+
+    #[test]
+    fn runtime_storage_getter_int_contracts_are_explicit() {
+        for name in [
+            "mb_getattr",
+            "mb_list_getitem",
+            "mb_seq_getitem",
+            "mb_dict_getitem",
+            "mb_tuple_getitem",
+        ] {
+            assert_eq!(runtime_int_companion_contract(name), None, "{name}");
+            assert_eq!(
+                runtime_typed_int_companion_contract(name),
+                Some(IntCompanionContract::FreshResultOrNone),
+                "{name}"
+            );
+            assert_eq!(
+                runtime_typed_int_owner_out(name, 42, &[])
+                    .unwrap()
+                    .expect("typed storage/getter projection")
+                    .owner,
+                IntCompanionOwner::None,
+                "{name} raw result"
+            );
+        }
     }
 
     // Spot-check that critical cross-subsystem runtime symbols the JIT actually

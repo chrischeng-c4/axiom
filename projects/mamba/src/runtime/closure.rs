@@ -466,6 +466,42 @@ pub fn mb_closure_get_capture(closure_handle: MbValue, index: MbValue) -> MbValu
     }
 }
 
+/// Read a capture as a data/provenance pair for a statically proven typed Int
+/// consumer. Cell-backed captures preserve their storage sidecar; legacy
+/// value-only captures deliberately remain ownerless.
+pub(crate) fn mb_closure_get_typed_int_owner_capture(
+    closure_handle: MbValue,
+    index: MbValue,
+) -> TypedIntStorageRead {
+    let Some(id) = closure_handle.as_int() else {
+        return TypedIntStorageRead {
+            value: MbValue::none(),
+            owner: None,
+        };
+    };
+    let Some(idx) = index.as_int() else {
+        return TypedIntStorageRead {
+            value: MbValue::none(),
+            owner: None,
+        };
+    };
+    let (cell, value) = CLOSURES.with(|closures| {
+        let closures = closures.borrow();
+        let Some(slot_idx) = closure_slot_index(id) else {
+            return (None, MbValue::none());
+        };
+        let closure = closures.get(slot_idx).and_then(|slot| slot.as_ref());
+        (
+            closure.and_then(|c| c.capture_cells.get(idx as usize).copied()),
+            closure
+                .and_then(|c| c.captures.get(idx as usize).copied())
+                .unwrap_or_else(MbValue::none),
+        )
+    });
+    cell.map(mb_cell_get_typed_int_owner)
+        .unwrap_or(TypedIntStorageRead { value, owner: None })
+}
+
 /// Set a captured variable by index (for mutable closures).
 pub fn mb_closure_set_capture(closure_handle: MbValue, index: MbValue, value: MbValue) {
     if let (Some(id), Some(idx)) = (closure_handle.as_int(), index.as_int()) {
@@ -1432,6 +1468,18 @@ pub fn func_file(func: MbValue) -> Option<String> {
 thread_local! {
     static CELLS: std::cell::RefCell<Vec<Option<MbValue>>> =
         std::cell::RefCell::new(Vec::new());
+    // Typed Int provenance is deliberately not recoverable from a cell's
+    // value bits. This parallel metadata slot carries only an owner supplied
+    // by a typed producer; it never owns an additional reference itself.
+    static CELL_INT_OWNERS: std::cell::RefCell<Vec<Option<MbValue>>> =
+        std::cell::RefCell::new(Vec::new());
+}
+
+/// Data and explicit provenance returned by a typed Int storage load.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TypedIntStorageRead {
+    pub(crate) value: MbValue,
+    pub(crate) owner: Option<MbValue>,
 }
 
 fn cell_slot_index(raw: i64, len: usize) -> Option<usize> {
@@ -1453,8 +1501,20 @@ pub fn mb_cell_new(value: MbValue) -> MbValue {
         let mut vec = cells.borrow_mut();
         let id = CELL_ID_BASE + vec.len() as i64;
         vec.push(Some(value));
+        CELL_INT_OWNERS.with(|owners| owners.borrow_mut().push(None));
         MbValue::from_int(id)
     })
+}
+
+/// Create typed Int storage with an explicitly supplied borrowed owner.
+///
+/// `mb_cell_new` retains `value` before exposing the slot, so the owner sidecar
+/// may safely borrow that retained storage rather than manufacture provenance
+/// from its payload bits.
+fn mb_cell_new_typed_int_owner(value: MbValue, owner: Option<MbValue>) -> MbValue {
+    let cell = mb_cell_new(value);
+    set_cell_int_owner_sidecar(cell, owner);
+    cell
 }
 
 /// Create a new, genuinely EMPTY cell (`types.CellType()` with no argument;
@@ -1467,6 +1527,7 @@ pub fn mb_cell_new_empty() -> MbValue {
         let mut vec = cells.borrow_mut();
         let id = CELL_ID_BASE + vec.len() as i64;
         vec.push(None);
+        CELL_INT_OWNERS.with(|owners| owners.borrow_mut().push(None));
         MbValue::from_int(id)
     })
 }
@@ -1557,6 +1618,19 @@ pub fn mb_cell_contents_read(cell_handle: MbValue) -> CellContentsRead {
 
 /// Set the value stored in a cell.
 pub fn mb_cell_set(cell_handle: MbValue, value: MbValue) {
+    mb_cell_set_typed_int_owner(cell_handle, value, None);
+}
+
+/// Store a typed Int value and its explicit provenance in one transition.
+///
+/// The sidecar is metadata for a later typed consumer, not a second retained
+/// reference. Callers that do not have a typed owner must pass `None`; this
+/// API intentionally never inspects `value` to manufacture one.
+pub(crate) fn mb_cell_set_typed_int_owner(
+    cell_handle: MbValue,
+    value: MbValue,
+    owner: Option<MbValue>,
+) {
     if let Some(id) = cell_handle.as_int() {
         // Retain so value survives the JIT epilogue releasing the source VReg.
         unsafe {
@@ -1572,9 +1646,35 @@ pub fn mb_cell_set(cell_handle: MbValue, value: MbValue) {
                     }
                 }
                 vec[idx] = Some(value);
+                CELL_INT_OWNERS.with(|owners| {
+                    let mut owners = owners.borrow_mut();
+                    if owners.len() <= idx {
+                        owners.resize(idx + 1, None);
+                    }
+                    owners[idx] = owner;
+                });
             }
         });
     }
+}
+
+fn set_cell_int_owner_sidecar(cell_handle: MbValue, owner: Option<MbValue>) {
+    let Some(id) = cell_handle.as_int() else {
+        return;
+    };
+    CELLS.with(|cells| {
+        let cells = cells.borrow();
+        let Some(idx) = cell_slot_index(id, cells.len()) else {
+            return;
+        };
+        CELL_INT_OWNERS.with(|owners| {
+            let mut owners = owners.borrow_mut();
+            if owners.len() <= idx {
+                owners.resize(idx + 1, None);
+            }
+            owners[idx] = owner;
+        });
+    });
 }
 
 pub fn mb_cell_clear(cell_handle: MbValue) {
@@ -1588,9 +1688,38 @@ pub fn mb_cell_clear(cell_handle: MbValue) {
                     }
                 }
                 vec[idx] = None;
+                CELL_INT_OWNERS.with(|owners| {
+                    if let Some(owner) = owners.borrow_mut().get_mut(idx) {
+                        *owner = None;
+                    }
+                });
             }
         });
     }
+}
+
+/// Read a typed Int cell as a data/provenance pair without inspecting data
+/// bits. A missing or empty cell returns a deterministic `None` value paired
+/// with no owner.
+pub(crate) fn mb_cell_get_typed_int_owner(cell_handle: MbValue) -> TypedIntStorageRead {
+    let Some(id) = cell_handle.as_int() else {
+        return TypedIntStorageRead {
+            value: MbValue::none(),
+            owner: None,
+        };
+    };
+    CELLS.with(|cells| {
+        let cells = cells.borrow();
+        let Some(idx) = cell_slot_index(id, cells.len()) else {
+            return TypedIntStorageRead {
+                value: MbValue::none(),
+                owner: None,
+            };
+        };
+        let value = cells[idx].unwrap_or_else(MbValue::none);
+        let owner = CELL_INT_OWNERS.with(|owners| owners.borrow().get(idx).copied().flatten());
+        TypedIntStorageRead { value, owner }
+    })
 }
 
 fn active_cell_for_id(key: i64) -> MbValue {
@@ -1600,13 +1729,17 @@ fn active_cell_for_id(key: i64) -> MbValue {
         if let Some(cell) = cells.get(&scoped).copied() {
             return cell;
         }
-        let initial = GLOBAL_ID_NAMESPACE.with(|ns| {
-            ns.borrow()
+        let (initial, owner) = GLOBAL_ID_NAMESPACE.with(|ns| {
+            let value = ns
+                .borrow()
                 .get(&scoped)
                 .copied()
-                .unwrap_or_else(MbValue::none)
+                .unwrap_or_else(MbValue::none);
+            let owner = GLOBAL_ID_NAMESPACE_INT_OWNERS
+                .with(|owners| owners.borrow().get(&scoped).copied().flatten());
+            (value, owner)
         });
-        let cell = mb_cell_new(initial);
+        let cell = mb_cell_new_typed_int_owner(initial, owner);
         cells.insert(scoped, cell);
         cell
     })
@@ -1618,9 +1751,31 @@ pub fn mb_capture_cell_set_id(id: MbValue, value: MbValue) {
     mb_cell_set(cell, value);
 }
 
+pub(crate) fn mb_capture_cell_set_typed_int_owner_id(
+    id: MbValue,
+    value: MbValue,
+    owner: Option<MbValue>,
+) {
+    let key = id.to_bits() as i64;
+    let cell = active_cell_for_id(key);
+    mb_cell_set_typed_int_owner(cell, value, owner);
+}
+
 pub fn mb_capture_cell_reset_id(id: MbValue, value: MbValue) {
     let key = id.to_bits() as i64;
     let cell = mb_cell_new(value);
+    ACTIVE_CELLS.with(|cells| {
+        cells.borrow_mut().insert(scoped_symbol_key(key), cell);
+    });
+}
+
+pub(crate) fn mb_capture_cell_reset_typed_int_owner_id(
+    id: MbValue,
+    value: MbValue,
+    owner: Option<MbValue>,
+) {
+    let key = id.to_bits() as i64;
+    let cell = mb_cell_new_typed_int_owner(value, owner);
     ACTIVE_CELLS.with(|cells| {
         cells.borrow_mut().insert(scoped_symbol_key(key), cell);
     });
@@ -1671,11 +1826,45 @@ fn active_cell_get_id_raw(key: i64) -> Option<MbValue> {
     }
 }
 
+fn active_cell_get_typed_int_owner_id_raw(key: i64) -> Option<TypedIntStorageRead> {
+    let scoped = scoped_symbol_key(key);
+    let cell = ACTIVE_CELLS.with(|cells| cells.borrow().get(&scoped).copied())?;
+    match mb_cell_contents_read(cell) {
+        CellContentsRead::Value(_) => Some(mb_cell_get_typed_int_owner(cell)),
+        CellContentsRead::Empty => {
+            let name = MODULE_SYM_INFO
+                .with(|m| m.borrow().get(&key).map(|(name, _)| name.clone()))
+                .unwrap_or_else(|| format!("<symbol {key}>"));
+            raise_missing_global_name_error(&name);
+            Some(TypedIntStorageRead {
+                value: MbValue::none(),
+                owner: None,
+            })
+        }
+        CellContentsRead::NotACell => None,
+    }
+}
+
 fn active_cell_set_id_raw(key: i64, value: MbValue) -> bool {
     let scoped = scoped_symbol_key(key);
     let cell = ACTIVE_CELLS.with(|cells| cells.borrow().get(&scoped).copied());
     if let Some(cell) = cell {
         mb_cell_set(cell, value);
+        true
+    } else {
+        false
+    }
+}
+
+fn active_cell_set_typed_int_owner_id_raw(
+    key: i64,
+    value: MbValue,
+    owner: Option<MbValue>,
+) -> bool {
+    let scoped = scoped_symbol_key(key);
+    let cell = ACTIVE_CELLS.with(|cells| cells.borrow().get(&scoped).copied());
+    if let Some(cell) = cell {
+        mb_cell_set_typed_int_owner(cell, value, owner);
         true
     } else {
         false
@@ -1688,7 +1877,12 @@ fn active_cell_set_id_raw(key: i64, value: MbValue) -> bool {
 thread_local! {
     static GLOBAL_NAMESPACE: std::cell::RefCell<HashMap<String, MbValue>> =
         std::cell::RefCell::new(HashMap::new());
+    static GLOBAL_NAMESPACE_INT_OWNERS: std::cell::RefCell<HashMap<String, Option<MbValue>>> =
+        std::cell::RefCell::new(HashMap::new());
     static GLOBAL_ID_NAMESPACE: std::cell::RefCell<HashMap<ScopedSymbolKey, MbValue>> =
+        std::cell::RefCell::new(HashMap::new());
+    static GLOBAL_ID_NAMESPACE_INT_OWNERS:
+        std::cell::RefCell<HashMap<ScopedSymbolKey, Option<MbValue>>> =
         std::cell::RefCell::new(HashMap::new());
     static MISSING_GLOBAL_RAISES_NAME_ERROR: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
@@ -1803,6 +1997,30 @@ pub fn mb_global_set(name: MbValue, value: MbValue) {
             release_rebound_global_value(prev);
         }
     });
+    // Untyped callers never obtain provenance by inspecting their data.
+    GLOBAL_NAMESPACE_INT_OWNERS.with(|owners| {
+        owners
+            .borrow_mut()
+            .insert(extract_str(name).unwrap_or_default(), None);
+    });
+}
+
+pub(crate) fn mb_global_set_typed_int_owner(name: MbValue, value: MbValue, owner: Option<MbValue>) {
+    let key = extract_str(name).unwrap_or_default();
+    mb_global_set(name, value);
+    GLOBAL_NAMESPACE_INT_OWNERS.with(|owners| {
+        owners.borrow_mut().insert(key, owner);
+    });
+}
+
+pub(crate) fn mb_global_get_typed_int_owner(name: MbValue) -> TypedIntStorageRead {
+    let key = extract_str(name).unwrap_or_default();
+    let value = GLOBAL_NAMESPACE
+        .with(|ns| ns.borrow().get(&key).copied())
+        .unwrap_or_else(MbValue::none);
+    let owner =
+        GLOBAL_NAMESPACE_INT_OWNERS.with(|owners| owners.borrow().get(&key).copied().flatten());
+    TypedIntStorageRead { value, owner }
 }
 
 /// Get a global variable by integer id (SymbolId). Used by REPL since
@@ -1848,12 +2066,45 @@ pub fn mb_global_set_id(id: MbValue, value: MbValue) {
         super::rc::retain_if_ptr(value);
     }
     GLOBAL_ID_NAMESPACE.with(|ns| {
-        let old = ns.borrow_mut().insert(scoped, value);
+        let old = ns.borrow_mut().insert(scoped.clone(), value);
         // Release the previous value being overwritten.
         if let Some(prev) = old {
             release_rebound_global_value(prev);
         }
     });
+    GLOBAL_ID_NAMESPACE_INT_OWNERS.with(|owners| {
+        owners.borrow_mut().insert(scoped, None);
+    });
+}
+
+pub(crate) fn mb_global_set_id_typed_int_owner(
+    id: MbValue,
+    value: MbValue,
+    owner: Option<MbValue>,
+) {
+    let key = id.to_bits() as i64;
+    if active_cell_set_typed_int_owner_id_raw(key, value, owner) {
+        return;
+    }
+    let scoped = scoped_symbol_key(key);
+    mb_global_set_id(id, value);
+    GLOBAL_ID_NAMESPACE_INT_OWNERS.with(|owners| {
+        owners.borrow_mut().insert(scoped, owner);
+    });
+}
+
+pub(crate) fn mb_global_get_id_typed_int_owner(id: MbValue) -> TypedIntStorageRead {
+    let key = id.to_bits() as i64;
+    if let Some(read) = active_cell_get_typed_int_owner_id_raw(key) {
+        return read;
+    }
+    let scoped = scoped_symbol_key(key);
+    let value = GLOBAL_ID_NAMESPACE
+        .with(|ns| ns.borrow().get(&scoped).copied())
+        .unwrap_or_else(MbValue::none);
+    let owner = GLOBAL_ID_NAMESPACE_INT_OWNERS
+        .with(|owners| owners.borrow().get(&scoped).copied().flatten());
+    TypedIntStorageRead { value, owner }
 }
 
 /// Delete a global variable by integer id (SymbolId).
@@ -1868,6 +2119,9 @@ pub fn mb_global_del_id(id: MbValue) {
                 super::rc::release_if_ptr(prev);
             }
         }
+    });
+    GLOBAL_ID_NAMESPACE_INT_OWNERS.with(|owners| {
+        owners.borrow_mut().remove(&scoped);
     });
 }
 
@@ -2190,11 +2444,14 @@ pub fn build_globals_dict() -> MbValue {
 pub(crate) fn cleanup_all_closures() {
     let _ = CLOSURES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = CELLS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = CELL_INT_OWNERS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = ACTIVE_CELLS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = ACTIVE_MODULE_NAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = ACTIVE_QUALNAME_CONTEXTS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = GLOBAL_NAMESPACE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = GLOBAL_NAMESPACE_INT_OWNERS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = GLOBAL_ID_NAMESPACE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = GLOBAL_ID_NAMESPACE_INT_OWNERS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = ACTIVE_MODULE_SYM_IDS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     MISSING_GLOBAL_RAISES_NAME_ERROR.with(|flag| flag.set(false));
     let _ = FUNC_NAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
@@ -2647,6 +2904,133 @@ mod tests {
         assert_eq!(mb_cell_get(cell).as_int(), Some(10));
         mb_cell_set(cell, MbValue::from_int(20));
         assert_eq!(mb_cell_get(cell).as_int(), Some(20));
+    }
+
+    #[test]
+    fn typed_int_storage_owner_provenance_is_explicit() {
+        cleanup_all_closures();
+
+        // Cell storage never derives ownership from value bits, and an
+        // ordinary write deliberately clears the typed provenance sidecar.
+        let cell = mb_cell_new(MbValue::from_int(0));
+        let fresh = super::super::bigint_ops::bigint_from_i128(1i128 << 70);
+        mb_cell_set_typed_int_owner(cell, fresh, Some(fresh));
+        unsafe { super::super::rc::release_if_ptr(fresh) };
+
+        let loaded = mb_cell_get_typed_int_owner(cell);
+        assert_eq!(loaded.value, fresh);
+        assert_eq!(loaded.owner, Some(fresh));
+
+        mb_cell_set(cell, MbValue::from_int(42));
+        let overwritten = mb_cell_get_typed_int_owner(cell);
+        assert_eq!(overwritten.value.as_int(), Some(42));
+        assert_eq!(overwritten.owner, None);
+
+        mb_cell_clear(cell);
+        let missing = mb_cell_get_typed_int_owner(cell);
+        assert!(missing.value.is_none());
+        assert_eq!(missing.owner, None);
+
+        // Named globals preserve only an explicitly supplied owner, and an
+        // untyped overwrite removes it without inspecting the new payload.
+        let name = MbValue::from_ptr(MbObject::new_str("typed_global".to_string()));
+        let global = super::super::bigint_ops::bigint_from_i128(1i128 << 71);
+        mb_global_set_typed_int_owner(name, global, Some(global));
+        unsafe { super::super::rc::release_if_ptr(global) };
+        assert_eq!(
+            mb_global_get_typed_int_owner(name),
+            TypedIntStorageRead {
+                value: global,
+                owner: Some(global),
+            }
+        );
+        mb_global_set(name, MbValue::from_int(7));
+        assert_eq!(mb_global_get_typed_int_owner(name).owner, None);
+        unsafe { super::super::rc::release_if_ptr(name) };
+
+        // SymbolId globals carry the same metadata. Deleting the slot clears
+        // data and its sidecar together.
+        let global_id = MbValue::from_bits(7);
+        let global_by_id = super::super::bigint_ops::bigint_from_i128(1i128 << 72);
+        mb_global_set_id_typed_int_owner(global_id, global_by_id, Some(global_by_id));
+        unsafe { super::super::rc::release_if_ptr(global_by_id) };
+        assert_eq!(
+            mb_global_get_id_typed_int_owner(global_id),
+            TypedIntStorageRead {
+                value: global_by_id,
+                owner: Some(global_by_id),
+            }
+        );
+        mb_global_del_id(global_id);
+        assert_eq!(
+            mb_global_get_id_typed_int_owner(global_id),
+            TypedIntStorageRead {
+                value: MbValue::none(),
+                owner: None,
+            }
+        );
+
+        // Active capture cells inherit explicit global provenance, and typed
+        // closure loads read that sidecar rather than reconstructing it from
+        // the captured data word.
+        let capture_id = MbValue::from_bits(8);
+        let captured = super::super::bigint_ops::bigint_from_i128(1i128 << 73);
+        mb_global_set_id_typed_int_owner(capture_id, captured, Some(captured));
+        unsafe { super::super::rc::release_if_ptr(captured) };
+        assert_eq!(
+            mb_global_get_id_typed_int_owner(capture_id),
+            TypedIntStorageRead {
+                value: captured,
+                owner: Some(captured),
+            }
+        );
+        let closure_name = MbValue::from_ptr(MbObject::new_str("typed_capture".to_string()));
+        // Runtime SymbolId arguments are raw i64 words, while closure capture
+        // metadata stores the same id as a boxed Python integer.
+        let capture_ids = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(8)]));
+        let closure = mb_closure_new_with_cells(closure_name, MbValue::from_int(0), capture_ids);
+        assert_eq!(
+            mb_closure_get_typed_int_owner_capture(closure, MbValue::from_int(0)),
+            TypedIntStorageRead {
+                value: captured,
+                owner: Some(captured),
+            }
+        );
+        mb_closure_set_capture(closure, MbValue::from_int(0), MbValue::from_int(9));
+        assert_eq!(
+            mb_closure_get_typed_int_owner_capture(closure, MbValue::from_int(0)),
+            TypedIntStorageRead {
+                value: MbValue::from_int(9),
+                owner: None,
+            }
+        );
+        mb_closure_release(closure);
+        unsafe {
+            super::super::rc::release_if_ptr(closure_name);
+            super::super::rc::release_if_ptr(capture_ids);
+        }
+
+        // Direct typed capture initialization also publishes the declared
+        // owner, while its legacy setter clears the sidecar.
+        let local_capture = super::super::bigint_ops::bigint_from_i128(1i128 << 74);
+        mb_capture_cell_reset_typed_int_owner_id(capture_id, local_capture, Some(local_capture));
+        unsafe { super::super::rc::release_if_ptr(local_capture) };
+        assert_eq!(
+            mb_global_get_id_typed_int_owner(capture_id),
+            TypedIntStorageRead {
+                value: local_capture,
+                owner: Some(local_capture),
+            }
+        );
+        mb_capture_cell_set_id(capture_id, MbValue::from_int(10));
+        assert_eq!(
+            mb_global_get_id_typed_int_owner(capture_id),
+            TypedIntStorageRead {
+                value: MbValue::from_int(10),
+                owner: None,
+            }
+        );
+        cleanup_all_closures();
     }
 
     #[test]
