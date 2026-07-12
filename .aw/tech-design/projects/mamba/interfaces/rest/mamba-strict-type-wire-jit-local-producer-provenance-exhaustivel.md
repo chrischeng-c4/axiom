@@ -44,6 +44,20 @@ flowchart TD
 ```
 
 `jit.rs` commits a companion only after the producer has established its data and declared owner source. Constants, raw values, and immortals commit `None`; fresh runtime results transfer the emitted owner; borrowed and pass-through results retain their named owner source. Checked arithmetic and left shift pass `[data, owner]` together through each predecessor, including slow and missing-helper paths. Internal and dynamic calls remain a named #1452 boundary action rather than a local inference path.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/mamba/src/codegen/cranelift/jit.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-jit-local-producer-provenance
+    tracker: "#1462"
+    reason: "The JIT producer transaction table and paired owner-phi lowering need a dedicated deterministic generator primitive."
+```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
