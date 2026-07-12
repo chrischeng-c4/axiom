@@ -599,11 +599,34 @@ fn compute_loop_carried_vregs(body: &MirBody, tcx: &TypeContext) -> HashSet<VReg
     out
 }
 
+#[derive(Clone, Copy, Debug)]
+enum CompanionOwnerTransition {
+    ProducerWrite {
+        dest: VReg,
+        owner: Option<Value>,
+    },
+    AliasCopy {
+        dest: VReg,
+        source: VReg,
+    },
+    MoveOut {
+        source: VReg,
+    },
+    Cleanup {
+        vreg: VReg,
+    },
+}
+
 /// Variable allocator — maps VRegs to Cranelift Variables.
 struct VarAlloc {
     map: HashMap<VReg, Variable>,
     /// Track declared type for each VReg (needed for refcount cleanup).
     types: HashMap<VReg, cranelift_codegen::ir::Type>,
+    /// Runtime ownership carrier for canonical RawOrBoxedInt values. Raw data
+    /// edges carry None here; boxed edges carry the separately-owned MbValue.
+    companion_owners: HashMap<VReg, Variable>,
+    precise_owner_retain: Option<cranelift_codegen::ir::FuncRef>,
+    precise_owner_release: Option<cranelift_codegen::ir::FuncRef>,
     next: u32,
     /// VRegs that hold a native 0/1 comparison result (from BinOp Lt/Gt/Eq/…).
     /// Branch codegen can use these directly without `band_imm 1` extraction.
@@ -630,11 +653,134 @@ impl VarAlloc {
         Self {
             map: HashMap::new(),
             types: HashMap::new(),
+            companion_owners: HashMap::new(),
+            precise_owner_retain: None,
+            precise_owner_release: None,
             next: 0,
             native_bools: HashSet::new(),
             raw_ints: HashSet::new(),
             live_filter: None,
             recursion_depth_ptr: None,
+        }
+    }
+
+    fn initialize_companion_owners(
+        &mut self,
+        vregs: &HashSet<VReg>,
+        retain: Option<cranelift_codegen::ir::FuncRef>,
+        release: Option<cranelift_codegen::ir::FuncRef>,
+        builder: &mut FunctionBuilder,
+    ) {
+        self.precise_owner_retain = retain;
+        self.precise_owner_release = release;
+        if vregs.is_empty() {
+            return;
+        }
+
+        let none = builder
+            .ins()
+            .iconst(cl_types::I64, MbValue::none().to_bits() as i64);
+        let mut ordered: Vec<VReg> = vregs.iter().copied().collect();
+        ordered.sort_by_key(|vreg| vreg.0);
+        for vreg in ordered {
+            let owner = Variable::from_u32(self.next);
+            self.next += 1;
+            builder.declare_var(owner, cl_types::I64);
+            builder.def_var(owner, none);
+            self.companion_owners.insert(vreg, owner);
+        }
+    }
+
+    fn has_companion_owner(&self, vreg: VReg) -> bool {
+        self.companion_owners.contains_key(&vreg)
+    }
+
+    fn transition_companion_owner(
+        &mut self,
+        transition: CompanionOwnerTransition,
+        builder: &mut FunctionBuilder,
+    ) -> Option<Value> {
+        match transition {
+            CompanionOwnerTransition::ProducerWrite { dest, owner } => {
+                let owner_var = self.companion_owners.get(&dest).copied()?;
+                let old_owner = builder.use_var(owner_var);
+                if let Some(release) = self.precise_owner_release {
+                    builder.ins().call(release, &[old_owner]);
+                }
+                let owner = owner.unwrap_or_else(|| {
+                    builder
+                        .ins()
+                        .iconst(cl_types::I64, MbValue::none().to_bits() as i64)
+                });
+                builder.def_var(owner_var, owner);
+                Some(owner)
+            }
+            CompanionOwnerTransition::AliasCopy { dest, source } => {
+                if dest == source {
+                    return None;
+                }
+                let dest_owner = self.companion_owners.get(&dest).copied()?;
+                let source_owner = self
+                    .companion_owners
+                    .get(&source)
+                    .copied()
+                    .map(|owner| builder.use_var(owner))
+                    .unwrap_or_else(|| {
+                        builder
+                            .ins()
+                            .iconst(cl_types::I64, MbValue::none().to_bits() as i64)
+                    });
+                // Retain first: dest and source may currently alias the same
+                // object, so releasing dest before retaining source can free it.
+                if let Some(retain) = self.precise_owner_retain {
+                    builder.ins().call(retain, &[source_owner]);
+                }
+                let old_owner = builder.use_var(dest_owner);
+                if let Some(release) = self.precise_owner_release {
+                    builder.ins().call(release, &[old_owner]);
+                }
+                builder.def_var(dest_owner, source_owner);
+                Some(source_owner)
+            }
+            CompanionOwnerTransition::MoveOut { source } => {
+                let owner_var = self.companion_owners.get(&source).copied()?;
+                let owner = builder.use_var(owner_var);
+                let none = builder
+                    .ins()
+                    .iconst(cl_types::I64, MbValue::none().to_bits() as i64);
+                builder.def_var(owner_var, none);
+                Some(owner)
+            }
+            CompanionOwnerTransition::Cleanup { vreg } => {
+                let owner_var = self.companion_owners.get(&vreg).copied()?;
+                let owner = builder.use_var(owner_var);
+                if let Some(release) = self.precise_owner_release {
+                    builder.ins().call(release, &[owner]);
+                }
+                let none = builder
+                    .ins()
+                    .iconst(cl_types::I64, MbValue::none().to_bits() as i64);
+                builder.def_var(owner_var, none);
+                Some(owner)
+            }
+        }
+    }
+
+    fn cleanup_companion_owners(
+        &mut self,
+        return_vreg: Option<VReg>,
+        builder: &mut FunctionBuilder,
+    ) {
+        let mut ordered: Vec<VReg> = self.companion_owners.keys().copied().collect();
+        ordered.sort_by_key(|vreg| vreg.0);
+        for vreg in ordered {
+            if return_vreg == Some(vreg) {
+                continue;
+            }
+            self.transition_companion_owner(
+                CompanionOwnerTransition::Cleanup { vreg },
+                builder,
+            );
         }
     }
 
@@ -680,6 +826,9 @@ impl VarAlloc {
         self.map
             .keys()
             .filter(|v| {
+                if self.companion_owners.contains_key(v) {
+                    return false;
+                }
                 crate::runtime::rc::should_release_local_slot(
                     crate::runtime::rc::LocalSlotReleaseRule {
                         declared_i64: self.types.get(v) == Some(&cl_types::I64),
@@ -831,6 +980,36 @@ impl CraneliftBackend {
         Ok(func_id)
     }
 
+    /// Declare the precise-owner RC helpers without publishing them through
+    /// `extern_funcs`. Object codegen historically only enables legacy data
+    /// retain/release when the MIR explicitly uses those externs; companion
+    /// ownership must not silently widen that behavior.
+    fn declare_precise_owner_extern(
+        &mut self,
+        ext: &MirExtern,
+    ) -> crate::error::Result<FuncId> {
+        if let Some(&existing) = self.extern_funcs.get(&ext.name) {
+            return Ok(existing);
+        }
+        let mut sig = Signature::new(CallConv::SystemV);
+        for param_ty in &ext.params {
+            sig.params
+                .push(AbiParam::new(marshal::mir_type_to_cl(param_ty)));
+        }
+        if ext.return_type != MirType::Void {
+            sig.returns
+                .push(AbiParam::new(marshal::mir_type_to_cl(&ext.return_type)));
+        }
+        self.module()
+            .declare_function(&ext.name, Linkage::Import, &sig)
+            .map_err(|e| {
+                crate::error::MambaError::codegen(format!(
+                    "declare precise owner extern '{}': {e}",
+                    ext.name
+                ))
+            })
+    }
+
     /// Declare an internal function (forward declaration for mutual calls).
     fn declare_internal(
         &mut self,
@@ -860,6 +1039,9 @@ impl CraneliftBackend {
         body: &MirBody,
         tcx: &TypeContext,
         externs: &[MirExtern],
+        mixed_int_vregs: &HashSet<VReg>,
+        precise_owner_retain_id: Option<FuncId>,
+        precise_owner_release_id: Option<FuncId>,
     ) -> crate::error::Result<()> {
         let func_id = self.internal_funcs[&body.name.0];
         let mut sig = Signature::new(CallConv::SystemV);
@@ -897,6 +1079,17 @@ impl CraneliftBackend {
             builder.def_var(var, param_val);
             param_vregs.insert(*vreg);
         }
+
+        let precise_owner_retain = precise_owner_retain_id
+            .map(|id| self.module().declare_func_in_func(id, builder.func));
+        let precise_owner_release = precise_owner_release_id
+            .map(|id| self.module().declare_func_in_func(id, builder.func));
+        vars.initialize_companion_owners(
+            mixed_int_vregs,
+            precise_owner_retain,
+            precise_owner_release,
+            &mut builder,
+        );
 
         // Resolve mb_release_value FuncRef for return-time cleanup (#1129 R3).
         // #1663 T4c5 iter-5 (mitigation): re-apply the `is_entry_body` guard.
@@ -969,6 +1162,14 @@ impl CraneliftBackend {
         builder: &mut FunctionBuilder,
         vars: &mut VarAlloc,
     ) {
+        if !matches!(inst, MirInst::Copy { .. }) {
+            if let Some(dest) = mir_inst_dest(inst) {
+                vars.transition_companion_owner(
+                    CompanionOwnerTransition::ProducerWrite { dest, owner: None },
+                    builder,
+                );
+            }
+        }
         match inst {
             MirInst::LoadConst { dest, value, ty } => {
                 let cl_type = self.mamba_to_cl_type(tcx.get(*ty));
@@ -1175,6 +1376,23 @@ impl CraneliftBackend {
                 }
             }
             MirInst::Copy { dest, source } => {
+                if vars.has_companion_owner(*dest) {
+                    if dest == source {
+                        return;
+                    }
+                    vars.transition_companion_owner(
+                        CompanionOwnerTransition::AliasCopy {
+                            dest: *dest,
+                            source: *source,
+                        },
+                        builder,
+                    );
+                    let sv = vars.get(*source, builder, cl_types::I64);
+                    let val = builder.use_var(sv);
+                    let dv = vars.get(*dest, builder, cl_types::I64);
+                    builder.def_var(dv, val);
+                    return;
+                }
                 let sv = vars.get(*source, builder, cl_types::I64);
                 let dv = vars.get(*dest, builder, cl_types::I64);
                 if EMIT_REFCOUNT_CALLS {
@@ -1740,6 +1958,17 @@ fn emit_terminator(
 ) {
     match term {
         Terminator::Return(Some(vreg)) => {
+            // Transfer the precise companion out of the local slot before
+            // cleanup. #1452 will carry this value across the dynamic call
+            // boundary; until then Object producers explicitly write None.
+            vars.transition_companion_owner(
+                CompanionOwnerTransition::MoveOut { source: *vreg },
+                builder,
+            );
+            // Companion slots are initialized on every entry path, so cleanup
+            // is safe for params and branch-local data and deliberately ignores
+            // the legacy live_filter/param_vregs approximations.
+            vars.cleanup_companion_owners(Some(*vreg), builder);
             // Release all local variables except the return value and
             // function parameters. Parameters are BORROWED from the caller —
             // the caller owns and releases them. Double-releasing causes UAF.
@@ -1791,10 +2020,12 @@ fn emit_terminator(
             // NaN-boxed values (it as_ptr-checks the tag), and a raw i64 in an
             // raw_ints VReg is by definition not a pointer — the FFI thunk is
             // pure overhead. This hits fib's base-case `return n` path.
-            if crate::runtime::rc::should_retain_borrowed_return(
-                param_vregs.contains(vreg),
-                vars.raw_ints.contains(vreg),
-            ) {
+            if !vars.has_companion_owner(*vreg)
+                && crate::runtime::rc::should_retain_borrowed_return(
+                    param_vregs.contains(vreg),
+                    vars.raw_ints.contains(vreg),
+                )
+            {
                 if let Some(retain_ref) = retain_func_ref {
                     builder.ins().call(retain_ref, &[val]);
                 }
@@ -1807,6 +2038,7 @@ fn emit_terminator(
             builder.ins().return_(&[ret_val]);
         }
         Terminator::Return(None) => {
+            vars.cleanup_companion_owners(None, builder);
             // Release all local variables except parameters and raw_ints
             // (mb_release_value is a no-op on non-pointer values).
             if let Some(release_ref) = release_func_ref {
@@ -2048,6 +2280,26 @@ impl CodegenBackend for CraneliftBackend {
             .chain(rt_externs.iter())
             .cloned()
             .collect();
+        let extern_abis: HashMap<String, crate::mir::ExternReturnAbi> = all_externs
+            .iter()
+            .map(|ext| (ext.name.clone(), (ext.return_type, ext.return_abi)))
+            .collect();
+        let physical_abis =
+            crate::mir::analyze_module_physical_abis(&module.bodies, tcx, &extern_abis);
+        let mixed_int_vregs_by_body: HashMap<u32, HashSet<VReg>> = module
+            .bodies
+            .iter()
+            .map(|body| {
+                let vregs = physical_abis
+                    .body(body.name.0)
+                    .map(|analysis| analysis.raw_or_boxed_int_vregs())
+                    .unwrap_or_default();
+                (body.name.0, vregs)
+            })
+            .collect();
+        let needs_precise_owners = mixed_int_vregs_by_body
+            .values()
+            .any(|vregs| !vregs.is_empty());
 
         // Phase 1: Declare only actually-used extern functions
         for ext in &all_externs {
@@ -2076,13 +2328,46 @@ impl CodegenBackend for CraneliftBackend {
                 self.declare_extern(ext)?;
             }
         }
+        let (precise_owner_retain_id, precise_owner_release_id) =
+            if EMIT_REFCOUNT_CALLS && needs_precise_owners {
+                let retain = all_externs
+                    .iter()
+                    .find(|ext| ext.name == "mb_retain_value")
+                    .ok_or_else(|| {
+                        crate::error::MambaError::codegen(
+                            "missing mb_retain_value for precise owners".to_string(),
+                        )
+                    })?;
+                let release = all_externs
+                    .iter()
+                    .find(|ext| ext.name == "mb_release_value")
+                    .ok_or_else(|| {
+                        crate::error::MambaError::codegen(
+                            "missing mb_release_value for precise owners".to_string(),
+                        )
+                    })?;
+                (
+                    Some(self.declare_precise_owner_extern(retain)?),
+                    Some(self.declare_precise_owner_extern(release)?),
+                )
+            } else {
+                (None, None)
+            };
         // Phase 2: Forward-declare all internal functions
         for body in &module.bodies {
             self.declare_internal(body, tcx)?;
         }
         // Phase 3: Compile function bodies
         for body in &module.bodies {
-            self.compile_function(body, tcx, &all_externs)?;
+            let mixed_int_vregs = &mixed_int_vregs_by_body[&body.name.0];
+            self.compile_function(
+                body,
+                tcx,
+                &all_externs,
+                mixed_int_vregs,
+                precise_owner_retain_id,
+                precise_owner_release_id,
+            )?;
         }
 
         // Phase 4: Emit C main() entry point that calls the last function and prints result.
@@ -2337,6 +2622,299 @@ mod tests {
         let var_c = va.get(v1, &mut builder, cl_types::I64);
         assert_ne!(var_a, var_c); // different VReg → new Variable
         assert_eq!(va.next, 2);
+    }
+
+    #[test]
+    fn precise_owner_import_does_not_enable_legacy_data_refcount_lookup() {
+        let mut backend = CraneliftBackend::new().unwrap();
+        let externs = crate::runtime::symbols::runtime_externs();
+        for name in ["mb_retain_value", "mb_release_value"] {
+            let ext = externs
+                .iter()
+                .find(|ext| ext.name == name)
+                .expect("runtime refcount extern");
+            backend.declare_precise_owner_extern(ext).unwrap();
+            assert!(
+                !backend.extern_funcs.contains_key(name),
+                "precise owner declaration enabled legacy {name} lookup"
+            );
+        }
+    }
+
+    fn companion_owner_test_ir<F>(vregs: HashSet<VReg>, emit: F) -> (String, VarAlloc)
+    where
+        F: FnOnce(&mut VarAlloc, &mut FunctionBuilder),
+    {
+        use cranelift_codegen::ir::{
+            ExtFuncData, ExternalName, Function, Signature, UserExternalName,
+        };
+        use cranelift_codegen::isa::CallConv;
+        use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+
+        let sig = Signature::new(CallConv::SystemV);
+        let mut func = Function::with_name_signature(
+            cranelift_codegen::ir::UserFuncName::testcase("companion_owner"),
+            sig,
+        );
+        let mut fb_ctx = FunctionBuilderContext::new();
+        let mut vars = VarAlloc::new();
+        {
+            let mut builder = FunctionBuilder::new(&mut func, &mut fb_ctx);
+            let entry = builder.create_block();
+            builder.switch_to_block(entry);
+
+            let mut rc_sig = Signature::new(CallConv::SystemV);
+            rc_sig.params.push(AbiParam::new(cl_types::I64));
+            let rc_sig = builder.func.import_signature(rc_sig);
+            let retain_name = builder
+                .func
+                .declare_imported_user_function(UserExternalName {
+                    namespace: 0,
+                    index: 0,
+                });
+            let retain = builder.import_function(ExtFuncData {
+                name: ExternalName::user(retain_name),
+                signature: rc_sig,
+                colocated: true,
+            });
+            let release_name = builder
+                .func
+                .declare_imported_user_function(UserExternalName {
+                    namespace: 0,
+                    index: 1,
+                });
+            let release = builder.import_function(ExtFuncData {
+                name: ExternalName::user(release_name),
+                signature: rc_sig,
+                colocated: true,
+            });
+
+            vars.initialize_companion_owners(
+                &vregs,
+                Some(retain),
+                Some(release),
+                &mut builder,
+            );
+            emit(&mut vars, &mut builder);
+            builder.ins().return_(&[]);
+            builder.seal_all_blocks();
+            builder.finalize();
+        }
+        (func.display().to_string(), vars)
+    }
+
+    #[test]
+    fn companion_owner_slots_follow_canonical_analysis_and_init_deterministically() {
+        let tcx = tcx();
+        let int_ty = tcx.int();
+        let body = MirBody {
+            name: SymbolId(1455),
+            params: vec![(VReg(9), int_ty)],
+            return_ty: int_ty,
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    MirInst::LoadConst {
+                        dest: VReg(1),
+                        value: MirConst::Int(1),
+                        ty: int_ty,
+                    },
+                    MirInst::CheckedAdd {
+                        dest: VReg(2),
+                        lhs: VReg(9),
+                        rhs: VReg(1),
+                        ty: int_ty,
+                    },
+                ],
+                terminator: Terminator::Return(Some(VReg(2))),
+            }],
+        };
+        let analysis = crate::mir::analyze_module_physical_abis(
+            &[body],
+            &tcx,
+            &HashMap::new(),
+        );
+        let mixed = analysis
+            .body(1455)
+            .unwrap()
+            .raw_or_boxed_int_vregs();
+        let (ir, vars) = companion_owner_test_ir(mixed, |_, _| {});
+
+        assert_eq!(
+            vars.companion_owners.keys().copied().collect::<HashSet<_>>(),
+            HashSet::from([VReg(2), VReg(9)])
+        );
+        assert_eq!(vars.companion_owners[&VReg(2)], Variable::from_u32(0));
+        assert_eq!(vars.companion_owners[&VReg(9)], Variable::from_u32(1));
+        assert_eq!(ir.matches("iconst.i64").count(), 1);
+    }
+
+    #[test]
+    fn companion_owner_self_copy_has_zero_transitions() {
+        let tcx = tcx();
+        let data_before = std::cell::Cell::new(None);
+        let data_after = std::cell::Cell::new(None);
+        let owner_before = std::cell::Cell::new(None);
+        let owner_after = std::cell::Cell::new(None);
+        let (ir, _) = companion_owner_test_ir(HashSet::from([VReg(0)]), |vars, builder| {
+            let data_var = vars.get(VReg(0), builder, cl_types::I64);
+            let data = builder.ins().iconst(cl_types::I64, 0x1234);
+            builder.def_var(data_var, data);
+            let owner_var = vars.companion_owners[&VReg(0)];
+            let owner = builder.ins().iconst(cl_types::I64, 0x5678);
+            builder.def_var(owner_var, owner);
+            data_before.set(Some(builder.use_var(data_var)));
+            owner_before.set(Some(builder.use_var(owner_var)));
+
+            assert!(vars
+                .transition_companion_owner(
+                    CompanionOwnerTransition::AliasCopy {
+                        dest: VReg(0),
+                        source: VReg(0),
+                    },
+                    builder,
+                )
+                .is_none());
+            let mut backend = CraneliftBackend::new().unwrap();
+            backend.emit_inst(
+                &MirInst::Copy {
+                    dest: VReg(0),
+                    source: VReg(0),
+                },
+                &tcx,
+                &[],
+                builder,
+                vars,
+            );
+
+            data_after.set(Some(builder.use_var(data_var)));
+            owner_after.set(Some(builder.use_var(owner_var)));
+        });
+        assert_eq!(data_before.get(), data_after.get(), "{ir}");
+        assert_eq!(owner_before.get(), owner_after.get(), "{ir}");
+        assert!(!ir.contains("call fn0"));
+        assert!(!ir.contains("call fn1"));
+    }
+
+    #[test]
+    fn companion_owner_alias_retains_before_releasing_destination() {
+        let (ir, _) = companion_owner_test_ir(
+            HashSet::from([VReg(0), VReg(1)]),
+            |vars, builder| {
+                let source_owner = vars.companion_owners[&VReg(0)];
+                let owned = builder.ins().iconst(cl_types::I64, 0x1234);
+                builder.def_var(source_owner, owned);
+                vars.transition_companion_owner(
+                    CompanionOwnerTransition::AliasCopy {
+                        dest: VReg(1),
+                        source: VReg(0),
+                    },
+                    builder,
+                );
+            },
+        );
+        let retain = ir.find("call fn0").expect("retain call");
+        let release = ir.find("call fn1").expect("release call");
+        assert!(retain < release, "retain must precede destination release\n{ir}");
+    }
+
+    #[test]
+    fn companion_owner_join_receives_each_predecessor_owner() {
+        let (ir, _) = companion_owner_test_ir(HashSet::from([VReg(0)]), |vars, builder| {
+            let then_block = builder.create_block();
+            let else_block = builder.create_block();
+            let join_block = builder.create_block();
+            let condition = builder.ins().iconst(cl_types::I64, 1);
+            builder
+                .ins()
+                .brif(condition, then_block, &[], else_block, &[]);
+
+            builder.switch_to_block(then_block);
+            let then_owner = builder.ins().iconst(cl_types::I64, 0x1111);
+            vars.transition_companion_owner(
+                CompanionOwnerTransition::ProducerWrite {
+                    dest: VReg(0),
+                    owner: Some(then_owner),
+                },
+                builder,
+            );
+            builder.ins().jump(join_block, &[]);
+
+            builder.switch_to_block(else_block);
+            let else_owner = builder.ins().iconst(cl_types::I64, 0x2222);
+            vars.transition_companion_owner(
+                CompanionOwnerTransition::ProducerWrite {
+                    dest: VReg(0),
+                    owner: Some(else_owner),
+                },
+                builder,
+            );
+            builder.ins().jump(join_block, &[]);
+
+            builder.switch_to_block(join_block);
+            vars.transition_companion_owner(
+                CompanionOwnerTransition::Cleanup { vreg: VReg(0) },
+                builder,
+            );
+        });
+
+        let predecessor_jumps: Vec<&str> = ir
+            .lines()
+            .filter(|line| line.contains("jump block3("))
+            .collect();
+        assert_eq!(predecessor_jumps.len(), 2, "{ir}");
+        assert_ne!(predecessor_jumps[0], predecessor_jumps[1], "{ir}");
+        let join = ir
+            .lines()
+            .find(|line| line.trim_start().starts_with("block3("))
+            .expect("owner join block parameter");
+        assert!(join.contains(": i64"), "{ir}");
+        assert_eq!(ir.matches("call fn1").count(), 3, "{ir}");
+    }
+
+    #[test]
+    fn companion_owner_overwrite_and_cleanup_never_release_data_bits() {
+        let collision = -(1_i64 << 51) + 16;
+        let (ir, vars) = companion_owner_test_ir(HashSet::from([VReg(0)]), |vars, builder| {
+            let data = builder.ins().iconst(cl_types::I64, collision);
+            let data_var = vars.get(VReg(0), builder, cl_types::I64);
+            builder.def_var(data_var, data);
+            vars.transition_companion_owner(
+                CompanionOwnerTransition::ProducerWrite {
+                    dest: VReg(0),
+                    owner: None,
+                },
+                builder,
+            );
+            vars.transition_companion_owner(
+                CompanionOwnerTransition::Cleanup { vreg: VReg(0) },
+                builder,
+            );
+        });
+
+        assert_eq!(ir.matches("call fn1").count(), 2);
+        assert!(!ir.contains("call fn1(v1)"), "raw collision reached RC call\n{ir}");
+        assert!(vars
+            .releasable_i64_vregs(&HashSet::new(), None)
+            .is_empty());
+    }
+
+    #[test]
+    fn companion_owner_return_moves_without_cleanup_release() {
+        let moved = std::cell::Cell::new(None);
+        let (ir, _) = companion_owner_test_ir(HashSet::from([VReg(0)]), |vars, builder| {
+            let owner_var = vars.companion_owners[&VReg(0)];
+            let owned = builder.ins().iconst(cl_types::I64, 0x5678);
+            builder.def_var(owner_var, owned);
+            moved.set(vars.transition_companion_owner(
+                CompanionOwnerTransition::MoveOut { source: VReg(0) },
+                builder,
+            ));
+            vars.cleanup_companion_owners(Some(VReg(0)), builder);
+        });
+
+        assert!(moved.get().is_some());
+        assert!(!ir.contains("call fn1"));
     }
 
     #[test]
