@@ -252,3 +252,70 @@ e2e_tests:
     assertions:
       - "AC1: vat compiles cleanly with the new Isolation::MicroVm variant, EnvSpec.microvm_image field, and sandbox/microvm.rs module."
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/vat/src/spec.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+    reason: "R1: add the `MicroVm` unit variant to the `Isolation` enum (additive, keeps deriving clap::ValueEnum) and `microvm_image: Option<String>` to `EnvSpec` (skip_serializing_if = Option::is_none, consistent with existing optional fields). Pure data-model addition, no control flow."
+  - path: apps/vat/src/sandbox/microvm.rs
+    action: create
+    section: schema
+    impl_mode: codegen
+    reason: "R2: new `MicroVmBackend` struct (egress, env: BTreeMap<String,String>, workdir, image) implementing the existing `Sandbox` trait; `resolve()` builds the `container run --rm -v <rootfs>:/workspace -w /workspace/<workdir> -e K=V... [--network none] <image> <program> <args...>` argv; `pub fn available() -> bool` checks `container` is on PATH. Mirrors `sandbox/seatbelt.rs`'s structure (struct + trait impl + embedded `#[cfg(test)]` argv-builder unit tests), which is itself codegen-owned end to end."
+  - path: apps/vat/src/sandbox/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "R3/AC6: add `pub mod microvm;` and a fail-closed `Isolation::MicroVm` branch inside `pick()`, extending the existing HANDWRITE gap (missing-generator:logic:pick-fail-closed, established by #1300) with the same Result<Box<dyn Sandbox>, String> fail-closed contract: reject GpuRequest::Required, reject a missing microvm_image, reject when microvm::available() is false, reject EgressPolicy::LocalhostOnly with the Phase-0-confirmed gateway-IP reasoning (not a generic 'no bridge' message), otherwise construct MicroVmBackend. Also corrects the stale semantic/source TD doc for this file (see the dedicated entry below) so it reflects the current fail-closed pick(), not the pre-#1300 warn-and-fallback version."
+  - path: apps/vat/src/commands/run.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "R4/R7: introduce a shared `fn gpu_satisfied(gpu: GpuRequest, isolation: Isolation, info: &GpuInfo) -> bool` helper and call it at all three existing GpuRequest::Required preflight checks (~163/334/518), fixing the isolation-blind bug where `--isolation micro_vm --gpu required` silently passed preflight on a host with a real GPU \u2014 this is a second, independent fail-closed layer alongside pick()'s own rejection (R3), not a replacement for it (dual-defense per #1300 precedent). Also threads the new `--microvm-image` value into the three `EnvSpec { ... }` construction sites as `microvm_image`."
+  - path: apps/vat/src/commands/capabilities.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "R5: replace the hardcoded `vm` row stub with real probing: `implemented: true`, `available: sandbox::microvm::available()`, `gpu_native: false`, `network_egress` mirroring `available`, and a reason string naming that Open/Deny are enforceable but LocalhostOnly is not yet."
+  - path: apps/vat/src/commands/doctor.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "R6: add `\"vm\"` to the existing OR condition in `check_network_isolation()` so a MicroVm-isolated run is recognized as network-isolation-capable wherever `container` is available, matching how `seatbelt` is already recognized."
+  - path: apps/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: codegen
+    reason: "R7: add a `--microvm-image <ref>` flag (`Option<String>`) to `Cmd::Run`; mechanical clap field addition, consistent with this file's existing codegen ownership."
+  - path: apps/vat/src/gpu.rs
+    action: modify
+    section: cli
+    impl_mode: codegen
+    reason: "One doc-comment sentence noting the opt-in MicroVm backend exists; no logic change, consistent with this file's existing codegen ownership."
+  - path: apps/vat/tests/vat_sandbox_microvm_fail_closed.rs
+    action: create
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "AC3/AC4: new fail-closed integration test file covering GpuRequest::Required, missing microvm_image, EgressPolicy::LocalhostOnly, and container-unavailable pick() rejections, plus the dedicated run.rs gpu_satisfied() preflight rejection case proving the second independent fail-closed layer (R4)."
+  - path: apps/vat/tests/vat_sandbox_microvm.rs
+    action: create
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "AC1: new container-gated smoke test exercising a real `container run` end to end through Isolation::MicroVm; skips cleanly when the `container` CLI is not installed, mirroring the existing Docker-gated test pattern."
+  - path: apps/vat/tests/aw-ec.toml
+    action: modify
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "Register vat_sandbox_microvm_fail_closed and vat_sandbox_microvm as configured EC-gated test commands for the agent-native-gpu-native-dev-containers capability, so `aw ec gen --verify` / `aw health --verify-tests` pick them up."
+  - path: apps/vat/tech-design/semantic/source/projects-vat-src-sandbox-mod-rs.md
+    action: modify
+    section: changes
+    impl_mode: hand-written
+    reason: "AC6: this stale TD doc still describes the pre-#1300 warn-and-fallback pick() (unconditional Box<dyn Sandbox> return, eprintln!-and-continue on an unenforceable egress policy) instead of the current fail-closed version (Result<Box<dyn Sandbox>, String>, hard Err on non-Open egress it cannot enforce). Corrected in the same change that adds the pub mod microvm; declaration and the new Isolation::MicroVm branch, so the doc never drifts further from apps/vat/src/sandbox/mod.rs."
+```
