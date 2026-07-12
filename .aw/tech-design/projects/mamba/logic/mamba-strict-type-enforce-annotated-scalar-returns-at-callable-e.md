@@ -109,46 +109,46 @@ id: mamba-strict-type-scalar-return-egress-verification
 requirements:
   direct_any_rejection:
     id: R1
-    text: "A synchronous function declared as returning int rejects an Any-origin str at callee egress after executing its body, with a catchable TypeError before a direct caller can consume the result."
+    text: "A direct synchronous call runs the body, then a declared int return rejects an Any-origin str at callee egress with a catchable TypeError before any caller continuation consumes the value."
     kind: regression
     risk: high
     verify: return_annotation/func_int_return_any_str_direct.py
   dynamic_any_rejection:
     id: R2
-    text: "The same retained callee contract rejects an Any-origin str when the function value is invoked through an Any-erased dynamic call, proving validation is not dispatcher-only."
+    text: "An Any-erased dynamic call reaches the same retained callee return contract and rejects an Any-origin str rather than relying on a dispatcher-only result check."
     kind: regression
     risk: high
     verify: return_annotation/func_int_return_any_str_dynamic.py
   fail_open_boundaries:
     id: R5
-    text: "Unannotated, explicit Any, and unsupported container, generic, union, or forward-reference return annotations retain the existing fail-open behavior."
+    text: "Unannotated, explicit Any, and unsupported return annotations have no scalar contract and remain fail-open."
     kind: regression
     risk: medium
-    verify: codegen::cranelift::tests::strict_scalar_return_contract_keeps_unsupported_annotations_open
+    verify: runtime::builtins::tests::declared_return_scalar_contract_leaves_unknown_annotations_open
   fixture_accounting:
     id: R6
-    text: "The two executable return_annotation fixtures are discovered and strict-type accounting advances from 7418 to 7420 without changing unconstrained or unresolved denominators."
+    text: "The two executable return_annotation fixtures advance the strict-type wall from 7418 to 7420 without changing unconstrained or unresolved counts."
     kind: integration
     risk: medium
-    verify: strict_type_accounting_gate_704::strict_type_fixture_accounting_matches_manifest
+    verify: strict_type_accounting_gate_704::productive_recursive_alias_accounting_matches_checker_contractiveness
   return_form_contracts:
     id: R4
-    text: "Explicit, bare, and implicit returns enforce non-None scalar contracts while bare and implicit returns satisfy a None contract without caller continuation after rejection."
+    text: "Explicit, bare, and implicit returns reject non-None scalar contracts when appropriate and allow a declared None return without publishing an invalid trace or caller result."
     kind: functional
     risk: high
-    verify: codegen::cranelift::tests::strict_scalar_return_contract_covers_return_forms
+    verify: runtime::builtins::tests::declared_return_scalar_contract_rejects_invalid_forms
   scalar_abi_compatibility:
     id: R3
-    text: "Accepted int, bool, float, str, bytes, None, and resolved PEP 695 scalar aliases preserve the existing raw, boxed, or F64 return ABI; bool-to-int and int-or-bool-to-float follow the ingress numeric compatibility rule."
+    text: "The runtime helper normalizes all supported scalar contracts while preserving identity for str, bytes, and None, bool-to-int compatibility, and int-or-bool-to-float compatibility before existing ABI adaptation."
     kind: functional
     risk: high
-    verify: codegen::cranelift::tests::strict_scalar_return_contract_preserves_compatible_abi
+    verify: runtime::builtins::tests::declared_return_scalar_contract_normalizes_compatible_values
 ---
 flowchart TD
     r1[R1 direct any rejection] --> return_annotation_func_int_return_any_str_direct_py[return_annotation/func_int_return_any_str_direct.py]
     r2[R2 dynamic any rejection] --> return_annotation_func_int_return_any_str_dynamic_py[return_annotation/func_int_return_any_str_dynamic.py]
-    r3[R3 scalar abi compatibility] --> codegen_cranelift_tests_strict_scalar_return_contract_preserves_compatible_abi[codegen::cranelift::tests::strict_scalar_return_contract_preserves_compatible_abi]
-    r4[R4 return form contracts] --> codegen_cranelift_tests_strict_scalar_return_contract_covers_return_forms[codegen::cranelift::tests::strict_scalar_return_contract_covers_return_forms]
-    r5[R5 fail open boundaries] --> codegen_cranelift_tests_strict_scalar_return_contract_keeps_unsupported_annotations_open[codegen::cranelift::tests::strict_scalar_return_contract_keeps_unsupported_annotations_open]
-    r6[R6 fixture accounting] --> strict_type_accounting_gate_704_strict_type_fixture_accounting_matches_manifest[strict_type_accounting_gate_704::strict_type_fixture_accounting_matches_manifest]
+    r3[R3 scalar abi compatibility] --> runtime_builtins_tests_declared_return_scalar_contract_normalizes_compatible_values[runtime::builtins::tests::declared_return_scalar_contract_normalizes_compatible_values]
+    r4[R4 return form contracts] --> runtime_builtins_tests_declared_return_scalar_contract_rejects_invalid_forms[runtime::builtins::tests::declared_return_scalar_contract_rejects_invalid_forms]
+    r5[R5 fail open boundaries] --> runtime_builtins_tests_declared_return_scalar_contract_leaves_unknown_annotations_open[runtime::builtins::tests::declared_return_scalar_contract_leaves_unknown_annotations_open]
+    r6[R6 fixture accounting] --> strict_type_accounting_gate_704_productive_recursive_alias_accounting_matches_checker_contractiveness[strict_type_accounting_gate_704::productive_recursive_alias_accounting_matches_checker_contractiveness]
 ```
