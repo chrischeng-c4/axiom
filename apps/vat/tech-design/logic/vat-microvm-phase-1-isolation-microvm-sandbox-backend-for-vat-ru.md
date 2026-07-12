@@ -1,7 +1,7 @@
 ---
 id: vat-microvm-phase-1-isolation-microvm-sandbox-backend-for-vat-ru
 summary: (fill)
-fill_sections: [logic]
+fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 ---
 
 ## Logic
