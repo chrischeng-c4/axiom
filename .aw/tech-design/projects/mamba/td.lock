@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/mamba"
-generated_at = "2026-07-12T08:03:29.550881+00:00"
-digest = "sha256:743de52f93ca6a32edeb19d00e19e167d53f17dfb914474168d292be016f2ff5"
-source_digest = "sha256:743de52f93ca6a32edeb19d00e19e167d53f17dfb914474168d292be016f2ff5"
-ir_digest = "sha256:7550c73ec627201b9ac571bd23ed639ec5cd47f7f048562b7ffb945b0fff3a2d"
+generated_at = "2026-07-12T08:55:13.819941+00:00"
+digest = "sha256:106b68ca5134d120199a5605fb9e50f5957c91e5559f9e14ce8b187f9c73274d"
+source_digest = "sha256:106b68ca5134d120199a5605fb9e50f5957c91e5559f9e14ce8b187f9c73274d"
+ir_digest = "sha256:567cd3dc98037067d2bdd28b34714df97ca93935a1d1f9d70ae94d824a697859"
 
 [[files]]
 path = "README.md"
@@ -71,6 +71,12 @@ section_count = 3
 path = "logic/mamba-pkgmanage-remove-implicit-pypi-default-from-add-lock.md"
 digest = "sha256:20cc53f9a053f363af88ea154ad77e3aab592d51c78031d41040fa09e43dcb96"
 ir_digest = "sha256:6cf3dc00069f76a2b26d0c9955e5f9435f3d3f93ecaf2d239cb248929550da34"
+section_count = 3
+
+[[files]]
+path = "logic/mamba-strict-type-expose-jit-owner-or-none-runtime-helper.md"
+digest = "sha256:0df0b2aa0f21422ed06f52b91adbad4baa933276e4b2f2d89b51e3522726bb78"
+ir_digest = "sha256:032c3a8a49d14d116eeea739d4313a167cc71ec22657231f1d19f396a05c9561"
 section_count = 3
 
 [[files]]

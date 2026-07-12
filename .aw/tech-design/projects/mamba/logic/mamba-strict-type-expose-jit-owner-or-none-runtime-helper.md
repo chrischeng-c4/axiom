@@ -36,6 +36,20 @@ flowchart TD
 ```
 
 The helper is a runtime producer contract: it recognizes a live BigInt and returns that borrowed owner, otherwise returns `MbValue::none()`. JIT code only consumes this returned sidecar under its declared fresh or borrowed transaction and never reconstructs ownership from data representation.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/mamba/src/runtime/symbols.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-runtime-owner-or-none-projection
+    tracker: "#1466"
+    reason: "Runtime owner projection and symbol registration require a deterministic runtime-contract generator primitive."
+```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
