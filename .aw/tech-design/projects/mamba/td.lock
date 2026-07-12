@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/mamba"
-generated_at = "2026-07-12T06:41:41.085714+00:00"
-digest = "sha256:14c4ae679b79edd0534021fc29393a4fc6326f68c15b6407e498c0d22c7af87f"
-source_digest = "sha256:14c4ae679b79edd0534021fc29393a4fc6326f68c15b6407e498c0d22c7af87f"
-ir_digest = "sha256:b19a64f6d3b84a447110b2e5ace4d6fd64ba9830ae8fae831393deda66ceb273"
+generated_at = "2026-07-12T07:05:34.295645+00:00"
+digest = "sha256:2a9927ec5fcd4f9ddd9e248ce3679e934016e59e671076cba4d24e791e22aa46"
+source_digest = "sha256:2a9927ec5fcd4f9ddd9e248ce3679e934016e59e671076cba4d24e791e22aa46"
+ir_digest = "sha256:a4a0c15c6fa8bcecd4fca732e12531ef25c3c097ce5cf7d0f8e2556a5b18c374"
 
 [[files]]
 path = "README.md"
@@ -63,9 +63,9 @@ section_count = 4
 
 [[files]]
 path = "interfaces/rest/mamba-strict-type-preserve-per-producer-owner-source-contracts.md"
-digest = "sha256:fde97057ba36f6f4a0abb79e42c4a7cd7789b046ee471ec7209ceeb6fdcaadf7"
-ir_digest = "sha256:f6867fdfdbc8e7284360ff868388e1470fdf2b4f3de6d7e712837aa9816e6ac2"
-section_count = 2
+digest = "sha256:55698fcf5997b180883754a644b1d1ee53900508aa8bec80299e8f2b04cbe2ce"
+ir_digest = "sha256:7a0621654686d5f02ad5fb5c58d27c5f6df441e330d169d37ab09eb5dc549102"
+section_count = 3
 
 [[files]]
 path = "logic/mamba-pkgmanage-remove-implicit-pypi-default-from-add-lock.md"
