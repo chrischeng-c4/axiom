@@ -147,21 +147,34 @@ pub fn mb_pow_float(base: f64, exp: f64) -> f64 {
 /// Integer power: base ** exp (for JIT use).
 /// Returns raw i64 if result fits, or NaN-boxed BigInt bits if it overflows (#833).
 pub fn mb_pow_int(base: i64, exp: i64) -> i64 {
+    mb_pow_int_owner_out(base, exp).bits
+}
+
+/// Mixed-Int owner-out form of [`mb_pow_int`].
+///
+/// Only this producer knows whether it allocated a BigInt. The raw C ABI
+/// keeps returning bits alone; later codegen consumes the sidecar separately.
+pub(crate) fn mb_pow_int_owner_out(
+    base: i64,
+    exp: i64,
+) -> crate::runtime::symbols::IntOwnerOut {
     if exp < 0 {
-        return 0; // Python returns float for negative exponents; int approx = 0
+        // Python returns float for negative exponents; the int helper's
+        // historical approximation remains raw zero and ownerless.
+        return crate::runtime::symbols::IntOwnerOut::fresh_result(MbValue::from_bits(0));
     }
     // Use BigInt for reliable arbitrary-precision power
     use num_bigint::BigInt;
     let result = BigInt::from(base).pow(exp as u32);
     let fits_inline = result >= BigInt::from(-(1i64 << 47)) && result < BigInt::from(1i64 << 47);
-    if fits_inline {
+    let value = if fits_inline {
         // Safe to extract as i64
         use num_traits::ToPrimitive;
-        result.to_i64().unwrap_or(0)
+        MbValue::from_bits(result.to_i64().unwrap_or(0) as u64)
     } else {
-        // Return NaN-boxed BigInt pointer
-        crate::runtime::bigint_ops::bigint_from_big(result).to_bits() as i64
-    }
+        crate::runtime::bigint_ops::bigint_from_big(result)
+    };
+    crate::runtime::symbols::IntOwnerOut::fresh_result(value)
 }
 
 /// Box a raw i64 (0/1) into a NaN-boxed MbValue bool.
@@ -226,6 +239,21 @@ pub fn mb_unbox_int_if_boxed(val: MbValue) -> i64 {
     val.to_bits() as i64
 }
 
+/// Explicit owner-out form of [`mb_unbox_int_if_boxed`]. The input companion
+/// is selected by the runtime registry's declared argument index, never by
+/// inspecting the unboxed result.
+pub(crate) fn mb_unbox_int_if_boxed_owner_out(
+    val: MbValue,
+    argument_owners: &[Option<MbValue>],
+) -> Result<crate::runtime::symbols::IntOwnerOut, crate::runtime::symbols::IntOwnerOutError> {
+    let owner_out = crate::runtime::symbols::runtime_int_owner_out(
+        "mb_unbox_int_if_boxed",
+        mb_unbox_int_if_boxed(val),
+        argument_owners,
+    )?;
+    Ok(owner_out.expect("registered smart-unbox helper must declare an owner sidecar"))
+}
+
 /// Unbox only inline tagged ints; keep raw i64 values and boxed BigInt bits
 /// unchanged. Used by the JIT entry-body typed-return path so a top-level
 /// `f()` call still returns raw `42`, but an overflowing `f()` preserves its
@@ -236,6 +264,19 @@ pub fn mb_unbox_inline_int_if_boxed(val: MbValue) -> i64 {
     } else {
         val.to_bits() as i64
     }
+}
+
+/// Explicit owner-out form of [`mb_unbox_inline_int_if_boxed`].
+pub(crate) fn mb_unbox_inline_int_if_boxed_owner_out(
+    val: MbValue,
+    argument_owners: &[Option<MbValue>],
+) -> Result<crate::runtime::symbols::IntOwnerOut, crate::runtime::symbols::IntOwnerOutError> {
+    let owner_out = crate::runtime::symbols::runtime_int_owner_out(
+        "mb_unbox_inline_int_if_boxed",
+        mb_unbox_inline_int_if_boxed(val),
+        argument_owners,
+    )?;
+    Ok(owner_out.expect("registered smart-unbox helper must declare an owner sidecar"))
 }
 
 /// Unbox a NaN-boxed bool if tagged; otherwise pass through. See
@@ -253,4 +294,26 @@ pub fn mb_unbox_bool_if_boxed(val: MbValue) -> i64 {
 pub fn mb_unbox_float_if_boxed(val: MbValue) -> f64 {
     val.as_float()
         .unwrap_or_else(|| f64::from_bits(val.to_bits()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::symbols::IntCompanionOwner;
+
+    #[test]
+    fn mixed_int_unbox_owner_out_uses_declared_argument() {
+        let owner = crate::runtime::bigint_ops::bigint_from_i128(1i128 << 70);
+        for owner_out in [
+            mb_unbox_int_if_boxed_owner_out(MbValue::from_int(42), &[Some(owner)]).unwrap(),
+            mb_unbox_inline_int_if_boxed_owner_out(MbValue::from_int(42), &[Some(owner)]).unwrap(),
+        ] {
+            assert_eq!(owner_out.bits, 42);
+            assert_eq!(owner_out.owner, IntCompanionOwner::Borrowed(owner));
+        }
+        unsafe { crate::runtime::rc::release_if_ptr(owner) };
+
+        let ownerless = mb_unbox_int_if_boxed_owner_out(MbValue::from_int(42), &[None]).unwrap();
+        assert_eq!(ownerless.owner, IntCompanionOwner::None);
+    }
 }

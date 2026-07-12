@@ -5,6 +5,82 @@
 use crate::mir::{
     MirExtern, MirType, PhysicalReturn, ReturnAbi, ReturnOwnership,
 };
+use super::MbValue;
+
+/// Declared source for the ownership sidecar of a mixed raw-or-boxed integer.
+///
+/// The data register stays an `i64`; this declaration tells a later consumer
+/// how to obtain a companion owner without inspecting those data bits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IntCompanionContract {
+    /// A runtime helper either returns raw data or transfers one fresh BigInt.
+    FreshResultOrNone,
+    /// A representation-preserving helper carries a declared argument owner.
+    ArgumentPassThroughOrNone { argument_index: usize },
+}
+
+/// Explicit owner sidecar for a mixed integer result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IntCompanionOwner {
+    None,
+    Fresh(MbValue),
+    Borrowed(MbValue),
+}
+
+/// Result data and its ownership sidecar, kept on separate channels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IntOwnerOut {
+    pub bits: i64,
+    pub owner: IntCompanionOwner,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IntOwnerOutError {
+    MissingArgumentOwner { argument_index: usize },
+}
+
+impl IntOwnerOut {
+    /// Transfer the freshly-created BigInt when present; all other results are
+    /// ownerless. This classification is performed by the producing runtime
+    /// helper, never by a JIT consumer inspecting its result bits.
+    pub(crate) fn fresh_result(result: MbValue) -> Self {
+        let owner = if super::builtins::is_bigint_value(result) {
+            IntCompanionOwner::Fresh(result)
+        } else {
+            IntCompanionOwner::None
+        };
+        Self {
+            bits: result.to_bits() as i64,
+            owner,
+        }
+    }
+
+    pub(crate) fn borrowed_result(bits: i64, owner: Option<MbValue>) -> Self {
+        Self {
+            bits,
+            owner: owner.map_or(IntCompanionOwner::None, IntCompanionOwner::Borrowed),
+        }
+    }
+}
+
+impl IntCompanionContract {
+    pub(crate) fn owner_out(
+        self,
+        result_bits: i64,
+        argument_owners: &[Option<MbValue>],
+    ) -> Result<IntOwnerOut, IntOwnerOutError> {
+        match self {
+            Self::FreshResultOrNone => {
+                Ok(IntOwnerOut::fresh_result(MbValue::from_bits(result_bits as u64)))
+            }
+            Self::ArgumentPassThroughOrNone { argument_index } => argument_owners
+                .get(argument_index)
+                .copied()
+                .map(|owner| IntOwnerOut::borrowed_result(result_bits, owner))
+                .ok_or(IntOwnerOutError::MissingArgumentOwner { argument_index }),
+        }
+    }
+}
 
 /// A runtime symbol: name, function pointer, and ABI signature.
 pub struct RuntimeSymbol {
@@ -14,6 +90,8 @@ pub struct RuntimeSymbol {
     pub return_type: MirType,
     /// Explicit physical/ownership contract for an I64-returning producer.
     pub return_abi: Option<ReturnAbi>,
+    /// Optional explicit owner-sidecar source for a RawOrBoxedInt result.
+    pub int_companion: Option<IntCompanionContract>,
 }
 
 // Safety: function pointers to static functions are Send+Sync.
@@ -32,6 +110,7 @@ macro_rules! rt_sym {
             params: &[$($p),*],
             return_type: $ret,
             return_abi: None,
+            int_companion: None,
         }
     };
     ($name:expr, $func:expr, [$($p:expr),*], $ret:expr, $physical:expr, $ownership:expr) => {
@@ -41,6 +120,17 @@ macro_rules! rt_sym {
             params: &[$($p),*],
             return_type: $ret,
             return_abi: Some(ReturnAbi::new($physical, $ownership)),
+            int_companion: None,
+        }
+    };
+    ($name:expr, $func:expr, [$($p:expr),*], $ret:expr, $physical:expr, $ownership:expr, $int_companion:expr) => {
+        RuntimeSymbol {
+            name: $name,
+            addr: $func as *const u8,
+            params: &[$($p),*],
+            return_type: $ret,
+            return_abi: Some(ReturnAbi::new($physical, $ownership)),
+            int_companion: Some($int_companion),
         }
     };
 }
@@ -58,6 +148,7 @@ macro_rules! rt_owned_sym {
                 PhysicalReturn::BoxedMbValue,
                 ReturnOwnership::NewlyOwnedBoxed,
             )),
+            int_companion: None,
         }
     };
 }
@@ -78,6 +169,7 @@ macro_rules! rt_unknown_sym {
                 PhysicalReturn::Unknown,
                 ReturnOwnership::ProvenanceTransfer,
             )),
+            int_companion: None,
         }
     };
 }
@@ -140,7 +232,8 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64, I64],
             I64,
             PhysicalReturn::RawOrBoxedInt,
-            ReturnOwnership::ProvenanceTransfer
+            ReturnOwnership::ProvenanceTransfer,
+            IntCompanionContract::FreshResultOrNone
         ),
         RuntimeSymbol {
             name: "mb_pow_float",
@@ -148,6 +241,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             params: &[MirType::F64, MirType::F64],
             return_type: MirType::F64,
             return_abi: Some(ReturnAbi::new(PhysicalReturn::RawFloat, ReturnOwnership::NoHeapOwner)),
+            int_companion: None,
         },
         RuntimeSymbol {
             name: "mb_box_float",
@@ -155,6 +249,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             params: &[MirType::F64],
             return_type: MirType::I64,
             return_abi: Some(ReturnAbi::new(PhysicalReturn::BoxedMbValue, ReturnOwnership::NewlyOwnedBoxed)),
+            int_companion: None,
         },
         // ── Unboxing (NaN-boxed MbValue → raw primitive) for nested capture bindings (#827) ──
         rt_sym!(
@@ -179,6 +274,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             params: &[MirType::I64],
             return_type: MirType::F64,
             return_abi: Some(ReturnAbi::new(PhysicalReturn::RawFloat, ReturnOwnership::NoHeapOwner)),
+            int_companion: None,
         },
         // ── Smart unbox: passes through if already raw, unboxes if NaN-tagged ──
         // Used in entry-body lowering's typed-return path for top-level call
@@ -189,7 +285,8 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64],
             I64,
             PhysicalReturn::RawOrBoxedInt,
-            ReturnOwnership::ProvenanceTransfer
+            ReturnOwnership::ProvenanceTransfer,
+            IntCompanionContract::ArgumentPassThroughOrNone { argument_index: 0 }
         ),
         rt_sym!(
             "mb_unbox_inline_int_if_boxed",
@@ -197,7 +294,8 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64],
             I64,
             PhysicalReturn::RawOrBoxedInt,
-            ReturnOwnership::ProvenanceTransfer
+            ReturnOwnership::ProvenanceTransfer,
+            IntCompanionContract::ArgumentPassThroughOrNone { argument_index: 0 }
         ),
         rt_sym!(
             "mb_unbox_bool_if_boxed",
@@ -213,6 +311,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             params: &[MirType::I64],
             return_type: MirType::F64,
             return_abi: Some(ReturnAbi::new(PhysicalReturn::RawFloat, ReturnOwnership::NoHeapOwner)),
+            int_companion: None,
         },
         // ── Builtins ──
         rt_unknown_sym!(
@@ -4447,6 +4546,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             params: &[I64, I64],
             return_type: I64,
             return_abi: Some(ReturnAbi::new(PhysicalReturn::RawOrBoxedInt, ReturnOwnership::ProvenanceTransfer)),
+            int_companion: Some(IntCompanionContract::FreshResultOrNone),
         },
         RuntimeSymbol {
             name: "mb_bigint_sub",
@@ -4454,6 +4554,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             params: &[I64, I64],
             return_type: I64,
             return_abi: Some(ReturnAbi::new(PhysicalReturn::RawOrBoxedInt, ReturnOwnership::ProvenanceTransfer)),
+            int_companion: Some(IntCompanionContract::FreshResultOrNone),
         },
         RuntimeSymbol {
             name: "mb_bigint_mul",
@@ -4461,6 +4562,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             params: &[I64, I64],
             return_type: I64,
             return_abi: Some(ReturnAbi::new(PhysicalReturn::RawOrBoxedInt, ReturnOwnership::ProvenanceTransfer)),
+            int_companion: Some(IntCompanionContract::FreshResultOrNone),
         },
         RuntimeSymbol {
             name: "mb_bigint_cmp",
@@ -4468,6 +4570,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             params: &[I64, I64],
             return_type: I64,
             return_abi: Some(ReturnAbi::new(PhysicalReturn::RawInt, ReturnOwnership::NoHeapOwner)),
+            int_companion: None,
         },
         RuntimeSymbol {
             name: "mb_bigint_eq",
@@ -4475,6 +4578,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             params: &[I64, I64],
             return_type: I64,
             return_abi: Some(ReturnAbi::new(PhysicalReturn::RawBool, ReturnOwnership::NoHeapOwner)),
+            int_companion: None,
         },
         RuntimeSymbol {
             name: "mb_bigint_hash",
@@ -4482,6 +4586,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             params: &[I64],
             return_type: I64,
             return_abi: Some(ReturnAbi::new(PhysicalReturn::RawInt, ReturnOwnership::NoHeapOwner)),
+            int_companion: None,
         },
         RuntimeSymbol {
             name: "mb_bigint_retain",
@@ -4489,6 +4594,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             params: &[I64],
             return_type: Void,
             return_abi: None,
+            int_companion: None,
         },
         RuntimeSymbol {
             name: "mb_bigint_release",
@@ -4496,6 +4602,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             params: &[I64],
             return_type: Void,
             return_abi: None,
+            int_companion: None,
         },
         RuntimeSymbol {
             name: "mb_bigint_from_i64",
@@ -4503,6 +4610,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             params: &[I64],
             return_type: I64,
             return_abi: Some(ReturnAbi::new(PhysicalReturn::BoxedMbValue, ReturnOwnership::NewlyOwnedBoxed)),
+            int_companion: None,
         },
         // ── Complex number support (R3 CPython 3.12 conformance) ──
         rt_unknown_sym!(
@@ -4773,6 +4881,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             params: &[I64],
             return_type: Void,
             return_abi: None,
+            int_companion: None,
         },
         RuntimeSymbol {
             name: "mb_release_value",
@@ -4780,8 +4889,32 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             params: &[I64],
             return_type: Void,
             return_abi: None,
+            int_companion: None,
         },
     ]
+}
+
+/// Look up the explicit owner-sidecar contract for a runtime symbol.
+///
+/// `None` is intentional for ordinary typed helpers and for dynamic runtime
+/// calls: they must not be treated as mixed integers by a consumer.
+pub fn runtime_int_companion_contract(name: &str) -> Option<IntCompanionContract> {
+    runtime_symbols()
+        .into_iter()
+        .find(|symbol| symbol.name == name)
+        .and_then(|symbol| symbol.int_companion)
+}
+
+/// Resolve one runtime mixed-Int owner sidecar without inspecting result bits
+/// at the consumer. Unregistered and non-mixed symbols remain deferred.
+pub(crate) fn runtime_int_owner_out(
+    name: &str,
+    result_bits: i64,
+    argument_owners: &[Option<MbValue>],
+) -> Result<Option<IntOwnerOut>, IntOwnerOutError> {
+    runtime_int_companion_contract(name)
+        .map(|contract| contract.owner_out(result_bits, argument_owners))
+        .transpose()
 }
 
 /// Convert runtime symbols to MirExtern declarations for codegen.
@@ -4920,6 +5053,51 @@ mod tests {
         assert!(symbols.iter().filter_map(|s| s.return_abi).all(|abi| {
             abi.ownership != ReturnOwnership::BorrowedBoxed
         }));
+    }
+
+    #[test]
+    fn runtime_mixed_int_companion_contracts_are_explicit() {
+        let symbols = runtime_symbols();
+        for symbol in &symbols {
+            if matches!(
+                symbol.return_abi,
+                Some(ReturnAbi {
+                    physical: PhysicalReturn::RawOrBoxedInt,
+                    ownership: ReturnOwnership::ProvenanceTransfer,
+                    ..
+                })
+            ) {
+                assert!(
+                    symbol.int_companion.is_some(),
+                    "{} lacks an explicit mixed-Int companion contract",
+                    symbol.name
+                );
+            }
+        }
+
+        for name in ["mb_pow_int", "mb_bigint_add", "mb_bigint_sub", "mb_bigint_mul"] {
+            assert_eq!(
+                runtime_int_companion_contract(name),
+                Some(IntCompanionContract::FreshResultOrNone),
+                "{name}"
+            );
+        }
+        for name in ["mb_unbox_int_if_boxed", "mb_unbox_inline_int_if_boxed"] {
+            assert_eq!(
+                runtime_int_companion_contract(name),
+                Some(IntCompanionContract::ArgumentPassThroughOrNone { argument_index: 0 }),
+                "{name}"
+            );
+        }
+
+        for name in ["mb_is_truthy", "mb_call0", "missing_runtime_symbol"] {
+            assert_eq!(runtime_int_companion_contract(name), None, "{name}");
+            assert_eq!(runtime_int_owner_out(name, 42, &[]).unwrap(), None, "{name}");
+        }
+        assert_eq!(
+            runtime_int_owner_out("mb_unbox_int_if_boxed", 42, &[]),
+            Err(IntOwnerOutError::MissingArgumentOwner { argument_index: 0 })
+        );
     }
 
     // Spot-check that critical cross-subsystem runtime symbols the JIT actually

@@ -15,6 +15,7 @@ use num_bigint::BigInt;
 use num_traits::{ToPrimitive, Zero};
 
 use super::rc::{mb_release, mb_retain, MbObject, ObjData, ObjKind};
+use super::symbols::IntOwnerOut;
 use super::value::MbValue;
 
 /// 48-bit signed integer bounds (inline NaN-box range).
@@ -452,8 +453,7 @@ fn reg_to_mbvalue(bits: u64) -> MbValue {
 /// This costs one cheap range-compare per operand (see `is_*_handle`) on the
 /// boxed path only; the native/raw_ints fast path (e.g. `fib`) never reaches
 /// here at all, so it is unaffected.
-#[no_mangle]
-pub extern "C" fn mb_bigint_add(a_bits: u64, b_bits: u64) -> u64 {
+pub(crate) fn mb_bigint_add_owner_out(a_bits: u64, b_bits: u64) -> IntOwnerOut {
     // Fast path: both are raw i64 (MSBs not set to NaN-box prefix)
     const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
     if (a_bits & NAN_PREFIX != NAN_PREFIX) && (b_bits & NAN_PREFIX != NAN_PREFIX) {
@@ -464,7 +464,7 @@ pub extern "C" fn mb_bigint_add(a_bits: u64, b_bits: u64) -> u64 {
             // 48-bit inline-int range. Otherwise the value would silently
             // wrap when the caller re-NaN-boxes it (#1212 §5b).
             if fits_inline(result) {
-                return result as u64;
+                return IntOwnerOut::fresh_result(MbValue::from_bits(result as u64));
             }
         }
         // Overflow (i64 or INT48) → fall through to BigInt path.
@@ -472,57 +472,70 @@ pub extern "C" fn mb_bigint_add(a_bits: u64, b_bits: u64) -> u64 {
     let a = reg_to_mbvalue(a_bits);
     let b = reg_to_mbvalue(b_bits);
     if let Some(result) = super::builtins::numeric_handle_binop("+", a, b) {
-        return result.to_bits();
+        return IntOwnerOut::fresh_result(result);
     }
-    unsafe { mb_int_add(a, b) }.to_bits()
+    IntOwnerOut::fresh_result(unsafe { mb_int_add(a, b) })
+}
+
+#[no_mangle]
+pub extern "C" fn mb_bigint_add(a_bits: u64, b_bits: u64) -> u64 {
+    mb_bigint_add_owner_out(a_bits, b_bits).bits as u64
 }
 
 /// JIT extern: subtract two integer register values.
 ///
 /// See the `mb_bigint_add` guard note — the numeric-handle check runs on
 /// the boxed slow path only, so the raw-int fast path is untouched.
-#[no_mangle]
-pub extern "C" fn mb_bigint_sub(a_bits: u64, b_bits: u64) -> u64 {
+pub(crate) fn mb_bigint_sub_owner_out(a_bits: u64, b_bits: u64) -> IntOwnerOut {
     const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
     if (a_bits & NAN_PREFIX != NAN_PREFIX) && (b_bits & NAN_PREFIX != NAN_PREFIX) {
         let a = a_bits as i64;
         let b = b_bits as i64;
         if let Some(result) = a.checked_sub(b) {
             if fits_inline(result) {
-                return result as u64;
+                return IntOwnerOut::fresh_result(MbValue::from_bits(result as u64));
             }
         }
     }
     let a = reg_to_mbvalue(a_bits);
     let b = reg_to_mbvalue(b_bits);
     if let Some(result) = super::builtins::numeric_handle_binop("-", a, b) {
-        return result.to_bits();
+        return IntOwnerOut::fresh_result(result);
     }
-    unsafe { mb_int_sub(a, b) }.to_bits()
+    IntOwnerOut::fresh_result(unsafe { mb_int_sub(a, b) })
+}
+
+#[no_mangle]
+pub extern "C" fn mb_bigint_sub(a_bits: u64, b_bits: u64) -> u64 {
+    mb_bigint_sub_owner_out(a_bits, b_bits).bits as u64
 }
 
 /// JIT extern: multiply two integer register values.
 ///
 /// See the `mb_bigint_add` guard note — the numeric-handle check runs on
 /// the boxed slow path only, so the raw-int fast path is untouched.
-#[no_mangle]
-pub extern "C" fn mb_bigint_mul(a_bits: u64, b_bits: u64) -> u64 {
+pub(crate) fn mb_bigint_mul_owner_out(a_bits: u64, b_bits: u64) -> IntOwnerOut {
     const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
     if (a_bits & NAN_PREFIX != NAN_PREFIX) && (b_bits & NAN_PREFIX != NAN_PREFIX) {
         let a = a_bits as i64;
         let b = b_bits as i64;
         if let Some(result) = a.checked_mul(b) {
             if fits_inline(result) {
-                return result as u64;
+                return IntOwnerOut::fresh_result(MbValue::from_bits(result as u64));
             }
         }
     }
     let a = reg_to_mbvalue(a_bits);
     let b = reg_to_mbvalue(b_bits);
     if let Some(result) = super::builtins::numeric_handle_binop("*", a, b) {
-        return result.to_bits();
+        return IntOwnerOut::fresh_result(result);
     }
-    unsafe { mb_int_mul(a, b) }.to_bits()
+    IntOwnerOut::fresh_result(unsafe { mb_int_mul(a, b) })
+}
+
+#[no_mangle]
+pub extern "C" fn mb_bigint_mul(a_bits: u64, b_bits: u64) -> u64 {
+    mb_bigint_mul_owner_out(a_bits, b_bits).bits as u64
 }
 
 /// JIT extern: compare two integer MbValues.
@@ -587,6 +600,8 @@ pub extern "C" fn mb_bigint_from_i64(v: i64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::symbols::IntCompanionOwner;
+    use std::sync::atomic::Ordering;
 
     fn inline(i: i64) -> MbValue {
         MbValue::from_int(i)
@@ -774,6 +789,29 @@ mod tests {
         let b = MbValue::from_int(7).to_bits();
         let r = MbValue::from_bits(mb_bigint_mul(a, b));
         assert_eq!(r.as_int(), Some(42));
+    }
+
+    #[test]
+    fn mixed_int_owner_out_transfers_fresh_bigint_once() {
+        let raw = mb_bigint_add_owner_out(1, 2);
+        assert_eq!(raw.bits, 3);
+        assert_eq!(raw.owner, IntCompanionOwner::None);
+
+        let results = [
+            mb_bigint_add_owner_out(INT48_MAX as u64, 1),
+            mb_bigint_sub_owner_out(INT48_MIN as u64, 1),
+            mb_bigint_mul_owner_out(INT48_MAX as u64, 2),
+            super::super::builtins::mb_pow_int_owner_out(2, 48),
+        ];
+        for owner_out in results {
+            let IntCompanionOwner::Fresh(owner) = owner_out.owner else {
+                panic!("overflow result must transfer its fresh BigInt owner");
+            };
+            assert_eq!(owner_out.bits, owner.to_bits() as i64);
+            let ptr = owner.as_ptr().expect("fresh owner must be a heap BigInt");
+            assert_eq!(unsafe { (*ptr).header.rc.load(Ordering::Relaxed) }, 1);
+            unsafe { mb_release(ptr) };
+        }
     }
 
     #[test]

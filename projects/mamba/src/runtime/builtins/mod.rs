@@ -70,6 +70,7 @@ pub use bit_shifts::{mb_lshift, mb_rshift};
 pub use bool_constructor::mb_bool;
 use boxing::format_bytes_inner;
 pub(crate) use boxing::{box_raw_i64_or_bigint, passthrough_boxed_int_candidate};
+pub(crate) use boxing::mb_pow_int_owner_out;
 pub use boxing::{
     mb_box_bool, mb_box_float, mb_box_int, mb_box_int_for_compare, mb_pow_float, mb_pow_int,
     mb_unbox_bool, mb_unbox_bool_if_boxed, mb_unbox_float, mb_unbox_float_if_boxed,
