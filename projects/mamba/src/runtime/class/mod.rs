@@ -16406,6 +16406,14 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     // Safepoint poll at method dispatch (R4)
     super::gc::gc_safepoint();
 
+    // #1451: method calls prepend `receiver` to the physical user-function
+    // arguments. Install that exact shape as a nested frame so a callee never
+    // consumes an outer spread frame whose indexes no longer line up.
+    let mut owner_values = Vec::with_capacity(1);
+    owner_values.push(receiver);
+    owner_values.extend(super::builtins::extract_items(args));
+    let _owner_frame = super::argument_owner::prepare_dynamic_argument_owner_frame(&owner_values);
+
     let name_for_proxy = extract_str(method_name).unwrap_or_default();
     if super::stdlib::weakref_mod::proxy_dead_attr_access(receiver, &name_for_proxy) {
         super::stdlib::weakref_mod::raise_reference_error();
