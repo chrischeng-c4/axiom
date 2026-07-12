@@ -46,7 +46,6 @@ edges:
   - { from: json_result, to: json_ok, label: "ok" }
 ---
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
