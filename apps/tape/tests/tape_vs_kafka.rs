@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:aa79af6d" tracker="pending-tracker" reason="New dedicated external test (mirrors apps/tape/tests/tape_vs_nats_jetstream.rs): spawns a real single-node Kafka broker in KRaft mode via `docker run apache/kafka:3.9.0` (no ZooKeeper), skips gracefully if Docker is unavailable, publishes a 20,000-event / 128-byte-payload backlog with a real pure-Rust rskafka producer, replays it from the beginning with a real rskafka consumer, and compares against Tape's TapeJournal::replay_refs zero-copy replay via tape::bench::external_replay_win / verify_external_replay_win with a required_ratio calibrated from an actual measured run."
+// TODO: hand-write content for `apps/tape/tests/tape_vs_kafka.rs`.
+// HANDWRITE-END
