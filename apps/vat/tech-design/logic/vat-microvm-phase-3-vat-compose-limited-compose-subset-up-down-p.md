@@ -393,3 +393,126 @@ commands:
       - "Not modified by this WI beyond the additive prepare_service dispatch check and the early RunnerRunRecord persist described above: no change to Isolation::MicroVm's resolve() argv shape (Phase 1) or vat build's container_build_command/build_image (Phase 2); vat cluster's own registry and run_capture poll pattern are read as precedent, not touched."
       - "Out of scope for this WI: bridge-network DNS simulation for depends_on (a printed warning only), registry push/pull, and any change to the default --runtime auto Docker-only behavior."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: vat-microvm-phase-3-vat-compose-limited-compose-subset-up-down-p-verification
+requirements:
+  container_run_command_argv_shape:
+    id: R5
+    text: "container_run_command builds the exact argv order: [\"container\",\"run\",\"--rm\",\"--name\",<name>,\"-p\",\"127.0.0.1:<host>:<container>\", (\"-v\",\"<name>:<path>\") per volumes entry, (\"-e\",\"<K>=<V>\") per sorted env entry, <image>] -- deterministic ordering matching docker_run_command's guarantee."
+    kind: functional
+    risk: high
+    verify: commands::run::tests::container_run_command_shape
+  depends_on_prints_no_bridge_dns_warning:
+    id: R3
+    text: "Any service whose depends_on is non-empty after expansion triggers a printed, non-fatal warning that vat compose does not simulate container-to-container bridge-network DNS."
+    kind: functional
+    risk: medium
+    verify: compose::tests::expand_depends_on_prints_no_bridge_dns_warning
+  down_hard_errors_without_recorded_pid:
+    id: R9
+    text: "compose down's kill-target resolution hard-errors (no libc::kill call attempted) when the ComposeRecord's vat_id has no recorded test_run.runner.pid, naming the condition clearly (never started, or already exited)."
+    kind: functional
+    risk: medium
+    verify: commands::compose::tests::down_errors_without_recorded_pid
+  environment_bare_key_hard_reject:
+    id: R2
+    text: "compose::parse hard-rejects an environment entry with a bare key and no value (list form with no \"=\", or map form with a null value) rather than silently inheriting the caller's shell environment."
+    kind: functional
+    risk: high
+    verify: compose::tests::parse_rejects_bare_environment_key
+  expand_bare_ports_become_auto:
+    id: R2
+    text: "compose::expand maps a bare \"C\" ports entry to PortSpec::Auto with container_port C, and an \"H:C\" entry to PortSpec::Fixed(H) with container_port C."
+    kind: functional
+    risk: high
+    verify: compose::tests::expand_ports_bare_container_form_becomes_auto
+  expand_build_resolves_via_build_image:
+    id: R6
+    text: "compose::expand resolves a build: entry (short string or full mapping form) by calling commands::build::build_image() in-process and writes the returned tag into that service's ServiceConfig.image, converging image: and build: services to one uniform shape."
+    kind: functional
+    risk: high
+    verify: compose::tests::expand_build_key_resolves_via_build_image
+  expand_depends_on_maps_to_requires:
+    id: R2
+    text: "compose::expand maps a depends_on list or map form 1:1 onto ServiceConfig.requires, preserving compose-declared order."
+    kind: functional
+    risk: medium
+    verify: compose::tests::expand_derives_requires_from_depends_on
+  materialize_writes_synthesized_runner:
+    id: R1
+    text: "compose::materialize writes a vat.toml with one [[services]] per compose service plus one synthesized [[runners]] (id \"<project>.up\", cmd [\"sleep\",\"infinity\"], requires = every compose service id in expand()'s order), satisfying VatConfig::validate()'s existing at-least-one-runner requirement unmodified."
+    kind: functional
+    risk: high
+    verify: compose::tests::materialize_writes_synthesized_runner_requires_all_services
+  parse_ignores_x_extension_keys:
+    id: R2
+    text: "compose::parse silently ignores any top-level or per-service key prefixed x- (compose's own extension convention), never treating it as unsupported."
+    kind: functional
+    risk: low
+    verify: compose::tests::parse_accepts_x_extension_keys
+  parse_rejects_unsupported_keys_exact_format:
+    id: R3
+    text: "compose::parse hard-rejects deploy/secrets/configs/extends/networks/profiles/healthcheck/command/entrypoint-override/bind-mount-form volumes with the exact error: compose file `{file}` service `{id}` uses unsupported key `{key}` -- {reason}; remove it or edit the generated vat.toml directly after `vat compose import`."
+    kind: functional
+    risk: high
+    verify: compose::tests::parse_rejects_deploy_key
+  prepare_service_dispatches_on_runtime:
+    id: R4
+    text: "prepare_service routes an image-backed ServiceConfig to prepare_microvm_service only when service.runtime is MicroVm; every other runtime value (Auto, Docker, Native) is routed to prepare_image_service unchanged, so today's default behavior is bit-for-bit preserved."
+    kind: regression
+    risk: high
+    verify: commands::run::tests::prepare_service_dispatches_microvm_runtime_only
+  ps_logs_filter_by_service_ids:
+    id: R10
+    text: "compose ps and compose logs both filter a loaded run's flat test_run.services by the ComposeRecord's service_ids membership before printing/locating, reusing commands/logs.rs's existing linear-scan-by-id approach; a service outside that set is treated as not found."
+    kind: functional
+    risk: medium
+    verify: commands::compose::tests::ps_and_logs_filter_by_service_ids
+  runner_early_persist_writes_live_pid:
+    id: R9
+    text: "run_configured writes an interim RunnerRunRecord (status Running, pid Some(child.id())) into vat.meta.test_run.runner/runners immediately after spawning the runner process, strictly before the blocking wait_runner_processes call returns -- required so a concurrent reader (vat compose down) observes a live pid while the runner is still executing."
+    kind: functional
+    risk: high
+    verify: commands::run::tests::run_configured_persists_runner_pid_before_wait
+  runner_run_record_pid_field_roundtrip:
+    id: R7
+    text: "RunnerRunRecord serializes and deserializes an optional pid: Option<u32> field; legacy metadata without the field deserializes with pid: None (backward compatible)."
+    kind: regression
+    risk: medium
+    verify: state::tests::runner_run_record_pid_field_roundtrip
+  service_runtime_microvm_variant_validate:
+    id: R4
+    text: "ServiceConfig::validate() accepts an image-backed service declaring runtime: docker or runtime: microvm explicitly (relaxed from requiring a preset), while a cmd-only service with a non-auto runtime still bails."
+    kind: functional
+    risk: high
+    verify: config::tests::validate_allows_image_service_explicit_runtime
+  stop_services_removes_microvm_container:
+    id: R5
+    text: "stop_services() force-removes a MicroVm-backed service's container via `container rm -f <name>` when the handle carries a microvm_name, regardless of how the `container run` child process exited, parallel to the existing docker_name/`docker rm -f` branch."
+    kind: regression
+    risk: medium
+    verify: commands::run::tests::stop_services_removes_microvm_container
+---
+flowchart TD
+    r1[R1 materialize writes synthesized runner] --> compose_tests_materialize_writes_synthesized_runner_requires_all_services[compose::tests::materialize_writes_synthesized_runner_requires_all_services]
+    r2[R2 environment bare key hard reject] --> compose_tests_parse_rejects_bare_environment_key[compose::tests::parse_rejects_bare_environment_key]
+    r2[R2 expand bare ports become auto] --> compose_tests_expand_ports_bare_container_form_becomes_auto[compose::tests::expand_ports_bare_container_form_becomes_auto]
+    r2[R2 expand depends on maps to requires] --> compose_tests_expand_derives_requires_from_depends_on[compose::tests::expand_derives_requires_from_depends_on]
+    r2[R2 parse ignores x extension keys] --> compose_tests_parse_accepts_x_extension_keys[compose::tests::parse_accepts_x_extension_keys]
+    r3[R3 depends on prints no bridge dns warning] --> compose_tests_expand_depends_on_prints_no_bridge_dns_warning[compose::tests::expand_depends_on_prints_no_bridge_dns_warning]
+    r3[R3 parse rejects unsupported keys exact format] --> compose_tests_parse_rejects_deploy_key[compose::tests::parse_rejects_deploy_key]
+    r4[R4 prepare service dispatches on runtime] --> commands_run_tests_prepare_service_dispatches_microvm_runtime_only[commands::run::tests::prepare_service_dispatches_microvm_runtime_only]
+    r4[R4 service runtime microvm variant validate] --> config_tests_validate_allows_image_service_explicit_runtime[config::tests::validate_allows_image_service_explicit_runtime]
+    r5[R5 container run command argv shape] --> commands_run_tests_container_run_command_shape[commands::run::tests::container_run_command_shape]
+    r5[R5 stop services removes microvm container] --> commands_run_tests_stop_services_removes_microvm_container[commands::run::tests::stop_services_removes_microvm_container]
+    r6[R6 expand build resolves via build image] --> compose_tests_expand_build_key_resolves_via_build_image[compose::tests::expand_build_key_resolves_via_build_image]
+    r7[R7 runner run record pid field roundtrip] --> state_tests_runner_run_record_pid_field_roundtrip[state::tests::runner_run_record_pid_field_roundtrip]
+    r9[R9 down hard errors without recorded pid] --> commands_compose_tests_down_errors_without_recorded_pid[commands::compose::tests::down_errors_without_recorded_pid]
+    r9[R9 runner early persist writes live pid] --> commands_run_tests_run_configured_persists_runner_pid_before_wait[commands::run::tests::run_configured_persists_runner_pid_before_wait]
+    r10[R10 ps logs filter by service ids] --> commands_compose_tests_ps_and_logs_filter_by_service_ids[commands::compose::tests::ps_and_logs_filter_by_service_ids]
+```
