@@ -113,3 +113,29 @@ notes: >
   take their bounded timeout as a plain Duration argument from the caller
   (ensure_microvm_available in commands/build.rs), not from a config file.
 ```
+
+## CLI
+<!-- type: cli lang: yaml -->
+
+```yaml
+commands:
+  - name: vat build
+    usage: "vat build [--file <path>] [--context <dir>] [--tag <ref>] [--build-arg K=V]... [--json]"
+    new_cmd_variant: "Cmd::Build { file: Option<PathBuf>, context: Option<PathBuf>, tag: Option<String>, build_arg: Vec<String>, json: bool }"
+    dispatch: "cli.rs routes Cmd::Build to commands::build::exec(Args { .. })"
+    behavior:
+      - "--file defaults to `Dockerfile` inside the resolved --context directory when omitted."
+      - "--context defaults to the current working directory when omitted; both --file and --context are resolved to absolute paths before any other step."
+      - "--tag defaults to `<context-dir-basename>:latest` (sanitized to a valid OCI reference: lowercased, non [a-z0-9._-] runs collapsed to `-`) when omitted; this default is resolved once in exec() — build_image() itself always receives a concrete tag: &str and never guesses."
+      - "--build-arg K=V may be repeated; each occurrence parses into a (String,String) pair via split_once('='); CLI-supplied order is preserved into the argv builder (no reordering)."
+      - "exec() calls ensure_microvm_available() before anything else (fail-closed, mirrors run.rs's ensure_docker_available for `vat run`): requires the `container` binary on PATH and a responsive system (system_up(), or a bounded ensure_system_started() wait)."
+      - "Human mode (json=false): exec() spawns the container_build_command() argv directly with inherited stdio, so live BuildKit layer/cache progress streams to the terminal in real time (R3); on success prints a one-line tag + elapsed-time summary."
+      - "JSON mode (json=true): exec() calls build_image() (captured stdout/stderr, never echoed) and prints only the structured BuildReport as JSON on success; this is an intentional divergence from gc.rs's compute-then-report pattern because build progress has real value and no other vat command proxies a long-running streamed subprocess today (R3)."
+      - "AC5: vat build never edits, lints, or otherwise mutates the Dockerfile it is given — it only reads the path and passes it to `container build -f`; works unmodified against any existing repo Dockerfile."
+      - "vat build is container-only: it does not touch Docker-backed ServiceRuntime::Docker, and it does not alter Isolation::MicroVm's resolve() argv shape or pick()'s fail-closed branch (Phase 1, merged, untouched)."
+      - "Out of scope for this command: compose YAML parsing / `vat compose` (Phase 3, will call build_image() in-process), and registry push/pull (not part of this rollout)."
+  - name: "vat run / vat capabilities / vat doctor (unaffected)"
+    usage: "(no change)"
+    behavior:
+      - "Not modified by this WI: no changes to Isolation::MicroVm's resolve() argv shape, pick()'s fail-closed branch, capabilities.rs, or doctor.rs. `container build` reuses the same `container` CLI presence check family (sandbox::microvm::available()) but is otherwise independent of the `vat run` code path."
+```
