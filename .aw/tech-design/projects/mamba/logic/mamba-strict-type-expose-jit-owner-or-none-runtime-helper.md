@@ -36,3 +36,35 @@ flowchart TD
 ```
 
 The runtime, not JIT lowering, classifies the produced value. It returns the original `MbValue` only for a live BigInt and `MbValue::none()` for raw integers, inline boxed integers, and any pointer-shaped raw payload. The helper grants no new reference; a JIT producer chooses its declared fresh or borrowed transaction action after receiving this sidecar.
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: mamba-strict-type-runtime-owner-or-none-verification
+requirements:
+  jit_registration:
+    id: R3
+    text: "The helper is registered as a callable runtime symbol for JIT lowering without exposing payload inference to consumers."
+    kind: regression
+    risk: high
+    verify: runtime::symbols::tests::runtime_typed_int_owner_projection_is_explicit
+  raw_collision:
+    id: R2
+    text: "Raw and inline integer results, including pointer-shaped raw payloads, produce an explicit None sidecar."
+    kind: regression
+    risk: high
+    verify: runtime::symbols::tests::runtime_typed_int_owner_projection_is_explicit
+  runtime_projection:
+    id: R1
+    text: "The registered runtime owner projection returns a borrowed BigInt owner only for a live BigInt result."
+    kind: functional
+    risk: high
+    verify: runtime::symbols::tests::runtime_typed_int_owner_projection_is_explicit
+---
+flowchart TD
+    r1[R1 runtime projection] --> runtime_symbols_tests_runtime_typed_int_owner_projection_is_explicit[runtime::symbols::tests::runtime_typed_int_owner_projection_is_explicit]
+    r2[R2 raw collision] --> runtime_symbols_tests_runtime_typed_int_owner_projection_is_explicit
+    r3[R3 jit registration] --> runtime_symbols_tests_runtime_typed_int_owner_projection_is_explicit
+```
