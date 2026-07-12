@@ -10,7 +10,7 @@
 // @command cargo test -p lumen --features operator --test operator_render -- --nocapture
 // AW-EC-END
 
-// Contract: The operator render gate proves fixed StatefulSet storage topology and reshard status exposure.
+// Contract: The operator render gate proves rendering topology conformance: fixed StatefulSet storage topology and reshard status exposure (rendering only — reshard driver execution, admin verbs, and migration durability are covered by the dedicated reshard-durability gate).
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_k8s_operator_storage_topology_reshard() {

@@ -71,6 +71,7 @@ fn build_corpus() -> Engine {
                 external_id: format!("u{j}"),
                 field: "email".into(),
                 value: FieldValue::String(value),
+                version: None,
             });
         }
         engine

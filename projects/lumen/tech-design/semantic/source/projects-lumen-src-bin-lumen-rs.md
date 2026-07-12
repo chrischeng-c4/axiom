@@ -480,7 +480,9 @@ struct ConnectArgs {
 }
 
 /// Bearer-token role required for `lumen connect`/`lumen query`'s Secret
-/// token resolution (R2). Mirrors `service_auth::Role`.
+/// token resolution (R2). Mirrors `service_auth::Role`; lumen's own role
+/// mapping into `cli_std::connect::Role` (#1376) — every k8s-native service
+/// CLI adopting `cli_std::connect` supplies its own such mapping.
 #[derive(Clone, Copy, ValueEnum)]
 enum TokenRole {
     Read,
@@ -489,12 +491,12 @@ enum TokenRole {
 }
 
 /// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
-impl From<TokenRole> for lumen::auth::Role {
+impl From<TokenRole> for cli_std::connect::Role {
     fn from(role: TokenRole) -> Self {
         match role {
-            TokenRole::Read => lumen::auth::Role::Read,
-            TokenRole::Write => lumen::auth::Role::Write,
-            TokenRole::Admin => lumen::auth::Role::Admin,
+            TokenRole::Read => cli_std::connect::Role::Read,
+            TokenRole::Write => cli_std::connect::Role::Write,
+            TokenRole::Admin => cli_std::connect::Role::Admin,
         }
     }
 }
@@ -854,8 +856,14 @@ struct ServeArgs {
     raft_port: u16,
     /// Physical storage shard count. Data ownership uses the versioned
     /// virtual-bucket map, not permanent `hash % shardCount` routing.
-    #[arg(long, env = "SHARD_COUNT", default_value_t = 1)]
-    shard_count: u32,
+    /// Deliberately `Option<u32>` with no `default_value_t`: this is the
+    /// only clap-native way to tell "the operator/user actually set
+    /// `--shard-count`/`SHARD_COUNT`" (`Some`) apart from "nobody set it"
+    /// (`None`) — the segment-dirs fan-in path (below) needs that
+    /// distinction to default to the loaded-dir count instead of silently
+    /// assuming 1 (#1398 R4). Non-fan-in call sites treat `None` as 1.
+    #[arg(long, env = "SHARD_COUNT")]
+    shard_count: Option<u32>,
     /// Directory for RDB snapshots (cold-start baseline). When unset,
     /// no snapshots are taken and a node rebuilds from the full log.
     #[arg(long, env = "LUMEN_DATA_DIR")]
@@ -1397,133 +1405,16 @@ fn restore_file_next_command(url: &str, path: &Path, has_token: bool) -> String 
 }
 
 // ---------------------------------------------------------------------------
-// `lumen connect` / `lumen query` (#1321)
+// `lumen connect` / `lumen query` (#1321) — thin adapter over
+// `cli_std::connect` (#1376): the `kubectl port-forward` process lifecycle
+// (`ChildGuard`, `free_local_port`, `wait_for_local_port_ready`) and the
+// token-registry Secret resolution chain (`kubectl_get_json`,
+// `resolve_cr_tokens_secret`, `resolve_token`) now live in
+// `libs/cli-std/src/connect.rs`, reusable by any k8s-native service CLI.
+// This file keeps only its own flag surface (`ConnectArgs`/`QueryTarget`),
+// the `Lumen` CRD-name lookup convention (`"lumen"` passed as
+// `resource_kind`), and the `TokenRole` -> `cli_std::connect::Role` mapping.
 // ---------------------------------------------------------------------------
-
-/// RAII child-process guard: kills + reaps on drop so a `kubectl
-/// port-forward` never survives the wrapped command (AC1). Prior art:
-/// `projects/preview/tests/kind_lifecycle.rs`'s `ChildGuard`, generalized
-/// here over any `std::process::Command` so it is unit-testable with a fake
-/// child instead of requiring a real cluster.
-/// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
-struct ChildGuard {
-    child: std::process::Child,
-}
-
-/// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
-impl ChildGuard {
-    fn spawn(command: &mut std::process::Command) -> Result<Self> {
-        let child = command.spawn().context("spawn child process")?;
-        Ok(Self { child })
-    }
-}
-
-/// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-/// Bind an ephemeral local port and immediately release it, returning the
-/// number `kubectl port-forward` should target. There is an inherent
-/// TOCTOU race (someone else could bind it first), the same tradeoff
-/// `projects/preview/tests/kind_lifecycle.rs::free_local_port` makes.
-fn free_local_port() -> Result<u16> {
-    let listener =
-        std::net::TcpListener::bind(("127.0.0.1", 0)).context("bind ephemeral local port")?;
-    Ok(listener.local_addr().context("read local addr")?.port())
-}
-
-/// Poll `127.0.0.1:port` until a TCP connect succeeds or `timeout` elapses —
-/// the port-forward readiness gate for AC1 (no fixed sleep, no dependency on
-/// kubectl's own stdout).
-fn wait_for_local_port_ready(port: u16, timeout: Duration) -> Result<()> {
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return Ok(());
-        }
-        if std::time::Instant::now() >= deadline {
-            anyhow::bail!("port-forward to 127.0.0.1:{port} never became ready within {timeout:?}");
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-}
-
-/// Pure: extract `spec.tokensSecret` from a `Lumen` CR's `kubectl get -o
-/// json` output (see `lumen::operator::crd::LumenSpec::tokens_secret`).
-fn cr_tokens_secret(cr_json: &serde_json::Value) -> Option<String> {
-    cr_json["spec"]["tokensSecret"].as_str().map(str::to_string)
-}
-
-/// Run `kubectl get <resource> <name> -n <namespace> -o json` (optionally
-/// through `--context`) and parse the result.
-fn kubectl_get_json(
-    context: Option<&str>,
-    resource: &str,
-    name: &str,
-    namespace: &str,
-) -> Result<serde_json::Value> {
-    let mut cmd = std::process::Command::new("kubectl");
-    if let Some(ctx) = context {
-        cmd.args(["--context", ctx]);
-    }
-    cmd.args(["get", resource, name, "-n", namespace, "-o", "json"]);
-    let output = cmd
-        .output()
-        .with_context(|| format!("run kubectl get {resource} {name} -n {namespace}"))?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "kubectl get {resource} {name} -n {namespace} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    serde_json::from_slice(&output.stdout)
-        .with_context(|| format!("parse kubectl get {resource} {name} JSON"))
-}
-
-/// Resolve a `Lumen` CR's `spec.tokensSecret` (empty when unset).
-fn resolve_cr_tokens_secret(
-    context: Option<&str>,
-    namespace: &str,
-    cr: &str,
-) -> Result<Option<String>> {
-    let cr_json = kubectl_get_json(context, "lumen", cr, namespace)?;
-    Ok(cr_tokens_secret(&cr_json))
-}
-
-/// Pure: decode a Kubernetes Secret's `data.<key>` (base64) field into raw
-/// bytes. `kubectl get secret -o json` always base64-encodes `.data`.
-fn secret_data_bytes(secret_json: &serde_json::Value, key: &str) -> Result<Vec<u8>> {
-    use base64::Engine;
-    let encoded = secret_json["data"][key]
-        .as_str()
-        .with_context(|| format!("secret has no data key `{key}`"))?;
-    base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .context("base64-decode secret data")
-}
-
-/// Pick the first registry token whose roles cover `role` for `collection`
-/// (falling back to the wildcard `*` grant). Pure — unit-testable without
-/// any I/O; deterministic tie-break is not needed since callers name a
-/// specific role/collection scope for their own token.
-fn select_token(
-    registry: &std::collections::HashMap<String, lumen::auth::TokenClaims>,
-    role: lumen::auth::Role,
-    collection: Option<&str>,
-) -> Option<String> {
-    registry.iter().find_map(|(token, claims)| {
-        let granted = collection
-            .and_then(|c| claims.roles.get(c))
-            .or_else(|| claims.roles.get("*"));
-        granted
-            .is_some_and(|granted| granted.covers(role))
-            .then(|| token.clone())
-    })
-}
 
 /// R2: resolve a usable bearer token without the caller decoding the
 /// Secret/JSON by hand. Precedence: `target.token` (explicit flag or
@@ -1531,21 +1422,18 @@ fn select_token(
 /// set, fetch the Secret via kubectl, decode its `token-registry.json` key
 /// (the same schema `lumen llm --topic auth` documents), and pick a token
 /// whose role covers `target.role` for `collection` (or `*`). Returns `None`
-/// when no token can be resolved (e.g. `spec.auth: off` deployments).
+/// when no token can be resolved (e.g. `spec.auth: off` deployments). Thin
+/// wrapper over `cli_std::connect::resolve_token` (#1376).
 /// @spec projects/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
 fn resolve_token(target: &QueryTarget, collection: Option<&str>) -> Result<Option<String>> {
-    if let Some(token) = &target.token {
-        return Ok(Some(token.clone()));
-    }
-    let (Some(namespace), Some(secret)) = (target.namespace.as_deref(), target.secret.as_deref())
-    else {
-        return Ok(None);
-    };
-    let secret_json = kubectl_get_json(target.context.as_deref(), "secret", secret, namespace)?;
-    let bytes = secret_data_bytes(&secret_json, "token-registry.json")?;
-    let registry: std::collections::HashMap<String, lumen::auth::TokenClaims> =
-        serde_json::from_slice(&bytes).context("parse token-registry.json")?;
-    Ok(select_token(&registry, target.role.into(), collection))
+    cli_std::connect::resolve_token(
+        target.token.as_deref(),
+        target.context.as_deref(),
+        target.namespace.as_deref(),
+        target.secret.as_deref(),
+        target.role.into(),
+        collection,
+    )
 }
 
 // The body-builder / URL-resolution helpers below are exercised directly by
@@ -1577,14 +1465,21 @@ async fn connect(args: ConnectArgs) -> Result<()> {
     let secret = match args.secret.clone() {
         Some(secret) => Some(secret),
         None => match &args.cr {
-            Some(cr) => resolve_cr_tokens_secret(args.context.as_deref(), &args.namespace, cr)?,
+            // "lumen" is the `Lumen` CRD's kubectl resource name — lumen's
+            // own CR-kind lookup convention (R2).
+            Some(cr) => cli_std::connect::resolve_cr_tokens_secret(
+                args.context.as_deref(),
+                &args.namespace,
+                "lumen",
+                cr,
+            )?,
             None => None,
         },
     };
 
     let local_port = match args.local_port {
         Some(port) => port,
-        None => free_local_port()?,
+        None => cli_std::connect::free_local_port()?,
     };
 
     let mut pf_cmd = std::process::Command::new("kubectl");
@@ -1600,9 +1495,10 @@ async fn connect(args: ConnectArgs) -> Result<()> {
     ]);
     pf_cmd.stdout(std::process::Stdio::null());
     pf_cmd.stderr(std::process::Stdio::null());
-    let _forward = ChildGuard::spawn(&mut pf_cmd).context("start kubectl port-forward")?;
+    let _forward =
+        cli_std::connect::ChildGuard::spawn(&mut pf_cmd).context("start kubectl port-forward")?;
 
-    wait_for_local_port_ready(local_port, Duration::from_secs(30))?;
+    cli_std::connect::wait_for_local_port_ready(local_port, Duration::from_secs(30))?;
 
     let target = QueryTarget {
         url: None,
@@ -2016,6 +1912,63 @@ fn ensure_trailing_newline(input: &str) -> String {
     }
 }
 
+/// Real [`lumen::api::CheckpointSink`] wiring for segment-persistence mode
+/// (#1389): forces the same synchronous stage-then-rename checkpoint the
+/// periodic snapshotter performs (`SegmentRdbStore::save`), but synchronously
+/// on demand — this is what `POST /admin/checkpoint` answers, and what the
+/// reshard driver's cutover gate (`operator::reshard_driver::
+/// checkpoint_touched_shards`) awaits per touched shard before triggering the
+/// cutover rolling restart. Also prunes + trims the AOF through the
+/// checkpointed sequence, mirroring the periodic path exactly, so an
+/// on-demand checkpoint leaves the AOF in the same state a periodic one
+/// would (and a reshard cutover right after one doesn't leave a redundant,
+/// ever-growing AOF tail).
+struct SegmentCheckpointSink {
+    engine: Arc<Engine>,
+    store: Arc<lumen::segment_rdb::SegmentRdbStore>,
+    writer: Arc<dyn lumen::coordinator::WriteSink>,
+    aof: Option<lumen::coordinator::SharedAof>,
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-bin-lumen-rs.md#source
+#[async_trait::async_trait]
+impl lumen::api::CheckpointSink for SegmentCheckpointSink {
+    async fn checkpoint_now(&self) -> Result<bool> {
+        let seq = self.writer.applied_seq();
+        let store = self.store.clone();
+        let engine = self.engine.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            store.save(&engine, seq)?;
+            store.prune(3)?;
+            Ok(())
+        })
+        .await
+        .context("checkpoint task panicked")??;
+
+        if let Some(aof) = &self.aof {
+            let aof = aof.clone();
+            let trim = tokio::task::spawn_blocking(move || {
+                aof.lock()
+                    .map_err(|_| anyhow::anyhow!("aof writer poisoned"))?
+                    .truncate_through(seq)
+            })
+            .await;
+            match trim {
+                Ok(Ok(())) => tracing::info!(through = seq, "AOF trimmed to on-demand checkpoint"),
+                Ok(Err(e)) => {
+                    tracing::warn!(error = %e, "AOF trim after on-demand checkpoint failed")
+                }
+                Err(e) => tracing::warn!(error = %e, "AOF trim task panicked"),
+            }
+        }
+        tracing::info!(
+            up_to_seq = seq,
+            "on-demand checkpoint written (admin request)"
+        );
+        Ok(true)
+    }
+}
+
 async fn serve(args: ServeArgs) -> Result<()> {
     init_tracing(
         &args.log_level,
@@ -2052,6 +2005,13 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let mut raft_host: Option<Arc<raft_host::RaftHost>> = None;
     #[cfg(feature = "raft-wal")]
     let mut raft_writer: Option<Arc<dyn lumen::coordinator::WriteSink>> = None;
+    // Live `ClusterState` for `AppState::with_cluster` (#1349): populated only
+    // in raft mode, kept current for the process lifetime by
+    // `spawn_cluster_state_poller` below. `None` here (standalone/legacy-log
+    // backends) is correct — `enforce_read_consistency` no-ops when
+    // `state.cluster` is `None`.
+    #[cfg(feature = "raft-wal")]
+    let mut raft_cluster: Option<Arc<lumen::raft::ClusterState>> = None;
     // k8s-native auto-detect: `--wal auto` (the default) picks raft when the
     // StatefulSet runs >1 replica per shard, else embedded — so single-node /
     // local dev needs no flags or cluster env.
@@ -2060,7 +2020,13 @@ async fn serve(args: ServeArgs) -> Result<()> {
         WalBackend::Auto => unreachable!("auto is resolved by resolve_wal_backend"),
         WalBackend::Embedded => {
             tracing::info!("wal=embedded (in-process; single-node)");
-            Some(Arc::new(MemWal::new()))
+            // Constructed below (#1486), once the final restore watermark
+            // (`start_seq`, after any checkpoint + AOF-tail replay) is
+            // known — an embedded `MemWal` must start its sequence domain
+            // above that watermark, not at 0, or the apply loop's
+            // redelivery-dedup guard silently strands the first N
+            // post-restart writes.
+            None
         }
         WalBackend::Nats => {
             tracing::info!(url = %args.nats_url, "wal=nats (JetStream)");
@@ -2111,6 +2077,34 @@ async fn serve(args: ServeArgs) -> Result<()> {
                     ..Default::default()
                 },
             ));
+
+            // Live cluster state (#1349): the same `ClusterConfig`/`RaftGroup`
+            // shape `AppState::with_cluster`'s consumer (`enforce_read_consistency`,
+            // `GET /debug/cluster`) already expects, seeded with the same
+            // topology math as `topo` above (#1002 delegation keeps them from
+            // drifting) so `group.peers` names line up with raft `NodeId`s
+            // 1:1 by replica index.
+            let cluster_cfg =
+                lumen::config::ClusterConfig::from_env().context("raft: cluster config")?;
+            let group = lumen::raft::RaftGroup::from_config(
+                &cluster_cfg,
+                "lumen",
+                &headless,
+                args.port,
+                args.port,
+            )
+            .context("raft: build raft group")?;
+            let cluster_state = Arc::new(
+                lumen::raft::ClusterState::new(&cluster_cfg, group)
+                    .context("raft: build cluster state")?,
+            );
+            spawn_cluster_state_poller(
+                host.clone(),
+                cluster_state.clone(),
+                cluster_cfg.is_voter()?,
+            );
+            raft_cluster = Some(cluster_state);
+
             raft_host = Some(Arc::clone(&host));
             raft_writer = Some(Arc::new(lumen::raft_sm::RaftWriteSink::new(host, sm)));
             None
@@ -2208,6 +2202,16 @@ async fn serve(args: ServeArgs) -> Result<()> {
         None
     };
 
+    // Embedded backend: build the `MemWal` now that `start_seq` reflects the
+    // final restore watermark (checkpoint restore, then AOF-tail replay if
+    // any — whichever is higher). Every other backend either owns its own
+    // sequence domain externally (NATS) or bypasses `wal` entirely (raft)
+    // (#1486).
+    let wal: Option<SharedWal> = match backend {
+        WalBackend::Embedded => Some(Arc::new(MemWal::starting_at(start_seq))),
+        _ => wal,
+    };
+
     // (c) Start the apply loop. In segment mode with an AOF, the loop appends
     // every applied record to it; otherwise the default loop runs unchanged.
     // The raft path uses the `RaftHost` as its `WriteSink`; every other backend
@@ -2235,10 +2239,109 @@ async fn serve(args: ServeArgs) -> Result<()> {
     }
 
     let mut state = lumen::api::AppState::with_components(engine.clone(), auth, writer.clone());
+    // #1389: wire a real on-demand checkpoint (`POST /admin/checkpoint`) only
+    // when segment persistence is actually configured — the raft path has
+    // its own snapshot mechanism and is out of the reshard driver's scope
+    // (single-member only), and the default CBOR/no-data-dir path stays
+    // `NoopCheckpoint` (nothing durable to force). Cloned from `segment_store`
+    // before the periodic-snapshotter block below consumes it.
+    if let Some(store) = segment_store.clone() {
+        state = state.with_checkpoint(Arc::new(SegmentCheckpointSink {
+            engine: engine.clone(),
+            store,
+            writer: writer.clone(),
+            aof: aof_writer.clone(),
+        }));
+    }
+    // Populate #1310's read-consistency enforcement seam with live cluster
+    // state (#1349) — only in raft mode; standalone/legacy-log backends
+    // correctly leave `state.cluster` `None` (single authoritative copy).
+    #[cfg(feature = "raft-wal")]
+    if let Some(cluster) = raft_cluster {
+        state = state.with_cluster(cluster);
+    }
     if !args.search_shard_segment_dirs.is_empty() {
         let shards = load_search_shard_segment_roots(&args.search_shard_segment_dirs)?;
-        tracing::info!(shard_count = shards.len(), "search backend=segment-sharded");
-        state = state.with_search_backend(Arc::new(lumen::routing::EngineShardSearch::new(shards)));
+        // #1384: route by the operator/reshard-driver-committed shard map
+        // (SHARD_MAP_VERSION/SHARD_MAP_ASSIGNMENTS/VIRTUAL_BUCKET_COUNT env)
+        // instead of always assuming the balanced default — queries for
+        // buckets moved by a completed autonomous split must land on their
+        // new physical shard.
+        //
+        // #1398 R4: the physical shard count that map is built for defaults
+        // to the number of loaded dirs (matching `EngineShardSearch::new`'s
+        // original behavior) unless `--shard-count`/`SHARD_COUNT` was
+        // explicitly set — see `fan_in_shard_count`'s doc comment for why
+        // `args.shard_count` has to be `Option<u32>` to make that
+        // distinction. A mismatch between the resolved count and the
+        // actual loaded-dir count fails startup instead of silently
+        // under-routing.
+        let fan_in_shard_count = lumen::config::fan_in_shard_count(args.shard_count, shards.len());
+        let shard_map = lumen::config::shard_map_from_env(fan_in_shard_count).context(
+            "shard map from env (SHARD_MAP_VERSION/SHARD_MAP_ASSIGNMENTS/VIRTUAL_BUCKET_COUNT)",
+        )?;
+        lumen::config::check_fan_in_shard_count(&shard_map, shards.len())?;
+        tracing::info!(
+            shard_count = shards.len(),
+            shard_map_version = shard_map.version(),
+            "search backend=segment-sharded"
+        );
+        state = state.with_search_backend(Arc::new(
+            lumen::routing::EngineShardSearch::new_with_shard_map(shards, shard_map),
+        ));
+    }
+    // #1398 R1: activate cross-pod routing only in the operator/k8s routed
+    // serving topology (`SHARD_COUNT` env > 1 at `replicasPerShard <= 1`) —
+    // `routed_activation_shard_count` returns `None` for every other
+    // deployment shape, so `shardCount:1` serving never even constructs a
+    // `RoutedRouter` (AC5). It also folds in the fan-in mutual-exclusion
+    // guard (#1442 R3): the fan-in path above already built its own local
+    // `EngineShardSearch`/`state.search_backend` when
+    // `args.search_shard_segment_dirs` is non-empty, so a fan-in invocation
+    // must never also reach the routed block — pulled into
+    // `config::routed_activation_shard_count` so that guarantee is
+    // unit-tested directly instead of only by inline control flow here.
+    #[cfg(feature = "operator")]
+    if let Some(shard_count) =
+        lumen::config::routed_activation_shard_count(args.search_shard_segment_dirs.is_empty())
+            .context("routed shard count from env (SHARD_COUNT)")?
+    {
+        let shard_map = lumen::config::shard_map_from_env(shard_count).context(
+            "shard map from env (SHARD_MAP_VERSION/SHARD_MAP_ASSIGNMENTS/VIRTUAL_BUCKET_COUNT)",
+        )?;
+        let (prefix, local_shard) = lumen::config::routed_pod_topology(shard_count)
+            .context("routed pod topology from env (POD_NAME)")?;
+        let headless = std::env::var("LUMEN_HEADLESS_SERVICE")
+            .unwrap_or_else(|_| "lumen-headless".to_string());
+        // #1467 R5: publish this pod's live shard-map version on `/metrics`
+        // so the reshard driver's `advance_convergence` can require every
+        // serving pod to actually report the new map, not just that its
+        // StatefulSet rollout finished.
+        engine.metrics().set_shard_map_version(shard_map.version());
+        let shard_urls: Vec<String> = (0..shard_count)
+            .map(|shard| {
+                format!(
+                    "http://{}:{}",
+                    lumen::routing::shard_host(&prefix, shard, &headless),
+                    args.port
+                )
+            })
+            .collect();
+        tracing::info!(
+            shard_count,
+            local_shard,
+            shard_map_version = shard_map.version(),
+            "cross-pod shard routing active"
+        );
+        let router = lumen::routing_remote::RoutedRouter::new(
+            engine.clone(),
+            state.write_backend.clone(),
+            shard_map,
+            local_shard,
+            shard_urls,
+        )
+        .context("construct routed shard router")?;
+        state = state.with_routed(Arc::new(router));
     }
     #[cfg_attr(not(feature = "raft-wal"), allow(unused_mut))]
     let mut app = lumen::api::router(state);
@@ -2355,7 +2458,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&bind)
         .await
         .with_context(|| format!("bind {bind}"))?;
-    tracing::info!(addr = %bind, shard_count = args.shard_count, "lumen serve listening");
+    tracing::info!(addr = %bind, shard_count = args.shard_count.unwrap_or(1), "lumen serve listening");
 
     let grace = Duration::from_secs(args.grace_secs);
     // Serve HTTP/1.1 + h2c on one port through the shared service HTTP shell,
@@ -2371,6 +2474,66 @@ async fn serve(args: ServeArgs) -> Result<()> {
     #[cfg(feature = "otel")]
     opentelemetry::global::shutdown_tracer_provider();
     Ok(())
+}
+
+/// Keeps `AppState.cluster` (#1310's read-consistency enforcement seam)
+/// current for the process lifetime (#1349): polls the already-running
+/// `RaftHost` for its live role/leader view (`is_leader`/`leader`, both
+/// pre-existing — no new raft-host surface added) and republishes it onto
+/// the shared `ClusterState` via its atomic setters, so every concurrently
+/// running request handler observes the latest election result without a
+/// restart. Runs for the life of the `serve` process; errors from the raft
+/// host (e.g. transient watch-channel lag) are not fatal to serving and are
+/// simply retried on the next tick.
+///
+/// Replication lag is reported as `0` on the leader and `u64::MAX`
+/// ("unknown") on every follower/learner: deriving a true milliseconds-lag
+/// figure would need new peer RPC surface this WI intentionally does not
+/// add (see #1349's scope guardrail), so `ReadConsistency::Bounded` is kept
+/// conservative — an unknown lag always fails the bound rather than
+/// silently serving a stale follower.
+#[cfg(feature = "raft-wal")]
+fn spawn_cluster_state_poller(
+    host: Arc<raft_host::RaftHost>,
+    cluster: Arc<lumen::raft::ClusterState>,
+    is_voter: bool,
+) {
+    use lumen::raft::RaftRole;
+    let applied_rx = host.applied_watch();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_millis(200));
+        loop {
+            ticker.tick().await;
+            let is_leader = host.is_leader().await;
+            let leader = host.leader().await;
+            let role = if !is_voter {
+                RaftRole::Learner
+            } else if is_leader {
+                RaftRole::Leader
+            } else if leader.is_some() {
+                RaftRole::Follower
+            } else {
+                RaftRole::Candidate
+            };
+            let prev = cluster.role();
+            cluster.set_role(role);
+            cluster.set_leader_index(leader.map(|n| n as u32));
+            cluster.replication_lag_ms.store(
+                if role == RaftRole::Leader {
+                    0
+                } else {
+                    u64::MAX
+                },
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            cluster
+                .applied_index
+                .store(*applied_rx.borrow(), std::sync::atomic::Ordering::Relaxed);
+            if role != prev {
+                tracing::info!(pod = %cluster.pod_name, from = ?prev, to = ?role, "raft role changed");
+            }
+        }
+    });
 }
 
 fn apply_bootstrap_seed(engine: &Engine, seed_uri: Option<&str>) -> Result<bool> {
@@ -2904,113 +3067,101 @@ mod tests {
         assert_eq!(body["offset"], 0);
     }
 
-    #[test]
-    fn select_token_picks_token_covering_role_for_collection_or_wildcard() {
-        let mut registry = std::collections::HashMap::new();
-        registry.insert(
-            "reader-token".to_string(),
-            lumen::auth::TokenClaims {
-                subject: "reader".into(),
-                roles: [("products".to_string(), lumen::auth::Role::Read)]
-                    .into_iter()
-                    .collect(),
-            },
-        );
-        registry.insert(
-            "admin-token".to_string(),
-            lumen::auth::TokenClaims {
-                subject: "admin".into(),
-                roles: [("*".to_string(), lumen::auth::Role::Admin)]
-                    .into_iter()
-                    .collect(),
-            },
-        );
+    // `select_token`/`cr_tokens_secret`/`secret_data_bytes`/
+    // `wait_for_local_port_ready`/`ChildGuard` unit tests moved to
+    // `libs/cli-std/src/connect.rs` (#1376) along with the primitives
+    // themselves; lumen's own coverage is the thin-adapter tests above
+    // (`resolve_base_url_requires_explicit_url`, `build_*_body_*`) plus
+    // `cargo test -p cli-std --features k8s`.
 
-        let picked = select_token(&registry, lumen::auth::Role::Read, Some("products"));
-        assert!(matches!(
-            picked.as_deref(),
-            Some("reader-token") | Some("admin-token")
+    // -----------------------------------------------------------------
+    // `spawn_cluster_state_poller` (#1349)
+    // -----------------------------------------------------------------
+
+    /// #1349 AC1/AC2 (unit-level): a single-voter `RaftHost` always wins its
+    /// own election, so `spawn_cluster_state_poller` must converge the
+    /// shared `ClusterState` from its pre-poller bootstrap value to
+    /// `RaftRole::Leader` — driven by the real raft engine's own
+    /// `is_leader`/`leader` results, not a manually-set role. This is the
+    /// same seam `enforce_read_consistency` (#1310, `src/api.rs`) reads via
+    /// `AppState.cluster`; the live 3-node localhost cluster in this WI's
+    /// report additionally proves the HTTP-facing accept/reject behavior
+    /// end-to-end.
+    #[cfg(feature = "raft-wal")]
+    #[tokio::test]
+    async fn cluster_state_poller_converges_role_to_live_election_result() {
+        use lumen::raft::{ClusterState, PeerAddr, RaftGroup, RaftRole};
+
+        let tmp = std::env::temp_dir().join(format!(
+            "lumen-cluster-poller-test-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("t")
         ));
-        assert_eq!(
-            select_token(&registry, lumen::auth::Role::Admin, Some("products")).as_deref(),
-            Some("admin-token"),
-            "only the wildcard admin token covers admin on `products`"
-        );
-
-        let mut narrow = std::collections::HashMap::new();
-        narrow.insert(
-            "scoped-token".to_string(),
-            lumen::auth::TokenClaims {
-                subject: "scoped".into(),
-                roles: [("orders".to_string(), lumen::auth::Role::Write)]
-                    .into_iter()
-                    .collect(),
+        let _ = std::fs::create_dir_all(&tmp);
+        let sm = lumen::raft_sm::EngineSm::new(Arc::new(Engine::new()), 0);
+        let host = Arc::new(raft_host::RaftHost::spawn(
+            0,
+            raft_host::Membership {
+                voters: vec![0],
+                learners: vec![],
             },
-        );
-        assert!(select_token(&narrow, lumen::auth::Role::Read, Some("products")).is_none());
-    }
+            std::collections::HashMap::new(),
+            raft_host::RaftStore::open(tmp.to_str().unwrap(), 0, raft_host::FsyncPolicy::Os)
+                .unwrap(),
+            sm.clone() as Arc<dyn raft_host::RaftStateMachine>,
+            raft_host::HostConfig::default(),
+        ));
 
-    #[test]
-    fn cr_tokens_secret_reads_spec_field() {
-        let cr = serde_json::json!({ "spec": { "tokensSecret": "lumen-tokens" } });
-        assert_eq!(cr_tokens_secret(&cr).as_deref(), Some("lumen-tokens"));
+        // Bootstrap value deliberately wrong (Follower/no-leader), matching
+        // how a real pod starts before its first poller tick — proves the
+        // assertion below observes the poller's live update, not the
+        // constructor's static default.
+        let cluster = Arc::new(ClusterState::from_snapshot(
+            "lumen-0".to_string(),
+            0,
+            0,
+            RaftRole::Follower,
+            RaftGroup {
+                shard_index: 0,
+                peers: vec![PeerAddr {
+                    pod_name: "lumen-0".to_string(),
+                    host: "127.0.0.1".to_string(),
+                    raft_port: 0,
+                    client_port: 0,
+                    role: RaftRole::Follower,
+                }],
+            },
+            0,
+            1,
+            u64::MAX,
+        ));
+        assert_eq!(cluster.role(), RaftRole::Follower, "bootstrap sanity check");
 
-        let cr_missing = serde_json::json!({ "spec": {} });
-        assert_eq!(cr_tokens_secret(&cr_missing), None);
-    }
+        spawn_cluster_state_poller(host, cluster.clone(), true);
 
-    #[test]
-    fn secret_data_bytes_decodes_base64_field() {
-        use base64::Engine;
-        let encoded =
-            base64::engine::general_purpose::STANDARD.encode(b"{\"tok\":{\"subject\":\"s\"}}");
-        let secret = serde_json::json!({ "data": { "token-registry.json": encoded } });
-        let bytes = secret_data_bytes(&secret, "token-registry.json").unwrap();
-        assert_eq!(bytes, b"{\"tok\":{\"subject\":\"s\"}}");
-
-        let missing = serde_json::json!({ "data": {} });
-        assert!(secret_data_bytes(&missing, "token-registry.json").is_err());
-    }
-
-    #[test]
-    fn wait_for_local_port_ready_succeeds_against_bound_listener() {
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        assert!(wait_for_local_port_ready(port, Duration::from_secs(2)).is_ok());
-        drop(listener);
-    }
-
-    #[test]
-    fn wait_for_local_port_ready_times_out_against_closed_port() {
-        let port = free_local_port().unwrap();
-        assert!(wait_for_local_port_ready(port, Duration::from_millis(300)).is_err());
-    }
-
-    /// AC1's process-management primitive, unit-tested with a real (but
-    /// harmless) child process instead of a live cluster's `kubectl
-    /// port-forward` — see the report for why this stays a unit test.
-    #[test]
-    fn child_guard_kills_process_on_drop() {
-        let mut cmd = std::process::Command::new("sh");
-        cmd.args(["-c", "sleep 5"]);
-        let guard = ChildGuard::spawn(&mut cmd).expect("spawn sleep");
-        let pid = guard.child.id();
-        drop(guard);
-        std::thread::sleep(Duration::from_millis(200));
-        let status = std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .status()
-            .expect("run kill -0");
+        let converged = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if cluster.role() == RaftRole::Leader {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await;
         assert!(
-            !status.success(),
-            "process {pid} should be dead after ChildGuard drop"
+            converged.is_ok(),
+            "poller did not converge role to Leader within bound"
         );
-    }
+        assert_eq!(cluster.leader_index(), Some(0));
+        assert_eq!(
+            cluster
+                .replication_lag_ms
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "leader reports zero lag, not the unknown sentinel"
+        );
 
-    #[test]
-    fn child_guard_spawn_nonexistent_binary_errs() {
-        let mut cmd = std::process::Command::new("lumen-connect-test-nonexistent-binary-xyz-1321");
-        assert!(ChildGuard::spawn(&mut cmd).is_err());
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
 // CODEGEN-END
@@ -3067,4 +3218,68 @@ changes:
       `#[cfg(any(test, feature = "backup"))]` so they stay unit-testable
       without requiring `--features backup`. No server-side endpoint or
       token-registry format change; no interactive REPL.
+  - path: projects/lumen/src/bin/lumen.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1376: extracted #1321's `kubectl port-forward` process lifecycle
+      (`ChildGuard`, `free_local_port`, `wait_for_local_port_ready`) and
+      token-registry Secret resolution chain (`kubectl_get_json`,
+      `cr_tokens_secret`, `resolve_cr_tokens_secret`, `secret_data_bytes`,
+      `select_token`) into `libs/cli-std/src/connect.rs` (feature `k8s`),
+      reusable by any k8s-native service CLI's own `connect` verb (see
+      `CONTRIBUTING.md` § "CLI convention"). `lumen connect` is now a thin
+      adapter: `resolve_token` delegates to `cli_std::connect::resolve_token`,
+      and `connect()`'s body calls `cli_std::connect::resolve_cr_tokens_secret`
+      (passing `"lumen"` as the CR-kind lookup string),
+      `cli_std::connect::free_local_port`, `cli_std::connect::ChildGuard`, and
+      `cli_std::connect::wait_for_local_port_ready`. The seven unit tests
+      covering the extracted primitives moved byte-identical to
+      `libs/cli-std/src/connect.rs`'s `#[cfg(test)] mod tests`. This file
+      keeps only its own flag surface (`ConnectArgs`/`QueryTarget`), the
+      `Lumen` CRD-name lookup convention, and the `TokenRole ->
+      cli_std::connect::Role` mapping (`impl From<TokenRole> for
+      cli_std::connect::Role`, retargeted from the removed
+      `lumen::auth::Role`). `lumen query`'s body builders/dispatch are
+      unchanged — out of #1376's scope. Behavior unchanged (verified via
+      `lumen connect --help` / `lumen llm` output diff before/after).
+  - path: projects/lumen/src/bin/lumen.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1398 R1: `serve()` now activates cross-pod shard routing in the
+      operator/k8s routed serving topology only — when
+      `lumen::config::routed_shard_count_from_env()` (gated
+      `#[cfg(feature = "operator")]`) returns `Some(shard_count)`, it reads
+      the delivered shard map (`lumen::config::shard_map_from_env`), this
+      pod's topology (`lumen::config::routed_pod_topology`, `POD_NAME`
+      ordinal + `LUMEN_HEADLESS_SERVICE`, default `lumen-headless`), builds
+      each shard's stable per-pod URL via `lumen::routing::shard_host`, and
+      constructs a `lumen::routing_remote::RoutedRouter` wired in via
+      `AppState::with_routed` before the router is built. Every other
+      deployment shape (including the `--search-shard-segment-dirs` fan-in
+      path above, which never sets `SHARD_COUNT` the same way) leaves
+      `routed_shard_count_from_env` returning `None`, so `shardCount:1`
+      serving never even constructs a `RoutedRouter` (AC5, zero forwarding
+      overhead).
+  - path: projects/lumen/src/bin/lumen.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1442 R3: `serve()`'s routed-activation `if let` now calls
+      `lumen::config::routed_activation_shard_count(args
+      .search_shard_segment_dirs.is_empty())` instead of
+      `routed_shard_count_from_env()` directly — the new function folds in
+      the fan-in mutual-exclusion guard (a fan-in invocation with non-empty
+      `--search-shard-segment-dirs` must never also reach the routed block)
+      alongside the existing `SHARD_COUNT`/`REPLICAS_PER_SHARD` env gating,
+      so the combined activation condition is unit-tested directly in
+      `config.rs` rather than only by inline control flow here. Behavior for
+      every existing deployment shape is unchanged; the only newly-excluded
+      case is a (previously impossible in practice) invocation that set both
+      a fan-in `--search-shard-segment-dirs` list and an operator-shaped
+      `SHARD_COUNT` env simultaneously.
 ```

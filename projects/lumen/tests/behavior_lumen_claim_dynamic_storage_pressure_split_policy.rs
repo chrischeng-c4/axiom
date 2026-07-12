@@ -10,7 +10,7 @@
 // @command cargo test -p lumen --features operator --test operator_render -- --nocapture
 // AW-EC-END
 
-// Contract: The operator exposes storage-pressure reshard recommendations without changing HPA-owned serving scale.
+// Contract: The operator render gate proves rendering topology conformance: storage-pressure reshard recommendations compute correctly without changing HPA-owned serving scale (rendering only — reshard driver execution, admin verbs, and migration durability are covered by the dedicated reshard-durability gate).
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_dynamic_storage_pressure_split_policy() {

@@ -20,61 +20,67 @@ Public API manifest for `projects/lumen/src/storage.rs` generated from AST durin
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ApplyOutcome` | projects/lumen/src/storage.rs | enum | pub | 4566 |  |
-| `CollectionSnapshot` | projects/lumen/src/storage.rs | struct | pub | 8721 |  |
-| `DropOutcome` | projects/lumen/src/storage.rs | enum | pub | 65 |  |
-| `Engine` | projects/lumen/src/storage.rs | struct | pub | 2937 |  |
-| `FieldIndexSnapshot` | projects/lumen/src/storage.rs | enum | pub | 8731 |  |
-| `MAX_INDEX_ITEMS` | projects/lumen/src/storage.rs | constant | pub | 56 |  |
-| `MAX_SORT_KEYS` | projects/lumen/src/storage.rs | constant | pub | 61 |  |
-| `Postings` | projects/lumen/src/storage.rs | struct | pub | 322 |  |
-| `SnapshotV1` | projects/lumen/src/storage.rs | struct | pub | 8712 |  |
-| `SortableF64` | projects/lumen/src/storage.rs | struct | pub | 113 |  |
-| `StorageError` | projects/lumen/src/storage.rs | enum | pub | 78 |  |
-| `__collection_schema` | projects/lumen/src/storage.rs | function | pub | 10243 | __collection_schema(         &self,         collection_id: &str,     ) -> Result<BTreeMap<String, FieldSpec>>  |
-| `__field_forward_probe` | projects/lumen/src/storage.rs | function | pub | 10280 | __field_forward_probe(         &self,         collection_id: &str,         field: &str,     ) -> Result<(usize, usize, bool)>  |
-| `__open_collection_from_segments` | projects/lumen/src/storage.rs | function | pub | 10259 | __open_collection_from_segments(         collection_id: &str,         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<std::sync::Arc<Engine>>  |
-| `__seal_collection_to_segments` | projects/lumen/src/storage.rs | function | pub | 10227 | __seal_collection_to_segments(         &self,         collection_id: &str,         dir: &std::path::Path,         applied_seq: u64,     ) -> Result<()>  |
-| `__seal_hash_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10163 | __seal_hash_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_keyword_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9973 | __seal_keyword_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_number_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9910 | __seal_number_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_set_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10039 | __seal_set_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_text_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10107 | __seal_text_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_vector_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 10200 | __seal_vector_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `add_field` | projects/lumen/src/storage.rs | function | pub | 3140 | add_field(&self, collection_id: &str, field_name: &str, spec: FieldSpec) -> Result<u32> |
-| `apply_raft_entry` | projects/lumen/src/storage.rs | function | pub | 4524 | apply_raft_entry(&self, entry: crate::log_entry::RaftLogEntry) -> Result<ApplyOutcome> |
-| `bits` | projects/lumen/src/storage.rs | function | pub | 150 | bits(self) -> u64 |
-| `create_collection` | projects/lumen/src/storage.rs | function | pub | 2996 | create_collection(         &self,         collection_id: &str,         req: CreateCollectionRequest,     ) -> Result<CreateCollectionResponse> |
-| `delete` | projects/lumen/src/storage.rs | function | pub | 3370 | delete(         &self,         collection_id: &str,         external_id: &str,         field: Option<&str>,     ) -> Result<()> |
-| `docids` | projects/lumen/src/storage.rs | function | pub | 339 | docids(&self) -> &[u32] |
-| `drop_collection` | projects/lumen/src/storage.rs | function | pub | 3065 | drop_collection(&self, collection_id: &str, force: bool) -> Result<DropOutcome> |
-| `drop_field` | projects/lumen/src/storage.rs | function | pub | 3085 | drop_field(&self, collection_id: &str, field_name: &str) -> Result<u32> |
-| `duplicates` | projects/lumen/src/storage.rs | function | pub | 4279 | duplicates(         &self,         collection_id: &str,         req: DuplicatesRequest,     ) -> Result<DuplicatesResponse> |
-| `flush_to_segments` | projects/lumen/src/storage.rs | function | pub | 9760 | flush_to_segments(&self, dir: &std::path::Path, up_to_seq: u64) -> Result<()>  |
-| `from_bits` | projects/lumen/src/storage.rs | function | pub | 158 | from_bits(bits: u64) -> Self |
-| `from_sorted` | projects/lumen/src/storage.rs | function | pub | 333 | from_sorted(docids: Vec<u32>, tfs: Vec<u32>) -> Self |
-| `index` | projects/lumen/src/storage.rs | function | pub | 3179 | index(&self, collection_id: &str, req: IndexRequest) -> Result<IndexResponse> |
-| `is_draining` | projects/lumen/src/storage.rs | function | pub | 2975 | is_draining(&self) -> bool |
-| `list_collections` | projects/lumen/src/storage.rs | function | pub | 3167 | list_collections(&self) -> Result<Vec<String>> |
-| `metrics` | projects/lumen/src/storage.rs | function | pub | 2963 | metrics(&self) -> &Metrics |
-| `new` | projects/lumen/src/storage.rs | function | pub | 119 | new(x: f64) -> Result<Self> |
-| `new` | projects/lumen/src/storage.rs | function | pub | 119 | new() -> Self  |
-| `number_value_for_external_id` | projects/lumen/src/storage.rs | function | pub | 3723 | number_value_for_external_id(         &self,         collection_id: &str,         external_id: &str,         field: &str,     ) -> Result<Option<f64>> |
-| `open_from_segments` | projects/lumen/src/storage.rs | function | pub | 9570 | open_from_segments(         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<Self>  |
-| `reopen_from_segment_dir` | projects/lumen/src/storage.rs | function | pub | 9804 | reopen_from_segment_dir(&self, dir: &std::path::Path) -> Result<u64>  |
-| `replace_docs` | projects/lumen/src/storage.rs | function | pub | 3429 | replace_docs(         &self,         collection_id: &str,         req: ReplaceDocsRequest,     ) -> Result<ReplaceDocsResponse> |
-| `restore` | projects/lumen/src/storage.rs | function | pub | 4450 | restore(&self, snap: SnapshotV1) -> Result<()> |
-| `seal_to_segments` | projects/lumen/src/storage.rs | function | pub | 9535 | seal_to_segments(&mut self, dir: &std::path::Path, applied_seq: u64) -> Result<()>  |
-| `search` | projects/lumen/src/storage.rs | function | pub | 3751 | search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> |
-| `search_fast_string_term` | projects/lumen/src/storage.rs | function | pub | 4220 | search_fast_string_term(         &self,         collection_id: &str,         field: &str,         value: &str,         limit: u32,     ) -> Result<SearchResponse> |
-| `segment_field_probe` | projects/lumen/src/storage.rs | function | pub | 9846 | segment_field_probe(&self, collection_id: &str, field: &str) -> Result<(usize, bool)>  |
-| `snapshot` | projects/lumen/src/storage.rs | function | pub | 4435 | snapshot(&self) -> Result<SnapshotV1> |
-| `start_drain` | projects/lumen/src/storage.rs | function | pub | 2971 | start_drain(&self) |
-| `stats` | projects/lumen/src/storage.rs | function | pub | 4468 | stats(&self, collection_id: &str) -> Result<StatsResponse> |
-| `sweep_deleted` | projects/lumen/src/storage.rs | function | pub | 3115 | sweep_deleted(&self, grace: Duration) -> Result<usize> |
-| `tfs` | projects/lumen/src/storage.rs | function | pub | 343 | tfs(&self) -> &[u32] |
-| `to_f64` | projects/lumen/src/storage.rs | function | pub | 135 | to_f64(self) -> f64 |
-| `validate_query` | projects/lumen/src/storage.rs | function | pub | 4855 | validate_query(root: &QueryNode) -> std::result::Result<(), StorageError> |
+| `ApplyOutcome` | projects/lumen/src/storage.rs | enum | pub | 5005 |  |
+| `CollectionSnapshot` | projects/lumen/src/storage.rs | struct | pub | 9160 |  |
+| `DropOutcome` | projects/lumen/src/storage.rs | enum | pub | 66 |  |
+| `Engine` | projects/lumen/src/storage.rs | struct | pub | 2951 |  |
+| `FieldIndexSnapshot` | projects/lumen/src/storage.rs | enum | pub | 9202 |  |
+| `MAX_INDEX_ITEMS` | projects/lumen/src/storage.rs | constant | pub | 57 |  |
+| `MAX_SORT_KEYS` | projects/lumen/src/storage.rs | constant | pub | 62 |  |
+| `Postings` | projects/lumen/src/storage.rs | struct | pub(crate) | 336 |  |
+| `ReshardApplyOutcome` | projects/lumen/src/storage.rs | struct | pub | 9170 | #1380 R1 / #1443 R2: response summary for `POST /admin/reshard:apply`, now including `documents_pruned` from the authoritative-replace pass. |
+| `ReshardEvictOutcome` | projects/lumen/src/storage.rs | struct | pub | 9182 | #1380 R3: response summary for `POST /admin/reshard:evict`. |
+| `ReshardPruneOutcome` | projects/lumen/src/storage.rs | struct | pub | 9194 | #1457 R1: response summary for `POST /admin/reshard:prune`; `complete` is `false` while the receiver is still accumulating chunks for a `(to_map_version, bucket, collection_id, total_chunks)` group, `documents_pruned` is only meaningful once `complete` is `true`. |
+| `SnapshotV1` | projects/lumen/src/storage.rs | struct | pub | 9151 |  |
+| `SortableF64` | projects/lumen/src/storage.rs | struct | pub | 127 |  |
+| `StorageError` | projects/lumen/src/storage.rs | enum | pub | 79 |  |
+| `__collection_schema` | projects/lumen/src/storage.rs | function | pub(crate) | 10714 | __collection_schema(         &self,         collection_id: &str,     ) -> Result<BTreeMap<String, FieldSpec>>  |
+| `__field_forward_probe` | projects/lumen/src/storage.rs | function | pub(crate) | 10751 | __field_forward_probe(         &self,         collection_id: &str,         field: &str,     ) -> Result<(usize, usize, bool)>  |
+| `__open_collection_from_segments` | projects/lumen/src/storage.rs | function | pub(crate) | 10730 | __open_collection_from_segments(         collection_id: &str,         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<std::sync::Arc<Engine>>  |
+| `__seal_collection_to_segments` | projects/lumen/src/storage.rs | function | pub(crate) | 10698 | __seal_collection_to_segments(         &self,         collection_id: &str,         dir: &std::path::Path,         applied_seq: u64,     ) -> Result<()>  |
+| `__seal_hash_field_to_segment` | projects/lumen/src/storage.rs | function | pub(crate) | 10634 | __seal_hash_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_keyword_field_to_segment` | projects/lumen/src/storage.rs | function | pub(crate) | 10444 | __seal_keyword_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_number_field_to_segment` | projects/lumen/src/storage.rs | function | pub(crate) | 10381 | __seal_number_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_set_field_to_segment` | projects/lumen/src/storage.rs | function | pub(crate) | 10510 | __seal_set_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_text_field_to_segment` | projects/lumen/src/storage.rs | function | pub(crate) | 10578 | __seal_text_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_vector_field_to_segment` | projects/lumen/src/storage.rs | function | pub(crate) | 10671 | __seal_vector_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `add_field` | projects/lumen/src/storage.rs | function | pub | 3212 | add_field(&self, collection_id: &str, field_name: &str, spec: FieldSpec) -> Result<u32> |
+| `apply_raft_entry` | projects/lumen/src/storage.rs | function | pub | 4963 | apply_raft_entry(&self, entry: crate::log_entry::RaftLogEntry) -> Result<ApplyOutcome> |
+| `apply_reshard_batch` | projects/lumen/src/storage.rs | function | pub | 4577 | #1380 R1 / #1443 R2, reworked #1457 R1: additively merge one `ReshardBatch`'s snapshot into the live engine (upsert semantics, idempotent on retry), then — when `replace` is `Some` — prune any document this shard holds that routes to `replace.bucket` but is absent from `replace.replace_ids`, closing delete-during-split resurrection. Callers reach the `replace`-scoped branch through `apply_reshard_prune_chunk`'s receiver-side chunk accumulator, not directly from a wire `ReshardBatch` (#1457 R1 split the authoritative-replace scope out of that now purely-additive type). apply_reshard_batch(&self, delta: SnapshotV1, replace: Option<crate::reshard::ReshardBatchReplaceScope>) -> Result<ReshardApplyOutcome> |
+| `apply_reshard_prune_chunk` | projects/lumen/src/storage.rs | function | pub | 4735 | #1457 R1: `POST /admin/reshard:prune` receiver — accumulate one `ReshardPruneChunk` of a final migration pass's authoritative "keep" set for one `(bucket, collection_id)` pair, keyed by `(to_map_version, bucket, collection_id, total_chunks)`, and prune once every chunk in `0..total_chunks` has arrived by delegating to `apply_reshard_batch`. Idempotent: re-sending any subset (413 retry) only re-inserts identical set members, and re-sending a completed group re-runs the same accumulate-then-apply sequence, which is itself idempotent. apply_reshard_prune_chunk(&self, chunk: crate::reshard::ReshardPruneChunk) -> Result<ReshardPruneOutcome> |
+| `bits` | projects/lumen/src/storage.rs | function | pub(crate) | 164 | bits(self) -> u64 |
+| `create_collection` | projects/lumen/src/storage.rs | function | pub | 3068 | create_collection(         &self,         collection_id: &str,         req: CreateCollectionRequest,     ) -> Result<CreateCollectionResponse> |
+| `delete` | projects/lumen/src/storage.rs | function | pub | 3442 | delete(         &self,         collection_id: &str,         external_id: &str,         field: Option<&str>,     ) -> Result<()> |
+| `docids` | projects/lumen/src/storage.rs | function | pub(crate) | 353 | docids(&self) -> &[u32] |
+| `drop_collection` | projects/lumen/src/storage.rs | function | pub | 3137 | drop_collection(&self, collection_id: &str, force: bool) -> Result<DropOutcome> |
+| `drop_field` | projects/lumen/src/storage.rs | function | pub | 3157 | drop_field(&self, collection_id: &str, field_name: &str) -> Result<u32> |
+| `duplicates` | projects/lumen/src/storage.rs | function | pub | 4351 | duplicates(         &self,         collection_id: &str,         req: DuplicatesRequest,     ) -> Result<DuplicatesResponse> |
+| `evict_not_owned` | projects/lumen/src/storage.rs | function | pub | 4833 | #1380 R3: source-side post-cutover eviction under a newer `VirtualBucketShardMap` (idempotent). evict_not_owned(         &self,         to: &VirtualBucketShardMap,         this_shard: u32,     ) -> Result<ReshardEvictOutcome> |
+| `flush_to_segments` | projects/lumen/src/storage.rs | function | pub | 10231 | flush_to_segments(&self, dir: &std::path::Path, up_to_seq: u64) -> Result<()>  |
+| `from_bits` | projects/lumen/src/storage.rs | function | pub(crate) | 172 | from_bits(bits: u64) -> Self |
+| `from_sorted` | projects/lumen/src/storage.rs | function | pub(crate) | 347 | from_sorted(docids: Vec<u32>, tfs: Vec<u32>) -> Self |
+| `index` | projects/lumen/src/storage.rs | function | pub | 3251 | index(&self, collection_id: &str, req: IndexRequest) -> Result<IndexResponse> |
+| `is_draining` | projects/lumen/src/storage.rs | function | pub | 3047 | is_draining(&self) -> bool |
+| `list_collections` | projects/lumen/src/storage.rs | function | pub | 3239 | list_collections(&self) -> Result<Vec<String>> |
+| `metrics` | projects/lumen/src/storage.rs | function | pub | 3035 | metrics(&self) -> &Metrics |
+| `new` | projects/lumen/src/storage.rs | function | pub | 133 | new(x: f64) -> Result<Self> |
+| `new` | projects/lumen/src/storage.rs | function | pub | 3031 | new() -> Self  |
+| `number_value_for_external_id` | projects/lumen/src/storage.rs | function | pub | 3795 | number_value_for_external_id(         &self,         collection_id: &str,         external_id: &str,         field: &str,     ) -> Result<Option<f64>> |
+| `open_from_segments` | projects/lumen/src/storage.rs | function | pub | 10041 | open_from_segments(         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<Self>  |
+| `reopen_from_segment_dir` | projects/lumen/src/storage.rs | function | pub | 10275 | reopen_from_segment_dir(&self, dir: &std::path::Path) -> Result<u64>  |
+| `replace_docs` | projects/lumen/src/storage.rs | function | pub | 3501 | replace_docs(         &self,         collection_id: &str,         req: ReplaceDocsRequest,     ) -> Result<ReplaceDocsResponse> |
+| `restore` | projects/lumen/src/storage.rs | function | pub | 4522 | restore(&self, snap: SnapshotV1) -> Result<()> |
+| `seal_to_segments` | projects/lumen/src/storage.rs | function | pub | 10006 | seal_to_segments(&mut self, dir: &std::path::Path, applied_seq: u64) -> Result<()>  |
+| `search` | projects/lumen/src/storage.rs | function | pub | 3823 | search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> |
+| `search_fast_string_term` | projects/lumen/src/storage.rs | function | pub(crate) | 4292 | search_fast_string_term(         &self,         collection_id: &str,         field: &str,         value: &str,         limit: u32,     ) -> Result<SearchResponse> |
+| `segment_field_probe` | projects/lumen/src/storage.rs | function | pub | 10317 | segment_field_probe(&self, collection_id: &str, field: &str) -> Result<(usize, bool)>  |
+| `snapshot` | projects/lumen/src/storage.rs | function | pub | 4507 | snapshot(&self) -> Result<SnapshotV1> |
+| `start_drain` | projects/lumen/src/storage.rs | function | pub | 3043 | start_drain(&self) |
+| `stats` | projects/lumen/src/storage.rs | function | pub | 4895 | stats(&self, collection_id: &str) -> Result<StatsResponse> |
+| `sweep_deleted` | projects/lumen/src/storage.rs | function | pub | 3187 | sweep_deleted(&self, grace: Duration) -> Result<usize> |
+| `tfs` | projects/lumen/src/storage.rs | function | pub(crate) | 357 | tfs(&self) -> &[u32] |
+| `to_f64` | projects/lumen/src/storage.rs | function | pub | 149 | to_f64(self) -> f64 |
+| `validate_query` | projects/lumen/src/storage.rs | function | pub | 5294 | validate_query(root: &QueryNode) -> std::result::Result<(), StorageError> |
 
 ## Source
 <!-- type: rust-source-unit lang: rust -->
@@ -105,8 +111,8 @@ Public API manifest for `projects/lumen/src/storage.rs` generated from AST durin
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
@@ -116,6 +122,7 @@ use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::metrics::Metrics;
+use crate::routing::VirtualBucketShardMap;
 use crate::tokenize;
 use crate::types::{
     Analyzer, CacheStats, CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup,
@@ -182,6 +189,19 @@ pub enum StorageError {
     UnsupportedSort(String),
     #[error("collection `{0}` was deleted and is pending physical removal")]
     Gone(String),
+    /// #1467 R4: `ReshardPruneChunk::total_chunks` sanity cap — a spoofed
+    /// or buggy sender declaring an enormous `total_chunks` would otherwise
+    /// let a single chunk hold the receiver's prune accumulator open
+    /// indefinitely (it can never reach "ready" without that many chunks
+    /// actually arriving).
+    #[error("prune chunk total_chunks {total_chunks} invalid (must be 1..={max})")]
+    InvalidPruneChunk { total_chunks: u32, max: u32 },
+    /// #1467 R4: hard cap on distinct in-flight prune accumulator groups —
+    /// bounds memory against an abandoned migration (driver crash mid-pass)
+    /// or a flood of distinct bogus keys, on top of the age-based GC that
+    /// runs on every call.
+    #[error("prune accumulator full: {count} in-flight groups (max {max})")]
+    PruneAccumulatorFull { count: usize, max: usize },
 }
 
 // ---------------------------------------------------------------------------
@@ -3020,6 +3040,64 @@ pub struct Engine {
     state: RwLock<EngineState>,
     metrics: Metrics,
     draining: AtomicBool,
+    /// #1457 R1: receiver-side accumulator for `POST /admin/reshard:prune`
+    /// chunks, keyed by `(to_map_version, bucket, collection_id,
+    /// total_chunks)`. See [`Engine::apply_reshard_prune_chunk`].
+    prune_accumulator: Mutex<BTreeMap<PruneAccumKey, PruneAccumState>>,
+    /// #1467 R4: monotonic call counter for the prune accumulator's
+    /// age-based GC — incremented once per [`Engine::apply_reshard_prune_chunk`]
+    /// call and stamped onto each new [`PruneAccumState`] as `created_tick`.
+    /// A tick counter rather than wall-clock time keeps GC behavior
+    /// deterministic in tests (no sleeping required to exercise it) and
+    /// immune to system clock adjustments.
+    prune_accum_tick: AtomicU64,
+}
+
+/// `(to_map_version, bucket, collection_id, total_chunks)` — see
+/// [`Engine::apply_reshard_prune_chunk`].
+type PruneAccumKey = (u64, u32, String, u32);
+
+/// #1467 R4: hard cap on distinct in-flight prune accumulator groups —
+/// rejected with [`StorageError::PruneAccumulatorFull`] once reached, so an
+/// abandoned migration or a flood of bogus keys can't grow the accumulator
+/// without bound.
+const PRUNE_ACCUM_MAX_ENTRIES: usize = 256;
+
+/// #1467 R4: an accumulator entry older than this many
+/// [`Engine::apply_reshard_prune_chunk`] calls (tracked via
+/// `Engine::prune_accum_tick`, not wall-clock time) without completing is
+/// considered abandoned and is dropped on the next call. A real migration
+/// pass sends every chunk for a key back-to-back within one HTTP round
+/// trip loop, so thousands of intervening calls is generous slack for
+/// concurrent unrelated passes on other keys.
+const PRUNE_ACCUM_MAX_AGE_TICKS: u64 = 4096;
+
+/// #1467 R4: sanity cap on `ReshardPruneChunk::total_chunks` — rejected
+/// with [`StorageError::InvalidPruneChunk`] outright rather than accepted
+/// into the accumulator, since a chunk count this large could never
+/// plausibly complete from the sender's own chunking (`chunk_ids_by_bytes`
+/// in `src/reshard.rs` targets far fewer, larger chunks).
+const PRUNE_ACCUM_MAX_TOTAL_CHUNKS: u32 = 4096;
+
+#[derive(Debug, Default)]
+struct PruneAccumState {
+    received_chunks: BTreeSet<u32>,
+    keep_ids: BTreeSet<String>,
+    /// #1467 R4: the `Engine::prune_accum_tick` value when this entry was
+    /// first created (i.e. when its first chunk — of either index, since a
+    /// mid-sequence chunk can legitimately arrive first — landed).
+    created_tick: u64,
+}
+
+/// #1467 R4: drops every accumulator entry older than
+/// [`PRUNE_ACCUM_MAX_AGE_TICKS`]. Called with the accumulator already
+/// locked, once per [`Engine::apply_reshard_prune_chunk`] call, before that
+/// call's own chunk is considered — so a steady trickle of prune traffic
+/// keeps the accumulator bounded even if some passes are never completed
+/// (driver crash, superseded plan, ...).
+fn gc_prune_accumulator(accumulator: &mut BTreeMap<PruneAccumKey, PruneAccumState>, now: u64) {
+    accumulator
+        .retain(|_, state| now.saturating_sub(state.created_tick) <= PRUNE_ACCUM_MAX_AGE_TICKS);
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
@@ -4547,6 +4625,361 @@ impl Engine {
         Ok(())
     }
 
+    // -- Reshard admin verbs (#1380) -----------------------------------------
+
+    /// `POST /admin/reshard:apply`: additively merge one `ReshardBatch`'s
+    /// partial snapshot into the live engine — upsert semantics for the
+    /// batch's documents, never a full replace, so a target shard's
+    /// pre-existing collections/documents outside the batch are untouched.
+    ///
+    /// Reuses the same [`Collection::to_snapshot`]/[`Collection::from_snapshot`]
+    /// machinery `snapshot`/`restore` use: for a collection the target
+    /// already has, the live collection is snapshotted, merged with the
+    /// delta via [`crate::reshard::merge_snapshot_delta`] (bucket-batch
+    /// deltas are computed by [`crate::reshard::snapshot_reshard_batches`]),
+    /// and rebuilt in one write-lock scope so a concurrent read never
+    /// observes a torn state. A collection the target doesn't have yet is
+    /// inserted straight from the delta.
+    ///
+    /// Idempotent: `merge_snapshot_delta` unions postings/forward maps by
+    /// key, so replaying the same batch (operator resume after a checkpoint)
+    /// re-inserts identical entries and leaves query-visible state
+    /// unchanged. Per-field `bytes` size counters are a saturating-add
+    /// heuristic and are not strictly idempotent, but they never feed query
+    /// results.
+    /// `replace` (#1443 R2, reworked #1457 R1): when `Some`, applied *after*
+    /// the additive merge below — for every `(collection_id, keep_ids)` in
+    /// its `replace_ids`, prunes any document this shard currently holds
+    /// that routes to `replace.bucket` (under `replace.virtual_bucket_count`)
+    /// but is absent from `keep_ids`. This is what makes the reshard
+    /// driver's final, fenced `CatchingUp` pass authoritative for the
+    /// buckets it copies: a document deleted on the source during the split
+    /// is absent from the final pass's authoritative keep set and is pruned
+    /// here rather than surviving as a stale copy from an earlier additive
+    /// pass. Non-final passes never call this with `replace` set, so their
+    /// merge stays purely additive. Callers reach this branch through
+    /// [`Self::apply_reshard_prune_chunk`]'s receiver-side chunk
+    /// accumulator, not directly from a wire `ReshardBatch` (#1457 R1 split
+    /// the authoritative-replace scope out of that purely-additive type).
+    /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+    pub fn apply_reshard_batch(
+        &self,
+        delta: SnapshotV1,
+        replace: Option<crate::reshard::ReshardBatchReplaceScope>,
+    ) -> Result<ReshardApplyOutcome> {
+        if delta.version != SNAPSHOT_VERSION {
+            bail!(
+                "reshard batch snapshot version mismatch: got {}, supported {}",
+                delta.version,
+                SNAPSHOT_VERSION
+            );
+        }
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        let mut collections_touched = 0u32;
+        let mut documents_upserted = 0u32;
+        for (collection_id, delta_collection) in delta.collections {
+            documents_upserted =
+                documents_upserted.saturating_add(delta_collection.eid_fields.len() as u32);
+            let merged_collection = match state.collections.get(&collection_id) {
+                Some(existing) => {
+                    let base_snapshot = existing.to_snapshot()?;
+                    let base = SnapshotV1 {
+                        version: delta.version,
+                        collections: BTreeMap::from([(collection_id.clone(), base_snapshot)]),
+                    };
+                    let delta_wrap = SnapshotV1 {
+                        version: delta.version,
+                        collections: BTreeMap::from([(collection_id.clone(), delta_collection)]),
+                    };
+                    let merged = crate::reshard::merge_snapshot_delta(base, delta_wrap)?;
+                    merged
+                        .collections
+                        .into_iter()
+                        .next()
+                        .map(|(_, c)| c)
+                        .ok_or_else(|| anyhow!("reshard merge produced no collection"))?
+                }
+                None => delta_collection,
+            };
+            state
+                .collections
+                .insert(collection_id, Collection::from_snapshot(merged_collection)?);
+            collections_touched += 1;
+        }
+
+        let mut documents_pruned = 0u32;
+        if let Some(scope) = replace {
+            let bucket_map = VirtualBucketShardMap::balanced(0, scope.virtual_bucket_count, 1)?;
+            for (collection_id, keep_ids) in &scope.replace_ids {
+                let Some(coll) = state.collections.get_mut(collection_id) else {
+                    continue;
+                };
+                if coll.deleted_at.is_some() {
+                    continue;
+                }
+                let to_prune: Vec<(u32, String)> = coll
+                    .eid_fields
+                    .keys()
+                    .filter_map(|&id| {
+                        let external_id = coll.interner.resolve(id).to_string();
+                        let route = bucket_map
+                            .route_document(collection_id, None, &external_id)
+                            .bucket;
+                        (route == scope.bucket && !keep_ids.contains(&external_id))
+                            .then_some((id, external_id))
+                    })
+                    .collect();
+                if to_prune.is_empty() {
+                    continue;
+                }
+                coll.clear_search_cache();
+                coll.clear_number_filter_caches();
+                for (id, external_id) in &to_prune {
+                    let fields: Vec<String> = coll
+                        .eid_fields
+                        .get(id)
+                        .map(|s| s.iter().cloned().collect())
+                        .unwrap_or_default();
+                    for f in fields {
+                        if let Some(fi) = coll.fields.get_mut(&f) {
+                            fi.drop_eid(*id, external_id);
+                        }
+                    }
+                    coll.eid_fields.remove(id);
+                }
+                documents_pruned = documents_pruned.saturating_add(to_prune.len() as u32);
+            }
+            let total_bytes: u64 = state
+                .collections
+                .values()
+                .filter(|c| c.deleted_at.is_none())
+                .flat_map(|c| c.fields.values())
+                .map(|fi| fi.bytes())
+                .sum();
+            self.metrics.set_storage_bytes(total_bytes);
+        }
+
+        Ok(ReshardApplyOutcome {
+            collections_touched,
+            documents_upserted,
+            documents_pruned,
+        })
+    }
+
+    /// `POST /admin/reshard:prune` (#1457 R1, hardened #1467 R1/R2/R4):
+    /// accumulate one [`crate::reshard::ReshardPruneChunk`] of a final
+    /// migration pass's authoritative "keep" set for one `(bucket,
+    /// collection_id)` pair, and prune once every chunk in `0..total_chunks`
+    /// has arrived.
+    ///
+    /// Chunks are keyed by `(to_map_version, bucket, collection_id,
+    /// total_chunks)`; `keep_ids` are unioned and `chunk_index`es collected
+    /// into a set as each chunk lands. Once the set's length equals
+    /// `total_chunks`, the accumulated key is removed and the union is
+    /// applied via [`Self::apply_reshard_batch`] with an empty additive
+    /// delta and a single-collection [`crate::reshard::ReshardBatchReplaceScope`]
+    /// — reusing that method's already-tested prune logic rather than
+    /// duplicating it.
+    ///
+    /// Idempotent by construction: re-sending any subset of chunks (a 413
+    /// retry, or a network retry) only re-inserts identical set members;
+    /// re-sending *every* chunk of an already-completed group re-runs the
+    /// same accumulate-then-apply sequence from scratch (the completed
+    /// entry was removed) and calls `apply_reshard_batch` with the same
+    /// scope again, which is itself idempotent (pruning against
+    /// already-pruned state is a no-op).
+    ///
+    /// #1467 R1 (TOCTOU fix): readiness-check-and-removal is now a SINGLE
+    /// critical section — the lock is held across inserting this chunk,
+    /// checking whether the group is now complete, and (if so) removing the
+    /// entry, so two concurrent completions for the same key can never both
+    /// observe "ready". The loser of such a race (its chunk lands after the
+    /// winner already removed the entry) starts a fresh, necessarily
+    /// incomplete accumulation instead of ever pruning against an empty
+    /// keep set.
+    ///
+    /// #1467 R2 (stale-partial reset): the sender (`run_migration_pass_impl`
+    /// in `src/operator/reshard_driver.rs`) always emits chunks
+    /// `0..total_chunks` for one key strictly in order, back-to-back within
+    /// a single migration pass, and never starts a second pass for the same
+    /// `(bucket, collection_id)` before the first either completes or the
+    /// driver gives up on it entirely — see
+    /// [`crate::reshard::ReshardPruneChunk`]'s doc comment for the sender-side
+    /// half of this contract. So `chunk_index == 0` unambiguously marks the
+    /// start of a new pass: it resets any stale partial left by an earlier
+    /// pass for the same key that never reached completion (driver
+    /// crash/restart, superseded plan) instead of unioning into it — a
+    /// delete landing between the abandoned pass and its retry could
+    /// otherwise resurrect via a keep_id carried over from the stale entry.
+    ///
+    /// #1467 R4 (bounded accumulator): every call first age-GCs the
+    /// accumulator ([`gc_prune_accumulator`]) and validates `total_chunks`
+    /// against [`PRUNE_ACCUM_MAX_TOTAL_CHUNKS`]; a brand-new key is rejected
+    /// with [`StorageError::PruneAccumulatorFull`] once
+    /// [`PRUNE_ACCUM_MAX_ENTRIES`] distinct in-flight groups are already
+    /// held, so neither an abandoned migration nor a flood of bogus keys can
+    /// grow the accumulator without bound.
+    /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+    pub fn apply_reshard_prune_chunk(
+        &self,
+        chunk: crate::reshard::ReshardPruneChunk,
+    ) -> Result<ReshardPruneOutcome> {
+        if chunk.total_chunks == 0 || chunk.total_chunks > PRUNE_ACCUM_MAX_TOTAL_CHUNKS {
+            return Err(StorageError::InvalidPruneChunk {
+                total_chunks: chunk.total_chunks,
+                max: PRUNE_ACCUM_MAX_TOTAL_CHUNKS,
+            }
+            .into());
+        }
+        let key: PruneAccumKey = (
+            chunk.to_map_version,
+            chunk.bucket,
+            chunk.collection_id.clone(),
+            chunk.total_chunks,
+        );
+        let keep_ids = {
+            let mut accumulator = self
+                .prune_accumulator
+                .lock()
+                .map_err(|_| anyhow!("prune accumulator poisoned"))?;
+            let now = self.prune_accum_tick.fetch_add(1, Ordering::Relaxed) + 1;
+            gc_prune_accumulator(&mut accumulator, now);
+
+            // R2: chunk 0 always starts a fresh pass — drop any stale
+            // partial left by an earlier, never-completed pass for this key.
+            if chunk.chunk_index == 0 {
+                accumulator.remove(&key);
+            }
+
+            // R4: bound distinct in-flight groups (only a brand-new key
+            // consumes a new slot; a chunk for an already-tracked key is
+            // always accepted so an in-progress pass can still complete).
+            if !accumulator.contains_key(&key) && accumulator.len() >= PRUNE_ACCUM_MAX_ENTRIES {
+                return Err(StorageError::PruneAccumulatorFull {
+                    count: accumulator.len(),
+                    max: PRUNE_ACCUM_MAX_ENTRIES,
+                }
+                .into());
+            }
+
+            let entry = accumulator
+                .entry(key.clone())
+                .or_insert_with(|| PruneAccumState {
+                    created_tick: now,
+                    ..Default::default()
+                });
+            entry.received_chunks.insert(chunk.chunk_index);
+            entry.keep_ids.extend(chunk.keep_ids);
+            let ready = entry.received_chunks.len() as u32 >= chunk.total_chunks;
+            if !ready {
+                return Ok(ReshardPruneOutcome {
+                    complete: false,
+                    documents_pruned: 0,
+                });
+            }
+            // R1: remove-and-capture inside the SAME guard as the readiness
+            // check above — no other caller can observe "ready" for this
+            // key again until a fresh chunk 0 re-creates it.
+            accumulator
+                .remove(&key)
+                .map(|state| state.keep_ids)
+                .unwrap_or_default()
+        };
+        let empty_delta = SnapshotV1 {
+            version: SNAPSHOT_VERSION,
+            collections: BTreeMap::new(),
+        };
+        let scope = crate::reshard::ReshardBatchReplaceScope {
+            bucket: chunk.bucket,
+            virtual_bucket_count: chunk.virtual_bucket_count,
+            replace_ids: BTreeMap::from([(chunk.collection_id, keep_ids)]),
+        };
+        let outcome = self.apply_reshard_batch(empty_delta, Some(scope))?;
+        Ok(ReshardPruneOutcome {
+            complete: true,
+            documents_pruned: outcome.documents_pruned,
+        })
+    }
+
+    /// `POST /admin/reshard:evict`: source-side post-cutover eviction.
+    /// Given a newer virtual-bucket map `to` and this shard's physical
+    /// index `this_shard`, removes exactly the documents whose bucket now
+    /// routes to a different shard under `to` — nothing else. A separate,
+    /// explicitly-invoked step: never implicit in `apply_reshard_batch` or
+    /// `snapshot`. Idempotent — a doc already evicted by a prior call no
+    /// longer matches and is skipped on retry.
+    ///
+    /// Refreshes `lumen_storage_bytes` inline for every collection actually
+    /// touched (#1386 R2): the gauge otherwise only refreshes on the next
+    /// `GET /collections/{id}/stats` call, which may not come before the
+    /// reshard driver's own usage loop scrapes `/metrics` again — a scrape
+    /// timed right after this cutover's eviction would otherwise still
+    /// report pre-eviction bytes even though it is chronologically
+    /// post-cutover, defeating the cutover-generation freshness check in
+    /// [`crate::operator::crd::LumenSpec::reshard_status_with_usage`].
+    /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+    pub fn evict_not_owned(
+        &self,
+        to: &VirtualBucketShardMap,
+        this_shard: u32,
+    ) -> Result<ReshardEvictOutcome> {
+        let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
+        let mut collections_touched = 0u32;
+        let mut documents_evicted = 0u32;
+        for (collection_id, coll) in state.collections.iter_mut() {
+            if coll.deleted_at.is_some() {
+                continue;
+            }
+            let to_evict: Vec<(u32, String)> = coll
+                .eid_fields
+                .keys()
+                .filter_map(|&id| {
+                    let external_id = coll.interner.resolve(id).to_string();
+                    let route = to.route_document(collection_id, None, &external_id);
+                    (route.shard != this_shard).then_some((id, external_id))
+                })
+                .collect();
+            if to_evict.is_empty() {
+                continue;
+            }
+            coll.clear_search_cache();
+            coll.clear_number_filter_caches();
+            for (id, external_id) in &to_evict {
+                let fields: Vec<String> = coll
+                    .eid_fields
+                    .get(id)
+                    .map(|s| s.iter().cloned().collect())
+                    .unwrap_or_default();
+                for f in fields {
+                    if let Some(fi) = coll.fields.get_mut(&f) {
+                        fi.drop_eid(*id, external_id);
+                    }
+                }
+                coll.eid_fields.remove(id);
+            }
+            documents_evicted = documents_evicted.saturating_add(to_evict.len() as u32);
+            collections_touched += 1;
+        }
+        // #1386 R2 / #1397 R2: publish the engine-wide byte footprint (summed
+        // across every live collection), not just whichever collection this
+        // loop happened to touch last — the reshard split trigger reads this
+        // gauge, and a per-collection last-writer-wins value under-reports
+        // any engine holding more than one collection. Computed once, after
+        // the loop, over the same live-collection view `stats()` uses.
+        let total_bytes: u64 = state
+            .collections
+            .values()
+            .filter(|c| c.deleted_at.is_none())
+            .flat_map(|c| c.fields.values())
+            .map(|fi| fi.bytes())
+            .sum();
+        self.metrics.set_storage_bytes(total_bytes);
+        Ok(ReshardEvictOutcome {
+            collections_touched,
+            documents_evicted,
+        })
+    }
+
     pub fn stats(&self, collection_id: &str) -> Result<StatsResponse> {
         let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
         let coll = state
@@ -4570,7 +5003,19 @@ impl Engine {
             .collect();
 
         let total_bytes: u64 = fields.values().map(|s| s.bytes).sum();
-        self.metrics.set_storage_bytes(total_bytes);
+        // #1397 R2: the response reports this collection's own total, but the
+        // gauge is engine-wide — summing only this collection here is the
+        // same last-writer-wins defect `evict_not_owned` had (whichever
+        // collection was `/stats`-ed last "wins" the gauge), and the reshard
+        // trigger reads this gauge expecting an engine-wide figure.
+        let engine_total_bytes: u64 = state
+            .collections
+            .values()
+            .filter(|c| c.deleted_at.is_none())
+            .flat_map(|c| c.fields.values())
+            .map(|fi| fi.bytes())
+            .sum();
+        self.metrics.set_storage_bytes(engine_total_bytes);
 
         let last_indexed_at = coll.last_indexed_at.map(|t| {
             let dt: chrono::DateTime<chrono::Utc> = t.into();
@@ -8805,6 +9250,38 @@ pub struct CollectionSnapshot {
     pub version: u32,
     pub eid_fields: HashMap<String, BTreeSet<String>>,
     pub fields: BTreeMap<String, FieldIndexSnapshot>,
+}
+
+/// Response summary for `POST /admin/reshard:apply` (#1380 R1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+pub struct ReshardApplyOutcome {
+    pub collections_touched: u32,
+    pub documents_upserted: u32,
+    /// #1443 R2: documents pruned by an authoritative-subset `replace`
+    /// scope, `0` when the batch carried none.
+    #[serde(default)]
+    pub documents_pruned: u32,
+}
+
+/// Response summary for `POST /admin/reshard:evict` (#1380 R3).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+pub struct ReshardEvictOutcome {
+    pub collections_touched: u32,
+    pub documents_evicted: u32,
+}
+
+/// Response summary for `POST /admin/reshard:prune` (#1457 R1). `complete`
+/// is `false` while the receiver is still accumulating chunks for this
+/// `(to_map_version, bucket, collection_id, total_chunks)` group (the
+/// common case for every chunk but the last); `documents_pruned` is only
+/// meaningful once `complete` is `true`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
+pub struct ReshardPruneOutcome {
+    pub complete: bool,
+    pub documents_pruned: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16599,6 +17076,431 @@ mod tests {
             3
         );
     }
+
+    fn kw_only_schema() -> CreateCollectionRequest {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "email".into(),
+            FieldSpec {
+                field_type: FieldType::Keyword,
+                analyzer: None,
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        CreateCollectionRequest { fields }
+    }
+
+    fn index_kw(e: &Engine, collection_id: &str, eid: &str) {
+        e.index(
+            collection_id,
+            IndexRequest {
+                items: vec![item(
+                    eid,
+                    "email",
+                    FieldValue::String(format!("{eid}@x.com")),
+                )],
+                request_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    /// Ground truth read of one collection's own byte footprint, independent
+    /// of the engine-wide gauge under test.
+    fn collection_live_bytes(e: &Engine, collection_id: &str) -> u64 {
+        let state = e.state.read().unwrap();
+        state
+            .collections
+            .get(collection_id)
+            .unwrap()
+            .fields
+            .values()
+            .map(|fi| fi.bytes())
+            .sum()
+    }
+
+    /// #1397 R2 / AC2: `evict_not_owned` must publish the ENGINE-WIDE byte
+    /// total (summed across every live collection) after eviction, not just
+    /// whichever collection the loop happened to touch last. Two
+    /// collections, both with enough documents spread across the shard
+    /// map's virtual buckets that eviction touches both (a real
+    /// `balanced()` map, same shape production reshard uses) — the old
+    /// last-writer-wins gauge update would equal only the
+    /// later-in-iteration-order collection's post-eviction bytes ("b"
+    /// sorts after "a" in the `BTreeMap` the loop walks), not the sum.
+    #[test]
+    fn evict_not_owned_publishes_engine_wide_byte_total() {
+        let e = Engine::new();
+        e.create_collection("a", kw_only_schema()).unwrap();
+        e.create_collection("b", kw_only_schema()).unwrap();
+        for i in 0..40 {
+            index_kw(&e, "a", &format!("a{i:02}"));
+        }
+        for i in 0..40 {
+            index_kw(&e, "b", &format!("b{i:02}"));
+        }
+
+        let map = VirtualBucketShardMap::balanced(1, 8, 2).unwrap();
+        let touches_a =
+            (0..40).any(|i| map.route_document("a", None, &format!("a{i:02}")).shard != 0);
+        let touches_b =
+            (0..40).any(|i| map.route_document("b", None, &format!("b{i:02}")).shard != 0);
+        assert!(
+            touches_a && touches_b,
+            "fixture must evict from both collections to exercise the \
+             engine-wide sum (touches_a={touches_a}, touches_b={touches_b})"
+        );
+
+        let outcome = e.evict_not_owned(&map, 0).unwrap();
+        assert_eq!(outcome.collections_touched, 2);
+        assert!(outcome.documents_evicted > 0);
+
+        let expected_total = collection_live_bytes(&e, "a") + collection_live_bytes(&e, "b");
+        assert!(expected_total > 0);
+        assert_eq!(
+            e.metrics().storage_bytes.get(),
+            expected_total,
+            "gauge must equal the sum of both collections' post-eviction bytes, \
+             not just one of them"
+        );
+    }
+
+    /// #1397 R2 / AC2: `stats()` has the same last-writer-wins defect as
+    /// `evict_not_owned` — it must also publish the engine-wide byte total,
+    /// summed across every live collection, even though the API response it
+    /// returns stays scoped to the one requested collection.
+    #[test]
+    fn stats_publishes_engine_wide_byte_total() {
+        let e = Engine::new();
+        e.create_collection("a", kw_only_schema()).unwrap();
+        e.create_collection("b", kw_only_schema()).unwrap();
+        for i in 0..10 {
+            index_kw(&e, "a", &format!("a{i:02}"));
+        }
+        for i in 0..25 {
+            index_kw(&e, "b", &format!("b{i:02}"));
+        }
+
+        let bytes_a = collection_live_bytes(&e, "a");
+        let bytes_b = collection_live_bytes(&e, "b");
+        assert!(bytes_a > 0 && bytes_b != bytes_a);
+
+        // Calling stats on the SMALLER collection last is the case the old
+        // per-collection-only update got wrong: a last-writer-wins gauge
+        // would equal `bytes_a` alone, not `bytes_a + bytes_b`.
+        let stats_b = e.stats("b").unwrap();
+        assert_eq!(stats_b.storage.total_bytes, bytes_b);
+        e.stats("a").unwrap();
+
+        assert_eq!(
+            e.metrics().storage_bytes.get(),
+            bytes_a + bytes_b,
+            "gauge must equal the sum across both collections after a \
+             single-collection stats() call"
+        );
+    }
+
+    // ---- #1467 R1/R2/R4: prune-chunk accumulator hardening -----------
+
+    fn prune_test_schema() -> CreateCollectionRequest {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "email".into(),
+            FieldSpec {
+                field_type: FieldType::Keyword,
+                analyzer: None,
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        CreateCollectionRequest { fields }
+    }
+
+    fn prune_index_user(e: &Engine, collection: &str, eid: &str) {
+        e.index(
+            collection,
+            IndexRequest {
+                items: vec![item(
+                    eid,
+                    "email",
+                    FieldValue::String(format!("{eid}@x.com")),
+                )],
+                request_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    fn prune_has_doc(e: &Engine, collection: &str, eid: &str) -> bool {
+        let resp = e
+            .search(
+                collection,
+                SearchRequest {
+                    query: QueryNode::Term(TermQuery {
+                        field: "email".into(),
+                        value: FieldValue::String(format!("{eid}@x.com")),
+                    }),
+                    limit: 10,
+                    cursor: None,
+                    routing_key: None,
+                    sort: None,
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap();
+        resp.total == 1
+    }
+
+    fn prune_bucket_of(collection_id: &str, external_id: &str) -> u32 {
+        VirtualBucketShardMap::balanced(0, 4, 1)
+            .unwrap()
+            .route_document(collection_id, None, external_id)
+            .bucket
+    }
+
+    fn prune_chunk(
+        to_map_version: u64,
+        bucket: u32,
+        collection_id: &str,
+        chunk_index: u32,
+        total_chunks: u32,
+        keep_ids: &[&str],
+    ) -> crate::reshard::ReshardPruneChunk {
+        crate::reshard::ReshardPruneChunk {
+            to_map_version,
+            bucket,
+            virtual_bucket_count: 4,
+            collection_id: collection_id.to_string(),
+            chunk_index,
+            total_chunks,
+            keep_ids: keep_ids.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// #1467 R1/AC1: two chunks that BOTH complete the same group (a
+    /// duplicate final chunk racing its original, e.g. a client retry
+    /// in flight concurrently with the original request) must never both
+    /// observe "ready" and neither may ever prune against an empty keep
+    /// set — the fixed readiness-check-and-removal is one critical section,
+    /// so exactly one call drains the group with the correct, fully-unioned
+    /// keep set and every later racer starts a fresh, empty accumulation.
+    #[test]
+    fn apply_reshard_prune_chunk_concurrent_completions_never_use_empty_keep_set() {
+        let e = std::sync::Arc::new(Engine::new());
+        e.create_collection("u", prune_test_schema()).unwrap();
+        prune_index_user(&e, "u", "kept-1");
+        prune_index_user(&e, "u", "kept-2");
+        prune_index_user(&e, "u", "dropped");
+        // The scope only prunes documents that route to `bucket` — derive it
+        // from "dropped" itself so the doc under test is actually in scope
+        // regardless of where "kept-1"/"kept-2" happen to hash (they are
+        // safe either way: present in `keep_ids`, so kept if co-bucketed,
+        // and untouched if not).
+        let bucket = prune_bucket_of("u", "dropped");
+
+        // Two threads race the SAME final chunk of a 1-chunk group — the
+        // keep set never includes "dropped", so a correct outcome always
+        // prunes exactly it, exactly once (a re-run against already-pruned
+        // state prunes 0 more), and never wipes "kept-1"/"kept-2".
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let e = e.clone();
+            handles.push(std::thread::spawn(move || {
+                e.apply_reshard_prune_chunk(prune_chunk(
+                    1,
+                    bucket,
+                    "u",
+                    0,
+                    1,
+                    &["kept-1", "kept-2"],
+                ))
+                .unwrap()
+            }));
+        }
+        let outcomes: Vec<ReshardPruneOutcome> =
+            handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+        assert!(
+            outcomes.iter().all(|o| o.complete),
+            "every racer completes its own 1-chunk group: {outcomes:?}"
+        );
+        let total_pruned: u32 = outcomes.iter().map(|o| o.documents_pruned).sum();
+        assert_eq!(
+            total_pruned, 1,
+            "the dropped doc must be pruned exactly once across every racer, \
+             never an empty-keep-set full-bucket wipe: {outcomes:?}"
+        );
+        assert!(prune_has_doc(&e, "u", "kept-1"));
+        assert!(prune_has_doc(&e, "u", "kept-2"));
+        assert!(!prune_has_doc(&e, "u", "dropped"));
+    }
+
+    /// #1467 R2/AC2: an abandoned pass that only sent chunk 0 of a
+    /// multi-chunk group (driver crash/restart mid-pass) leaves a stale
+    /// partial accumulation. A retried pass's fresh `chunk_index == 0` must
+    /// reset it rather than union into it — otherwise a keep_id carried
+    /// over from the abandoned attempt could resurrect a doc the retried
+    /// pass's own keep set actually drops.
+    #[test]
+    fn apply_reshard_prune_chunk_chunk_index_zero_resets_stale_partial() {
+        let e = Engine::new();
+        e.create_collection("u", prune_test_schema()).unwrap();
+        prune_index_user(&e, "u", "kept");
+        prune_index_user(&e, "u", "stale-only");
+        // The scope only prunes documents that route to `bucket` — derive it
+        // from "stale-only" itself so the doc under test is actually in
+        // scope. "kept" is safe either way: it is always in the retried
+        // pass's `keep_ids`, so it survives whether or not it shares a
+        // bucket with "stale-only".
+        let bucket = prune_bucket_of("u", "stale-only");
+
+        // Abandoned first pass: chunk 0 of 2 lands, keeping "stale-only"
+        // (as if the retried pass's keep set will differ); chunk 1 never
+        // arrives.
+        let out = e
+            .apply_reshard_prune_chunk(prune_chunk(1, bucket, "u", 0, 2, &["stale-only"]))
+            .unwrap();
+        assert!(!out.complete);
+
+        // Retried pass restarts from chunk 0 with the corrected keep set
+        // (drops "stale-only", keeps "kept"), then completes with chunk 1.
+        let out = e
+            .apply_reshard_prune_chunk(prune_chunk(1, bucket, "u", 0, 2, &["kept"]))
+            .unwrap();
+        assert!(!out.complete);
+        let out = e
+            .apply_reshard_prune_chunk(prune_chunk(1, bucket, "u", 1, 2, &[]))
+            .unwrap();
+        assert!(out.complete);
+
+        assert!(
+            prune_has_doc(&e, "u", "kept"),
+            "the retried pass's own keep set must be honored"
+        );
+        assert!(
+            !prune_has_doc(&e, "u", "stale-only"),
+            "the abandoned pass's stale chunk-0 keep_id must not have survived \
+             the chunk_index==0 reset"
+        );
+    }
+
+    /// #1467 R4/AC4: `total_chunks == 0` and `total_chunks` beyond the sanity
+    /// cap are both rejected before ever touching the accumulator.
+    #[test]
+    fn apply_reshard_prune_chunk_rejects_invalid_total_chunks() {
+        let e = Engine::new();
+        e.create_collection("u", prune_test_schema()).unwrap();
+
+        for total_chunks in [0, PRUNE_ACCUM_MAX_TOTAL_CHUNKS + 1] {
+            let err = e
+                .apply_reshard_prune_chunk(prune_chunk(1, 0, "u", 0, total_chunks, &[]))
+                .unwrap_err();
+            assert!(
+                matches!(
+                    err.downcast_ref::<StorageError>(),
+                    Some(StorageError::InvalidPruneChunk { .. })
+                ),
+                "total_chunks={total_chunks} must be rejected as InvalidPruneChunk: {err:?}"
+            );
+        }
+    }
+
+    /// #1467 R4/AC4: once [`PRUNE_ACCUM_MAX_ENTRIES`] distinct incomplete
+    /// groups are already held, a brand-new key is rejected rather than
+    /// growing the accumulator without bound; an already-tracked key may
+    /// still make progress.
+    #[test]
+    fn apply_reshard_prune_chunk_rejects_new_key_once_accumulator_is_full() {
+        let e = Engine::new();
+        e.create_collection("u", prune_test_schema()).unwrap();
+
+        // Every filler key uses a 3-chunk group and only ever receives chunk
+        // 0, so all `PRUNE_ACCUM_MAX_ENTRIES` entries stay held (incomplete,
+        // never removed) at once.
+        for v in 0..PRUNE_ACCUM_MAX_ENTRIES as u64 {
+            let out = e
+                .apply_reshard_prune_chunk(prune_chunk(v, 0, "u", 0, 3, &[]))
+                .unwrap();
+            assert!(!out.complete);
+        }
+
+        // An already-tracked key still makes progress without completing
+        // (2 of 3 chunks received) — the accumulator count must not drop,
+        // so the capacity check below still holds.
+        let out = e
+            .apply_reshard_prune_chunk(prune_chunk(0, 0, "u", 1, 3, &[]))
+            .unwrap();
+        assert!(!out.complete);
+
+        // A brand-new key is rejected: the accumulator is at capacity.
+        let err = e
+            .apply_reshard_prune_chunk(prune_chunk(
+                PRUNE_ACCUM_MAX_ENTRIES as u64,
+                0,
+                "u",
+                0,
+                3,
+                &[],
+            ))
+            .unwrap_err();
+        assert!(
+            matches!(
+                err.downcast_ref::<StorageError>(),
+                Some(StorageError::PruneAccumulatorFull { .. })
+            ),
+            "a new key beyond PRUNE_ACCUM_MAX_ENTRIES must be rejected: {err:?}"
+        );
+    }
+
+    /// #1467 R4/AC4: an incomplete group older than
+    /// [`PRUNE_ACCUM_MAX_AGE_TICKS`] is age-GC'd on a later call — its
+    /// earlier chunks are gone, so a later chunk for the same key starts a
+    /// fresh (still-incomplete) accumulation instead of completing.
+    #[test]
+    fn apply_reshard_prune_chunk_gc_evicts_stale_incomplete_groups_by_age() {
+        let e = Engine::new();
+        e.create_collection("u", prune_test_schema()).unwrap();
+
+        // Key under test: only chunk 0 of 2 ever lands.
+        let out = e
+            .apply_reshard_prune_chunk(prune_chunk(999, 0, "u", 0, 2, &[]))
+            .unwrap();
+        assert!(!out.complete);
+
+        // Advance the tick well past PRUNE_ACCUM_MAX_AGE_TICKS via distinct,
+        // SELF-COMPLETING single-chunk (total_chunks=1) groups — each is
+        // removed from the accumulator the moment it lands, so this loop
+        // advances the tick counter without ever growing the accumulator
+        // past `PRUNE_ACCUM_MAX_ENTRIES` (which would otherwise reject
+        // long before the age budget is reached, since
+        // `PRUNE_ACCUM_MAX_AGE_TICKS` far exceeds `PRUNE_ACCUM_MAX_ENTRIES`).
+        for v in 0..(PRUNE_ACCUM_MAX_AGE_TICKS + 2) {
+            let out = e
+                .apply_reshard_prune_chunk(prune_chunk(2_000_000 + v, 0, "u", 0, 1, &[]))
+                .unwrap();
+            assert!(out.complete);
+        }
+
+        // The key under test's chunk 0 must have been age-GC'd: its
+        // "final" chunk 1 now starts a fresh, still-incomplete group rather
+        // than completing.
+        let out = e
+            .apply_reshard_prune_chunk(prune_chunk(999, 0, "u", 1, 2, &[]))
+            .unwrap();
+        assert!(
+            !out.complete,
+            "chunk 0 of the aged-out group must have been GC'd, so chunk 1 alone \
+             cannot complete a fresh 2-chunk group: {out:?}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -18413,4 +19315,72 @@ changes:
     description: |
       rust-source-unit (td_ast) source for `projects/lumen/src/storage.rs` captured during lumen
       standardization onto the per-file codegen ladder.
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1386 R2: `evict_not_owned` now recomputes and publishes
+      `lumen_storage_bytes` inline for every collection it actually
+      touches, instead of leaving the gauge to whatever the last
+      `GET /collections/{id}/stats` call happened to report. Closes the gap
+      where a shard-usage scrape timed right after a split's cutover
+      eviction could still see pre-eviction bytes even though it is
+      chronologically post-cutover — the gauge is now numerically fresh in
+      the same tick that bumps `shardMap.version`, not just
+      chronologically fresh.
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1443 R2: `apply_reshard_batch` gains a new `replace: Option<crate::
+      reshard::ReshardBatchReplaceScope>` parameter. When `Some` (only the
+      reshard driver's final fenced `CatchingUp` pass sets it), the
+      additive merge runs first as before and then, for every
+      `(collection_id, keep_ids)` pair in `replace.replace_ids`, any
+      document this shard currently holds that routes to `replace.bucket`
+      (under `replace.virtual_bucket_count`) but is absent from `keep_ids`
+      is pruned via the same code path `delete` uses (forward-index +
+      postings + per-field byte-counter cleanup), and `lumen_storage_bytes`
+      is refreshed for every collection actually touched. This closes the
+      delete-during-split resurrection gap: a document deleted on the
+      source mid-split is absent from the final pass's authoritative id
+      set and is pruned here instead of surviving as a stale copy left by
+      an earlier additive-only pass. Non-final passes still call this with
+      `replace: None` and behave exactly as before (purely additive,
+      existing 413-retry idempotency tests unaffected). The new
+      `documents_pruned` counter is added to `ReshardApplyOutcome` and
+      surfaced in the `POST /admin/reshard:apply` response body. All call
+      sites that don't yet have a replace scope (raft snapshot restore,
+      segment_rdb tests) now pass `None` explicitly.
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1467 R1/R2/R4: `apply_reshard_prune_chunk` hardening. R1 (TOCTOU):
+      the readiness check and the accumulator-entry removal are now a
+      single critical section under one lock guard, so two concurrent
+      completions for the same `(to_map_version, bucket, collection_id,
+      total_chunks)` key can never both observe "ready" -- the loser
+      starts a fresh, empty accumulation instead of ever pruning against
+      an empty keep set. R2 (stale-partial reset): `chunk_index == 0` now
+      resets any pre-existing accumulator entry for its key before
+      inserting, so a retried migration pass after a driver crash/restart
+      cannot union its fresh keep set into a stale partial left by the
+      abandoned pass. R4 (bounded accumulator): every call first age-GCs
+      the accumulator (`gc_prune_accumulator`, keyed off a new
+      `Engine::prune_accum_tick` monotonic counter and
+      `PRUNE_ACCUM_MAX_AGE_TICKS`), validates `total_chunks` against the
+      new `PRUNE_ACCUM_MAX_TOTAL_CHUNKS` sanity cap (rejecting `0` and
+      oversized values as `StorageError::InvalidPruneChunk`), and rejects
+      a brand-new key once `PRUNE_ACCUM_MAX_ENTRIES` distinct in-flight
+      groups are already held (`StorageError::PruneAccumulatorFull`) --
+      an already-tracked key may still make progress. New unit tests:
+      `apply_reshard_prune_chunk_concurrent_completions_never_use_empty_keep_set`,
+      `apply_reshard_prune_chunk_chunk_index_zero_resets_stale_partial`,
+      `apply_reshard_prune_chunk_rejects_invalid_total_chunks`,
+      `apply_reshard_prune_chunk_rejects_new_key_once_accumulator_is_full`,
+      `apply_reshard_prune_chunk_gc_evicts_stale_incomplete_groups_by_age`.
 ```

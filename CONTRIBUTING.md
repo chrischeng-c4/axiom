@@ -209,7 +209,11 @@ headers, the CPython oracle, and the perf-baseline flow.
 > anything. The production data plane is durable-only: no service-archetype
 > adopter may acknowledge accepted state changes from an in-memory-only path, and
 > every stateful service must pair local/raft durability with scheduled off-node
-> snapshots to object storage.
+> snapshots to object storage. Durable-only applies to the mutation path as a
+> whole, not only the primary write path: an admin or migration verb that
+> writes state outside the normal request path must either route through it
+> or be explicitly checkpointed and awaited before any dependent
+> orchestration step (restart, cutover, failover) proceeds.
 
 Reference instantiations: **`keep`** (KV / claim-check store), **`relay`**
 (broker), **`lumen`** (search / dedup index), and **`loom`** (workflow
@@ -384,6 +388,23 @@ Kubernetes output is split by lifecycle layer:
 an independent namespace such as `<svc>-system`; `operator run` is the controller
 process/container entrypoint. `instance` renders the app-namespace custom
 resource that an application team applies next to the app it integrates with.
+
+When a reconcile's rendered shape stops including a resource it rendered
+previously — a conditional HPA, a per-mode Service, or any other
+conditionally-rendered child — the service operator must explicitly delete
+that child. The shared `libs/operator` reconcile loop renders desired state;
+it does not garbage-collect a resource that an earlier render produced and
+the current render no longer wants. The deletion must be idempotent, scoped
+to the names/labels the operator itself stamps (never a foreign or
+unrelated resource), and logged.
+
+A mounted PVC is not durability. Rendering a `PersistentVolumeClaim`
+template only makes storage available; the operator's rendered defaults
+must also activate the service's own durable-persistence path (data-dir /
+persistence env or equivalent) so the service actually writes to that
+storage. The deploy baseline for a stateful service includes a
+pod-delete-and-recreate proof that data written before the deletion is
+still present after the pod is recreated.
 
 ### Deploy tenancy — dedicated first, shared only when justified
 
@@ -575,6 +596,12 @@ and the peer set come from the Kubernetes **downward API** on a StatefulSet —
 nothing is hand-configured per replica. Gate consensus behind a Cargo feature
 only when a single-node mode is a legitimate deployment (e.g. `keep`).
 
+A stateful sharded service scales storage and compute along two independent,
+autonomous axes: storage ownership grows through disk-usage-driven shard
+splits, compute capacity grows through CPU-driven replica/HPA scaling, and
+neither axis has a human gate. HPA owns compute scaling only — it never
+changes shard ownership or storage topology.
+
 ### EC gates — `vat`-driven, evidence under `external-contracts/`
 
 Every service carries a fixed set of **evidence-contract (EC) gate files**, each
@@ -693,6 +720,26 @@ builds. Reference adopters: `apps/jet` and `projects/lumen`.
   to that same label. The group is named `issue` (**not** `report`), leaving
   domain `report` verbs (`jet report` = HTML **test** reports) untouched.
 
+A fourth verb, **`connect`**, is a convention for **k8s-native service CLIs**
+specifically (not every CLI — see "Service CLI convention" below for the
+`kubernetes_native` project baseline): `<cli> connect --namespace <ns>
+(--service <svc> | --cr <cr-name>) [--secret <secret>] -- <cmd>...` spawns a
+`kubectl port-forward` for the duration of a wrapped command and tears it down
+(kill + wait) on exit regardless of the wrapped command's status, resolving a
+bearer token from a token-registry Secret when one is in play. Its
+implementation home is `cli_std::connect` (`libs/cli-std/src/connect.rs`,
+behind the `k8s` feature): the port-forward process lifecycle (`ChildGuard`,
+`free_local_port`, `wait_for_local_port_ready`) and the token-registry Secret
+resolution chain (`kubectl_get_json`, `cr_tokens_secret`,
+`resolve_cr_tokens_secret`, `secret_data_bytes`, `select_token`,
+`resolve_token`) are universal to any k8s-native service CLI — a tool adopts
+`connect` by supplying only its own flag surface, its CR-kind lookup
+convention (the `resource_kind` string passed to `resolve_cr_tokens_secret`),
+and a role mapping into `cli_std::connect::Role`. `projects/lumen`
+(`lumen connect`, extracted #1321/#1376) is the reference adopter; keep/relay/
+loom/beam adopting `connect` is tracked as follow-up work per project, not
+required by this convention alone.
+
 ## CLI convention: stdout tells the agent the next step
 
 > Every CLI's machine-readable output must tell the agent what happens next —
@@ -736,6 +783,64 @@ traceability coverage); this convention asks whether one command's output is
 *executable by the next agent* (轉不轉得動 — handoff, not completeness). A
 CLI can be 100% complete by `aw health` and still emit unchainable output,
 and vice versa.
+
+## DX convention: every service and CLI ships a Developer & Agent Experience capability
+
+> An agent's first contact with a tool is offline (docs, schemas, `--help`)
+> long before it is online (a live connection). This convention makes that
+> first contact a **capability** — with the same gate discipline as any other
+> product surface — instead of incidental documentation nobody tests.
+
+Every service-archetype adopter (see "Service archetype" above) and every
+ecosystem CLI (see "CLI convention: every CLI ships `llm`, `upgrade`,
+`issue`" above) **MUST** own one `Developer & Agent Experience` capability
+(`Type: AgentFirst`) in its README `## Capabilities` section, decomposed
+into four work-root sub-domains:
+
+| Sub-domain | Owns |
+|---|---|
+| `offline-contract` | The tool's machine-readable interface committed to the repo without a live process — OpenAPI/JSON-schema/proto, CLI `--help`, generated reference docs. |
+| `agent-onboarding` | The tool's self-teaching surface — `<cli> llm` topics, README quickstart/recipes — anything an agent reads before it writes its first command. |
+| `interactive-tooling` | Live-surface ergonomics — `<cli> connect`, REPLs, watch/tail modes — anything that assumes a reachable deployed or remote instance. |
+| `integration-contract` | Client-visible behavioral contracts that span calls — retry/error-code semantics, pagination, idempotency, versioning — the promises a caller's code, not just its docs, depends on. |
+
+`interactive-tooling` applies only where the tool has a deployed or remote
+surface to connect to (a k8s-native service, or a CLI with a `connect` verb
+per the convention above); a pure-local CLI with no remote surface **MAY**
+omit that sub-domain, but **MUST** say so explicitly in its work-root table
+(e.g. `n/a — no remote surface`) rather than leaving the row out silently.
+
+Each sub-domain is an ordinary work-root row (ID, gap/claim refs, status,
+`sub-domain: <name>` in its Gate/Evidence column) — it does not require its
+own H3 heading; one `### Developer & Agent Experience` capability with all
+four sub-domains in its Work Root table satisfies this convention.
+
+Gate expectations:
+
+- `offline-contract` **MUST NOT** lag the live surface it describes: a
+  committed schema/spec artifact that can drift from generated output
+  **MUST** carry a byte-diff test between the committed file and live
+  generation (normalized only for trailing-newline noise), not a
+  human-review process.
+- `agent-onboarding` and `integration-contract` text **MUST** be
+  test-asserted, not merely present — a unit or CLI test that asserts on the
+  exact advertised commands, codes, and thresholds, so a later edit that
+  silently invalidates the prose fails CI instead of drifting.
+- `interactive-tooling`, where present, follows the verification norms of
+  its underlying convention (`connect`'s port-forward lifecycle, etc.)
+  rather than inventing a new one.
+
+`projects/lumen` is the reference instantiation: `### Developer & Agent
+Experience` (`developer-agent-experience`, `AgentFirst`) with
+`offline-contract` (`clients/openapi.json` byte-diff-tested against
+`lumen spec --format openapi`), `agent-onboarding` (`lumen llm` topics
+test-asserted by `tests/spec_cli.rs`), `interactive-tooling` (`lumen
+connect`, `lumen query`), and `integration-contract` (the routed
+multi-shard retry-code contract, test-asserted). Wiring this convention
+into `[capability.profile].traits` derivation (so it becomes a
+trait-derived baseline capability like `cli-interface`) is tracked
+separately as agentic-workflow work item #1481 — not implemented by this
+section.
 
 ## Meta-doc content contract
 

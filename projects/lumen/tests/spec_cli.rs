@@ -462,6 +462,34 @@ fn llm_storage_documents_unconditional_statefulset_pvc() {
     }
 }
 
+/// #1387: the operator now activates PVC-backed embedded persistence at
+/// `replicasPerShard: 1` (`LUMEN_DATA_DIR` + `LUMEN_PERSISTENCE=segment`),
+/// with the disjoint raft subtree, actual crash-durability semantics
+/// (`everysec` AOF fsync, ~1s RPO — not the `LUMEN_SNAPSHOT_SECS` interval),
+/// and the bare-`lumen serve` dev-mode caveat all discoverable offline via
+/// `lumen llm --topic storage`.
+#[test]
+fn llm_storage_documents_embedded_mode_persistence_wiring() {
+    let storage = llm_storage_md();
+    for needle in [
+        "LUMEN_WAL=auto",
+        "MemWal",
+        "LUMEN_DATA_DIR=/var/lib/lumen/data",
+        "LUMEN_PERSISTENCE=segment",
+        "/var/lib/lumen/raft",
+        "everysec",
+        "src/aof.rs",
+        "src/segment_rdb.rs",
+        "~1s",
+        "LUMEN_SNAPSHOT_SECS",
+        "Dev mode: bare `lumen serve` stays in-memory",
+        "--data-dir",
+        "in-memory",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
+    }
+}
+
 #[test]
 fn llm_storage_documents_shard_replica_and_bootstrap_boundaries() {
     let storage = llm_storage_md();
@@ -734,6 +762,30 @@ fn llm_outline_mentions_docs_replace() {
     );
 }
 
+/// #1398 R5/AC4: the workflow topic must disclose that `X-Read-Consistency:
+/// bounded(<ms>)` always rejects on a follower today (no real replication
+/// lag measurement yet — a follower reports the "lag unknown" sentinel),
+/// and that the headerless/unrecognized default stays `leader`, so this
+/// text can't silently regress back to promising follower reads "at or
+/// under the bound".
+#[test]
+fn llm_workflow_discloses_bounded_read_consistency_narrowing() {
+    let g = llm_workflow_md();
+    for needle in [
+        "X-Read-Consistency",
+        "leader` — the default",
+        "always rejects today",
+        "lag unknown",
+        "do not rely on it to read from a follower",
+        "standalone deployments (no",
+    ] {
+        assert!(
+            g.to_lowercase().contains(&needle.to_lowercase()),
+            "workflow missing read-consistency disclosure `{needle}`"
+        );
+    }
+}
+
 #[test]
 fn llm_integration_recommends_postgres_alloydb_adapter_boundary() {
     let integration = llm_integration_md();
@@ -910,5 +962,102 @@ fn openapi_json_declares_3_2_and_describes_query_twins() {
         !v["paths"]["/collections/{collection_id}/search"]["post"].is_null(),
         "QUERY /collections/{{collection_id}} keeps its POST twin registered"
     );
+}
+
+/// #1480 R1: `clients/openapi.json` is a committed snapshot of
+/// `lumen spec --format openapi`'s live output, not a hand-maintained copy —
+/// it must byte-match live generation (normalized only for a trailing
+/// newline) so the offline contract can never silently lag the surface it
+/// describes. Modeled on `openapi_is_valid_json_with_search_path`.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+#[test]
+fn openapi_committed_snapshot_matches_live_generation() {
+    let committed = include_str!("../clients/openapi.json");
+    let live = openapi_json();
+    fn normalize(s: &str) -> &str {
+        s.trim_end_matches('\n')
+    }
+    assert_eq!(
+        normalize(committed),
+        normalize(&live),
+        "clients/openapi.json is stale: regenerate via \
+         `./target/debug/lumen spec --format openapi > clients/openapi.json` \
+         (CONTRIBUTING.md DX convention: offline-contract must not lag the live surface)"
+    );
+}
+
+/// #1480 R2: the reshard admin verbs section must cover all six
+/// `Role::Admin`-gated verbs, including `POST /admin/reshard:fence`'s TTL
+/// semantics, driver-owned framing, and manual-use risk warning.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+#[test]
+fn llm_storage_documents_reshard_fence_admin_verb() {
+    let storage = llm_storage_md();
+    for needle in [
+        "Six more",
+        "POST /admin/reshard:fence",
+        "arms or clears a bounded write",
+        "ttl_secs",
+        "defaults to 300",
+        "capped at 3600",
+        "400 invalid_ttl_secs",
+        "503 bucket_write_paused",
+        "driver-owned",
+        "advance_catching_up",
+        "WRITE_FENCE_TTL_SECS",
+        "risks a real write outage",
+        "These six verbs",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
+    }
+}
+
+/// #1480 R3: the workflow topic must disclose the routed multi-shard client
+/// retry contract — the three retryable `503` codes and the two rejected
+/// (not retryable) verbs with their alternatives.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+#[test]
+fn llm_workflow_discloses_routed_mode_retry_contract() {
+    let g = llm_workflow_md();
+    for needle in [
+        "Routed multi-shard mode: client retry contract",
+        "bucket_write_paused",
+        "shard_forward_unavailable",
+        "shard_map_version_mismatch",
+        "safe to retry with backoff",
+        "duplicates_not_routed",
+        "Do not retry.",
+        "reindex_stream_not_routed",
+        "POST /collections/{id}/index",
+        "Do not retry the stream endpoint",
+    ] {
+        assert!(g.contains(needle), "workflow topic missing `{needle}`");
+    }
+}
+
+/// #1480 R4: fold #1467's reshard/convergence observability additions
+/// (the `lumen_shard_map_version` gauge, the
+/// `lumen_scatter_map_version_mismatches_total` counter, and the
+/// `awaitingTopologyConvergence`/`topologyConvergenceStalled` status
+/// conditions) into the deployment topic.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+#[test]
+fn llm_deployment_documents_reshard_convergence_observability() {
+    let deployment = llm_deployment_md();
+    for needle in [
+        "Reshard/convergence observability",
+        "lumen_shard_map_version",
+        "gauge",
+        "lumen_scatter_map_version_mismatches_total",
+        "counter",
+        "awaitingTopologyConvergence",
+        "topologyConvergenceStalled",
+        "CONVERGENCE_STALL_TICKS",
+    ] {
+        assert!(
+            deployment.contains(needle),
+            "deployment topic missing `{needle}`"
+        );
+    }
 }
 // CODEGEN-END

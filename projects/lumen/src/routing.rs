@@ -14,7 +14,7 @@ use std::time::Instant;
 
 use std::sync::Arc;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use futures::future::try_join_all;
 use rayon::prelude::*;
@@ -173,6 +173,39 @@ impl VirtualBucketShardMap {
             Some(key) => SearchShardTarget::One(self.route_key(collection_id, key)),
             None => SearchShardTarget::All,
         }
+    }
+
+    /// Target map for growing this map by exactly one physical shard, moving
+    /// the minimum number of virtual buckets. From each existing shard, the
+    /// lowest-numbered `buckets_on_that_shard / new_physical_shard_count`
+    /// buckets move to the new shard (appended at index
+    /// `physical_shard_count`); no bucket ever moves directly between two
+    /// existing shards. That keeps a single split a bounded, per-source-shard
+    /// migration (one batch stream per old shard into the new shard) rather
+    /// than a full cluster-wide rebalance.
+    /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+    pub fn split_one_shard(&self, new_version: u64) -> Result<Self> {
+        let new_physical_shard_count = self
+            .physical_shard_count
+            .checked_add(1)
+            .context("physical_shard_count overflow computing shard split")?;
+        let new_shard = self.physical_shard_count;
+
+        let mut buckets_by_shard: Vec<Vec<u32>> =
+            vec![Vec::new(); self.physical_shard_count as usize];
+        for (bucket, &shard) in self.assignments.iter().enumerate() {
+            buckets_by_shard[shard as usize].push(bucket as u32);
+        }
+
+        let mut assignments = (*self.assignments).clone();
+        for buckets in &buckets_by_shard {
+            let move_count = buckets.len() / new_physical_shard_count as usize;
+            for &bucket in buckets.iter().take(move_count) {
+                assignments[bucket as usize] = new_shard;
+            }
+        }
+
+        Self::new(new_version, assignments, new_physical_shard_count)
     }
 }
 
@@ -714,6 +747,59 @@ mod tests {
         assert!(
             seen.len() > 1,
             "external_id routing collapsed one collection to one shard"
+        );
+    }
+
+    #[test]
+    fn split_one_shard_moves_only_into_the_new_shard() {
+        // 8 buckets, 2 balanced shards: shard0=[0,2,4,6], shard1=[1,3,5,7].
+        let before = VirtualBucketShardMap::balanced(0, 8, 2).unwrap();
+        let after = before.split_one_shard(1).unwrap();
+
+        assert_eq!(after.version(), 1);
+        assert_eq!(after.virtual_bucket_count(), 8);
+        assert_eq!(after.physical_shard_count(), 3);
+
+        let mut moved = Vec::new();
+        for bucket in 0..8 {
+            let old_shard = before.assignment_for_bucket(bucket).unwrap();
+            let new_shard = after.assignment_for_bucket(bucket).unwrap();
+            if old_shard != new_shard {
+                // Every move must land on the brand-new shard, never on
+                // another pre-existing shard.
+                assert_eq!(new_shard, 2, "bucket {bucket} moved to an old shard");
+                moved.push(bucket);
+            }
+        }
+        // 4 buckets/shard, new_physical_shard_count=3 -> 4/3=1 bucket moves
+        // from each of the 2 old shards = 2 buckets total, the lowest
+        // bucket id on each source shard (0 from shard0, 1 from shard1).
+        assert_eq!(moved, vec![0, 1]);
+    }
+
+    #[test]
+    fn split_one_shard_is_deterministic_and_idempotent_shape() {
+        let map = VirtualBucketShardMap::balanced(3, 97, 5).unwrap();
+        let a = map.split_one_shard(4).unwrap();
+        let b = map.split_one_shard(4).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a.physical_shard_count(), 6);
+        // Every bucket must still resolve to a valid shard index.
+        for bucket in 0..97 {
+            assert!(a.assignment_for_bucket(bucket).unwrap() < 6);
+        }
+    }
+
+    #[test]
+    fn split_one_shard_never_leaves_the_new_shard_empty_when_source_has_buckets() {
+        let map = VirtualBucketShardMap::balanced(0, 64, 4).unwrap();
+        let after = map.split_one_shard(1).unwrap();
+        let new_shard_bucket_count = (0..64)
+            .filter(|&b| after.assignment_for_bucket(b).unwrap() == 4)
+            .count();
+        assert!(
+            new_shard_bucket_count > 0,
+            "split produced an empty new shard"
         );
     }
 

@@ -42,6 +42,16 @@ semantic_domain:
     role: "source"
     section_type: "schema"
     domain: "libs/cli-std"
+- path: "libs/cli-std/src/connect.rs"
+  language: "rust"
+  ownership_state: "handwrite"
+  generator_primitives: ["source_unit"]
+  source_evidence_node:
+    layer: "source"
+    ecosystem: "rust"
+    role: "source"
+    section_type: "schema"
+    domain: "libs/cli-std"
 - path: "libs/cli-std/src/issue.rs"
   language: "rust"
   ownership_state: "handwrite"
@@ -126,6 +136,14 @@ changes:
   impl_mode: hand-written
   replaces:
     - "<handwrite-tracker:libs-cli-std-src-chainable-rs>"
+- path: "libs/cli-std/src/connect.rs"
+  action: create
+  section: schema
+  description: |
+    New module (#1376): the k8s-native service CLI's `connect` port-forward
+    lifecycle + token-registry Secret resolution, lifted from `lumen
+    connect` (#1321), gated behind the `k8s` feature.
+  impl_mode: hand-written
 - path: "libs/cli-std/src/issue.rs"
   action: modify
   section: schema

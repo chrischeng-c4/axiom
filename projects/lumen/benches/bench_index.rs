@@ -95,6 +95,7 @@ fn keyword_items() -> Vec<IndexItem> {
             external_id: format!("u{i}"),
             field: "email".into(),
             value: FieldValue::String(format!("user{}@example.com", rng.next_u32() % 5_000)),
+            version: None,
         })
         .collect()
 }
@@ -106,6 +107,7 @@ fn text_items() -> Vec<IndexItem> {
             external_id: format!("u{i}"),
             field: "bio".into(),
             value: FieldValue::String(sentence(&mut rng)),
+            version: None,
         })
         .collect()
 }
@@ -117,6 +119,7 @@ fn number_items() -> Vec<IndexItem> {
             external_id: format!("u{i}"),
             field: "age".into(),
             value: FieldValue::Number((rng.next_u32() % 100) as f64),
+            version: None,
         })
         .collect()
 }

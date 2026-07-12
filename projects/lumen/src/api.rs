@@ -11,8 +11,10 @@
 //! The contract for external consumers is `GET /openapi.json`,
 //! generated at runtime from this module.
 
+use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -39,9 +41,11 @@ use axum::http::HeaderMap;
 
 use crate::auth::{auth_middleware, AuthConfig, AuthContext, LumenVerifier, Role};
 use crate::backup_sink::{BackupSink, LocalFsSink};
-use crate::coordinator::{WriteCoordinator, WriteSink};
+use crate::coordinator::{SubmitStalled, WriteCoordinator, WriteSink};
 use crate::log_entry::RaftLogEntry;
 use crate::raft::{ClusterStateView, RaftRole, ReadConsistency};
+use crate::reshard::ReshardBatch;
+use crate::routing::VirtualBucketShardMap;
 use crate::storage::{ApplyOutcome, DropOutcome, Engine, SnapshotV1, StorageError};
 use crate::types::{
     Analyzer, ApiError, BatchSearchRequest, BatchSearchResponse, BatchSearchResult, CacheStats,
@@ -72,11 +76,160 @@ pub struct AppState {
     /// serving can replace it with a document-router that fans out writes
     /// across independent shard coordinators.
     pub write_backend: Arc<dyn WriteBackend>,
+    /// Durability-on-demand seam for `POST /admin/checkpoint` (#1389).
+    /// Defaults to [`NoopCheckpoint`]; the server binary wires a real
+    /// segment-checkpoint implementation when segment persistence is
+    /// configured. See [`CheckpointSink`].
+    pub checkpoint: Arc<dyn CheckpointSink>,
+    /// Bounded write pause on still-moving virtual buckets during a
+    /// reshard's final `CatchingUp` pass (#1396 R2). Defaults to unarmed
+    /// (every write passes through unchanged); the reshard driver arms it
+    /// via `POST /admin/reshard:fence`. See [`WriteFence`].
+    pub write_fence: WriteFence,
+    /// Cross-pod shard router for operator/k8s serving (#1398 R1-R3).
+    /// `None` for every deployment shape except the routed one (`SHARD_COUNT`
+    /// > 1, `replicasPerShard <= 1`, no `--search-shard-segment-dirs`) — see
+    /// [`RoutedBackend`]. The server binary wires a real
+    /// `routing_remote::RoutedRouter` via [`Self::with_routed`]; tests and
+    /// every other deployment shape leave this `None`.
+    pub routed: Option<Arc<dyn RoutedBackend>>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 pub trait SearchBackend: Send + Sync {
     fn search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse>;
+}
+
+/// Forces a synchronous, awaited durability checkpoint of the live engine
+/// state (#1389). The reshard driver's cutover (`operator::reshard_driver::
+/// advance_catching_up`) calls `POST /admin/checkpoint` — which routes here —
+/// on every shard it just migrated data into or evicted data from, and waits
+/// for the response before flipping `spec.shardMap` and triggering the
+/// cutover rolling restart. `Engine::apply_reshard_batch`/`evict_not_owned`
+/// (`storage.rs`, #1380) mutate engine state directly rather than through
+/// `WriteCoordinator`/the AOF, so — unlike ordinary writes — their durability
+/// is not implied by `applied_seq()`; this seam is what makes it durable
+/// on-demand instead of only on the next periodic `LUMEN_SNAPSHOT_SECS` tick.
+///
+/// [`NoopCheckpoint`] is the default (no `--data-dir`/non-segment-persistence
+/// deployments, including every existing test `AppState`): `checkpoint_now`
+/// trivially returns `Ok(false)` (nothing configured to persist, so nothing
+/// to lose across an in-process test's non-restart). The server binary wires
+/// a real segment-checkpoint-backed implementation whenever
+/// `--persistence=segment` + `--data-dir` are configured — exactly the
+/// combination the operator now renders unconditionally at
+/// `replicasPerShard <= 1` (#1387), which is the same topology the reshard
+/// driver is scoped to (see `reshard_driver`'s "Scope rail" doc).
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+#[async_trait]
+pub trait CheckpointSink: Send + Sync {
+    /// Persist current engine state durably and return only once the write
+    /// is committed. `Ok(true)` when a checkpoint was actually written;
+    /// `Ok(false)` when no durable store is configured (a checkpoint request
+    /// against such a deployment is vacuously satisfied — there is nothing
+    /// on disk to fall behind). `Err` on a real write failure, which callers
+    /// (the reshard driver) must treat as "not yet durable" and retry.
+    async fn checkpoint_now(&self) -> Result<bool>;
+}
+
+/// Default [`CheckpointSink`] for deployments/tests with no configured
+/// durable store — see the trait doc.
+struct NoopCheckpoint;
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+#[async_trait]
+impl CheckpointSink for NoopCheckpoint {
+    async fn checkpoint_now(&self) -> Result<bool> {
+        Ok(false)
+    }
+}
+
+/// A bounded, status-visible write pause on a set of still-moving virtual
+/// buckets (#1396 R2), the mechanism #1381's R5 review sanctioned: "a
+/// bounded final pause of writes to still-moving buckets is acceptable if
+/// needed for convergence, but must be bounded and reported in status."
+///
+/// Closes the copy-to-evict gap in the reshard driver's `CatchingUp` pass:
+/// without a pause, a write landing on a source shard's moving bucket after
+/// the last migration-copy read but before that bucket's eviction is never
+/// re-copied to the target and is silently dropped by eviction. The driver
+/// arms a fence over exactly the buckets its final migration pass is about
+/// to copy (`POST /admin/reshard:fence`) immediately before that pass, so
+/// the single pass taken under the fence is already a complete/converged
+/// snapshot of those buckets — no repeat-until-converged loop is needed —
+/// and clears the fence (an empty-`buckets` call to the same verb) on every
+/// exit path of that tick, success or `Blocked`.
+///
+/// Crash safety: a driver process that dies between arming and clearing
+/// cannot leave a bucket permanently unwritable. [`WriteFence::blocks`]
+/// checks `deadline` on every call and treats an expired fence as unarmed —
+/// this check runs on the *serving pod*, independent of whether the driver
+/// process that armed it is still alive, so expiry is enforced even if the
+/// driver never comes back. The reshard driver re-arms a fresh deadline
+/// every tick it needs one, so a healthy, slow-but-progressing driver never
+/// races its own TTL; see `reshard_driver::WRITE_FENCE_TTL`.
+#[derive(Clone, Default)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+pub struct WriteFence {
+    state: Arc<Mutex<Option<FenceState>>>,
+}
+
+struct FenceState {
+    virtual_bucket_count: u32,
+    buckets: BTreeSet<u32>,
+    deadline: Instant,
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl WriteFence {
+    /// Arm the fence over `buckets` (computed against `virtual_bucket_count`)
+    /// until `ttl` from now, replacing any prior armed state. Returns `false`
+    /// (leaving any prior armed state untouched) when `Instant::now() + ttl`
+    /// would overflow (#1443 R3) — the caller must treat that as a failed arm
+    /// rather than silently panicking with the fence lock held, which would
+    /// poison it for every subsequent write/clear on this pod.
+    fn arm(&self, virtual_bucket_count: u32, buckets: BTreeSet<u32>, ttl: Duration) -> bool {
+        let Some(deadline) = Instant::now().checked_add(ttl) else {
+            return false;
+        };
+        let mut guard = self.lock();
+        *guard = Some(FenceState {
+            virtual_bucket_count,
+            buckets,
+            deadline,
+        });
+        true
+    }
+
+    /// Explicitly disarm, independent of `deadline`.
+    fn clear(&self) {
+        *self.lock() = None;
+    }
+
+    /// `Some(bucket)` when `collection_id`/`external_id` route to a
+    /// currently-fenced bucket; `None` (unblocked) once armed but past
+    /// `deadline`, or never armed at all.
+    fn blocks(&self, collection_id: &str, external_id: &str) -> Option<u32> {
+        let guard = self.lock();
+        let fence = guard.as_ref()?;
+        if Instant::now() >= fence.deadline {
+            return None;
+        }
+        let map = VirtualBucketShardMap::balanced(0, fence.virtual_bucket_count, 1).ok()?;
+        let bucket = map.route_document(collection_id, None, external_id).bucket;
+        fence.buckets.contains(&bucket).then_some(bucket)
+    }
+
+    /// Poison-proof lock acquisition (#1443 R3), matching `segment_rdb.rs`'s
+    /// `save_lock` precedent: a panic anywhere else in the process while
+    /// holding this lock must never turn into a permanent write outage on
+    /// this pod by propagating a poisoned-mutex panic into every later
+    /// `arm`/`clear`/`blocks` call.
+    fn lock(&self) -> std::sync::MutexGuard<'_, Option<FenceState>> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 }
 
 #[async_trait]
@@ -106,6 +259,51 @@ pub trait WriteBackend: Send + Sync {
     ) -> Result<()>;
 
     async fn drop_field(&self, collection_id: String, field_name: String) -> Result<u32>;
+}
+
+/// Cross-pod shard routing for operator/k8s serving pods (#1398 R1-R3).
+/// `AppState::routed` is `None` for every non-routed deployment (standalone,
+/// primary/replica, and the `--search-shard-segment-dirs` fan-in path) —
+/// handlers consult it first and fall back to `search_backend`/
+/// `write_backend` unchanged when it is absent, so `shardCount:1` serving
+/// never even constructs an implementation (AC5: no forwarding overhead).
+///
+/// Every method takes the inbound request's `headers` verbatim: the sole
+/// concrete implementation ([`crate::routing_remote::RoutedRouter`], behind
+/// the `operator` feature) checks the `x-lumen-forwarded` one-hop guard
+/// first and, when forwarding, carries the caller's `Authorization` bearer
+/// and `x-read-consistency` through unchanged (R3).
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+#[async_trait]
+pub trait RoutedBackend: Send + Sync {
+    async fn search(
+        &self,
+        collection_id: &str,
+        req: SearchRequest,
+        headers: &HeaderMap,
+    ) -> Result<SearchResponse>;
+
+    async fn index(
+        &self,
+        collection_id: String,
+        req: IndexRequest,
+        headers: &HeaderMap,
+    ) -> Result<IndexResponse>;
+
+    async fn replace_docs(
+        &self,
+        collection_id: String,
+        req: ReplaceDocsRequest,
+        headers: &HeaderMap,
+    ) -> Result<ReplaceDocsResponse>;
+
+    async fn delete(
+        &self,
+        collection_id: String,
+        external_id: String,
+        field: Option<String>,
+        headers: &HeaderMap,
+    ) -> Result<()>;
 }
 
 #[derive(Clone)]
@@ -252,6 +450,9 @@ impl AppState {
             auth,
             cluster: None,
             writer,
+            checkpoint: Arc::new(NoopCheckpoint),
+            write_fence: WriteFence::default(),
+            routed: None,
         }
     }
 
@@ -273,6 +474,23 @@ impl AppState {
 
     pub fn with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self {
         self.write_backend = write_backend;
+        self
+    }
+
+    /// Wire a real [`CheckpointSink`] (#1389) — used by the server binary
+    /// when segment persistence is configured, and by tests that need to
+    /// control/observe `POST /admin/checkpoint` behavior.
+    pub fn with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self {
+        self.checkpoint = checkpoint;
+        self
+    }
+
+    /// Wire a [`RoutedBackend`] (#1398) — the server binary calls this only
+    /// in the routed serving topology (`SHARD_COUNT` env > 1 at
+    /// `replicasPerShard <= 1`, no `--search-shard-segment-dirs`); every
+    /// other deployment shape leaves `routed` at its `None` default.
+    pub fn with_routed(mut self, routed: Arc<dyn RoutedBackend>) -> Self {
+        self.routed = Some(routed);
         self
     }
 
@@ -322,6 +540,12 @@ impl AppState {
         batch_search,
         duplicates,
         stats,
+        backup_scoped,
+        reshard_apply,
+        reshard_prune,
+        reshard_evict,
+        reshard_fence,
+        admin_checkpoint,
     ),
     components(schemas(
         CreateCollectionRequest,
@@ -488,12 +712,23 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/admin/backup", get(backup))
         .route("/admin/backup/local", post(backup_to_local))
+        .route("/admin/backup:scoped", post(backup_scoped))
         .route("/admin/restore", post(restore))
+        .route("/admin/reshard:apply", post(reshard_apply))
+        .route("/admin/reshard:prune", post(reshard_prune))
+        .route("/admin/reshard:evict", post(reshard_evict))
+        .route("/admin/reshard:fence", post(reshard_fence))
+        .route("/admin/checkpoint", post(admin_checkpoint))
         .layer(from_fn_with_state(auth_state, auth_middleware))
         // Bound request bodies: a bulk index is ~MBs (the item cap is the real
         // guard); 8MiB is the broker payload budget. Rejects oversized
-        // bodies with 413 before they hit a handler.
-        .layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024));
+        // bodies with 413 before they hit a handler. Shared with
+        // `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES` (#1444 R2) so the
+        // reshard driver's oversize-batch detection can never drift from the
+        // limit actually enforced here.
+        .layer(axum::extract::DefaultBodyLimit::max(
+            crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES,
+        ));
 
     let metrics: Arc<dyn MetricsProvider> = state.engine.clone();
     let probes = service_http::standard_probe_routes(state.engine.clone(), Some(metrics), openapi);
@@ -580,7 +815,12 @@ fn read_consistency_from(headers: &HeaderMap) -> ReadConsistency {
 /// - [`ReadConsistency::Bounded`] succeeds on the leader (never stale) or
 ///   on a follower/learner whose `replication_lag_ms` is at or under the
 ///   requested bound; a replica over the bound rejects rather than
-///   silently serving a stale read.
+///   silently serving a stale read. In `lumen serve --wal raft`, a
+///   follower/learner's `replication_lag_ms` is the conservative "unknown"
+///   sentinel (`u64::MAX`) — `RaftHost` doesn't expose a peer-timing RPC
+///   today, so `Bounded` on a non-leader replica always rejects rather than
+///   report a fabricated lag figure (see `spawn_cluster_state_poller` in
+///   `src/bin/lumen.rs`, #1349).
 fn enforce_read_consistency(state: &AppState, consistency: ReadConsistency) -> Result<(), ApiErr> {
     let Some(cluster) = state.cluster.as_ref() else {
         return Ok(());
@@ -588,10 +828,10 @@ fn enforce_read_consistency(state: &AppState, consistency: ReadConsistency) -> R
     match consistency {
         ReadConsistency::Any => Ok(()),
         ReadConsistency::Leader => {
-            if cluster.role == RaftRole::Leader {
+            if cluster.role() == RaftRole::Leader {
                 return Ok(());
             }
-            Err(match cluster.group.leader() {
+            Err(match cluster.leader_peer() {
                 Some(leader) => ApiErr::new(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "read_consistency_not_leader",
@@ -612,7 +852,7 @@ fn enforce_read_consistency(state: &AppState, consistency: ReadConsistency) -> R
             })
         }
         ReadConsistency::Bounded(bound_ms) => {
-            if cluster.role == RaftRole::Leader {
+            if cluster.role() == RaftRole::Leader {
                 return Ok(());
             }
             let lag_ms = cluster.replication_lag_ms.load(Ordering::Relaxed);
@@ -630,6 +870,40 @@ fn enforce_read_consistency(state: &AppState, consistency: ReadConsistency) -> R
             }
         }
     }
+}
+
+/// Reject a write whose `(collection_id, external_id)` routes to a
+/// currently-fenced virtual bucket (#1396 R2). Checked in [`index`],
+/// [`replace_docs`], [`replace_doc`], and [`delete_external_id`] — every
+/// write path a reshard's final migration pass must observe a converged
+/// snapshot of.
+///
+/// `delete_external_id` is fenced too (#1458 R2): an earlier revision left
+/// DELETE exempt on the theory that `apply_reshard_batch`'s
+/// authoritative-subset `replace_ids` scoping (see
+/// [`crate::reshard::snapshot_reshard_batches`]'s `replace_mode` and
+/// [`crate::storage::Engine::apply_reshard_batch`]'s `replace` parameter)
+/// already closes the resurrection gap for a delete acked *before* the
+/// final pass's scoped-backup read. That leaves a delete racing strictly
+/// inside the sub-window between that read and the same pass's eviction
+/// uncovered — fencing DELETE like every other write closes it fully, at
+/// the ordinary cost (a retryable 503) of any write to a fenced bucket. See
+/// the module's #1396 R2 write-fence doc on [`WriteFence`].
+fn enforce_write_fence(
+    state: &AppState,
+    collection_id: &str,
+    external_id: &str,
+) -> Result<(), ApiErr> {
+    if let Some(bucket) = state.write_fence.blocks(collection_id, external_id) {
+        return Err(ApiErr::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "bucket_write_paused",
+            format!(
+                "virtual bucket {bucket} is paused for an in-progress reshard cutover; retry shortly"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -819,15 +1093,26 @@ async fn drop_collection(
 async fn index(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
     Path(collection_id): Path<String>,
     Json(req): Json<IndexRequest>,
 ) -> Result<Json<IndexResponse>, ApiErr> {
     auth.ensure(&collection_id, Role::Write)?;
-    let resp = state
-        .write_backend
-        .index(collection_id.clone(), req)
-        .await
-        .map_err(ApiErr::from)?;
+    for item in &req.items {
+        enforce_write_fence(&state, &collection_id, &item.external_id)?;
+    }
+    let resp = if let Some(router) = &state.routed {
+        router
+            .index(collection_id.clone(), req, &headers)
+            .await
+            .map_err(ApiErr::from)?
+    } else {
+        state
+            .write_backend
+            .index(collection_id.clone(), req)
+            .await
+            .map_err(ApiErr::from)?
+    };
     Ok(Json(resp))
 }
 
@@ -850,15 +1135,24 @@ struct DeleteQuery {
 async fn delete_external_id(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
     Path((collection_id, external_id)): Path<(String, String)>,
     Query(q): Query<DeleteQuery>,
 ) -> Result<StatusCode, ApiErr> {
     auth.ensure(&collection_id, Role::Write)?;
-    state
-        .write_backend
-        .delete(collection_id.clone(), external_id, q.field)
-        .await
-        .map_err(ApiErr::from)?;
+    enforce_write_fence(&state, &collection_id, &external_id)?;
+    if let Some(router) = &state.routed {
+        router
+            .delete(collection_id.clone(), external_id, q.field, &headers)
+            .await
+            .map_err(ApiErr::from)?;
+    } else {
+        state
+            .write_backend
+            .delete(collection_id.clone(), external_id, q.field)
+            .await
+            .map_err(ApiErr::from)?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -894,6 +1188,7 @@ async fn delete_external_id(
 async fn replace_docs(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
     Path(collection_id): Path<String>,
     Json(req): Json<ReplaceDocsRequest>,
 ) -> Result<Json<ReplaceDocsResponse>, ApiErr> {
@@ -908,12 +1203,33 @@ async fn replace_docs(
             ),
         ));
     }
-    let resp = state
-        .write_backend
-        .replace_docs(collection_id.clone(), req)
-        .await
-        .map_err(ApiErr::from)?;
+    for doc in &req.docs {
+        enforce_write_fence(&state, &collection_id, &doc.external_id)?;
+    }
+    let resp = replace_docs_routed_or_local(&state, &headers, collection_id, req).await?;
     Ok(Json(resp))
+}
+
+/// Shared write-backend/router branch for [`replace_docs`] and
+/// [`replace_doc`] (its single-doc sugar).
+async fn replace_docs_routed_or_local(
+    state: &AppState,
+    headers: &HeaderMap,
+    collection_id: String,
+    req: ReplaceDocsRequest,
+) -> Result<ReplaceDocsResponse, ApiErr> {
+    if let Some(router) = &state.routed {
+        router
+            .replace_docs(collection_id, req, headers)
+            .await
+            .map_err(ApiErr::from)
+    } else {
+        state
+            .write_backend
+            .replace_docs(collection_id, req)
+            .await
+            .map_err(ApiErr::from)
+    }
 }
 
 /// Single-resource sugar over `docs:replace`: exactly the one-item batch
@@ -939,10 +1255,12 @@ async fn replace_docs(
 async fn replace_doc(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
     Path((collection_id, external_id)): Path<(String, String)>,
     Json(body): Json<ReplaceDocBody>,
 ) -> Result<Json<ReplaceDocResult>, ApiErr> {
     auth.ensure(&collection_id, Role::Write)?;
+    enforce_write_fence(&state, &collection_id, &external_id)?;
     let req = ReplaceDocsRequest {
         docs: vec![ReplaceDocItem {
             external_id,
@@ -950,11 +1268,7 @@ async fn replace_doc(
             fields: body.fields,
         }],
     };
-    let resp = state
-        .write_backend
-        .replace_docs(collection_id.clone(), req)
-        .await
-        .map_err(ApiErr::from)?;
+    let resp = replace_docs_routed_or_local(&state, &headers, collection_id, req).await?;
     let result = resp.results.into_iter().next().ok_or_else(|| {
         ApiErr::new(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -984,20 +1298,19 @@ async fn search(
     Path(collection_id): Path<String>,
     Json(req): Json<SearchRequest>,
 ) -> Result<Json<SearchResponse>, ApiErr> {
-    Ok(Json(search_core(
-        &state,
-        &auth,
-        &headers,
-        &collection_id,
-        req,
-    )?))
+    Ok(Json(
+        search_core(&state, &auth, &headers, &collection_id, req).await?,
+    ))
 }
 
 /// Shared implementation behind `POST /collections/{collection_id}/search`
 /// and its `QUERY /collections/{collection_id}` twin
 /// ([`collection_id_query_dispatch`], epic #1296 R1: every QUERY endpoint
-/// keeps a POST twin — same handler, identical response).
-fn search_core(
+/// keeps a POST twin — same handler, identical response). Consults
+/// `state.routed` first (#1398 R1) — a routed deployment scatters/forwards
+/// by ownership; every other deployment falls through to `search_backend`
+/// unchanged.
+async fn search_core(
     state: &AppState,
     auth: &AuthContext,
     headers: &HeaderMap,
@@ -1007,6 +1320,12 @@ fn search_core(
     auth.ensure(collection_id, Role::Read)?;
     let consistency = read_consistency_from(headers);
     enforce_read_consistency(state, consistency)?;
+    if let Some(router) = &state.routed {
+        return router
+            .search(collection_id, req, headers)
+            .await
+            .map_err(ApiErr::from);
+    }
     state
         .search_backend
         .search(collection_id, req)
@@ -1067,11 +1386,19 @@ async fn batch_search_core(
     let results = join_all(req.searches.into_iter().map(|item| {
         let state = state.clone();
         let auth = auth.clone();
+        let headers = headers.clone();
         async move {
             if let Err(e) = auth.ensure(&item.collection, Role::Read) {
                 return batch_search_auth_error(e);
             }
-            match state.search_backend.search(&item.collection, item.request) {
+            let result = if let Some(router) = &state.routed {
+                router
+                    .search(&item.collection, item.request, &headers)
+                    .await
+            } else {
+                state.search_backend.search(&item.collection, item.request)
+            };
+            match result {
                 Ok(response) => BatchSearchResult::Ok { response },
                 Err(e) => batch_search_storage_error(e),
             }
@@ -1151,7 +1478,7 @@ async fn collection_id_query_dispatch(
     }
     let headers = request.headers().clone();
     match Json::<SearchRequest>::from_request(request, &state).await {
-        Ok(Json(req)) => match search_core(&state, &auth, &headers, &collection_id, req) {
+        Ok(Json(req)) => match search_core(&state, &auth, &headers, &collection_id, req).await {
             Ok(resp) => Json(resp).into_response(),
             Err(e) => e.into_response(),
         },
@@ -1199,6 +1526,8 @@ fn batch_search_storage_error(e: anyhow::Error) -> BatchSearchResult {
         Some(StorageError::QueryTooComplex(_)) => "query_too_complex",
         Some(StorageError::Gone(_)) => "gone",
         Some(StorageError::UnsupportedSort(_)) => "unsupported_sort",
+        Some(StorageError::InvalidPruneChunk { .. }) => "invalid_prune_chunk",
+        Some(StorageError::PruneAccumulatorFull { .. }) => "prune_accumulator_full",
         None => "bad_request",
     };
     BatchSearchResult::Error {
@@ -1230,6 +1559,18 @@ fn batch_search_auth_error(e: crate::auth::AuthErr) -> BatchSearchResult {
     request_body = DuplicatesRequest,
     responses((status = 200, description = "Duplicate groups", body = DuplicatesResponse))
 )]
+/// Local-shard only, deliberately not wired to `state.routed` (#1398 known
+/// gap, #1442 R6): `Engine::duplicates` filters by `min_group_size` *before*
+/// any cross-shard merge could happen, so scatter-then-merge would silently
+/// miss a true cross-shard group (e.g. one copy per shard under
+/// `min_group_size: 2`) — a correctness regression, not a routing gap. A
+/// correct cross-shard implementation needs unfiltered per-shard candidate
+/// groups from `storage.rs`, out of scope here. #1442 R6 closes the "silent
+/// wrong answer" gap this left in routed multi-shard mode: rather than
+/// unchanged pre-#1398 behavior (silently answering from local-shard data
+/// only, missing cross-shard duplicate groups with no indication), a routed
+/// deployment now rejects with a distinct, non-retryable error so a caller
+/// can tell "not supported here" from "no duplicates found".
 async fn duplicates(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -1239,6 +1580,15 @@ async fn duplicates(
 ) -> Result<Json<DuplicatesResponse>, ApiErr> {
     auth.ensure(&collection_id, Role::Read)?;
     let _consistency = read_consistency_from(&headers);
+    if state.routed.is_some() {
+        return Err(ApiErr::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "duplicates_not_routed",
+            "duplicate detection is local-shard-only and does not merge across shards; not \
+             supported in routed multi-shard mode (#1442 R6)"
+                .to_string(),
+        ));
+    }
     Ok(Json(
         state
             .engine
@@ -1279,6 +1629,17 @@ async fn stats(
 ///
 /// Errors are surfaced as `{"event":"error","line":N,"message":"..."}`
 /// inline; the stream continues so partial progress is observable.
+///
+/// Rejected outright in routed multi-shard mode (#1442 R6): the spawned
+/// batch loop below writes through `state.write_backend` directly, bypassing
+/// both `state.routed`'s per-item shard ownership and `enforce_write_fence`
+/// (the same per-item reshard-cutover pause every other write path
+/// observes). Routing each streamed item by ownership and fencing it
+/// individually, inside a detached `tokio::spawn` task that already streams
+/// its own NDJSON response back, is a materially bigger change than this
+/// bounded hardening pass — an accepted, documented fallback per R6's own
+/// scope rather than a half-routed implementation that could silently
+/// mis-shard or skip the write fence.
 async fn reindex_stream(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -1290,6 +1651,15 @@ async fn reindex_stream(
     use tokio::sync::mpsc;
 
     auth.ensure(&collection_id, Role::Write)?;
+    if state.routed.is_some() {
+        return Err(ApiErr::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "reindex_stream_not_routed",
+            "streaming bulk reindex bypasses per-item shard ownership and the write fence; not \
+             supported in routed multi-shard mode, use POST .../index instead (#1442 R6)"
+                .to_string(),
+        ));
+    }
 
     const BATCH_SIZE: usize = 1_000;
     let (tx, rx) = mpsc::channel::<Result<axum::body::Bytes, std::io::Error>>(16);
@@ -1550,6 +1920,375 @@ async fn restore(
 }
 
 // ---------------------------------------------------------------------------
+// Reshard admin verbs (#1380): batch-apply, bucket-scoped export, evict.
+// Plus `/admin/checkpoint` (#1389), the on-demand durability step that makes
+// the other three's mutations survive the cutover restart the driver itself
+// triggers, and `/admin/reshard:prune` (#1457 R1), the final migration
+// pass's independently chunked authoritative-replace scope.
+//
+// `reshard.rs`'s tested primitives (`bucket_moves`, `snapshot_reshard_batches`,
+// `snapshot_reshard_prune_chunks`) emit bounded `ReshardBatch`/
+// `ReshardPruneChunk` units for checkpointed migration; the five verbs below
+// are the wire surface that moves them and makes them durable. All five
+// require `Role::Admin` on `*`, same as `/admin/backup`/`/admin/restore`
+// above.
+// ---------------------------------------------------------------------------
+
+/// `POST /admin/reshard:apply`: additively merge one [`ReshardBatch`] into
+/// the live engine (upsert semantics for the batch's documents; never a
+/// full replace, unlike `/admin/restore`). Idempotent — a retried batch
+/// (operator resume after a checkpoint) converges to the same query-visible
+/// state; see [`Engine::apply_reshard_batch`].
+#[utoipa::path(
+    post,
+    path = "/admin/reshard:apply",
+    tag = "Admin",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Batch merged additively (safe to retry)", body = serde_json::Value),
+        (status = 400, description = "Malformed batch or snapshot version mismatch", body = ApiError)
+    )
+)]
+async fn reshard_apply(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Json(batch): Json<ReshardBatch>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    auth.ensure("*", Role::Admin)?;
+    let outcome = state
+        .engine
+        .apply_reshard_batch(batch.snapshot, None)
+        .map_err(ApiErr::from)?;
+    tracing::info!(
+        target: "lumen.audit",
+        event = "reshard_batch_applied",
+        subject = auth.subject().unwrap_or("anonymous"),
+        bucket = batch.bucket,
+        from_shard = batch.from_shard,
+        to_shard = batch.to_shard,
+        from_map_version = batch.from_map_version,
+        to_map_version = batch.to_map_version,
+        collections_touched = outcome.collections_touched,
+        documents_upserted = outcome.documents_upserted,
+        documents_pruned = outcome.documents_pruned,
+    );
+    Ok(Json(serde_json::json!({
+        "collections_touched": outcome.collections_touched,
+        "documents_upserted": outcome.documents_upserted,
+        "documents_pruned": outcome.documents_pruned,
+    })))
+}
+
+/// `POST /admin/reshard:prune`: accumulate one [`ReshardPruneChunk`] of the
+/// final migration pass's authoritative "keep" set for one `(bucket,
+/// collection_id)` pair, and prune once every chunk has arrived (#1457 R1).
+/// Unlike `/admin/reshard:apply` (purely additive), this verb is what makes
+/// the final pass authoritative for the buckets it copies: a document
+/// deleted on the source during the split is absent from the accumulated
+/// keep set and is pruned here instead of surviving as a stale copy from an
+/// earlier additive pass. Idempotent per chunk (safe to retry after a 413)
+/// and as a whole group (safe to re-send every chunk after a driver
+/// restart); see [`Engine::apply_reshard_prune_chunk`].
+#[utoipa::path(
+    post,
+    path = "/admin/reshard:prune",
+    tag = "Admin",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Chunk accumulated; pruned once every chunk of its group has arrived", body = serde_json::Value),
+        (status = 400, description = "Malformed chunk", body = ApiError)
+    )
+)]
+async fn reshard_prune(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Json(chunk): Json<crate::reshard::ReshardPruneChunk>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    auth.ensure("*", Role::Admin)?;
+    let to_map_version = chunk.to_map_version;
+    let bucket = chunk.bucket;
+    let collection_id = chunk.collection_id.clone();
+    let chunk_index = chunk.chunk_index;
+    let total_chunks = chunk.total_chunks;
+    let outcome = state
+        .engine
+        .apply_reshard_prune_chunk(chunk)
+        .map_err(ApiErr::from)?;
+    if outcome.complete {
+        tracing::info!(
+            target: "lumen.audit",
+            event = "reshard_prune_applied",
+            subject = auth.subject().unwrap_or("anonymous"),
+            bucket,
+            to_map_version,
+            collection_id = collection_id.as_str(),
+            chunk_index,
+            total_chunks,
+            documents_pruned = outcome.documents_pruned,
+        );
+    }
+    Ok(Json(serde_json::json!({
+        "complete": outcome.complete,
+        "documents_pruned": outcome.documents_pruned,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+struct ScopedBackupRequest {
+    /// Same `virtual_bucket_count` the caller's [`VirtualBucketShardMap`]
+    /// uses — must match what `snapshot_reshard_batches` was/will be called
+    /// with so bucket membership agrees.
+    virtual_bucket_count: u32,
+    /// Only documents whose bucket is in this set are included.
+    buckets: BTreeSet<u32>,
+}
+
+/// `POST /admin/backup:scoped`: like `GET /admin/backup`, but restricted to
+/// documents routed to the requested virtual buckets — a source shard can
+/// export just the buckets that are moving instead of a full-engine dump.
+/// Bucket membership is computed with the same hash `reshard::
+/// snapshot_reshard_batches` uses ([`crate::reshard::snapshot_bucket_subset`]),
+/// so an export and a later-computed batch can never disagree.
+#[utoipa::path(
+    post,
+    path = "/admin/backup:scoped",
+    tag = "Admin",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "SnapshotV1 restricted to the requested virtual buckets", body = serde_json::Value),
+        (status = 400, description = "Invalid virtual_bucket_count", body = ApiError)
+    )
+)]
+async fn backup_scoped(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Json(req): Json<ScopedBackupRequest>,
+) -> Result<Json<SnapshotV1>, ApiErr> {
+    auth.ensure("*", Role::Admin)?;
+    let full = state.engine.snapshot().map_err(ApiErr::from)?;
+    let scoped =
+        crate::reshard::snapshot_bucket_subset(&full, req.virtual_bucket_count, &req.buckets)
+            .map_err(ApiErr::from)?;
+    tracing::info!(
+        target: "lumen.audit",
+        event = "backup_scoped",
+        subject = auth.subject().unwrap_or("anonymous"),
+        virtual_bucket_count = req.virtual_bucket_count,
+        buckets = req.buckets.len(),
+    );
+    Ok(Json(scoped))
+}
+
+#[derive(Debug, Deserialize)]
+struct ReshardEvictRequest {
+    /// This shard's physical index in `assignments`.
+    shard: u32,
+    /// The newer map version being cut over to; carried for audit logging.
+    map_version: u64,
+    /// `bucket -> physical shard` assignment for the newer map. Its length
+    /// is the virtual bucket count.
+    assignments: Vec<u32>,
+    physical_shard_count: u32,
+}
+
+/// `POST /admin/reshard:evict`: source-side post-cutover eviction. Given a
+/// newer virtual-bucket map and this shard's index within it, removes
+/// exactly the documents whose bucket no longer routes to this shard —
+/// nothing else. A separate, explicitly-invoked step; never implicit in
+/// `/admin/reshard:apply` or `/admin/backup*`. Idempotent — a document
+/// already evicted by a prior call no longer matches and is skipped.
+#[utoipa::path(
+    post,
+    path = "/admin/reshard:evict",
+    tag = "Admin",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Documents no longer owned by this shard removed", body = serde_json::Value),
+        (status = 400, description = "Invalid virtual bucket map", body = ApiError)
+    )
+)]
+async fn reshard_evict(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Json(req): Json<ReshardEvictRequest>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    auth.ensure("*", Role::Admin)?;
+    let map =
+        VirtualBucketShardMap::new(req.map_version, req.assignments, req.physical_shard_count)
+            .map_err(ApiErr::from)?;
+    let outcome = state
+        .engine
+        .evict_not_owned(&map, req.shard)
+        .map_err(ApiErr::from)?;
+    tracing::info!(
+        target: "lumen.audit",
+        event = "reshard_evict",
+        subject = auth.subject().unwrap_or("anonymous"),
+        shard = req.shard,
+        map_version = req.map_version,
+        collections_touched = outcome.collections_touched,
+        documents_evicted = outcome.documents_evicted,
+    );
+    Ok(Json(serde_json::json!({
+        "collections_touched": outcome.collections_touched,
+        "documents_evicted": outcome.documents_evicted,
+    })))
+}
+
+/// `POST /admin/checkpoint` (#1389): force a synchronous durability
+/// checkpoint of the live engine state and return only once it is committed.
+/// The reshard driver's cutover calls this on every shard it just migrated
+/// data into or evicted data from, so `/admin/reshard:apply`/`:evict`'s
+/// mutations — which bypass `WriteCoordinator`/the AOF — reach durability
+/// before the driver triggers the cutover rolling restart, instead of
+/// depending on the next periodic `LUMEN_SNAPSHOT_SECS` tick. `persisted:
+/// false` means no durable store is configured on this node (nothing to
+/// lose on restart, e.g. dev mode); a production/operator deployment with
+/// segment persistence configured always reports `true` on success. See
+/// [`CheckpointSink`].
+#[utoipa::path(
+    post,
+    path = "/admin/checkpoint",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Checkpoint committed (or vacuously satisfied if no durable store is configured)", body = serde_json::Value),
+        (status = 400, description = "Checkpoint write failed", body = ApiError)
+    )
+)]
+async fn admin_checkpoint(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    auth.ensure("*", Role::Admin)?;
+    let persisted = state
+        .checkpoint
+        .checkpoint_now()
+        .await
+        .map_err(ApiErr::from)?;
+    tracing::info!(
+        target: "lumen.audit",
+        event = "admin_checkpoint",
+        subject = auth.subject().unwrap_or("anonymous"),
+        persisted,
+    );
+    Ok(Json(serde_json::json!({ "persisted": persisted })))
+}
+
+fn default_fence_ttl_secs() -> u64 {
+    300
+}
+
+/// Upper bound on `ReshardFenceRequest::ttl_secs` (#1443 R3): well above any
+/// real driver tick, but small enough that `Instant::now().checked_add` never
+/// overflows and a malformed/malicious admin request can never arm an
+/// effectively-permanent write pause.
+const MAX_FENCE_TTL_SECS: u64 = 3600;
+
+#[derive(Debug, Deserialize)]
+struct ReshardFenceRequest {
+    /// Same `virtual_bucket_count` the caller's map uses, matching
+    /// [`ScopedBackupRequest`]'s convention.
+    virtual_bucket_count: u32,
+    /// Buckets to pause writes on. An empty set explicitly clears any
+    /// currently-armed fence, independent of its deadline.
+    buckets: BTreeSet<u32>,
+    /// How long the pause stays armed if never explicitly cleared (a
+    /// crashed-driver backstop; see [`WriteFence`]'s doc). Defaults to 300s —
+    /// generous relative to one driver tick (`DRIVER_POLL_INTERVAL`, 20s in
+    /// `reshard_driver.rs`) plus a full migration-pass HTTP round trip, while
+    /// still bounded well under any operator-visible SLO.
+    #[serde(default = "default_fence_ttl_secs")]
+    ttl_secs: u64,
+}
+
+/// `POST /admin/reshard:fence`: arm or clear a bounded write pause on a set
+/// of virtual buckets (#1396 R2). The reshard driver's cutover
+/// (`operator::reshard_driver::advance_catching_up`) arms this over exactly
+/// the buckets its final `CatchingUp` migration pass is about to copy,
+/// immediately before that pass, and clears it (`buckets: []`) once the
+/// pass/evict/checkpoint/cutover sequence finishes — on success or on
+/// `Blocked`. A write to a fenced bucket is rejected with `503
+/// bucket_write_paused` rather than silently dropped or applied against a
+/// map that is about to change; see [`WriteFence`] for the crash-safety
+/// (TTL) argument.
+#[utoipa::path(
+    post,
+    path = "/admin/reshard:fence",
+    tag = "Admin",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Fence armed or cleared", body = serde_json::Value),
+        (status = 400, description = "Invalid virtual_bucket_count", body = ApiError)
+    )
+)]
+async fn reshard_fence(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Json(req): Json<ReshardFenceRequest>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    auth.ensure("*", Role::Admin)?;
+    if req.virtual_bucket_count == 0 {
+        return Err(ApiErr::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_virtual_bucket_count",
+            "virtual_bucket_count must be > 0",
+        ));
+    }
+    if req.buckets.is_empty() {
+        state.write_fence.clear();
+        tracing::info!(
+            target: "lumen.audit",
+            event = "reshard_fence_cleared",
+            subject = auth.subject().unwrap_or("anonymous"),
+        );
+    } else {
+        // #1443 R3: reject a nonsensical TTL as 400 rather than letting
+        // `WriteFence::arm`'s `Instant::now() + ttl` overflow — `0` would
+        // arm-then-immediately-expire (never actually pausing anything, a
+        // silent no-op the caller would wrongly believe closed the write
+        // window), and anything above the generous upper bound is either a
+        // malformed request or would arm an effectively-permanent pause.
+        if req.ttl_secs == 0 || req.ttl_secs > MAX_FENCE_TTL_SECS {
+            return Err(ApiErr::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_ttl_secs",
+                format!(
+                    "ttl_secs must be in 1..={MAX_FENCE_TTL_SECS}, got {}",
+                    req.ttl_secs
+                ),
+            ));
+        }
+        if !state.write_fence.arm(
+            req.virtual_bucket_count,
+            req.buckets.clone(),
+            Duration::from_secs(req.ttl_secs),
+        ) {
+            // Unreachable in practice now that ttl_secs is bounded above,
+            // but `arm` still reports overflow explicitly (#1443 R3) rather
+            // than panicking — surface it as the same 400 shape instead of a
+            // silently-unarmed 200.
+            return Err(ApiErr::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_ttl_secs",
+                "ttl_secs would overflow the fence deadline",
+            ));
+        }
+        tracing::info!(
+            target: "lumen.audit",
+            event = "reshard_fence_armed",
+            subject = auth.subject().unwrap_or("anonymous"),
+            virtual_bucket_count = req.virtual_bucket_count,
+            buckets = req.buckets.len(),
+            ttl_secs = req.ttl_secs,
+        );
+    }
+    Ok(Json(serde_json::json!({
+        "armed": !req.buckets.is_empty(),
+        "buckets": req.buckets,
+    })))
+}
+
+// ---------------------------------------------------------------------------
 // OpenAPI
 // ---------------------------------------------------------------------------
 
@@ -1639,9 +2378,145 @@ impl ApiErr {
     }
 }
 
+/// One-hop shard-forward failure — the owning shard was unreachable (pod
+/// down/rolling) or its response could not be decoded. Raised via `anyhow`
+/// by `routing_remote::RoutedRouter` so `ApiErr`'s classification stays
+/// centralized here rather than duplicated in the `operator`-gated module;
+/// R2 requires this to surface as a clear, distinctly-kinded retryable
+/// error, never a silent local answer.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+#[derive(Debug)]
+pub struct ShardForwardUnavailable(pub String);
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::fmt::Display for ShardForwardUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::error::Error for ShardForwardUnavailable {}
+
+/// The owning shard was reached and answered, but with a non-2xx status
+/// (e.g. a forwarded write hit `404`/`422`). Re-emitted locally with the
+/// same status so a forwarded error is as legible as a local one; `message`
+/// carries the remote's own `{error, message}` envelope verbatim.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+#[derive(Debug)]
+pub struct ShardForwardRemoteError {
+    pub status: u16,
+    pub message: String,
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::fmt::Display for ShardForwardRemoteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "shard forward error ({}): {}", self.status, self.message)
+    }
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::error::Error for ShardForwardRemoteError {}
+
+/// A forwarded request declared a shard-map version that disagrees with
+/// this pod's own live map (#1442 R2). A rolling restart after a completed
+/// reshard split can run pods on two different `SHARD_MAP_*` env snapshots
+/// for a bounded window (pods only read env at boot) — rather than let the
+/// one-hop guard force a local answer that may be wrong on either side of
+/// the split, the receiver rejects with this distinct, retryable error so
+/// the caller (or its own retry policy) waits for the rollout to converge.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+#[derive(Debug)]
+pub struct ShardMapVersionMismatch {
+    pub sender_version: u64,
+    pub local_version: u64,
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::fmt::Display for ShardMapVersionMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "forwarded request's shard-map version {} disagrees with this pod's live version {}",
+            self.sender_version, self.local_version
+        )
+    }
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::error::Error for ShardMapVersionMismatch {}
+
+/// A forwarded request's one-hop marker (`x-lumen-forwarded`) claimed this
+/// pod, but recomputing ownership from this pod's own shard map disagrees
+/// (#1442 R1). The marker alone is caller-controlled — an external client
+/// can set it directly on a request to any pod, forcing local handling on a
+/// bucket that pod doesn't actually own — so it is now validated on
+/// receipt rather than trusted blindly; a spoofed or genuinely misrouted
+/// forward is rejected, never honored.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+#[derive(Debug)]
+pub struct ShardForwardMisrouted {
+    pub bucket: u32,
+    pub owner_shard: u32,
+    pub local_shard: u32,
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::fmt::Display for ShardForwardMisrouted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "forwarded request targets virtual bucket {} (owned by shard {}), but this pod is \
+             shard {}; refusing to honor an unverified forwarded-hop marker",
+            self.bucket, self.owner_shard, self.local_shard
+        )
+    }
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::error::Error for ShardForwardMisrouted {}
+
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl From<anyhow::Error> for ApiErr {
     fn from(e: anyhow::Error) -> Self {
+        // #1486 R2: a write waiter released without a genuine apply outcome
+        // (dedup-guard skip or a bounded submit() timeout) is transient —
+        // surface it as a retryable 503, never the generic 400 fallback
+        // below (which would misreport it as a bad request) and never a
+        // silent hang (the original defect).
+        if e.downcast_ref::<SubmitStalled>().is_some() {
+            return Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "write_stalled",
+                e.to_string(),
+            );
+        }
+        if e.downcast_ref::<ShardForwardUnavailable>().is_some() {
+            return Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "shard_forward_unavailable",
+                e.to_string(),
+            );
+        }
+        if let Some(re) = e.downcast_ref::<ShardForwardRemoteError>() {
+            let status = StatusCode::from_u16(re.status).unwrap_or(StatusCode::BAD_GATEWAY);
+            return Self::new(status, "shard_forwarded_error", re.message.clone());
+        }
+        if e.downcast_ref::<ShardMapVersionMismatch>().is_some() {
+            return Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "shard_map_version_mismatch",
+                e.to_string(),
+            );
+        }
+        if e.downcast_ref::<ShardForwardMisrouted>().is_some() {
+            return Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "shard_forward_misrouted",
+                e.to_string(),
+            );
+        }
         if let Some(se) = e.downcast_ref::<StorageError>() {
             return match se {
                 StorageError::CollectionNotFound(_) => {
@@ -1680,6 +2555,22 @@ impl From<anyhow::Error> for ApiErr {
                 StorageError::UnsupportedSort(_) => {
                     Self::new(StatusCode::BAD_REQUEST, "unsupported_sort", e.to_string())
                 }
+                // #1467 R4: caller-declared `total_chunks` failed the sanity
+                // cap — a client/protocol error, not a transient one.
+                StorageError::InvalidPruneChunk { .. } => Self::new(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_prune_chunk",
+                    e.to_string(),
+                ),
+                // #1467 R4: the prune accumulator is at its entry cap — a
+                // 429-class signal (retryable once the driver's other,
+                // presumably-stuck passes GC out or complete) rather than a
+                // permanent 4xx.
+                StorageError::PruneAccumulatorFull { .. } => Self::new(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "prune_accumulator_full",
+                    e.to_string(),
+                ),
             };
         }
         Self::new(StatusCode::BAD_REQUEST, "bad_request", e.to_string())
