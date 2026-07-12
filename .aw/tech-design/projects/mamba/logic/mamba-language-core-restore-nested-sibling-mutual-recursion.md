@@ -60,29 +60,29 @@ changes:
 
 ```mermaid
 ---
-id: mamba-nested-sibling-recursion-verification
+id: mamba-nested-sibling-recursion-contract-verification
 requirements:
-  closure_boundaries:
+  binding_inventory:
+    id: R1
+    text: "A cell-backed nested FuncDefPlaceholder bind target is included in the pre-vivification inventory."
+    kind: unit
+    risk: high
+    verify: lower::hir_to_mir::tests::captured_funcdef_binding_is_previvified
+  closure_nonregression:
     id: R3
-    text: "Forward capture and per-call closure identity remain correct while sibling bindings are fixed."
+    text: "Existing late-binding closure behavior remains at oracle parity."
     kind: regression
     risk: medium
     verify: conformance::_regression/core/closure_capture/closure_late_binding.py
-  first_call_order:
+  mutual_recursion_oracle:
     id: R2
-    text: "Either sibling may execute first and recursively call its peer."
-    kind: regression
-    risk: high
-    verify: conformance::_regression/core/closure_capture/nested_sibling_mutual_recursion.py
-  sibling_binding:
-    id: R1
-    text: "Nested sibling functions resolve each other through the enclosing invocation scope instead of a None placeholder."
-    kind: functional
+    text: "Nested is_even and is_odd functions both resolve their peer and match CPython output."
+    kind: integration
     risk: high
     verify: conformance::_regression/core/closure_capture/nested_sibling_mutual_recursion.py
 ---
 flowchart TD
-    r1[R1 sibling binding] --> conformance_regression_core_closure_capture_nested_sibling_mutual_recursion_py[conformance::_regression/core/closure_capture/nested_sibling_mutual_recursion.py]
-    r2[R2 first call order] --> conformance_regression_core_closure_capture_nested_sibling_mutual_recursion_py
-    r3[R3 closure boundaries] --> conformance_regression_core_closure_capture_closure_late_binding_py[conformance::_regression/core/closure_capture/closure_late_binding.py]
+    r1[R1 binding inventory] --> lower_hir_to_mir_tests_captured_funcdef_binding_is_previvified[lower::hir_to_mir::tests::captured_funcdef_binding_is_previvified]
+    r2[R2 mutual recursion oracle] --> conformance_regression_core_closure_capture_nested_sibling_mutual_recursion_py[conformance::_regression/core/closure_capture/nested_sibling_mutual_recursion.py]
+    r3[R3 closure nonregression] --> conformance_regression_core_closure_capture_closure_late_binding_py[conformance::_regression/core/closure_capture/closure_late_binding.py]
 ```
