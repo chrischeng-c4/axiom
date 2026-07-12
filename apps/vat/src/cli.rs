@@ -606,3 +606,15 @@ fn issue_cmd(_cmd: IssueCmd) -> Result<ExitCode> {
     )
 }
 // CODEGEN-END
+// SPEC-MANAGED: apps/vat/tech-design/logic/vat-microvm-phase-1-isolation-microvm-sandbox-backend-for-vat-ru.md#cli
+// CODEGEN-BEGIN
+#[derive(Subcommand)]
+pub enum Commands {
+    VatRun,
+
+    VatCapabilitiesJson,
+
+    VatDoctor,
+
+}
+// CODEGEN-END
