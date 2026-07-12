@@ -2025,4 +2025,133 @@ async fn batch_search_enforces_read_consistency_too() {
         .await;
     resp.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
 }
+
+/// #1486 R4 e2e: the restart-write flow. Builds a segment checkpoint (the
+/// same `SegmentRdbStore::save` a real periodic snapshotter or on-demand
+/// `/admin/checkpoint` performs), reopens it into a fresh engine exactly as
+/// `serve()`'s cold-start path does (`reopen_into` → `start_seq`), then
+/// wires a `WriteCoordinator` the same way `serve()` now does: a `MemWal`
+/// seeded via `starting_at(start_seq)` paired with
+/// `start_from(engine, start_seq)`. Drives the "first write after restart"
+/// through the real HTTP router — must complete promptly (not hang), be
+/// durable + searchable, and advance stats/metrics.
+#[tokio::test]
+async fn first_write_after_checkpoint_restore_completes_and_is_searchable() {
+    use lumen::coordinator::WriteCoordinator;
+    use lumen::segment_rdb::SegmentRdbStore;
+    use lumen::wal::MemWal;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = SegmentRdbStore::new(dir.path()).unwrap();
+
+    // Pre-restart: a live engine with a collection + one doc, checkpointed.
+    let pre = Arc::new(lumen::storage::Engine::new());
+    pre.create_collection(
+        "users",
+        CreateCollectionRequest {
+            fields: BTreeMap::from([(
+                "email".to_string(),
+                FieldSpec {
+                    field_type: FieldType::Keyword,
+                    analyzer: None,
+                    multi: None,
+                    dim: None,
+                    metric: None,
+                    backend: None,
+                    quantize: None,
+                },
+            )]),
+        },
+    )
+    .unwrap();
+    pre.index(
+        "users",
+        IndexRequest {
+            items: vec![IndexItem {
+                external_id: "pre-restart-1".into(),
+                field: "email".into(),
+                value: FieldValue::String("old@x.com".into()),
+                version: None,
+            }],
+            request_id: None,
+        },
+    )
+    .unwrap();
+    store.save(&pre, 5).unwrap();
+
+    // "Restart": fresh engine, reopen the checkpoint — exactly `serve()`'s
+    // cold-start path (`reopen_into` → `start_seq`).
+    let engine = Arc::new(lumen::storage::Engine::new());
+    let start_seq = store
+        .reopen_into(&engine)
+        .unwrap()
+        .expect("a checkpoint to restore");
+    assert_eq!(start_seq, 5);
+    assert_eq!(engine.stats("users").unwrap().documents_indexed, 1);
+
+    // The fix under test: the embedded WAL's sequence domain starts above
+    // the restored watermark, paired with a coordinator seeded from the
+    // same watermark — the exact `serve()` wiring (#1486 R1).
+    let wal = Arc::new(MemWal::starting_at(start_seq));
+    let writer = WriteCoordinator::start_from(wal, engine.clone(), start_seq);
+    let state = lumen::api::AppState::with_components(
+        engine.clone(),
+        Arc::new(lumen::auth::AuthConfig::open()),
+        writer,
+    );
+    let s = TestServer::new(lumen::api::router(state)).expect("test server");
+
+    // First write after "restart" — must complete promptly, not hang.
+    let resp = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        s.post("/collections/users/index").json(&json!({
+            "items": [
+                { "external_id": "post-restart-1", "field": "email", "value": "new@x.com" }
+            ]
+        })),
+    )
+    .await
+    .expect("first post-restart write must complete promptly, not hang (#1486)");
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["indexed"], 1);
+
+    // Durable + searchable.
+    let search = s
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "new@x.com" } },
+            "limit": 10
+        }))
+        .await;
+    search.assert_status_ok();
+    let search_body: Value = search.json();
+    assert_eq!(search_body["total"], 1, "{search_body}");
+    assert_eq!(
+        search_body["hits"][0]["external_id"].as_str(),
+        Some("post-restart-1")
+    );
+
+    // Stats + metrics gauges advance (#1486 R3/AC2), not frozen at the
+    // pre-restart count.
+    let stats = s.get("/collections/users/stats").await;
+    stats.assert_status_ok();
+    let stats_body: Value = stats.json();
+    assert_eq!(
+        stats_body["documents_indexed"], 2,
+        "documents_indexed must count both the restored doc and the new post-restart doc: {stats_body}"
+    );
+    assert!(
+        !stats_body["last_indexed_at"].is_null(),
+        "last_indexed_at must advance after the post-restart write: {stats_body}"
+    );
+
+    let metrics = s.get("/metrics").await;
+    metrics.assert_status_ok();
+    let metrics_body = metrics.text();
+    assert!(
+        !metrics_body.contains("lumen_index_writes_total 0"),
+        "lumen_index_writes_total must have advanced past 0: {metrics_body}"
+    );
+}
 // CODEGEN-END

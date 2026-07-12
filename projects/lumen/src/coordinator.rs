@@ -42,12 +42,41 @@ use crate::wal::{SharedWal, WalRecord};
 /// handler is waiting on (writes that originated on other nodes) age out.
 const OUTCOME_WINDOW: u64 = 8192;
 const APPLY_LOOP_BATCH: usize = 128;
+/// Bound on `submit()`'s wait for local apply (#1486 R2). Comfortably above
+/// any realistic single-batch apply latency (`APPLY_LOOP_BATCH` folds
+/// synchronously in one `spawn_blocking` task), so this only fires on a
+/// genuine stall — turning what would otherwise be an infinite hang into a
+/// retryable 5xx.
+const SUBMIT_TIMEOUT_SECS: u64 = 30;
+const SUBMIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(SUBMIT_TIMEOUT_SECS);
 
 struct PendingApply {
     seq: u64,
     rec: WalRecord,
     aof_rec: Option<WalRecord>,
 }
+
+/// A `submit()` waiter was released without a genuine [`ApplyOutcome`]
+/// (#1486 R2): either the apply loop's redelivery-dedup guard skipped the
+/// waiter's sequence (already at/below `applied`), or the wait exceeded
+/// [`SUBMIT_TIMEOUT`]. Both are transient/retryable, never a client
+/// input error — `src/api.rs`'s `From<anyhow::Error> for ApiErr` downcasts
+/// this to a `503` instead of falling through to the generic `400`
+/// default, so a stranded write is loud (a 5xx) rather than silent (an
+/// infinite hang, the original defect) or misleading (a 4xx).
+#[derive(Debug, Clone)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-coordinator-rs.md#source
+pub struct SubmitStalled(pub String);
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-coordinator-rs.md#source
+impl std::fmt::Display for SubmitStalled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-coordinator-rs.md#source
+impl std::error::Error for SubmitStalled {}
 
 struct CompletionState {
     outcomes: OutcomeWindow<Result<ApplyOutcome>>,
@@ -146,8 +175,13 @@ impl WriteCoordinator {
                     match item {
                         Ok((seq, rec)) => {
                             // Idempotent under redelivery: skip anything at or
-                            // below what we've already applied.
+                            // below what we've already applied. Defense-in-depth
+                            // (#1486): a skipped sequence never reaches `complete`,
+                            // so any local waiter for it (a submit() that published
+                            // this exact seq) would otherwise hang forever — release
+                            // it with a distinct, retryable error instead.
                             if seq <= loop_coord.applied.load(Ordering::Acquire) {
+                                loop_coord.complete_stale(seq);
                                 continue;
                             }
                             let mut batch = Vec::with_capacity(APPLY_LOOP_BATCH);
@@ -160,6 +194,7 @@ impl WriteCoordinator {
                                 match sub.next().now_or_never() {
                                     Some(Some(Ok((seq, rec)))) => {
                                         if seq <= loop_coord.applied.load(Ordering::Acquire) {
+                                            loop_coord.complete_stale(seq);
                                             continue;
                                         }
                                         batch.push(PendingApply {
@@ -252,6 +287,31 @@ impl WriteCoordinator {
         coord
     }
 
+    /// Defense-in-depth (#1486): release any waiter stranded on a sequence
+    /// the apply loop's redelivery-dedup guard is about to skip (already at
+    /// or below `applied`). Unlike [`complete`](Self::complete), this is
+    /// NOT reporting a real apply outcome — the dedup guard means this
+    /// sequence's record was never folded into the engine on this pass, so
+    /// there is no genuine `ApplyOutcome` to hand back. A distinct,
+    /// explicitly-retryable error lets the caller's error message (and any
+    /// HTTP status mapping) tell this apart from a real apply failure, and
+    /// — critically — completes the waiter at all, instead of leaving
+    /// `submit()`'s `rx.await` hanging forever. Deliberately does not touch
+    /// `applied` or the outcomes window: `seq` is already accounted for by
+    /// the watermark, so there is nothing further to record.
+    fn complete_stale(&self, seq: u64) {
+        let waiter = {
+            let mut m = self.completions.lock().expect("completions poisoned");
+            m.waiters.remove(&seq)
+        };
+        if let Some(tx) = waiter {
+            let _ = tx.send(Err(anyhow::Error::new(SubmitStalled(format!(
+                "sequence {seq} arrived at or below the applied watermark (stale redelivery \
+                 or a sequence-domain mismatch); the write was not applied on this pass — retry"
+            )))));
+        }
+    }
+
     fn complete(&self, seq: u64, outcome: Result<ApplyOutcome>) {
         let mut direct = None;
         {
@@ -287,11 +347,29 @@ impl WriteCoordinator {
     }
 
     /// Publish `entry`, wait for local apply, and return its outcome.
+    ///
+    /// Bounded by [`SUBMIT_TIMEOUT`] (#1486 R2, defense-in-depth): a stray
+    /// sequence-domain mismatch (the class R1 fixes) or any other apply-loop
+    /// stall must surface as a retryable 5xx to the caller, never an
+    /// unbounded hang that leaks a server task per request.
     pub async fn submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome> {
         let seq = self.wal.publish(WalRecord::new(entry)).await?;
         let rx = self.register_waiter(seq)?;
-        rx.await
-            .map_err(|_| anyhow::anyhow!("apply loop stopped before sequence {seq} was applied"))?
+        match tokio::time::timeout(SUBMIT_TIMEOUT, rx).await {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(_)) => Err(anyhow::anyhow!(
+                "apply loop stopped before sequence {seq} was applied"
+            )),
+            Err(_) => {
+                // The waiter entry may still be sitting in `completions.waiters`
+                // (a very-late `complete`/`complete_stale` will just find no live
+                // receiver and drop the result) — nothing to clean up here beyond
+                // returning the bounded error.
+                Err(anyhow::Error::new(SubmitStalled(format!(
+                    "timed out after {SUBMIT_TIMEOUT_SECS}s waiting for sequence {seq} to apply"
+                ))))
+            }
+        }
     }
 
     /// Highest sequence this node has applied.
@@ -421,6 +499,148 @@ mod tests {
                 .map(|e| matches!(e, StorageError::CollectionNotFound(_)))
                 .unwrap_or(false),
             "StorageError must survive coordinator routing, got: {err}"
+        );
+    }
+
+    /// #1486 AC1/AC2: an engine "restored" to a non-zero watermark (mirrors
+    /// `serve()`'s `MemWal::starting_at(start_seq)` + `start_from(engine,
+    /// start_seq)` pairing, whatever the restore source — segment checkpoint,
+    /// AOF-tail replay, or CBOR RDB) accepts its first subsequent write
+    /// immediately (no waiter leak) and that write is durable + reflected in
+    /// stats/metrics, not stranded behind a stale watermark.
+    #[tokio::test]
+    async fn restore_seeds_wal_above_watermark_first_write_completes_promptly() {
+        let engine = Arc::new(Engine::new());
+        // Pre-restore state: schema already present (as a real checkpoint
+        // restore would leave it), engine otherwise fresh.
+        engine.create_collection("u", keyword_schema()).unwrap();
+
+        const RESTORED_WATERMARK: u64 = 5;
+        let wal = Arc::new(MemWal::starting_at(RESTORED_WATERMARK));
+        let coord = WriteCoordinator::start_from(wal, engine.clone(), RESTORED_WATERMARK);
+        assert_eq!(coord.applied_seq(), RESTORED_WATERMARK);
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            coord.submit(RaftLogEntry::Index {
+                collection_id: "u".into(),
+                req: IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: "post-restore-1".into(),
+                        field: "email".into(),
+                        value: FieldValue::String("fresh@x.com".into()),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            }),
+        )
+        .await
+        .expect("first post-restore write must complete promptly, not hang (#1486)")
+        .expect("first post-restore write must succeed");
+
+        match outcome {
+            ApplyOutcome::Indexed(r) => assert_eq!(r.indexed, 1),
+            other => panic!("expected Indexed, got {other:?}"),
+        }
+
+        // Durable + reflected in read-your-write state.
+        let stats = engine.stats("u").unwrap();
+        assert_eq!(
+            stats.documents_indexed, 1,
+            "the fresh post-restore doc must be counted"
+        );
+        assert!(
+            stats.last_indexed_at.is_some(),
+            "last_indexed_at must advance for a genuinely-applied post-restore write"
+        );
+
+        // Searchable: the apply loop actually folded the write into the
+        // engine (not silently dropped by the dedup guard).
+        assert!(
+            engine.metrics().index_writes_total.get() >= 1,
+            "lumen_index_writes_total must advance for a genuinely-applied post-restore write"
+        );
+        assert!(
+            engine.metrics().index_bytes_total.get() > 0,
+            "lumen_index_bytes_total must advance for a genuinely-applied post-restore write"
+        );
+
+        // The WAL's own sequence domain is strictly above the restored
+        // watermark, and the coordinator's applied head advanced past it.
+        assert!(coord.applied_seq() > RESTORED_WATERMARK);
+    }
+
+    /// #1486 documents the defect class R1 fixes: pairing a non-zero
+    /// `start_from` watermark with an UNSEEDED `MemWal::new()` (base 0) — the
+    /// pre-fix `serve()` wiring — reproduces the original hang: the first
+    /// write is stranded (never applied, never completed) well past a
+    /// generous bound, proving `MemWal::starting_at` (not just R2's
+    /// `submit()` timeout) is the real fix a correct restore needs. Uses a
+    /// short local bound rather than waiting out the full production
+    /// `SUBMIT_TIMEOUT` (30s), which R2 covers independently below.
+    #[tokio::test]
+    async fn unseeded_wal_after_restore_strands_first_write() {
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", keyword_schema()).unwrap();
+
+        const RESTORED_WATERMARK: u64 = 5;
+        // The bug: base-0 WAL paired with a watermark seeded from a restore.
+        let wal = Arc::new(MemWal::new());
+        let coord = WriteCoordinator::start_from(wal, engine.clone(), RESTORED_WATERMARK);
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            coord.submit(RaftLogEntry::Index {
+                collection_id: "u".into(),
+                req: IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: "post-restore-1".into(),
+                        field: "email".into(),
+                        value: FieldValue::String("fresh@x.com".into()),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            }),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "an unseeded WAL after a watermark restore strands the write (still hangs past a \
+             generous bound) — this is the exact defect class #1486 R1 fixes; \
+             MemWal::starting_at(watermark) is required, not just start_from(watermark)"
+        );
+        // Never actually applied — the read side agrees with the hang.
+        assert_eq!(engine.stats("u").unwrap().documents_indexed, 0);
+    }
+
+    /// #1486 R2: `submit()` is bounded by `SUBMIT_TIMEOUT`, so even a
+    /// completely stalled apply (nothing ever calls `complete`) surfaces as
+    /// a distinct, retryable `SubmitStalled` error rather than an infinite
+    /// hang. Exercises `complete_stale` too: the dedup guard's stale-skip
+    /// path releases a waiter with `SubmitStalled`, not a plain hang.
+    #[tokio::test]
+    async fn dedup_guard_completes_stranded_waiter_as_submit_stalled() {
+        let engine = Arc::new(Engine::new());
+        engine.create_collection("u", keyword_schema()).unwrap();
+        let wal = Arc::new(MemWal::new());
+        let coord = WriteCoordinator::start(wal, engine.clone());
+
+        // Register a waiter directly for a sequence at/below `applied`
+        // (0 at start) — exactly what the apply loop's dedup guard would
+        // see on a stale-redelivery, and route it through the same
+        // `complete_stale` the guard calls.
+        let rx = coord.register_waiter(0).expect("register waiter for seq 0");
+        coord.complete_stale(0);
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(2), rx)
+            .await
+            .expect("complete_stale must resolve the waiter promptly, not hang")
+            .expect("oneshot must not be dropped without a send");
+        let err = outcome.expect_err("a dedup-skipped sequence must not report a fake success");
+        assert!(
+            err.downcast_ref::<SubmitStalled>().is_some(),
+            "expected SubmitStalled, got: {err}"
         );
     }
 }
