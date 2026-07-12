@@ -81,7 +81,6 @@ properties:
     description: "apps/vat/Cargo.toml: serde_yaml (version 0.9, unchanged) loses `optional = true` and becomes an unconditional dependency; removed from the `emulator` feature's `dep:serde_yaml` list. Zero new crate, needed unconditionally ahead of Phase 3's compose YAML parsing (not used by this WI's own code)."
 additionalProperties: true
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
