@@ -6,12 +6,16 @@
 use super::marshal;
 use super::perf_map;
 use super::{
-    emit_binop, emit_terminator, CompanionOwnerTransition, VarAlloc, EMIT_REFCOUNT_CALLS,
+    emit_binop, emit_terminator, CompanionOwnerInput, CompanionOwnerTransition, VarAlloc,
+    EMIT_REFCOUNT_CALLS,
 };
 use crate::codegen::{CodegenBackend, CodegenOutput};
+use crate::mir::return_abi::BodyPhysicalAbiAnalysis;
 use crate::mir::{
-    analyze_literal_escapes, LiteralEscapeAnalysis, LiteralEscapeClassification, LiteralEscapeKind,
-    MirBinOp, MirBody, MirConst, MirExtern, MirInst, MirModule, MirType, VReg,
+    analyze_literal_escapes, ExternCompanionContract, LiteralEscapeAnalysis,
+    LiteralEscapeClassification, LiteralEscapeKind, MirBinOp, MirBody, MirConst, MirExtern,
+    MirInst, MirModule, MirType, OwnerValueSource, ProducerOwnerAction, ProducerOwnerMetadata,
+    ProducerSite, VReg,
 };
 use crate::runtime::rc::MbObject;
 use crate::runtime::symbols::{runtime_externs, runtime_symbols};
@@ -367,7 +371,7 @@ impl CraneliftJitBackend {
         body: &MirBody,
         tcx: &TypeContext,
         externs: &[MirExtern],
-        mixed_int_vregs: &HashSet<VReg>,
+        physical_abi: &BodyPhysicalAbiAnalysis,
     ) -> crate::error::Result<()> {
         let func_id = self.internal_funcs[&body.name.0];
         let mut sig = Signature::new(CallConv::SystemV);
@@ -447,6 +451,7 @@ impl CraneliftJitBackend {
         } else {
             None
         };
+        let mixed_int_vregs = physical_abi.raw_or_boxed_int_vregs();
         let needs_precise_owners = !mixed_int_vregs.is_empty();
         let precise_owner_release = if needs_precise_owners {
             release_func_ref.or_else(|| {
@@ -462,7 +467,7 @@ impl CraneliftJitBackend {
         };
         let precise_owner_retain = needs_precise_owners.then_some(retain_func_ref).flatten();
         vars.initialize_companion_owners(
-            mixed_int_vregs,
+            &mixed_int_vregs,
             precise_owner_retain,
             precise_owner_release,
             &mut builder,
@@ -506,9 +511,13 @@ impl CraneliftJitBackend {
             if block_idx > 0 {
                 builder.switch_to_block(cl_blocks[&block.id.0]);
             }
-            for inst in &block.stmts {
+            for (statement_index, inst) in block.stmts.iter().enumerate() {
                 self.emit_inst(
                     inst,
+                    physical_abi.producer_owner(ProducerSite::Instruction {
+                        block: block.id,
+                        statement_index,
+                    }),
                     tcx,
                     externs,
                     &literal_escapes,
@@ -611,6 +620,7 @@ impl CraneliftJitBackend {
     fn emit_inst(
         &mut self,
         inst: &MirInst,
+        producer_owner: Option<ProducerOwnerMetadata>,
         tcx: &TypeContext,
         externs: &[MirExtern],
         literal_escapes: &LiteralEscapeAnalysis,
@@ -670,25 +680,11 @@ impl CraneliftJitBackend {
             };
             if let Some(dest) = dest_vreg {
                 if vars.has_companion_owner(dest) {
-                    let deferred_to_merge = matches!(
-                        inst,
-                        MirInst::CheckedAdd { .. }
-                            | MirInst::CheckedSub { .. }
-                            | MirInst::CheckedMul { .. }
-                    ) || matches!(
-                        inst,
-                        MirInst::BinOp {
-                            op: MirBinOp::LShift,
-                            ty,
-                            ..
-                        } if matches!(tcx.get(*ty), Ty::Int)
-                    );
-                    if !matches!(inst, MirInst::Copy { .. }) && !deferred_to_merge {
-                        vars.transition_companion_owner(
-                            CompanionOwnerTransition::ProducerWrite { dest, owner: None },
-                            builder,
-                        );
-                    }
+                    // #1462 commits the precise owner after the instruction has
+                    // produced its data and evaluated the declared owner source.
+                    // The old pre-evaluation `ProducerWrite(None)` discarded a
+                    // live owner before a Copy, runtime call, or split merge had
+                    // established the replacement provenance.
                     // Mixed slots are released exclusively through their
                     // companion owner; their data bits may be raw pointer-like
                     // integers and must never reach mb_release_value.
@@ -957,13 +953,6 @@ impl CraneliftJitBackend {
                         self.emit_raw_lshift_with_overflow_check(dest, lhs, rhs, builder, vars);
                     } else {
                         self.emit_checked_bitwise_op(dest, lhs, rhs, "mb_lshift", builder, vars);
-                        vars.transition_companion_owner(
-                            CompanionOwnerTransition::ProducerWrite {
-                                dest: *dest,
-                                owner: None,
-                            },
-                            builder,
-                        );
                     }
                 } else if matches!(op, MirBinOp::RShift) && matches!(resolved_ty, Ty::Int) {
                     // Right shift of a *genuinely* raw inline base always stays
@@ -1091,13 +1080,6 @@ impl CraneliftJitBackend {
                     if dest == source {
                         return;
                     }
-                    vars.transition_companion_owner(
-                        CompanionOwnerTransition::AliasCopy {
-                            dest: *dest,
-                            source: *source,
-                        },
-                        builder,
-                    );
                 }
                 // Copy with auto-bitcast: source and dest may have different types
                 // (e.g., I64 from runtime call copied into F64 variable, or vice versa).
@@ -1112,10 +1094,7 @@ impl CraneliftJitBackend {
                 if vars.raw_ints.contains(source) {
                     vars.raw_ints.insert(*dest);
                 }
-                if EMIT_REFCOUNT_CALLS
-                    && !has_companion
-                    && !vars.raw_ints.contains(source)
-                {
+                if EMIT_REFCOUNT_CALLS && !has_companion && !vars.raw_ints.contains(source) {
                     // Retain the new value — Copy is aliasing, both source
                     // and dest now reference the same object (#1129 R2).
                     // Only retain I64 (pointer) values, not F64 (floats).
@@ -1502,6 +1481,125 @@ impl CraneliftJitBackend {
                 }
             }
         }
+
+        // Split producers commit their paired data/owner phi inside their
+        // dedicated lowering helpers. Every other local producer reaches this
+        // one metadata-driven transition only after its data has been written.
+        if !matches!(
+            inst,
+            MirInst::CheckedAdd { .. }
+                | MirInst::CheckedSub { .. }
+                | MirInst::CheckedMul { .. }
+                | MirInst::BinOp {
+                    op: MirBinOp::LShift,
+                    ..
+                }
+        ) {
+            self.commit_declared_companion_owner(inst, producer_owner, builder, vars);
+        }
+    }
+
+    /// Ask the runtime for the typed-Int owner sidecar after the data producer
+    /// has completed. This call is the sole payload-classification boundary:
+    /// the JIT never derives an owner from raw data bits or pointer shape.
+    fn typed_int_owner_or_none(
+        &mut self,
+        value: cranelift_codegen::ir::Value,
+        builder: &mut cranelift_frontend::FunctionBuilder,
+    ) -> cranelift_codegen::ir::Value {
+        if let Some(&func_id) = self.extern_funcs.get("mb_typed_int_owner_or_none") {
+            let func_ref = self.module().declare_func_in_func(func_id, builder.func);
+            let call = builder.ins().call(func_ref, &[value]);
+            builder.inst_results(call)[0]
+        } else {
+            builder
+                .ins()
+                .iconst(cl_types::I64, MbValue::none().to_bits() as i64)
+        }
+    }
+
+    fn commit_fresh_typed_int_owner(
+        &mut self,
+        dest: VReg,
+        value: cranelift_codegen::ir::Value,
+        builder: &mut cranelift_frontend::FunctionBuilder,
+        vars: &mut VarAlloc,
+    ) {
+        if !vars.has_companion_owner(dest) {
+            return;
+        }
+        let owner = self.typed_int_owner_or_none(value, builder);
+        vars.transition_companion_owner(
+            CompanionOwnerTransition::Commit {
+                dest,
+                input: CompanionOwnerInput::Fresh(owner),
+            },
+            builder,
+        );
+    }
+
+    /// Execute one declared owner action for an ordinary local producer.
+    /// Fail-closed contracts publish `None`; #1452 owns transport across the
+    /// intentionally deferred internal and dynamic call boundaries.
+    fn commit_declared_companion_owner(
+        &mut self,
+        inst: &MirInst,
+        producer_owner: Option<ProducerOwnerMetadata>,
+        builder: &mut cranelift_frontend::FunctionBuilder,
+        vars: &mut VarAlloc,
+    ) {
+        let Some(producer_owner) = producer_owner else {
+            return;
+        };
+        let dest = producer_owner.dest;
+        if !vars.has_companion_owner(dest) {
+            return;
+        }
+
+        // JIT BigInt literals are compile-time immortals. Their data can look
+        // exactly like a live BigInt, but they never transfer a releaseable
+        // owner into a local companion slot.
+        if matches!(
+            inst,
+            MirInst::LoadConst {
+                value: MirConst::BigInt(_),
+                ..
+            }
+        ) {
+            vars.transition_companion_owner(
+                CompanionOwnerTransition::Commit {
+                    dest,
+                    input: CompanionOwnerInput::Ownerless,
+                },
+                builder,
+            );
+            return;
+        }
+
+        let input = match producer_owner.action {
+            ProducerOwnerAction::OwnerlessOrImmortal
+            | ProducerOwnerAction::DeferredBoundary(_)
+            | ProducerOwnerAction::Extern(
+                ExternCompanionContract::OwnerlessOrImmortal
+                | ExternCompanionContract::DeferredRuntimeReturn
+                | ExternCompanionContract::MissingDeclaration
+                | ExternCompanionContract::MissingReturnAbi
+                | ExternCompanionContract::MissingArgument { .. }
+                | ExternCompanionContract::Invalid { .. },
+            ) => CompanionOwnerInput::Ownerless,
+            ProducerOwnerAction::PassThroughOrNone(OwnerValueSource::SourceCompanion(source))
+            | ProducerOwnerAction::Extern(ExternCompanionContract::ArgumentPassThroughOrNone {
+                source,
+            }) => CompanionOwnerInput::SourceCompanion(source),
+            ProducerOwnerAction::FreshResultOrNone
+            | ProducerOwnerAction::ExplicitOwnerOut
+            | ProducerOwnerAction::Extern(ExternCompanionContract::FreshResultOrNone)
+            | ProducerOwnerAction::Extern(ExternCompanionContract::ExplicitOwnerOut) => {
+                let data = vars.use_as_i64(dest, builder);
+                CompanionOwnerInput::Fresh(self.typed_int_owner_or_none(data, builder))
+            }
+        };
+        vars.transition_companion_owner(CompanionOwnerTransition::Commit { dest, input }, builder);
     }
 
     /// Emit overflow-checked integer arithmetic via BigInt runtime ABI (#833).
@@ -1568,13 +1666,8 @@ impl CraneliftJitBackend {
             };
             vars.def_var_cast(*dest, builder, result, cl_types::I64);
         }
-        vars.transition_companion_owner(
-            CompanionOwnerTransition::ProducerWrite {
-                dest: *dest,
-                owner: None,
-            },
-            builder,
-        );
+        let data = vars.use_as_i64(*dest, builder);
+        self.commit_fresh_typed_int_owner(*dest, data, builder, vars);
     }
 
     /// Emit raw-int CheckedAdd/Sub/Mul with INT48 overflow detection (#1212 §5b).
@@ -1659,7 +1752,7 @@ impl CraneliftJitBackend {
         // Slow block: call mb_bigint_*; select inline-unboxed vs boxed bits.
         builder.switch_to_block(slow_block);
         builder.seal_block(slow_block);
-        let slow_value = if let Some(&func_id) = self.extern_funcs.get(func_name) {
+        let (slow_value, slow_owner) = if let Some(&func_id) = self.extern_funcs.get(func_name) {
             let func_ref = self.module().declare_func_in_func(func_id, builder.func);
             let call = builder.ins().call(func_ref, &[l, r]);
             let result_bits = builder.inst_results(call)[0];
@@ -1674,14 +1767,18 @@ impl CraneliftJitBackend {
             let shifted2 = builder.ins().ishl_imm(result_payload, 16);
             let unboxed = builder.ins().sshr_imm(shifted2, 16);
 
-            builder.ins().select(is_inline, unboxed, result_bits)
+            let data = builder.ins().select(is_inline, unboxed, result_bits);
+            let owner = self.typed_int_owner_or_none(data, builder);
+            (data, owner)
         } else {
             // Runtime missing — fall back to wrapping result (legacy behavior).
-            raw_result
+            (
+                raw_result,
+                builder
+                    .ins()
+                    .iconst(cl_types::I64, MbValue::none().to_bits() as i64),
+            )
         };
-        let slow_owner = builder
-            .ins()
-            .iconst(cl_types::I64, MbValue::none().to_bits() as i64);
         builder
             .ins()
             .jump(merge_block, &[slow_value.into(), slow_owner.into()]);
@@ -1692,9 +1789,9 @@ impl CraneliftJitBackend {
         let dv = vars.get(*dest, builder, cl_types::I64);
         builder.def_var(dv, merged_param);
         vars.transition_companion_owner(
-            CompanionOwnerTransition::ProducerWrite {
+            CompanionOwnerTransition::Commit {
                 dest: *dest,
-                owner: Some(merged_owner),
+                input: CompanionOwnerInput::Fresh(merged_owner),
             },
             builder,
         );
@@ -1784,6 +1881,8 @@ impl CraneliftJitBackend {
             let zero = builder.ins().iconst(cl_types::I64, 0);
             vars.def_var_cast(*dest, builder, zero, cl_types::I64);
         }
+        let data = vars.use_as_i64(*dest, builder);
+        self.commit_fresh_typed_int_owner(*dest, data, builder, vars);
     }
 
     /// Emit `LShift` for a statically Ty::Int, both-operands-raw_ints-tagged
@@ -1865,7 +1964,7 @@ impl CraneliftJitBackend {
         // inline-int result.
         builder.switch_to_block(slow_block);
         builder.seal_block(slow_block);
-        let slow_value = if let Some(&func_id) = self.extern_funcs.get("mb_lshift") {
+        let (slow_value, slow_owner) = if let Some(&func_id) = self.extern_funcs.get("mb_lshift") {
             let func_ref = self.module().declare_func_in_func(func_id, builder.func);
             let box_id = self.extern_funcs.get("mb_box_int").copied();
             let (l_boxed, r_boxed) = if let Some(bid) = box_id {
@@ -1878,13 +1977,17 @@ impl CraneliftJitBackend {
             };
             let call = builder.ins().call(func_ref, &[l_boxed, r_boxed]);
             let result_bits = builder.inst_results(call)[0];
-            Self::unbox_if_inline(builder, result_bits)
+            let data = Self::unbox_if_inline(builder, result_bits);
+            let owner = self.typed_int_owner_or_none(data, builder);
+            (data, owner)
         } else {
-            builder.ins().iconst(cl_types::I64, 0)
+            (
+                builder.ins().iconst(cl_types::I64, 0),
+                builder
+                    .ins()
+                    .iconst(cl_types::I64, MbValue::none().to_bits() as i64),
+            )
         };
-        let slow_owner = builder
-            .ins()
-            .iconst(cl_types::I64, MbValue::none().to_bits() as i64);
         builder
             .ins()
             .jump(merge_block, &[slow_value.into(), slow_owner.into()]);
@@ -1897,9 +2000,9 @@ impl CraneliftJitBackend {
         let dv = vars.get(*dest, builder, cl_types::I64);
         builder.def_var(dv, merged_param);
         vars.transition_companion_owner(
-            CompanionOwnerTransition::ProducerWrite {
+            CompanionOwnerTransition::Commit {
                 dest: *dest,
-                owner: Some(merged_owner),
+                input: CompanionOwnerInput::Fresh(merged_owner),
             },
             builder,
         );
@@ -3061,11 +3164,10 @@ impl CodegenBackend for CraneliftJitBackend {
         }
         // Phase 3: Compile function bodies
         for body in &module.bodies {
-            let mixed_int_vregs = physical_abis
+            let physical_abi = physical_abis
                 .body(body.name.0)
-                .map(|analysis| analysis.raw_or_boxed_int_vregs())
-                .unwrap_or_default();
-            self.compile_function(body, tcx, &all_externs, &mixed_int_vregs)?;
+                .expect("physical ABI analysis must contain every MIR body");
+            self.compile_function(body, tcx, &all_externs, physical_abi)?;
         }
 
         // Finalize — commit code to executable memory
@@ -3236,19 +3338,23 @@ mod tests {
         ir.lines()
             .find(|line| {
                 let line = line.trim_start();
-                line.starts_with("fn")
-                    && line
-                        .split_whitespace()
-                        .any(|field| field == module_name)
+                line.starts_with("fn") && line.split_whitespace().any(|field| field == module_name)
             })
             .and_then(|line| line.split_whitespace().next())
             .map(str::to_string)
     }
 
     fn module_func_call_count(ir: &str, module_func_id: u32) -> usize {
-        local_func_ref(ir, module_func_id)
+        let module_name = format!("u0:{module_func_id}");
+        ir.lines()
+            .filter_map(|line| {
+                let line = line.trim_start();
+                (line.starts_with("fn")
+                    && line.split_whitespace().any(|field| field == module_name))
+                .then(|| line.split_whitespace().next().unwrap())
+            })
             .map(|func_ref| ir.matches(&format!("call {func_ref}(")).count())
-            .unwrap_or(0)
+            .sum()
     }
 
     fn block_text(ir: &str, block: &str) -> String {
@@ -3306,31 +3412,33 @@ mod tests {
             if jumps.len() != 2 {
                 continue;
             }
-            let args: Vec<Vec<&str>> = jumps
-                .iter()
-                .map(|jump| jump_args(jump, block))
-                .collect();
+            let args: Vec<Vec<&str>> = jumps.iter().map(|jump| jump_args(jump, block)).collect();
             if args.iter().any(|args| args.len() != 2) {
                 continue;
             }
             assert_ne!(args[0][1], args[1][1], "owner edges must be explicit\n{ir}");
-            let owner_defs: Vec<&str> = args
-                .iter()
-                .map(|args| {
-                    ir.lines()
-                        .find(|candidate| {
-                            candidate
-                                .trim_start()
-                                .starts_with(&format!("{} = iconst.i64", args[1]))
-                        })
-                        .unwrap_or_else(|| panic!("owner edge is not an explicit None\n{ir}"))
+            let owner_is_none = |owner: &str| {
+                ir.lines().any(|candidate| {
+                    candidate
+                        .trim_start()
+                        .starts_with(&format!("{owner} = iconst.i64"))
                 })
-                .collect();
-            let owner_rhs: Vec<&str> = owner_defs
-                .iter()
-                .map(|definition| definition.split_once("iconst.i64").unwrap().1.trim())
-                .collect();
-            assert_eq!(owner_rhs[0], owner_rhs[1], "owner edges disagree\n{ir}");
+            };
+            let owner_is_runtime_projection = |owner: &str| {
+                ir.lines().any(|candidate| {
+                    candidate
+                        .trim_start()
+                        .starts_with(&format!("{owner} = call "))
+                })
+            };
+            assert!(
+                owner_is_none(args[0][1]) || owner_is_none(args[1][1]),
+                "fast raw edge must publish explicit None\n{ir}"
+            );
+            assert!(
+                owner_is_runtime_projection(args[0][1]) || owner_is_runtime_projection(args[1][1]),
+                "slow runtime edge must publish the runtime owner projection\n{ir}"
+            );
             return;
         }
         panic!("missing two-predecessor [data, owner] merge\n{ir}");
@@ -3455,6 +3563,266 @@ mod tests {
     }
 
     #[test]
+    fn companion_owner_exhaustive_local_producer_actions() {
+        let _guard = acquire_jit_lock();
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let body = entry_zero_arg_body(
+            int_ty,
+            vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    MirInst::LoadConst {
+                        dest: VReg(0),
+                        value: MirConst::Int(1),
+                        ty: int_ty,
+                    },
+                    MirInst::Copy {
+                        dest: VReg(1),
+                        source: VReg(0),
+                    },
+                    MirInst::CheckedAdd {
+                        dest: VReg(2),
+                        lhs: VReg(0),
+                        rhs: VReg(1),
+                        ty: int_ty,
+                    },
+                    MirInst::BinOp {
+                        dest: VReg(3),
+                        op: MirBinOp::Add,
+                        lhs: VReg(0),
+                        rhs: VReg(1),
+                        ty: int_ty,
+                    },
+                    MirInst::UnaryOp {
+                        dest: VReg(4),
+                        op: crate::mir::MirUnaryOp::Pos,
+                        operand: VReg(3),
+                        ty: int_ty,
+                    },
+                    MirInst::Call {
+                        dest: Some(VReg(5)),
+                        func: SymbolId(88_001),
+                        args: vec![],
+                        ty: int_ty,
+                    },
+                    MirInst::CallExtern {
+                        dest: Some(VReg(6)),
+                        name: "mb_pow_int".to_string(),
+                        args: vec![VReg(0), VReg(1)],
+                        ty: int_ty,
+                    },
+                ],
+                terminator: Terminator::Return(Some(VReg(6))),
+            }],
+        );
+        let extern_abis = crate::runtime::symbols::runtime_externs()
+            .into_iter()
+            .map(|ext| (ext.name, (ext.return_type, ext.return_abi)))
+            .collect();
+        let analysis = crate::mir::analyze_module_physical_abis(
+            std::slice::from_ref(&body),
+            &tcx,
+            &extern_abis,
+        );
+        let owner_action = |statement_index| {
+            analysis
+                .body(u32::MAX)
+                .unwrap()
+                .producer_owner(ProducerSite::Instruction {
+                    block: BlockId(0),
+                    statement_index,
+                })
+                .unwrap()
+                .action
+        };
+        assert!(matches!(
+            owner_action(0),
+            ProducerOwnerAction::OwnerlessOrImmortal
+        ));
+        assert!(matches!(
+            owner_action(1),
+            ProducerOwnerAction::PassThroughOrNone(OwnerValueSource::SourceCompanion(VReg(0)))
+        ));
+        assert!(matches!(
+            owner_action(2),
+            ProducerOwnerAction::FreshResultOrNone
+        ));
+        assert!(matches!(
+            owner_action(3),
+            ProducerOwnerAction::ExplicitOwnerOut
+        ));
+        assert!(matches!(
+            owner_action(4),
+            ProducerOwnerAction::PassThroughOrNone(OwnerValueSource::SourceCompanion(VReg(3)))
+        ));
+        assert!(matches!(
+            owner_action(5),
+            ProducerOwnerAction::DeferredBoundary(crate::mir::ProducerBoundary::InternalReturn)
+        ));
+        assert!(matches!(
+            owner_action(6),
+            ProducerOwnerAction::Extern(ExternCompanionContract::FreshResultOrNone)
+        ));
+
+        let module = MirModule {
+            bodies: vec![body],
+            externs: vec![],
+        };
+        let mut backend = capturing_backend();
+        backend.codegen(&module, &tcx).unwrap();
+        let owner_projection = backend.extern_funcs["mb_typed_int_owner_or_none"].as_u32();
+        let ir = captured_clif(&backend, u32::MAX);
+        assert_eq!(
+            module_func_call_count(ir, owner_projection),
+            3,
+            "fresh and explicit local producers must each use the runtime sidecar\n{ir}"
+        );
+    }
+
+    #[test]
+    fn companion_owner_raw_collision_and_bigint_refcounts() {
+        let _guard = acquire_jit_lock();
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let raw_id = 14_567;
+        let pointer_shaped_raw = 0x0000_7fff_dead_beef_i64;
+        let module = MirModule {
+            bodies: vec![
+                MirBody {
+                    name: SymbolId(raw_id),
+                    params: vec![],
+                    return_ty: int_ty,
+                    blocks: vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: vec![MirInst::LoadConst {
+                            dest: VReg(0),
+                            value: MirConst::Int(pointer_shaped_raw),
+                            ty: int_ty,
+                        }],
+                        terminator: Terminator::Return(Some(VReg(0))),
+                    }],
+                },
+                entry_zero_arg_body(
+                    int_ty,
+                    vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: vec![
+                            MirInst::LoadConst {
+                                dest: VReg(0),
+                                value: MirConst::Int((1_i64 << 47) - 1),
+                                ty: int_ty,
+                            },
+                            MirInst::LoadConst {
+                                dest: VReg(1),
+                                value: MirConst::Int(1),
+                                ty: int_ty,
+                            },
+                            MirInst::CheckedAdd {
+                                dest: VReg(2),
+                                lhs: VReg(0),
+                                rhs: VReg(1),
+                                ty: int_ty,
+                            },
+                        ],
+                        terminator: Terminator::Return(Some(VReg(2))),
+                    }],
+                ),
+            ],
+            externs: vec![],
+        };
+        let mut backend = capturing_backend();
+        backend.codegen(&module, &tcx).unwrap();
+        let owner_projection = backend.extern_funcs["mb_typed_int_owner_or_none"].as_u32();
+        assert_eq!(
+            module_func_call_count(captured_clif(&backend, raw_id), owner_projection),
+            0,
+            "pointer-shaped raw data must remain ownerless"
+        );
+        assert_eq!(
+            module_func_call_count(captured_clif(&backend, u32::MAX), owner_projection),
+            1,
+            "the slow BigInt edge must obtain one explicit fresh owner"
+        );
+
+        let raw_ptr = backend.get_func_ptr(raw_id).unwrap();
+        let raw: extern "C" fn() -> i64 = unsafe { std::mem::transmute(raw_ptr) };
+        assert_eq!(raw(), pointer_shaped_raw);
+
+        let bigint_ptr = backend.get_func_ptr(u32::MAX).unwrap();
+        let bigint_fn: extern "C" fn() -> i64 = unsafe { std::mem::transmute(bigint_ptr) };
+        let bigint = MbValue::from_bits(bigint_fn() as u64);
+        let object = bigint
+            .as_ptr()
+            .expect("checked overflow must return a BigInt");
+        unsafe {
+            assert_eq!(crate::runtime::rc::mb_refcount(object), 1);
+            crate::runtime::rc::release_if_ptr(bigint);
+        }
+    }
+
+    #[test]
+    fn companion_owner_call_boundaries_are_explicitly_deferred() {
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let body = entry_zero_arg_body(
+            int_ty,
+            vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    MirInst::Call {
+                        dest: Some(VReg(0)),
+                        func: SymbolId(88_002),
+                        args: vec![],
+                        ty: int_ty,
+                    },
+                    MirInst::CallExtern {
+                        dest: Some(VReg(1)),
+                        name: "dynamic_typed_result".to_string(),
+                        args: vec![],
+                        ty: int_ty,
+                    },
+                ],
+                terminator: Terminator::Return(Some(VReg(1))),
+            }],
+        );
+        let extern_abis = HashMap::from([(
+            "dynamic_typed_result".to_string(),
+            (
+                MirType::I64,
+                Some(crate::mir::ReturnAbi::new(
+                    crate::mir::PhysicalReturn::Unknown,
+                    crate::mir::ReturnOwnership::ProvenanceTransfer,
+                )),
+            ),
+        )]);
+        let analysis = crate::mir::analyze_module_physical_abis(
+            std::slice::from_ref(&body),
+            &tcx,
+            &extern_abis,
+        );
+        let owner_action = |statement_index| {
+            analysis
+                .body(u32::MAX)
+                .unwrap()
+                .producer_owner(ProducerSite::Instruction {
+                    block: BlockId(0),
+                    statement_index,
+                })
+                .unwrap()
+                .action
+        };
+        assert!(matches!(
+            owner_action(0),
+            ProducerOwnerAction::DeferredBoundary(crate::mir::ProducerBoundary::InternalReturn)
+        ));
+        assert!(matches!(
+            owner_action(1),
+            ProducerOwnerAction::Extern(ExternCompanionContract::DeferredRuntimeReturn)
+        ));
+    }
+
+    #[test]
     fn companion_owner_branch_loop_and_parameter_rebind_keep_ssa_aligned() {
         let _guard = acquire_jit_lock();
         let tcx = TypeContext::new();
@@ -3466,11 +3834,7 @@ mod tests {
             bodies: vec![
                 MirBody {
                     name: SymbolId(branch_id),
-                    params: vec![
-                        (VReg(0), int_ty),
-                        (VReg(1), int_ty),
-                        (VReg(2), bool_ty),
-                    ],
+                    params: vec![(VReg(0), int_ty), (VReg(1), int_ty), (VReg(2), bool_ty)],
                     return_ty: int_ty,
                     blocks: vec![
                         BasicBlock {
@@ -3573,11 +3937,17 @@ mod tests {
         let release = rebind
             .find(&format!("call {release_ref}("))
             .expect("release");
-        assert!(retain < release, "parameter rebind released before retain\n{rebind}");
+        assert!(
+            retain < release,
+            "parameter rebind released before retain\n{rebind}"
+        );
 
         let loop_ir = captured_clif(&backend, loop_id);
         assert_eq!(predecessor_arity(loop_ir, "block1"), 5, "{loop_ir}");
-        let loop_owner = block_params(loop_ir, "block1")[0];
+        // #1462 carries the loop-carried mixed value as `[data, owner]`.
+        // The first phi is the data register; the second is the companion
+        // owner retained before the destination's old owner is released.
+        let loop_owner = block_params(loop_ir, "block1")[1];
         let loop_retain_ref = local_func_ref(loop_ir, retain_id).expect("loop retain FuncRef");
         assert!(
             block_text(loop_ir, "block1")
@@ -3587,7 +3957,7 @@ mod tests {
         let owner_edges: Vec<&str> = loop_ir
             .lines()
             .filter(|line| line.contains("jump block1("))
-            .map(|line| jump_args(line, "block1")[0])
+            .map(|line| jump_args(line, "block1")[1])
             .collect();
         assert_eq!(owner_edges.len(), 2, "{loop_ir}");
         assert_ne!(owner_edges[0], owner_edges[1], "{loop_ir}");
@@ -3714,9 +4084,18 @@ mod tests {
         };
         assert_eq!(rc_calls(baseline_id), 2);
         assert_eq!(rc_calls(self_copy_id), rc_calls(baseline_id));
-        assert_eq!(module_func_call_count(captured_clif(&backend, collision_id), release_id), 3);
-        assert_eq!(module_func_call_count(captured_clif(&backend, collision_id), retain_id), 0);
-        assert_eq!(module_func_call_count(captured_clif(&backend, u32::MAX), release_id), 3);
+        assert_eq!(
+            module_func_call_count(captured_clif(&backend, collision_id), release_id),
+            3
+        );
+        assert_eq!(
+            module_func_call_count(captured_clif(&backend, collision_id), retain_id),
+            0
+        );
+        assert_eq!(
+            module_func_call_count(captured_clif(&backend, u32::MAX), release_id),
+            3
+        );
     }
 
     /// S2/R1: JIT_LOCK exists and is acquirable from external callers.
