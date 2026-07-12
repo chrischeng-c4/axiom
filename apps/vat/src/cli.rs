@@ -624,3 +624,13 @@ pub enum Commands {
 
 }
 // CODEGEN-END
+// SPEC-MANAGED: apps/vat/tech-design/interfaces/cli/vat-microvm-phase-2-vat-build-dockerfile-build-via-container-cli.md#cli
+// CODEGEN-BEGIN
+#[derive(Subcommand)]
+pub enum Commands {
+    VatBuild,
+
+    VatRunVatCapabilitiesVatDoctorUnaffected,
+
+}
+// CODEGEN-END

@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:e2e-test:dc898059" tracker="pending-tracker" reason="R7/AC3/AC4/AC5: `container_available()` skip helper (mirrors `vat_cluster.rs`'s Docker-gated pattern and `vat_sandbox_microvm.rs`'s container-gated tests) plus `build_fails_missing_dockerfile` (no subprocess, always runs) and the container-gated `build_produces_tagged_image_visible_in_container_image_list` test asserting both a successful `BuildReport` and that singular-noun `container image list` (not the plural `container images`, per the Phase 0 spike's R7 finding) shows the built tag."
+// TODO: hand-write content for `apps/vat/tests/vat_build.rs`.
+// HANDWRITE-END

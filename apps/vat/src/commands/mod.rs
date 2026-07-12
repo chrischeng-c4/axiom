@@ -38,3 +38,13 @@ pub fn print_json<T: serde::Serialize>(value: &T, compact: bool) -> Result<()> {
     Ok(())
 }
 // CODEGEN-END
+// SPEC-MANAGED: apps/vat/tech-design/interfaces/cli/vat-microvm-phase-2-vat-build-dockerfile-build-via-container-cli.md#cli
+// CODEGEN-BEGIN
+#[derive(Subcommand)]
+pub enum Commands {
+    VatBuild,
+
+    VatRunVatCapabilitiesVatDoctorUnaffected,
+
+}
+// CODEGEN-END
