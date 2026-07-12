@@ -35,8 +35,7 @@ flowchart TD
     none --> jit
 ```
 
-The runtime, not JIT lowering, classifies the produced value. It returns the original `MbValue` only for a live BigInt and `MbValue::none()` for raw integers, inline boxed integers, and any pointer-shaped raw payload. The helper grants no new reference; a JIT producer chooses its declared fresh or borrowed transaction action after receiving this sidecar.
-
+The helper is a runtime producer contract: it recognizes a live BigInt and returns that borrowed owner, otherwise returns `MbValue::none()`. JIT code only consumes this returned sidecar under its declared fresh or borrowed transaction and never reconstructs ownership from data representation.
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
