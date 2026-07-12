@@ -922,9 +922,25 @@ async fn advance_splitting(
 /// current (source) owners, so this tick's migration pass is guaranteed a
 /// converged snapshot of those buckets — closing the gap where a write
 /// lands on a source shard after the last migration-copy read but before
-/// that bucket's eviction and is silently dropped. The fence is cleared on
-/// every exit path (success or `Blocked`); see [`crate::api::WriteFence`]
-/// for why a crashed driver can never leave it armed permanently.
+/// that bucket's eviction and is silently dropped. See
+/// [`crate::api::WriteFence`] for why a crashed driver can never leave it
+/// armed permanently.
+///
+/// The fence is cleared immediately on every exit path *except*
+/// [`DriveOutcome::CompletedSplit`] (#1442 R2): a completed split just
+/// called [`ClusterControl::trigger_rolling_restart`], and pods only read
+/// `SHARD_MAP_*`/`SHARD_COUNT` env at boot, so old-map pods keep serving
+/// (and, without this, keep accepting local writes for) the just-evicted
+/// source buckets until the rolling restart actually reaches them —
+/// clearing the fence right after triggering the restart would open exactly
+/// that mixed-map window back up. Leaving it armed here lets
+/// [`WRITE_FENCE_TTL_SECS`] bound the window instead (the design's simpler,
+/// non-blocking alternative to synchronously polling every serving pod
+/// Ready on the new topology from inside one CR's tick, which would stall
+/// `drive_tick`'s other CRs); the next split for this CR can only start once
+/// `drive_tick` sees the phase back at `Complete`, well after the TTL, so
+/// there is no risk of a subsequent tick trying to arm a fence that is
+/// already armed from a prior split.
 async fn advance_catching_up(
     control: &dyn ClusterControl,
     http: &reqwest::Client,
@@ -966,12 +982,17 @@ async fn advance_catching_up(
     let outcome =
         advance_catching_up_fenced(control, http, namespace, name, lumen, &current, &target).await;
 
-    if !moving_buckets.is_empty() {
-        // Always clear, on every exit path: the fence must never outlive
-        // this tick. If this clear itself fails (or the process dies before
-        // reaching it), WRITE_FENCE_TTL_SECS still bounds how long writes to
-        // these buckets stay paused — the serving pod enforces that
-        // deadline on its own, independent of the driver ever coming back.
+    let completed_split = matches!(outcome, DriveOutcome::CompletedSplit { .. });
+    if !moving_buckets.is_empty() && !completed_split {
+        // Clear on every exit path except a completed split (#1442 R2, see
+        // this fn's doc comment): the fence must not outlive this tick
+        // *unless* the cutover it guarded just triggered a rolling restart,
+        // in which case leaving it armed and TTL-bounded closes the
+        // mixed-map window instead of reopening it. If this clear itself
+        // fails (or the process dies before reaching it), WRITE_FENCE_TTL_SECS
+        // still bounds how long writes to these buckets stay paused — the
+        // serving pod enforces that deadline on its own, independent of the
+        // driver ever coming back.
         if let Err(err) = set_write_fence(
             control,
             http,
@@ -990,6 +1011,12 @@ async fn advance_catching_up(
                  bounded by WRITE_FENCE_TTL_SECS"
             );
         }
+    } else if !moving_buckets.is_empty() && completed_split {
+        tracing::info!(
+            "reshard driver: split completed and rolling restart triggered; leaving write fence \
+             armed for WRITE_FENCE_TTL_SECS={WRITE_FENCE_TTL_SECS}s to close the old-map pods' \
+             mixed-map window instead of clearing it immediately (#1442 R2)"
+        );
     }
 
     outcome

@@ -2244,13 +2244,19 @@ async fn serve(args: ServeArgs) -> Result<()> {
     }
     // #1398 R1: activate cross-pod routing only in the operator/k8s routed
     // serving topology (`SHARD_COUNT` env > 1 at `replicasPerShard <= 1`) —
-    // `routed_shard_count_from_env` returns `None` for every other
-    // deployment shape (including the `--search-shard-segment-dirs` fan-in
-    // path above, which never sets `SHARD_COUNT` the same way), so
-    // `shardCount:1` serving never even constructs a `RoutedRouter` (AC5).
+    // `routed_activation_shard_count` returns `None` for every other
+    // deployment shape, so `shardCount:1` serving never even constructs a
+    // `RoutedRouter` (AC5). It also folds in the fan-in mutual-exclusion
+    // guard (#1442 R3): the fan-in path above already built its own local
+    // `EngineShardSearch`/`state.search_backend` when
+    // `args.search_shard_segment_dirs` is non-empty, so a fan-in invocation
+    // must never also reach the routed block — pulled into
+    // `config::routed_activation_shard_count` so that guarantee is
+    // unit-tested directly instead of only by inline control flow here.
     #[cfg(feature = "operator")]
-    if let Some(shard_count) = lumen::config::routed_shard_count_from_env()
-        .context("routed shard count from env (SHARD_COUNT)")?
+    if let Some(shard_count) =
+        lumen::config::routed_activation_shard_count(args.search_shard_segment_dirs.is_empty())
+            .context("routed shard count from env (SHARD_COUNT)")?
     {
         let shard_map = lumen::config::shard_map_from_env(shard_count).context(
             "shard map from env (SHARD_MAP_VERSION/SHARD_MAP_ASSIGNMENTS/VIRTUAL_BUCKET_COUNT)",

@@ -25,11 +25,11 @@ Public API manifest for `projects/lumen/src/operator/reshard_driver.rs`.
 | `KubeClusterControl` | projects/lumen/src/operator/reshard_driver.rs | struct | pub | 265 |  |
 | `compute_target_map` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 489 | compute_target_map(current: &VirtualBucketShardMap) -> Result<VirtualBucketShardMap> |
 | `current_shard_map` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 474 | current_shard_map(lumen: &Lumen) -> Result<VirtualBucketShardMap> |
-| `drive_tick` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 1072 | drive_tick(     control: &dyn ClusterControl,     http: &reqwest::Client,     lumen: &Lumen, ) -> DriveOutcome |
+| `drive_tick` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 1113 | drive_tick(     control: &dyn ClusterControl,     http: &reqwest::Client,     lumen: &Lumen, ) -> DriveOutcome |
 | `new` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 271 | new(client: Client) -> Self |
-| `run_migration_pass` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 724 | run_migration_pass(     control: &dyn ClusterControl,     http: &reqwest::Client,     namespace: &str,     name: &str,     lumen: &Lumen, ) -> Result<usize> |
+| `run_migration_pass` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 731 | run_migration_pass(     control: &dyn ClusterControl,     http: &reqwest::Client,     namespace: &str,     name: &str,     lumen: &Lumen, ) -> Result<usize> |
 | `should_start_split` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 411 | #1396 R5: also requires `status.reshard.usage_measured_at_map_version == spec.shardMap.version` — a lagging/stale status subresource can never start a split. should_start_split(lumen: &Lumen) -> bool |
-| `spawn_reshard_driver_loop` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 1109 | spawn_reshard_driver_loop(client: Client) |
+| `spawn_reshard_driver_loop` | projects/lumen/src/operator/reshard_driver.rs | function | pub | 1150 | spawn_reshard_driver_loop(client: Client) |
 
 Not listed above (matching this project's existing mirrors' convention of
 only capturing top-level `pub` structs/enums/consts/modules and inherent-impl
@@ -976,9 +976,25 @@ async fn advance_splitting(
 /// current (source) owners, so this tick's migration pass is guaranteed a
 /// converged snapshot of those buckets — closing the gap where a write
 /// lands on a source shard after the last migration-copy read but before
-/// that bucket's eviction and is silently dropped. The fence is cleared on
-/// every exit path (success or `Blocked`); see [`crate::api::WriteFence`]
-/// for why a crashed driver can never leave it armed permanently.
+/// that bucket's eviction and is silently dropped. See
+/// [`crate::api::WriteFence`] for why a crashed driver can never leave it
+/// armed permanently.
+///
+/// The fence is cleared immediately on every exit path *except*
+/// [`DriveOutcome::CompletedSplit`] (#1442 R2): a completed split just
+/// called [`ClusterControl::trigger_rolling_restart`], and pods only read
+/// `SHARD_MAP_*`/`SHARD_COUNT` env at boot, so old-map pods keep serving
+/// (and, without this, keep accepting local writes for) the just-evicted
+/// source buckets until the rolling restart actually reaches them —
+/// clearing the fence right after triggering the restart would open exactly
+/// that mixed-map window back up. Leaving it armed here lets
+/// [`WRITE_FENCE_TTL_SECS`] bound the window instead (the design's simpler,
+/// non-blocking alternative to synchronously polling every serving pod
+/// Ready on the new topology from inside one CR's tick, which would stall
+/// `drive_tick`'s other CRs); the next split for this CR can only start once
+/// `drive_tick` sees the phase back at `Complete`, well after the TTL, so
+/// there is no risk of a subsequent tick trying to arm a fence that is
+/// already armed from a prior split.
 async fn advance_catching_up(
     control: &dyn ClusterControl,
     http: &reqwest::Client,
@@ -1020,12 +1036,17 @@ async fn advance_catching_up(
     let outcome =
         advance_catching_up_fenced(control, http, namespace, name, lumen, &current, &target).await;
 
-    if !moving_buckets.is_empty() {
-        // Always clear, on every exit path: the fence must never outlive
-        // this tick. If this clear itself fails (or the process dies before
-        // reaching it), WRITE_FENCE_TTL_SECS still bounds how long writes to
-        // these buckets stay paused — the serving pod enforces that
-        // deadline on its own, independent of the driver ever coming back.
+    let completed_split = matches!(outcome, DriveOutcome::CompletedSplit { .. });
+    if !moving_buckets.is_empty() && !completed_split {
+        // Clear on every exit path except a completed split (#1442 R2, see
+        // this fn's doc comment): the fence must not outlive this tick
+        // *unless* the cutover it guarded just triggered a rolling restart,
+        // in which case leaving it armed and TTL-bounded closes the
+        // mixed-map window instead of reopening it. If this clear itself
+        // fails (or the process dies before reaching it), WRITE_FENCE_TTL_SECS
+        // still bounds how long writes to these buckets stay paused — the
+        // serving pod enforces that deadline on its own, independent of the
+        // driver ever coming back.
         if let Err(err) = set_write_fence(
             control,
             http,
@@ -1044,6 +1065,12 @@ async fn advance_catching_up(
                  bounded by WRITE_FENCE_TTL_SECS"
             );
         }
+    } else if !moving_buckets.is_empty() && completed_split {
+        tracing::info!(
+            "reshard driver: split completed and rolling restart triggered; leaving write fence \
+             armed for WRITE_FENCE_TTL_SECS={WRITE_FENCE_TTL_SECS}s to close the old-map pods' \
+             mixed-map window instead of clearing it immediately (#1442 R2)"
+        );
     }
 
     outcome
@@ -1676,7 +1703,6 @@ mod tests {
     }
 }
 // CODEGEN-END
-
 ````
 
 ## Changes
@@ -1747,4 +1773,24 @@ changes:
       `should_start_split_true_on_fresh_status_map_version` (AC5), and
       `status_with_blocking`'s fixture now sets
       `usage_measured_at_map_version` to stay fresh under the new R5 gate.
+  - path: projects/lumen/src/operator/reshard_driver.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1442 R2: `advance_catching_up` no longer clears the write fence
+      unconditionally on every exit path — when the outcome is
+      `DriveOutcome::CompletedSplit`, the fence is left armed (bounded by
+      `WRITE_FENCE_TTL_SECS`) instead of cleared immediately. A completed
+      split just called `ClusterControl::trigger_rolling_restart`, but pods
+      only read `SHARD_MAP_*`/`SHARD_COUNT` env at boot, so old-map pods
+      keep serving (and would otherwise keep accepting local writes for) the
+      just-evicted source buckets until the rolling restart actually reaches
+      them; clearing the fence right after triggering the restart would
+      reopen exactly that mixed-map window. Every other exit path (success
+      without a completed split, or `Blocked`) still clears the fence
+      immediately as before. Scope is limited to fence-through-restart
+      sequencing only; new test
+      `write_fence_stays_armed_immediately_after_completed_split` in
+      `tests/reshard_driver_e2e.rs` covers the behavior.
 ```
