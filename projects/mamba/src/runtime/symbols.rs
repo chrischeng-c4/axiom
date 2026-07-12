@@ -73,6 +73,21 @@ impl IntOwnerOut {
     }
 }
 
+/// Return the runtime-declared owner sidecar for a typed Int result.
+///
+/// This is intentionally a producer-side classification boundary: callers
+/// receive an explicit borrowed BigInt owner or `None` and never need to
+/// inspect result payload bits or tags themselves. The returned owner carries
+/// no additional reference; a consumer applies its declared fresh or borrowed
+/// transaction rule.
+pub fn mb_typed_int_owner_or_none(result: MbValue) -> MbValue {
+    if super::builtins::is_bigint_value(result) {
+        result
+    } else {
+        MbValue::none()
+    }
+}
+
 impl IntCompanionContract {
     pub(crate) fn owner_out(
         self,
@@ -254,6 +269,15 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_owned_sym!(
             "mb_box_bool",
             builtins::mb_box_bool as fn(i64) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        // This is an ownership sidecar, not a data producer. Its conservative
+        // value ABI prevents ordinary MIR calls from treating it as a typed
+        // Int result; JIT local-producer lowering consumes it explicitly.
+        rt_unknown_sym!(
+            "mb_typed_int_owner_or_none",
+            mb_typed_int_owner_or_none as fn(super::MbValue) -> super::MbValue,
             [I64],
             I64
         ),
@@ -5230,6 +5254,39 @@ mod tests {
                 "{name} raw result"
             );
         }
+    }
+
+    #[test]
+    fn runtime_typed_int_owner_projection_is_explicit() {
+        let raw = MbValue::from_int(42);
+        assert!(mb_typed_int_owner_or_none(raw).is_none());
+
+        // Looks pointer-shaped as an i64 payload, but does not carry an
+        // MbValue pointer tag and therefore must never become an owner.
+        let pointer_shaped_raw = MbValue::from_bits(0x0000_7fff_dead_beef);
+        assert!(mb_typed_int_owner_or_none(pointer_shaped_raw).is_none());
+
+        let inline = MbValue::from_int((1i64 << 47) - 1);
+        assert!(mb_typed_int_owner_or_none(inline).is_none());
+
+        let bigint = crate::runtime::bigint_ops::bigint_from_i128(1i128 << 70);
+        assert_eq!(mb_typed_int_owner_or_none(bigint), bigint);
+        unsafe { crate::runtime::rc::release_if_ptr(bigint) };
+
+        let symbol = runtime_symbols()
+            .into_iter()
+            .find(|symbol| symbol.name == "mb_typed_int_owner_or_none")
+            .expect("runtime owner projection must be registered for JIT");
+        assert_eq!(symbol.params, &[MirType::I64]);
+        assert_eq!(symbol.return_type, MirType::I64);
+        assert_eq!(
+            symbol.return_abi,
+            Some(ReturnAbi::new(
+                PhysicalReturn::Unknown,
+                ReturnOwnership::ProvenanceTransfer,
+            ))
+        );
+        assert_eq!(symbol.int_companion, None);
     }
 
     // Spot-check that critical cross-subsystem runtime symbols the JIT actually
