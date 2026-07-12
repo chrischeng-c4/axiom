@@ -1,3 +1,9 @@
-// HANDWRITE-BEGIN gap="missing-generator:mamba-closure-perf-pin" tracker="#1478" reason="The closure hot path needs an executable CPU and RSS perf gate."
-// TODO: hand-write content for `projects/mamba/tests/harness/cpython/config/perf/pins/closure_call_hot_1478.toml`.
-// HANDWRITE-END
+issue = 1478
+lib = "closure_call_hot"
+fixture = "tests/cpython/_regression/core/language/closures/bench/closure_call_hot.py"
+floor = 1.0
+mem_floor = 1.0
+samples = 9
+prereq_imports = []
+
+<!-- marker: missing-generator:mamba-closure-perf-pin path: projects/mamba/tests/harness/cpython/config/perf/pins/closure_call_hot_1478.toml reason: The closure hot path needs an executable CPU and RSS perf gate. -->
