@@ -15824,6 +15824,11 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
 
 fn mb_call1_val_impl(func: MbValue, arg: MbValue) -> MbValue {
     super::gc::gc_safepoint();
+    // Direct callable-value dispatch can bypass `mb_call_spread`; keep an
+    // exact one-slot frame around that fast path. Routes that subsequently
+    // repack through spread install their own nested frame instead.
+    let _owner_frame =
+        super::argument_owner::prepare_dynamic_argument_owner_frame(&[arg]);
     // Re-box raw i64 returns from JIT-compiled functions that declared a
     // primitive (int) return type — mb_call_spread has the same logic.
     //
