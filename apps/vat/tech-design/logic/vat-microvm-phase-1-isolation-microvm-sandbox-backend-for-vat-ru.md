@@ -97,7 +97,6 @@ properties:
         description: "Checks the `container` binary is resolvable on PATH (mirrors seatbelt::available()'s sandbox-exec check); no real container invocation, no image pull."
 additionalProperties: true
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
