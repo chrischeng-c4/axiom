@@ -473,6 +473,30 @@ impl CraneliftJitBackend {
             &mut builder,
         );
 
+        // #1451: consume the caller-prepared argument-owner frame before
+        // emitting any body, trace, or profile operation. The ABI remains
+        // data-only; a slot mismatch is explicitly ownerless and never falls
+        // back to inspecting the parameter's payload bits.
+        if let Some(&take_id) = self.extern_funcs.get("mb_argument_owner_frame_take") {
+            let take_ref = self.module().declare_func_in_func(take_id, builder.func);
+            for (index, (vreg, _)) in body.params.iter().enumerate() {
+                if !vars.has_companion_owner(*vreg) {
+                    continue;
+                }
+                let index = builder.ins().iconst(cl_types::I64, index as i64);
+                let data = vars.use_as_i64(*vreg, &mut builder);
+                let call = builder.ins().call(take_ref, &[index, data]);
+                let owner = builder.inst_results(call)[0];
+                vars.transition_companion_owner(
+                    CompanionOwnerTransition::Commit {
+                        dest: *vreg,
+                        input: CompanionOwnerInput::Borrowed(owner),
+                    },
+                    &mut builder,
+                );
+            }
+        }
+
         // #1013 / #2111 (Subset A iteration-retention amplifier): pre-seed
         // VRegs written inside a loop body with a harmless `MbValue::none()`
         // sentinel before the loop's own blocks compile. This makes
@@ -2610,6 +2634,47 @@ impl CraneliftJitBackend {
                     }
                 }
             }
+            // Preserve an explicit companion owner beside every physical
+            // argument without modifying the SystemV signature. The callee
+            // consumes matching typed slots in its entry prologue; the caller
+            // discards this frame after the direct call for every normal or
+            // uninstrumented-target return path.
+            let begin = self
+                .extern_funcs
+                .get("mb_argument_owner_frame_begin")
+                .copied();
+            let push = self
+                .extern_funcs
+                .get("mb_argument_owner_frame_push")
+                .copied();
+            let discard = self
+                .extern_funcs
+                .get("mb_argument_owner_frame_discard")
+                .copied();
+            let discard_ref = if let (Some(begin_id), Some(push_id), Some(discard_id)) =
+                (begin, push, discard)
+            {
+                let begin_ref = self.module().declare_func_in_func(begin_id, builder.func);
+                let push_ref = self.module().declare_func_in_func(push_id, builder.func);
+                let discard_ref = self.module().declare_func_in_func(discard_id, builder.func);
+                let count = builder.ins().iconst(cl_types::I64, arg_vals.len() as i64);
+                builder.ins().call(begin_ref, &[count]);
+                for (index, data) in arg_vals.iter().copied().enumerate() {
+                    let owner = args
+                        .get(index)
+                        .and_then(|vreg| vars.companion_owners.get(vreg).copied())
+                        .map(|owner| builder.use_var(owner))
+                        .unwrap_or_else(|| {
+                            builder
+                                .ins()
+                                .iconst(cl_types::I64, MbValue::none().to_bits() as i64)
+                    });
+                    builder.ins().call(push_ref, &[data, owner]);
+                }
+                Some(discard_ref)
+            } else {
+                None
+            };
             let call = builder.ins().call(func_ref, &arg_vals);
             if let Some(dest_vreg) = dest {
                 let cl_type = Self::mamba_to_cl_type(tcx.get(*ty));
@@ -2678,6 +2743,9 @@ impl CraneliftJitBackend {
                         vars.raw_ints.insert(*dest_vreg);
                     }
                 }
+            }
+            if let Some(discard_ref) = discard_ref {
+                builder.ins().call(discard_ref, &[]);
             }
         } else if let Some(dest_vreg) = dest {
             let cl_type = Self::mamba_to_cl_type(tcx.get(*ty));
@@ -3820,6 +3888,62 @@ mod tests {
             owner_action(1),
             ProducerOwnerAction::Extern(ExternCompanionContract::DeferredRuntimeReturn)
         ));
+    }
+
+    #[test]
+    fn argument_owner_frame_is_prepared_and_consumed_at_entry() {
+        let _guard = acquire_jit_lock();
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let callee_id = 14_511;
+        let module = MirModule {
+            bodies: vec![
+                MirBody {
+                    name: SymbolId(callee_id),
+                    params: vec![(VReg(0), int_ty)],
+                    return_ty: int_ty,
+                    blocks: vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: vec![],
+                        terminator: Terminator::Return(Some(VReg(0))),
+                    }],
+                },
+                entry_zero_arg_body(
+                    int_ty,
+                    vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: vec![
+                            MirInst::LoadConst {
+                                dest: VReg(0),
+                                value: MirConst::Int(7),
+                                ty: int_ty,
+                            },
+                            MirInst::Call {
+                                dest: Some(VReg(1)),
+                                func: SymbolId(callee_id),
+                                args: vec![VReg(0)],
+                                ty: int_ty,
+                            },
+                        ],
+                        terminator: Terminator::Return(Some(VReg(1))),
+                    }],
+                ),
+            ],
+            externs: vec![],
+        };
+        let mut backend = capturing_backend();
+        backend.codegen(&module, &tcx).unwrap();
+
+        let begin = backend.extern_funcs["mb_argument_owner_frame_begin"].as_u32();
+        let push = backend.extern_funcs["mb_argument_owner_frame_push"].as_u32();
+        let take = backend.extern_funcs["mb_argument_owner_frame_take"].as_u32();
+        let discard = backend.extern_funcs["mb_argument_owner_frame_discard"].as_u32();
+        let caller = captured_clif(&backend, u32::MAX);
+        let callee = captured_clif(&backend, callee_id);
+        assert_eq!(module_func_call_count(caller, begin), 1, "{caller}");
+        assert_eq!(module_func_call_count(caller, push), 1, "{caller}");
+        assert_eq!(module_func_call_count(caller, discard), 1, "{caller}");
+        assert_eq!(module_func_call_count(callee, take), 1, "{callee}");
     }
 
     #[test]

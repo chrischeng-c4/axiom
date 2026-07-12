@@ -222,6 +222,7 @@ macro_rules! rt_unknown_sym {
 
 /// Return all registered runtime symbols.
 pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
+    use super::argument_owner;
     use super::async_rt;
     use super::builtins;
     use super::class;
@@ -280,6 +281,33 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             mb_typed_int_owner_or_none as fn(super::MbValue) -> super::MbValue,
             [I64],
             I64
+        ),
+        // Argument-owner frames are control/sidecar transport, not ordinary
+        // MIR data producers. Generated call entry uses these only around a
+        // proven raw-or-boxed Int parameter channel (#1451).
+        rt_sym!(
+            "mb_argument_owner_frame_begin",
+            argument_owner::mb_argument_owner_frame_begin as extern "C" fn(i64),
+            [I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_argument_owner_frame_push",
+            argument_owner::mb_argument_owner_frame_push as extern "C" fn(i64, i64),
+            [I64, I64],
+            Void
+        ),
+        rt_unknown_sym!(
+            "mb_argument_owner_frame_take",
+            argument_owner::mb_argument_owner_frame_take as extern "C" fn(i64, i64) -> i64,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_argument_owner_frame_discard",
+            argument_owner::mb_argument_owner_frame_discard as extern "C" fn(),
+            [],
+            Void
         ),
         rt_sym!(
             "mb_pow_int",

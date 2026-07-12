@@ -1141,6 +1141,30 @@ impl CraneliftBackend {
             &mut builder,
         );
 
+        // #1451: install only the caller's explicit matching parameter owner
+        // before any body instruction executes. A missing/mismatched slot is
+        // ownerless; Object lowering never infers ownership from raw bits.
+        if let Some(&take_id) = self.extern_funcs.get("mb_argument_owner_frame_take") {
+            let take_ref = self.module().declare_func_in_func(take_id, builder.func);
+            for (index, (vreg, _)) in body.params.iter().enumerate() {
+                if !vars.has_companion_owner(*vreg) {
+                    continue;
+                }
+                let index = builder.ins().iconst(cl_types::I64, index as i64);
+                let data = vars.get(*vreg, &mut builder, cl_types::I64);
+                let data = builder.use_var(data);
+                let call = builder.ins().call(take_ref, &[index, data]);
+                let owner = builder.inst_results(call)[0];
+                vars.transition_companion_owner(
+                    CompanionOwnerTransition::Commit {
+                        dest: *vreg,
+                        input: CompanionOwnerInput::Borrowed(owner),
+                    },
+                    &mut builder,
+                );
+            }
+        }
+
         // Resolve mb_release_value FuncRef for return-time cleanup (#1129 R3).
         // #1663 T4c5 iter-5 (mitigation): re-apply the `is_entry_body` guard.
         // T4c4 dropped it to enable __main__ release for the bench-loop perf
@@ -2071,6 +2095,32 @@ impl CraneliftBackend {
                     builder.use_var(v)
                 })
                 .collect();
+            let discard_ref = if let (Some(&begin_id), Some(&push_id), Some(&discard_id)) = (
+                self.extern_funcs.get("mb_argument_owner_frame_begin"),
+                self.extern_funcs.get("mb_argument_owner_frame_push"),
+                self.extern_funcs.get("mb_argument_owner_frame_discard"),
+            ) {
+                let begin_ref = self.module().declare_func_in_func(begin_id, builder.func);
+                let push_ref = self.module().declare_func_in_func(push_id, builder.func);
+                let discard_ref = self.module().declare_func_in_func(discard_id, builder.func);
+                let count = builder.ins().iconst(cl_types::I64, arg_vals.len() as i64);
+                builder.ins().call(begin_ref, &[count]);
+                for (index, data) in arg_vals.iter().copied().enumerate() {
+                    let owner = args
+                        .get(index)
+                        .and_then(|vreg| vars.companion_owners.get(vreg).copied())
+                        .map(|owner| builder.use_var(owner))
+                        .unwrap_or_else(|| {
+                            builder
+                                .ins()
+                                .iconst(cl_types::I64, MbValue::none().to_bits() as i64)
+                        });
+                    builder.ins().call(push_ref, &[data, owner]);
+                }
+                Some(discard_ref)
+            } else {
+                None
+            };
             let call = builder.ins().call(func_ref, &arg_vals);
             if let Some(dest_vreg) = dest {
                 let cl_type = self.mamba_to_cl_type(tcx.get(*ty));
@@ -2106,6 +2156,9 @@ impl CraneliftBackend {
                     result
                 };
                 builder.def_var(var, boxed);
+            }
+            if let Some(discard_ref) = discard_ref {
+                builder.ins().call(discard_ref, &[]);
             }
         } else if let Some(dest_vreg) = dest {
             let cl_type = self.mamba_to_cl_type(tcx.get(*ty));
@@ -2572,6 +2625,10 @@ impl CodegenBackend for CraneliftBackend {
             "mb_lshift",
             "mb_rshift",
             "mb_pow_int",
+            "mb_argument_owner_frame_begin",
+            "mb_argument_owner_frame_push",
+            "mb_argument_owner_frame_take",
+            "mb_argument_owner_frame_discard",
             // Ownership sidecar consumed by local producer lowering, not by
             // a MIR CallExtern node, so it must be imported explicitly.
             "mb_typed_int_owner_or_none",
@@ -3249,6 +3306,52 @@ mod tests {
                 .action,
             ProducerOwnerAction::Extern(ExternCompanionContract::DeferredRuntimeReturn)
         ));
+    }
+
+    #[test]
+    fn object_argument_owner_frame_is_emitted_for_internal_call() {
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let callee_id = 14_512;
+        let module = MirModule {
+            bodies: vec![
+                MirBody {
+                    name: SymbolId(callee_id),
+                    params: vec![(VReg(0), int_ty)],
+                    return_ty: int_ty,
+                    blocks: vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: vec![],
+                        terminator: Terminator::Return(Some(VReg(0))),
+                    }],
+                },
+                MirBody {
+                    name: SymbolId(u32::MAX),
+                    params: vec![],
+                    return_ty: int_ty,
+                    blocks: vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: vec![
+                            MirInst::LoadConst {
+                                dest: VReg(0),
+                                value: MirConst::Int(7),
+                                ty: int_ty,
+                            },
+                            MirInst::Call {
+                                dest: Some(VReg(1)),
+                                func: SymbolId(callee_id),
+                                args: vec![VReg(0)],
+                                ty: int_ty,
+                            },
+                        ],
+                        terminator: Terminator::Return(Some(VReg(1))),
+                    }],
+                },
+            ],
+            externs: vec![],
+        };
+        let output = CraneliftBackend::new().unwrap().codegen(&module, &tcx).unwrap();
+        assert!(matches!(output, CodegenOutput::ObjectFile(bytes) if !bytes.is_empty()));
     }
 
     #[test]
