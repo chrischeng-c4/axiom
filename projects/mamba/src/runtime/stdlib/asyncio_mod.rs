@@ -679,6 +679,7 @@ struct ThreadCallSpec {
     is_boxed_ret: bool,
     module_name: String,
     args: Vec<MbValue>,
+    argument_owners: Vec<MbValue>,
     globals: HashMap<super::super::closure::ScopedSymbolKey, MbValue>,
     active_cells:
         HashMap<super::super::closure::ScopedSymbolKey, super::super::closure::ActiveCellSnapshot>,
@@ -789,12 +790,18 @@ fn prepare_to_thread_call(func: MbValue, pos: &[MbValue], kw: MbValue) -> Option
         pos.to_vec()
     };
     retain_owned_values(&args);
+    let argument_owners = args
+        .iter()
+        .copied()
+        .map(super::super::symbols::mb_typed_int_owner_or_none)
+        .collect();
     Some(ThreadCallSpec {
         raw_addr,
         is_native,
         is_boxed_ret: super::super::module::is_boxed_return_func(raw_addr as u64),
         module_name: callable_module_name(func),
         args,
+        argument_owners,
         globals: super::super::closure::snapshot_global_id_namespace(),
         active_cells: super::super::closure::snapshot_active_cells(),
     })
@@ -912,6 +919,18 @@ fn spawn_to_thread_worker(future: MbValue, spec: ThreadCallSpec) {
                 unsafe { std::mem::transmute(spec.raw_addr) };
             unsafe { f(spec.args.as_ptr(), spec.args.len()) }
         } else {
+            // Frame scope is local to this worker's one JIT invocation. The
+            // values remain alive through `spec.args`; frame slots borrow
+            // those explicit sidecars and are dropped before worker teardown.
+            let _owner_frame = super::super::argument_owner::prepare_argument_owner_frame(
+                spec.args
+                    .iter()
+                    .copied()
+                    .zip(spec.argument_owners.iter().copied())
+                    .map(|(value, owner)| {
+                        super::super::argument_owner::ArgumentOwnerSlot::new(value, owner)
+                    }),
+            );
             dispatch_thread_jit_frame(spec.raw_addr, &spec.args, spec.is_boxed_ret)
         };
         if super::super::exception::current_exception_type().is_some() {
@@ -2023,6 +2042,28 @@ mod tests {
         assert!(exception::current_exception_type().is_none());
 
         crate::runtime::async_rt::cleanup_all_async();
+    }
+
+    #[test]
+    fn to_thread_argument_owner_frame_is_worker_scoped() {
+        crate::runtime::argument_owner::clear_argument_owner_frames_for_test();
+        let bigint = crate::runtime::bigint_ops::bigint_from_i128(1i128 << 70);
+        let worker = std::thread::spawn(move || {
+            let frame = crate::runtime::argument_owner::prepare_argument_owner_frame([
+                crate::runtime::argument_owner::ArgumentOwnerSlot::new(bigint, bigint),
+            ]);
+            let owners = crate::runtime::argument_owner::consume_matching_argument_owners(&[bigint]);
+            drop(frame);
+            (
+                owners[0].to_bits(),
+                crate::runtime::argument_owner::argument_owner_frame_depth(),
+            )
+        });
+        let (owner_bits, worker_depth) = worker.join().expect("worker frame");
+        assert_eq!(owner_bits, bigint.to_bits());
+        assert_eq!(worker_depth, 0);
+        assert_eq!(crate::runtime::argument_owner::argument_owner_frame_depth(), 0);
+        unsafe { crate::runtime::rc::release_if_ptr(bigint) };
     }
 
     #[test]

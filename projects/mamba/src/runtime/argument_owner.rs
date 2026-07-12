@@ -57,15 +57,31 @@ impl Drop for ArgumentOwnerFrameGuard {
 pub(crate) fn prepare_argument_owner_frame(
     slots: impl IntoIterator<Item = ArgumentOwnerSlot>,
 ) -> ArgumentOwnerFrameGuard {
+    let slots: Vec<_> = slots.into_iter().collect();
     let id = NEXT_FRAME_ID.fetch_add(1, Ordering::Relaxed);
     ARGUMENT_OWNER_FRAMES.with(|frames| {
         frames.borrow_mut().push(ArgumentOwnerFrame {
             id,
-            slots: slots.into_iter().collect(),
-            expected_slots: 0,
+            expected_slots: slots.len(),
+            slots,
         });
     });
     ArgumentOwnerFrameGuard { id }
+}
+
+/// Build a dynamic-call frame from boxed runtime values through the explicit
+/// typed-Int owner sidecar. This is deliberately separate from static codegen:
+/// dynamic dispatch already owns MbValues, while static calls read companion
+/// slots directly.
+pub(crate) fn prepare_dynamic_argument_owner_frame(
+    values: &[MbValue],
+) -> ArgumentOwnerFrameGuard {
+    prepare_argument_owner_frame(values.iter().copied().map(|value| {
+        ArgumentOwnerSlot::new(
+            value,
+            crate::runtime::symbols::mb_typed_int_owner_or_none(value),
+        )
+    }))
 }
 
 /// Consume exactly the top frame when all physical values match. A missing,

@@ -4720,6 +4720,12 @@ fn unbound_builtin_classmethod_target(type_name: &str, method_name: &str) -> boo
 }
 
 pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
+    // Dynamic routes carry boxed values before their later positional/default/
+    // keyword adaptation. Preserve the declared typed-Int sidecar alongside
+    // those original values; a callee whose final physical arguments differ
+    // receives `None` rather than an inferred or stale owner (#1451).
+    let argument_values = extract_items(args_list);
+    let _owner_frame = super::argument_owner::prepare_dynamic_argument_owner_frame(&argument_values);
     super::closure::with_callable_module(func, || mb_call_spread_impl(func, args_list))
 }
 
@@ -10633,6 +10639,27 @@ def f():
 
         // int must not coerce.
         assert!(super::try_bytes_like(MbValue::from_int(42)).is_none());
+    }
+
+    #[test]
+    fn typed_argument_owner_slots_survive_dynamic_adaptation() {
+        super::super::argument_owner::clear_argument_owner_frames_for_test();
+        let bigint = super::super::bigint_ops::bigint_from_i128(1i128 << 70);
+        let raw_collision = MbValue::from_bits(0x0000_7fff_dead_beef);
+        let frame = super::super::argument_owner::prepare_dynamic_argument_owner_frame(&[
+            bigint,
+            raw_collision,
+        ]);
+        assert_eq!(
+            super::super::argument_owner::consume_matching_argument_owners(&[
+                bigint,
+                raw_collision,
+            ]),
+            vec![bigint, MbValue::none()]
+        );
+        drop(frame);
+        assert_eq!(super::super::argument_owner::argument_owner_frame_depth(), 0);
+        unsafe { super::super::rc::release_if_ptr(bigint) };
     }
     // HANDWRITE-END
 }
