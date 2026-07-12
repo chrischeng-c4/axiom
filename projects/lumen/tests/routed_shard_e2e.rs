@@ -288,10 +288,53 @@ async fn routing_key_less_search_merges_across_both_shards() {
 }
 
 // #1398 R3: cross-pod forwarding depth is bounded to one hop — a request
-// that already carries the internal forwarded marker header must always be
-// answered from the local engine, never forwarded again.
+// that already carries the internal forwarded marker header and is legally
+// owned by the receiving pod's shard (matching map version, matching
+// ownership) must be answered from the local engine, never forwarded again.
 #[tokio::test]
 async fn already_forwarded_request_never_forwards_again() {
+    let (shard0, shard1) = spin_up_routed_pair();
+    create_users_collection(&shard0.server).await;
+    create_users_collection(&shard1.server).await;
+
+    let local_id = external_id_for_shard("users", 0);
+
+    shard0
+        .server
+        .post("/collections/users/index")
+        .json(&json!({
+            "items": [
+                { "external_id": local_id, "field": "email", "value": "onlyshard0@x.com" }
+            ]
+        }))
+        .await
+        .assert_status_ok();
+
+    // Send the internal forwarded-marker header (with the correct map
+    // version) straight to shard0 for a bucket shard0 actually owns — must
+    // be answered locally, not re-forwarded.
+    let resp = shard0
+        .server
+        .post("/collections/users/search")
+        .add_header("x-lumen-forwarded", "1")
+        .add_header("x-lumen-map-version", "1")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "onlyshard0@x.com" } },
+            "routing_key": local_id,
+            "limit": 10
+        }))
+        .await;
+    resp.assert_status_ok();
+    assert_eq!(resp.json::<Value>()["total"], 1);
+}
+
+// #1442 R1: a spoofed `x-lumen-forwarded` marker — set directly by an
+// external caller, not produced by `RoutedRouter` itself — must never force
+// a wrong-shard local answer. Sending it straight to the NON-owning pod for
+// a keyed request must be rejected (`shard_forward_misrouted`), not silently
+// answered from the wrong pod's local (empty-or-stale) engine.
+#[tokio::test]
+async fn spoofed_forwarded_header_on_wrong_shard_is_rejected_not_answered_locally() {
     let (shard0, shard1) = spin_up_routed_pair();
     create_users_collection(&shard0.server).await;
     create_users_collection(&shard1.server).await;
@@ -311,23 +354,187 @@ async fn already_forwarded_request_never_forwards_again() {
         .await
         .assert_status_ok();
 
-    // Send the internal forwarded-marker header straight to shard0, whose
-    // shard map assignment for this bucket points at shard1. If the router
-    // forwarded again, it would find the doc on shard1 and return it; the
-    // one-hop guard must instead answer from shard0's own (empty) local
-    // engine.
+    // Spoof the internal forwarded-marker header straight to shard0 (the
+    // NON-owning pod) with a correct map version but a routing key that
+    // belongs to shard1. Pre-#1442 this forced a silent wrong-shard local
+    // answer (empty result, masking the miss); it must now be rejected.
     let resp = shard0
         .server
         .post("/collections/users/search")
         .add_header("x-lumen-forwarded", "1")
+        .add_header("x-lumen-map-version", "1")
         .json(&json!({
             "query": { "term": { "field": "email", "value": "onlyshard1@x.com" } },
             "routing_key": remote_id,
             "limit": 10
         }))
         .await;
-    resp.assert_status_ok();
-    assert_eq!(resp.json::<Value>()["total"], 0);
+    resp.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = resp.json();
+    assert_eq!(body["error"], "shard_forward_misrouted", "body = {body}");
+}
+
+// #1442 R1: a spoofed forwarded marker on a WRITE to a wrong-shard bucket
+// must be rejected, not silently written to the wrong pod's local engine
+// (AC1: "wrong-shard local write no longer possible").
+#[tokio::test]
+async fn spoofed_forwarded_header_on_wrong_shard_write_is_rejected() {
+    let (shard0, _shard1) = spin_up_routed_pair();
+    create_users_collection(&shard0.server).await;
+
+    let remote_id = external_id_for_shard("users", 1);
+
+    let resp = shard0
+        .server
+        .post("/collections/users/index")
+        .add_header("x-lumen-forwarded", "1")
+        .add_header("x-lumen-map-version", "1")
+        .json(&json!({
+            "items": [
+                { "external_id": remote_id, "field": "email", "value": "spoofed@x.com" }
+            ]
+        }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = resp.json();
+    assert_eq!(body["error"], "shard_forward_misrouted", "body = {body}");
+}
+
+// #1442 R2: a forwarded request whose sender map version disagrees with the
+// receiver's live map (the rolling-restart mixed-map window) must be
+// rejected with a distinct, retryable error instead of the one-hop guard
+// forcing a (possibly stale) local answer.
+#[tokio::test]
+async fn forwarded_request_with_stale_map_version_is_rejected() {
+    let (shard0, _shard1) = spin_up_routed_pair();
+    create_users_collection(&shard0.server).await;
+
+    let local_id = external_id_for_shard("users", 0);
+    let resp = shard0
+        .server
+        .post("/collections/users/index")
+        .add_header("x-lumen-forwarded", "1")
+        .add_header("x-lumen-map-version", "999")
+        .json(&json!({
+            "items": [
+                { "external_id": local_id, "field": "email", "value": "x@x.com" }
+            ]
+        }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = resp.json();
+    assert_eq!(body["error"], "shard_map_version_mismatch", "body = {body}");
+}
+
+// #1442 R4: forwarding must percent-encode the external_id/field path
+// segments — an id containing reserved URL characters must round-trip
+// through a forwarded delete instead of corrupting the forward URL.
+#[tokio::test]
+async fn forward_delete_with_reserved_characters_in_external_id() {
+    let (shard0, shard1) = spin_up_routed_pair();
+    create_users_collection(&shard0.server).await;
+    create_users_collection(&shard1.server).await;
+
+    // Find a base id that routes to shard1, then decorate it with reserved
+    // URL characters (still the same route since routing hashes on the
+    // provided external_id string itself).
+    let base_id = external_id_for_shard("users", 1);
+    let remote_id = format!("{base_id}/weird?id=1&x=2 y");
+
+    shard0
+        .server
+        .post("/collections/users/index")
+        .json(&json!({
+            "items": [
+                { "external_id": remote_id, "field": "email", "value": "weird@x.com" }
+            ]
+        }))
+        .await
+        .assert_status_ok();
+
+    let after_index = shard1
+        .server
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "weird@x.com" } },
+            "limit": 10
+        }))
+        .await;
+    after_index.assert_status_ok();
+    assert_eq!(after_index.json::<Value>()["total"], 1);
+
+    shard0
+        .server
+        .delete(&format!(
+            "/collections/users/index/{}",
+            urlencoding_for_test(&remote_id)
+        ))
+        .await
+        .assert_status(axum::http::StatusCode::NO_CONTENT);
+
+    let after_delete = shard1
+        .server
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "weird@x.com" } },
+            "limit": 10
+        }))
+        .await;
+    after_delete.assert_status_ok();
+    assert_eq!(after_delete.json::<Value>()["total"], 0);
+}
+
+/// Minimal RFC 3986 percent-encoder for this test's own outbound request
+/// path — deliberately independent of `routing_remote`'s
+/// `percent_encode_component` (that function is exercised directly by
+/// `routing_remote`'s unit tests); this is the client side of the same
+/// round-trip a real HTTP client (or another lumen pod) would perform.
+fn urlencoding_for_test(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+// #1442 R6: `reindex_stream` bypasses per-item shard ownership and the write
+// fence, so it must be rejected outright in routed multi-shard mode rather
+// than silently reindexing only locally-owned buckets.
+#[tokio::test]
+async fn reindex_stream_is_rejected_in_routed_mode() {
+    let (shard0, _shard1) = spin_up_routed_pair();
+    create_users_collection(&shard0.server).await;
+
+    let resp = shard0
+        .server
+        .post("/collections/users/reindex/stream")
+        .await;
+    resp.assert_status(axum::http::StatusCode::NOT_IMPLEMENTED);
+    let body: Value = resp.json();
+    assert_eq!(body["error"], "reindex_stream_not_routed", "body = {body}");
+}
+
+// #1442 R6: `duplicates` cannot merge duplicate groups across shards, so
+// routed multi-shard mode must reject it with a distinct error rather than
+// silently answering from only the local shard's view.
+#[tokio::test]
+async fn duplicates_is_rejected_in_routed_mode() {
+    let (shard0, _shard1) = spin_up_routed_pair();
+    create_users_collection(&shard0.server).await;
+
+    let resp = shard0
+        .server
+        .post("/collections/users/duplicates")
+        .json(&json!({ "field": "email" }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::NOT_IMPLEMENTED);
+    let body: Value = resp.json();
+    assert_eq!(body["error"], "duplicates_not_routed", "body = {body}");
 }
 
 // #1398 R2: a forward failure (owning pod unreachable) must surface as a

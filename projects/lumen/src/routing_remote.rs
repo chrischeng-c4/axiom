@@ -14,12 +14,26 @@
 //! [`crate::routing::merge_shard_search_responses`] primitive
 //! [`crate::routing::EngineShardSearch`] uses.
 //!
-//! One-hop forwarding guard: every method checks `x-lumen-forwarded` FIRST
-//! and, if present, always answers from the local engine — a forwarded
-//! request never forwards again, so cross-pod routing can only ever be one
-//! hop deep (R3). A forward carries the caller's `Authorization` and
-//! `x-read-consistency` headers through unchanged (R3) plus
-//! `x-lumen-forwarded: 1`.
+//! One-hop forwarding guard: every method checks `x-lumen-forwarded` FIRST.
+//! (#1442 R1/R2 hardening of the #1398 guard.) The marker alone is
+//! caller-controlled — an external client can set it directly on a request
+//! to any pod — so a forwarded request is no longer trusted blindly:
+//! `check_forwarded_map_version` rejects it with a distinct retryable error
+//! (`ShardMapVersionMismatch`, R2) if the sender's `x-lumen-map-version`
+//! disagrees with this pod's live map (the mixed-map window during a
+//! rolling restart after a completed reshard split), and `assert_owns`
+//! recomputes bucket ownership (R1) for every deterministic-owner path
+//! (writes, keyed search) and rejects (`ShardForwardMisrouted`) rather than
+//! answering locally when this pod isn't actually the owner — a spoofed or
+//! genuinely misrouted forward is rejected, never honored. A forwarded
+//! request still never forwards again, so cross-pod routing remains one hop
+//! deep. Keyless (scatter) sub-requests are the one exception: every shard
+//! is a legitimate scatter participant with no single owner to validate
+//! against, so that path keeps trusting the marker (see `search`'s
+//! `SearchShardTarget::All` arm). A forward carries the caller's
+//! `Authorization` and `x-read-consistency` headers through unchanged (R3)
+//! plus `x-lumen-forwarded: 1` and `x-lumen-map-version: <sender's map
+//! version>` (R2).
 //!
 //! Behind the `operator` feature only because it is the sole module that
 //! needs `reqwest` as a directly-nameable type — every real deployment that
@@ -39,7 +53,10 @@ use futures::future::try_join_all;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::api::{RoutedBackend, ShardForwardRemoteError, ShardForwardUnavailable, WriteBackend};
+use crate::api::{
+    RoutedBackend, ShardForwardMisrouted, ShardForwardRemoteError, ShardForwardUnavailable,
+    ShardMapVersionMismatch, WriteBackend,
+};
 use crate::routing::{merge_shard_search_responses, SearchShardTarget, VirtualBucketShardMap};
 use crate::storage::Engine;
 use crate::types::{
@@ -47,9 +64,18 @@ use crate::types::{
     ReplaceDocsResponse, SearchRequest, SearchResponse,
 };
 
-/// Internal one-hop guard header: present on every forwarded request, never
-/// set by an external caller reaching this pod directly through the Service.
+/// Internal one-hop guard header: present on every forwarded request. No
+/// longer trusted blindly on receipt (#1442 R1) — an external caller can set
+/// this directly too, so every deterministic-owner path re-validates
+/// ownership (`assert_owns`) instead of short-circuiting on its presence
+/// alone.
 const FORWARDED_HEADER: &str = "x-lumen-forwarded";
+/// Sender's shard-map version, carried on every forward (#1442 R2). The
+/// receiver rejects with a distinct retryable error when this disagrees with
+/// its own live map instead of letting the one-hop guard force a (possibly
+/// stale/possibly future) local answer during a rolling restart's mixed-map
+/// window.
+const MAP_VERSION_HEADER: &str = "x-lumen-map-version";
 /// Read-consistency header carried through a forward verbatim (R3).
 const READ_CONSISTENCY_HEADER: &str = "x-read-consistency";
 /// Connections per remote shard's h2c pool — small and fixed, matching
@@ -133,6 +159,63 @@ impl RoutedRouter {
         headers.contains_key(FORWARDED_HEADER)
     }
 
+    /// Parses the sender's shard-map version off a forwarded request
+    /// (#1442 R2). Absent on a fresh, non-forwarded request — only
+    /// [`RoutedRouter::send`] sets this header — so this returns `None`
+    /// there; it can also be `None`/unparseable on a forward from a peer
+    /// mid-binary-upgrade that predates this header, which
+    /// `check_forwarded_map_version` treats as "nothing to compare" rather
+    /// than a hard failure.
+    fn forwarded_map_version(headers: &HeaderMap) -> Option<u64> {
+        headers
+            .get(MAP_VERSION_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse().ok())
+    }
+
+    /// #1442 R2: rejects a forwarded request whose sender ran a different
+    /// shard-map version than this pod's live map, with a distinct
+    /// retryable error — instead of letting the one-hop guard force a local
+    /// answer that may be wrong on either side of a just-completed reshard
+    /// split during a rolling restart's mixed-map window.
+    fn check_forwarded_map_version(&self, headers: &HeaderMap) -> Result<()> {
+        if let Some(sender_version) = Self::forwarded_map_version(headers) {
+            let local_version = self.shard_map.version();
+            if sender_version != local_version {
+                return Err(anyhow::Error::new(ShardMapVersionMismatch {
+                    sender_version,
+                    local_version,
+                }));
+            }
+        }
+        Ok(())
+    }
+
+    /// #1442 R1: validates this pod actually owns `external_id`'s virtual
+    /// bucket before honoring a forwarded request's one-hop marker. The
+    /// marker alone is caller-controlled (an external client can set
+    /// `x-lumen-forwarded` directly on a request to any pod), so every
+    /// deterministic-owner path (writes, keyed search) recomputes ownership
+    /// on receipt and rejects (`ShardForwardMisrouted`) rather than
+    /// answering locally when this pod isn't the real owner — a spoofed or
+    /// genuinely misrouted forward is rejected, never honored. Keyless
+    /// (scatter) sub-requests have no single owner to validate against and
+    /// are deliberately not routed through this check (see `search`'s
+    /// `SearchShardTarget::All` arm).
+    fn assert_owns(&self, collection_id: &str, external_id: &str) -> Result<()> {
+        let route = self
+            .shard_map
+            .route_document(collection_id, None, external_id);
+        if route.shard != self.local_shard {
+            return Err(anyhow::Error::new(ShardForwardMisrouted {
+                bucket: route.bucket,
+                owner_shard: route.shard,
+                local_shard: self.local_shard,
+            }));
+        }
+        Ok(())
+    }
+
     /// Sends one forwarded request and returns the raw response — success or
     /// not, decoding is the caller's job (`forward_json`/`forward_empty`)
     /// since a `DELETE` success carries no body while every other verb
@@ -159,7 +242,8 @@ impl RoutedRouter {
             .pool
             .client()
             .request(method.clone(), &url)
-            .header(FORWARDED_HEADER, "1");
+            .header(FORWARDED_HEADER, "1")
+            .header(MAP_VERSION_HEADER, self.shard_map.version().to_string());
         if let Some(v) = headers.get(axum::http::header::AUTHORIZATION) {
             builder = builder.header("authorization", v.as_bytes());
         }
@@ -302,6 +386,28 @@ fn cursor_offset(cursor: Option<&str>) -> u64 {
     v.get("offset").and_then(|o| o.as_u64()).unwrap_or(0)
 }
 
+/// Percent-encodes one path segment or query value: RFC 3986's unreserved
+/// set (`A-Z a-z 0-9 - . _ ~`) passes through, everything else becomes
+/// `%XX` (#1442 R4). Forwarded URLs interpolate caller-controlled
+/// `external_id`/`field` directly, so an unescaped `/`, `?`, `#`, `%`, or
+/// non-ASCII byte would otherwise be misparsed as URL structure (or land as
+/// a doubly-decoded literal) on the remote pod. A tiny local encoder rather
+/// than the `percent-encoding` crate: it is not a direct dependency of
+/// lumen today (only pulled in transitively via other crates' `reqwest`/
+/// `url` deps), so this keeps the fix dependency-free per #1442 R4.
+fn percent_encode_component(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
 #[async_trait]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing_remote-rs.md#source
 impl RoutedBackend for RoutedRouter {
@@ -312,6 +418,21 @@ impl RoutedBackend for RoutedRouter {
         headers: &HeaderMap,
     ) -> Result<SearchResponse> {
         if Self::already_forwarded(headers) {
+            self.check_forwarded_map_version(headers)?;
+            // #1442 R1: a keyed forward recomputes ownership like every
+            // other deterministic route below; a keyless (scatter)
+            // sub-request has no single owner to validate against and
+            // keeps trusting the marker (see `assert_owns`'s doc comment).
+            if let Some(key) = req.routing_key.as_deref() {
+                let route = self.shard_map.route_key(collection_id, key);
+                if route.shard != self.local_shard {
+                    return Err(anyhow::Error::new(ShardForwardMisrouted {
+                        bucket: route.bucket,
+                        owner_shard: route.shard,
+                        local_shard: self.local_shard,
+                    }));
+                }
+            }
             return self.engine.search(collection_id, req);
         }
         match self
@@ -343,6 +464,10 @@ impl RoutedBackend for RoutedRouter {
         headers: &HeaderMap,
     ) -> Result<IndexResponse> {
         if Self::already_forwarded(headers) {
+            self.check_forwarded_map_version(headers)?;
+            for item in &req.items {
+                self.assert_owns(&collection_id, &item.external_id)?;
+            }
             return self.local_write.index(collection_id, req).await;
         }
         let shard_count = self.shard_map.physical_shard_count() as usize;
@@ -409,6 +534,10 @@ impl RoutedBackend for RoutedRouter {
         headers: &HeaderMap,
     ) -> Result<ReplaceDocsResponse> {
         if Self::already_forwarded(headers) {
+            self.check_forwarded_map_version(headers)?;
+            for doc in &req.docs {
+                self.assert_owns(&collection_id, &doc.external_id)?;
+            }
             return self.local_write.replace_docs(collection_id, req).await;
         }
         let total = req.docs.len();
@@ -426,24 +555,32 @@ impl RoutedBackend for RoutedRouter {
         }
 
         let path = format!("/collections/{collection_id}/docs:replace");
-        let mut local_resp: Option<(u32, ReplaceDocsResponse)> = None;
-        let mut remote_shards = Vec::new();
+        // #1442 R5: `sent` is the exact number of docs handed to each
+        // shard, captured before the request body moves — the response
+        // below is validated against it so a short/long response (e.g. a
+        // remote pod that dropped part of the batch) is a classified
+        // forward error, never a silent `zip`-truncation that leaves a
+        // `results[pos]` unassigned.
+        let mut local_resp: Option<(u32, usize, ReplaceDocsResponse)> = None;
+        let mut remote_shards: Vec<(u32, usize)> = Vec::new();
         let mut remote_futures = Vec::new();
         for (shard, docs) in shard_docs.into_iter().enumerate() {
             if docs.is_empty() {
                 continue;
             }
             let shard = shard as u32;
+            let sent = docs.len();
             let sub_req = ReplaceDocsRequest { docs };
             if shard == self.local_shard {
                 local_resp = Some((
                     shard,
+                    sent,
                     self.local_write
                         .replace_docs(collection_id.clone(), sub_req)
                         .await?,
                 ));
             } else {
-                remote_shards.push(shard);
+                remote_shards.push((shard, sent));
                 remote_futures.push(
                     self.forward_json::<ReplaceDocsRequest, ReplaceDocsResponse>(
                         shard,
@@ -457,23 +594,47 @@ impl RoutedBackend for RoutedRouter {
         }
         let remote_resps = try_join_all(remote_futures).await?;
 
+        let mismatch = |shard: u32, sent: usize, got: usize| {
+            anyhow::Error::new(ShardForwardRemoteError {
+                status: 502,
+                message: format!(
+                    "shard {shard} replace_docs response has {got} results but {sent} docs were sent"
+                ),
+            })
+        };
         let mut results: Vec<Option<crate::types::ReplaceDocResult>> =
             (0..total).map(|_| None).collect();
-        if let Some((shard, resp)) = local_resp {
+        if let Some((shard, sent, resp)) = local_resp {
+            if resp.results.len() != sent {
+                return Err(mismatch(shard, sent, resp.results.len()));
+            }
             for (pos, r) in shard_positions[shard as usize].iter().zip(resp.results) {
                 results[*pos] = Some(r);
             }
         }
-        for (shard, resp) in remote_shards.into_iter().zip(remote_resps) {
+        for ((shard, sent), resp) in remote_shards.into_iter().zip(remote_resps) {
+            if resp.results.len() != sent {
+                return Err(mismatch(shard, sent, resp.results.len()));
+            }
             for (pos, r) in shard_positions[shard as usize].iter().zip(resp.results) {
                 results[*pos] = Some(r);
             }
         }
-        let results = results
-            .into_iter()
-            .map(|r| r.expect("every original index assigned exactly one shard result"))
-            .collect();
-        Ok(ReplaceDocsResponse { results })
+        // Every position was assigned to exactly one shard above, and every
+        // shard's response length was just validated to match the docs
+        // sent to it, so every slot is provably `Some` here — but this
+        // stays a classified error rather than an `.expect()` panic (R5)
+        // as a defensive backstop, not a documented reachable path.
+        let mut final_results = Vec::with_capacity(total);
+        for r in results {
+            final_results.push(r.ok_or_else(|| ShardForwardRemoteError {
+                status: 502,
+                message: "replace_docs response merge left a position unassigned".to_string(),
+            })?);
+        }
+        Ok(ReplaceDocsResponse {
+            results: final_results,
+        })
     }
 
     async fn delete(
@@ -484,6 +645,8 @@ impl RoutedBackend for RoutedRouter {
         headers: &HeaderMap,
     ) -> Result<()> {
         if Self::already_forwarded(headers) {
+            self.check_forwarded_map_version(headers)?;
+            self.assert_owns(&collection_id, &external_id)?;
             return self
                 .local_write
                 .delete(collection_id, external_id, field)
@@ -498,11 +661,18 @@ impl RoutedBackend for RoutedRouter {
                 .delete(collection_id, external_id, field)
                 .await;
         }
-        let mut path = format!("/collections/{collection_id}/index/{external_id}");
+        // #1442 R4: percent-encode the caller-controlled path/query
+        // components — an unencoded `/`, `?`, `#`, or `%` in `external_id`
+        // or `field` would otherwise be misparsed as URL structure (or a
+        // doubly-decoded literal) by the remote pod.
+        let mut path = format!(
+            "/collections/{collection_id}/index/{}",
+            percent_encode_component(&external_id)
+        );
         if let Some(f) = &field {
             path.push('?');
             path.push_str("field=");
-            path.push_str(f);
+            path.push_str(&percent_encode_component(f));
         }
         self.forward_empty(route.shard, reqwest::Method::DELETE, &path, headers)
             .await
@@ -625,6 +795,90 @@ mod tests {
         use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
         let cursor = STANDARD_NO_PAD.encode(r#"{"offset":42}"#);
         assert_eq!(cursor_offset(Some(&cursor)), 42);
+    }
+
+    #[test]
+    fn percent_encode_component_escapes_reserved_bytes() {
+        assert_eq!(percent_encode_component("plain-ID_1.2~3"), "plain-ID_1.2~3");
+        assert_eq!(
+            percent_encode_component("a/b?c=d&e f"),
+            "a%2Fb%3Fc%3Dd%26e%20f"
+        );
+    }
+
+    #[test]
+    fn forwarded_map_version_parses_and_defaults_to_none() {
+        let mut headers = HeaderMap::new();
+        assert_eq!(RoutedRouter::forwarded_map_version(&headers), None);
+        headers.insert(MAP_VERSION_HEADER, "7".parse().unwrap());
+        assert_eq!(RoutedRouter::forwarded_map_version(&headers), Some(7));
+    }
+
+    fn test_router(local_shard: u32) -> RoutedRouter {
+        RoutedRouter::new(
+            Arc::new(Engine::new()),
+            Arc::new(DummyWrite),
+            shard_map(2),
+            local_shard,
+            vec![
+                "http://search-0.headless".into(),
+                "http://search-1.headless".into(),
+            ],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn check_forwarded_map_version_ok_when_absent_or_matching() {
+        let router = test_router(0);
+        assert!(router
+            .check_forwarded_map_version(&HeaderMap::new())
+            .is_ok());
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            MAP_VERSION_HEADER,
+            router.shard_map.version().to_string().parse().unwrap(),
+        );
+        assert!(router.check_forwarded_map_version(&headers).is_ok());
+    }
+
+    #[test]
+    fn check_forwarded_map_version_rejects_mismatch() {
+        let router = test_router(0);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            MAP_VERSION_HEADER,
+            (router.shard_map.version() + 1)
+                .to_string()
+                .parse()
+                .unwrap(),
+        );
+        let err = router.check_forwarded_map_version(&headers).unwrap_err();
+        assert!(err.downcast_ref::<ShardMapVersionMismatch>().is_some());
+    }
+
+    /// #1442 R1: `assert_owns` must reject a bucket this pod does not own —
+    /// the core of closing the spoofed-forwarded-marker gap.
+    #[test]
+    fn assert_owns_rejects_bucket_owned_by_another_shard() {
+        let router = test_router(0);
+        let remote_id = (0..1000)
+            .map(|i| format!("doc-{i}"))
+            .find(|id| router.shard_map.route_document("coll", None, id).shard != 0)
+            .expect("some id routes to shard 1 out of 2");
+        let err = router.assert_owns("coll", &remote_id).unwrap_err();
+        assert!(err.downcast_ref::<ShardForwardMisrouted>().is_some());
+    }
+
+    #[test]
+    fn assert_owns_accepts_locally_owned_bucket() {
+        let router = test_router(0);
+        let local_id = (0..1000)
+            .map(|i| format!("doc-{i}"))
+            .find(|id| router.shard_map.route_document("coll", None, id).shard == 0)
+            .expect("some id routes to shard 0 out of 2");
+        assert!(router.assert_owns("coll", &local_id).is_ok());
     }
 }
 // CODEGEN-END

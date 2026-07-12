@@ -1523,13 +1523,17 @@ fn batch_search_auth_error(e: crate::auth::AuthErr) -> BatchSearchResult {
     responses((status = 200, description = "Duplicate groups", body = DuplicatesResponse))
 )]
 /// Local-shard only, deliberately not wired to `state.routed` (#1398 known
-/// gap): `Engine::duplicates` filters by `min_group_size` *before* any
-/// cross-shard merge could happen, so scatter-then-merge would silently miss
-/// a true cross-shard group (e.g. one copy per shard under `min_group_size:
-/// 2`) — a correctness regression, not a routing gap. Unchanged from
-/// pre-#1398 behavior (already local-shard-only); a correct cross-shard
-/// implementation needs unfiltered per-shard candidate groups from
-/// `storage.rs`, out of this WI's scope.
+/// gap, #1442 R6): `Engine::duplicates` filters by `min_group_size` *before*
+/// any cross-shard merge could happen, so scatter-then-merge would silently
+/// miss a true cross-shard group (e.g. one copy per shard under
+/// `min_group_size: 2`) — a correctness regression, not a routing gap. A
+/// correct cross-shard implementation needs unfiltered per-shard candidate
+/// groups from `storage.rs`, out of scope here. #1442 R6 closes the "silent
+/// wrong answer" gap this left in routed multi-shard mode: rather than
+/// unchanged pre-#1398 behavior (silently answering from local-shard data
+/// only, missing cross-shard duplicate groups with no indication), a routed
+/// deployment now rejects with a distinct, non-retryable error so a caller
+/// can tell "not supported here" from "no duplicates found".
 async fn duplicates(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -1539,6 +1543,15 @@ async fn duplicates(
 ) -> Result<Json<DuplicatesResponse>, ApiErr> {
     auth.ensure(&collection_id, Role::Read)?;
     let _consistency = read_consistency_from(&headers);
+    if state.routed.is_some() {
+        return Err(ApiErr::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "duplicates_not_routed",
+            "duplicate detection is local-shard-only and does not merge across shards; not \
+             supported in routed multi-shard mode (#1442 R6)"
+                .to_string(),
+        ));
+    }
     Ok(Json(
         state
             .engine
@@ -1579,6 +1592,17 @@ async fn stats(
 ///
 /// Errors are surfaced as `{"event":"error","line":N,"message":"..."}`
 /// inline; the stream continues so partial progress is observable.
+///
+/// Rejected outright in routed multi-shard mode (#1442 R6): the spawned
+/// batch loop below writes through `state.write_backend` directly, bypassing
+/// both `state.routed`'s per-item shard ownership and `enforce_write_fence`
+/// (the same per-item reshard-cutover pause every other write path
+/// observes). Routing each streamed item by ownership and fencing it
+/// individually, inside a detached `tokio::spawn` task that already streams
+/// its own NDJSON response back, is a materially bigger change than this
+/// bounded hardening pass — an accepted, documented fallback per R6's own
+/// scope rather than a half-routed implementation that could silently
+/// mis-shard or skip the write fence.
 async fn reindex_stream(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -1590,6 +1614,15 @@ async fn reindex_stream(
     use tokio::sync::mpsc;
 
     auth.ensure(&collection_id, Role::Write)?;
+    if state.routed.is_some() {
+        return Err(ApiErr::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "reindex_stream_not_routed",
+            "streaming bulk reindex bypasses per-item shard ownership and the write fence; not \
+             supported in routed multi-shard mode, use POST .../index instead (#1442 R6)"
+                .to_string(),
+        ));
+    }
 
     const BATCH_SIZE: usize = 1_000;
     let (tx, rx) = mpsc::channel::<Result<axum::body::Bytes, std::io::Error>>(16);
@@ -2259,6 +2292,64 @@ impl std::fmt::Display for ShardForwardRemoteError {
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl std::error::Error for ShardForwardRemoteError {}
 
+/// A forwarded request declared a shard-map version that disagrees with
+/// this pod's own live map (#1442 R2). A rolling restart after a completed
+/// reshard split can run pods on two different `SHARD_MAP_*` env snapshots
+/// for a bounded window (pods only read env at boot) — rather than let the
+/// one-hop guard force a local answer that may be wrong on either side of
+/// the split, the receiver rejects with this distinct, retryable error so
+/// the caller (or its own retry policy) waits for the rollout to converge.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+#[derive(Debug)]
+pub struct ShardMapVersionMismatch {
+    pub sender_version: u64,
+    pub local_version: u64,
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::fmt::Display for ShardMapVersionMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "forwarded request's shard-map version {} disagrees with this pod's live version {}",
+            self.sender_version, self.local_version
+        )
+    }
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::error::Error for ShardMapVersionMismatch {}
+
+/// A forwarded request's one-hop marker (`x-lumen-forwarded`) claimed this
+/// pod, but recomputing ownership from this pod's own shard map disagrees
+/// (#1442 R1). The marker alone is caller-controlled — an external client
+/// can set it directly on a request to any pod, forcing local handling on a
+/// bucket that pod doesn't actually own — so it is now validated on
+/// receipt rather than trusted blindly; a spoofed or genuinely misrouted
+/// forward is rejected, never honored.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+#[derive(Debug)]
+pub struct ShardForwardMisrouted {
+    pub bucket: u32,
+    pub owner_shard: u32,
+    pub local_shard: u32,
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::fmt::Display for ShardForwardMisrouted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "forwarded request targets virtual bucket {} (owned by shard {}), but this pod is \
+             shard {}; refusing to honor an unverified forwarded-hop marker",
+            self.bucket, self.owner_shard, self.local_shard
+        )
+    }
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl std::error::Error for ShardForwardMisrouted {}
+
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl From<anyhow::Error> for ApiErr {
     fn from(e: anyhow::Error) -> Self {
@@ -2272,6 +2363,20 @@ impl From<anyhow::Error> for ApiErr {
         if let Some(re) = e.downcast_ref::<ShardForwardRemoteError>() {
             let status = StatusCode::from_u16(re.status).unwrap_or(StatusCode::BAD_GATEWAY);
             return Self::new(status, "shard_forwarded_error", re.message.clone());
+        }
+        if e.downcast_ref::<ShardMapVersionMismatch>().is_some() {
+            return Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "shard_map_version_mismatch",
+                e.to_string(),
+            );
+        }
+        if e.downcast_ref::<ShardForwardMisrouted>().is_some() {
+            return Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "shard_forward_misrouted",
+                e.to_string(),
+            );
         }
         if let Some(se) = e.downcast_ref::<StorageError>() {
             return match se {

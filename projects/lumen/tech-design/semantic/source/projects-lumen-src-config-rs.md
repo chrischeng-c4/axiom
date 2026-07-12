@@ -28,9 +28,10 @@ Public API manifest for `projects/lumen/src/config.rs` generated from AST during
 | `shard_index` | projects/lumen/src/config.rs | function | pub | 68 | shard_index(&self) -> Result<u32> |
 | `shard_map_from_env` | projects/lumen/src/config.rs | function | pub | 95 | shard_map_from_env(shard_count: u32) -> Result<VirtualBucketShardMap> |
 | `fan_in_shard_count` | projects/lumen/src/config.rs | function | pub | 144 | fan_in_shard_count(explicit: Option<u32>, loaded_dirs: usize) -> u32 |
-| `check_fan_in_shard_count` | projects/lumen/src/config.rs | function | pub | 156 | check_fan_in_shard_count(map: &VirtualBucketShardMap, loaded_dirs: usize) -> Result<()> |
-| `routed_pod_topology` | projects/lumen/src/config.rs | function | pub | 183 | routed_pod_topology(shard_count: u32) -> Result<(String, u32)> |
-| `routed_shard_count_from_env` | projects/lumen/src/config.rs | function | pub | 205 | routed_shard_count_from_env() -> Result<Option<u32>> |
+| `check_fan_in_shard_count` | projects/lumen/src/config.rs | function | pub | 161 | check_fan_in_shard_count(map: &VirtualBucketShardMap, loaded_dirs: usize) -> Result<()> |
+| `routed_pod_topology` | projects/lumen/src/config.rs | function | pub | 188 | routed_pod_topology(shard_count: u32) -> Result<(String, u32)> |
+| `routed_shard_count_from_env` | projects/lumen/src/config.rs | function | pub | 223 | routed_shard_count_from_env() -> Result<Option<u32>> |
+| `routed_activation_shard_count` | projects/lumen/src/config.rs | function | pub | 257 | routed_activation_shard_count(search_shard_segment_dirs_empty: bool) -> Result<Option<u32>> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -188,15 +189,20 @@ pub fn fan_in_shard_count(explicit: Option<u32>, loaded_dirs: usize) -> u32 {
 /// reach only a subset of shards (#1398 R4 — e.g. an explicit
 /// `SHARD_COUNT` that doesn't match the actual dir count). Names both
 /// numbers in the error instead of continuing to serve with an
-/// inconsistent map.
+/// inconsistent map. The remediation names only `--shard-count` (#1442 R3):
+/// this is the segment-dirs fan-in CLI path specifically, not the routed
+/// k8s topology, and `--shard-count` is the flag every caller here actually
+/// has in hand — naming the `SHARD_COUNT` env var too would suggest the
+/// operator-managed routed topology's activation knob, which this code path
+/// never reaches (see `routed_shard_count_from_env`).
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
 pub fn check_fan_in_shard_count(map: &VirtualBucketShardMap, loaded_dirs: usize) -> Result<()> {
     let declared = map.physical_shard_count() as usize;
     if declared != loaded_dirs {
         anyhow::bail!(
             "shard map physical_shard_count ({declared}) does not match the number of \
-             loaded --search-shard-segment-dirs ({loaded_dirs}); set SHARD_COUNT/--shard-count \
-             to {loaded_dirs} or fix the loaded dirs"
+             loaded --search-shard-segment-dirs ({loaded_dirs}); set --shard-count to \
+             {loaded_dirs} or fix the loaded dirs"
         );
     }
     Ok(())
@@ -232,14 +238,37 @@ pub fn routed_pod_topology(shard_count: u32) -> Result<(String, u32)> {
 }
 
 /// `Some(shard_count)` only when the operator-rendered `SHARD_COUNT` env is
-/// present and describes more than one physical shard — the routed serving
-/// topology's activation condition (#1398 R1). `SHARD_COUNT` unset or `<= 1`
-/// (including plain non-k8s `lumen serve`) returns `None`, so single-shard
-/// deployments never build a [`crate::routing_remote::RoutedRouter`] at all
-/// (#1398 AC5: zero forwarding overhead, not just a no-op branch through
-/// one).
+/// present and describes more than one physical shard *and*
+/// `REPLICAS_PER_SHARD` describes at most one replica per shard — the
+/// routed serving topology's activation condition (#1398 R1, tightened by
+/// #1442 R3). `SHARD_COUNT` unset or `<= 1` (including plain non-k8s `lumen
+/// serve`) returns `None`, so single-shard deployments never build a
+/// [`crate::routing_remote::RoutedRouter`] at all (#1398 AC5: zero
+/// forwarding overhead, not just a no-op branch through one).
+///
+/// `REPLICAS_PER_SHARD` unset is treated as `<= 1`
+/// (`operator::render::serving_statefulset` strips this env entirely at
+/// `replicasPerShard <= 1`, so "absent" and "explicitly 1" are the same
+/// topology) — a `SHARD_COUNT > 1` deployment that also has
+/// `REPLICAS_PER_SHARD > 1` is the multi-replica-per-shard raft topology
+/// (each shard is itself a raft group, not a single owning pod), not the
+/// routed topology this activates: without this check, a multi-replica
+/// pod's `POD_NAME` ordinal doesn't identify a shard 1:1
+/// (`routed_pod_topology`'s `ordinal % shard_count` math assumes exactly
+/// one pod per shard), so activating routing there would silently mis-map
+/// pods to shards instead of failing fast.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
 pub fn routed_shard_count_from_env() -> Result<Option<u32>> {
+    let replicas_per_shard: u32 = match std::env::var("REPLICAS_PER_SHARD") {
+        Ok(raw) => raw
+            .trim()
+            .parse()
+            .with_context(|| format!("REPLICAS_PER_SHARD={raw:?} is not a valid u32"))?,
+        Err(_) => 1,
+    };
+    if replicas_per_shard > 1 {
+        return Ok(None);
+    }
     match std::env::var("SHARD_COUNT") {
         Ok(raw) => {
             let n: u32 = raw
@@ -250,6 +279,24 @@ pub fn routed_shard_count_from_env() -> Result<Option<u32>> {
         }
         Err(_) => Ok(None),
     }
+}
+
+/// Combines the fan-in mutual-exclusion guard with
+/// [`routed_shard_count_from_env`] into the single activation condition
+/// `bin/lumen.rs` gates the routed block on (#1442 R3): routed cross-pod
+/// routing activates only when the segment-dirs fan-in search backend did
+/// NOT already activate (`search_shard_segment_dirs_empty`) AND the env
+/// describes the routed topology. Pulled out as its own pure function so the
+/// "a fan-in invocation must never reach the routed block at all" guarantee
+/// is unit-testable without starting a real server — `SHARD_COUNT` isn't set
+/// the same way on today's fan-in CLI path, but this makes the two paths
+/// structurally mutually exclusive instead of relying on that coincidence.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
+pub fn routed_activation_shard_count(search_shard_segment_dirs_empty: bool) -> Result<Option<u32>> {
+    if !search_shard_segment_dirs_empty {
+        return Ok(None);
+    }
+    routed_shard_count_from_env()
 }
 
 #[cfg(test)]
@@ -623,6 +670,102 @@ mod tests {
             std::env::remove_var("SHARD_COUNT");
         }
     }
+
+    #[test]
+    fn routed_shard_count_from_env_none_when_replicas_per_shard_above_one() {
+        // #1442 R3: a multi-replica-per-shard raft topology (each shard is
+        // its own raft group) must never activate routing even with
+        // SHARD_COUNT > 1 — `routed_pod_topology`'s ordinal math assumes
+        // exactly one pod per shard.
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("SHARD_COUNT", "4");
+            std::env::set_var("REPLICAS_PER_SHARD", "3");
+        }
+        assert_eq!(routed_shard_count_from_env().unwrap(), None);
+        unsafe {
+            std::env::remove_var("SHARD_COUNT");
+            std::env::remove_var("REPLICAS_PER_SHARD");
+        }
+    }
+
+    #[test]
+    fn routed_shard_count_from_env_some_when_replicas_per_shard_absent_or_one() {
+        // #1442 R3: absent REPLICAS_PER_SHARD is treated the same as an
+        // explicit `1` — the operator strips the env entirely at
+        // `replicasPerShard <= 1` (`operator::render::serving_statefulset`).
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("SHARD_COUNT", "4");
+            std::env::remove_var("REPLICAS_PER_SHARD");
+        }
+        assert_eq!(routed_shard_count_from_env().unwrap(), Some(4));
+        unsafe {
+            std::env::set_var("REPLICAS_PER_SHARD", "1");
+        }
+        assert_eq!(routed_shard_count_from_env().unwrap(), Some(4));
+        unsafe {
+            std::env::remove_var("SHARD_COUNT");
+            std::env::remove_var("REPLICAS_PER_SHARD");
+        }
+    }
+
+    // ---- routed_activation_shard_count (#1442 R3) -----------------------
+
+    #[test]
+    fn routed_activation_shard_count_none_when_fan_in_dirs_present() {
+        // A fan-in invocation (`--search-shard-segment-dirs` non-empty) must
+        // never activate routed cross-pod routing, even when SHARD_COUNT
+        // describes the routed topology — the two paths are structurally
+        // mutually exclusive.
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("SHARD_COUNT", "4");
+            std::env::remove_var("REPLICAS_PER_SHARD");
+        }
+        assert_eq!(
+            routed_activation_shard_count(/* search_shard_segment_dirs_empty */ false).unwrap(),
+            None
+        );
+        unsafe {
+            std::env::remove_var("SHARD_COUNT");
+        }
+    }
+
+    #[test]
+    fn routed_activation_shard_count_none_for_raft_replica_topology() {
+        // Raft-env (REPLICAS_PER_SHARD > 1) must never activate routing even
+        // when the fan-in guard alone would allow it.
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("SHARD_COUNT", "4");
+            std::env::set_var("REPLICAS_PER_SHARD", "3");
+        }
+        assert_eq!(
+            routed_activation_shard_count(/* search_shard_segment_dirs_empty */ true).unwrap(),
+            None
+        );
+        unsafe {
+            std::env::remove_var("SHARD_COUNT");
+            std::env::remove_var("REPLICAS_PER_SHARD");
+        }
+    }
+
+    #[test]
+    fn routed_activation_shard_count_some_when_both_guards_clear() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("SHARD_COUNT", "4");
+            std::env::remove_var("REPLICAS_PER_SHARD");
+        }
+        assert_eq!(
+            routed_activation_shard_count(/* search_shard_segment_dirs_empty */ true).unwrap(),
+            Some(4)
+        );
+        unsafe {
+            std::env::remove_var("SHARD_COUNT");
+        }
+    }
 }
 // CODEGEN-END
 ````
@@ -639,4 +782,25 @@ changes:
     description: |
       rust-source-unit (td_ast) source for `projects/lumen/src/config.rs` captured during lumen
       standardization onto the per-file codegen ladder.
+  - path: projects/lumen/src/config.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1442 R3: `routed_shard_count_from_env` now also reads
+      `REPLICAS_PER_SHARD` (absent treated as `1`, matching
+      `operator::render::serving_statefulset` stripping the env at
+      `replicasPerShard <= 1`) and returns `None` when it is `> 1` — a
+      multi-replica-per-shard raft topology must never activate cross-pod
+      routing, since `routed_pod_topology`'s ordinal math assumes exactly
+      one pod per shard. `check_fan_in_shard_count`'s error message now
+      names only `--shard-count` (not the `SHARD_COUNT` env var) since that
+      remediation is specifically the segment-dirs fan-in CLI path, not the
+      routed k8s topology. Added `routed_activation_shard_count(bool) ->
+      Result<Option<u32>>`, which folds the fan-in mutual-exclusion guard
+      (must be `Option::None` whenever `--search-shard-segment-dirs` is
+      non-empty) together with `routed_shard_count_from_env` into the one
+      activation condition `bin/lumen.rs`'s `serve()` gates the routed block
+      on, so the combined guarantee is directly unit-tested rather than only
+      inline control flow in `bin/lumen.rs`.
 ```

@@ -812,4 +812,71 @@ async fn late_write_to_moving_bucket_during_catching_up_survives_cutover_exactly
         assert!(!has_doc(&shard0.server, id).await);
     }
 }
+
+/// #1442 R2 regression: the write fence armed over `CatchingUp`'s moving
+/// buckets must still be armed immediately after `CompletedSplit` returns —
+/// clearing it right after `trigger_rolling_restart` reopens exactly the
+/// window the fence exists to close, since pods only read `SHARD_MAP_*` env
+/// at boot and a rolling restart takes real time to reach every pod. Proven
+/// behaviorally: a write landing directly on the (evicted) source shard for
+/// a bucket the just-completed split moved away must still be rejected
+/// (503 `bucket_write_paused`), not silently accepted, in the same tick
+/// `CompletedSplit` was returned from — before `WRITE_FENCE_TTL_SECS` or any
+/// later tick could have cleared it.
+#[tokio::test]
+async fn write_fence_stays_armed_immediately_after_completed_split() {
+    let shard0 = spin_up_shard();
+    let shard1 = spin_up_shard();
+    create_users_collection(&shard0.server).await;
+    create_users_collection(&shard1.server).await;
+
+    let ids: Vec<String> = (0..40).map(|i| format!("u-{i:03}")).collect();
+    for id in &ids {
+        index_user(&shard0.server, id).await;
+    }
+    let moving: Vec<&String> = ids.iter().filter(|id| bucket_of(id) < 4).collect();
+    assert!(!moving.is_empty());
+
+    let cluster = Arc::new(Mutex::new(initial_lumen(
+        Some(1_000_000_000),
+        Some("urgentThresholdCrossed"),
+    )));
+    let shard_urls = vec![shard0.base_url.clone(), shard1.base_url.clone()];
+    let http = reqwest::Client::new();
+    let control = FakeControl::new(cluster.clone(), shard_urls.clone());
+
+    // Drive all the way to the CatchingUp -> Complete tick that completes
+    // the split and triggers the rolling restart.
+    for _ in 0..3 {
+        let lumen = control.snapshot();
+        drive_tick(&control, &http, &lumen).await;
+    }
+    let lumen = control.snapshot();
+    let outcome = drive_tick(&control, &http, &lumen).await;
+    assert_eq!(outcome, DriveOutcome::CompletedSplit { new_map_version: 1 });
+    assert_eq!(control.restart_trigger_calls.load(Ordering::SeqCst), 1);
+
+    // A write for one of the moved buckets, landing directly on the source
+    // shard exactly as it would from a client reaching an old-map pod that
+    // hasn't been restarted yet, must still be paused by the write fence —
+    // not silently accepted onto a shard that no longer owns this bucket.
+    let moved_id = moving[0];
+    let resp = shard0
+        .server
+        .post("/collections/u/index")
+        .json(&json!({
+            "items": [{
+                "external_id": moved_id,
+                "field": "email",
+                "value": format!("{moved_id}@late.example"),
+            }]
+        }))
+        .await;
+    assert_eq!(
+        resp.status_code(),
+        503,
+        "write fence must still be armed immediately after CompletedSplit, got body: {:?}",
+        resp.text()
+    );
+}
 // CODEGEN-END
