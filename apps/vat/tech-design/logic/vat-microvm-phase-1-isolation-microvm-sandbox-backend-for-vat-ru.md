@@ -247,7 +247,6 @@ e2e_tests:
     assertions:
       - "AC1: vat compiles cleanly with the new Isolation::MicroVm variant, EnvSpec.microvm_image field, and sandbox/microvm.rs module."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
