@@ -68,36 +68,36 @@ changes:
 
 ```mermaid
 ---
-id: mamba-unbound-local-diagnostic-verification
+id: mamba-unbound-local-diagnostic-contract-verification
 requirements:
-  generated_prebind_message:
+  deferred_name_boundary:
+    id: R4
+    text: "A genuinely unresolved name remains a catchable NameError in the same regression fixture."
+    kind: regression
+    risk: medium
+    verify: conformance::_regression/core/scope_resolution/errors.py
+  generated_path:
     id: R2
-    text: "Generated function pre-bind checks emit the same pinned diagnostic instead of a divergent message literal."
+    text: "The generator pre-bind lowering emits the same centralized message rather than a local divergent literal."
     kind: regression
     risk: medium
     verify: lower::hir_to_mir::tests::generated_unbound_local_message_matches_runtime_helper
-  live_oracle_scope_fixture:
-    id: R3
-    text: "The scope-resolution regression fixture matches the live pinned oracle with its cache disabled."
-    kind: integration
-    risk: high
-    verify: conformance::_regression/core/scope_resolution/errors.py
-  nameerror_boundary:
-    id: R4
-    text: "The same fixture continues to report a catchable NameError for an unresolved non-local name, proving that this diagnostic-only slice does not change NameError routing."
-    kind: regression
-    risk: medium
-    verify: conformance::_regression/core/scope_resolution/errors.py
-  runtime_helper_message:
+  ordinary_helper:
     id: R1
-    text: "The ordinary function helper raises the UnboundLocalError subtype with the pinned CPython 3.12 local-variable-before-assignment message."
+    text: "mb_unbound_local_error_value raises the pinned CPython 3.12 UnboundLocalError message and retains NameError inheritance."
     kind: functional
     risk: high
     verify: runtime::exception::tests::unbound_local_error_matches_pinned_cpython_message
+  scope_oracle:
+    id: R3
+    text: "The scope-resolution regression fixture matches the pinned live oracle when the cache is disabled."
+    kind: integration
+    risk: high
+    verify: conformance::_regression/core/scope_resolution/errors.py
 ---
 flowchart TD
-    r1[R1 runtime helper message] --> runtime_exception_tests_unbound_local_error_matches_pinned_cpython_message[runtime::exception::tests::unbound_local_error_matches_pinned_cpython_message]
-    r2[R2 generated prebind message] --> lower_hir_to_mir_tests_generated_unbound_local_message_matches_runtime_helper[lower::hir_to_mir::tests::generated_unbound_local_message_matches_runtime_helper]
-    r3[R3 live oracle scope fixture] --> conformance_regression_core_scope_resolution_errors_py[conformance::_regression/core/scope_resolution/errors.py]
-    r4[R4 nameerror boundary] --> conformance_regression_core_scope_resolution_errors_py
+    r1[R1 ordinary helper] --> runtime_exception_tests_unbound_local_error_matches_pinned_cpython_message[runtime::exception::tests::unbound_local_error_matches_pinned_cpython_message]
+    r2[R2 generated path] --> lower_hir_to_mir_tests_generated_unbound_local_message_matches_runtime_helper[lower::hir_to_mir::tests::generated_unbound_local_message_matches_runtime_helper]
+    r3[R3 scope oracle] --> conformance_regression_core_scope_resolution_errors_py[conformance::_regression/core/scope_resolution/errors.py]
+    r4[R4 deferred name boundary] --> conformance_regression_core_scope_resolution_errors_py
 ```
