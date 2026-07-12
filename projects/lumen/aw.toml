@@ -31,7 +31,7 @@ generated_from_td_digest = "sha256:5b27bcb24cfbc31a02ee0ca75d1262b6971dd8b2c668b
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-agent-llm-topics"
-capability_id = "agent-offline-integration"
+capability_id = "developer-agent-experience"
 claim_id = "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
 contract_id = "agent-llm-topics"
 category = "behavior"
@@ -43,7 +43,7 @@ assertions = ["The offline LLM outline, workflow, integration, quickstart, and r
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-agent-offline-spec"
-capability_id = "agent-offline-integration"
+capability_id = "developer-agent-experience"
 claim_id = "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
 contract_id = "agent-offline-spec"
 category = "behavior"
@@ -55,7 +55,7 @@ assertions = ["Offline schema commands produce valid OpenAPI JSON/YAML and JSON-
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-agent-query-catalog"
-capability_id = "agent-offline-integration"
+capability_id = "developer-agent-experience"
 claim_id = "query-shape-cookbook-field-analyzer-catalog"
 contract_id = "agent-query-catalog"
 category = "behavior"

@@ -7,7 +7,7 @@ summary: >
   OpenAPI/schema comments and offline LLM/spec cookbook text so agents no longer
   see the old restrictions.
 capability_refs:
-  - id: "agent-offline-integration"
+  - id: "developer-agent-experience"
     role: primary
     claim: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
     coverage: partial

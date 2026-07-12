@@ -74,7 +74,7 @@ agent integration remain first-class domain roots.
 | Replica Sync & Bootstrap | 1181 | implemented | passing | conformance | ready | domain: raft replica sync semantics plus empty-PVC snapshot/object seed before raft catch-up |
 | Observability | - | implemented | verified | conformance | ready | domain: Prometheus metrics, ServiceMonitor/alerts, and opt-in OTLP |
 | Kubernetes-Native Deployment | - | implemented | verified | dogfood | ready | domain: kustomize manifests, Lumen CRD, and kube-rs operator |
-| Agent Offline Integration | 4143 | implemented | verified | conformance | ready | domain: installed binary self-onboards agents with spec and llm topics |
+| Developer & Agent Experience | 4143 | implemented | verified | conformance | ready | domain: installed binary teaches offline (spec/llm topics, committed OpenAPI contract) and interactive (connect/query) integration, with client-visible contracts test-asserted against drift |
 
 ### CLI Interface
 
@@ -249,7 +249,7 @@ Gate Inventory:
 
 ID: http2-api-list
 Type: Service
-Surfaces: HTTP: `POST /index`, `POST /search`, `QUERY /collections/{id}` and `QUERY /collections` (RFC 10008 twins of `POST .../search` and `POST /collections:search`), collection/schema/stats/reindex/replay routes, `POST /admin/reshard:apply`, `POST /admin/backup:scoped`, `POST /admin/reshard:evict`, `POST /admin/checkpoint`, `/openapi.json`, `/healthz`, `/readyz`, `/metrics` - concise HTTP/2 API list for clients and operators.; CLI: `lumen spec` and `lumen spec --format openapi-yaml` - offline API/schema inventory.
+Surfaces: HTTP: `POST /index`, `POST /search`, `QUERY /collections/{id}` and `QUERY /collections` (RFC 10008 twins of `POST .../search` and `POST /collections:search`), collection/schema/stats/reindex/replay routes, `POST /admin/reshard:apply`, `POST /admin/backup:scoped`, `POST /admin/reshard:evict`, `POST /admin/reshard:fence`, `POST /admin/reshard:prune`, `POST /admin/checkpoint`, `/openapi.json`, `/healthz`, `/readyz`, `/metrics` - concise HTTP/2 API list for clients and operators.; CLI: `lumen spec` and `lumen spec --format openapi-yaml` - offline API/schema inventory.
 EC Dimensions: behavior: `cargo test -p lumen --test spec_cli` - offline API/schema inventory; behavior: named `api_e2e` subtests - served OpenAPI, health, readiness, and metrics smoke; behavior: `cargo test -p lumen --test reshard_admin_e2e` - reshard admin verb conformance
 Root WI: 4143
 Status: verified
@@ -616,27 +616,39 @@ Gate Inventory:
 | single-member-durable-persistence-render | change | 1387 | implemented | passing | dogfood | projects/lumen/src/operator/render.rs (live kind pod-delete-and-recreate proof) |
 | topology-transition-hpa-handoff-deletion | change | 1385 | implemented | passing | dogfood | projects/lumen/src/operator (live kind proof: stale single-member HPA deleted on split) |
 
-### Agent Offline Integration
+### Developer & Agent Experience
 
-ID: agent-offline-integration
+ID: developer-agent-experience
 Type: AgentFirst
-Surfaces: CLI: `lumen spec` + `lumen spec --format openapi-yaml` + `lumen llm --topic outline` + `lumen llm --topic workflow` + `lumen llm --topic integration` + `lumen llm --topic quickstart` + `lumen llm --topic recipes` - offline self-description and agent onboarding commands.
-EC Dimensions: behavior: `cargo test -p lumen --test spec_cli` - offline schema and LLM topic conformance
+Surfaces: CLI: `lumen spec` + `lumen spec --format openapi-yaml` + `lumen llm --topic outline` + `lumen llm --topic workflow` + `lumen llm --topic integration` + `lumen llm --topic quickstart` + `lumen llm --topic recipes` + `lumen llm --topic storage` + `lumen llm --topic deployment` + `lumen connect` + `lumen query` - offline self-description, agent onboarding, and interactive CLI commands.; Artifact: `clients/openapi.json` - committed OpenAPI contract regenerated from and byte-diff-enforced against the live document.
+EC Dimensions: behavior: `cargo test -p lumen --test spec_cli` - offline schema, LLM topic, committed-contract-freshness, and client-integration-contract-disclosure conformance
 Root WI: 4143
 Status: verified
 Required Verification: conformance
 Promise:
-An installed `lumen` binary self-onboards an agent offline: `lumen spec` emits
-machine schemas and query catalogs, while `lumen llm --topic <topic>` emits
-workflow, integration, quickstart, recipes, and non-goal topics.
+An installed `lumen` binary does not just expose its surface — it teaches an
+agent or operator how to use it, offline and interactively, and its
+contracts cannot silently lag what is actually shipped. `lumen spec` emits
+machine schemas and query catalogs whose committed `clients/openapi.json`
+snapshot is byte-diff-enforced against the live document; `lumen llm --topic
+<topic>` emits workflow, integration, quickstart, recipes, storage, and
+deployment topics, including the full admin-verb and client-visible
+retry/rejection contract; `lumen connect` and `lumen query` give an
+interactive CLI onto a running instance without hand-built HTTP calls; and
+client-visible integration semantics (routed-mode retry codes, read
+consistency, bounded staleness, the reshard write-fence 503 contract) are
+disclosed alongside the surface they describe and test-asserted so they
+cannot regress silently.
 Gate Inventory:
-- projects/lumen/tests/spec_cli.rs; projects/lumen/src/spec.rs
+- projects/lumen/tests/spec_cli.rs; projects/lumen/src/spec.rs; projects/lumen/clients/openapi.json; projects/lumen/src/bin/lumen.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| lumen-spec-schema-openapi-json-yaml-json-schema-offline | epic | - | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
-| query-shape-cookbook-field-analyzer-catalog | epic | - | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
-| lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
+| lumen-spec-schema-openapi-json-yaml-json-schema-offline | epic | - | implemented | passing | conformance | sub-domain: offline-contract; projects/lumen/tests/spec_cli.rs<br>projects/lumen/clients/openapi.json |
+| query-shape-cookbook-field-analyzer-catalog | epic | - | implemented | passing | conformance | sub-domain: offline-contract; projects/lumen/tests/spec_cli.rs |
+| lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes | epic | 4143 | implemented | passing | conformance | sub-domain: agent-onboarding; projects/lumen/tests/spec_cli.rs |
+| interactive-tooling | epic | - | implemented | passing | conformance | sub-domain: interactive-tooling; projects/lumen/src/bin/lumen.rs (`lumen connect`, `lumen query`) |
+| integration-contract | epic | 1480 | implemented | passing | conformance | sub-domain: integration-contract; projects/lumen/tests/spec_cli.rs (routed-mode retry contract, read consistency, reshard admin verbs incl. `reshard:fence`) |
 
 ## Benchmarks
 
@@ -1080,6 +1092,8 @@ POST /admin/backup/local                          # snapshot → LocalFsSink (pa
 POST /admin/backup:scoped                         # SnapshotV1 restricted to a set of virtual buckets
 POST /admin/reshard:apply                         # additively merge one ReshardBatch into live state
 POST /admin/reshard:evict                         # remove docs no longer owned under a newer shard map
+POST /admin/reshard:fence                         # arm/clear a bounded write pause on a set of buckets
+POST /admin/reshard:prune                         # accumulate + prune the final migration pass's keep set
 POST /admin/checkpoint                            # force a synchronous full-state durability checkpoint
 GET  /debug/cluster                               # pod/shard/role/peers/replication-lag
 GET  /metrics                                     # Prometheus text format
@@ -1089,18 +1103,27 @@ GET  /openapi.json                                # live OpenAPI spec
 GET  /docs                                        # Swagger UI (interactive "Try it out")
 ```
 
-`backup:scoped` / `reshard:apply` / `reshard:evict` are the operator-driven
-reshard data-plane verbs: `backup:scoped` exports only the documents routed
-to a requested set of virtual buckets (the same hash the engine's own routing
-uses), `reshard:apply` idempotently upserts one such export's batch into a
-target shard, and `reshard:evict` removes exactly the documents a supplied
-newer virtual-bucket map no longer routes to that shard. All three are
-`Role::Admin`-gated and idempotent on retry. `reshard:apply`/`reshard:evict`
-mutate engine state directly, bypassing the normal WriteCoordinator/AOF write
-path, so the reshard driver calls `POST /admin/checkpoint` — a synchronous
-full-state segment checkpoint returning `{"persisted": bool}` — on every
-touched shard before cutover, making the migration durable ahead of the
-rolling-restart that flips the live shard map.
+`backup:scoped` / `reshard:apply` / `reshard:evict` / `reshard:fence` /
+`reshard:prune` are the operator-driven reshard data-plane verbs:
+`backup:scoped` exports only the documents routed to a requested set of
+virtual buckets (the same hash the engine's own routing uses),
+`reshard:apply` idempotently upserts one such export's batch into a target
+shard, `reshard:evict` removes exactly the documents a supplied newer
+virtual-bucket map no longer routes to that shard, `reshard:fence` arms or
+clears a bounded (default 300s, max 3600s) write pause on a set of buckets
+so a write mid-cutover is rejected with a retryable `503
+bucket_write_paused` instead of racing the map change, and `reshard:prune`
+accumulates a final migration pass's authoritative per-bucket "keep" id set
+and prunes anything absent from it once complete. All five are
+`Role::Admin`-gated and idempotent on retry; `reshard:fence` is
+driver-owned (`operator::reshard_driver::advance_catching_up`) — manual use
+outside driver-orchestrated cutover risks a real write outage.
+`reshard:apply`/`reshard:evict` mutate engine state directly, bypassing the
+normal WriteCoordinator/AOF write path, so the reshard driver calls `POST
+/admin/checkpoint` — a synchronous full-state segment checkpoint returning
+`{"persisted": bool}` — on every touched shard before cutover, making the
+migration durable ahead of the rolling-restart that flips the live shard
+map.
 
 ### Stats
 
