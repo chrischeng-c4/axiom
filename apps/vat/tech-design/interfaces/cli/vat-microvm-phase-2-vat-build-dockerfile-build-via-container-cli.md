@@ -167,7 +167,6 @@ flowchart TD
     ac3[AC3 missing dockerfile clean error] --> vat_build_build_fails_missing_dockerfile[vat_build::build_fails_missing_dockerfile]
     r4[R4 system started bounded timeout] --> sandbox_microvm_tests_ensure_system_started_times_out_when_unavailable[sandbox::microvm::tests::ensure_system_started_times_out_when_unavailable]
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
