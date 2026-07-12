@@ -139,3 +139,35 @@ commands:
     behavior:
       - "Not modified by this WI: no changes to Isolation::MicroVm's resolve() argv shape, pick()'s fail-closed branch, capabilities.rs, or doctor.rs. `container build` reuses the same `container` CLI presence check family (sandbox::microvm::available()) but is otherwise independent of the `vat run` code path."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: vat-microvm-phase-2-vat-build-dockerfile-build-via-container-cli-verification
+requirements:
+  argv_exact_shape:
+    id: R2
+    text: "container_build_command builds the exact argv order: [\"container\",\"build\",\"-f\",<dockerfile>,\"-t\",<tag>,\"--build-arg\",\"K=V\",... (one pair per repeated --build-arg flag, in CLI-supplied order), <context>] — matching the real invocation Phase 0 verified (AC2)."
+    kind: functional
+    risk: high
+    verify: commands::build::tests::container_build_command_shape
+  missing_dockerfile_clean_error:
+    id: AC3
+    text: "build_image (via exec) fails cleanly with a clear error and no subprocess spawned when the Dockerfile path does not exist; runs unconditionally with no container CLI required."
+    kind: functional
+    risk: high
+    verify: vat_build::build_fails_missing_dockerfile
+  system_started_bounded_timeout:
+    id: R4
+    text: "sandbox::microvm::ensure_system_started(timeout) returns Err once the bounded timeout elapses when the container system never reports up — deterministic on every host (including ones without the container CLI installed, since system_up() simply returns false), never hangs indefinitely."
+    kind: regression
+    risk: medium
+    verify: sandbox::microvm::tests::ensure_system_started_times_out_when_unavailable
+---
+flowchart TD
+    r2[R2 argv exact shape] --> commands_build_tests_container_build_command_shape[commands::build::tests::container_build_command_shape]
+    ac3[AC3 missing dockerfile clean error] --> vat_build_build_fails_missing_dockerfile[vat_build::build_fails_missing_dockerfile]
+    r4[R4 system started bounded timeout] --> sandbox_microvm_tests_ensure_system_started_times_out_when_unavailable[sandbox::microvm::tests::ensure_system_started_times_out_when_unavailable]
+```
