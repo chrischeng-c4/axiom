@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-09T15:41:17.193837+00:00"
-digest = "sha256:d8759dd654a8423255160888f6a58eb4f6335ba834606ccc479371d6763a1ead"
-source_digest = "sha256:d8759dd654a8423255160888f6a58eb4f6335ba834606ccc479371d6763a1ead"
-ir_digest = "sha256:759ca7369223801c3e0f7f17021d358af60f4fa55640f32b0de9a18e5ba36ae3"
+generated_at = "2026-07-12T16:31:29.766794+00:00"
+digest = "sha256:78cc9a757ae0f1466492414f992fb88a050b11be4dbccfd99ddf6ba7ceb1c13f"
+source_digest = "sha256:78cc9a757ae0f1466492414f992fb88a050b11be4dbccfd99ddf6ba7ceb1c13f"
+ir_digest = "sha256:d65b28b760b1756b244a8ffb752669976a89e5b4be12efa42971f8d5c7252a10"
 
 [[files]]
 path = "README.md"
@@ -132,3 +132,9 @@ path = "semantic/tape-install-script.md"
 digest = "sha256:4212305a743b209d7977347730c010de5a3c6c7cb8850f9ea5098fa146e057d2"
 ir_digest = "sha256:a17e69751a12aaafa6775f753a194fcde6acfa0f827ae5f845e840d88a1c3e47"
 section_count = 3
+
+[[files]]
+path = "validate/real-kafka-calibrated-performance-benchmark-kraft-docker-mirrors.md"
+digest = "sha256:5711a93159395b35e7cfa561057155e298a473648827673ac460f6cc2716819f"
+ir_digest = "sha256:e8d92552f7f529071f9f78eecbb29068396f9b887f6991a5da9e05ca2c2c705b"
+section_count = 1
