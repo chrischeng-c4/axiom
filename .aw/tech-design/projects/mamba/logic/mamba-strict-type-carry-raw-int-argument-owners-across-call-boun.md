@@ -9,32 +9,35 @@ fill_sections: [logic, unit-test]
 
 ```mermaid
 ---
-id: mamba-strict-type-argument-owner-frame
-entry: call_with_typed_int_argument
+id: mamba-strict-type-argument-owner-frame-contract
+entry: prepare_argument_owner_frame
 nodes:
-  caller: { kind: start, label: "typed Int caller" }
-  prepare: { kind: process, label: "prepare frame with data and explicit owner" }
-  invoke: { kind: process, label: "enter callee ABI" }
-  consume: { kind: process, label: "match and consume frame before user code" }
-  cleanup: { kind: process, label: "close consumed or abandoned frame" }
-  done: { kind: terminal, label: "nested-call-safe owner state" }
+  caller_owner: { kind: start, label: "caller companion owner" }
+  frame_borrow: { kind: process, label: "borrow explicit owner into LIFO frame" }
+  matching_entry: { kind: decision, label: "top frame matches argument values and arity" }
+  callee_retain: { kind: process, label: "retain matching owner for callee companion" }
+  ownerless: { kind: process, label: "install None" }
+  close: { kind: terminal, label: "drop frame without payload inference" }
 edges:
-  - { from: caller, to: prepare }
-  - { from: prepare, to: invoke }
-  - { from: invoke, to: consume }
-  - { from: consume, to: cleanup }
-  - { from: cleanup, to: done }
+  - { from: caller_owner, to: frame_borrow }
+  - { from: frame_borrow, to: matching_entry }
+  - { from: matching_entry, to: callee_retain, label: match }
+  - { from: matching_entry, to: ownerless, label: mismatch or raw }
+  - { from: callee_retain, to: close }
+  - { from: ownerless, to: close }
 ---
 flowchart TD
-    caller([typed Int caller]) --> prepare[prepare data plus explicit owner frame]
-    prepare --> invoke[enter callee ABI]
-    invoke --> consume[match and consume before user code]
-    consume --> cleanup[close consumed or abandoned frame]
-    cleanup --> done([nested-call-safe owner state])
+    caller([caller companion owner]) --> frame[borrow explicit owner into LIFO frame]
+    frame --> match{top frame matches values and arity}
+    match -->|match| retain[retain owner for callee companion]
+    match -->|mismatch or raw| none[install None]
+    retain --> close([drop frame without payload inference])
+    none --> close
 ```
 
-A thread-local LIFO frame stack carries only explicit companion provenance for raw-or-boxed Int arguments. Every static or dynamic caller evaluates data and its companion owner before pushing one uniquely identified frame. Callee entry consumes the matching top frame by argument index and exact data value before trace, profiling, argument adaptation, or user code can re-enter. It installs a retained borrowed companion for a matching BigInt and `None` for raw/collision/missing values. Return, error, arity mismatch, unsupported target, and worker teardown discard only their own remaining frame, preserving any outer recursive frame. Dynamic and `asyncio.to_thread` paths serialize the same explicit slots through their call specs and install them only around the target invocation.
+The frame slot is `{ value_bits, owner_or_none }`, where `owner_or_none` is copied only from an existing companion slot; the frame never classifies payload bits. Pushing a frame borrows the caller companion and does not change its retain count. A matching callee entry retains that explicit owner once while installing its own companion; caller and callee cleanup then each release only their own companion. Any mismatch, absent frame, raw collision, or malformed slot installs `None` and closes the top frame without fallback inference. Each push receives a monotonically unique identity and an RAII cleanup guard so nested, recursive, exceptional, and reentrant calls cannot consume or discard an outer frame.
 
+The ABI remains data-only. The call trampoline must prepare the frame before invoking the callee and callee entry must consume it before profiling, tracing, argument adaptation, or user code. Dynamic and worker-thread routes carry the same explicit slot values; worker installation is scoped to the one target invocation and removes the frame even when it fails.
 ## Changes
 <!-- type: changes lang: yaml -->
 
