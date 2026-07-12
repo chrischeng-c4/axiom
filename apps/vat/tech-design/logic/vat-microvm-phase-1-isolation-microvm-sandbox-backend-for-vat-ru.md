@@ -135,3 +135,84 @@ commands:
     behavior:
       - "`check_network_isolation()` adds `\"vm\"` to its existing OR condition (R6), so a MicroVm-isolated run is recognized as network-isolation-capable on hosts where the `container` CLI is available, consistent with how `seatbelt` is already recognized."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: vat-microvm-phase-1-isolation-microvm-sandbox-backend-for-vat-ru-verification
+requirements:
+  argv_deny_egress_network_none:
+    id: R4
+    text: "EgressPolicy::Deny produces argv containing `--network none`, blocking all outbound network from the microVM (AC2)."
+    kind: functional
+    risk: high
+    verify: sandbox::microvm::tests::resolve_deny_egress_sets_network_none
+  argv_env_deterministic_ordering:
+    id: R2
+    text: "resolve()'s `-e K=V` flags are emitted in deterministic BTreeMap key order (not HashMap iteration order), so the same EnvSpec.env always produces byte-identical argv across runs (AC2)."
+    kind: functional
+    risk: high
+    verify: sandbox::microvm::tests::resolve_env_flags_are_btreemap_ordered
+  argv_open_egress_no_network_flag:
+    id: R3
+    text: "EgressPolicy::Open produces argv with no `--network` flag at all (container's default network, unrestricted) (AC2)."
+    kind: functional
+    risk: medium
+    verify: sandbox::microvm::tests::resolve_open_egress_omits_network_flag
+  argv_rootfs_workdir_shape:
+    id: R1
+    text: "MicroVmBackend::resolve(rootfs, cmd) builds argv beginning `run --rm -v <rootfs>:/workspace -w /workspace/<workdir>` — rootfs bind-mounted at /workspace, working directory nested under it exactly as configured (AC2)."
+    kind: functional
+    risk: high
+    verify: sandbox::microvm::tests::resolve_builds_rootfs_mount_and_workdir
+  argv_tail_ordering:
+    id: R5
+    text: "argv's tail is ordered image, then program, then args — `... <image> <program> <args...>` — exactly once, after all `run`/mount/workdir/env/network flags (AC2)."
+    kind: functional
+    risk: medium
+    verify: sandbox::microvm::tests::resolve_argv_tail_is_image_then_program_then_args
+  pick_rejects_container_unavailable:
+    id: R9
+    text: "sandbox::pick(spec) returns a hard Err when isolation=MicroVm and microvm::available() is false (container CLI not on PATH) (R3/AC3)."
+    kind: functional
+    risk: medium
+    verify: vat_sandbox_microvm_fail_closed::container_unavailable_rejected
+  pick_rejects_gpu_required:
+    id: R6
+    text: "sandbox::pick(spec) returns a hard Err (not a Box<dyn Sandbox>) when isolation=MicroVm and gpu=GpuRequest::Required — GPU passthrough is categorically impossible in an Apple Silicon microVM (R3/AC3)."
+    kind: functional
+    risk: high
+    verify: vat_sandbox_microvm_fail_closed::gpu_required_rejected
+  pick_rejects_localhost_only_with_gateway_reasoning:
+    id: R8
+    text: "sandbox::pick(spec) returns a hard Err when isolation=MicroVm and egress=EgressPolicy::LocalhostOnly, and the error text states guest 127.0.0.1 never reaches the host and the host is only reachable via a per-network container VM gateway IP that ordinary applications do not know to target — confirmed by the Phase 0 spike #1472, not a generic 'no bridge exists' message (R3/AC3)."
+    kind: regression
+    risk: high
+    verify: vat_sandbox_microvm_fail_closed::localhost_only_rejected_with_gateway_reasoning
+  pick_rejects_missing_image:
+    id: R7
+    text: "sandbox::pick(spec) returns a hard Err when isolation=MicroVm and spec.microvm_image is None — vat never guesses a base image (R3/AC3)."
+    kind: functional
+    risk: high
+    verify: vat_sandbox_microvm_fail_closed::missing_image_rejected
+  run_preflight_rejects_microvm_gpu_required_before_clone:
+    id: R10
+    text: "The shared gpu_satisfied(gpu, isolation, info) helper in run.rs rejects `--isolation micro_vm --gpu required` at all three GpuRequest::Required call sites BEFORE any workspace clone begins — this is a second, independent fail-closed layer alongside pick()'s own rejection (R6), not a substitute for it (R4/AC4, dual-defense per #1300 precedent)."
+    kind: regression
+    risk: high
+    verify: commands::run::tests::gpu_satisfied_rejects_microvm_required_before_workspace_clone
+---
+flowchart TD
+    r1[R1 argv rootfs workdir shape] --> sandbox_microvm_tests_resolve_builds_rootfs_mount_and_workdir[sandbox::microvm::tests::resolve_builds_rootfs_mount_and_workdir]
+    r2[R2 argv env deterministic ordering] --> sandbox_microvm_tests_resolve_env_flags_are_btreemap_ordered[sandbox::microvm::tests::resolve_env_flags_are_btreemap_ordered]
+    r3[R3 argv open egress no network flag] --> sandbox_microvm_tests_resolve_open_egress_omits_network_flag[sandbox::microvm::tests::resolve_open_egress_omits_network_flag]
+    r4[R4 argv deny egress network none] --> sandbox_microvm_tests_resolve_deny_egress_sets_network_none[sandbox::microvm::tests::resolve_deny_egress_sets_network_none]
+    r5[R5 argv tail ordering] --> sandbox_microvm_tests_resolve_argv_tail_is_image_then_program_then_args[sandbox::microvm::tests::resolve_argv_tail_is_image_then_program_then_args]
+    r6[R6 pick rejects gpu required] --> vat_sandbox_microvm_fail_closed_gpu_required_rejected[vat_sandbox_microvm_fail_closed::gpu_required_rejected]
+    r7[R7 pick rejects missing image] --> vat_sandbox_microvm_fail_closed_missing_image_rejected[vat_sandbox_microvm_fail_closed::missing_image_rejected]
+    r8[R8 pick rejects localhost only with gateway reasoning] --> vat_sandbox_microvm_fail_closed_localhost_only_rejected_with_gateway_reasoning[vat_sandbox_microvm_fail_closed::localhost_only_rejected_with_gateway_reasoning]
+    r9[R9 pick rejects container unavailable] --> vat_sandbox_microvm_fail_closed_container_unavailable_rejected[vat_sandbox_microvm_fail_closed::container_unavailable_rejected]
+    r10[R10 run preflight rejects microvm gpu required before clone] --> commands_run_tests_gpu_satisfied_rejects_microvm_required_before_workspace_clone[commands::run::tests::gpu_satisfied_rejects_microvm_required_before_workspace_clone]
+```
