@@ -132,7 +132,6 @@ commands:
     behavior:
       - "`check_network_isolation()` adds `\"vm\"` to its existing OR condition (R6), so a MicroVm-isolated run is recognized as network-isolation-capable on hosts where the `container` CLI is available, consistent with how `seatbelt` is already recognized."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
