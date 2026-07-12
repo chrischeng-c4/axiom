@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/mamba"
-generated_at = "2026-07-12T14:21:35.953971+00:00"
-digest = "sha256:211c9da5e241394b3f544f7fb702206a6325bc175a647b89881813390611846d"
-source_digest = "sha256:211c9da5e241394b3f544f7fb702206a6325bc175a647b89881813390611846d"
-ir_digest = "sha256:b6569de098e5a0299e111dd8f8341dba66f97216c35645519bfeb3564febdafa"
+generated_at = "2026-07-12T14:54:15.572836+00:00"
+digest = "sha256:6fb3aa9f0b9c80e3063bb7ff2b00ea22b7db92549ff0e864d5bbdbc24582a0ec"
+source_digest = "sha256:6fb3aa9f0b9c80e3063bb7ff2b00ea22b7db92549ff0e864d5bbdbc24582a0ec"
+ir_digest = "sha256:0df1ca5e91884af4d279657fafe9d94f6dbd4e57006e45c6a85719790e34d746"
 
 [[files]]
 path = "README.md"
@@ -83,6 +83,12 @@ section_count = 3
 path = "logic/mamba-language-core-match-pinned-unboundlocalerror-diagnostics.md"
 digest = "sha256:75f317ffbb526fc2ac07085f3ae90eb1087e649b8ef4b61da66e842d1b7fb608"
 ir_digest = "sha256:6c27e4e10521f7638f4ec32a12ba404c60260e7c7f1414d4474b27d0671fc407"
+section_count = 3
+
+[[files]]
+path = "logic/mamba-language-core-restore-nested-sibling-mutual-recursion.md"
+digest = "sha256:109fd1ccaf4ddb36e07f18fadfd8e0992ca55579a4781d3094ba596036a75c9b"
+ir_digest = "sha256:0f0e553003e6d54dd69a719b74cf2c5c1b610d553fd5a1fb2537387f8dc66930"
 section_count = 3
 
 [[files]]
