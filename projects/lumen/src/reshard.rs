@@ -11,9 +11,33 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{bail, Result};
+use serde::{Deserialize, Serialize};
 
 use crate::routing::VirtualBucketShardMap;
 use crate::storage::{CollectionSnapshot, FieldIndexSnapshot, SnapshotV1};
+
+/// The hard body-size limit `POST /admin/reshard:apply` (and every other
+/// admin route) enforces at the HTTP layer — `api.rs`'s
+/// `DefaultBodyLimit::max(..)` is built from this exact constant (#1444 R2),
+/// so the two can never drift apart: a batch this crate computes as
+/// "under the limit" is always actually under the limit the route enforces,
+/// and [`crate::operator::reshard_driver`]'s oversize-wedge detection
+/// compares a batch's real wire size against this same number rather than a
+/// second, hand-copied literal.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
+pub const ADMIN_ROUTE_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
+
+/// Upper bound on one batch's serialized `snapshot` payload (#1396 R4):
+/// [`ADMIN_ROUTE_BODY_LIMIT_BYTES`] is the route's hard 413 cutoff, but
+/// [`snapshot_reshard_batches`] used to cap batches only by external-id count
+/// (`MAX_EXTERNAL_IDS_PER_BATCH`-style caller constants) — a bucket of large
+/// documents (long text fields, vectors, hashes) can still serialize well
+/// past the route limit even at a small id count, and a 413 from an
+/// oversized batch is deterministically recomputed identically every driver
+/// tick, wedging the split forever (the confirmed defect). Half the route
+/// limit leaves comfortable headroom for JSON/wire overhead and per-item
+/// framing above the raw snapshot bytes measured here.
+pub const MAX_BATCH_BYTES: usize = ADMIN_ROUTE_BODY_LIMIT_BYTES / 2;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
@@ -23,7 +47,23 @@ pub struct BucketMove {
     pub to_shard: u32,
 }
 
-#[derive(Clone, Debug)]
+/// #1380: `Serialize`/`Deserialize` make a batch postable to `POST
+/// /admin/reshard:apply` as-is — the wire payload for the admin apply verb
+/// is this struct's exact JSON shape, no separate DTO.
+///
+/// #1457 R1: `ReshardBatch` is now purely additive — it used to also carry
+/// an authoritative `replace_ids`/`virtual_bucket_count` pair for the final
+/// migration pass (#1443 R2), but stamping the *complete* id set onto every
+/// byte-capped chunk of a bucket made the final pass's wire size scale with
+/// total bucket population rather than the chunk's own content, so a bucket
+/// whose id set alone serialized past the byte cap produced chunks over the
+/// route's hard body limit no matter how small `snapshot`/`external_ids`
+/// were — and [`crate::operator::reshard_driver::detect_oversized_batch`]
+/// wrongly blamed whichever document happened to be first in the chunk. The
+/// authoritative-replace concern moved to its own dedicated, independently
+/// chunked message: [`ReshardPruneChunk`] /
+/// [`snapshot_reshard_prune_chunks`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
 pub struct ReshardBatch {
     pub from_map_version: u64,
@@ -33,6 +73,69 @@ pub struct ReshardBatch {
     pub to_shard: u32,
     pub external_ids: BTreeMap<String, BTreeSet<String>>,
     pub snapshot: SnapshotV1,
+}
+
+/// #1443 R2 / #1457 R1: the authoritative-subset-replace scope one applying
+/// shard must enforce for a `bucket`+collection, derived from one or more
+/// [`ReshardPruneChunk`]s sharing the same `(to_map_version, bucket,
+/// collection_id, total_chunks)` key once every chunk has been received
+/// (see [`crate::storage::Engine::apply_reshard_prune_chunk`]'s receiver-side
+/// accumulator). Applying this scope after a batch's additive merge closes
+/// the delete-resurrection gap #1443 found: a document deleted on the source
+/// during the split is absent from the final pass's authoritative id set and
+/// is pruned from the target rather than surviving only because an earlier,
+/// now-stale copy landed on the target from a prior additive pass.
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
+pub struct ReshardBatchReplaceScope {
+    pub bucket: u32,
+    pub virtual_bucket_count: u32,
+    pub replace_ids: BTreeMap<String, BTreeSet<String>>,
+}
+
+/// #1457 R1: one byte-capped chunk of the authoritative "keep" id set for a
+/// single `(bucket, collection_id)` pair under the final migration pass's
+/// `to` map. Unlike [`ReshardBatch`] (purely additive, chunked by
+/// `max_external_ids_per_batch`/[`MAX_BATCH_BYTES`] with no cross-chunk
+/// coupling), every chunk of one `(bucket, collection_id)`'s keep set shares
+/// the same `to_map_version`/`bucket`/`collection_id`/`total_chunks` and
+/// carries only its own slice of `keep_ids` — the receiver
+/// ([`crate::storage::Engine::apply_reshard_prune_chunk`]) accumulates
+/// chunks by that key and prunes only once every `chunk_index` in
+/// `0..total_chunks` has arrived, so re-sending any subset (413 retry) or
+/// all chunks (whole-pass retry after a driver restart) converges to the
+/// same pruned result rather than pruning against a partial, still-assembling
+/// keep set. `keep_ids` may be empty — every moved bucket emits a chunk for
+/// every collection that exists on the source shard, even one a batch of
+/// deletes emptied entirely (#1457 R2 / #1443's disclosed edge), so the
+/// bucket's copies of that collection are still pruned on cutover.
+///
+/// #1467 R2 ordering contract: the sender
+/// (`run_migration_pass_impl`/`snapshot_reshard_prune_chunks` in
+/// `src/operator/reshard_driver.rs`) always emits every chunk for one
+/// `(bucket, collection_id, total_chunks)` key strictly in `chunk_index`
+/// order (`0..total_chunks`, awaited sequentially, one HTTP round trip per
+/// chunk) within a single migration pass, and never starts a second pass
+/// for the same key before the first either completes or the driver gives
+/// up on it entirely. The receiver relies on this: `chunk_index == 0`
+/// unambiguously marks the start of a fresh pass and resets any stale
+/// partial left by an earlier, never-completed pass for the same key
+/// instead of unioning into it (see
+/// [`crate::storage::Engine::apply_reshard_prune_chunk`]'s R2 doc comment).
+/// If a future sender ever needs to send chunks for one key out of order or
+/// interleaved across concurrent passes, this ordering contract — and the
+/// receiver's chunk-0 reset — must change together (e.g. to a per-pass
+/// nonce field on this struct).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
+pub struct ReshardPruneChunk {
+    pub to_map_version: u64,
+    pub bucket: u32,
+    pub virtual_bucket_count: u32,
+    pub collection_id: String,
+    pub chunk_index: u32,
+    pub total_chunks: u32,
+    pub keep_ids: BTreeSet<String>,
 }
 
 /// Return the virtual buckets whose physical owner changes between two map
@@ -70,10 +173,16 @@ pub fn bucket_moves(
     Ok(moves)
 }
 
-/// Build bounded snapshot batches for documents that move under `to`.
-/// Batches are grouped by `(bucket, from_shard, to_shard)` and capped by
-/// `max_external_ids_per_batch`, so an operator can checkpoint progress after
-/// every emitted batch instead of blocking on one full-shard copy.
+/// Build bounded, purely-additive snapshot batches for documents that move
+/// under `to`. Batches are grouped by `(bucket, from_shard, to_shard)` and
+/// capped by `max_external_ids_per_batch`/[`MAX_BATCH_BYTES`], so an
+/// operator can checkpoint progress after every emitted batch instead of
+/// blocking on one full-shard copy.
+///
+/// #1457 R1: every pass — including the reshard driver's final `CatchingUp`
+/// pass, run under the write fence — uses this purely-additive form. The
+/// final pass's authoritative prune scope is now a separate, independently
+/// byte-capped message: see [`snapshot_reshard_prune_chunks`].
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
 pub fn snapshot_reshard_batches(
     snapshot: &SnapshotV1,
@@ -130,21 +239,157 @@ pub fn snapshot_reshard_batches(
         pending.sort();
 
         for chunk in pending.chunks(max_external_ids_per_batch) {
-            let external_ids = ids_map_from_pairs(chunk.iter().cloned());
-            let partial = snapshot_subset(snapshot, &external_ids)?;
-            batches.push(ReshardBatch {
-                from_map_version: from.version(),
-                to_map_version: to.version(),
-                bucket,
-                from_shard,
-                to_shard,
-                external_ids,
-                snapshot: partial,
-            });
+            let mut sub_batches = Vec::new();
+            byte_cap_chunk(snapshot, chunk, MAX_BATCH_BYTES, &mut sub_batches)?;
+            for (external_ids, partial) in sub_batches {
+                batches.push(ReshardBatch {
+                    from_map_version: from.version(),
+                    to_map_version: to.version(),
+                    bucket,
+                    from_shard,
+                    to_shard,
+                    external_ids,
+                    snapshot: partial,
+                });
+            }
         }
     }
 
     Ok(batches)
+}
+
+/// #1457 R1 / R2: build the final migration pass's authoritative "keep"
+/// chunks for every `(bucket, collection_id)` pair, `bucket` restricted to
+/// `buckets` (the caller's current `from_shard` group — never the whole
+/// map's moved buckets, so one from-shard's prune scope can never claim
+/// authority over a bucket another from-shard actually owns) and
+/// `collection_id` ranging over `collection_ids` (the *full* list of
+/// collections that exist on the source shard, fetched independently of
+/// `snapshot` — see module docs on why the bucket-scoped snapshot's own
+/// collection keys are not sufficient).
+///
+/// `snapshot` only needs to cover `buckets` (a bucket-scoped export is
+/// enough): for each `(bucket, collection_id)` pair, `keep_ids` is exactly
+/// the external_ids in `snapshot` that route to that bucket for that
+/// collection, computed with `to.route_document` (identical to
+/// `from.route_document`'s bucket component, since [`bucket_moves`] already
+/// requires a stable `virtual_bucket_count` between the two maps). A
+/// collection with **zero** matching docs in a bucket still emits exactly
+/// one chunk with an empty `keep_ids` (`total_chunks == 1`) — this is what
+/// makes a collection a batch of deletes emptied entirely still get pruned
+/// on the target rather than silently keeping its stale copies (#1457 R2,
+/// the edge #1443 disclosed).
+///
+/// Each `(bucket, collection_id)`'s keep set is independently byte-capped by
+/// `max_chunk_bytes` via [`chunk_ids_by_bytes`] — unlike [`ReshardBatch`],
+/// no *other* pair's chunk count or size is affected by how large one pair's
+/// population is.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
+pub fn snapshot_reshard_prune_chunks(
+    snapshot: &SnapshotV1,
+    to: &VirtualBucketShardMap,
+    buckets: &BTreeSet<u32>,
+    collection_ids: &BTreeSet<String>,
+    max_chunk_bytes: usize,
+) -> Result<Vec<ReshardPruneChunk>> {
+    if max_chunk_bytes == 0 {
+        bail!("max_chunk_bytes must be > 0");
+    }
+
+    let virtual_bucket_count = to.virtual_bucket_count();
+    let mut keep: BTreeMap<(u32, String), BTreeSet<String>> = BTreeMap::new();
+    for &bucket in buckets {
+        for collection_id in collection_ids {
+            keep.insert((bucket, collection_id.clone()), BTreeSet::new());
+        }
+    }
+    for (collection_id, collection) in &snapshot.collections {
+        if !collection_ids.contains(collection_id) {
+            continue;
+        }
+        for external_id in collection.eid_fields.keys() {
+            let bucket = to.route_document(collection_id, None, external_id).bucket;
+            if let Some(ids) = keep.get_mut(&(bucket, collection_id.clone())) {
+                ids.insert(external_id.clone());
+            }
+        }
+    }
+
+    let mut chunks = Vec::new();
+    for ((bucket, collection_id), ids) in keep {
+        let pieces = chunk_ids_by_bytes(&ids, max_chunk_bytes);
+        let total_chunks = pieces.len() as u32;
+        for (chunk_index, keep_ids) in pieces.into_iter().enumerate() {
+            chunks.push(ReshardPruneChunk {
+                to_map_version: to.version(),
+                bucket,
+                virtual_bucket_count,
+                collection_id: collection_id.clone(),
+                chunk_index: chunk_index as u32,
+                total_chunks,
+                keep_ids,
+            });
+        }
+    }
+    Ok(chunks)
+}
+
+/// Recursively halve `ids` until each emitted chunk's serialized size is at
+/// or under `max_bytes`, or the chunk is down to a single id (mirrors
+/// [`byte_cap_chunk`]'s same one-item floor for the same reason: a single id
+/// long enough alone to exceed the cap cannot be split further). An empty
+/// `ids` still returns exactly one (empty) chunk — [`snapshot_reshard_prune_chunks`]
+/// relies on this to always emit at least one chunk per `(bucket,
+/// collection_id)` pair, including pairs with nothing left to keep.
+fn chunk_ids_by_bytes(ids: &BTreeSet<String>, max_bytes: usize) -> Vec<BTreeSet<String>> {
+    if ids.is_empty() {
+        return vec![BTreeSet::new()];
+    }
+    let size = serde_json::to_vec(ids)
+        .map(|b| b.len())
+        .unwrap_or(usize::MAX);
+    if size <= max_bytes || ids.len() == 1 {
+        return vec![ids.clone()];
+    }
+    let mid = ids.len() / 2;
+    let first: BTreeSet<String> = ids.iter().take(mid).cloned().collect();
+    let rest: BTreeSet<String> = ids.iter().skip(mid).cloned().collect();
+    let mut out = chunk_ids_by_bytes(&first, max_bytes);
+    out.extend(chunk_ids_by_bytes(&rest, max_bytes));
+    out
+}
+
+/// Recursively halve `chunk` (already `<= max_external_ids_per_batch` ids)
+/// until each emitted `(external_ids, snapshot)` pair's serialized snapshot
+/// is at or under `max_batch_bytes`, or the chunk is down to a single
+/// external_id — one oversized document cannot be split further, so it is
+/// emitted as its own (over-budget) batch rather than looping forever; a
+/// single document that alone exceeds [`ADMIN_ROUTE_BODY_LIMIT_BYTES`] is a
+/// data-modeling problem this splitter cannot solve, not a batching bug —
+/// [`crate::operator::reshard_driver`] detects and surfaces exactly this
+/// batch shape (#1444 R2) rather than retrying it forever as a generic 413.
+fn byte_cap_chunk(
+    snapshot: &SnapshotV1,
+    chunk: &[(String, String)],
+    max_batch_bytes: usize,
+    out: &mut Vec<(BTreeMap<String, BTreeSet<String>>, SnapshotV1)>,
+) -> Result<()> {
+    if chunk.is_empty() {
+        return Ok(());
+    }
+    let external_ids = ids_map_from_pairs(chunk.iter().cloned());
+    let partial = snapshot_subset(snapshot, &external_ids)?;
+    let size = serde_json::to_vec(&partial)
+        .map(|bytes| bytes.len())
+        .unwrap_or(usize::MAX);
+    if size <= max_batch_bytes || chunk.len() == 1 {
+        out.push((external_ids, partial));
+        return Ok(());
+    }
+    let mid = chunk.len() / 2;
+    byte_cap_chunk(snapshot, &chunk[..mid], max_batch_bytes, out)?;
+    byte_cap_chunk(snapshot, &chunk[mid..], max_batch_bytes, out)?;
+    Ok(())
 }
 
 /// Merge a reshard delta snapshot into an existing target snapshot. This is
@@ -169,6 +414,36 @@ pub fn merge_snapshot_delta(mut base: SnapshotV1, delta: SnapshotV1) -> Result<S
         }
     }
     Ok(base)
+}
+
+/// Restrict a snapshot to only the external_ids routed to one of `buckets`,
+/// computed with the exact same `route_document` hash
+/// `snapshot_reshard_batches` uses (`route_hash(collection_id, external_id) %
+/// virtual_bucket_count`). Backs the bucket-scoped export admin verb (`POST
+/// /admin/backup:scoped`, #1380 R2) so an export and the batches later
+/// computed against the same map can never disagree about bucket
+/// membership. `physical_shard_count` is irrelevant to bucket selection, so
+/// callers only need to agree on `virtual_bucket_count`.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#source
+pub fn snapshot_bucket_subset(
+    snapshot: &SnapshotV1,
+    virtual_bucket_count: u32,
+    buckets: &BTreeSet<u32>,
+) -> Result<SnapshotV1> {
+    let map = VirtualBucketShardMap::balanced(0, virtual_bucket_count, 1)?;
+    let mut external_ids: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (collection_id, collection) in &snapshot.collections {
+        for external_id in collection.eid_fields.keys() {
+            let bucket = map.route_document(collection_id, None, external_id).bucket;
+            if buckets.contains(&bucket) {
+                external_ids
+                    .entry(collection_id.clone())
+                    .or_default()
+                    .insert(external_id.clone());
+            }
+        }
+    }
+    snapshot_subset(snapshot, &external_ids)
 }
 
 fn ids_map_from_pairs(
@@ -614,6 +889,330 @@ mod tests {
             .sum();
         assert_eq!(hits, moved_ids);
         assert!(moved_ids < 24, "split should move only reassigned buckets");
+    }
+
+    #[test]
+    fn snapshot_bucket_subset_matches_route_document_membership() {
+        let collection_id = "users";
+        let source = Engine::new();
+        source
+            .create_collection(
+                collection_id,
+                CreateCollectionRequest {
+                    fields: BTreeMap::from([("email".into(), field(FieldType::Keyword))]),
+                },
+            )
+            .unwrap();
+        for i in 0..16 {
+            let external_id = format!("doc-{i:02}");
+            source
+                .index(
+                    collection_id,
+                    IndexRequest {
+                        request_id: None,
+                        items: vec![item(
+                            &external_id,
+                            "email",
+                            FieldValue::String(format!("{external_id}@example.com")),
+                        )],
+                    },
+                )
+                .unwrap();
+        }
+        let snapshot = source.snapshot().unwrap();
+        let virtual_bucket_count = 8;
+        let buckets = BTreeSet::from([0u32, 3]);
+        let scoped = snapshot_bucket_subset(&snapshot, virtual_bucket_count, &buckets).unwrap();
+
+        let map = VirtualBucketShardMap::balanced(0, virtual_bucket_count, 1).unwrap();
+        let expected: BTreeSet<String> = snapshot.collections[collection_id]
+            .eid_fields
+            .keys()
+            .filter(|external_id| {
+                buckets.contains(&map.route_document(collection_id, None, external_id).bucket)
+            })
+            .cloned()
+            .collect();
+
+        let got: BTreeSet<String> = scoped
+            .collections
+            .get(collection_id)
+            .map(|c| c.eid_fields.keys().cloned().collect())
+            .unwrap_or_default();
+        assert_eq!(got, expected);
+        assert!(!expected.is_empty(), "test buckets should select some docs");
+        assert!(
+            expected.len() < 16,
+            "bucket-scoped export should not return everything"
+        );
+    }
+
+    /// AC4 (#1396 R4): a moved bucket's delta whose full snapshot serializes
+    /// well over 8 MiB (large per-doc text bodies, not merely a high id
+    /// count) still migrates completely via byte-capped batches — the
+    /// fixture picks a document count/size that would collapse to a single
+    /// oversized batch under the old id-count-only cap
+    /// (`max_external_ids_per_batch` set high enough that byte size, not id
+    /// count, is the binding constraint).
+    #[test]
+    fn snapshot_reshard_batches_splits_oversized_bucket_delta_by_bytes() {
+        let collection_id = "docs";
+        let source = Engine::new();
+        source
+            .create_collection(
+                collection_id,
+                CreateCollectionRequest {
+                    fields: BTreeMap::from([("body".into(), field(FieldType::Text))]),
+                },
+            )
+            .unwrap();
+
+        // A text field's snapshot wire size is driven by its *inverted
+        // index* (`FieldIndexSnapshot::Text`'s `forward`: per-doc unique
+        // token set, and `tokens`: per-term postings) — repeating one word
+        // many times within a doc collapses to a single unique token and
+        // stays tiny on the wire, so this fixture instead gives every doc a
+        // large, shared vocabulary of distinct tokens: ~2500 unique tokens
+        // per doc across 200 docs comes to well over 8 MiB serialized
+        // (~25 KiB/doc of forward token strings alone, plus per-term
+        // postings), comfortably over both `MAX_BATCH_BYTES` (4 MiB) and
+        // the route's 8 MiB body limit if emitted as one batch.
+        const VOCAB_SIZE: usize = 2500;
+        let vocab: Vec<String> = (0..VOCAB_SIZE).map(|i| format!("tok{i}")).collect();
+        let big_body = vocab.join(" ");
+        let ids: Vec<String> = (0..200).map(|i| format!("d-{i:04}")).collect();
+        for id in &ids {
+            source
+                .index(
+                    collection_id,
+                    IndexRequest {
+                        request_id: None,
+                        items: vec![item(id, "body", FieldValue::String(big_body.clone()))],
+                    },
+                )
+                .unwrap();
+        }
+
+        let snapshot = source.snapshot().unwrap();
+        // Single physical shard -> two, everything in one bucket moves.
+        let from = VirtualBucketShardMap::new(1, vec![0], 1).unwrap();
+        let to = VirtualBucketShardMap::new(2, vec![1], 2).unwrap();
+        // A generous id-count cap so byte size, not id count, is what
+        // forces the split.
+        let batches = snapshot_reshard_batches(&snapshot, &from, &to, 10_000).unwrap();
+
+        assert!(
+            batches.len() > 1,
+            "expected the oversized delta to split into more than one batch, got {}",
+            batches.len()
+        );
+        for batch in &batches {
+            let wire_bytes = serde_json::to_vec(batch).unwrap().len();
+            assert!(
+                wire_bytes < ADMIN_ROUTE_BODY_LIMIT_BYTES,
+                "batch serialized to {wire_bytes} bytes, over the route's {ADMIN_ROUTE_BODY_LIMIT_BYTES} byte body limit"
+            );
+        }
+
+        // Every id made it into exactly one batch, and merging them back
+        // together restores every document.
+        let moved_ids: BTreeSet<String> = batches
+            .iter()
+            .flat_map(|b| b.external_ids.values().flat_map(|s| s.iter().cloned()))
+            .collect();
+        assert_eq!(moved_ids, ids.iter().cloned().collect::<BTreeSet<_>>());
+
+        let mut target_snapshot = SnapshotV1 {
+            version: snapshot.version,
+            collections: BTreeMap::new(),
+        };
+        for batch in &batches {
+            target_snapshot =
+                merge_snapshot_delta(target_snapshot, batch.snapshot.clone()).unwrap();
+        }
+        let moved = Engine::new();
+        moved.restore(target_snapshot).unwrap();
+        let hits = moved
+            .search(
+                collection_id,
+                SearchRequest {
+                    query: QueryNode::Match(MatchQuery {
+                        field: "body".into(),
+                        text: "tok0".into(),
+                        op: MatchOp::And,
+                    }),
+                    limit: 1000,
+                    cursor: None,
+                    routing_key: None,
+                    sort: None,
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap()
+            .hits
+            .len();
+        assert_eq!(
+            hits,
+            ids.len(),
+            "every moved document should be restorable from the byte-capped batches"
+        );
+    }
+
+    /// AC1 (#1457 R1): a bucket group whose id set ALONE serializes past a
+    /// small byte cap must still complete via multiple independently
+    /// bounded prune chunks (every chunk under the route's hard body
+    /// limit), and the union of every chunk's `keep_ids` for a
+    /// `(bucket, collection_id)` group reconstructs the full authoritative
+    /// set regardless of how many chunks it split into.
+    #[test]
+    fn snapshot_reshard_prune_chunks_splits_large_keep_set_by_bytes() {
+        let collection_id = "docs";
+        let source = Engine::new();
+        source
+            .create_collection(
+                collection_id,
+                CreateCollectionRequest {
+                    fields: BTreeMap::from([("email".into(), field(FieldType::Keyword))]),
+                },
+            )
+            .unwrap();
+        let ids: Vec<String> = (0..20_000)
+            .map(|i| format!("doc-with-a-fairly-long-external-id-{i:06}"))
+            .collect();
+        for id in &ids {
+            source
+                .index(
+                    collection_id,
+                    IndexRequest {
+                        request_id: None,
+                        items: vec![item(
+                            id,
+                            "email",
+                            FieldValue::String(format!("{id}@example.com")),
+                        )],
+                    },
+                )
+                .unwrap();
+        }
+        let snapshot = source.snapshot().unwrap();
+        let to = VirtualBucketShardMap::new(2, vec![0, 1], 2).unwrap();
+        let buckets = BTreeSet::from([0u32, 1u32]);
+        let collection_ids = BTreeSet::from([collection_id.to_string()]);
+        const SMALL_CAP: usize = 64 * 1024;
+        let chunks =
+            snapshot_reshard_prune_chunks(&snapshot, &to, &buckets, &collection_ids, SMALL_CAP)
+                .unwrap();
+
+        assert!(
+            chunks.len() > 2,
+            "expected the large keep set to split into multiple chunks, got {}",
+            chunks.len()
+        );
+        for chunk in &chunks {
+            let wire_bytes = serde_json::to_vec(chunk).unwrap().len();
+            assert!(
+                wire_bytes < ADMIN_ROUTE_BODY_LIMIT_BYTES,
+                "chunk serialized to {wire_bytes} bytes, over the route's {ADMIN_ROUTE_BODY_LIMIT_BYTES} byte body limit"
+            );
+        }
+
+        let mut by_group: BTreeMap<(u32, String), Vec<&ReshardPruneChunk>> = BTreeMap::new();
+        for chunk in &chunks {
+            by_group
+                .entry((chunk.bucket, chunk.collection_id.clone()))
+                .or_default()
+                .push(chunk);
+        }
+        let mut reconstructed: BTreeSet<String> = BTreeSet::new();
+        for group in by_group.values() {
+            let total = group[0].total_chunks;
+            let mut seen: BTreeSet<u32> = BTreeSet::new();
+            for c in group {
+                assert_eq!(c.total_chunks, total);
+                assert!(seen.insert(c.chunk_index), "duplicate chunk_index");
+                reconstructed.extend(c.keep_ids.iter().cloned());
+            }
+            assert_eq!(seen, (0..total).collect::<BTreeSet<_>>());
+        }
+        assert_eq!(reconstructed, ids.iter().cloned().collect::<BTreeSet<_>>());
+    }
+
+    /// AC2 (#1457 R2, the edge #1443 disclosed): a `(bucket, collection_id)`
+    /// pair with zero matching docs in the snapshot — modeling a collection
+    /// whose every moved-bucket document was deleted before the final pass —
+    /// still gets exactly one chunk carrying an empty `keep_ids`, so a
+    /// receiver still prunes any stale copies it holds rather than the pair
+    /// being silently omitted because the snapshot has nothing to say about
+    /// it.
+    #[test]
+    fn snapshot_reshard_prune_chunks_emits_empty_scope_for_emptied_collection() {
+        let empty_collection_id = "emptied";
+        let populated_collection_id = "populated";
+        let source = Engine::new();
+        for collection_id in [empty_collection_id, populated_collection_id] {
+            source
+                .create_collection(
+                    collection_id,
+                    CreateCollectionRequest {
+                        fields: BTreeMap::from([("email".into(), field(FieldType::Keyword))]),
+                    },
+                )
+                .unwrap();
+        }
+        source
+            .index(
+                populated_collection_id,
+                IndexRequest {
+                    request_id: None,
+                    items: vec![item(
+                        "doc-1",
+                        "email",
+                        FieldValue::String("doc-1@example.com".into()),
+                    )],
+                },
+            )
+            .unwrap();
+        // `empty_collection_id` stays empty: models a collection whose only
+        // moved-bucket docs were all deleted before the final pass.
+        let snapshot = source.snapshot().unwrap();
+        let to = VirtualBucketShardMap::new(1, vec![0], 1).unwrap();
+        let buckets = BTreeSet::from([0u32]);
+        let collection_ids = BTreeSet::from([
+            empty_collection_id.to_string(),
+            populated_collection_id.to_string(),
+        ]);
+        let chunks = snapshot_reshard_prune_chunks(
+            &snapshot,
+            &to,
+            &buckets,
+            &collection_ids,
+            MAX_BATCH_BYTES,
+        )
+        .unwrap();
+
+        let empty_chunks: Vec<&ReshardPruneChunk> = chunks
+            .iter()
+            .filter(|c| c.collection_id == empty_collection_id)
+            .collect();
+        assert_eq!(
+            empty_chunks.len(),
+            1,
+            "an emptied collection must still get exactly one (empty) chunk"
+        );
+        assert_eq!(empty_chunks[0].total_chunks, 1);
+        assert!(empty_chunks[0].keep_ids.is_empty());
+        assert_eq!(empty_chunks[0].bucket, 0);
+
+        let populated_chunks: Vec<&ReshardPruneChunk> = chunks
+            .iter()
+            .filter(|c| c.collection_id == populated_collection_id)
+            .collect();
+        assert_eq!(populated_chunks.len(), 1);
+        assert_eq!(
+            populated_chunks[0].keep_ids,
+            BTreeSet::from(["doc-1".to_string()])
+        );
     }
 
     fn field(field_type: FieldType) -> FieldSpec {

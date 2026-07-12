@@ -216,6 +216,214 @@ async fn index_can_use_injected_sharded_write_backend() {
     assert_eq!(eids, vec![eid1.as_str(), eid0.as_str()]);
 }
 
+// #1384 AC1/AC4: `serve()`'s only production `EngineShardSearch` call site
+// (the `search_shard_segment_dirs` consolidated-read-shard-fan-in mode) now
+// builds via `new_with_shard_map` fed by `lumen::config::shard_map_from_env`
+// instead of the always-balanced `::new`. These two tests prove that wiring
+// end-to-end through the real HTTP router: an explicit SHARD_MAP_ASSIGNMENTS
+// env routes a single-shard query to the shard the map says owns it (not
+// wherever the balanced default would have sent it), and leaving the env
+// unset still reproduces `::new`'s balanced behavior byte-for-byte so
+// existing/default deployments are unaffected.
+//
+// Process env is global, so these two tests (and any other SHARD_MAP_* env
+// user added later) must serialize on this lock.
+static SHARD_MAP_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn clear_shard_map_env() {
+    unsafe {
+        std::env::remove_var("SHARD_MAP_VERSION");
+        std::env::remove_var("SHARD_MAP_ASSIGNMENTS");
+        std::env::remove_var("VIRTUAL_BUCKET_COUNT");
+    }
+}
+
+/// Search for a routing key whose bucket under `map` is `target_bucket`
+/// (mirrors `eid_for_document_shard`'s brute-force approach, but against an
+/// arbitrary caller-supplied map instead of the fixed balanced default).
+fn routing_key_for_bucket(
+    map: &lumen::routing::VirtualBucketShardMap,
+    collection_id: &str,
+    target_bucket: u32,
+) -> String {
+    for i in 0..10_000 {
+        let key = format!("k{i}");
+        if map.route_key(collection_id, &key).bucket == target_bucket {
+            return key;
+        }
+    }
+    panic!("could not find a routing key landing on bucket {target_bucket}");
+}
+
+#[tokio::test]
+async fn search_routes_by_shard_map_from_env_assignments() {
+    let _g = SHARD_MAP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    clear_shard_map_env();
+    // Reversed 2-bucket map: bucket 0 -> shard 1, bucket 1 -> shard 0 (the
+    // opposite of the balanced `bucket % shard_count` default), simulating
+    // the map a completed autonomous split/cutover would have committed.
+    unsafe {
+        std::env::set_var("SHARD_MAP_VERSION", "7");
+        std::env::set_var("VIRTUAL_BUCKET_COUNT", "2");
+        std::env::set_var("SHARD_MAP_ASSIGNMENTS", "1,0");
+    }
+    let shard_map = lumen::config::shard_map_from_env(2).expect("shard map from env");
+    clear_shard_map_env();
+    assert_eq!(shard_map.version(), 7);
+
+    let shard0 = test_search_shard([("shard0_only", "a@x.com", 1)]);
+    let shard1 = test_search_shard([("shard1_only", "a@x.com", 1)]);
+    let state = lumen::api::AppState::open(Arc::new(lumen::storage::Engine::new()))
+        .with_search_backend(Arc::new(EngineShardSearch::new_with_shard_map(
+            vec![shard0, shard1],
+            shard_map.clone(),
+        )));
+    let s = TestServer::new(lumen::api::router(state)).expect("test server");
+
+    let key = routing_key_for_bucket(&shard_map, "users", 0);
+    let resp = s
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "a@x.com" } },
+            "routing_key": key,
+            "limit": 10
+        }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    // bucket 0 is assigned to shard 1 by this map, so only shard1's document
+    // must come back — proving the query honored SHARD_MAP_ASSIGNMENTS
+    // rather than the balanced default (which would have targeted shard 0).
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["hits"][0]["external_id"], "shard1_only");
+}
+
+#[tokio::test]
+async fn search_shard_map_from_env_falls_back_to_balanced_when_unset() {
+    let _g = SHARD_MAP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    clear_shard_map_env();
+    let shard_map = lumen::config::shard_map_from_env(2).expect("shard map from env");
+
+    let shard_a = test_search_shard([("u1", "a@x.com", 40), ("u2", "b@y.com", 30)]);
+    let shard_b = test_search_shard([("u3", "a@x.com", 20)]);
+    // `::new` derives its balanced map straight from `shards.len()`, so
+    // feeding `new_with_shard_map` the env-unset (balanced) map must produce
+    // byte-identical routing to `search_can_use_injected_sharded_backend`'s
+    // `::new(...)`-built backend above.
+    let state = lumen::api::AppState::open(Arc::new(lumen::storage::Engine::new()))
+        .with_search_backend(Arc::new(EngineShardSearch::new_with_shard_map(
+            vec![shard_a, shard_b],
+            shard_map,
+        )));
+    let s = TestServer::new(lumen::api::router(state)).expect("test server");
+
+    let resp = s
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "a@x.com" } },
+            "sort": [{ "field": "age", "order": "asc" }],
+            "limit": 10
+        }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["total"], 2);
+    let eids: Vec<&str> = body["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["external_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(eids, vec!["u3", "u1"]);
+}
+
+// #1398 R4/AC3: the `--search-shard-segment-dirs` fan-in path used to feed
+// `shard_map_from_env` straight from clap's `default_value_t = 1` when
+// `SHARD_COUNT` wasn't set, so `a,b,c` silently built a 1-shard map and
+// searched only dir `a` on routed queries. `lumen::config::fan_in_shard_count`
+// now derives the default from the loaded-dir count instead, and
+// `check_fan_in_shard_count` fails startup fast on a mismatch. These two
+// tests exercise the same production call sequence `serve()`'s fan-in
+// branch runs (`fan_in_shard_count` -> `shard_map_from_env` ->
+// `check_fan_in_shard_count`), then prove the resulting map actually routes
+// correctly end-to-end through the real HTTP router — `serve()` itself
+// can't be exercised in-process (it binds a real listener), matching this
+// file's existing `search_routes_by_shard_map_from_env_assignments` pattern.
+#[tokio::test]
+async fn search_shard_segment_dirs_routes_across_all_loaded_dirs_without_shard_count() {
+    let _g = SHARD_MAP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    clear_shard_map_env();
+
+    // Simulate `--search-shard-segment-dirs a,b,c` loading 3 segment roots
+    // with no SHARD_COUNT/--shard-count set (`ServeArgs::shard_count` is
+    // `None`).
+    let loaded_dirs = 3usize;
+    let fan_in_shard_count = lumen::config::fan_in_shard_count(None, loaded_dirs);
+    assert_eq!(
+        fan_in_shard_count, 3,
+        "must derive from the loaded-dir count"
+    );
+    let shard_map =
+        lumen::config::shard_map_from_env(fan_in_shard_count).expect("shard map from env");
+    lumen::config::check_fan_in_shard_count(&shard_map, loaded_dirs)
+        .expect("derived count matches loaded dirs");
+    clear_shard_map_env();
+
+    let shard0 = test_search_shard([("shard0_only", "a@x.com", 1)]);
+    let shard1 = test_search_shard([("shard1_only", "a@x.com", 1)]);
+    let shard2 = test_search_shard([("shard2_only", "a@x.com", 1)]);
+    let state = lumen::api::AppState::open(Arc::new(lumen::storage::Engine::new()))
+        .with_search_backend(Arc::new(EngineShardSearch::new_with_shard_map(
+            vec![shard0, shard1, shard2],
+            shard_map.clone(),
+        )));
+    let s = TestServer::new(lumen::api::router(state)).expect("test server");
+
+    for (bucket, expected_eid) in [(0, "shard0_only"), (1, "shard1_only"), (2, "shard2_only")] {
+        let key = routing_key_for_bucket(&shard_map, "users", bucket);
+        let resp = s
+            .post("/collections/users/search")
+            .json(&json!({
+                "query": { "term": { "field": "email", "value": "a@x.com" } },
+                "routing_key": key,
+                "limit": 10
+            }))
+            .await;
+        resp.assert_status_ok();
+        let body: Value = resp.json();
+        assert_eq!(
+            body["total"], 1,
+            "bucket {bucket} should hit exactly one shard"
+        );
+        assert_eq!(body["hits"][0]["external_id"], expected_eid);
+    }
+}
+
+#[test]
+fn search_shard_segment_dirs_mismatched_explicit_shard_count_fails_fast() {
+    let _g = SHARD_MAP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    clear_shard_map_env();
+
+    // An explicit --shard-count/SHARD_COUNT=3 with only 2 dirs actually
+    // loaded must not silently search a subset of shards — startup bails.
+    let loaded_dirs = 2usize;
+    let fan_in_shard_count = lumen::config::fan_in_shard_count(Some(3), loaded_dirs);
+    assert_eq!(fan_in_shard_count, 3, "an explicit count is always honored");
+    let shard_map =
+        lumen::config::shard_map_from_env(fan_in_shard_count).expect("shard map from env");
+    let err = lumen::config::check_fan_in_shard_count(&shard_map, loaded_dirs).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains('3'),
+        "error should name the declared count: {msg}"
+    );
+    assert!(
+        msg.contains('2'),
+        "error should name the loaded-dir count: {msg}"
+    );
+    clear_shard_map_env();
+}
+
 fn eid_for_document_shard(collection_id: &str, shard: usize, shard_count: usize) -> String {
     for i in 0..10_000 {
         let eid = format!("u{shard}_{i}");
@@ -1631,21 +1839,19 @@ fn read_consistency_server(
     peers: Vec<lumen::raft::PeerAddr>,
     lag_ms: u64,
 ) -> TestServer {
-    use std::sync::atomic::AtomicU64;
-
-    let cluster = Arc::new(lumen::raft::ClusterState {
-        pod_name: "lumen-1".to_string(),
-        shard_index: 0,
-        replica_index: 1,
+    let cluster = Arc::new(lumen::raft::ClusterState::from_snapshot(
+        "lumen-1".to_string(),
+        0,
+        1,
         role,
-        group: lumen::raft::RaftGroup {
+        lumen::raft::RaftGroup {
             shard_index: 0,
             peers,
         },
-        applied_index: AtomicU64::new(0),
-        leader_term: AtomicU64::new(1),
-        replication_lag_ms: AtomicU64::new(lag_ms),
-    });
+        0,
+        1,
+        lag_ms,
+    ));
     let state =
         lumen::api::AppState::open(Arc::new(lumen::storage::Engine::new())).with_cluster(cluster);
     TestServer::new(lumen::api::router(state)).expect("test server")
@@ -1818,5 +2024,134 @@ async fn batch_search_enforces_read_consistency_too() {
         }))
         .await;
     resp.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+}
+
+/// #1486 R4 e2e: the restart-write flow. Builds a segment checkpoint (the
+/// same `SegmentRdbStore::save` a real periodic snapshotter or on-demand
+/// `/admin/checkpoint` performs), reopens it into a fresh engine exactly as
+/// `serve()`'s cold-start path does (`reopen_into` → `start_seq`), then
+/// wires a `WriteCoordinator` the same way `serve()` now does: a `MemWal`
+/// seeded via `starting_at(start_seq)` paired with
+/// `start_from(engine, start_seq)`. Drives the "first write after restart"
+/// through the real HTTP router — must complete promptly (not hang), be
+/// durable + searchable, and advance stats/metrics.
+#[tokio::test]
+async fn first_write_after_checkpoint_restore_completes_and_is_searchable() {
+    use lumen::coordinator::WriteCoordinator;
+    use lumen::segment_rdb::SegmentRdbStore;
+    use lumen::wal::MemWal;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = SegmentRdbStore::new(dir.path()).unwrap();
+
+    // Pre-restart: a live engine with a collection + one doc, checkpointed.
+    let pre = Arc::new(lumen::storage::Engine::new());
+    pre.create_collection(
+        "users",
+        CreateCollectionRequest {
+            fields: BTreeMap::from([(
+                "email".to_string(),
+                FieldSpec {
+                    field_type: FieldType::Keyword,
+                    analyzer: None,
+                    multi: None,
+                    dim: None,
+                    metric: None,
+                    backend: None,
+                    quantize: None,
+                },
+            )]),
+        },
+    )
+    .unwrap();
+    pre.index(
+        "users",
+        IndexRequest {
+            items: vec![IndexItem {
+                external_id: "pre-restart-1".into(),
+                field: "email".into(),
+                value: FieldValue::String("old@x.com".into()),
+                version: None,
+            }],
+            request_id: None,
+        },
+    )
+    .unwrap();
+    store.save(&pre, 5).unwrap();
+
+    // "Restart": fresh engine, reopen the checkpoint — exactly `serve()`'s
+    // cold-start path (`reopen_into` → `start_seq`).
+    let engine = Arc::new(lumen::storage::Engine::new());
+    let start_seq = store
+        .reopen_into(&engine)
+        .unwrap()
+        .expect("a checkpoint to restore");
+    assert_eq!(start_seq, 5);
+    assert_eq!(engine.stats("users").unwrap().documents_indexed, 1);
+
+    // The fix under test: the embedded WAL's sequence domain starts above
+    // the restored watermark, paired with a coordinator seeded from the
+    // same watermark — the exact `serve()` wiring (#1486 R1).
+    let wal = Arc::new(MemWal::starting_at(start_seq));
+    let writer = WriteCoordinator::start_from(wal, engine.clone(), start_seq);
+    let state = lumen::api::AppState::with_components(
+        engine.clone(),
+        Arc::new(lumen::auth::AuthConfig::open()),
+        writer,
+    );
+    let s = TestServer::new(lumen::api::router(state)).expect("test server");
+
+    // First write after "restart" — must complete promptly, not hang.
+    let resp = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        s.post("/collections/users/index").json(&json!({
+            "items": [
+                { "external_id": "post-restart-1", "field": "email", "value": "new@x.com" }
+            ]
+        })),
+    )
+    .await
+    .expect("first post-restart write must complete promptly, not hang (#1486)");
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["indexed"], 1);
+
+    // Durable + searchable.
+    let search = s
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "new@x.com" } },
+            "limit": 10
+        }))
+        .await;
+    search.assert_status_ok();
+    let search_body: Value = search.json();
+    assert_eq!(search_body["total"], 1, "{search_body}");
+    assert_eq!(
+        search_body["hits"][0]["external_id"].as_str(),
+        Some("post-restart-1")
+    );
+
+    // Stats + metrics gauges advance (#1486 R3/AC2), not frozen at the
+    // pre-restart count.
+    let stats = s.get("/collections/users/stats").await;
+    stats.assert_status_ok();
+    let stats_body: Value = stats.json();
+    assert_eq!(
+        stats_body["documents_indexed"], 2,
+        "documents_indexed must count both the restored doc and the new post-restart doc: {stats_body}"
+    );
+    assert!(
+        !stats_body["last_indexed_at"].is_null(),
+        "last_indexed_at must advance after the post-restart write: {stats_body}"
+    );
+
+    let metrics = s.get("/metrics").await;
+    metrics.assert_status_ok();
+    let metrics_body = metrics.text();
+    assert!(
+        !metrics_body.contains("lumen_index_writes_total 0"),
+        "lumen_index_writes_total must have advanced past 0: {metrics_body}"
+    );
 }
 // CODEGEN-END

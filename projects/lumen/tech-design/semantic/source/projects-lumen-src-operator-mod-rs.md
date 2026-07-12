@@ -24,8 +24,9 @@ Public API manifest for `projects/lumen/src/operator/mod.rs` generated from AST 
 | `lease` | projects/lumen/src/operator/mod.rs | module | pub | 16 |  |
 | `reconcile` | projects/lumen/src/operator/mod.rs | module | pub | 17 |  |
 | `render` | projects/lumen/src/operator/mod.rs | module | pub | 18 |  |
-| `resize` | projects/lumen/src/operator/mod.rs | module | pub | 19 |  |
-| `crd_yaml` | projects/lumen/src/operator/mod.rs | function | pub | 25 | crd_yaml() -> String |
+| `reshard_driver` | projects/lumen/src/operator/mod.rs | module | pub | 19 |  |
+| `resize` | projects/lumen/src/operator/mod.rs | module | pub | 20 |  |
+| `crd_yaml` | projects/lumen/src/operator/mod.rs | function | pub | 26 | crd_yaml() -> String |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -48,6 +49,7 @@ pub mod crd;
 pub mod lease;
 pub mod reconcile;
 pub mod render;
+pub mod reshard_driver;
 pub mod resize;
 
 pub use crd::{Lumen, LumenSpec, LumenStatus};
@@ -99,4 +101,11 @@ changes:
     description: |
       #809: add `pub mod resize;` alongside the existing operator submodules,
       exposing the new raftStorage PVC resize helper.
+  - path: projects/lumen/src/operator/mod.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1381: add `pub mod reshard_driver;` — the autonomous reshard
+      phase-driver background loop (#1319 R2 executor).
 ```

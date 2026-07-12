@@ -2734,9 +2734,11 @@ name = "cli-std"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "flate2",
  "reqwest 0.12.28",
  "semver",
+ "serde",
  "serde_json",
  "sha2 0.10.9",
  "tar",

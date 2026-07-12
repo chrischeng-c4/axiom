@@ -27,11 +27,11 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "lumen"
-generated_from_td_digest = "sha256:906397908b3499651a9f25eeba1acc6027c4f6bb248200f186769c9521c2a65f"
+generated_from_td_digest = "sha256:5b27bcb24cfbc31a02ee0ca75d1262b6971dd8b2c668b886741235b0bea46343"
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-agent-llm-topics"
-capability_id = "agent-offline-integration"
+capability_id = "developer-agent-experience"
 claim_id = "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
 contract_id = "agent-llm-topics"
 category = "behavior"
@@ -43,7 +43,7 @@ assertions = ["The offline LLM outline, workflow, integration, quickstart, and r
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-agent-offline-spec"
-capability_id = "agent-offline-integration"
+capability_id = "developer-agent-experience"
 claim_id = "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
 contract_id = "agent-offline-spec"
 category = "behavior"
@@ -55,7 +55,7 @@ assertions = ["Offline schema commands produce valid OpenAPI JSON/YAML and JSON-
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-agent-query-catalog"
-capability_id = "agent-offline-integration"
+capability_id = "developer-agent-experience"
 claim_id = "query-shape-cookbook-field-analyzer-catalog"
 contract_id = "agent-query-catalog"
 category = "behavior"
@@ -270,6 +270,18 @@ required_for_production = true
 assertions = ["The live kind dogfood path covers multi-shard and replicated-shard operator profiles."]
 
 [[aw.ec.generated.cases]]
+id = "lumen-claim-dynamic-reshard-durability"
+capability_id = "dynamic-shard-topology"
+claim_id = "reshard-driver-admin-verb-and-cold-start-migration-durability"
+contract_id = "dynamic-reshard-durability"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-reshard-durability"
+test_path = "projects/lumen/tests/behavior_lumen_claim_dynamic_reshard_durability.rs"
+command = "cargo test -p lumen --features operator --test reshard_driver_e2e -- --nocapture && cargo test -p lumen --test reshard_admin_e2e -- --nocapture && cargo test -p lumen --lib segment_rdb -- --nocapture"
+required_for_production = true
+assertions = ["The checkpointed reshard phase driver (state machine, checkpoint-gated cutover, no-transition guard), the four reshard/backup admin verbs (scoped export, additive apply, source eviction, on-demand checkpoint) including idempotency and auth, and cold-start durability of applied/evicted reshard mutations all pass — keeping the migration-path regression class #1389 fixed under standing gate."]
+
+[[aw.ec.generated.cases]]
 id = "lumen-claim-dynamic-storage-pressure-split-policy"
 capability_id = "dynamic-shard-topology"
 claim_id = "storage-pressure-operator-split-policy"
@@ -279,7 +291,7 @@ td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#l
 test_path = "projects/lumen/tests/behavior_lumen_claim_dynamic_storage_pressure_split_policy.rs"
 command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
 required_for_production = true
-assertions = ["The operator exposes storage-pressure reshard recommendations without changing HPA-owned serving scale."]
+assertions = ["The operator render gate proves rendering topology conformance: storage-pressure reshard recommendations compute correctly without changing HPA-owned serving scale (rendering only — reshard driver execution, admin verbs, and migration durability are covered by the dedicated reshard-durability gate)."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-dynamic-versioned-virtual-bucket-map"
@@ -435,7 +447,7 @@ td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#l
 test_path = "projects/lumen/tests/behavior_lumen_claim_k8s_operator_reconcile.rs"
 command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
 required_for_production = true
-assertions = ["The kube-rs operator render path reconciles Lumen CRD inputs into serving resources, including storage-pressure reshard policy, status phases, and fixed storage topology."]
+assertions = ["The kube-rs operator render path proves rendering topology conformance: Lumen CRD inputs map to serving resources, including storage-pressure reshard policy, status phases, and fixed storage topology (rendering only — the live reconcile loop, reshard driver, and admin verbs are covered by the dedicated reshard-durability gate)."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-k8s-operator-storage-topology-reshard"
@@ -447,7 +459,7 @@ td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#l
 test_path = "projects/lumen/tests/behavior_lumen_claim_k8s_operator_storage_topology_reshard.rs"
 command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
 required_for_production = true
-assertions = ["The operator render gate proves fixed StatefulSet storage topology and reshard status exposure."]
+assertions = ["The operator render gate proves rendering topology conformance: fixed StatefulSet storage topology and reshard status exposure (rendering only — reshard driver execution, admin verbs, and migration durability are covered by the dedicated reshard-durability gate)."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-k8s-stateless-kind"

@@ -45,7 +45,7 @@ Public API manifest for `projects/lumen/src/operator/render.rs` generated from A
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `render` | projects/lumen/src/operator/render.rs | function | pub | 112 | render(lumen: &Lumen) -> Vec<Value> |
+| `render` | projects/lumen/src/operator/render.rs | function | pub | 148 | render(lumen: &Lumen) -> Vec<Value> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -84,6 +84,11 @@ const TOKEN_REGISTRY_VOLUME: &str = "lumen-token-registry";
 const TOKEN_REGISTRY_KEY: &str = "token-registry.json";
 const TOKEN_REGISTRY_MOUNT_DIR: &str = "/var/run/secrets/lumen";
 const TOKEN_REGISTRY_FILE: &str = "/var/run/secrets/lumen/token-registry.json";
+// #1387: embedded-mode persistence subtree, disjoint from the raft backend's
+// `/var/lib/lumen/raft` default (`LUMEN_RAFT_DATA_DIR` in `bin/lumen.rs`) so
+// both can coexist on the one `raft` PVC mount across a `replicasPerShard`
+// change without colliding.
+const EMBEDDED_DATA_DIR: &str = "/var/lib/lumen/data";
 
 /// Resolve the instance name (defaults to `lumen` only when metadata is absent,
 /// which never happens for a real CR).
@@ -149,6 +154,40 @@ fn token_registry_source(lumen: &Lumen) -> Option<TokenRegistrySource<'_>> {
         .map(TokenRegistrySource::Csi)
 }
 
+/// Whether [`render`] emits [`serving_hpa`] for `lumen`'s current shape:
+/// single shard, no raft consensus (`replicasPerShard <= 1 && shardCount <=
+/// 1`). The single source of truth for that shape test — `super::reconcile`'s
+/// HPA handoff loop (#1385) also consults it, so a topology whose shape
+/// transitions away from an HPA (today `shardCount > 1`; any future no-HPA
+/// mode tomorrow) is detected in exactly one place.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
+pub(crate) fn wants_hpa(lumen: &Lumen) -> bool {
+    lumen.spec.replicas_per_shard <= 1 && lumen.spec.shard_count <= 1
+}
+
+/// The exact labels [`serving_hpa`] stamps on the rendered HPA object
+/// (mirrors [`operator::render::RenderCtx::labels`]'s five recommended
+/// labels). Exposed crate-private so `super::reconcile`'s HPA handoff loop
+/// (#1385, R2) can confirm a live HPA found at this CR's name was actually
+/// rendered by lumen — not a user-created object with a coincidentally
+/// matching name — before deleting it.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
+pub(crate) fn hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> {
+    let mut labels = std::collections::BTreeMap::new();
+    labels.insert("app.kubernetes.io/name".to_string(), APP.to_string());
+    labels.insert("app.kubernetes.io/instance".to_string(), instance(lumen));
+    labels.insert(
+        "app.kubernetes.io/component".to_string(),
+        COMPONENT.to_string(),
+    );
+    labels.insert(
+        "app.kubernetes.io/managed-by".to_string(),
+        MANAGER.to_string(),
+    );
+    labels.insert("app.kubernetes.io/part-of".to_string(), APP.to_string());
+    labels
+}
+
 /// Render every child object for `lumen`, in dependency order (namespace-scoped
 /// config first, then workloads).
 ///
@@ -159,7 +198,9 @@ fn token_registry_source(lumen: &Lumen) -> Option<TokenRegistrySource<'_>> {
 /// (#1317) clamped to exactly 1 replica — CPU-driven scaling above 1 pod
 /// here would produce uncoordinated shard-0 copies with no consensus link,
 /// confirmed on a kind cluster. `> 1` means raft-HA with a fixed peer set
-/// (no HPA).
+/// (no HPA) — and `super::reconcile`'s HPA handoff loop (#1385) deletes
+/// whatever HPA the single-member shape previously rendered, since nothing
+/// here ever will again once `shard_count > 1`.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
 pub fn render(lumen: &Lumen) -> Vec<Value> {
     let name = instance(lumen);
@@ -173,7 +214,7 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
         render::headless_service(&cx, &headless, COMPONENT, CLIENT_PORT),
         render::client_service(&cx, &name, COMPONENT, CLIENT_PORT),
     ];
-    if lumen.spec.replicas_per_shard <= 1 && lumen.spec.shard_count <= 1 {
+    if wants_hpa(lumen) {
         // Single shard, no raft consensus: keep the legacy dev HPA path.
         // Multi-shard storage ownership is fixed by shardCount and is never
         // changed by HPA.
@@ -392,14 +433,22 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
             spec.insert("replicas".into(), json!(replicas));
         }
         if let Some(env) = sts["spec"]["template"]["spec"]["containers"][0]["env"].as_array_mut() {
+            // `shard_count > 1` at `replicasPerShard <= 1` is the routed
+            // serving topology (#1398): each pod still needs its own stable
+            // headless DNS name to forward cross-shard requests one hop to
+            // the owning pod (`lumen::routing::shard_host`), so
+            // `HEADLESS_ENV_KEY` is only stripped alongside the raft peer
+            // env when there is truly one physical shard and nothing to
+            // route to.
+            let strip_headless = lumen.spec.shard_count <= 1;
             env.retain(|value| {
                 let Some(name) = value["name"].as_str() else {
                     return true;
                 };
-                !matches!(
-                    name,
-                    "REPLICAS_PER_SHARD" | "VOTER_COUNT" | HEADLESS_ENV_KEY
-                )
+                if name == HEADLESS_ENV_KEY {
+                    return !strip_headless;
+                }
+                !matches!(name, "REPLICAS_PER_SHARD" | "VOTER_COUNT")
             });
         }
     }
@@ -419,9 +468,23 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
         from_cfg("LUMEN_PORT"),
         from_cfg("LUMEN_LOG_FORMAT"),
         from_cfg("LUMEN_AUTH"),
+        // #1384: mirror `serving_configmap`'s shard-map keys onto the
+        // serving container so `lumen::config::shard_map_from_env` (used by
+        // `serve()`'s `EngineShardSearch::new_with_shard_map` wiring) can
+        // actually see the operator/reshard-driver-committed map instead of
+        // always falling back to the balanced default.
+        from_cfg("SHARD_MAP_VERSION"),
+        from_cfg("VIRTUAL_BUCKET_COUNT"),
     ];
     if lumen.spec.log_level.is_some() {
         env.push(from_cfg("LUMEN_LOG_LEVEL"));
+    }
+    // SHARD_MAP_ASSIGNMENTS is only written into the ConfigMap once
+    // assignments are non-empty (see `serving_configmap` below); a
+    // `configMapKeyRef` to an absent key would fail the pod at start, so
+    // this must mirror that same condition exactly.
+    if !lumen.spec.shard_map.assignments.is_empty() {
+        env.push(from_cfg("SHARD_MAP_ASSIGNMENTS"));
     }
     // Strict auth: the registry is mounted from a Secret or CSI-provided projection.
     if token_registry_source(lumen).is_some() {
@@ -441,6 +504,23 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
                 "value": limit.to_string(),
             }));
         }
+    }
+    // #1387: `LUMEN_WAL=auto` above resolves to `Embedded` (`MemWal::new()`,
+    // RAM-only) whenever `resolve_wal_backend` sees no raft cluster context —
+    // exactly the `replicasPerShard <= 1` regime (its raft peer-identity env
+    // is stripped in `serving_statefulset` below). Without `LUMEN_DATA_DIR`
+    // that mode never touches the already-mounted `raft` PVC, so a pod
+    // restart — including the reshard cutover's own rolling restart — wipes
+    // all data despite the volume being durable. `replicasPerShard > 1` pods
+    // run raft (already PVC-backed via `LUMEN_RAFT_DATA_DIR`) and are
+    // unaffected by this block. `--persistence=segment` (not the CBOR
+    // default) is deliberate: it activates the local AOF (`src/aof.rs`)
+    // alongside the periodic segment checkpoint, giving `everysec`-fsync
+    // crash durability (~1s RPO bound) instead of only surviving cleanly
+    // between `LUMEN_SNAPSHOT_SECS` (default 300s) CBOR snapshots.
+    if lumen.spec.replicas_per_shard <= 1 {
+        env.push(json!({ "name": "LUMEN_DATA_DIR", "value": EMBEDDED_DATA_DIR }));
+        env.push(json!({ "name": "LUMEN_PERSISTENCE", "value": "segment" }));
     }
     env
 }
@@ -563,4 +643,33 @@ changes:
     description: |
       rust-source-unit (td_ast) source for `projects/lumen/src/operator/render.rs` captured during lumen
       standardization onto the per-file codegen ladder.
+  - path: projects/lumen/src/operator/render.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1385: extracted the inline single-shard/no-raft HPA-emission guard out
+      of `render()` into a new `pub(crate) fn wants_hpa`, and added a new
+      `pub(crate) fn hpa_labels` exposing the exact label set `serving_hpa`
+      stamps. Both are consumed by `super::reconcile`'s new HPA
+      topology-transition handoff loop so it can detect, from the single
+      source of truth, when a CR's rendered shape no longer wants an HPA and
+      confirm a live HPA at that CR's name was actually operator-rendered
+      before deleting it. `render()`'s HPA-emission condition now calls
+      `wants_hpa` instead of repeating the inline boolean expression.
+  - path: projects/lumen/src/operator/render.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1387: `serving_env` now renders `LUMEN_DATA_DIR=/var/lib/lumen/data`
+      and `LUMEN_PERSISTENCE=segment` for `replicasPerShard <= 1` pods, so
+      `resolve_wal_backend`'s auto-resolved `Embedded` WAL (RAM-only
+      `MemWal`) actually persists to the already-mounted `raft` PVC via the
+      existing segment checkpoint + local AOF machinery in
+      `src/bin/lumen.rs`/`src/aof.rs`, instead of silently losing all data on
+      pod restart (including the reshard cutover's own rolling restart). New
+      `EMBEDDED_DATA_DIR` const keeps the path disjoint from the raft
+      backend's `/var/lib/lumen/raft` subtree. `replicasPerShard > 1`
+      (raft-HA) rendering is unchanged.
 ```

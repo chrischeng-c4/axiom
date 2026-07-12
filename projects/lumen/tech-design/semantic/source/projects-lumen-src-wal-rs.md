@@ -28,7 +28,8 @@ Public API manifest for `projects/lumen/src/wal.rs` generated from AST during Sc
 | `decode` | projects/lumen/src/wal.rs | function | pub | 84 | decode(bytes: &[u8]) -> Result<Self> |
 | `encode` | projects/lumen/src/wal.rs | function | pub | 74 | encode(&self) -> Result<Vec<u8>> |
 | `new` | projects/lumen/src/wal.rs | function | pub | 66 | new(entry: RaftLogEntry) -> Self |
-| `new` | projects/lumen/src/wal.rs | function | pub | 416 | new() -> Self |
+| `new` | projects/lumen/src/wal.rs | function | pub | 414 | new() -> Self |
+| `starting_at` | projects/lumen/src/wal.rs | function | pub | 429 | starting_at(base_seq: u64) -> Self |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -447,11 +448,26 @@ impl Default for MemWal {
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
 impl MemWal {
     pub fn new() -> Self {
-        let (len_tx, _rx) = watch::channel(0u64);
+        Self::starting_at(0)
+    }
+
+    /// Like [`new`](Self::new) but the sequence domain starts above
+    /// `base_seq` instead of `0` — required whenever the engine was seeded
+    /// from a restored checkpoint (and, if applicable, replayed AOF tail):
+    /// without this, a fresh in-process `MemWal` reassigns sequences `1..N`
+    /// to genuinely new writes while the coordinator's `applied` watermark
+    /// (seeded from the same restore) is already `>= N`, so the apply
+    /// loop's redelivery-dedup guard silently discards them (#1486). The
+    /// caller passes the final restored watermark (checkpoint `up_to_seq`,
+    /// or the AOF-tail-replayed sequence if that is higher) so the first
+    /// `publish` after restore is assigned `base_seq + 1` — strictly above
+    /// anything the watermark already considers applied.
+    pub fn starting_at(base_seq: u64) -> Self {
+        let (len_tx, _rx) = watch::channel(base_seq);
         Self {
             shared: Arc::new(Mutex::new(MemWalInner {
                 records: std::collections::VecDeque::new(),
-                base: 0,
+                base: base_seq,
                 subs: std::collections::HashMap::new(),
                 next_sub_id: 0,
             })),
@@ -675,6 +691,47 @@ mod tests {
         assert_eq!(s1, 1);
         assert_eq!(s2, 2);
         assert_eq!(wal.latest_seq().await.unwrap(), 2);
+    }
+
+    /// #1486 R1: a `MemWal` seeded from a restored watermark assigns its
+    /// first fresh sequence strictly above that watermark — required so the
+    /// coordinator's `applied` watermark (also seeded from the same
+    /// restore) never sees a fresh write land at or below it.
+    #[tokio::test]
+    async fn mem_starting_at_assigns_seq_above_base() {
+        let wal = MemWal::starting_at(5);
+        assert_eq!(wal.latest_seq().await.unwrap(), 5);
+        let s1 = wal
+            .publish(WalRecord::new(create_entry("a")))
+            .await
+            .unwrap();
+        let s2 = wal
+            .publish(WalRecord::new(create_entry("b")))
+            .await
+            .unwrap();
+        assert_eq!(s1, 6);
+        assert_eq!(s2, 7);
+        assert_eq!(wal.latest_seq().await.unwrap(), 7);
+    }
+
+    /// #1486 R1: a subscriber tailing from exactly the restored watermark
+    /// (mirrors the apply loop's `wal.subscribe(applied)` on cold start)
+    /// receives every fresh record published after `starting_at`, in order
+    /// — the exact delivery path the original bug broke.
+    #[tokio::test]
+    async fn mem_starting_at_subscribe_from_watermark_delivers_fresh_writes() {
+        let wal = MemWal::starting_at(5);
+        let mut sub = wal.subscribe(5).await.unwrap();
+        let seq = wal
+            .publish(WalRecord::new(create_entry("a")))
+            .await
+            .unwrap();
+        assert_eq!(seq, 6);
+        let (delivered_seq, _rec) = sub.next().await.unwrap().unwrap();
+        assert_eq!(
+            delivered_seq, 6,
+            "first fresh write after a watermark restore must be delivered promptly"
+        );
     }
 
     #[tokio::test]

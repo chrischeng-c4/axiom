@@ -221,12 +221,39 @@ fn statefulset_wires_serving_contract_single_member() {
         "LUMEN_WAL",
         "SHARD_COUNT",
         "LUMEN_AUTH",
+        // #1384: serving pods must see the shard map the ConfigMap carries
+        // so `lumen::config::shard_map_from_env` can route by it instead of
+        // always falling back to the balanced default.
+        "SHARD_MAP_VERSION",
+        "VIRTUAL_BUCKET_COUNT",
+        // #1387 AC1: `LUMEN_WAL=auto` resolves to embedded (RAM-only) at
+        // replicasPerShard:1 — without these, the mounted `raft` PVC is
+        // never touched and a pod restart wipes all data.
+        "LUMEN_DATA_DIR",
+        "LUMEN_PERSISTENCE",
     ] {
         assert!(
             names.contains(&required.to_string()),
             "missing env {required}; have {names:?}"
         );
     }
+    // #1387: the exact values that activate the segment store + local AOF
+    // (`everysec`-fsync crash durability) under the durable `raft` PVC mount,
+    // disjoint from the raft backend's own `/var/lib/lumen/raft` subtree.
+    let env = c["env"].as_array().unwrap();
+    let value_of = |name: &str| {
+        env.iter()
+            .find(|e| e["name"] == name)
+            .and_then(|e| e["value"].as_str())
+            .unwrap_or_else(|| panic!("env {name} missing a literal value"))
+            .to_string()
+    };
+    assert_eq!(value_of("LUMEN_DATA_DIR"), "/var/lib/lumen/data");
+    assert_eq!(value_of("LUMEN_PERSISTENCE"), "segment");
+    assert!(
+        !value_of("LUMEN_DATA_DIR").starts_with("/var/lib/lumen/raft"),
+        "embedded data dir must stay disjoint from the raft backend's subtree"
+    );
     // Single member, no raft consensus at replicasPerShard:1 → no raft
     // peer-identity env.
     for absent in [
@@ -243,6 +270,11 @@ fn statefulset_wires_serving_contract_single_member() {
     assert!(!names.contains(&"LUMEN_TOKENS".to_string()));
     assert!(!names.contains(&"LUMEN_TOKEN_REGISTRY_FILE".to_string()));
     assert!(!names.contains(&"LUMEN_LOG_LEVEL".to_string()));
+    // #1384 AC4: default spec has no shard-map assignments yet, so the
+    // ConfigMap key is absent (see `configmap_tracks_serving_spec`) and the
+    // container env must not reference it either — a `configMapKeyRef` to a
+    // missing key would fail the pod at start.
+    assert!(!names.contains(&"SHARD_MAP_ASSIGNMENTS".to_string()));
 
     // Durable raft PVC (#812): the WAL survives pod reschedule/eviction/node
     // loss even for a single-member deployer — not just an emptyDir.
@@ -299,6 +331,28 @@ fn multi_shard_single_replica_is_fixed_storage_topology_not_hpa() {
         !has(&objs, "HorizontalPodAutoscaler", "search"),
         "HPA must not change multi-shard storage ownership"
     );
+
+    // #1398: shardCount > 1 at replicasPerShard <= 1 is the routed serving
+    // topology — each pod still needs LUMEN_HEADLESS_SERVICE to build stable
+    // per-shard DNS names (`lumen::routing::shard_host`) for one-hop
+    // cross-pod forwarding, even though there is no raft consensus to peer.
+    let c = &sts["spec"]["template"]["spec"]["containers"][0];
+    let names: Vec<String> = c["env"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        names.contains(&"LUMEN_HEADLESS_SERVICE".to_string()),
+        "routed topology (shardCount>1) must render LUMEN_HEADLESS_SERVICE; have {names:?}"
+    );
+    for absent in ["REPLICAS_PER_SHARD", "VOTER_COUNT"] {
+        assert!(
+            !names.contains(&absent.to_string()),
+            "single-member shards still have no raft peer env; unexpected {absent}; have {names:?}"
+        );
+    }
 }
 
 #[test]
@@ -503,6 +557,7 @@ fn reshard_status_is_recommendation_only_without_capacity_ceiling() {
     spec.reshard_policy.workflow = ReshardWorkflowSpec {
         phase: ReshardPhase::PrepareSplit,
         target_shard_count: Some(2),
+        ..Default::default()
     };
     let status = spec.reshard_status();
 
@@ -530,6 +585,7 @@ fn reshard_status_tracks_workflow_phases_with_capacity_policy() {
         spec.reshard_policy.workflow = ReshardWorkflowSpec {
             phase,
             target_shard_count: None,
+            ..Default::default()
         };
 
         let status = spec.reshard_status();
@@ -550,7 +606,7 @@ fn reshard_status_with_usage_falls_back_without_capacity_ceiling() {
     let spec = dev_spec();
     let mut usage = BTreeMap::new();
     usage.insert(0u32, 999_999_999u64);
-    let status = spec.reshard_status_with_usage(&usage);
+    let status = spec.reshard_status_with_usage(&usage, spec.shard_map.version);
     assert_eq!(status, spec.reshard_status());
     assert_eq!(status.max_observed_percent, None);
 }
@@ -560,7 +616,7 @@ fn reshard_status_with_usage_falls_back_when_usage_not_measured_yet() {
     // Policy configured, but no usage sample yet this tick (empty map).
     let mut spec = dev_spec();
     spec.reshard_policy.max_shard_bytes = Some(1_000_000);
-    let status = spec.reshard_status_with_usage(&BTreeMap::new());
+    let status = spec.reshard_status_with_usage(&BTreeMap::new(), spec.shard_map.version);
     assert_eq!(status.max_observed_percent, None);
     assert_eq!(status, spec.reshard_status());
 }
@@ -572,8 +628,12 @@ fn reshard_status_with_usage_below_prepare_threshold() {
     // Defaults: prepare 50%, urgent 85%.
     let mut usage = BTreeMap::new();
     usage.insert(0u32, 100_000u64); // 10%
-    let status = spec.reshard_status_with_usage(&usage);
+    let status = spec.reshard_status_with_usage(&usage, spec.shard_map.version);
     assert_eq!(status.max_observed_percent, Some(10));
+    assert_eq!(
+        status.usage_measured_at_map_version,
+        Some(spec.shard_map.version)
+    );
     assert!(status.blocking_conditions.is_empty());
     assert!(status.message.contains("below prepare threshold"));
 }
@@ -584,7 +644,7 @@ fn reshard_status_with_usage_reports_prepare_threshold_crossed() {
     spec.reshard_policy.max_shard_bytes = Some(1_000_000);
     let mut usage = BTreeMap::new();
     usage.insert(0u32, 600_000u64); // 60%: past prepare(50), below urgent(85)
-    let status = spec.reshard_status_with_usage(&usage);
+    let status = spec.reshard_status_with_usage(&usage, spec.shard_map.version);
     assert_eq!(status.max_observed_percent, Some(60));
     assert_eq!(status.blocking_conditions, vec!["prepareThresholdCrossed"]);
     assert!(status.message.contains("prepare threshold crossed"));
@@ -596,7 +656,7 @@ fn reshard_status_with_usage_reports_urgent_threshold_crossed() {
     spec.reshard_policy.max_shard_bytes = Some(1_000_000);
     let mut usage = BTreeMap::new();
     usage.insert(0u32, 900_000u64); // 90%: past urgent(85)
-    let status = spec.reshard_status_with_usage(&usage);
+    let status = spec.reshard_status_with_usage(&usage, spec.shard_map.version);
     assert_eq!(status.max_observed_percent, Some(90));
     assert_eq!(status.blocking_conditions, vec!["urgentThresholdCrossed"]);
     assert!(status.message.contains("urgent threshold crossed"));
@@ -611,9 +671,48 @@ fn reshard_status_with_usage_picks_the_busiest_shard() {
     usage.insert(0u32, 100_000u64);
     usage.insert(1u32, 950_000u64); // busiest: 95%, urgent
     usage.insert(2u32, 400_000u64);
-    let status = spec.reshard_status_with_usage(&usage);
+    let status = spec.reshard_status_with_usage(&usage, spec.shard_map.version);
     assert_eq!(status.max_observed_percent, Some(95));
     assert!(status.message.contains("shard 1"));
+}
+
+#[test]
+fn reshard_status_with_usage_holds_on_pre_cutover_measurement() {
+    // #1386 R1/R3: a measurement tagged with an older `shardMap.version` than
+    // the CR's current one (the shard-usage cache right after a split
+    // completes, before the next scrape) must not report a crossed
+    // threshold even though the raw percentage is well past urgent — and
+    // the status must visibly say so (not silently look idle).
+    let mut spec = dev_spec();
+    spec.reshard_policy.max_shard_bytes = Some(1_000_000);
+    spec.shard_map.version = 1; // post-cutover
+    let mut usage = BTreeMap::new();
+    usage.insert(0u32, 900_000u64); // 90%: past urgent(85), but stale
+    let status = spec.reshard_status_with_usage(&usage, 0 /* pre-cutover measurement */);
+    assert_eq!(status.max_observed_percent, Some(90));
+    assert_eq!(status.usage_measured_at_map_version, Some(0));
+    assert_eq!(status.blocking_conditions, vec!["usageStalePostCutover"]);
+    assert!(status
+        .message
+        .contains("holding for a fresh post-cutover measurement"));
+}
+
+#[test]
+fn reshard_status_with_usage_reports_urgent_after_fresh_post_cutover_measurement() {
+    // #1386 R2: once the usage cache carries a measurement tagged with the
+    // CR's *current* `shardMap.version`, a genuinely still-hot shard is
+    // reported normally and can legitimately trigger the next split.
+    let mut spec = dev_spec();
+    spec.reshard_policy.max_shard_bytes = Some(1_000_000);
+    spec.shard_map.version = 1; // post-cutover
+    let mut usage = BTreeMap::new();
+    usage.insert(1u32, 900_000u64); // 90%: past urgent(85), fresh
+    let status =
+        spec.reshard_status_with_usage(&usage, 1 /* fresh: matches shardMap.version */);
+    assert_eq!(status.max_observed_percent, Some(90));
+    assert_eq!(status.usage_measured_at_map_version, Some(1));
+    assert_eq!(status.blocking_conditions, vec!["urgentThresholdCrossed"]);
+    assert!(status.message.contains("urgent threshold crossed"));
 }
 
 #[test]
@@ -632,6 +731,24 @@ fn shard_map_assignments_are_exposed_to_serving_config() {
     assert_eq!(cm["data"]["SHARD_MAP_VERSION"], "7");
     assert_eq!(cm["data"]["VIRTUAL_BUCKET_COUNT"], "4");
     assert_eq!(cm["data"]["SHARD_MAP_ASSIGNMENTS"], "0,1,1,0");
+
+    // #1384: once assignments are non-empty, the serving container env must
+    // reference SHARD_MAP_ASSIGNMENTS too (not just the ConfigMap), so a pod
+    // started/restarted after this commits actually routes by it via
+    // `lumen::config::shard_map_from_env`.
+    let sts = find(&objs, "StatefulSet", "search");
+    let c = &sts["spec"]["template"]["spec"]["containers"][0];
+    let names = env_names(c);
+    for required in [
+        "SHARD_MAP_VERSION",
+        "VIRTUAL_BUCKET_COUNT",
+        "SHARD_MAP_ASSIGNMENTS",
+    ] {
+        assert!(
+            names.contains(&required.to_string()),
+            "missing env {required}; have {names:?}"
+        );
+    }
 }
 
 #[test]
@@ -682,6 +799,15 @@ fn raft_ha_renders_serving_statefulset() {
         "LUMEN_HEADLESS_SERVICE",
     ] {
         assert!(env.contains(&k.to_string()), "missing {k} in {env:?}");
+    }
+    // #1387 regression: raft mode is already PVC-backed via
+    // `LUMEN_RAFT_DATA_DIR` (out of scope) — the embedded-mode data-dir env
+    // only applies at `replicasPerShard <= 1` and must stay absent here.
+    for absent in ["LUMEN_DATA_DIR", "LUMEN_PERSISTENCE"] {
+        assert!(
+            !env.contains(&absent.to_string()),
+            "unexpected embedded-persistence env {absent} in raft mode; have {env:?}"
+        );
     }
 
     // The raft PVC shape is unchanged by #812 — it was already unconditional

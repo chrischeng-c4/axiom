@@ -11,7 +11,7 @@ capability_refs:
     claim: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
     coverage: partial
     rationale: "Keeps the offline llm topic surface copy-paste runnable through the standard `--topic` flag form."
-  - id: "agent-offline-integration"
+  - id: "developer-agent-experience"
     role: primary
     gap: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
     claim: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
