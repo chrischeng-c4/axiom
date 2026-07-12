@@ -43,8 +43,7 @@ flowchart TD
     commit --> done([deterministic local provenance])
 ```
 
-Every typed JIT producer must derive its owner from the producer contract or the storage/runtime sidecar after evaluating data, then make one destination transition. The old generic pre-evaluation write is removed. Raw and immortal values publish `None`; fresh results transfer their declared owner; borrowed/pass-through results retain only their declared source. Checked arithmetic and left shift propagate `[data, owner]` through both predecessors in the same order. Internal and dynamic calls record an explicit deferred boundary for #1452 and must not infer payload provenance.
-
+`jit.rs` commits a companion only after the producer has established its data and declared owner source. Constants, raw values, and immortals commit `None`; fresh runtime results transfer the emitted owner; borrowed and pass-through results retain their named owner source. Checked arithmetic and left shift pass `[data, owner]` together through each predecessor, including slow and missing-helper paths. Internal and dynamic calls remain a named #1452 boundary action rather than a local inference path.
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
