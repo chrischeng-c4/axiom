@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="sift-instance-artifact" tracker="1606" reason="Define the development Sift custom resource with standard probes and single-node topology."
+// TODO: hand-write content for `projects/sift/k8s/instances/dev.yaml`.
+// HANDWRITE-END

@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="sift-release-image-artifact" tracker="1606" reason="Provide the verified release-binary Sift image contract."
+// TODO: hand-write content for `projects/sift/Dockerfile.release`.
+// HANDWRITE-END

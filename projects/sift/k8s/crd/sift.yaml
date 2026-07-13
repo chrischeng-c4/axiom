@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="sift-crd-artifact" tracker="1606" reason="Define the cluster-scoped Sift custom resource API."
+// TODO: hand-write content for `projects/sift/k8s/crd/sift.yaml`.
+// HANDWRITE-END

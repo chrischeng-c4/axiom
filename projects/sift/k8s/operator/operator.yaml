@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="sift-operator-artifact" tracker="1606" reason="Define Sift operator service account, RBAC, and controller deployment."
+// TODO: hand-write content for `projects/sift/k8s/operator/operator.yaml`.
+// HANDWRITE-END
