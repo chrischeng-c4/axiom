@@ -9,24 +9,23 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: pgpool-reset-reader-reuse
-entry: transaction_ready
+id: pgpool-reset-reader-reuse-contract
+entry: ready
 nodes:
-  transaction_ready: { kind: start, label: "Transaction reader sees ReadyForQuery Idle" }
-  release: { kind: process, label: "Pass drained reader with released backend stream" }
-  reset: { kind: process, label: "Write DISCARD ALL and validate response using same reader" }
-  idle: { kind: terminal, label: "Reuse backend only after reset ReadyForQuery" }
+  ready: { kind: start, label: "Leg ReadyForQuery Idle received" }
+  handoff: { kind: process, label: "Reunite stream and hand reader to pool reset" }
+  reset: { kind: process, label: "Static DISCARD ALL then same reader validates backend response" }
+  outcome: { kind: terminal, label: "Idle on success or close on failure" }
 edges:
-  - { from: transaction_ready, to: release }
-  - { from: release, to: reset }
-  - { from: reset, to: idle }
+  - { from: ready, to: handoff }
+  - { from: handoff, to: reset }
+  - { from: reset, to: outcome }
 ---
 flowchart LR
-  transaction_ready([transaction ReadyForQuery Idle]) --> release[release stream plus drained reader]
-  release --> reset[DISCARD ALL using same reader]
-  reset --> idle([safe idle reuse])
+  ready([leg ReadyForQuery Idle]) --> handoff[stream plus reader handoff]
+  handoff --> reset[static reset and same reader]
+  reset --> outcome([idle or close])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
