@@ -1,3 +1,32 @@
-// HANDWRITE-BEGIN gap="missing-generator:changes:6bec81f9" tracker="pending-tracker" reason="Define the standalone Sift Rust service package and its runtime dependencies."
-// TODO: hand-write content for `projects/sift/Cargo.toml`.
-// HANDWRITE-END
+[package]
+name = "sift"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Sift — GCP/GKE-first operational event service"
+
+[lib]
+name = "sift"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sift"
+path = "src/bin/sift.rs"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+chrono.workspace = true
+clap = { workspace = true, features = ["env"] }
+cli-std = { path = "../../libs/cli-std", default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+service-http = { path = "../../libs/service-http" }
+tokio.workspace = true
+tower.workspace = true
+tracing.workspace = true
+utoipa = { workspace = true, features = ["axum_extras"] }
+
+[dev-dependencies]
+tempfile = "3"
