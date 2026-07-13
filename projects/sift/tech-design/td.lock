@@ -2,10 +2,10 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-13T17:27:13.141178+00:00"
-digest = "sha256:9e17fa7015c8aa9614e30d6b25f036229563bd0cf25b3f85ac82155c043a0642"
-source_digest = "sha256:9e17fa7015c8aa9614e30d6b25f036229563bd0cf25b3f85ac82155c043a0642"
-ir_digest = "sha256:5bef9192e357c9f2bc238e66d87b59ac78d128256bf8fb3a60bb0b50de64a77c"
+generated_at = "2026-07-13T17:37:45.612808+00:00"
+digest = "sha256:5b89b2d56acae85347eb6de3bbd93081d75455cb3a72c491036ce0403d93f94c"
+source_digest = "sha256:5b89b2d56acae85347eb6de3bbd93081d75455cb3a72c491036ce0403d93f94c"
+ir_digest = "sha256:18b959ec5fed0599e272192a6834510cdc5e14c0a3a992ecbd029aa48daa77c7"
 
 [[files]]
 path = "interfaces/rest/adopt-shared-runtime-security-and-agent-interface.md"
@@ -17,6 +17,12 @@ section_count = 2
 path = "interfaces/rest/bootstrap-service-contract-and-durable-raw-event-vertical-slice.md"
 digest = "sha256:35ee36a2411335a53e3a1b1407c08f82a87d94773dd0cc26b1fc1c2ee646d59e"
 ir_digest = "sha256:0b88419781dd0923c1510b53ddd146a17787c0596fb2b34a803f22f42f1675f2"
+section_count = 2
+
+[[files]]
+path = "logic/add-kubernetes-deployment-and-operator-surfaces.md"
+digest = "sha256:4d6f90d327dbdf47b7b929d057b9f8c1494a7e7b0a1f99724c0e9e94b182aaa1"
+ir_digest = "sha256:43cdd473bff0620bfa460cd4c83a2e1798bec7dfdc8d9a5c8b8b9ac423b314c9"
 section_count = 2
 
 [[files]]
