@@ -6,7 +6,7 @@ summary: >
   service-http, #1326 service-auth, #1327 raft-host, #1328 operator/k8s/
   dockerfile, #1329 backup/spec-gen/clients, and #1330 vat/meter/guard/
   observability. Adds `apps/tape/docs/deployment-handoff.md` and
-  `apps/tape/docs/benchmarks-scale.md`, mirroring `projects/lumen/docs/`'s
+  `apps/tape/docs/benchmarks-scale.md`, mirroring `apps/lumen/docs/`'s
   layout and depth but scoped to what tape actually ships today: the
   deployment handoff covers the real dockerfile/k8s-operator path (#1328),
   bearer-auth flags (#1326), backup/restore (#1329), and raft HA env
@@ -170,22 +170,22 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: "New docs page (mirrors projects/lumen/docs/deployment-handoff.md): image/binary (dockerfile render + serve), CLI surface, runbooks (binary/docker/k8s kustomize-equivalent operator path #1328), environment variables (TAPE_BIND/STORE/GRACE_SECS/AUTH/TOKEN_REGISTRY_FILE/DATA_DIR/PEER_SERVICE/PEERS #1326 #1327), HTTP surface and probes, smoke sequence, backup/restore runbook (#1329), and release-readiness gates."
+    description: "New docs page (mirrors apps/lumen/docs/deployment-handoff.md): image/binary (dockerfile render + serve), CLI surface, runbooks (binary/docker/k8s kustomize-equivalent operator path #1328), environment variables (TAPE_BIND/STORE/GRACE_SECS/AUTH/TOKEN_REGISTRY_FILE/DATA_DIR/PEER_SERVICE/PEERS #1326 #1327), HTTP surface and probes, smoke sequence, backup/restore runbook (#1329), and release-readiness gates."
   - path: apps/tape/docs/benchmarks-scale.md
     action: create
     section: logic
     impl_mode: hand-written
-    description: "New docs page (mirrors projects/lumen/docs/benchmarks-scale.md shape, scoped to tape's actual gates): documents apps/tape/tests/tape_perf_gate.rs (local append/replay/checkpoint regression budget, no external peer win claims) and apps/tape/tests/tape_vs_nats_jetstream.rs (real nats-server -js 20k-event 128-byte-payload backlog replay, Tape zero-copy replay_refs >=1.5x win), how to reproduce both, and the explicit not-yet-calibrated peer list (Kafka/Redpanda/Pulsar/RabbitMQ Streams). No new benchmark classes invented."
+    description: "New docs page (mirrors apps/lumen/docs/benchmarks-scale.md shape, scoped to tape's actual gates): documents apps/tape/tests/tape_perf_gate.rs (local append/replay/checkpoint regression budget, no external peer win claims) and apps/tape/tests/tape_vs_nats_jetstream.rs (real nats-server -js 20k-event 128-byte-payload backlog replay, Tape zero-copy replay_refs >=1.5x win), how to reproduce both, and the explicit not-yet-calibrated peer list (Kafka/Redpanda/Pulsar/RabbitMQ Streams). No new benchmark classes invented."
   - path: apps/tape/scripts/dev-single.sh
     action: create
     section: logic
     impl_mode: hand-written
-    description: "New script (mirrors projects/lumen/scripts/dev-single.sh): single-node local dev, embedded file-backed journal via TAPE_STORE, TAPE_BIND default 127.0.0.1:7137, TAPE_AUTH=off, runs cargo run -p tape --bin tape -- serve."
+    description: "New script (mirrors apps/lumen/scripts/dev-single.sh): single-node local dev, embedded file-backed journal via TAPE_STORE, TAPE_BIND default 127.0.0.1:7137, TAPE_AUTH=off, runs cargo run -p tape --bin tape -- serve."
   - path: apps/tape/scripts/dev-cluster.sh
     action: create
     section: logic
     impl_mode: hand-written
-    description: "New script (mirrors projects/lumen/scripts/dev-cluster.sh): 3-node local raft cluster, sets REPLICAS_PER_SHARD=3/SHARD_COUNT=1/VOTER_COUNT=3/POD_NAME plus TAPE_DATA_DIR/TAPE_PEER_SERVICE/TAPE_PEERS so raft_host::ClusterTopology::from_env resolves peers and TapeRaft::from_topology replicates append/checkpoint-put across 3 tape serve processes on distinct ports."
+    description: "New script (mirrors apps/lumen/scripts/dev-cluster.sh): 3-node local raft cluster, sets REPLICAS_PER_SHARD=3/SHARD_COUNT=1/VOTER_COUNT=3/POD_NAME plus TAPE_DATA_DIR/TAPE_PEER_SERVICE/TAPE_PEERS so raft_host::ClusterTopology::from_env resolves peers and TapeRaft::from_topology replicates append/checkpoint-put across 3 tape serve processes on distinct ports."
   - path: apps/tape/README.md
     action: modify
     section: logic

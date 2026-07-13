@@ -146,7 +146,7 @@ green locally and through `rig run --vat` with vat-managed services;
 
 ## First consumer
 
-lumen: `projects/lumen/tests/rig/scenarios/` ports `scripts/chaos.sh`
+lumen: `apps/lumen/tests/rig/scenarios/` ports `scripts/chaos.sh`
 (partition recovery, packet-loss p99) and `scripts/soak.sh` (two-window
 RSS plateau) to scenarios, plus one `load/search_qps` pin
 (`config/pins/search_p99.toml`).

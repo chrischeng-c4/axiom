@@ -3,7 +3,7 @@ id: tape-vat-meter-guard-ec-gates-observability
 summary: >
   EC gate infra + observability slice for apps/tape (WI #1330, epic #1324),
   mirroring apps/relay's WI #1210 shape (vat-isolated meter/guard EC
-  dispatch) rather than projects/lumen's larger multi-runner vat.toml, since
+  dispatch) rather than apps/lumen's larger multi-runner vat.toml, since
   tape has no external broker peer service to spin up for its efficiency
   gate (the NATS JetStream comparison in `tape_vs_nats_jetstream.rs` starts
   its own local `nats-server` subprocess and does not need a vat-managed
@@ -38,7 +38,7 @@ summary: >
   scrape target, `grafana-datasources.yaml` wiring Prometheus + Jaeger
   datasources) and `apps/tape/compose.yaml` (a local dev stack: tape +
   otel-collector + prometheus + jaeger + grafana, mirroring
-  projects/lumen/compose.yaml exactly since both are h2c services with the
+  apps/lumen/compose.yaml exactly since both are h2c services with the
   same OTLP metrics surface). Finally wires `apps/tape/aw.toml`'s two new
   `tool_manifests` entries and root `aw.toml`'s `[[projects]]` tape block
   with `ec.efficiency`/`ec.security` bindings (mirroring the relay/keep
@@ -196,22 +196,22 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: "Prometheus scrape config targeting tape's /metrics endpoint (mirrors projects/lumen/observability/prometheus.yml), scraping the otel-collector's Prometheus exporter port."
+    description: "Prometheus scrape config targeting tape's /metrics endpoint (mirrors apps/lumen/observability/prometheus.yml), scraping the otel-collector's Prometheus exporter port."
   - path: apps/tape/observability/otel-collector-config.yaml
     action: create
     section: logic
     impl_mode: hand-written
-    description: "OTel collector config receiving OTLP gRPC from tape and re-exporting a Prometheus scrape target plus a trace exporter to Jaeger (mirrors projects/lumen/observability/otel-collector-config.yaml)."
+    description: "OTel collector config receiving OTLP gRPC from tape and re-exporting a Prometheus scrape target plus a trace exporter to Jaeger (mirrors apps/lumen/observability/otel-collector-config.yaml)."
   - path: apps/tape/observability/grafana-datasources.yaml
     action: create
     section: logic
     impl_mode: hand-written
-    description: "Grafana datasource provisioning wiring Prometheus + Jaeger (mirrors projects/lumen/observability/grafana-datasources.yaml)."
+    description: "Grafana datasource provisioning wiring Prometheus + Jaeger (mirrors apps/lumen/observability/grafana-datasources.yaml)."
   - path: apps/tape/compose.yaml
     action: create
     section: logic
     impl_mode: hand-written
-    description: "Local dev compose stack: tape + otel-collector + prometheus + jaeger + grafana (mirrors projects/lumen/compose.yaml), building tape's Dockerfile and wiring the observability/ config volumes."
+    description: "Local dev compose stack: tape + otel-collector + prometheus + jaeger + grafana (mirrors apps/lumen/compose.yaml), building tape's Dockerfile and wiring the observability/ config volumes."
   - path: apps/tape/aw.toml
     action: modify
     section: logic

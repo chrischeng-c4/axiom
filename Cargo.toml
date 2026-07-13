@@ -96,7 +96,7 @@ members = [
     "crates/cclab-log",
     "crates/cclab-aurora",
     "crates/cclab-ctx-inf-db",
-    "projects/lumen",
+    "apps/lumen",
     "apps/keep",
     "examples/client-transport-policy",
 ]

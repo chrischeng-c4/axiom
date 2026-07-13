@@ -1,4 +1,4 @@
-<!-- HANDWRITE-BEGIN gap="missing-generator:logic:e2141d18" tracker="pending-tracker" reason="New docs page (mirrors projects/lumen/docs/deployment-handoff.md): image/binary (dockerfile render + serve), CLI surface, runbooks (binary/docker/k8s kustomize-equivalent operator path #1328), environment variables (TAPE_BIND/STORE/GRACE_SECS/AUTH/TOKEN_REGISTRY_FILE/DATA_DIR/PEER_SERVICE/PEERS #1326 #1327), HTTP surface and probes, smoke sequence, backup/restore runbook (#1329), and release-readiness gates." -->
+<!-- HANDWRITE-BEGIN gap="missing-generator:logic:e2141d18" tracker="pending-tracker" reason="New docs page (mirrors apps/lumen/docs/deployment-handoff.md): image/binary (dockerfile render + serve), CLI surface, runbooks (binary/docker/k8s kustomize-equivalent operator path #1328), environment variables (TAPE_BIND/STORE/GRACE_SECS/AUTH/TOKEN_REGISTRY_FILE/DATA_DIR/PEER_SERVICE/PEERS #1326 #1327), HTTP surface and probes, smoke sequence, backup/restore runbook (#1329), and release-readiness gates." -->
 # tape — test-environment deployment handoff
 
 > One verified path for another team to stand up tape (topic replay journal)

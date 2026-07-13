@@ -1,0 +1,340 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: lumens.lumen.dev
+spec:
+  group: lumen.dev
+  names:
+    categories: []
+    kind: Lumen
+    plural: lumens
+    shortNames:
+    - lum
+    singular: lumen
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.servingReadyReplicas
+      name: Ready
+      type: integer
+    - jsonPath: .status.shardCount
+      name: Shards
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for LumenSpec via `CustomResource`
+        properties:
+          spec:
+            description: '`lumen.dev/v1alpha1` `Lumen`. Namespaced: every child object the operator renders lands in this object''s namespace, so multiple independent lumen deployments can coexist by name. @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source'
+            properties:
+              auth:
+                default: disabled
+                description: 'Auth mode: `off` (dev) or `required` (token registry supplied via `tokensSecret` or `tokensSecretProviderClass`).'
+                enum:
+                - disabled
+                - required
+                type: string
+              image:
+                description: Serving container image, e.g. `lumen:latest`. Required.
+                type: string
+              imagePullPolicy:
+                description: Image pull policy. Defaults to `IfNotPresent`.
+                nullable: true
+                type: string
+              logFormat:
+                default: pretty
+                description: 'Log output format: `json` (prod/staging) or `pretty` (dev).'
+                enum:
+                - json
+                - pretty
+                type: string
+              logLevel:
+                description: Log level (`trace|debug|info|warn|error`). Defaults to `info`.
+                nullable: true
+                type: string
+              observability:
+                default: false
+                description: Emit a ServiceMonitor + PrometheusRule. Requires the prometheus-operator CRDs (`monitoring.coreos.com/v1`) to be installed in the cluster.
+                type: boolean
+              replicasPerShard:
+                default: 1
+                description: 'Raft replicas per shard. `1` (default) = a single-member serving StatefulSet with no raft consensus (still durable — the same PVC-backed `raft` volume — and still fronted by an HPA). `> 1` adds raft-HA: a fixed peer set whose pods inject the downward-API env `raft_host::cluster` reads (no HPA — raft needs a known membership).'
+                type: integer
+                minimum: 0.0
+              reshardPolicy:
+                default:
+                  prepareAtPercent: 50
+                  urgentAtPercent: 85
+                  workflow:
+                    phase: Complete
+                description: Operator-owned storage reshard policy. HPA never changes storage ownership; this policy only prepares/recommends explicit shard topology changes.
+                properties:
+                  maxShardBytes:
+                    type: integer
+                    minimum: 0.0
+                    nullable: true
+                  maxShards:
+                    type: integer
+                    minimum: 0.0
+                    nullable: true
+                  migrationBytesPerSec:
+                    type: integer
+                    minimum: 0.0
+                    nullable: true
+                  prepareAtPercent:
+                    default: 50
+                    format: uint8
+                    minimum: 0.0
+                    type: integer
+                  startAtPercent:
+                    format: uint8
+                    minimum: 0.0
+                    nullable: true
+                    type: integer
+                  urgentAtPercent:
+                    default: 85
+                    format: uint8
+                    minimum: 0.0
+                    type: integer
+                  workflow:
+                    default:
+                      phase: Complete
+                    description: '@spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source'
+                    properties:
+                      phase:
+                        default: Complete
+                        description: '@spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source'
+                        enum:
+                        - Complete
+                        - PrepareSplit
+                        - Splitting
+                        - CatchingUp
+                        type: string
+                      targetShardCount:
+                        type: integer
+                        minimum: 0.0
+                        nullable: true
+                    type: object
+                type: object
+              serving:
+                default:
+                  autoscaling:
+                    minReplicas: 3
+                    maxReplicas: 12
+                    targetCpuUtilization: 70
+                  cpu: '2'
+                  memory: 4Gi
+                  graceSecs: 30
+                  raftStorage: 20Gi
+                  raftStorageClass: null
+                description: Stateless serving-fleet shape.
+                properties:
+                  autoscaling:
+                    default:
+                      minReplicas: 3
+                      maxReplicas: 12
+                      targetCpuUtilization: 70
+                    description: HPA bounds + CPU target.
+                    properties:
+                      maxReplicas:
+                        description: Ceiling.
+                        format: int32
+                        type: integer
+                      minReplicas:
+                        description: Floor (also the StatefulSet's apply-time replica count in HPA mode).
+                        format: int32
+                        type: integer
+                      targetCpuUtilization:
+                        description: Target average CPU utilization (%) — read QPS proxied by CPU.
+                        format: int32
+                        type: integer
+                    required:
+                    - maxReplicas
+                    - minReplicas
+                    - targetCpuUtilization
+                    type: object
+                  backup:
+                    description: Optional scheduled backup (#808). When set, the operator renders a `<name>-backup` CronJob (see [`super::render::backup_cron_job`]) that invokes `lumen backup` on this schedule against the running serving fleet's own already-existing `/admin/backup` endpoint — no new snapshot mechanism, only scheduling + transport. Absent means no CronJob; the admin API (`GET /admin/backup`, `POST /admin/backup/local`, `POST /admin/restore`) is still reachable for manual/scripted use either way (see `lumen llm --topic storage`).
+                    nullable: true
+                    properties:
+                      adminTokenSecret:
+                        description: 'Name of a Secret whose `token` key holds a bearer token with `Role::Admin` on `*`, injected into the CronJob as `LUMEN_BACKUP_TOKEN`. Needed when `spec.auth: required`; ignored (the admin API needs no token) when `spec.auth: off`.'
+                        nullable: true
+                        type: string
+                      destination:
+                        description: 'Destination URI: `file:///path`, `s3://bucket/prefix`, or schema-only `gs://bucket/prefix` (parsed, but the runner supports `file://` and `s3://` sinks today).'
+                        type: string
+                      retentionSecs:
+                        description: Drop backup objects older than this many seconds after a successful put. Absent keeps everything.
+                        type: integer
+                        minimum: 0.0
+                        nullable: true
+                      schedule:
+                        description: Cron schedule (`CronJob.spec.schedule`) for the backup runner.
+                        type: string
+                    required:
+                    - destination
+                    - schedule
+                    type: object
+                  bootstrap:
+                    description: Optional empty-PVC bootstrap seed. When set, serving pods restore this snapshot before WAL/raft catch-up. Supported seed URIs are exact `file://` SnapshotV1 JSON paths and, in backup-enabled builds, exact `s3://bucket/key` SnapshotV1 objects.
+                    nullable: true
+                    properties:
+                      maxBytesPerSec:
+                        description: Optional read throttle advertised to operators/status. The current source primitive reads one object per bootstrap; transfer shaping can be enforced by the object-store client/proxy or a future streaming reader.
+                        type: integer
+                        minimum: 0.0
+                        nullable: true
+                      seedUri:
+                        description: SnapshotV1 JSON seed URI. Use an exact `file://` path or `s3://bucket/key` object, not a backup prefix.
+                        type: string
+                    required:
+                    - seedUri
+                    type: object
+                  cpu:
+                    default: '2'
+                    description: Per-pod CPU, applied as request==limit (Guaranteed QoS). e.g. `"2"`.
+                    type: string
+                  graceSecs:
+                    default: 30
+                    description: Graceful drain window on SIGTERM (seconds); tracks `terminationGracePeriodSeconds`.
+                    type: integer
+                    minimum: 0.0
+                  memory:
+                    default: 4Gi
+                    description: Per-pod memory, applied as request==limit. e.g. `"4Gi"`.
+                    type: string
+                  raftStorage:
+                    default: 20Gi
+                    description: Per-pod WAL/raft hard-state PVC size. Always applied — the serving StatefulSet's `raft` volumeClaimTemplate exists at every `replicasPerShard` value, not only when raft consensus (`> 1`) is active.
+                    type: string
+                  raftStorageClass:
+                    description: PVC StorageClass for the WAL/raft hard-state volume. Unset means cluster default — which, on most managed Kubernetes offerings, is **not** SSD-backed (e.g. GKE's default `standard-rwo` is pd-balanced, not pd-ssd). Raft/WAL write latency is sensitive to disk performance, so a deployer who cares about that latency should set this field explicitly to an SSD-backed StorageClass name rather than relying on the cluster default (see `lumen llm --topic storage` for example StorageClass names per common provider — informational reference only, not a value validated or defaulted by this field).
+                    nullable: true
+                    type: string
+                type: object
+              shardCount:
+                default: 1
+                description: Physical storage shard count. Data ownership is resolved through the versioned virtual-bucket map, not permanent `hash % shardCount` routing. HPA never changes this value.
+                type: integer
+                minimum: 0.0
+              shardMap:
+                default:
+                  version: 0
+                  virtualBucketCount: 4096
+                description: Versioned virtual-bucket map metadata. The default one-shard map keeps existing installs compatible; future reshard workflows bump `version` and move selected virtual buckets to new physical shards.
+                properties:
+                  assignments:
+                    description: Optional explicit `bucket -> physical shard` assignments. Empty means derive the deterministic balanced assignment `bucket % shardCount`; reshard workflows set this to move selected buckets without changing every key.
+                    items:
+                      type: integer
+                      minimum: 0.0
+                    type: array
+                  version:
+                    default: 0
+                    type: integer
+                    minimum: 0.0
+                  virtualBucketCount:
+                    default: 4096
+                    type: integer
+                    minimum: 0.0
+                type: object
+              tokensSecret:
+                description: 'Name of a Secret whose `token-registry.json` key is mounted at `/var/run/secrets/lumen/token-registry.json` and exposed to the serving process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`. `token-registry.json` is a JSON object of `{ "<token>": { "subject": "...", "roles": { "<collection_id>|*": "read|write|admin" } } }`. Ignored when `auth: off`. See also `tokensSecretProviderClass` for a Secret-free alternative; if both are set, this field wins.'
+                nullable: true
+                type: string
+              tokensSecretProviderClass:
+                description: 'Name of an existing `SecretProviderClass` (same namespace as this object) mounted via the Secrets Store CSI driver (`secrets-store.csi.k8s.io`) at the same path as `tokensSecret` (`/var/run/secrets/lumen/token-registry.json`, env `LUMEN_TOKEN_REGISTRY_FILE`), so the token registry''s content never materializes as a k8s API object (`Secret` or `ConfigMap`) at all. The referenced `SecretProviderClass` must project a file named `token-registry.json` (same schema as `tokensSecret`''s Secret key). Ignored when `auth: off`. Mutual exclusion with `tokensSecret` is by precedence, not schema enforcement: if `tokensSecret` is also set, it wins (backward compatible) and this field is ignored. Rotation caveat: a CSI-mounted file only refreshes on the underlying value''s rotation if the cluster''s CSI driver has secret rotation enabled (e.g. GKE''s managed add-on defaults it off); either way, lumen reads the registry once at serve startup, so picking up a rotated value requires a rolling restart regardless of the CSI driver''s rotation setting.'
+                nullable: true
+                type: string
+              voterCount:
+                default: 1
+                description: Voting members per shard (the rest are learners). Only meaningful when `replicasPerShard > 1`.
+                type: integer
+                minimum: 0.0
+            required:
+            - image
+            type: object
+          status:
+            description: Status subresource, written back by the reconcile loop. @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
+            nullable: true
+            properties:
+              desiredReplicas:
+                default: 0
+                description: Desired serving replicas (HPA floor at apply, or the live count).
+                format: int32
+                type: integer
+              message:
+                default: ''
+                description: Last human-readable reconcile message.
+                type: string
+              observedGeneration:
+                default: 0
+                description: The `.metadata.generation` this status reflects (drift detection).
+                format: int64
+                type: integer
+              phase:
+                default: ''
+                description: '`Pending | Reconciling | Ready | Degraded`.'
+                type: string
+              reshard:
+                default:
+                  phase: ''
+                  recommendationOnly: false
+                  progressPercent: 0
+                  message: ''
+                description: Reshard workflow status. Present even before a split starts so agents can distinguish "complete" from "unknown policy".
+                properties:
+                  blockingConditions:
+                    items:
+                      type: string
+                    type: array
+                  message:
+                    default: ''
+                    type: string
+                  migrationBytesPerSec:
+                    type: integer
+                    minimum: 0.0
+                    nullable: true
+                  phase:
+                    default: ''
+                    type: string
+                  progressPercent:
+                    default: 0
+                    format: uint8
+                    minimum: 0.0
+                    type: integer
+                  recommendationOnly:
+                    default: false
+                    type: boolean
+                  targetShardCount:
+                    type: integer
+                    minimum: 0.0
+                    nullable: true
+                type: object
+              servingReadyReplicas:
+                default: 0
+                description: Ready serving replicas (from the StatefulSet status).
+                format: int32
+                type: integer
+              shardCount:
+                default: 0
+                description: Effective shard count.
+                type: integer
+                minimum: 0.0
+            type: object
+        required:
+        - spec
+        title: Lumen
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

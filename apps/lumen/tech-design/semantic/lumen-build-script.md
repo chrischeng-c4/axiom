@@ -1,0 +1,121 @@
+---
+id: semantic-lumen-build-script
+summary: Lossless source-unit coverage for the lumen project build script.
+capability_refs:
+  - id: "cli-interface"
+    role: primary
+    claim: "service-process-interface"
+    coverage: partial
+    rationale: "The project build script is part of the operability/release workflow for installing and verifying the lumen binary."
+fill_sections: [text-source-unit, changes]
+---
+
+# Semantic TD: lumen/build.sh
+
+## Source
+<!-- type: text-source-unit lang: bash -->
+
+```bash
+#!/usr/bin/env bash
+# SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-build-script.md#text-source-unit
+# CODEGEN-BEGIN
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: apps/lumen/build.sh <debug|release>
+
+debug    Build lumen and install target/debug/lumen to ~/.cargo/bin/lumen.
+release  Build/install lumen, create a release commit, and print the tag to push after git:land.
+
+Note: this is the LOCAL/host dev install. Cross-platform release binaries
+(macOS arm64 + Linux x64/arm64) are built by .github/workflows/lumen-release.yml
+when the lumen@<version> tag is pushed.
+EOF
+}
+
+fail_hint() {
+  local mode="$1"
+  echo ""
+  echo "Build failed."
+  echo "Retry with: apps/lumen/build.sh ${mode}"
+  echo "Verify with: ~/.cargo/bin/lumen --version"
+}
+
+MODE="${1:-}"
+if [[ "${2:-}" == "-h" || "${2:-}" == "--help" || "${2:-}" == "help" ]]; then
+  usage
+  exit 0
+fi
+if [[ $# -gt 1 ]]; then
+  usage >&2
+  exit 2
+fi
+case "$MODE" in
+  -h|--help|help|"")
+    usage
+    exit 0
+    ;;
+  debug|release)
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+. scripts/project-build-lib.sh
+
+trap 'fail_hint "$MODE"' ERR
+
+install_lumen() {
+  local profile="$1"
+  install -m 755 "target/${profile}/lumen" "$HOME/.cargo/bin/lumen"
+  codesign -s - -f "$HOME/.cargo/bin/lumen" 2>/dev/null || true
+  echo "Installed: $("$HOME/.cargo/bin/lumen" --version 2>/dev/null || echo 'lumen')"
+  echo "Verify with: ~/.cargo/bin/lumen --version"
+}
+
+if [[ "$MODE" == "debug" ]]; then
+  VERSION_FILES=(apps/lumen/Cargo.toml)
+  CURRENT_VERSION="$(project_build_read_version apps/lumen/Cargo.toml)"
+  project_build_prepare_debug_version lumen "$CURRENT_VERSION" "${VERSION_FILES[@]}"
+  cargo build -p lumen --bin lumen --features raft-wal
+  install_lumen debug
+  project_build_restore_manifests
+  echo ""
+  echo "Build complete (debug ${PROJECT_BUILD_DEBUG_VERSION})."
+  exit 0
+fi
+
+VERSION_FILES=(apps/lumen/Cargo.toml)
+CURRENT_VERSION="$(project_build_read_version apps/lumen/Cargo.toml)"
+export PROJECT_BUILD_REQUIRE_REMOTE_TAG_CHECK=1
+project_build_prepare_release_version lumen "$CURRENT_VERSION" "${VERSION_FILES[@]}"
+
+cargo update -w 2>/dev/null || cargo generate-lockfile
+cargo build --release -p lumen --bin lumen --features "otel operator raft-wal self-update issue"
+install_lumen release
+
+TAG="${PROJECT_BUILD_RELEASE_TAG}"
+git add Cargo.lock apps/lumen
+git commit --allow-empty -m "release(lumen): ${TAG}"
+
+project_build_print_release_next_steps lumen "$TAG"
+# CODEGEN-END
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "apps/lumen/build.sh"
+    action: modify
+    section: text-source-unit
+    description: "Regenerate the lumen project build script from a TD-owned text source unit."
+    impl_mode: codegen
+```
