@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-13T12:35:22.491299+00:00"
-digest = "sha256:1f2277f577c15c06786a4d070f855ed8b6ee20acf3ce6c4d2cca41013bd10585"
-source_digest = "sha256:1f2277f577c15c06786a4d070f855ed8b6ee20acf3ce6c4d2cca41013bd10585"
-ir_digest = "sha256:775e7a85c0d865b4bd47ddc3c4d6f951471f6f4f95a9794827fa3425e13d1ad5"
+generated_at = "2026-07-13T12:45:00.592571+00:00"
+digest = "sha256:8e7ca296e18d0f1ed6fef2ac58574435a45a2498eab5787102cc09e1028b66f4"
+source_digest = "sha256:8e7ca296e18d0f1ed6fef2ac58574435a45a2498eab5787102cc09e1028b66f4"
+ir_digest = "sha256:a99624b39fdffca888ae35d98c1ba2d60a6bdcfce09e84a0405d4a9bff79feec"
 
 [[files]]
 path = "README.md"
@@ -24,6 +24,12 @@ path = "interfaces/rest/tape-service-auth.md"
 digest = "sha256:6153519a5ea3e6d405cba97558e66850b627b0a61cabfc02402612a8e25444d2"
 ir_digest = "sha256:08d2e53f4bd35197f47fde2df1486c37a1c4aaa092a2df29d78fc8cb09cd538f"
 section_count = 3
+
+[[files]]
+path = "logic/add-operator-kind-restart-and-durable-replay-dogfood.md"
+digest = "sha256:ac57a4330d3c4eae9a5d456745775caec8c692377525c15db3c55ceded53b609"
+ir_digest = "sha256:3145191e298a12a5a8fd0e61325a1153281a1c67db5b89be2d87afec6d2d08af"
+section_count = 2
 
 [[files]]
 path = "logic/expose-subscriptions-as-topic-delivery-resources.md"
