@@ -839,9 +839,29 @@ path = "."
         String::from_utf8_lossy(&apply_logic.stdout),
         String::from_utf8_lossy(&apply_logic.stderr),
     );
+    let apply_envelope: serde_json::Value = serde_json::from_slice(&apply_logic.stdout)
+        .expect("logic applicability apply should emit one JSON dispatch envelope");
+    assert_eq!(
+        apply_envelope["invoke"]["args"]["phase"], "applicability",
+        "the default queue must finish applicability before contract authoring: {apply_envelope}"
+    );
+    assert_eq!(
+        apply_envelope["invoke"]["args"]["section"], "unit-test",
+        "logic applicability must dispatch the default unit-test section next: {apply_envelope}"
+    );
+    assert!(
+        apply_envelope["invoke"]["args"]["payload_path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("/applicability/unit-test.json")),
+        "the next payload must remain in the applicability pass: {apply_envelope}"
+    );
 
     let spec_abs = root.join(spec_path);
     let spec_after_authoring = std::fs::read_to_string(&spec_abs).unwrap();
+    assert!(
+        spec_after_authoring.contains("fill_sections: [logic, unit-test]"),
+        "the first merge must retain the complete default queue:\n{spec_after_authoring}"
+    );
     assert!(
         spec_after_authoring.contains("real-logic-813"),
         "spec should carry the authored logic content:\n{spec_after_authoring}"
