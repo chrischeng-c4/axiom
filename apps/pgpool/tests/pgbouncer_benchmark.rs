@@ -37,11 +37,16 @@ fn dry_run_profile_declares_equal_transaction_pooling_inputs() {
     assert_eq!(profile["profile"]["clients"], 64);
     assert_eq!(profile["profile"]["jobs"], 4);
     assert_eq!(profile["profile"]["duration_seconds"], 30);
+    assert_eq!(profile["profile"]["pool_acquire_timeout_ms"], 60_000);
     assert_eq!(profile["targets"]["pgbouncer"]["pool_mode"], "transaction");
     assert_eq!(profile["targets"]["pgpool"]["pool_mode"], "transaction");
     assert_eq!(
         profile["targets"]["pgbouncer"]["backend_connection_cap"],
         profile["targets"]["pgpool"]["backend_connection_cap"]
+    );
+    assert_eq!(
+        profile["targets"]["pgpool"]["pool_acquire_timeout_ms"],
+        profile["profile"]["pool_acquire_timeout_ms"]
     );
 }
 

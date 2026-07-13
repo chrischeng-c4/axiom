@@ -8,6 +8,7 @@ readonly CLIENTS=64
 readonly JOBS=4
 readonly DURATION_SECONDS=30
 readonly SCALE=1
+readonly POOL_ACQUIRE_TIMEOUT_MS=60000
 readonly DATABASE="pgpool_bench"
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 
@@ -33,7 +34,7 @@ USAGE
 
 emit_dry_run_profile() {
     cat <<JSON
-{"schema":"$PROFILE_SCHEMA","profile":{"workload":"pgbench-tpcb","protocol":"simple","pool_mode":"transaction","backend_connection_cap":$BACKEND_CAP,"clients":$CLIENTS,"jobs":$JOBS,"duration_seconds":$DURATION_SECONDS,"scale":$SCALE},"targets":{"pgbouncer":{"pool_mode":"transaction","backend_connection_cap":$BACKEND_CAP},"pgpool":{"pool_mode":"transaction","backend_connection_cap":$BACKEND_CAP}}}
+{"schema":"$PROFILE_SCHEMA","profile":{"workload":"pgbench-tpcb","protocol":"simple","pool_mode":"transaction","backend_connection_cap":$BACKEND_CAP,"clients":$CLIENTS,"jobs":$JOBS,"duration_seconds":$DURATION_SECONDS,"scale":$SCALE,"pool_acquire_timeout_ms":$POOL_ACQUIRE_TIMEOUT_MS},"targets":{"pgbouncer":{"pool_mode":"transaction","backend_connection_cap":$BACKEND_CAP},"pgpool":{"pool_mode":"transaction","backend_connection_cap":$BACKEND_CAP,"pool_acquire_timeout_ms":$POOL_ACQUIRE_TIMEOUT_MS}}}
 JSON
 }
 
@@ -99,6 +100,14 @@ require_client_count() {
     local value="$1"
     local target="$2"
     [[ "$value" == "$CLIENTS" ]] || fail "$target benchmark did not establish all $CLIENTS clients (reported '$value')"
+}
+
+require_clean_pgbench() {
+    local report="$1"
+    local target="$2"
+    if grep -q '^pgbench: error:' "$report"; then
+        fail "$target benchmark reported client errors; refusing a partial-workload comparison"
+    fi
 }
 
 cleanup() {
@@ -208,6 +217,7 @@ wait_for_sql "$PGBOUNCER_PORT" "PgBouncer"
     --bind "127.0.0.1:$PGPOOL_PORT" \
     --admin-bind "127.0.0.1:$ADMIN_PORT" \
     --max-backend-connections "$BACKEND_CAP" \
+    --pool-acquire-timeout-ms "$POOL_ACQUIRE_TIMEOUT_MS" \
     >"$WORK_DIR/pgpool.log" 2>&1 &
 PGPOOL_PID=$!
 wait_for_sql "$PGPOOL_PORT" "pgpool"
@@ -227,6 +237,8 @@ require_metric "$PGPOOL_TPS" "pgpool TPS"
 require_metric "$PGPOOL_LATENCY_MS" "pgpool latency"
 require_client_count "$PGBOUNCER_CLIENTS" "PgBouncer"
 require_client_count "$PGPOOL_CLIENTS" "pgpool"
+require_clean_pgbench "$WORK_DIR/pgbouncer-pgbench.log" "PgBouncer"
+require_clean_pgbench "$WORK_DIR/pgpool-pgbench.log" "pgpool"
 
 TPS_RATIO="$(awk -v pgpool="$PGPOOL_TPS" -v pgbouncer="$PGBOUNCER_TPS" 'BEGIN { printf "%.6f", pgpool / pgbouncer }')"
 WINNER="$(awk -v pgpool="$PGPOOL_TPS" -v pgbouncer="$PGBOUNCER_TPS" 'BEGIN { print (pgpool > pgbouncer ? "pgpool" : (pgpool < pgbouncer ? "pgbouncer" : "tie")) }')"

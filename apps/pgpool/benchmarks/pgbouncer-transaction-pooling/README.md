@@ -14,14 +14,18 @@ Both targets use the same intentionally constrained workload:
 - transaction pooling
 - 16 physical backend connections
 - 64 clients, 4 pgbench jobs, 30 seconds, TPC-B scale factor 1
+- pgpool waits up to 60 seconds for a capped backend lease, matching
+  PgBouncer's queueing behavior instead of aborting a client during a
+  transient slow host interval
 - one freshly initialized, trust-authenticated loopback PostgreSQL database
 - `DISCARD ALL` when PgBouncer returns a backend connection to its pool
 
 The runner warms the shared backend before measurement and then measures the
 two targets sequentially. Its JSON includes raw TPS, average latency, and the
 explicit `pgpool_over_pgbouncer_tps` ratio; it deliberately does not encode a
-pass/fail threshold. It does reject a target that cannot establish all 64
-declared clients, so a partial-client run cannot be compared as a valid result.
+pass/fail threshold. It rejects a target that cannot establish all 64 declared
+clients or logs a pgbench client error, so a partial-workload run cannot be
+compared as a valid result.
 
 ## Run
 
