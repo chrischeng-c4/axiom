@@ -8,15 +8,29 @@ fill_sections: [logic]
 <!-- type: logic lang: mermaid -->
 
 ```mermaid
-flowchart TD
-    CR[Pgpool custom resource] --> MS[ManagedService reconcile]
-    MS --> DEP[Stateless Deployment]
-    MS --> SVC[ClusterIP Service]
-    MS --> PDB[PodDisruptionBudget]
-    DB[PostgreSQL endpoint facts] --> CP[PgpoolControlPlane]
-    CP --> QUOTA[Global endpoint quota]
-    QUOTA --> POD[Per-Pod backend limit]
-    CP --> STATUS[Pgpool status and metrics]
-    DEP --> READY[Deployment ready replicas]
-    READY --> STATUS
+---
+id: pgpool-crd-operator-control-plane
+entry: custom_resource
+nodes:
+  custom_resource: { kind: start, label: "Pgpool CR image replicas backend endpoint budgets" }
+  reconcile: { kind: process, label: "Shared ManagedService reconcile" }
+  render: { kind: process, label: "Render ServiceAccount Deployment ClusterIP Service and PDB" }
+  readiness: { kind: process, label: "Read Deployment ReadyFacts" }
+  discovery: { kind: process, label: "Discover runtime endpoint connection facts" }
+  admission: { kind: decision, label: "Atomically admit desired and rollout Pod quotas" }
+  limit: { kind: process, label: "Set per-Pod PGPOOL_MAX_BACKEND_CONNECTIONS" }
+  drain: { kind: process, label: "Remove readiness drain and retain quota" }
+  status: { kind: terminal, label: "Patch Pgpool readiness and endpoint budget status" }
+edges:
+  - { from: custom_resource, to: reconcile }
+  - { from: reconcile, to: render }
+  - { from: render, to: readiness }
+  - { from: custom_resource, to: discovery }
+  - { from: discovery, to: admission }
+  - { from: admission, to: limit, label: "capacity available" }
+  - { from: limit, to: drain }
+  - { from: readiness, to: status }
+  - { from: admission, to: status, label: "blocked" }
+  - { from: drain, to: status }
+---
 ```
