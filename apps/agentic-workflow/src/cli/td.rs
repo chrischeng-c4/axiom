@@ -2390,7 +2390,11 @@ fn td_authoring_pass(raw: Option<&str>) -> &str {
 }
 
 fn td_section_queue(_pass: &str) -> Vec<String> {
-    vec!["logic".to_string(), "unit-test".to_string()]
+    vec![
+        "logic".to_string(),
+        "changes".to_string(),
+        "unit-test".to_string(),
+    ]
 }
 
 fn td_fill_sections_from_content(content: &str) -> Option<Vec<String>> {
@@ -3374,7 +3378,7 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     println!("---");
     println!("```");
     println!();
-    println!("Example: `fill_sections: [logic, unit-test]`.");
+    println!("Example: `fill_sections: [logic, changes, unit-test]`.");
     println!();
     println!("Each section uses an H2 heading with type annotation:");
     println!();
@@ -3411,7 +3415,7 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
             .join(" → "),
     );
     println!();
-    println!("Only sections listed in `fill_sections` are required. A fresh skeleton records `logic` then `unit-test` as the minimal default; an existing non-empty custom queue keeps its declared members and order.");
+    println!("Only sections listed in `fill_sections` are required. A fresh skeleton records `logic`, `changes`, then `unit-test` so codegen has an explicit target plan; an existing non-empty custom queue keeps its declared members and order.");
     println!();
     println!(
         "Use frontmatter `summary:` for overview text; requirements stay in the WI body. Do not add legacy prose sections such as `scenarios` unless migrating an older TD."
@@ -5235,10 +5239,10 @@ label = "lib:pg"
 
         let merged = merge_spec_section(base, "logic", payload).unwrap();
 
-        assert!(merged.contains("fill_sections: [logic, unit-test]"));
+        assert!(merged.contains("fill_sections: [logic, changes, unit-test]"));
         assert_eq!(
             remaining_after_section_in_content(&merged, "applicability", "logic"),
-            vec!["unit-test".to_string()]
+            vec!["changes".to_string(), "unit-test".to_string()]
         );
     }
 
@@ -5592,12 +5596,19 @@ label = "lib:pg"
     #[test]
     fn td_section_queue_excludes_deprecated_and_legacy_metadata_types() {
         let queue = td_section_queue("applicability");
-        assert_eq!(queue, vec!["logic".to_string(), "unit-test".to_string()]);
+        assert_eq!(
+            queue,
+            vec![
+                "logic".to_string(),
+                "changes".to_string(),
+                "unit-test".to_string(),
+            ]
+        );
         assert!(!queue.contains(&"overview".to_string()));
         assert!(!queue.contains(&"requirements".to_string()));
         assert!(!queue.contains(&"doc".to_string()));
         assert!(!queue.contains(&"scenarios".to_string()));
-        assert!(!queue.contains(&"changes".to_string()));
+        assert!(queue.contains(&"changes".to_string()));
         assert!(queue.contains(&"unit-test".to_string()));
         assert!(queue.contains(&"logic".to_string()));
         for section in &queue {
@@ -6054,7 +6065,7 @@ label = "lib:pg"
         assert!(content.starts_with("---\n"), "content: {content}");
         assert!(content.contains("id: some-slug"), "content: {content}");
         assert!(
-            content.contains("fill_sections: [logic, unit-test]"),
+            content.contains("fill_sections: [logic, changes, unit-test]"),
             "content: {content}"
         );
 
