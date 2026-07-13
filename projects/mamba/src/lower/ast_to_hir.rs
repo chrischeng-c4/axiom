@@ -3692,6 +3692,10 @@ struct AstLowerer<'a> {
     /// Names with multiple same-scope binding events. Function/class uses must
     /// load the Python slot instead of selecting one declaration statically.
     active_runtime_rebound_names: HashSet<String>,
+    /// Name of the class body currently being lowered, if any. Unresolved
+    /// reads in that scope must consult the executing class namespace
+    /// (`__prepare__` / class locals) before falling back to globals.
+    active_class_body_name: Option<String>,
 }
 
 impl<'a> AstLowerer<'a> {
@@ -3744,6 +3748,7 @@ impl<'a> AstLowerer<'a> {
             forced_global_names: HashMap::new(),
             decorated_top_level_names: std::collections::HashMap::new(),
             in_function_body: false,
+            active_class_body_name: None,
         }
     }
 
@@ -4132,11 +4137,8 @@ impl<'a> AstLowerer<'a> {
                     // default values and decorators lower to the deferred
                     // NameError path until the generated assignment statement
                     // runs.
-                    self.module_del_stmt_names.extend(
-                        type_params
-                            .iter()
-                            .map(|param| param.name.clone()),
-                    );
+                    self.module_del_stmt_names
+                        .extend(type_params.iter().map(|param| param.name.clone()));
                     // Register param info for kwargs resolution at call sites.
                     let (param_info, default_setup) =
                         self.frozen_param_info(name, params, stmt.span);
@@ -4716,6 +4718,7 @@ impl<'a> AstLowerer<'a> {
         self.cell_override_syms = std::collections::HashSet::new();
         self.enter_local_scope();
         let saved_in_function_body = self.in_function_body;
+        let saved_active_class_body_name = self.active_class_body_name.take();
         self.in_function_body = true;
 
         // #1053: prescan THIS function's OWN body for every name it assigns
@@ -5048,6 +5051,7 @@ impl<'a> AstLowerer<'a> {
         self.outer_scope_names = saved_outer_scope;
         self.cell_override_syms = saved_cell_syms;
         self.in_function_body = saved_in_function_body;
+        self.active_class_body_name = saved_active_class_body_name;
 
         let star_param_pos = params.iter().position(|p| p.kind == ast::ParamKind::Star);
         let has_star_args = star_param_pos.is_some();
@@ -5615,6 +5619,7 @@ impl<'a> AstLowerer<'a> {
             .sym_names
             .entry(name_id)
             .or_insert_with(|| name.to_string());
+        let saved_active_class_body_name = self.active_class_body_name.replace(name.to_string());
         // PEP 557: ordered (field_name, annotation_repr, default_expr) facts
         // from class-body annotations, recorded only for @dataclass classes so
         // the runtime synthesizer can build __init__/__repr__/__eq__/etc.
@@ -6159,7 +6164,7 @@ impl<'a> AstLowerer<'a> {
                 None
             }
         });
-        Some(HirClass {
+        let class = HirClass {
             name: name_id,
             bind_name,
             base: None,
@@ -6182,7 +6187,9 @@ impl<'a> AstLowerer<'a> {
             class_kwargs: Vec::new(),
             dataclass_fields,
             doc: class_doc,
-        })
+        };
+        self.active_class_body_name = saved_active_class_body_name;
+        Some(class)
     }
 
     fn lower_stmt(&mut self, stmt: &Spanned<ast::Stmt>) -> Option<HirStmt> {
@@ -7616,7 +7623,7 @@ impl<'a> AstLowerer<'a> {
                     }
                 }
                 if let ast::Expr::Ident(name) = &func.node {
-                    if matches!(name.as_str(), "set" | "frozenset")
+                    if matches!(name.as_str(), "set" | "frozenset" | "list")
                         && args.iter().all(|a| {
                             matches!(
                                 a,
@@ -8454,10 +8461,7 @@ impl<'a> AstLowerer<'a> {
                                 })
                             });
                             return Some(HirExpr::Call {
-                                func: Box::new(HirExpr::StrLit(
-                                    "mb_enumerate".to_string(),
-                                    any_ty,
-                                )),
+                                func: Box::new(HirExpr::StrLit("mb_enumerate".to_string(), any_ty)),
                                 args: vec![
                                     iterable,
                                     start.unwrap_or_else(|| {
@@ -10680,6 +10684,19 @@ impl<'a> AstLowerer<'a> {
     /// raises NameError with CPython's exact message at THIS read.
     fn deferred_name_read_expr(&self, name: &str) -> HirExpr {
         let any_ty = self.checker.tcx.any();
+        if let Some(class_name) = self.active_class_body_name.as_deref() {
+            return HirExpr::Call {
+                func: Box::new(HirExpr::StrLit(
+                    "mb_deferred_class_name_read".to_string(),
+                    any_ty,
+                )),
+                args: vec![
+                    HirExpr::StrLit(class_name.to_string(), self.checker.tcx.str()),
+                    HirExpr::StrLit(name.to_string(), self.checker.tcx.str()),
+                ],
+                ty: any_ty,
+            };
+        }
         HirExpr::Call {
             func: Box::new(HirExpr::StrLit("mb_deferred_name_read".to_string(), any_ty)),
             args: vec![HirExpr::StrLit(name.to_string(), self.checker.tcx.str())],
@@ -11295,9 +11312,7 @@ mod tests {
                 hir_expr_contains_deferred_name_read(key, name)
                     || hir_expr_contains_deferred_name_read(value, name)
             }),
-            HirExpr::UnaryOp { operand, .. } => {
-                hir_expr_contains_deferred_name_read(operand, name)
-            }
+            HirExpr::UnaryOp { operand, .. } => hir_expr_contains_deferred_name_read(operand, name),
             HirExpr::BinOp { lhs, rhs, .. } => {
                 hir_expr_contains_deferred_name_read(lhs, name)
                     || hir_expr_contains_deferred_name_read(rhs, name)
@@ -12319,7 +12334,11 @@ mod tests {
         let nested_placeholder = hir
             .functions
             .iter()
-            .find(|func| func.func_sig.as_ref().is_some_and(|sig| sig.params[0].name == "arg"))
+            .find(|func| {
+                func.func_sig
+                    .as_ref()
+                    .is_some_and(|sig| sig.params[0].name == "arg")
+            })
             .and_then(|func| {
                 func.body.iter().find_map(|stmt| {
                     if let HirStmt::ClassDefPlaceholder { name, .. } = stmt {
@@ -12408,6 +12427,100 @@ mod tests {
                 .iter()
                 .any(|stmt| matches!(stmt, HirStmt::ClassDefPlaceholder { name, .. } if *name == class.name)),
             "indexed generic base should force a textual class placeholder"
+        );
+    }
+
+    #[test]
+    fn test_lower_nested_generic_class_base_uses_enclosing_class_namespace_read() {
+        fn contains_deferred_class_name_read(
+            expr: &HirExpr,
+            class_name: &str,
+            name: &str,
+        ) -> bool {
+            match expr {
+                HirExpr::Call { func, args, .. } => {
+                    matches!(
+                        func.as_ref(),
+                        HirExpr::StrLit(func_name, _) if func_name == "mb_deferred_class_name_read"
+                    ) && matches!(
+                        args.as_slice(),
+                        [HirExpr::StrLit(cls_name, _), HirExpr::StrLit(arg_name, _)]
+                            if cls_name == class_name && arg_name == name
+                    ) || contains_deferred_class_name_read(func, class_name, name)
+                        || args
+                            .iter()
+                            .any(|arg| contains_deferred_class_name_read(arg, class_name, name))
+                }
+                HirExpr::Attr { object, .. } => {
+                    contains_deferred_class_name_read(object, class_name, name)
+                }
+                HirExpr::Index { object, index, .. } => {
+                    contains_deferred_class_name_read(object, class_name, name)
+                        || contains_deferred_class_name_read(index, class_name, name)
+                }
+                HirExpr::Tuple { elements, .. } | HirExpr::List { elements, .. } => elements
+                    .iter()
+                    .any(|expr| contains_deferred_class_name_read(expr, class_name, name)),
+                HirExpr::Dict { entries, .. } => entries.iter().any(|(key, value)| {
+                    contains_deferred_class_name_read(key, class_name, name)
+                        || contains_deferred_class_name_read(value, class_name, name)
+                }),
+                HirExpr::UnaryOp { operand, .. } => {
+                    contains_deferred_class_name_read(operand, class_name, name)
+                }
+                HirExpr::BinOp { lhs, rhs, .. } => {
+                    contains_deferred_class_name_read(lhs, class_name, name)
+                        || contains_deferred_class_name_read(rhs, class_name, name)
+                }
+                HirExpr::IfExpr {
+                    cond,
+                    then_val,
+                    else_val,
+                    ..
+                } => {
+                    contains_deferred_class_name_read(cond, class_name, name)
+                        || contains_deferred_class_name_read(then_val, class_name, name)
+                        || contains_deferred_class_name_read(else_val, class_name, name)
+                }
+                HirExpr::Slice {
+                    start, stop, step, ..
+                } => start
+                    .iter()
+                    .chain(stop.iter())
+                    .chain(step.iter())
+                    .any(|expr| contains_deferred_class_name_read(expr, class_name, name)),
+                HirExpr::Lambda { defaults, body, .. } => {
+                    defaults
+                        .iter()
+                        .flatten()
+                        .any(|expr| contains_deferred_class_name_read(expr, class_name, name))
+                        || contains_deferred_class_name_read(body, class_name, name)
+                }
+                _ => false,
+            }
+        }
+
+        let mut module = crate::parser::parse(
+            "class Meta(type):\n    @staticmethod\n    def __prepare__(name, bases):\n        return {}\nclass MyClass[V](metaclass=Meta):\n    class Inner[U](T):\n        pass\n",
+            FileId(0),
+        )
+        .expect("parse failed");
+        crate::lower::pep695::desugar_module(&mut module);
+        let mut checker = TypeChecker::new();
+        let _ = checker.check_module(&module);
+        let hir = lower_module(&module, &checker).expect("lower failed");
+        let inner = hir
+            .classes
+            .iter()
+            .find(|class| hir.sym_names.get(&class.name).is_some_and(|name| name == "Inner"))
+            .expect("Inner class should be present");
+        let runtime_bases = inner
+            .runtime_base_list_expr
+            .as_ref()
+            .expect("generic nested class base should lower as a runtime base list");
+        assert!(
+            contains_deferred_class_name_read(runtime_bases, "MyClass", "T"),
+            "nested class bases should consult the enclosing class namespace before global fallback"
         );
     }
 
@@ -13324,11 +13437,12 @@ async def main():
         };
 
         let HirStmt::Expr {
-            expr: HirExpr::ListComp {
-                element,
-                generators,
-                ..
-            },
+            expr:
+                HirExpr::ListComp {
+                    element,
+                    generators,
+                    ..
+                },
             ..
         } = &hir.top_level[1]
         else {
@@ -13598,8 +13712,9 @@ async def main():
 
     #[test]
     fn test_lower_class_def_rebinds_deleted_module_name() {
-        let module = crate::parser::parse("X = 1\ndel X\nclass X:\n    pass\nprint(X)\n", FileId(0))
-            .expect("parse failed");
+        let module =
+            crate::parser::parse("X = 1\ndel X\nclass X:\n    pass\nprint(X)\n", FileId(0))
+                .expect("parse failed");
         let mut checker = TypeChecker::new();
         let _ = checker.check_module(&module);
         let hir = lower_module(&module, &checker).expect("lower failed");
@@ -13608,7 +13723,10 @@ async def main():
             expr: rebound_read, ..
         } = hir.top_level.last().expect("expected print(X) statement")
         else {
-            panic!("expected print(X) expression, got {:?}", hir.top_level.last());
+            panic!(
+                "expected print(X) expression, got {:?}",
+                hir.top_level.last()
+            );
         };
         assert!(
             !hir_expr_contains_deferred_name_read(rebound_read, "X"),
@@ -13618,9 +13736,8 @@ async def main():
 
     #[test]
     fn test_lower_class_body_keeps_deleted_name_error_until_class_rebinds() {
-        let module =
-            crate::parser::parse("X = 1\ndel X\nclass X:\n    y = X\n", FileId(0))
-                .expect("parse failed");
+        let module = crate::parser::parse("X = 1\ndel X\nclass X:\n    y = X\n", FileId(0))
+            .expect("parse failed");
         let mut checker = TypeChecker::new();
         let _ = checker.check_module(&module);
         let hir = lower_module(&module, &checker).expect("lower failed");
@@ -13967,7 +14084,9 @@ async def main():
                         HirExpr::StrLit(func_name, _) if func_name == "mb_deferred_name_read"
                     ) && matches!(args.as_slice(), [HirExpr::StrLit(arg_name, _)] if arg_name == name)
                         || contains_deferred_name_read(func, name)
-                        || args.iter().any(|arg| contains_deferred_name_read(arg, name))
+                        || args
+                            .iter()
+                            .any(|arg| contains_deferred_name_read(arg, name))
                 }
                 HirExpr::Attr { object, .. } => contains_deferred_name_read(object, name),
                 HirExpr::Index { object, index, .. } => {
@@ -13985,8 +14104,7 @@ async def main():
                 }),
                 HirExpr::UnaryOp { operand, .. } => contains_deferred_name_read(operand, name),
                 HirExpr::BinOp { lhs, rhs, .. } => {
-                    contains_deferred_name_read(lhs, name)
-                        || contains_deferred_name_read(rhs, name)
+                    contains_deferred_name_read(lhs, name) || contains_deferred_name_read(rhs, name)
                 }
                 HirExpr::IfExpr {
                     cond,
@@ -14006,15 +14124,19 @@ async def main():
                     .chain(step.iter())
                     .any(|expr| contains_deferred_name_read(expr, name)),
                 HirExpr::Lambda { defaults, body, .. } => {
-                    defaults.iter().flatten().any(|expr| contains_deferred_name_read(expr, name))
+                    defaults
+                        .iter()
+                        .flatten()
+                        .any(|expr| contains_deferred_name_read(expr, name))
                         || contains_deferred_name_read(body, name)
                 }
                 _ => false,
             }
         }
 
-        let mut module = crate::parser::parse("def f[T](x = list[T]()):\n    return x\n", FileId(0))
-            .expect("parse failed");
+        let mut module =
+            crate::parser::parse("def f[T](x = list[T]()):\n    return x\n", FileId(0))
+                .expect("parse failed");
         crate::lower::pep695::desugar_module(&mut module);
         let mut checker = TypeChecker::new();
         let _ = checker.check_module(&module);
@@ -14031,8 +14153,8 @@ async def main():
 
     #[test]
     fn test_lower_type_alias_variadic_value_keeps_lazy_thunk_and_params() {
-        let mut module = crate::parser::parse("type V[*Ts] = tuple[*Ts]\n", FileId(0))
-            .expect("parse failed");
+        let mut module =
+            crate::parser::parse("type V[*Ts] = tuple[*Ts]\n", FileId(0)).expect("parse failed");
         crate::lower::pep695::desugar_module(&mut module);
         let mut checker = TypeChecker::new();
         let _ = checker.check_module(&module);
@@ -14046,10 +14168,7 @@ async def main():
                     value: HirExpr::Call { func, args, .. },
                     ..
                 } if args.len() == 3
-                    && matches!(
-                        func.as_ref(),
-                        HirExpr::Var(_, _) | HirExpr::StrLit(_, _)
-                    )
+                    && matches!(func.as_ref(), HirExpr::Var(_, _) | HirExpr::StrLit(_, _))
                     && matches!(&args[1], HirExpr::Lambda { .. }) =>
                 {
                     Some(args)
@@ -14157,9 +14276,7 @@ async def main():
         let hir = helper_lower(vec![sp(Stmt::ExprStmt(sp(Expr::Call {
             func: Box::new(sp(Expr::Ident("enumerate".to_string()))),
             args: vec![
-                CallArg::Positional(sp(Expr::ListLit(vec![sp(Expr::StrLit(
-                    "x".to_string(),
-                ))]))),
+                CallArg::Positional(sp(Expr::ListLit(vec![sp(Expr::StrLit("x".to_string()))]))),
                 CallArg::Keyword {
                     name: "start".to_string(),
                     value: sp(Expr::IntLit(10)),

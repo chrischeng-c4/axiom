@@ -2861,6 +2861,24 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_super_no_args_error",
+            class::mb_super_no_args_error as fn() -> super::MbValue,
+            [],
+            I64
+        ),
+        rt_sym!(
+            "mb_super_checked",
+            class::mb_super_checked as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_super_argcount_error",
+            class::mb_super_argcount_error as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
             "mb_delattr",
             class::mb_delattr as fn(super::MbValue, super::MbValue),
             [I64, I64],

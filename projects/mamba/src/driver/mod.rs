@@ -2644,6 +2644,47 @@ print(module_server.url)
         assert!(migrate_symbols.contains("runner_status"));
     }
 
+    // ── #1492: runtime-base slot inheritance ──────────────────────────────────
+
+    #[test]
+    fn runtime_base_slots_include_inherited_fields_before_instance_init() {
+        let src = r#"
+class Base:
+    __slots__ = ("x",)
+
+    def __init__(self, x):
+        self.x = x
+
+
+class Child(Base):
+    __slots__ = ("y",)
+
+    def class_cell(self):
+        return super()
+
+    def __init__(self, x, y):
+        Base.__init__(self, x)
+        self.y = y
+
+
+child = Child(1, 2)
+print(child.x)
+print(child.y)
+print(Child.__slots__)
+"#;
+        let previous = crate::runtime::output::begin_capture();
+        let mut session = CompilerSession::new(CompilerConfig::default());
+        let result = session.run_source(src, "runtime_base_slots.py");
+        let captured = crate::runtime::output::end_capture(previous);
+        crate::runtime::cleanup_all_runtime_state();
+
+        result.expect("runtime-base slot inheritance should run from source");
+        assert_eq!(
+            captured.lines().collect::<Vec<_>>(),
+            ["1", "2", "('y', 'x')"]
+        );
+    }
+
     // ── CompilerSession::new ──────────────────────────────────────────────────
 
     #[test]

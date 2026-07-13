@@ -2166,14 +2166,13 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
         let enc_orig = as_str(encoding).unwrap_or("utf-8").to_string();
         let enc = enc_orig.to_ascii_lowercase();
         let err = as_str(errors).unwrap_or("strict").to_string();
-        let raise_uee = |enc_name: &str, ch: char, pos: usize| {
-            super::exception::mb_raise(
-                MbValue::from_ptr(MbObject::new_str("UnicodeEncodeError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(format!(
-                    "'{}' codec can't encode character '\\u{:04x}' in position {}: ordinal not in range",
-                    enc_name, ch as u32, pos
-                ))),
-            );
+        // Build a full UnicodeEncodeError instance (encoding/object/start/end/
+        // reason fields) rather than a bare message string — `str(e)` for
+        // Unicode*Error is computed on demand from those fields
+        // (`exception::unicode_error_str`), so a message-only raise renders
+        // as an empty string (#223).
+        let raise_uee = |enc_name: &str, ch: char, pos: usize, reason: &str| {
+            raise_unicode_encode_error_instance(enc_name, s, pos, pos + 1, reason, ch as u32);
         };
         let bytes = match enc.as_str() {
             "utf-8-sig" | "utf_8_sig" => {
@@ -2216,7 +2215,7 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
                             "ignore" => continue,
                             "replace" => out.push(b'?'),
                             _ => {
-                                raise_uee("ascii", ch, pos);
+                                raise_uee("ascii", ch, pos, "ordinal not in range(128)");
                                 return MbValue::none();
                             }
                         }
@@ -2234,7 +2233,7 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
                             "ignore" => continue,
                             "replace" => out.push(b'?'),
                             _ => {
-                                raise_uee("latin-1", ch, pos);
+                                raise_uee("latin-1", ch, pos, "ordinal not in range(256)");
                                 return MbValue::none();
                             }
                         }
@@ -2369,14 +2368,14 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
             "idna" => match super::stdlib::codecs_mod::idna_encode_bytes(st) {
                 Some(out) => out,
                 None => {
-                    raise_uee("idna", '\u{FFFD}', 0);
+                    raise_uee("idna", '\u{FFFD}', 0, "ordinal not in range");
                     return MbValue::none();
                 }
             },
             "punycode" => match super::stdlib::codecs_mod::punycode_encode_bytes(st) {
                 Some(out) => out,
                 None => {
-                    raise_uee("punycode", '\u{FFFD}', 0);
+                    raise_uee("punycode", '\u{FFFD}', 0, "ordinal not in range");
                     return MbValue::none();
                 }
             },

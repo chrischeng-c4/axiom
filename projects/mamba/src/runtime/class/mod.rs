@@ -2029,6 +2029,7 @@ fn build_kwargs_dict(kwargs: &HashMap<String, MbValue>) -> MbValue {
     }
     dict
 }
+
 fn class_base_accepts_kwargs_without_init_subclass(base_name: &str) -> bool {
     matches!(base_name, "typing.Generic" | "typing.typing.Generic")
         || class_is_typeddict_or_descendant(base_name)
@@ -2070,7 +2071,6 @@ fn apply_typeddict_class_kwargs(class_name: &str, kwargs: &HashMap<String, MbVal
         }
     });
 }
-
 
 /// Look up a dunder method on a value's class (R12 helper).
 /// Similar to try_get_dunder but works on arbitrary values (not just instances).
@@ -2349,6 +2349,115 @@ pub fn mb_call_metaclass_prepare(meta_name: &str, name: MbValue, bases: MbValue)
     args.push(name);
     args.push(bases);
     super::builtins::mb_call_spread(callable, MbValue::from_ptr(MbObject::new_list(args)))
+}
+
+/// Runtime fallback for unresolved reads that occur while executing a class
+/// body. Consult the class's materialized attrs first, then the metaclass
+/// `__prepare__` mapping (so custom `__missing__` hooks still fire), and only
+/// then fall back to ordinary global NameError handling.
+pub fn mb_deferred_class_name_read(class_name: MbValue, name: MbValue) -> MbValue {
+    let class_name = extract_str(class_name).unwrap_or_default();
+    if class_name.is_empty() {
+        return super::closure::mb_deferred_name_read(name);
+    }
+    let var_name = extract_str(name).unwrap_or_default();
+    if let Some(value) = class_attr_lookup(&class_name, &var_name) {
+        unsafe {
+            super::rc::retain_if_ptr(value);
+        }
+        return value;
+    }
+    let meta = CLASS_REGISTRY.with(|reg| {
+        reg.borrow()
+            .get(&class_name)
+            .and_then(|cls| cls.metaclass.clone().or_else(|| inherited_metaclass_for_bases(&cls.bases)))
+    });
+    if let Some(meta_name) = meta {
+        let prepared = mb_call_metaclass_prepare(
+            &meta_name,
+            MbValue::from_ptr(MbObject::new_str(class_name.clone())),
+            class_bases_tuple(&class_name),
+        );
+        if super::exception::current_exception_type().is_some() {
+            return MbValue::none();
+        }
+        if !prepared.is_none() {
+            let key = MbValue::from_ptr(MbObject::new_str(var_name.clone()));
+            match mapping_lookup(prepared, key) {
+                MappingLookup::Hit(value) => return value,
+                MappingLookup::Missing => {}
+                MappingLookup::Error => return MbValue::none(),
+            }
+        }
+    }
+    super::closure::mb_deferred_name_read(name)
+}
+
+fn sync_class_namespace_from_dict(class_name: &str, namespace: MbValue) {
+    let entries: Vec<(String, MbValue)> = namespace
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                Some(
+                    lock.read()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|(key, value)| {
+                            if let super::dict_ops::DictKey::Str(name) = key {
+                                (name != "__classcell__").then_some((name.clone(), *value))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+    if entries.is_empty() {
+        return;
+    }
+    CLASS_REGISTRY.with(|reg| {
+        let mut reg = reg.borrow_mut();
+        let Some(cls) = reg.get_mut(class_name) else {
+            return;
+        };
+        let existing_methods: HashSet<String> = cls.methods.keys().cloned().collect();
+        for (key, value) in entries {
+            let method_like = existing_methods.contains(&key)
+                || super::builtins::resolve_callable_pub(value).is_some();
+            unsafe {
+                super::rc::retain_if_ptr(value);
+            }
+            if method_like {
+                if let Some(old) = cls.methods.insert(key.clone(), value) {
+                    unsafe {
+                        super::rc::release_if_ptr(old);
+                    }
+                }
+                if let Some(old) = cls.class_attrs.remove(&key) {
+                    unsafe {
+                        super::rc::release_if_ptr(old);
+                    }
+                }
+            } else {
+                if let Some(old) = cls.class_attrs.insert(key.clone(), value) {
+                    unsafe {
+                        super::rc::release_if_ptr(old);
+                    }
+                }
+                if let Some(old) = cls.methods.remove(&key) {
+                    unsafe {
+                        super::rc::release_if_ptr(old);
+                    }
+                }
+            }
+        }
+    });
+    invalidate_method_cache();
+    refresh_cached_init(class_name);
 }
 
 fn refresh_cached_init(class_name: &str) {
@@ -3006,6 +3115,25 @@ pub fn mb_instance_new(class_name: MbValue, _args: MbValue) -> MbValue {
 /// Factored out to avoid duplicating the arity match in both cached and uncached paths.
 /// Uses a single RwLock read to get both the arg count and arg values.
 #[inline]
+/// `__init__` must return `None`; CPython's slot wrapper rejects any other
+/// return value with a TypeError once the call returns (skipped when the
+/// call already left a pending exception — that takes priority).
+fn check_init_return_value(result: MbValue) {
+    if result.is_none() {
+        return;
+    }
+    if super::exception::mb_has_exception().as_bool() == Some(true) {
+        return;
+    }
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "__init__() should return None, not '{}'",
+            super::builtins::value_type_name(result)
+        ))),
+    );
+}
+
 fn call_init_with_args(addr: u64, instance: MbValue, args_list: MbValue) {
     // Variadic native `__init__(self, args_list)`: the registered function
     // always expects exactly two arguments — `self` plus a list of the
@@ -3028,7 +3156,7 @@ fn call_init_with_args(addr: u64, instance: MbValue, args_list: MbValue) {
         let list = MbValue::from_ptr(MbObject::new_list(packed));
         let func: extern "C" fn(MbValue, MbValue) -> MbValue =
             unsafe { std::mem::transmute(addr as usize) };
-        func(instance, list);
+        check_init_return_value(func(instance, list));
         return;
     }
     if let Some(ptr) = args_list.as_ptr() {
@@ -3041,20 +3169,20 @@ fn call_init_with_args(addr: u64, instance: MbValue, args_list: MbValue) {
                     0 => {
                         let func: extern "C" fn(MbValue) -> MbValue =
                             std::mem::transmute(addr as usize);
-                        func(instance);
+                        check_init_return_value(func(instance));
                     }
                     1 => {
                         let a0 = items[0];
                         let func: extern "C" fn(MbValue, MbValue) -> MbValue =
                             std::mem::transmute(addr as usize);
-                        func(instance, a0);
+                        check_init_return_value(func(instance, a0));
                     }
                     2 => {
                         let a0 = items[0];
                         let a1 = items[1];
                         let func: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
                             std::mem::transmute(addr as usize);
-                        func(instance, a0, a1);
+                        check_init_return_value(func(instance, a0, a1));
                     }
                     3 => {
                         let a0 = items[0];
@@ -3062,7 +3190,7 @@ fn call_init_with_args(addr: u64, instance: MbValue, args_list: MbValue) {
                         let a2 = items[2];
                         let func: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue =
                             std::mem::transmute(addr as usize);
-                        func(instance, a0, a1, a2);
+                        check_init_return_value(func(instance, a0, a1, a2));
                     }
                     _ => {
                         // Higher arity: build args vec from the already-held lock.
@@ -3078,13 +3206,13 @@ fn call_init_with_args(addr: u64, instance: MbValue, args_list: MbValue) {
                                 MbValue,
                                 MbValue,
                             ) -> MbValue = std::mem::transmute(addr as usize);
-                            func(
+                            check_init_return_value(func(
                                 all_args[0],
                                 all_args[1],
                                 all_args[2],
                                 all_args[3],
                                 all_args[4],
-                            );
+                            ));
                         }
                     }
                 }
@@ -3095,7 +3223,7 @@ fn call_init_with_args(addr: u64, instance: MbValue, args_list: MbValue) {
     // No args list — call with just instance (zero-arg __init__).
     // REQ: JIT-compiled functions use SystemV/C calling convention.
     let func: extern "C" fn(MbValue) -> MbValue = unsafe { std::mem::transmute(addr as usize) };
-    func(instance);
+    check_init_return_value(func(instance));
 }
 
 /// Create a new instance of a class and invoke __init__ with args.
@@ -3493,15 +3621,29 @@ pub(crate) fn object_new_unbound(items: &[MbValue]) -> MbValue {
         );
         return MbValue::none();
     }
-    if items.len() > 1 && !class_overrides_init(&class_name) {
-        super::exception::mb_raise(
-            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-            MbValue::from_ptr(MbObject::new_str(format!(
-                "{}.__new__() takes exactly one argument",
-                class_display_name(&class_name)
-            ))),
-        );
-        return MbValue::none();
+    if items.len() > 1 {
+        // A class overriding __new__ but calling object.__new__ directly with
+        // extra args gets object.__new__'s own arity error; a class using the
+        // inherited object.__new__ as-is (and not overriding __init__ either)
+        // gets the class-constructor-style "takes no arguments" instead
+        // (CPython's object_new: excess_args + tp_new/tp_init checks).
+        if class_overrides_new(&class_name) {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "object.__new__() takes exactly one argument (the type to instantiate)"
+                        .to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+        if !class_overrides_init(&class_name) {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!("{}() takes no arguments", class_name))),
+            );
+            return MbValue::none();
+        }
     }
     MbValue::from_ptr(MbObject::new_instance(class_name))
 }
@@ -8140,7 +8282,7 @@ fn mb_getattr_impl(
                     {
                         return make_bound_native_method(obj, &attr_name);
                     }
-                    if matches!(attr_name.as_str(), "__setstate__" | "add_note")
+                    if matches!(attr_name.as_str(), "__setstate__" | "add_note" | "__init__")
                         && is_exception_instance_class(class_name)
                     {
                         return make_bound_native_method(obj, &attr_name);
@@ -11818,6 +11960,22 @@ pub(crate) fn class_bool_is_blocked(class_name: &str) -> bool {
 /// Returns Err with a message for inconsistent hierarchies (Python's TypeError).
 fn compute_mro(name: &str, bases: &[String]) -> Vec<String> {
     let mut mro = vec![name.to_string()];
+    // A repeated base class is a distinct, earlier CPython error (raised by
+    // type_new before it ever attempts C3 linearization) — not merely an
+    // inconsistent-MRO failure, so check for it first.
+    for (i, base) in bases.iter().enumerate() {
+        if bases[..i].contains(base) {
+            super::exception::set_current_exception(super::exception::MbException::new(
+                "TypeError",
+                &format!("duplicate base class {base}"),
+            ));
+            mro.extend(bases.iter().cloned());
+            if !mro.contains(&"object".to_string()) {
+                mro.push("object".to_string());
+            }
+            return mro;
+        }
+    }
     if bases.iter().any(|base| base == "object")
         && bases
             .iter()
@@ -13368,6 +13526,41 @@ pub fn mb_super(class_name: MbValue, instance: MbValue) -> MbValue {
     MbValue::from_ptr(proxy)
 }
 
+/// Zero-argument `super()` used outside any enclosing method (no implicit
+/// `__class__`/first-arg cell to draw from) — CPython raises this from
+/// `super_init` when it can't locate the calling frame's class context.
+pub fn mb_super_no_args_error() -> MbValue {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str("super(): no arguments".to_string())),
+    );
+    MbValue::none()
+}
+
+/// Explicit `super(cls, obj_or_type)` with argument validation matching
+/// CPython's `super_init`: the first argument must be a type.
+pub fn mb_super_checked(class_name: MbValue, instance: MbValue) -> MbValue {
+    if resolve_class_name(class_name).is_none() {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "super() argument 1 must be a type, not {}",
+                super::builtins::value_type_name(class_name)
+            ))),
+        );
+        return MbValue::none();
+    }
+    mb_super(class_name, instance)
+}
+
+/// `super(...)` called with more than two positional arguments — CPython's
+/// `super_init` rejects the call before looking at the argument values.
+pub fn mb_super_argcount_error(count: MbValue) -> MbValue {
+    let n = count.as_int().unwrap_or(3);
+    super::builtins::raise_type_error(format!("super() expected at most 2 arguments, got {n}"));
+    MbValue::none()
+}
+
 const SUPER_MISSING_INIT_METHOD: &str = "__super_missing_init__";
 const SUPER_TYPE_INIT_METHOD: &str = "__super_type_init__";
 
@@ -13473,6 +13666,16 @@ pub fn mb_super_getattr(proxy: MbValue, attr: MbValue) -> MbValue {
                 if attr_name == "__init__" {
                     return make_bound_native_method(super_self, SUPER_MISSING_INIT_METHOD);
                 }
+                // Nothing in the remaining MRO (or the native-method/`__init__`
+                // fallbacks above) resolved this name — CPython's super proxy
+                // raises AttributeError rather than silently yielding None.
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "'super' object has no attribute '{attr_name}'"
+                    ))),
+                );
+                return MbValue::none();
             }
         }
     }
@@ -13492,6 +13695,22 @@ fn super_builtin_native_method(
                 skip = false;
             }
             continue;
+        }
+        // `type` and `object` are the universal metaclass/instance roots and
+        // are deliberately absent from `builtin_type_method_names_by_name`
+        // (that table only enumerates concrete container/primitive builtins
+        // for attribute synthesis). Without this, `super().__new__(...)`
+        // walking off the end of a user-defined metaclass (base `type`) or a
+        // plain class chain (terminal base `object`) fell through to `None`
+        // instead of reaching the real constructor (#228). `__init__` is
+        // deliberately excluded: it's handled by the SUPER_MISSING_INIT_METHOD
+        // fallback below, which correctly binds `super_self` as the receiver
+        // for the common no-arg `super().__init__()` idiom — routing it
+        // through `make_unbound_method` instead would require an explicit
+        // leading `self`/`cls` argument that ordinary `__init__` calls don't
+        // pass.
+        if (mro_class == "type" || mro_class == "object") && method_name == "__new__" {
+            return Some(make_unbound_method(&mro_class, method_name));
         }
         if !builtin_type_method_names_by_name(&mro_class)
             .iter()
@@ -15757,12 +15976,16 @@ fn mb_call0_impl(func: MbValue) -> MbValue {
                     let (kind, origin) = {
                         let guard = fields.read().unwrap();
                         (
-                            guard.get("_kind").copied().and_then(|value| extract_str(value)),
+                            guard
+                                .get("_kind")
+                                .copied()
+                                .and_then(|value| extract_str(value)),
                             guard.get("__origin__").copied(),
                         )
                     };
                     if kind.as_deref() == Some("generic") {
-                        if let Some(origin) = origin.filter(|origin| origin.to_bits() != func.to_bits())
+                        if let Some(origin) =
+                            origin.filter(|origin| origin.to_bits() != func.to_bits())
                         {
                             let args_list = MbValue::from_ptr(MbObject::new_list(vec![]));
                             return super::builtins::mb_call_spread(origin, args_list);
@@ -15914,12 +16137,16 @@ fn mb_call1_val_impl(func: MbValue, arg: MbValue) -> MbValue {
                     let (kind, origin) = {
                         let guard = fields.read().unwrap();
                         (
-                            guard.get("_kind").copied().and_then(|value| extract_str(value)),
+                            guard
+                                .get("_kind")
+                                .copied()
+                                .and_then(|value| extract_str(value)),
                             guard.get("__origin__").copied(),
                         )
                     };
                     if kind.as_deref() == Some("generic") {
-                        if let Some(origin) = origin.filter(|origin| origin.to_bits() != func.to_bits())
+                        if let Some(origin) =
+                            origin.filter(|origin| origin.to_bits() != func.to_bits())
                         {
                             let args_list = MbValue::from_ptr(MbObject::new_list(vec![arg]));
                             return super::builtins::mb_call_spread(origin, args_list);
