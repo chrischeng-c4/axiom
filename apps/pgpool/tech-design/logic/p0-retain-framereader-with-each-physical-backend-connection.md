@@ -9,27 +9,28 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: pgpool-physical-backend-reader-lifecycle
-entry: connect
+id: pgpool-physical-backend-reader-contract
+entry: fresh
 nodes:
-  connect: { kind: start, label: "Fresh physical backend connect" }
-  reader: { kind: process, label: "Create one backend FrameReader with the connection" }
-  lease: { kind: process, label: "Lease stream and reader through startup or transaction relay" }
-  reset: { kind: process, label: "Same reader validates DISCARD ALL response" }
-  idle: { kind: terminal, label: "Return clean stream and reader together to idle" }
+  fresh: { kind: start, label: "Fresh connection creates stream and reader" }
+  active: { kind: process, label: "Lease reader and stream together" }
+  reset: { kind: process, label: "Same reader consumes reset response to ReadyForQuery" }
+  idle: { kind: process, label: "Store clean reader and stream together" }
+  close: { kind: terminal, label: "Close both on error EOF or failed reset" }
 edges:
-  - { from: connect, to: reader }
-  - { from: reader, to: lease }
-  - { from: lease, to: reset }
+  - { from: fresh, to: active }
+  - { from: active, to: reset }
   - { from: reset, to: idle }
+  - { from: active, to: close }
+  - { from: reset, to: close }
 ---
 flowchart LR
-  connect([fresh physical backend]) --> reader[one backend FrameReader]
-  reader --> lease[lease stream and reader]
-  lease --> reset[same reader validates reset]
-  reset --> idle([return clean stream and reader])
+  fresh([fresh stream and reader]) --> active[lease together]
+  active --> reset[same reader consumes reset]
+  reset --> idle[store clean reader and stream]
+  active --> close([close on error])
+  reset --> close
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
