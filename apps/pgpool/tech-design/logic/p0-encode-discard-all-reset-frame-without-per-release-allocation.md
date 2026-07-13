@@ -33,14 +33,13 @@ flowchart LR
 changes:
   - path: apps/pgpool/src/pool/backend_pool.rs
     action: modify
-    section: pgpool-static-discard-all-frame
+    section: pgpool-static-discard-all-frame-contract
     impl_mode: hand-written
   - path: apps/pgpool/tests/pool.rs
     action: modify
-    section: pgpool-static-discard-all-frame
+    section: pgpool-static-discard-all-frame-contract
     impl_mode: hand-written
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
