@@ -1,7 +1,7 @@
 ---
 id: "1539"
 summary: (fill)
-fill_sections: [logic, e2e-test]
+fill_sections: [logic, e2e-test, changes]
 ---
 
 ## Logic
@@ -110,4 +110,21 @@ e2e_tests:
       - "R5/R6/R7: The test exercises a Deployment, Job, StatefulSet/PVC, ConfigMap, Secret, ClusterIP Service, host port-forward, and the documented Ingress/NodePort path; it proves a local OCI image reaches k3s containerd without a public push and verifies the pod image digest."
       - "R8: A best-effort two-machine server/agent probe always records join/CNI/DNS/Service evidence; lack of multi-node support is a recorded P2 limitation, not a false single-node success."
       - "R9/AC4: A scope guard removes every VAT-owned machine/network/forwarder/image artifact on success and failure, then prints cold/warm/RSS/disk evidence and a GO, CONDITIONAL GO, or NO-GO record."
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/vat/tests/vat_local_k8s_phase0.rs
+    action: create
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "R1-R9/AC1-AC4: add the opt-in, Apple-container-gated Phase 0 probe harness. It owns a unique temporary root and machine/network names, records a structured evidence matrix, creates a persistent systemd-capable machine, verifies k3s prerequisites and host kubeconfig lifecycle, runs the single-node workload/image/storage journey, records a best-effort two-node result, and removes all owned resources in a Drop/cleanup path. The real test is #[ignore] and requires VAT_LOCAL_K8S_E2E=1, so normal cargo test and unsupported hosts never mutate the container runtime."
+  - path: apps/vat/tests/aw-ec.toml
+    action: modify
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "Register the explicit VAT_LOCAL_K8S_E2E=1 Phase 0 command under the existing local-Kubernetes claim so aw ec and health can locate the real-host evidence gate without running it in ordinary unit-test CI."
 ```
