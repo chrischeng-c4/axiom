@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="sift-guard-security-contract" tracker="1607" reason="Bind Sift bearer-auth and probe-exemption evidence to the security guard surface."
+// TODO: hand-write content for `projects/sift/guard.toml`.
+// HANDWRITE-END
