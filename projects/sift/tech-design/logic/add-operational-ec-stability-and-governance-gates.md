@@ -115,6 +115,20 @@ changes:
     gap: sift-meter-stability-contract
     tracker: "1607"
     description: Bind repeatable Sift stability tests to the meter gate surface.
+  - path: projects/sift/rig.toml
+    action: create
+    section: changes
+    impl_mode: hand-written
+    gap: sift-rig-stability-contract
+    tracker: "1607"
+    description: Bind executable Sift resilience scenarios to the Rig stability surface.
+  - path: projects/sift/tests/rig/cases/resilience/sift_resilience.toml
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    gap: sift-rig-resilience-scenario
+    tracker: "1607"
+    description: Execute the bounded ingest, drain, and recovery stability case through Rig.
   - path: projects/sift/external-contracts/security-hardening/sift-auth.md
     action: create
     section: changes

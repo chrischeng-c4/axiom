@@ -20,7 +20,7 @@ axiom-operator = { package = "operator", path = "../../libs/operator" }
 axum.workspace = true
 chrono.workspace = true
 clap = { workspace = true, features = ["env"] }
-cli-std = { path = "../../libs/cli-std", default-features = false, features = ["online"] }
+cli-std = { path = "../../libs/cli-std", default-features = false, features = ["online", "k8s"] }
 cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
 k8s-openapi = { version = "0.24", features = ["v1_32"] }
 kube = { version = "0.98", features = ["runtime", "derive", "client"] }

@@ -1,3 +1,11 @@
 // HANDWRITE-BEGIN gap="sift-guard-security-contract" tracker="1607" reason="Bind Sift bearer-auth and probe-exemption evidence to the security guard surface."
-// TODO: hand-write content for `projects/sift/guard.toml`.
+# SPEC-MANAGED: projects/sift/external-contracts/security-hardening/sift-auth.md#sift-guard-auth-surface
+# CODEGEN-BEGIN
+# AW-EC-TOOL-BEGIN
+project = "sift"
+source_contract = "sift-security-hardening-bearer-auth"
+target = "projects/sift"
+version = 1
+# AW-EC-TOOL-END
+# CODEGEN-END
 // HANDWRITE-END

@@ -1,3 +1,11 @@
 // HANDWRITE-BEGIN gap="sift-meter-stability-contract" tracker="1607" reason="Bind repeatable Sift stability tests to the meter gate surface."
-// TODO: hand-write content for `projects/sift/meter-stability.toml`.
+# SPEC-MANAGED: projects/sift/external-contracts/long-running-stability/sift-resilience.md#sift-meter-stability
+# CODEGEN-BEGIN
+# AW-EC-TOOL-BEGIN
+delegate_command = "cargo test -p sift --test stability_e2e -- --nocapture"
+project = "sift"
+source_contract = "sift-long-running-stability-resilience"
+version = 1
+# AW-EC-TOOL-END
+# CODEGEN-END
 // HANDWRITE-END
