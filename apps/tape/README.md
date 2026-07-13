@@ -48,7 +48,7 @@ real-service external peer calibration remain separate work roots.
 | Chainable Output Conformance | #768 | implemented | verified | smoke | ready | replay/admin commands emit terminal `next:` hints |
 | EC Gates Configured | #768, #1330 | implemented | verified | smoke | ready | crate smoke tests + vat/meter/guard EC inventory (vat.toml, meter-tape-performance.toml, guard-tape-security.toml) |
 | Long-Running Stability | #768, #1589 | implemented | passing | conformance | not_ready | repeated Raft restart recovery proves bounded append/checkpoint endurance; live soak and retention remain follow-ups |
-| Security Hardening | #768 | planned | planned | none | not_ready | producer/consumer authz, tenant isolation, audit, and secret rotation |
+| Security Hardening | #768, #1593 | partial | passing | conformance | not_ready | shared bearer topic authz, Secret projection, non-root pod hardening, and an opt-in CNI-enforced NetworkPolicy component; audit, secret rotation, and abuse limits remain separate |
 | Competitor Feature Parity | #768 | implemented | verified | smoke | ready | Kafka/Redpanda/Pulsar/JetStream/RabbitMQ Streams replay matrix; feature win only over RabbitMQ topic exchange replay gap |
 | Competitor Performance | #768 | implemented | verified | smoke | ready | Tape zero-copy replay beats NATS JetStream 20k-event local backlog replay >=1.5x; other replay-log broker wins remain unclaimed |
 
@@ -138,18 +138,25 @@ ID: security-hardening
 Type: Devops
 Root WI: #768
 Status: confirmed
-Surfaces: HTTP/K8s: producer/consumer authn/authz, tenant/topic isolation, network policy, audit events, secret rotation, and request limits.
-EC Dimensions: behavior: pending security gate - auth failure cases, topic isolation, audit emission, secret rotation, and abuse limits
+Surfaces: HTTP/K8s: shared bearer producer/consumer authn/authz and topic isolation; opt-in ingress NetworkPolicy for Tape server pods; non-root contexts and read-only Secret projection. Audit events, secret rotation, and request limits remain separate work.
+EC Dimensions: behavior: `cargo test -p tape --test service_auth --test network_policy_assets` proves bearer topic-role enforcement and the static ingress boundary; a NetworkPolicy-capable CNI is required for cluster enforcement.
 Required Verification: negative, conformance
 Promise:
-Tape protects topic replay data with explicit producer/consumer authorization,
-auditability, network policy, and managed secret rotation.
+Tape protects topic replay data with shared bearer producer/consumer
+authorization and an opt-in NetworkPolicy that allows TCP 7137 only from
+explicitly labeled client or Prometheus namespaces. The policy complements
+rather than replaces HTTP authorization and is enforced only by a
+NetworkPolicy-capable CNI. It does not claim Lumen's search/collection RBAC;
+auditability, secret rotation, and abuse limits remain planned.
 Gate Inventory:
-- pending: apps/tape/tests/security_hardening.rs
+- apps/tape/tests/service_auth.rs
+- apps/tape/tests/network_policy_assets.rs
+- apps/tape/k8s/components/network-policy
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| topic-replay-security-boundary | epic | #768 | planned | planned | none | pending security hardening gate |
+| topic-replay-security-boundary | epic | #768 | partial | planned | none | bearer role map, Secret projection, non-root operator workload; remaining audit/rotation/limits are not claimed |
+| opt-in-server-ingress-network-policy | enhancement | #1593 | implemented | passing | conformance | apps/tape/k8s/components/network-policy<br>apps/tape/tests/network_policy_assets.rs |
 
 ### Competitor Feature Parity
 
