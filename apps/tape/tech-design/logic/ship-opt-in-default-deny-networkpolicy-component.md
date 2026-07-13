@@ -9,25 +9,25 @@ fill_sections: [logic]
 
 ```mermaid
 ---
-id: tape-network-policy-ingress-boundary
-entry: component
+id: tape-network-policy-contract
+entry: ingress
 nodes:
-  component: { kind: start, label: "Opt-in NetworkPolicy component" }
-  select: { kind: process, label: "Select only Tape server pods" }
-  client: { kind: process, label: "Allow labeled client namespaces on TCP 7137" }
-  scrape: { kind: process, label: "Allow labeled Prometheus namespaces on TCP 7137" }
-  deny: { kind: terminal, label: "All other ingress denied by policy" }
+  ingress: { kind: start, label: "Ingress reaches Tape server selector" }
+  client_label: { kind: decision, label: "Source namespace labeled tape.cclab.dev/client-access=true?" }
+  scrape_label: { kind: decision, label: "Source has monitoring access labels?" }
+  allow: { kind: terminal, label: "Allow TCP 7137 only" }
+  deny: { kind: terminal, label: "Deny ingress" }
 edges:
-  - { from: component, to: select }
-  - { from: select, to: client }
-  - { from: select, to: scrape }
-  - { from: client, to: deny }
-  - { from: scrape, to: deny }
+  - { from: ingress, to: client_label }
+  - { from: client_label, to: allow, label: "yes" }
+  - { from: client_label, to: scrape_label, label: "no" }
+  - { from: scrape_label, to: allow, label: "yes" }
+  - { from: scrape_label, to: deny, label: "no" }
 ---
 flowchart TD
-  component[Opt-in NetworkPolicy component] --> select[Select only Tape server pods]
-  select --> client[Allow labeled client namespaces on TCP 7137]
-  select --> scrape[Allow labeled Prometheus namespaces on TCP 7137]
-  client --> deny([All other ingress denied])
-  scrape --> deny
+  ingress[Ingress reaches Tape server selector] --> client{Client namespace label?}
+  client -->|yes| allow([Allow TCP 7137 only])
+  client -->|no| scrape{Monitoring access labels?}
+  scrape -->|yes| allow
+  scrape -->|no| deny([Deny ingress])
 ```
