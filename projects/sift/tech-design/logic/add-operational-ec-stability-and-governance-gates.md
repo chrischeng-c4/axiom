@@ -61,7 +61,6 @@ flowchart TD
     policy --> ec[AW EC generation and verification]
     ec --> health([clean governance and health gates])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
