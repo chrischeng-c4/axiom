@@ -45,3 +45,28 @@ changes:
     section: pgpool-reset-reader-reuse
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-reset-reader-reuse-verification
+requirements:
+  reader_handoff:
+    id: R1
+    text: "Transaction release hands its drained backend reader to reset response validation without changing the reset boundary."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool --test pool_modes
+  safe_reset:
+    id: R2
+    text: "Reset bytes, failed-reset close behavior, and cross-owner session isolation remain unchanged."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool --lib --test pool --test pool_modes
+---
+flowchart TD
+    r1[R1 reader handoff] --> cargo_test_p_pgpool_test_pool_modes[cargo test -p pgpool --test pool_modes]
+    r2[R2 safe reset] --> cargo_test_p_pgpool_lib_test_pool_test_pool_modes[cargo test -p pgpool --lib --test pool --test pool_modes]
+```
