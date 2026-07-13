@@ -1224,6 +1224,174 @@ fn merge_spec_section(base_body: &str, section_type: &str, payload_body: &str) -
     Ok(ensure_fill_sections_has_section(&merged, section_type))
 }
 
+/// Normalize one generic JSON payload's `body` into the complete typed TD
+/// section fragment consumed by `merge_spec_section`.
+///
+/// The initialized payload template contains the complete H2 + annotation
+/// wrapper, but agents can reasonably replace only the body inside the JSON
+/// field (the exact #1561/#1562 incident shape). Treat that body-only form as
+/// shorthand and restore the requested section's canonical wrapper. A payload
+/// that attempts to provide its own wrapper is held to a stricter boundary:
+/// exactly one top-level H2, one immediately-bound annotation, the requested
+/// type, and its expected language. That keeps a body payload from smuggling a
+/// second typed section into a single-section merge.
+fn normalize_generic_td_section_payload(
+    section: &str,
+    payload_body: &str,
+    spec_path: &std::path::Path,
+) -> Result<String> {
+    let section_type = section
+        .parse::<crate::models::spec_rules::SectionType>()
+        .map_err(|error| anyhow::anyhow!(error))?;
+    if !is_supported_td_payload_section_type(section_type) {
+        anyhow::bail!("section '{section}' is not supported for new TD payloads");
+    }
+
+    if payload_body.trim().is_empty() {
+        anyhow::bail!("section '{section}' payload body must not be empty");
+    }
+    if td_section_content_is_placeholder(payload_body) {
+        anyhow::bail!(
+            "section '{section}' payload body is still a `(fill)` placeholder; fill the initialized payload before applying it"
+        );
+    }
+
+    let shape = td_payload_top_level_shape(payload_body);
+    if let Some(open) = &shape.unclosed_fence {
+        anyhow::bail!(
+            "section '{section}' payload has an unclosed fenced block opened with '{open}'"
+        );
+    }
+    let normalized = match shape.headings.len() {
+        0 => {
+            if !shape.annotation_candidates.is_empty() {
+                anyhow::bail!(
+                    "section '{section}' payload has a type/lang annotation without its top-level H2 wrapper"
+                );
+            }
+            let trimmed = payload_body.trim_end_matches('\n');
+            format!(
+                "## {}\n<!-- type: {} lang: {} -->\n\n{}\n",
+                td_section_title(section_type.as_str()),
+                section_type.as_str(),
+                section_type.default_lang(),
+                trimmed,
+            )
+        }
+        1 => {
+            let sections = extract_sections(payload_body);
+            if sections.len() != 1 || shape.annotation_candidates.len() != 1 {
+                anyhow::bail!(
+                    "section '{section}' payload's top-level H2 must be immediately followed by one complete type annotation"
+                );
+            }
+            let (heading, annotation, content) = &sections[0];
+            if annotation.section_type != section_type.as_str() {
+                anyhow::bail!(
+                    "requested section '{section}' cannot apply payload wrapper type '{}'",
+                    annotation.section_type,
+                );
+            }
+            if annotation.lang != section_type.default_lang() {
+                anyhow::bail!(
+                    "section '{section}' payload wrapper declares lang '{}' but expected '{}'",
+                    annotation.lang,
+                    section_type.default_lang(),
+                );
+            }
+            if let Some(heading_type) = crate::models::spec_rules::SectionType::all_in_fill_order()
+                .into_iter()
+                .find(|candidate| {
+                    td_section_title(candidate.as_str()).eq_ignore_ascii_case(heading.trim())
+                })
+            {
+                if heading_type != section_type {
+                    anyhow::bail!(
+                        "requested section '{section}' cannot apply payload heading '{}' for type '{}'",
+                        heading,
+                        heading_type.as_str(),
+                    );
+                }
+            }
+            if content.trim().is_empty() {
+                anyhow::bail!("section '{section}' payload body must not be empty");
+            }
+            payload_body.to_string()
+        }
+        count => {
+            anyhow::bail!(
+                "section '{section}' payload must contain at most one complete section; found {count} top-level H2 wrappers (expected exactly one top-level H2 wrapper or a body-only fragment)"
+            );
+        }
+    };
+
+    // #1562 deliberately validates just the generic payload's structural
+    // wrapper/fence in memory. The full registry still reads completed files;
+    // switching all candidate rule checks to content is tracked separately by
+    // #1586.
+    let findings = crate::validate::rules::section_format::check_section_format(
+        spec_path,
+        &normalized,
+        crate::validate::rules::section_format::DEFAULT_LOOKAHEAD,
+    );
+    let errors: Vec<String> = findings
+        .into_iter()
+        .filter(|finding| finding.severity == crate::validate::Severity::Error)
+        .map(|finding| finding.message)
+        .collect();
+    if !errors.is_empty() {
+        anyhow::bail!(
+            "section '{section}' payload is malformed: {}",
+            errors.join("; ")
+        );
+    }
+
+    Ok(normalized)
+}
+
+struct TdPayloadTopLevelShape {
+    headings: Vec<String>,
+    annotation_candidates: Vec<String>,
+    unclosed_fence: Option<String>,
+}
+
+/// Fence-aware scan of payload-level structure. H2-looking lines and
+/// annotation examples inside Mermaid/YAML fences are content, not wrappers.
+fn td_payload_top_level_shape(payload_body: &str) -> TdPayloadTopLevelShape {
+    let mut headings = Vec::new();
+    let mut annotation_candidates = Vec::new();
+    let mut fence_open: Option<String> = None;
+
+    for line in payload_body.lines() {
+        if let Some(open) = &fence_open {
+            if markdown_fence_closes(line, open) {
+                fence_open = None;
+            }
+            continue;
+        }
+        if let Some(open) = markdown_fence_open_marker(line) {
+            fence_open = Some(open);
+            continue;
+        }
+        if let Some(heading) = line.strip_prefix("## ") {
+            headings.push(heading.trim().to_string());
+        }
+        let trimmed = line.trim();
+        if trimmed.starts_with("<!--")
+            && trimmed.ends_with("-->")
+            && (trimmed.contains("type:") || trimmed.contains("lang:"))
+        {
+            annotation_candidates.push(trimmed.to_string());
+        }
+    }
+
+    TdPayloadTopLevelShape {
+        headings,
+        annotation_candidates,
+        unclosed_fence: fence_open,
+    }
+}
+
 fn ensure_fill_sections_has_section(content: &str, section_type: &str) -> String {
     let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
     if lines.first().map(|line| line.trim()) != Some("---") {
@@ -3431,6 +3599,20 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
             return td_error(slug, msg);
         };
 
+        // Generic JSON payloads accept either the initialized complete
+        // section fragment or a body-only fragment. Normalize the latter
+        // before the single-section splice so replacing an existing section
+        // never discards its typed H2/annotation wrapper (#1562). Structured
+        // payloads such as unit-test already render a complete wrapper.
+        let payload_body = if section == "unit-test" {
+            payload_body
+        } else {
+            match normalize_generic_td_section_payload(section, &payload_body, &spec_abs) {
+                Ok(normalized) => normalized,
+                Err(error) => return td_error(slug, error.to_string()),
+            }
+        };
+
         let merged = match merge_spec_section(&base_body, section, &payload_body) {
             Ok(m) => m,
             Err(e) => {
@@ -5630,6 +5812,186 @@ label = "lib:pg"
         let raw_json = serde_json::to_string(&payload).unwrap();
         let rendered = render_td_json_section_payload("unit-test", &raw_json).unwrap();
         assert_eq!(rendered, render_unit_test_section(&payload));
+    }
+
+    // #1562: generic payloads may contain only the requested section body.
+    // The apply path must restore the typed H2 wrapper before replacing the
+    // on-disk section, otherwise the subsequent RequireThrough lookup reports
+    // the valid section as missing.
+    #[test]
+    fn normalize_generic_td_section_payload_wraps_body_only_logic() {
+        let body = concat!(
+            "```mermaid\n",
+            "---\n",
+            "id: body_only_logic\n",
+            "entry: start\n",
+            "nodes:\n",
+            "  start: { kind: start }\n",
+            "edges: []\n",
+            "---\n",
+            "flowchart TD\n",
+            "```\n",
+        );
+
+        let normalized = normalize_generic_td_section_payload(
+            "logic",
+            body,
+            std::path::Path::new("tech-design/semantic/body-only.md"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            normalized,
+            format!("## Logic\n<!-- type: logic lang: mermaid -->\n\n{body}")
+        );
+        let spec =
+            format!("---\nid: body-only\nfill_sections: [logic, unit-test]\n---\n\n{normalized}");
+        assert!(
+            validate_spec_for_section_apply(&spec, "logic").is_empty(),
+            "normalized body-only payload must remain discoverable as Logic: {spec}"
+        );
+    }
+
+    #[test]
+    fn normalize_generic_td_section_payload_preserves_complete_custom_heading() {
+        let wrapped = concat!(
+            "## Logic: validate\n",
+            "<!-- type: logic lang: mermaid -->\n\n",
+            "```mermaid\n",
+            "---\n",
+            "id: wrapped_logic\n",
+            "entry: start\n",
+            "nodes:\n",
+            "  start: { kind: start }\n",
+            "edges: []\n",
+            "---\n",
+            "flowchart TD\n",
+            "```\n",
+        );
+
+        let normalized = normalize_generic_td_section_payload(
+            "logic",
+            wrapped,
+            std::path::Path::new("tech-design/semantic/wrapped.md"),
+        )
+        .unwrap();
+
+        assert_eq!(normalized, wrapped);
+    }
+
+    #[test]
+    fn normalize_generic_td_section_payload_rejects_mismatched_wrapper_type_and_lang() {
+        let wrong_type = concat!(
+            "## Interaction\n",
+            "<!-- type: interaction lang: mermaid -->\n\n",
+            "```mermaid\n---\nid: wrong\nactors: []\nmessages: []\n---\nsequenceDiagram\n```\n",
+        );
+        let type_error = normalize_generic_td_section_payload(
+            "logic",
+            wrong_type,
+            std::path::Path::new("tech-design/semantic/wrong-type.md"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            type_error.contains("requested section 'logic'"),
+            "{type_error}"
+        );
+        assert!(type_error.contains("type 'interaction'"), "{type_error}");
+
+        let wrong_heading = concat!(
+            "## Unit Test\n",
+            "<!-- type: logic lang: mermaid -->\n\n",
+            "```mermaid\n---\nid: wrong_heading\nentry: start\nnodes:\n  start: { kind: start }\nedges: []\n---\nflowchart TD\n```\n",
+        );
+        let heading_error = normalize_generic_td_section_payload(
+            "logic",
+            wrong_heading,
+            std::path::Path::new("tech-design/semantic/wrong-heading.md"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            heading_error.contains("payload heading 'Unit Test' for type 'unit-test'"),
+            "{heading_error}"
+        );
+
+        let wrong_lang = concat!(
+            "## Logic\n",
+            "<!-- type: logic lang: yaml -->\n\n",
+            "```yaml\nkind: wrong\n```\n",
+        );
+        let lang_error = normalize_generic_td_section_payload(
+            "logic",
+            wrong_lang,
+            std::path::Path::new("tech-design/semantic/wrong-lang.md"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(lang_error.contains("declares lang 'yaml'"), "{lang_error}");
+        assert!(lang_error.contains("expected 'mermaid'"), "{lang_error}");
+    }
+
+    #[test]
+    fn normalize_generic_td_section_payload_rejects_empty_wrong_fence_and_broken_wrappers() {
+        let path = std::path::Path::new("tech-design/semantic/malformed.md");
+
+        let empty = normalize_generic_td_section_payload("logic", "  \n", path)
+            .unwrap_err()
+            .to_string();
+        assert!(empty.contains("must not be empty"), "{empty}");
+
+        let wrong_fence =
+            normalize_generic_td_section_payload("logic", "```yaml\nkind: wrong\n```\n", path)
+                .unwrap_err()
+                .to_string();
+        assert!(
+            wrong_fence.contains("matching-lang fenced block"),
+            "{wrong_fence}"
+        );
+
+        let unclosed_fence = normalize_generic_td_section_payload(
+            "logic",
+            "```mermaid\n---\nid: unclosed\nentry: start\nnodes:\n  start: { kind: start }\nedges: []\n---\nflowchart TD\n",
+            path,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            unclosed_fence.contains("unclosed fenced block"),
+            "{unclosed_fence}"
+        );
+
+        let missing_annotation = normalize_generic_td_section_payload(
+            "logic",
+            "## Logic\n\n```mermaid\n---\nid: broken\n---\nflowchart TD\n```\n",
+            path,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            missing_annotation.contains("immediately followed by one complete type annotation"),
+            "{missing_annotation}"
+        );
+
+        let multiple = normalize_generic_td_section_payload(
+            "logic",
+            concat!(
+                "## Logic\n",
+                "<!-- type: logic lang: mermaid -->\n\n",
+                "```mermaid\n---\nid: one\nentry: start\nnodes:\n  start: { kind: start }\nedges: []\n---\nflowchart TD\n```\n\n",
+                "## Interaction\n",
+                "<!-- type: interaction lang: mermaid -->\n\n",
+                "```mermaid\n---\nid: forged\nactors: []\nmessages: []\n---\nsequenceDiagram\n```\n",
+            ),
+            path,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            multiple.contains("exactly one top-level H2 wrapper"),
+            "{multiple}"
+        );
     }
 
     #[test]

@@ -26,6 +26,12 @@ capability_refs:
     claim: ec-external-contract-source
     coverage: partial
     rationale: "The CLI semantic domain covers `aw ec draft/fill/gen` project-local external-contract markdown and generated aw.toml EC inventory behavior in src/cli/ec.rs."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: td-apply-section-lookup-parity
+    claim: td-apply-section-lookup-parity
+    coverage: full
+    rationale: "The CLI semantic domain owns generic TD payload normalization, typed single-section merge boundaries, and pre-write applicability validation in src/cli/td.rs."
 fill_sections: [schema, changes]
 ---
 
@@ -1719,6 +1725,15 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "run_promote_at"
+            kind: "function"
+            public: false
+          - name: "normalize_generic_td_section_payload"
+            kind: "function"
+            public: false
+          - name: "TdPayloadTopLevelShape"
+            kind: "struct"
+            public: false
+          - name: "td_payload_top_level_shape"
             kind: "function"
             public: false
         source_evidence_node:
@@ -3737,6 +3752,15 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      Issue #1562 accepts a body-only generic section payload by restoring the
+      requested typed H2/annotation wrapper before the existing exact
+      single-section merge. A fence-aware boundary rejects empty or placeholder
+      bodies, unclosed or wrong-language fences, mismatched annotations, broken
+      wrappers, and multiple top-level H2 sections before any spec write. A
+      complete matching wrapper, including a custom heading, is preserved; the
+      existing RequireThrough(candidate) validation and dirty-spec allowance
+      remain unchanged. Candidate-wide registry validation over in-memory
+      content remains tracked separately by #1586.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/project.rs"
     action: modify
