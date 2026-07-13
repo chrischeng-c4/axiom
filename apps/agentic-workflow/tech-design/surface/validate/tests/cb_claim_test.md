@@ -24,6 +24,12 @@ artifact persistence, sibling exclusion, and execution of the emitted
 errors, root-resolution errors, controlled ownership HITL with no mutation,
 and the directory route's human-progress-plus-final-JSON regression.
 
+Issue #1548 adds a real-CLI legacy source-snapshot regression. It changes a
+const and adds one uniquely named Rust test in the embedded snapshot, proves
+the exact target bytes, executes that unique test filter with one passing test,
+then proves idempotent `wrote_files=false`, sibling isolation, and actionable
+failure for an unmatched existing target.
+
 ### Symbols
 
 No public AST symbols.
@@ -32,7 +38,7 @@ No public AST symbols.
 <!-- source-from-target: strip-handwrite -->
 
 <!-- source-snapshot: path=apps/agentic-workflow/tests/cli/tests/cb_claim_test.rs -->
-```rust
+````rust
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/validate/tests/cb_claim_test.md#source
 // CODEGEN-BEGIN
 //! Integration tests for `aw td create --from-source` (Phase 2 recovery).
@@ -544,6 +550,146 @@ fn test_explicit_large_file_emits_single_dispatch_and_terminal_gen_source_json()
     assert_eq!(std::fs::read_to_string(&selected).unwrap(), source);
 }
 
+/// #1548: a legacy authoritative `source-snapshot` is still TD -> target on
+/// the explicit `td gen-source` path. The fixture changes an existing const,
+/// adds a uniquely named Rust test, proves exact target bytes and sibling
+/// isolation, then runs that test filter and rejects a zero-test false green.
+#[test]
+fn test_gen_source_projects_legacy_snapshot_and_runs_generated_test() {
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_from_source_fixture(root, "demo", "SnapshotProjection");
+    let spec_rel = "demo/tech-design/surface/interfaces/src/lib.md";
+    let target_rel = "demo/src/lib.rs";
+    let sibling_rel = "demo/src/sibling.rs";
+    let unmatched_rel = "demo/src/unmatched.rs";
+    let spec_path = root.join(spec_rel);
+    let target = root.join(target_rel);
+    let sibling = root.join(sibling_rel);
+    let unmatched = root.join(unmatched_rel);
+    std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+
+    let old_target = format!(
+        "// SPEC-MANAGED: {spec_rel}#source\n// CODEGEN-BEGIN\npub const SNAPSHOT_VALUE: &str = \"before\";\n// CODEGEN-END\n"
+    );
+    let projected_target = format!(
+        "// SPEC-MANAGED: {spec_rel}#source\n// CODEGEN-BEGIN\npub const SNAPSHOT_VALUE: &str = \"after\";\n\n#[cfg(test)]\nmod tests {{\n    #[test]\n    fn td_gen_source_snapshot_projection_unique_test() {{\n        assert_eq!(super::SNAPSHOT_VALUE, \"after\");\n    }}\n}}\n// CODEGEN-END\n"
+    );
+    let sibling_before = "pub fn sibling_must_stay_untouched() {}\n";
+    let unmatched_before = format!(
+        "// SPEC-MANAGED: {spec_rel}#source\n// CODEGEN-BEGIN\npub const UNMATCHED: &str = \"untouched\";\n// CODEGEN-END\n"
+    );
+    std::fs::write(&target, &old_target).unwrap();
+    std::fs::write(&sibling, sibling_before).unwrap();
+    std::fs::write(&unmatched, &unmatched_before).unwrap();
+
+    let spec = format!(
+        r#"---
+id: td-gen-source-source-snapshot-projection-fixture
+fill_sections: [overview, changes]
+---
+
+# Legacy authoritative source snapshot fixture
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Project a semantic snapshot edit into exactly one existing CODEGEN target.
+
+## Source
+<!-- type: source lang: rust -->
+<!-- source-from-target: strip-handwrite -->
+
+<!-- source-snapshot: path={target_rel} -->
+```rust
+{projected_target}```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: {target_rel}
+    action: create
+    impl_mode: codegen
+    section: source
+  - path: {target_rel}
+    action: modify
+    impl_mode: codegen
+    section: source
+```
+"#
+    );
+    std::fs::write(&spec_path, spec).unwrap();
+
+    let command = format!("aw td gen-source --spec {spec_rel} --target {target_rel}");
+    let projected = run_emitted_aw_command(&aw_bin, root, &command);
+    assert!(
+        projected.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&projected.stdout),
+        String::from_utf8_lossy(&projected.stderr)
+    );
+    let envelope = single_stdout_envelope(&projected);
+    assert_eq!(envelope["status"], "done");
+    assert_eq!(envelope["summary"]["wrote_files"], true);
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), projected_target);
+    assert_eq!(std::fs::read_to_string(&sibling).unwrap(), sibling_before);
+    assert_eq!(
+        std::fs::read_to_string(&unmatched).unwrap(),
+        unmatched_before
+    );
+
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let generated_test = std::process::Command::new(cargo)
+        .arg("test")
+        .arg("--manifest-path")
+        .arg(root.join("demo/Cargo.toml"))
+        .arg("td_gen_source_snapshot_projection_unique_test")
+        .arg("--")
+        .arg("--nocapture")
+        .env("CARGO_TARGET_DIR", root.join("generated-test-target"))
+        .output()
+        .expect("run generated Rust test filter");
+    assert!(
+        generated_test.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&generated_test.stdout),
+        String::from_utf8_lossy(&generated_test.stderr)
+    );
+    let test_stdout = String::from_utf8_lossy(&generated_test.stdout);
+    assert!(
+        test_stdout.contains("running 1 test") && test_stdout.contains("1 passed"),
+        "generated verification filter must execute one test, got:\n{test_stdout}"
+    );
+
+    let noop = run_emitted_aw_command(&aw_bin, root, &command);
+    assert!(noop.status.success());
+    let noop_envelope = single_stdout_envelope(&noop);
+    assert_eq!(noop_envelope["summary"]["wrote_files"], false);
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), projected_target);
+
+    let unmatched_command = format!("aw td gen-source --spec {spec_rel} --target {unmatched_rel}");
+    let rejected = run_emitted_aw_command(&aw_bin, root, &unmatched_command);
+    assert!(!rejected.status.success());
+    let rejected_envelope = single_stdout_envelope(&rejected);
+    assert_eq!(rejected_envelope["action"], "error");
+    let message = rejected_envelope["message"].as_str().unwrap_or_default();
+    assert!(message.contains(target_rel), "{message}");
+    assert!(message.contains("--target"), "{message}");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), projected_target);
+    assert_eq!(
+        std::fs::read_to_string(&unmatched).unwrap(),
+        unmatched_before
+    );
+    assert_eq!(std::fs::read_to_string(&sibling).unwrap(), sibling_before);
+}
+
 #[test]
 fn test_explicit_missing_path_is_non_hitl_error_envelope() {
     let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
@@ -669,9 +815,8 @@ fn collect_md_recursive(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     }
     out
 }
-
 // CODEGEN-END
-```
+````
 
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -687,5 +832,8 @@ changes:
       large explicit-file dispatch and exact terminal gen-source loop, strict
       one-envelope stdout, runnable remediation errors, controlled HITL
       no-mutation behavior, local default tracker linkage, sibling exclusion,
-      and unchanged directory progress behavior.
+      and unchanged directory progress behavior. Issue #1548 proves that an
+      authoritative legacy source-snapshot projects semantic bytes, runs its
+      unique generated test, remains idempotent, and rejects unmatched targets
+      without clobbering any file.
 ```

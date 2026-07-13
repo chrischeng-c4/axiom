@@ -468,6 +468,30 @@ semantic_domain:
           - name: "run_apply_worktree"
             kind: "function"
             public: true
+          - name: "run_apply_exact_source_target"
+            kind: "function"
+            public: true
+          - name: "ValidatedExactSourceSnapshot"
+            kind: "struct"
+            public: false
+          - name: "ExactSourceContract"
+            kind: "struct"
+            public: false
+          - name: "validate_exact_source_spec_contract"
+            kind: "function"
+            public: false
+          - name: "validate_legacy_source_snapshot_contract"
+            kind: "function"
+            public: false
+          - name: "authoritative_source_snapshot_path"
+            kind: "function"
+            public: false
+          - name: "extract_authoritative_source_snapshot"
+            kind: "function"
+            public: false
+          - name: "validate_complete_typed_changes_after_source"
+            kind: "function"
+            public: false
           - name: "run_apply_inner"
             kind: "function"
             public: false
@@ -780,6 +804,9 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      Issue #1548 adds fail-closed authoritative legacy source-snapshot
+      projection for exactly one existing whole-file CODEGEN target while
+      preserving typed and partitioned source-unit behavior from #1506.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/generate/from_td_ast.rs"
     action: modify

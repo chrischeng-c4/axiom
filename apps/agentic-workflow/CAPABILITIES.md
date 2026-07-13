@@ -251,6 +251,7 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | Brownfield takeover surface | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests standardize_subcommands_registered` |
 | Managed and semantic production gates | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib semantic_coverage_prioritizes_missing_td_before_generator_gap` |
+| Authoritative source-snapshot projection | change | #1548 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib legacy_source_snapshot -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests test_gen_source_projects_legacy_snapshot_and_runs_generated_test -- --nocapture`; apps/agentic-workflow/tech-design/semantic/td-gen-source-source-snapshot-projection.md |
 | Traceability closure gate | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib traceability` covers command, TD, source, and CB closure |
 | CB and cold verification gates | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib cb_gen_cold_rebuild_targets_include_codegen_changes` |
 | Shared service kit substrate | change | #1241 | implemented | verified | smoke | `cargo test -p server-core -p tcp-server -p http-server -p h2c -p service-http`; apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md |

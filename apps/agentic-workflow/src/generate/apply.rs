@@ -407,6 +407,18 @@ fn run_apply_inner(
     } else {
         None
     };
+    if let Some(validated) = validated_exact_source
+        .as_ref()
+        .filter(|validated| validated.authoritative_embedded_snapshot)
+    {
+        change_entries = change_entries
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                (index == validated.selected_change_index).then_some(entry)
+            })
+            .collect();
+    }
 
     // Neither legacy Changes metadata nor codebase refs produced a target.
     // Inference (`infer_change_entries_from_existing_spec_refs`) can only
@@ -445,8 +457,12 @@ fn run_apply_inner(
     // owns the entire file, so apply must REPLACE the whole file rather than
     // append a managed block beside pre-existing (unmanaged) content. Without
     // this, a virgin file with no markers would be duplicated.
-    let source_from_target_replays_whole_file =
-        source_from_target_directive(&spec_content).is_some() || typed_source_unit.is_some();
+    let source_from_target_replays_whole_file = source_from_target_directive(&spec_content)
+        .is_some()
+        || typed_source_unit.is_some()
+        || validated_exact_source
+            .as_ref()
+            .is_some_and(|validated| validated.authoritative_embedded_snapshot);
     let whole_file_source_targets: std::collections::BTreeSet<String> = all_entries
         .iter()
         .filter(|entry| {
@@ -796,13 +812,21 @@ fn run_apply_inner(
                     crate::generate::gen::rust::tests_gen::generate_e2e_tests(&spec_content).code
                 }
                 Some("source" | "rust-source-unit" | "text-source-unit") => {
-                    try_generate_source_section_code(
-                        &spec_content,
-                        &spec_path_str,
-                        Some(&entry.path),
-                        root,
-                    )
-                    .map_err(crate::generate::GenerateError::InvalidValue)?
+                    if validated_exact_source
+                        .as_ref()
+                        .is_some_and(|validated| validated.authoritative_embedded_snapshot)
+                    {
+                        extract_authoritative_source_snapshot(&spec_content)
+                            .map_err(crate::generate::GenerateError::InvalidValue)?
+                    } else {
+                        try_generate_source_section_code(
+                            &spec_content,
+                            &spec_path_str,
+                            Some(&entry.path),
+                            root,
+                        )
+                        .map_err(crate::generate::GenerateError::InvalidValue)?
+                    }
                 }
                 Some("runtime-image" | "deployment") => {
                     let section = entry.section_id.as_deref().unwrap_or("changes");
@@ -3449,6 +3473,16 @@ mod tests {
         spec
     }
 
+    fn legacy_source_snapshot_test_spec(
+        snapshot: &str,
+        snapshot_path: &str,
+        changes_yaml: &str,
+    ) -> String {
+        format!(
+            "---\nid: legacy-snapshot-test\nfill_sections: [overview, changes]\n---\n\n# Legacy Snapshot Test\n\n## Overview\n<!-- type: overview lang: markdown -->\n\nExact legacy snapshot projection fixture.\n\n## Source\n<!-- type: source lang: rust -->\n<!-- source-from-target: strip-handwrite -->\n\n<!-- source-snapshot: path={snapshot_path} -->\n```rust\n{snapshot}```\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n{changes_yaml}```\n"
+        )
+    }
+
     #[test]
     fn partition_decoder_rejects_every_structural_and_integrity_corruption() {
         let source = (0..2_500)
@@ -3690,6 +3724,161 @@ pub fn still_legacy() {}
             "idempotent exact apply must report no write"
         );
         assert_eq!(std::fs::read_to_string(&target).unwrap(), managed);
+    }
+
+    #[test]
+    fn exact_legacy_source_snapshot_const_only_edit_wins_over_source_from_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/direct.md");
+        let target = root.join("src/lib.rs");
+        let sibling = root.join("src/sibling.rs");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        let old = "// SPEC-MANAGED: tech-design/direct.md#source\n// CODEGEN-BEGIN\npub const SNAPSHOT_VALUE: &str = \"before\";\n// CODEGEN-END\n";
+        let projected = "// SPEC-MANAGED: tech-design/direct.md#source\n// CODEGEN-BEGIN\npub const SNAPSHOT_VALUE: &str = \"after\";\n// CODEGEN-END\n";
+        let sibling_before = "pub fn untouched() {}\n";
+        let spec = legacy_source_snapshot_test_spec(
+            projected,
+            "src/lib.rs",
+            "  - path: src/lib.rs\n    action: create\n    section: source\n    impl_mode: codegen\n  - path: src/lib.rs\n    action: modify\n    section: source\n    impl_mode: codegen\n",
+        );
+        std::fs::write(&spec_path, spec).unwrap();
+        std::fs::write(&target, old).unwrap();
+        std::fs::write(&sibling, sibling_before).unwrap();
+
+        let report = run_apply_exact_source_target(&spec_path, root, false, &target).unwrap();
+        assert!(report.wrote_files);
+        assert_eq!(report.files.iter().filter(|file| file.processed).count(), 1);
+        assert_eq!(report.total_blocks_updated(), 1);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), projected);
+        assert_eq!(std::fs::read_to_string(&sibling).unwrap(), sibling_before);
+
+        let noop = run_apply_exact_source_target(&spec_path, root, false, &target).unwrap();
+        assert!(!noop.wrote_files);
+        assert_eq!(noop.files.iter().filter(|file| file.processed).count(), 1);
+        assert_eq!(noop.total_blocks_updated(), 0);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), projected);
+    }
+
+    #[test]
+    fn exact_legacy_source_snapshot_rejects_ambiguous_or_unsafe_metadata_without_mutation() {
+        let base_changes = "  - path: src/lib.rs\n    action: modify\n    section: source\n    impl_mode: codegen\n";
+        let cases = [
+            (
+                "snapshot-target-mismatch",
+                "src/other.rs",
+                base_changes,
+                "--target src/other.rs",
+            ),
+            (
+                "different-source-target",
+                "src/lib.rs",
+                "  - path: src/lib.rs\n    action: modify\n    section: source\n    impl_mode: codegen\n  - path: src/other.rs\n    action: modify\n    section: source\n    impl_mode: codegen\n",
+                "different source target",
+            ),
+            (
+                "delete-action",
+                "src/lib.rs",
+                "  - path: src/lib.rs\n    action: delete\n    section: source\n    impl_mode: codegen\n",
+                "create`/`modify",
+            ),
+            (
+                "symbol-replaces",
+                "src/lib.rs",
+                "  - path: src/lib.rs\n    action: modify\n    section: source\n    replaces: [SNAPSHOT_VALUE]\n    impl_mode: codegen\n",
+                "forbids `replaces`",
+            ),
+            (
+                "target-local-non-source",
+                "src/lib.rs",
+                "  - path: src/lib.rs\n    action: modify\n    section: source\n    impl_mode: codegen\n  - path: src/lib.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n",
+                "non-source or incompatible",
+            ),
+        ];
+        for (name, snapshot_path, changes, expected) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path();
+            let spec_path = root.join("tech-design/direct.md");
+            let target = root.join("src/lib.rs");
+            std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            let before = "// SPEC-MANAGED: tech-design/direct.md#source\n// CODEGEN-BEGIN\npub const SNAPSHOT_VALUE: &str = \"before\";\n// CODEGEN-END\n";
+            let projected = "// SPEC-MANAGED: tech-design/direct.md#source\n// CODEGEN-BEGIN\npub const SNAPSHOT_VALUE: &str = \"after\";\n// CODEGEN-END\n";
+            std::fs::write(
+                &spec_path,
+                legacy_source_snapshot_test_spec(projected, snapshot_path, changes),
+            )
+            .unwrap();
+            std::fs::write(&target, before).unwrap();
+
+            let error = run_apply_exact_source_target(&spec_path, root, false, &target)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(expected), "{name}: {error}");
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), before, "{name}");
+        }
+    }
+
+    #[test]
+    fn legacy_source_snapshot_metadata_and_fence_are_unique_and_top_level() {
+        let snapshot = "// SPEC-MANAGED: tech-design/direct.md#source\n// CODEGEN-BEGIN\n// <!-- source-snapshot: path=src/inside-fence.rs -->\npub const VALUE: &str = \"after\";\n// CODEGEN-END\n";
+        let valid = legacy_source_snapshot_test_spec(
+            snapshot,
+            "src/lib.rs",
+            "  - path: src/lib.rs\n    action: modify\n    section: source\n    impl_mode: codegen\n",
+        );
+        assert_eq!(
+            authoritative_source_snapshot_path(&valid).unwrap(),
+            "src/lib.rs"
+        );
+        assert_eq!(
+            extract_authoritative_source_snapshot(&valid).unwrap(),
+            snapshot
+        );
+
+        let duplicate_path = valid.replacen(
+            "<!-- source-snapshot: path=src/lib.rs -->",
+            "<!-- source-snapshot: path=src/lib.rs -->\n<!-- source-snapshot: path=src/duplicate.rs -->",
+            1,
+        );
+        assert!(authoritative_source_snapshot_path(&duplicate_path).is_err());
+
+        let outside_duplicate = valid.replacen(
+            "Exact legacy snapshot projection fixture.",
+            "Exact legacy snapshot projection fixture.\n<!-- source-snapshot: path=src/outside.rs -->",
+            1,
+        );
+        assert!(authoritative_source_snapshot_path(&outside_duplicate).is_err());
+
+        let outside_only = valid
+            .replacen("<!-- source-snapshot: path=src/lib.rs -->", "", 1)
+            .replacen(
+                "Exact legacy snapshot projection fixture.",
+                "Exact legacy snapshot projection fixture.\n<!-- source-snapshot: path=src/lib.rs -->",
+                1,
+            );
+        let outside_error = authoritative_source_snapshot_path(&outside_only).unwrap_err();
+        assert!(outside_error.contains("must belong"), "{outside_error}");
+
+        let duplicate_fence = valid.replacen(
+            "## Changes",
+            "```rust\npub const SECOND: bool = true;\n```\n\n## Changes",
+            1,
+        );
+        assert!(extract_authoritative_source_snapshot(&duplicate_fence).is_err());
+
+        let unterminated = valid.replacen("```\n\n## Changes", "\n\n## Changes", 1);
+        assert!(extract_authoritative_source_snapshot(&unterminated).is_err());
+
+        let renamed_changes = valid.replacen("## Changes", "## Traceability Changes", 1);
+        assert!(extract_authoritative_source_snapshot(&renamed_changes).is_err());
+
+        let json_changes = valid.replacen("```yaml", "```json", 1);
+        assert!(extract_authoritative_source_snapshot(&json_changes).is_err());
+
+        let duplicate_changes_payload = format!("{valid}\n```yaml\nchanges: []\n```\n");
+        assert!(extract_authoritative_source_snapshot(&duplicate_changes_payload).is_err());
     }
 
     #[test]
@@ -3968,6 +4157,8 @@ changes:
         let snapshot = ValidatedExactSourceSnapshot {
             target: target.clone(),
             content: Some("before\n".to_string()),
+            selected_change_index: 0,
+            authoritative_embedded_snapshot: false,
         };
         std::fs::write(&target, "after\n").unwrap();
         assert!(ensure_exact_target_snapshot_unchanged(&snapshot).is_err());
@@ -10414,6 +10605,15 @@ fn validate_partitioned_source_target(
 struct ValidatedExactSourceSnapshot {
     target: PathBuf,
     content: Option<String>,
+    selected_change_index: usize,
+    authoritative_embedded_snapshot: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExactSourceContract {
+    section: String,
+    selected_change_index: usize,
+    authoritative_embedded_snapshot: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -10443,11 +10643,27 @@ pub(crate) fn validate_exact_source_spec_contract(
     root: &Path,
     exact_target: &Path,
 ) -> Result<String, String> {
-    let typed_kind = typed_source_unit_kind(spec_content)?.ok_or_else(|| {
-        "exact source generation requires exactly one typed rust-source-unit or text-source-unit Source annotation"
-            .to_string()
-    })?;
+    validate_exact_source_spec_contract_details(spec_content, root, exact_target)
+        .map(|contract| contract.section)
+}
 
+fn validate_exact_source_spec_contract_details(
+    spec_content: &str,
+    root: &Path,
+    exact_target: &Path,
+) -> Result<ExactSourceContract, String> {
+    if let Some(typed_kind) = typed_source_unit_kind(spec_content)? {
+        return validate_typed_exact_source_contract(spec_content, root, exact_target, typed_kind);
+    }
+    validate_legacy_source_snapshot_contract(spec_content, root, exact_target)
+}
+
+fn validate_typed_exact_source_contract(
+    spec_content: &str,
+    root: &Path,
+    exact_target: &Path,
+    typed_kind: TypedSourceUnitKind,
+) -> Result<ExactSourceContract, String> {
     // A partitioned Source owns several encoded payload fences and is
     // validated by the strict manifest decoder.  A legacy unpartitioned
     // source-unit must own exactly one closed payload fence.
@@ -10467,9 +10683,10 @@ pub(crate) fn validate_exact_source_spec_contract(
     let change_entries = extract_change_entries(spec_content);
     let source_entries = change_entries
         .iter()
+        .enumerate()
         .filter(|entry| {
             matches!(
-                entry.section_id.as_deref(),
+                entry.1.section_id.as_deref(),
                 Some("source" | "rust-source-unit" | "text-source-unit")
             )
         })
@@ -10480,7 +10697,7 @@ pub(crate) fn validate_exact_source_spec_contract(
             source_entries.len()
         ));
     }
-    let entry = source_entries[0];
+    let (selected_change_index, entry) = source_entries[0];
     if entry.impl_mode == ImplMode::HandWritten {
         return Err(
             "exact source generation requires its unique source Changes entry to use impl_mode=codegen"
@@ -10544,16 +10761,26 @@ pub(crate) fn validate_exact_source_spec_contract(
         _ => {}
     }
 
-    Ok(section.to_string())
+    Ok(ExactSourceContract {
+        section: section.to_string(),
+        selected_change_index,
+        authoritative_embedded_snapshot: false,
+    })
 }
 
-fn validate_exact_source_request(
+fn validate_legacy_source_snapshot_contract(
     spec_content: &str,
-    spec_path: &str,
     root: &Path,
     exact_target: &Path,
-) -> Result<ValidatedExactSourceSnapshot, String> {
-    let section = validate_exact_source_spec_contract(spec_content, root, exact_target)?;
+) -> Result<ExactSourceContract, String> {
+    if !exact_target.exists() {
+        return Err(format!(
+            "legacy authoritative source-snapshot requires an existing whole-file CODEGEN target: `{}`; use `aw td create --from-source {}` to adopt a missing target",
+            exact_target.display(),
+            exact_target.display(),
+        ));
+    }
+
     let target_rel = exact_target
         .strip_prefix(root)
         .map(normalize_path_for_spec_ref)
@@ -10563,12 +10790,344 @@ fn validate_exact_source_request(
                 exact_target.display()
             )
         })?;
-    let selected =
-        try_generate_source_section_code(spec_content, spec_path, Some(&target_rel), root)?;
+    validate_legacy_source_annotation(spec_content, exact_target)?;
+    extract_authoritative_source_snapshot(spec_content)?;
+    let snapshot_path = authoritative_source_snapshot_path(spec_content)?;
+    if snapshot_path != target_rel {
+        return Err(format!(
+            "authoritative source-snapshot targets `{snapshot_path}`, not requested target `{target_rel}`; rerun with `--target {snapshot_path}`"
+        ));
+    }
+
+    let change_entries = extract_change_entries(spec_content);
+    let source_entries = change_entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| {
+            matches!(
+                entry.section_id.as_deref(),
+                Some("source" | "rust-source-unit" | "text-source-unit")
+            )
+        })
+        .collect::<Vec<_>>();
+    if source_entries.is_empty() {
+        return Err(
+            "legacy authoritative source-snapshot requires at least one source Changes entry"
+                .to_string(),
+        );
+    }
+    for (_, entry) in &source_entries {
+        let entry_path = normalize_path_for_spec_ref(Path::new(&entry.path));
+        if entry_path != target_rel {
+            return Err(format!(
+                "legacy authoritative source-snapshot may only contain historical source Changes rows for `{target_rel}`; found different source target `{}`",
+                entry.path
+            ));
+        }
+        if entry.section_id.as_deref() != Some("source") {
+            return Err(format!(
+                "legacy authoritative source-snapshot requires Changes section `source`, found `{}` for `{target_rel}`",
+                entry.section_id.as_deref().unwrap_or_default()
+            ));
+        }
+        if entry.impl_mode == ImplMode::HandWritten {
+            return Err(format!(
+                "legacy authoritative source-snapshot requires impl_mode=codegen for `{target_rel}`"
+            ));
+        }
+        if !entry.replaces.is_empty() {
+            return Err(format!(
+                "legacy authoritative source-snapshot requires whole-file ownership and forbids `replaces` for `{target_rel}`"
+            ));
+        }
+        if !matches!(entry.action.as_str(), "create" | "modify") {
+            return Err(format!(
+                "legacy authoritative source-snapshot only accepts historical `create`/`modify` Changes rows for `{target_rel}`, found action `{}`",
+                entry.action
+            ));
+        }
+    }
+
+    let target_local_entries = change_entries
+        .iter()
+        .filter(|entry| normalize_path_for_spec_ref(Path::new(&entry.path)) == target_rel)
+        .collect::<Vec<_>>();
+    if target_local_entries.len() != source_entries.len() {
+        return Err(format!(
+            "legacy authoritative source-snapshot target `{target_rel}` has a non-source or incompatible Changes row; exact projection only accepts historical source rows"
+        ));
+    }
+    let selected_change_index = source_entries
+        .iter()
+        .rev()
+        .find_map(|(index, entry)| (entry.action == "modify").then_some(*index))
+        .ok_or_else(|| {
+            format!(
+                "legacy authoritative source-snapshot target `{target_rel}` exists but has no effective `action: modify` Changes row"
+            )
+        })?;
+
+    Ok(ExactSourceContract {
+        section: "source".to_string(),
+        selected_change_index,
+        authoritative_embedded_snapshot: true,
+    })
+}
+
+fn validate_legacy_source_annotation(
+    spec_content: &str,
+    exact_target: &Path,
+) -> Result<(), String> {
+    let lines = spec_content.lines().collect::<Vec<_>>();
+    let sections = top_level_source_sections(&lines);
+    if sections.len() != 1 {
+        return Err(format!(
+            "legacy authoritative source-snapshot requires exactly one top-level `## Source` section; found {}",
+            sections.len()
+        ));
+    }
+    let (source_start, source_end) = sections[0];
+    let annotations = source_section_annotations(&lines, source_start + 1, source_end);
+    if annotations.len() != 1 || annotations[0].0 != source_start + 1 {
+        return Err(
+            "legacy authoritative source-snapshot requires exactly one immediate top-level `type: source` annotation"
+                .to_string(),
+        );
+    }
+    let annotation = &annotations[0].1;
+    if annotation.section_type != "source" || !annotation.attributes.is_empty() {
+        return Err(
+            "legacy authoritative source-snapshot requires an exact `type: source` annotation without extra attributes"
+                .to_string(),
+        );
+    }
+    let expected_lang = source_language_for_path(exact_target).ok_or_else(|| {
+        format!(
+            "legacy authoritative source-snapshot target `{}` does not have a supported source extension",
+            exact_target.display()
+        )
+    })?;
+    if annotation.lang.as_deref() != Some(expected_lang) {
+        return Err(format!(
+            "legacy authoritative source-snapshot annotation language `{}` does not match target language `{expected_lang}`",
+            annotation.lang.as_deref().unwrap_or_default()
+        ));
+    }
+    Ok(())
+}
+
+fn authoritative_source_snapshot_path(spec_content: &str) -> Result<String, String> {
+    let lines = spec_content.lines().collect::<Vec<_>>();
+    let sections = top_level_source_sections(&lines);
+    if sections.len() != 1 {
+        return Err(format!(
+            "authoritative source-snapshot requires exactly one top-level `## Source` section; found {}",
+            sections.len()
+        ));
+    }
+    let (start, end) = sections[0];
+    let directives = non_fenced_source_snapshot_directives(&lines)?;
+    if directives.len() != 1 {
+        return Err(format!(
+            "authoritative source-snapshot requires exactly one non-fenced source-snapshot path in the TD; found {}",
+            directives.len()
+        ));
+    }
+    let (directive_index, path) = &directives[0];
+    if *directive_index <= start || *directive_index >= end {
+        return Err(
+            "the unique authoritative source-snapshot directive must belong to the unique top-level `## Source` section"
+                .to_string(),
+        );
+    }
+    Ok(path.clone())
+}
+
+fn non_fenced_source_snapshot_directives(lines: &[&str]) -> Result<Vec<(usize, String)>, String> {
+    let mut fence_open: Option<String> = None;
+    let mut paths = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        if let Some(open) = &fence_open {
+            if fence_closes(line, open) {
+                fence_open = None;
+            }
+            continue;
+        }
+        if let Some(open) = source_fence_close_marker(line) {
+            fence_open = Some(open);
+            continue;
+        }
+        let trimmed = line.trim();
+        let Some(body) = trimmed
+            .strip_prefix("<!-- source-snapshot:")
+            .and_then(|rest| rest.strip_suffix("-->"))
+        else {
+            continue;
+        };
+        let tokens = body.split_whitespace().collect::<Vec<_>>();
+        let [path_token] = tokens.as_slice() else {
+            return Err(format!(
+                "authoritative source-snapshot metadata must contain only `path=<repo-relative-file>`: `{trimmed}`"
+            ));
+        };
+        let path = path_token.strip_prefix("path=").ok_or_else(|| {
+            format!("authoritative source-snapshot metadata is missing `path=`: `{trimmed}`")
+        })?;
+        let candidate = Path::new(path);
+        if path.is_empty()
+            || path.trim() != path
+            || candidate.is_absolute()
+            || candidate
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err(format!(
+                "authoritative source-snapshot path must be a normalized repository-relative file path: `{path}`"
+            ));
+        }
+        paths.push((index, normalize_path_for_spec_ref(candidate)));
+    }
+    Ok(paths)
+}
+
+fn extract_authoritative_source_snapshot(spec_content: &str) -> Result<String, String> {
+    let lines = spec_content.lines().collect::<Vec<_>>();
+    let sections = top_level_source_sections(&lines);
+    if sections.len() != 1 {
+        return Err(format!(
+            "authoritative source-snapshot TD requires exactly one top-level `## Source` section; found {}",
+            sections.len()
+        ));
+    }
+    let (start, end) = sections[0];
+    let mut payloads = Vec::new();
+    let mut closes = Vec::new();
+    let mut index = start + 1;
+    while index < end {
+        let Some(marker) = source_fence_close_marker(lines[index]) else {
+            index += 1;
+            continue;
+        };
+        let close = (index + 1..end)
+            .find(|line_index| fence_closes(lines[*line_index], &marker))
+            .ok_or_else(|| {
+                "authoritative source-snapshot Source payload fence is unterminated before the next top-level section"
+                    .to_string()
+            })?;
+        let mut payload = lines[index + 1..close].join("\n");
+        if close > index + 1 {
+            payload.push('\n');
+        }
+        payloads.push(payload);
+        closes.push(close);
+        index = close + 1;
+    }
+    if payloads.len() != 1 {
+        return Err(format!(
+            "authoritative source-snapshot Source requires exactly one closed payload fence; found {}",
+            payloads.len()
+        ));
+    }
+    validate_complete_typed_changes_after_source(&lines, closes[0], end)?;
+    Ok(payloads.remove(0))
+}
+
+fn validate_complete_typed_changes_after_source(
+    lines: &[&str],
+    source_close: usize,
+    changes_start: usize,
+) -> Result<(), String> {
+    let next_nonblank =
+        (source_close + 1..lines.len()).find(|index| !lines[*index].trim().is_empty());
+    if next_nonblank != Some(changes_start) || changes_start >= lines.len() {
+        return Err(
+            "authoritative source-snapshot payload must be followed by one top-level typed Changes section"
+                .to_string(),
+        );
+    }
+    if lines[changes_start].trim() != "## Changes" {
+        return Err(
+            "authoritative source-snapshot payload must be followed by the literal top-level `## Changes` heading"
+                .to_string(),
+        );
+    }
+    let annotation_index = changes_start + 1;
+    let annotation = lines
+        .get(annotation_index)
+        .and_then(|line| crate::models::section::parse_section_annotation_parts(line))
+        .ok_or_else(|| {
+            "authoritative source-snapshot Changes heading requires an immediate typed annotation"
+                .to_string()
+        })?;
+    if annotation.section_type != "changes"
+        || annotation.lang.as_deref() != Some("yaml")
+        || !annotation.attributes.is_empty()
+    {
+        return Err(
+            "authoritative source-snapshot requires an exact `type: changes lang: yaml` annotation"
+                .to_string(),
+        );
+    }
+    let changes_end = (annotation_index + 1..lines.len())
+        .find(|index| lines[*index].starts_with("## "))
+        .unwrap_or(lines.len());
+    let mut payload_count = 0;
+    let mut index = annotation_index + 1;
+    while index < changes_end {
+        let Some(marker) = source_fence_close_marker(lines[index]) else {
+            index += 1;
+            continue;
+        };
+        if lines[index][marker.len()..].trim() != "yaml" {
+            return Err(
+                "authoritative source-snapshot Changes payload fence language must be literal `yaml`"
+                    .to_string(),
+            );
+        }
+        let close = (index + 1..changes_end)
+            .find(|line_index| fence_closes(lines[*line_index], &marker))
+            .ok_or_else(|| {
+                "authoritative source-snapshot Changes YAML payload fence is unterminated"
+                    .to_string()
+            })?;
+        payload_count += 1;
+        index = close + 1;
+    }
+    if payload_count != 1 {
+        return Err(format!(
+            "authoritative source-snapshot Changes requires exactly one closed YAML payload fence; found {payload_count}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_exact_source_request(
+    spec_content: &str,
+    spec_path: &str,
+    root: &Path,
+    exact_target: &Path,
+) -> Result<ValidatedExactSourceSnapshot, String> {
+    let contract = validate_exact_source_spec_contract_details(spec_content, root, exact_target)?;
+    let target_rel = exact_target
+        .strip_prefix(root)
+        .map(normalize_path_for_spec_ref)
+        .map_err(|_| {
+            format!(
+                "exact source target `{}` is outside the repository root",
+                exact_target.display()
+            )
+        })?;
+    let selected = if contract.authoritative_embedded_snapshot {
+        extract_authoritative_source_snapshot(spec_content)?
+    } else {
+        try_generate_source_section_code(spec_content, spec_path, Some(&target_rel), root)?
+    };
     if !exact_target.exists() {
         return Ok(ValidatedExactSourceSnapshot {
             target: exact_target.to_path_buf(),
             content: None,
+            selected_change_index: contract.selected_change_index,
+            authoritative_embedded_snapshot: contract.authoritative_embedded_snapshot,
         });
     }
     let current = std::fs::read_to_string(exact_target).map_err(|error| {
@@ -10576,6 +11135,11 @@ fn validate_exact_source_request(
     })?;
     let blocks = parse_source_codegen_blocks(exact_target, &current)?;
     if blocks.is_empty() {
+        if contract.authoritative_embedded_snapshot {
+            return Err(format!(
+                "legacy authoritative source-snapshot target `{target_rel}` is not an existing whole-file CODEGEN owner; run `aw td create --from-source {target_rel}` before projection"
+            ));
+        }
         if current != selected {
             return Err(format!(
                 "unowned source target `{target_rel}` changed after fillback; rerun `aw td create --from-source {target_rel}` before adding CODEGEN ownership"
@@ -10584,9 +11148,11 @@ fn validate_exact_source_request(
         return Ok(ValidatedExactSourceSnapshot {
             target: exact_target.to_path_buf(),
             content: Some(current),
+            selected_change_index: contract.selected_change_index,
+            authoritative_embedded_snapshot: contract.authoritative_embedded_snapshot,
         });
     }
-    let expected_ref = format!("{spec_path}#{section}");
+    let expected_ref = format!("{spec_path}#{}", contract.section);
     if blocks.len() != 1
         || !is_whole_file_codegen_content(&current, &blocks)
         || blocks[0].spec_ref != expected_ref
@@ -10598,6 +11164,8 @@ fn validate_exact_source_request(
     Ok(ValidatedExactSourceSnapshot {
         target: exact_target.to_path_buf(),
         content: Some(current),
+        selected_change_index: contract.selected_change_index,
+        authoritative_embedded_snapshot: contract.authoritative_embedded_snapshot,
     })
 }
 
@@ -11412,11 +11980,15 @@ pub(crate) fn extract_section_fence(spec_content: &str, heading: &str) -> Option
 }
 
 fn extract_single_typed_source_fence(spec_content: &str) -> Result<String, String> {
+    extract_single_source_fence(spec_content, "typed source-unit")
+}
+
+fn extract_single_source_fence(spec_content: &str, contract_name: &str) -> Result<String, String> {
     let lines = spec_content.lines().collect::<Vec<_>>();
     let sections = top_level_source_sections(&lines);
     if sections.len() != 1 {
         return Err(format!(
-            "typed source-unit TD requires exactly one `## Source` section; found {}",
+            "{contract_name} TD requires exactly one top-level `## Source` section; found {}",
             sections.len()
         ));
     }
@@ -11430,7 +12002,7 @@ fn extract_single_typed_source_fence(spec_content: &str) -> Result<String, Strin
         };
         let close = (idx + 1..end)
             .find(|line_idx| fence_closes(lines[*line_idx], &marker))
-            .ok_or_else(|| "typed source-unit Source payload fence is unterminated".to_string())?;
+            .ok_or_else(|| format!("{contract_name} Source payload fence is unterminated"))?;
         let mut payload = lines[idx + 1..close].join("\n");
         if close > idx + 1 {
             payload.push('\n');
@@ -11440,7 +12012,7 @@ fn extract_single_typed_source_fence(spec_content: &str) -> Result<String, Strin
     }
     if payloads.len() != 1 {
         return Err(format!(
-            "typed source-unit Source requires exactly one closed payload fence; found {}",
+            "{contract_name} Source requires exactly one closed payload fence; found {}",
             payloads.len()
         ));
     }
@@ -11470,5 +12042,4 @@ fn fence_closes(line: &str, opener: &str) -> bool {
         && marker.len() >= opener.len()
         && line[marker.len()..].trim().is_empty()
 }
-
 // CODEGEN-END
