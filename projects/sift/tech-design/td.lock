@@ -2,10 +2,10 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-13T17:59:01.054728+00:00"
-digest = "sha256:8a3b831aef6aea721f80861b6341bf2c53b2c70806dd766e283c7086ba6d98e6"
-source_digest = "sha256:8a3b831aef6aea721f80861b6341bf2c53b2c70806dd766e283c7086ba6d98e6"
-ir_digest = "sha256:2f2b3793a19248959f64786d88945a9f59a8c18c46f925e6ed15252b40dd8995"
+generated_at = "2026-07-13T18:04:46.527963+00:00"
+digest = "sha256:fa6dc7aff8450d0faff79ed58bc48fa364b2188a4289e8651c5764169e1e215b"
+source_digest = "sha256:fa6dc7aff8450d0faff79ed58bc48fa364b2188a4289e8651c5764169e1e215b"
+ir_digest = "sha256:0ae4d83bcf1b40e5441aef361ea998c0eb6b9662d7e53aa0aee7b5bf6a34bab5"
 
 [[files]]
 path = "interfaces/rest/adopt-shared-runtime-security-and-agent-interface.md"
@@ -27,8 +27,8 @@ section_count = 2
 
 [[files]]
 path = "logic/add-operational-ec-stability-and-governance-gates.md"
-digest = "sha256:026daacc4691c7e7555d78ec27b858cb93439cd4b1dd75de0208db91c0345d69"
-ir_digest = "sha256:50421a8ecdb5e2b482a261fca055669fe927ec620e4170033830e7e999da97fb"
+digest = "sha256:368704d96eb12adac4ef3cf4a6af57feb96e20cc7646292da1d2d78cbf450d34"
+ir_digest = "sha256:0f230120abc5d9cbca24b522978b6d25363f5a8abf79453721fb0fb2d8058765"
 section_count = 2
 
 [[files]]
