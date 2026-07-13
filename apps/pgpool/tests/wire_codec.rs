@@ -9,8 +9,8 @@ use pgpool::wire::{
     AuthenticationSasl, AuthenticationSaslContinue, AuthenticationSaslFinal, BackendKeyData,
     BackendMessage, Bind, CommandComplete, DataRow, Describe, DescribeTarget, ErrorResponse,
     Execute, FieldDescription, Frame, FrameError, FrameReader, FrontendMessage, NoticeResponse,
-    ParameterStatus, Parse, PasswordMessage, Query, ReadyForQuery, Role, RowDescription,
-    SaslInitialResponse, SaslResponse, SslRequest, StartupMessage, Sync, Terminate,
+    ParameterStatus, Parse, PasswordMessage, Query, ReadyForQuery, RelayFrameKind, Role,
+    RowDescription, SaslInitialResponse, SaslResponse, SslRequest, StartupMessage, Sync, Terminate,
     TransactionStatus, WireCodecConfig, WireMessage,
 };
 
@@ -47,6 +47,23 @@ fn encode_backend(message: &BackendMessage) -> BytesMut {
     let mut buf = BytesMut::new();
     message.encode(&mut buf);
     buf
+}
+
+fn relay_startup(reader: &mut FrameReader) {
+    let startup = encode(&FrontendMessage::Startup(StartupMessage {
+        protocol_major: 3,
+        protocol_minor: 0,
+        parameters: vec![("user".to_string(), "app".to_string())],
+    }));
+    reader.feed(&startup);
+    assert_eq!(
+        reader
+            .next_relay_frame_with_raw()
+            .expect("startup validation succeeds")
+            .expect("startup frame is fully buffered")
+            .kind,
+        RelayFrameKind::Other
+    );
 }
 
 /// Round-trips a frontend message through a fresh `FrameReader`, asserting
@@ -255,6 +272,150 @@ fn validated_frame_retains_exact_wire_bytes_for_relay() {
         malformed_reader.next_frame_with_raw(),
         Err(FrameError::Malformed { .. })
     ));
+}
+
+/// Transaction pooling retains the normal structural validation and exact
+/// wire bytes for simple-query frames while keeping only its ownership facts.
+#[test]
+fn transaction_relay_validates_hot_frames_and_tracks_ownership() {
+    let config = WireCodecConfig::default();
+    let cases = vec![
+        (
+            BackendMessage::DataRow(DataRow {
+                columns: vec![Some(Bytes::from_static(b"42")), None],
+            }),
+            RelayFrameKind::Other,
+        ),
+        (
+            BackendMessage::RowDescription(RowDescription {
+                fields: vec![FieldDescription {
+                    name: "answer".to_string(),
+                    table_oid: 0,
+                    column_attr: 0,
+                    type_oid: 23,
+                    type_size: 4,
+                    type_modifier: -1,
+                    format: 0,
+                }],
+            }),
+            RelayFrameKind::Other,
+        ),
+        (
+            BackendMessage::CommandComplete(CommandComplete {
+                tag: "SELECT 1".to_string(),
+            }),
+            RelayFrameKind::Other,
+        ),
+        (
+            BackendMessage::ErrorResponse(ErrorResponse {
+                fields: vec![(b'M', "bad query".to_string())],
+            }),
+            RelayFrameKind::Other,
+        ),
+        (
+            BackendMessage::NoticeResponse(NoticeResponse {
+                fields: vec![(b'M', "notice".to_string())],
+            }),
+            RelayFrameKind::Other,
+        ),
+        (
+            BackendMessage::ReadyForQuery(ReadyForQuery {
+                status: TransactionStatus::Idle,
+            }),
+            RelayFrameKind::BackendReady(TransactionStatus::Idle),
+        ),
+    ];
+
+    for (message, expected_kind) in cases {
+        let encoded = encode_backend(&message);
+        let mut reader = FrameReader::new(Role::Backend, &config);
+        reader.feed(&encoded);
+        let frame = reader
+            .next_relay_frame_with_raw()
+            .expect("relay validation succeeds")
+            .expect("relay frame is fully buffered");
+        assert_eq!(frame.kind, expected_kind);
+        assert_eq!(frame.bytes.as_ref(), encoded.as_ref());
+    }
+
+    let query = encode(&FrontendMessage::Query(Query {
+        sql: "SELECT 1".to_string(),
+    }));
+    let mut frontend_reader = FrameReader::new(Role::Frontend, &config);
+    relay_startup(&mut frontend_reader);
+    frontend_reader.feed(&query);
+    let query_frame = frontend_reader
+        .next_relay_frame_with_raw()
+        .expect("query validation succeeds")
+        .expect("query frame is fully buffered");
+    assert_eq!(query_frame.kind, RelayFrameKind::Other);
+    assert_eq!(query_frame.bytes.as_ref(), query.as_ref());
+
+    let terminate = encode(&FrontendMessage::Terminate(Terminate));
+    frontend_reader.feed(&terminate);
+    let terminate_frame = frontend_reader
+        .next_relay_frame_with_raw()
+        .expect("terminate validation succeeds")
+        .expect("terminate frame is fully buffered");
+    assert_eq!(terminate_frame.kind, RelayFrameKind::FrontendTerminate);
+    assert_eq!(terminate_frame.bytes.as_ref(), terminate.as_ref());
+}
+
+/// The allocation-free relay validators must reject malformed hot frames in
+/// exactly the same way as the established full typed decoder.
+#[test]
+fn transaction_relay_hot_frame_errors_match_typed_decode() {
+    let config = WireCodecConfig::default();
+
+    for bytes in [
+        &[b'D', 0, 0, 0, 10, 0, 1, 0xff, 0xff, 0xff, 0xfe][..],
+        &[b'T', 0, 0, 0, 6, 0, 1][..],
+        &[b'C', 0, 0, 0, 6, b'a', b'b'][..],
+        &[b'N', 0, 0, 0, 7, b'M', 0xff, 0][..],
+        &[b'Z', 0, 0, 0, 5, b'Q'][..],
+    ] {
+        let mut typed = FrameReader::new(Role::Backend, &config);
+        typed.feed(bytes);
+        let typed_error = typed
+            .next_frame_with_raw()
+            .expect_err("typed decode rejects input");
+
+        let mut relay = FrameReader::new(Role::Backend, &config);
+        relay.feed(bytes);
+        let relay_error = relay
+            .next_relay_frame_with_raw()
+            .expect_err("relay decode rejects input");
+        assert_eq!(relay_error, typed_error);
+    }
+
+    for bytes in [
+        &[b'Q', 0, 0, 0, 6, 0xff, 0][..],
+        &[b'X', 0, 0, 0, 5, b'a'][..],
+    ] {
+        let mut typed = FrameReader::new(Role::Frontend, &config);
+        let typed_startup = encode(&FrontendMessage::Startup(StartupMessage {
+            protocol_major: 3,
+            protocol_minor: 0,
+            parameters: vec![("user".to_string(), "app".to_string())],
+        }));
+        typed.feed(&typed_startup);
+        typed
+            .next_frame_with_raw()
+            .expect("typed startup succeeds")
+            .expect("typed startup is buffered");
+        typed.feed(bytes);
+        let typed_error = typed
+            .next_frame_with_raw()
+            .expect_err("typed decode rejects input");
+
+        let mut relay = FrameReader::new(Role::Frontend, &config);
+        relay_startup(&mut relay);
+        relay.feed(bytes);
+        let relay_error = relay
+            .next_relay_frame_with_raw()
+            .expect_err("relay decode rejects input");
+        assert_eq!(relay_error, typed_error);
+    }
 }
 
 // R4: Parse/Bind/Describe/Execute/Sync extended-query round trip.

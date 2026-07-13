@@ -13,7 +13,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::proxy::error::ProxyError;
 use crate::wire::{
-    BackendKeyData, BackendMessage, FrameReader, FrontendMessage, WireFrame, WireMessage,
+    BackendKeyData, BackendMessage, FrameReader, FrontendMessage, RelayFrame, WireMessage,
 };
 
 /// Which side of a pre-established handshake ended: forward progress to
@@ -51,15 +51,17 @@ pub(crate) async fn read_frame(
     }
 }
 
-/// Reads a fully validated frame while retaining the exact source bytes for
-/// a relay write. Transaction pooling uses this in its steady-state hot path
-/// so it can inspect ownership boundaries without model re-encoding.
-pub(crate) async fn read_frame_with_raw(
+/// Reads a fully validated relay frame while retaining only the ownership
+/// facts transaction pooling needs. The reader still enforces the normal
+/// frame bounds and structural protocol validation; it simply avoids
+/// materializing typed result rows and strings that will be forwarded
+/// verbatim and discarded.
+pub(crate) async fn read_relay_frame_with_raw(
     stream: &mut (impl AsyncRead + Unpin),
     reader: &mut FrameReader,
-) -> Result<Option<WireFrame>, ProxyError> {
+) -> Result<Option<RelayFrame>, ProxyError> {
     loop {
-        match reader.next_frame_with_raw() {
+        match reader.next_relay_frame_with_raw() {
             Ok(Some(frame)) => return Ok(Some(frame)),
             Ok(None) => {
                 let mut buf = [0_u8; 8192];
@@ -103,7 +105,7 @@ pub(crate) async fn forward_backend(
 
 /// Writes a frame exactly as it was validated from the opposite transport.
 /// This intentionally does not bypass decoding: callers receive these bytes
-/// only from [`read_frame_with_raw`].
+/// only from [`read_relay_frame_with_raw`] on the transaction relay path.
 pub(crate) async fn forward_raw(
     write: &mut (impl AsyncWrite + Unpin),
     bytes: &[u8],

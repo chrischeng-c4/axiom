@@ -75,6 +75,31 @@ impl<'a> Cursor<'a> {
             })
     }
 
+    /// Validates and consumes a null-terminated UTF-8 string without
+    /// allocating an owned `String`. Relay-only decoding uses this when the
+    /// contents are not control data, but malformed bytes must still be
+    /// rejected exactly as they are by [`Self::read_cstr`].
+    pub(crate) fn skip_cstr(&mut self, tag: Option<u8>) -> Result<(), FrameError> {
+        let start = self.pos;
+        while self.pos < self.bytes.len() && self.bytes[self.pos] != 0 {
+            self.pos += 1;
+        }
+        if self.pos >= self.bytes.len() {
+            return Err(FrameError::Malformed {
+                tag,
+                reason: "unterminated string field (missing null terminator)".to_string(),
+            });
+        }
+        let raw = &self.bytes[start..self.pos];
+        self.pos += 1; // consume the null terminator
+        std::str::from_utf8(raw)
+            .map(|_| ())
+            .map_err(|_| FrameError::Malformed {
+                tag,
+                reason: "invalid UTF-8 in string field".to_string(),
+            })
+    }
+
     /// Consumes and returns every remaining byte in the payload.
     pub(crate) fn read_remaining_bytes(&mut self) -> Bytes {
         let s = Bytes::copy_from_slice(&self.bytes[self.pos..]);

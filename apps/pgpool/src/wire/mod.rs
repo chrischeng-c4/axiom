@@ -29,5 +29,5 @@ pub use frontend::{
     Bind, Describe, DescribeTarget, Execute, FrontendMessage, Parse, PasswordMessage, Query,
     SaslInitialResponse, SaslResponse, SslRequest, StartupMessage, Sync, Terminate,
 };
-pub use reader::{FrameReader, Role, WireFrame, WireMessage};
+pub use reader::{FrameReader, RelayFrame, RelayFrameKind, Role, WireFrame, WireMessage};
 // </HANDWRITE>

@@ -27,12 +27,12 @@ use tokio::net::TcpStream;
 use crate::pool::backend_pool::{BackendLease, BackendPool, StartupAdmission};
 use crate::pool::types::{BackendConnectionId, LeaseDisposition, PoolRejectionReason};
 use crate::proxy::{
-    forward_backend, forward_frontend, forward_raw, read_frame_with_raw, read_startup,
+    forward_backend, forward_frontend, forward_raw, read_relay_frame_with_raw, read_startup,
     relay_until_ready, HandshakeOutcome, RejectionReason,
 };
 use crate::wire::{
-    BackendMessage, FrameReader, FrontendMessage, Role, TransactionStatus, WireCodecConfig,
-    WireFrame, WireMessage,
+    FrameReader, FrontendMessage, RelayFrame, RelayFrameKind, Role, TransactionStatus,
+    WireCodecConfig,
 };
 
 /// Full configuration for one `TransactionHandler`, per the TD Schema
@@ -237,18 +237,18 @@ async fn run_transaction_client(
     // a frame the client had already pipelined ahead of the previous leg's
     // `ReadyForQuery` (captured by `relay_one_transaction`, never lost),
     // standing in for a fresh frontend read on this iteration.
-    let mut pending_first_frame: Option<WireFrame> = None;
+    let mut pending_first_frame: Option<RelayFrame> = None;
     loop {
         let first_frame = match pending_first_frame.take() {
             Some(msg) => msg,
-            None => match read_frame_with_raw(&mut client_read, &mut frontend_reader).await {
-                Ok(Some(frame)) => match &frame.message {
-                    WireMessage::Frontend(FrontendMessage::Terminate(_)) => {
+            None => match read_relay_frame_with_raw(&mut client_read, &mut frontend_reader).await {
+                Ok(Some(frame)) => match frame.kind {
+                    RelayFrameKind::FrontendTerminate => {
                         drop(permit);
                         return;
                     }
-                    WireMessage::Frontend(_) => frame,
-                    WireMessage::Backend(_) => {
+                    RelayFrameKind::Other => frame,
+                    RelayFrameKind::BackendReady(_) => {
                         unreachable!("frontend-role reader only emits Frontend frames")
                     }
                 },
@@ -340,7 +340,7 @@ enum TxnLegOutcome {
     /// this leg's `ReadyForQuery` -- captured (never forwarded to this
     /// now-being-reset backend) so it becomes the next lease's
     /// `first_frame` without a redundant socket read.
-    ReadyIdle(Option<WireFrame>),
+    ReadyIdle(Option<RelayFrame>),
     /// `Terminate`/EOF/`FrameError` on either leg: release `Close`, close
     /// the client.
     Ended,
@@ -356,12 +356,9 @@ async fn relay_one_transaction(
     backend_write: &mut OwnedWriteHalf,
     frontend_reader: &mut FrameReader,
     backend_reader: &mut FrameReader,
-    first_frame: WireFrame,
+    first_frame: RelayFrame,
 ) -> TxnLegOutcome {
-    let is_terminate = matches!(
-        &first_frame.message,
-        WireMessage::Frontend(FrontendMessage::Terminate(_))
-    );
+    let is_terminate = matches!(first_frame.kind, RelayFrameKind::FrontendTerminate);
     if forward_raw(backend_write, &first_frame.bytes)
         .await
         .is_err()
@@ -390,27 +387,27 @@ async fn relay_one_transaction(
     // disconnect end (and free/close) this leg promptly even while the
     // backend is still mid-response, instead of only being noticed after
     // the backend eventually replies.
-    let mut pending_frontend: Option<WireFrame> = None;
+    let mut pending_frontend: Option<RelayFrame> = None;
 
     loop {
         let is_idle = loop {
             if pending_frontend.is_some() {
                 // Already have a pending frame; only await the backend now.
-                match read_frame_with_raw(backend_read, backend_reader).await {
-                    Ok(Some(frame)) => match &frame.message {
-                        WireMessage::Backend(BackendMessage::ReadyForQuery(ready)) => {
-                            let idle = matches!(&ready.status, TransactionStatus::Idle);
+                match read_relay_frame_with_raw(backend_read, backend_reader).await {
+                    Ok(Some(frame)) => match frame.kind {
+                        RelayFrameKind::BackendReady(status) => {
+                            let idle = matches!(status, TransactionStatus::Idle);
                             if forward_raw(client_write, &frame.bytes).await.is_err() {
                                 return TxnLegOutcome::Ended;
                             }
                             break idle;
                         }
-                        WireMessage::Backend(_) => {
+                        RelayFrameKind::Other => {
                             if forward_raw(client_write, &frame.bytes).await.is_err() {
                                 return TxnLegOutcome::Ended;
                             }
                         }
-                        WireMessage::Frontend(_) => {
+                        RelayFrameKind::FrontendTerminate => {
                             unreachable!("backend-role reader only emits Backend frames")
                         }
                     },
@@ -418,38 +415,38 @@ async fn relay_one_transaction(
                 }
             } else {
                 tokio::select! {
-                    backend_result = read_frame_with_raw(backend_read, backend_reader) => {
+                    backend_result = read_relay_frame_with_raw(backend_read, backend_reader) => {
                         match backend_result {
-                            Ok(Some(frame)) => match &frame.message {
-                                WireMessage::Backend(BackendMessage::ReadyForQuery(ready)) => {
-                                    let idle = matches!(&ready.status, TransactionStatus::Idle);
+                            Ok(Some(frame)) => match frame.kind {
+                                RelayFrameKind::BackendReady(status) => {
+                                    let idle = matches!(status, TransactionStatus::Idle);
                                     if forward_raw(client_write, &frame.bytes).await.is_err() {
                                         return TxnLegOutcome::Ended;
                                     }
                                     break idle;
                                 }
-                                WireMessage::Backend(_) => {
+                                RelayFrameKind::Other => {
                                     if forward_raw(client_write, &frame.bytes).await.is_err() {
                                         return TxnLegOutcome::Ended;
                                     }
                                 }
-                                WireMessage::Frontend(_) => {
+                                RelayFrameKind::FrontendTerminate => {
                                     unreachable!("backend-role reader only emits Backend frames")
                                 }
                             },
                             Ok(None) | Err(_) => return TxnLegOutcome::Ended,
                         }
                     }
-                    frontend_result = read_frame_with_raw(client_read, frontend_reader) => {
+                    frontend_result = read_relay_frame_with_raw(client_read, frontend_reader) => {
                         match frontend_result {
-                            Ok(Some(frame)) => match &frame.message {
-                                WireMessage::Frontend(FrontendMessage::Terminate(_)) => {
+                            Ok(Some(frame)) => match frame.kind {
+                                RelayFrameKind::FrontendTerminate => {
                                     return TxnLegOutcome::Ended;
                                 }
-                                WireMessage::Frontend(_) => {
+                                RelayFrameKind::Other => {
                                     pending_frontend = Some(frame);
                                 }
-                                WireMessage::Backend(_) => {
+                                RelayFrameKind::BackendReady(_) => {
                                     unreachable!("frontend-role reader only emits Frontend frames")
                                 }
                             },
@@ -470,20 +467,17 @@ async fn relay_one_transaction(
         // the next statement in an explicit BEGIN...COMMIT).
         let msg = match pending_frontend.take() {
             Some(msg) => msg,
-            None => match read_frame_with_raw(client_read, frontend_reader).await {
-                Ok(Some(frame)) => match &frame.message {
-                    WireMessage::Frontend(_) => frame,
-                    WireMessage::Backend(_) => {
+            None => match read_relay_frame_with_raw(client_read, frontend_reader).await {
+                Ok(Some(frame)) => match frame.kind {
+                    RelayFrameKind::FrontendTerminate | RelayFrameKind::Other => frame,
+                    RelayFrameKind::BackendReady(_) => {
                         unreachable!("frontend-role reader only emits Frontend frames")
                     }
                 },
                 Ok(None) | Err(_) => return TxnLegOutcome::Ended,
             },
         };
-        if matches!(
-            &msg.message,
-            WireMessage::Frontend(FrontendMessage::Terminate(_))
-        ) {
+        if matches!(msg.kind, RelayFrameKind::FrontendTerminate) {
             let _ = forward_raw(backend_write, &msg.bytes).await;
             return TxnLegOutcome::Ended;
         }

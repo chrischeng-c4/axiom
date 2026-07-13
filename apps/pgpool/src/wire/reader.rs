@@ -12,11 +12,15 @@
 
 use bytes::{Bytes, BytesMut};
 
-use crate::wire::backend::{BackendMessage, TransactionStatus};
+use crate::wire::backend::{
+    BackendMessage, ReadyForQuery, TransactionStatus, TAG_COMMAND_COMPLETE, TAG_DATA_ROW,
+    TAG_ERROR_RESPONSE, TAG_NOTICE_RESPONSE, TAG_READY_FOR_QUERY, TAG_ROW_DESCRIPTION,
+};
+use crate::wire::codec::Cursor;
 use crate::wire::config::WireCodecConfig;
 use crate::wire::error::FrameError;
 use crate::wire::frame::Frame;
-use crate::wire::frontend::FrontendMessage;
+use crate::wire::frontend::{FrontendMessage, TAG_QUERY, TAG_TERMINATE};
 
 /// Which side of the connection this `FrameReader` is decoding: the
 /// frontend (client-to-pool) direction expects an untagged
@@ -43,6 +47,25 @@ pub enum WireMessage {
 #[derive(Debug, Clone, PartialEq)]
 pub struct WireFrame {
     pub message: WireMessage,
+    pub bytes: Bytes,
+}
+
+/// The only per-frame facts that transaction pooling needs after full wire
+/// validation. Every other accepted frame is forwarded as its exact raw bytes
+/// without constructing an owned message model that the relay would discard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelayFrameKind {
+    Other,
+    FrontendTerminate,
+    BackendReady(TransactionStatus),
+}
+
+/// A fully validated transaction-relay frame. Unlike [`WireFrame`], this
+/// carries only the control information needed to preserve transaction lease
+/// boundaries, avoiding allocations for ordinary result-set frames.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayFrame {
+    pub kind: RelayFrameKind,
     pub bytes: Bytes,
 }
 
@@ -102,6 +125,76 @@ impl FrameReader {
     /// typed-decoding guarantees to [`Self::next_frame`]; the additional raw
     /// bytes are for a trusted relay write, not an unchecked bypass.
     pub fn next_frame_with_raw(&mut self) -> Result<Option<WireFrame>, FrameError> {
+        let Some((frame, frame_bytes, untagged)) = self.take_frame()? else {
+            return Ok(None);
+        };
+
+        match self.role {
+            Role::Frontend => {
+                let message = FrontendMessage::decode(&frame, &self.config)?;
+                if untagged {
+                    if let FrontendMessage::Startup(_) = &message {
+                        self.awaiting_untagged_startup = false;
+                    }
+                    // SSLRequest leaves awaiting_untagged_startup set: the
+                    // client still owes an untagged StartupMessage next.
+                }
+                Ok(Some(WireFrame {
+                    message: WireMessage::Frontend(message),
+                    bytes: frame_bytes,
+                }))
+            }
+            Role::Backend => {
+                let message = BackendMessage::decode(&frame, &self.config)?;
+                if let BackendMessage::ReadyForQuery(ready) = &message {
+                    self.tx_status = ready.status;
+                }
+                Ok(Some(WireFrame {
+                    message: WireMessage::Backend(message),
+                    bytes: frame_bytes,
+                }))
+            }
+        }
+    }
+
+    /// Decodes a frame for the transaction relay's ownership state machine.
+    /// Common simple-query frames are structurally validated without building
+    /// owned `String`, `Vec`, or `Bytes` fields; uncommon frames fall back to
+    /// the established typed decoder. No raw frame reaches the relay without
+    /// the same bounds and structural checks as [`Self::next_frame_with_raw`].
+    pub fn next_relay_frame_with_raw(&mut self) -> Result<Option<RelayFrame>, FrameError> {
+        let Some((frame, frame_bytes, untagged)) = self.take_frame()? else {
+            return Ok(None);
+        };
+
+        let kind = match self.role {
+            Role::Frontend if untagged => {
+                // Transaction relay is normally entered only after startup.
+                // Preserve the complete startup behavior if this API is used
+                // earlier, where allocating the startup model is not hot.
+                let message = FrontendMessage::decode(&frame, &self.config)?;
+                if matches!(message, FrontendMessage::Startup(_)) {
+                    self.awaiting_untagged_startup = false;
+                }
+                RelayFrameKind::Other
+            }
+            Role::Frontend => validate_frontend_relay(&frame, &self.config)?,
+            Role::Backend => {
+                let kind = validate_backend_relay(&frame, &self.config)?;
+                if let RelayFrameKind::BackendReady(status) = kind {
+                    self.tx_status = status;
+                }
+                kind
+            }
+        };
+
+        Ok(Some(RelayFrame {
+            kind,
+            bytes: frame_bytes,
+        }))
+    }
+
+    fn take_frame(&mut self) -> Result<Option<(Frame, Bytes, bool)>, FrameError> {
         let untagged = self.role == Role::Frontend && self.awaiting_untagged_startup;
         let header_len = if untagged { 4 } else { 5 };
 
@@ -158,33 +251,124 @@ impl FrameReader {
                 payload: frame_bytes.slice(5..),
             }
         };
+        Ok(Some((frame, frame_bytes, untagged)))
+    }
+}
 
-        match self.role {
-            Role::Frontend => {
-                let message = FrontendMessage::decode(&frame, &self.config)?;
-                if untagged {
-                    if let FrontendMessage::Startup(_) = &message {
-                        self.awaiting_untagged_startup = false;
-                    }
-                    // SSLRequest leaves awaiting_untagged_startup set: the
-                    // client still owes an untagged StartupMessage next.
-                }
-                Ok(Some(WireFrame {
-                    message: WireMessage::Frontend(message),
-                    bytes: frame_bytes,
-                }))
-            }
-            Role::Backend => {
-                let message = BackendMessage::decode(&frame, &self.config)?;
-                if let BackendMessage::ReadyForQuery(ready) = &message {
-                    self.tx_status = ready.status;
-                }
-                Ok(Some(WireFrame {
-                    message: WireMessage::Backend(message),
-                    bytes: frame_bytes,
-                }))
-            }
+fn validate_frontend_relay(
+    frame: &Frame,
+    config: &WireCodecConfig,
+) -> Result<RelayFrameKind, FrameError> {
+    match frame.tag {
+        Some(TAG_QUERY) => {
+            let mut cur = Cursor::new(&frame.payload);
+            cur.skip_cstr(Some(TAG_QUERY))?;
+            cur.expect_end(Some(TAG_QUERY))?;
+            Ok(RelayFrameKind::Other)
+        }
+        Some(TAG_TERMINATE) => {
+            Cursor::new(&frame.payload).expect_end(Some(TAG_TERMINATE))?;
+            Ok(RelayFrameKind::FrontendTerminate)
+        }
+        // Extended-query and authentication variants retain the original
+        // decoder until they have a measured hot-path need.
+        _ => {
+            let _ = FrontendMessage::decode(frame, config)?;
+            Ok(RelayFrameKind::Other)
         }
     }
+}
+
+fn validate_backend_relay(
+    frame: &Frame,
+    config: &WireCodecConfig,
+) -> Result<RelayFrameKind, FrameError> {
+    let tag = frame.tag.ok_or(FrameError::Malformed {
+        tag: None,
+        reason: "backend frame missing required tag byte".to_string(),
+    })?;
+    match tag {
+        TAG_READY_FOR_QUERY => {
+            let ready = ReadyForQuery::decode(&frame.payload)?;
+            Ok(RelayFrameKind::BackendReady(ready.status))
+        }
+        TAG_DATA_ROW => {
+            let mut cur = Cursor::new(&frame.payload);
+            let count = read_bounded_count(&mut cur, tag, config.max_row_columns)?;
+            for _ in 0..count {
+                let len = cur.read_i32(Some(tag))?;
+                if len == -1 {
+                    continue;
+                }
+                if len < 0 {
+                    return Err(FrameError::Malformed {
+                        tag: Some(tag),
+                        reason: format!("negative column length {len}"),
+                    });
+                }
+                cur.read_exact(len as usize, Some(tag))?;
+            }
+            cur.expect_end(Some(tag))?;
+            Ok(RelayFrameKind::Other)
+        }
+        TAG_ROW_DESCRIPTION => {
+            let mut cur = Cursor::new(&frame.payload);
+            let count = read_bounded_count(&mut cur, tag, config.max_row_columns)?;
+            for _ in 0..count {
+                cur.skip_cstr(Some(tag))?;
+                cur.read_i32(Some(tag))?;
+                cur.read_i16(Some(tag))?;
+                cur.read_i32(Some(tag))?;
+                cur.read_i16(Some(tag))?;
+                cur.read_i32(Some(tag))?;
+                cur.read_i16(Some(tag))?;
+            }
+            cur.expect_end(Some(tag))?;
+            Ok(RelayFrameKind::Other)
+        }
+        TAG_COMMAND_COMPLETE => {
+            let mut cur = Cursor::new(&frame.payload);
+            cur.skip_cstr(Some(tag))?;
+            cur.expect_end(Some(tag))?;
+            Ok(RelayFrameKind::Other)
+        }
+        TAG_ERROR_RESPONSE | TAG_NOTICE_RESPONSE => {
+            let mut cur = Cursor::new(&frame.payload);
+            loop {
+                let field_code = cur.read_u8(Some(tag))?;
+                if field_code == 0 {
+                    break;
+                }
+                cur.skip_cstr(Some(tag))?;
+            }
+            cur.expect_end(Some(tag))?;
+            Ok(RelayFrameKind::Other)
+        }
+        // Authentication and startup-adjacent backend messages are not the
+        // transaction relay's steady-state result path. Keep their existing
+        // typed decoder as the compatibility fallback.
+        _ => {
+            let _ = BackendMessage::decode(frame, config)?;
+            Ok(RelayFrameKind::Other)
+        }
+    }
+}
+
+fn read_bounded_count(cur: &mut Cursor<'_>, tag: u8, max: usize) -> Result<usize, FrameError> {
+    let count = cur.read_i16(Some(tag))?;
+    if count < 0 {
+        return Err(FrameError::Malformed {
+            tag: Some(tag),
+            reason: format!("negative field count {count}"),
+        });
+    }
+    let count = count as usize;
+    if count > max {
+        return Err(FrameError::Malformed {
+            tag: Some(tag),
+            reason: format!("field count {count} exceeds configured maximum {max}"),
+        });
+    }
+    Ok(count)
 }
 // </HANDWRITE>
