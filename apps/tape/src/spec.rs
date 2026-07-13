@@ -30,6 +30,10 @@ pub fn routes_json() -> String {
             {"method": "GET", "path": "/docs", "purpose": "Swagger UI"},
             {"method": "POST", "path": "/topics/{topic}/append", "purpose": "append event envelopes"},
             {"method": "GET", "path": "/topics/{topic}/replay", "purpose": "replay by offset or timestamp"},
+            {"method": "POST", "path": "/topics/{topic}/subscriptions", "purpose": "create a topic delivery resource"},
+            {"method": "GET", "path": "/topics/{topic}/subscriptions", "purpose": "list topic delivery resources"},
+            {"method": "GET", "path": "/topics/{topic}/subscriptions/{subscription}", "purpose": "inspect one topic delivery resource"},
+            {"method": "DELETE", "path": "/topics/{topic}/subscriptions/{subscription}", "purpose": "delete topic delivery resource metadata"},
             {"method": "PUT", "path": "/topics/{topic}/consumers/{consumer}/checkpoint", "purpose": "advance a durable consumer cursor"},
             {"method": "GET", "path": "/topics/{topic}/consumers/{consumer}/checkpoint", "purpose": "read a durable consumer cursor"},
             {"method": "PUT", "path": "/topics/{topic}/retention", "purpose": "configure retention windows"}
@@ -51,6 +55,7 @@ Start with:
 tape append orders --payload '{"id":"o1"}'
 tape replay orders --from-offset 0
 tape checkpoint put orders worker-a --offset 1
+tape subscription create orders worker-a --pull
 ```
 
 The current implementation is the first local, file-backed service slice. Raft,
@@ -65,6 +70,8 @@ The initial service contract is intentionally compact:
 
 - `POST /topics/{topic}/append` appends an event envelope and returns its offset.
 - `GET /topics/{topic}/replay?from_offset=N&from_timestamp_ms=T&limit=L` replays history.
+- `POST`/`GET /topics/{topic}/subscriptions` declare topic delivery resources.
+- `GET`/`DELETE /topics/{topic}/subscriptions/{subscription}` declare one resource.
 - `PUT /topics/{topic}/consumers/{consumer}/checkpoint` advances a replay cursor.
 - `GET /topics/{topic}/consumers/{consumer}/checkpoint` reads the replay cursor.
 - `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, and `/docs` are the standard service endpoints.
@@ -90,7 +97,7 @@ fn openapi() -> Value {
         "info": {
             "title": "Tape API",
             "version": env!("CARGO_PKG_VERSION"),
-            "description": "Topic replay journal API for append, replay, checkpoints, retention, and standard service endpoints."
+            "description": "Topic replay journal API for append, replay, subscription resource inventory, checkpoints, retention, and standard service endpoints."
         },
         "paths": {
             "/healthz": {"get": {"summary": "Liveness probe", "responses": ok_text()}},
@@ -116,6 +123,31 @@ fn openapi() -> Value {
                         query_param("limit", "integer")
                     ],
                     "responses": ok_schema("ReplayResponse")
+                }
+            },
+            "/topics/{topic}/subscriptions": {
+                "post": {
+                    "summary": "Create a topic delivery resource",
+                    "parameters": [topic_param()],
+                    "requestBody": json_body("SubscriptionCreateRequest"),
+                    "responses": ok_schema("Subscription")
+                },
+                "get": {
+                    "summary": "List topic delivery resources",
+                    "parameters": [topic_param()],
+                    "responses": ok_schema("SubscriptionListResponse")
+                }
+            },
+            "/topics/{topic}/subscriptions/{subscription}": {
+                "get": {
+                    "summary": "Inspect one topic delivery resource",
+                    "parameters": [topic_param(), subscription_param()],
+                    "responses": ok_schema("Subscription")
+                },
+                "delete": {
+                    "summary": "Delete topic delivery resource metadata",
+                    "parameters": [topic_param(), subscription_param()],
+                    "responses": ok_schema("Subscription")
                 }
             },
             "/topics/{topic}/consumers/{consumer}/checkpoint": {
@@ -175,6 +207,47 @@ fn schemas() -> Value {
                 "events": {"type": "array", "items": {"$ref": "#/components/schemas/TapeEvent"}}
             }
         },
+        "DeliveryConfig": {
+            "oneOf": [
+                {
+                    "type": "object",
+                    "required": ["mode"],
+                    "properties": {"mode": {"type": "string", "const": "pull"}}
+                },
+                {
+                    "type": "object",
+                    "required": ["mode", "endpoint"],
+                    "properties": {
+                        "mode": {"type": "string", "const": "push"},
+                        "endpoint": {"type": "string", "format": "uri"}
+                    }
+                }
+            ]
+        },
+        "SubscriptionCreateRequest": {
+            "type": "object",
+            "required": ["name", "delivery"],
+            "properties": {
+                "name": {"type": "string"},
+                "delivery": {"$ref": "#/components/schemas/DeliveryConfig"}
+            }
+        },
+        "Subscription": {
+            "type": "object",
+            "required": ["topic", "name", "delivery"],
+            "properties": {
+                "topic": {"type": "string"},
+                "name": {"type": "string"},
+                "delivery": {"$ref": "#/components/schemas/DeliveryConfig"}
+            }
+        },
+        "SubscriptionListResponse": {
+            "type": "object",
+            "required": ["subscriptions"],
+            "properties": {
+                "subscriptions": {"type": "array", "items": {"$ref": "#/components/schemas/Subscription"}}
+            }
+        },
         "CheckpointRequest": {
             "type": "object",
             "required": ["offset"],
@@ -209,6 +282,10 @@ fn topic_param() -> Value {
 
 fn consumer_param() -> Value {
     path_param("consumer", "Consumer checkpoint name")
+}
+
+fn subscription_param() -> Value {
+    path_param("subscription", "Topic delivery resource name")
 }
 
 fn path_param(name: &str, description: &str) -> Value {
