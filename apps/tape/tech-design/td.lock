@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-16T02:39:44.225022+00:00"
-digest = "sha256:c582a6df6e5bb12f397157cf2ab89d5a047ca37686989f6f27322f030be3011c"
-source_digest = "sha256:c582a6df6e5bb12f397157cf2ab89d5a047ca37686989f6f27322f030be3011c"
-ir_digest = "sha256:16b397911beaf7151c7885f3deb53dae1470ed3d569ad72f95c7caa25e17e047"
+generated_at = "2026-07-16T02:40:34.053553+00:00"
+digest = "sha256:50c5533842aa7779ce798482a8ead6cedbfadfb341779a4f1794fdfc4d2948d1"
+source_digest = "sha256:50c5533842aa7779ce798482a8ead6cedbfadfb341779a4f1794fdfc4d2948d1"
+ir_digest = "sha256:b6657f1ec0673d7399ab52207e8b083774ea424678f86f17e986c026ceaec522"
 
 [[files]]
 path = "README.md"
@@ -53,6 +53,12 @@ section_count = 3
 path = "logic/project-the-stateful-service-workload-baseline.md"
 digest = "sha256:70580f5793c3ae5def3fed1a90c3ee9ed3b0d9680e8d739a79aca7810c1f7e7f"
 ir_digest = "sha256:95a97cc2d19a8b7bf8a1883623a517ce5b90b4d4078f84727aed959f5457abaa"
+section_count = 2
+
+[[files]]
+path = "logic/seed-empty-pvcs-from-a-backup-snapshot-before-raft-catch-up.md"
+digest = "sha256:29e1fa2505b308d9a98fd6488b72f9870cb442558b8d674d76e869ea2d8db8b5"
+ir_digest = "sha256:2c359814af5b1cf988e5caf8cd0fa205e359f9f45ebeff334ad2acb332389f4b"
 section_count = 2
 
 [[files]]
