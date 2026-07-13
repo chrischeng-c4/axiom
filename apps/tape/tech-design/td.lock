@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-13T12:11:12.141626+00:00"
-digest = "sha256:83745f926aa6d58af530387e1869ce4c3240468e9e5d7e1a19caa6d61ab64e8d"
-source_digest = "sha256:83745f926aa6d58af530387e1869ce4c3240468e9e5d7e1a19caa6d61ab64e8d"
-ir_digest = "sha256:f529694973d1b98743f5f78a25d697f5c5e7fde8d00502223767a434e00c7895"
+generated_at = "2026-07-13T12:28:13.361513+00:00"
+digest = "sha256:8bfd4d7ff6e23240b513ac781b52c63829a4b73b30cdde498e997a486d16ce2b"
+source_digest = "sha256:8bfd4d7ff6e23240b513ac781b52c63829a4b73b30cdde498e997a486d16ce2b"
+ir_digest = "sha256:78a7a444b7a6edcbb6230e769e93ca43dfc3eb217f30063c8730ff4b9e4985da"
 
 [[files]]
 path = "README.md"
@@ -47,6 +47,12 @@ section_count = 2
 path = "logic/seed-empty-pvcs-from-a-backup-snapshot-before-raft-catch-up.md"
 digest = "sha256:29e1fa2505b308d9a98fd6488b72f9870cb442558b8d674d76e869ea2d8db8b5"
 ir_digest = "sha256:2c359814af5b1cf988e5caf8cd0fa205e359f9f45ebeff334ad2acb332389f4b"
+section_count = 2
+
+[[files]]
+path = "logic/ship-prometheus-operator-scrape-and-alert-manifests.md"
+digest = "sha256:a1bdb03c14c3044134191a14e461e28ad4e17cbc5a7d1b20f0fbe89025f577a7"
+ir_digest = "sha256:d51a1baeedc227682c2fad86351cdd76142ae3df76a0a2a8658775782487d798"
 section_count = 2
 
 [[files]]
