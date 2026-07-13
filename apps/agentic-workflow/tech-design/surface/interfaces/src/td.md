@@ -26,6 +26,12 @@ capability_refs:
     claim: committed-td-skeleton-lifecycle
     coverage: full
     rationale: "The TD CLI admits only its exact sole untracked known-empty skeleton and commits canonical bytes at queue start without weakening authored or post-gen boundaries."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: td-merged-candidate-in-memory-validation
+    claim: td-merged-candidate-in-memory-validation
+    coverage: full
+    rationale: "TD section apply runs legacy partial checks, forbidden-section checks, and the complete shared rule registry over the merged candidate before writing, while completed specs retain file-backed validation."
 command_refs:
   - command: aw td
   - command: aw td ast
@@ -80,6 +86,12 @@ canonicalize registered labels first, and TD itself recognizes only the
 current `crate:`, `app:`, and `lib:` families. The #1519 regression drives both
 library and app rows through the real producer label vector into the configured
 project-local TD root while preserving the raw retired-label rejection.
+
+Merged section candidates are validated in memory before the write boundary.
+The candidate path reuses the full shared validator registry, so a valid
+Mermaid Plus LogicSpec may replace stale plain Mermaid without inheriting the
+old file's finding, while invalid candidate content preserves the spec and
+payload. Whole-file/completed validation continues to read the on-disk file.
 
 ### Symbols
 
@@ -1815,13 +1827,22 @@ fn validate_td_content_file(
 ) -> Result<crate::validate::RuleReport> {
     let content = std::fs::read_to_string(spec_path)
         .with_context(|| format!("failed to read spec file: {}", spec_path.display()))?;
-    validate_td_content(spec_path, &content, scope)
+    validate_td_content(spec_path, &content, scope, TdRuleValidationInput::File)
+}
+
+#[derive(Clone, Copy)]
+enum TdRuleValidationInput {
+    /// Completed on-disk specs keep the established file-backed registry path.
+    File,
+    /// Pre-write section merges validate exactly the caller-owned candidate.
+    Candidate,
 }
 
 fn validate_td_content(
     spec_path: &std::path::Path,
     content: &str,
     scope: TdContentValidationScope<'_>,
+    rule_input: TdRuleValidationInput,
 ) -> Result<crate::validate::RuleReport> {
     let mut report = crate::validate::RuleReport::new();
 
@@ -1862,7 +1883,16 @@ fn validate_td_content(
         ));
     }
 
-    report.extend(crate::validate::run_rules(&[spec_path.to_path_buf()]));
+    match rule_input {
+        TdRuleValidationInput::File => {
+            report.extend(crate::validate::run_rules(&[spec_path.to_path_buf()]));
+        }
+        TdRuleValidationInput::Candidate => {
+            report.extend(crate::validate::runner::run_rules_on_content(
+                spec_path, content,
+            ));
+        }
+    }
     Ok(report)
 }
 
@@ -1871,7 +1901,16 @@ fn validate_new_td_authoring_content(
     content: &str,
     scope: TdContentValidationScope<'_>,
 ) -> Result<crate::validate::RuleReport> {
-    let mut report = validate_td_content(spec_path, content, scope)?;
+    validate_new_td_authoring(spec_path, content, scope, TdRuleValidationInput::Candidate)
+}
+
+fn validate_new_td_authoring(
+    spec_path: &std::path::Path,
+    content: &str,
+    scope: TdContentValidationScope<'_>,
+    rule_input: TdRuleValidationInput,
+) -> Result<crate::validate::RuleReport> {
+    let mut report = validate_td_content(spec_path, content, scope, rule_input)?;
     for error in new_td_forbidden_section_errors(content) {
         report.push(crate::validate::Finding::error(
             crate::validate::RuleId::SectionFormat,
@@ -1888,7 +1927,7 @@ fn validate_new_td_authoring_file(
 ) -> Result<crate::validate::RuleReport> {
     let content = std::fs::read_to_string(spec_path)
         .with_context(|| format!("failed to read spec file: {}", spec_path.display()))?;
-    validate_new_td_authoring_content(spec_path, &content, scope)
+    validate_new_td_authoring(spec_path, &content, scope, TdRuleValidationInput::File)
 }
 
 fn new_td_forbidden_section_errors(spec_content: &str) -> Vec<String> {
@@ -7196,6 +7235,143 @@ label = "lib:pg"
         );
     }
 
+    fn stale_plain_mermaid_td() -> &'static str {
+        r#"---
+id: '1586'
+summary: Validate the merged TD section candidate before writing it.
+fill_sections: [logic]
+---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+flowchart TD
+  stale --> disk
+```
+"#
+    }
+
+    fn valid_signature_logic_candidate() -> &'static str {
+        r#"---
+id: '1586'
+summary: Validate the merged TD section candidate before writing it.
+fill_sections: [logic]
+---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+---
+id: merged-candidate
+signature: "pub fn merge_candidates(items: &[String]) -> Vec<String>"
+entry: init
+nodes:
+  init:
+    kind: process
+    code: "let mut out = Vec::new();"
+  item_loop:
+    kind: loop
+    over: items
+    as: item
+  push_item:
+    kind: process
+    code: "out.push(item.clone());"
+  done:
+    kind: terminal
+    value: out
+edges:
+  - { from: init, to: item_loop, kind: next }
+  - { from: item_loop, to: push_item, kind: body }
+  - { from: item_loop, to: done, kind: after }
+---
+flowchart TD
+  init --> item_loop
+  item_loop --> push_item
+  item_loop --> done
+```
+"#
+    }
+
+    #[test]
+    fn merged_td_candidate_validation_accepts_logic_spec_over_stale_disk() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let spec_path = dir.path().join("merged-candidate.md");
+        std::fs::write(&spec_path, stale_plain_mermaid_td()).unwrap();
+
+        let report = validate_new_td_authoring_content(
+            &spec_path,
+            valid_signature_logic_candidate(),
+            TdContentValidationScope::RequireThrough("logic"),
+        )
+        .unwrap();
+
+        assert!(
+            !report.has_errors(),
+            "a valid LogicSpec signature/loop candidate must replace stale plain Mermaid: {:?}",
+            report.findings
+        );
+        assert_eq!(
+            std::fs::read_to_string(&spec_path).unwrap(),
+            stale_plain_mermaid_td(),
+            "candidate validation must stay pure until the caller writes"
+        );
+    }
+
+    #[test]
+    fn merged_td_candidate_validation_rejects_invalid_mermaid_before_write() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let spec_path = dir.path().join("invalid-candidate.md");
+        std::fs::write(&spec_path, valid_signature_logic_candidate()).unwrap();
+        let invalid_candidate = r#"---
+id: '1586'
+summary: Validate the merged TD section candidate before writing it.
+fill_sections: [logic]
+---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+flowchart TD
+  missing --> frontmatter
+```
+"#;
+
+        let report = validate_new_td_authoring_content(
+            &spec_path,
+            invalid_candidate,
+            TdContentValidationScope::RequireThrough("logic"),
+        )
+        .unwrap();
+
+        assert!(report.findings.iter().any(|finding| {
+            finding.rule == crate::validate::RuleId::CodegenReady
+                && finding.message.contains("requires a Mermaid Plus block")
+        }));
+        assert_eq!(
+            std::fs::read_to_string(&spec_path).unwrap(),
+            valid_signature_logic_candidate(),
+            "an invalid candidate must be rejected before the write boundary"
+        );
+    }
+
+    #[test]
+    fn merged_td_candidate_validation_keeps_completed_specs_file_backed() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let spec_path = dir.path().join("completed-on-disk.md");
+        std::fs::write(&spec_path, stale_plain_mermaid_td()).unwrap();
+
+        let report =
+            validate_new_td_authoring_file(&spec_path, TdContentValidationScope::Complete).unwrap();
+
+        assert!(report.findings.iter().any(|finding| {
+            finding.rule == crate::validate::RuleId::CodegenReady
+                && finding.message.contains("requires a Mermaid Plus block")
+        }));
+    }
+
     #[test]
     fn shared_td_content_gate_supports_section_apply_partial_specs() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -8153,4 +8329,15 @@ changes:
       guard, and staged in one fresh or recovery Td-Queue-Start commit.
       Authored, tracked, staged, renamed, symlink, sibling-dirty, reachable
       `td_created`, post-gen, and terminal states remain fail-closed.
+  - path: apps/agentic-workflow/src/cli/td.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1586 makes the validation source explicit: section-merge
+      candidates run legacy partial rules, forbidden-section rules, and the
+      complete shared registry over candidate bytes before the write; completed
+      on-disk specs keep the file-backed registry path. Valid signature/loop
+      LogicSpec payloads replace stale plain Mermaid, and invalid Mermaid Plus
+      candidates leave the spec and payload unchanged.
 ```
