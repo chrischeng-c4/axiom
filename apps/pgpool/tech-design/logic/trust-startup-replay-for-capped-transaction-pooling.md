@@ -104,3 +104,35 @@ changes:
     impl_mode: hand-written
     reason: Assert the fixed 64-client capped benchmark detects startup-cap rejection instead of silently reporting a partial run.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-trust-startup-replay-verification
+requirements:
+  ac1_capped_trust_clients_complete_without_startup_rejection:
+    id: AC1
+    text: "With a local trust-auth PostgreSQL backend, 64 same-startup simple-protocol clients complete transactions through a 16-backend transaction pool without the startup-cap saturation failure that #1597 established."
+    kind: integration
+    risk: high
+    verify: trust_startup_replay::capped_trust_clients_complete_without_startup_rejection
+  r1_exact_no_challenge_startup_replays_without_a_backend_lease:
+    id: R1
+    text: "A complete no-challenge AuthenticationOk-to-ReadyForQuery reply is replayed only to a client whose ordered StartupMessage exactly matches the captured startup, and the replay client can issue a simple query without increasing active backend leases."
+    kind: functional
+    risk: high
+    verify: trust_startup_replay::exact_no_challenge_startup_replays_without_a_backend_lease
+  r2_startup_mismatch_and_auth_challenges_never_replay:
+    id: R2
+    text: "A startup parameter mismatch, cleartext-password challenge, MD5 challenge, or SASL challenge never consumes or publishes a cached reply and remains on the fresh passthrough path."
+    kind: security
+    risk: high
+    verify: trust_startup_replay::startup_mismatch_and_auth_challenges_never_replay
+---
+flowchart TD
+    ac1[AC1 ac1 capped trust clients complete without startup rejection] --> trust_startup_replay_capped_trust_clients_complete_without_startup_rejection[trust_startup_replay::capped_trust_clients_complete_without_startup_rejection]
+    r1[R1 r1 exact no challenge startup replays without a backend lease] --> trust_startup_replay_exact_no_challenge_startup_replays_without_a_backend_lease[trust_startup_replay::exact_no_challenge_startup_replays_without_a_backend_lease]
+    r2[R2 r2 startup mismatch and auth challenges never replay] --> trust_startup_replay_startup_mismatch_and_auth_challenges_never_replay[trust_startup_replay::startup_mismatch_and_auth_challenges_never_replay]
+```
