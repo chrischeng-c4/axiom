@@ -27,8 +27,9 @@ use tokio::net::TcpStream;
 use crate::pool::backend_pool::{BackendLease, BackendPool, StartupAdmission};
 use crate::pool::types::{BackendConnectionId, LeaseDisposition, PoolRejectionReason};
 use crate::proxy::{
-    forward_backend, forward_frontend, forward_raw, read_relay_frame_with_raw, read_startup,
-    relay_until_ready, HandshakeOutcome, RejectionReason,
+    forward_backend, forward_backend_batch, forward_frontend, forward_raw,
+    read_backend_relay_batch_with_raw, read_relay_frame_with_raw, read_startup, relay_until_ready,
+    HandshakeOutcome, RejectionReason,
 };
 use crate::wire::{
     FrameReader, FrontendMessage, RelayFrame, RelayFrameKind, Role, TransactionStatus,
@@ -393,48 +394,18 @@ async fn relay_one_transaction(
         let is_idle = loop {
             if pending_frontend.is_some() {
                 // Already have a pending frame; only await the backend now.
-                match read_relay_frame_with_raw(backend_read, backend_reader).await {
-                    Ok(Some(frame)) => match frame.kind {
-                        RelayFrameKind::BackendReady(status) => {
-                            let idle = matches!(status, TransactionStatus::Idle);
-                            if forward_raw(client_write, &frame.bytes).await.is_err() {
-                                return TxnLegOutcome::Ended;
-                            }
-                            break idle;
-                        }
-                        RelayFrameKind::Other => {
-                            if forward_raw(client_write, &frame.bytes).await.is_err() {
-                                return TxnLegOutcome::Ended;
-                            }
-                        }
-                        RelayFrameKind::FrontendTerminate => {
-                            unreachable!("backend-role reader only emits Backend frames")
-                        }
-                    },
-                    Ok(None) | Err(_) => return TxnLegOutcome::Ended,
+                match relay_backend_batch(backend_read, client_write, backend_reader).await {
+                    Ok(Some(status)) => break matches!(status, TransactionStatus::Idle),
+                    Ok(None) => {}
+                    Err(()) => return TxnLegOutcome::Ended,
                 }
             } else {
                 tokio::select! {
-                    backend_result = read_relay_frame_with_raw(backend_read, backend_reader) => {
+                    backend_result = relay_backend_batch(backend_read, client_write, backend_reader) => {
                         match backend_result {
-                            Ok(Some(frame)) => match frame.kind {
-                                RelayFrameKind::BackendReady(status) => {
-                                    let idle = matches!(status, TransactionStatus::Idle);
-                                    if forward_raw(client_write, &frame.bytes).await.is_err() {
-                                        return TxnLegOutcome::Ended;
-                                    }
-                                    break idle;
-                                }
-                                RelayFrameKind::Other => {
-                                    if forward_raw(client_write, &frame.bytes).await.is_err() {
-                                        return TxnLegOutcome::Ended;
-                                    }
-                                }
-                                RelayFrameKind::FrontendTerminate => {
-                                    unreachable!("backend-role reader only emits Backend frames")
-                                }
-                            },
-                            Ok(None) | Err(_) => return TxnLegOutcome::Ended,
+                            Ok(Some(status)) => break matches!(status, TransactionStatus::Idle),
+                            Ok(None) => {}
+                            Err(()) => return TxnLegOutcome::Ended,
                         }
                     }
                     frontend_result = read_relay_frame_with_raw(client_read, frontend_reader) => {
@@ -485,6 +456,27 @@ async fn relay_one_transaction(
             return TxnLegOutcome::Ended;
         }
     }
+}
+
+/// Relays a single immediately available backend batch. The batch helper
+/// stops before awaiting another socket read and at `ReadyForQuery`, so its
+/// status has the same ownership meaning as the former one-frame loop.
+async fn relay_backend_batch(
+    backend_read: &mut OwnedReadHalf,
+    client_write: &mut OwnedWriteHalf,
+    backend_reader: &mut FrameReader,
+) -> Result<Option<TransactionStatus>, ()> {
+    let batch = read_backend_relay_batch_with_raw(backend_read, backend_reader)
+        .await
+        .map_err(|_| ())?
+        .ok_or(())?;
+    forward_backend_batch(client_write, &batch)
+        .await
+        .map_err(|_| ())?;
+    if batch.terminal_error {
+        return Err(());
+    }
+    Ok(batch.ready)
 }
 
 async fn release_backend(
