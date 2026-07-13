@@ -823,11 +823,18 @@ fn pull_event_flags(events: Option<MbValue>) -> (bool, bool, bool) {
 }
 
 /// Read a string key out of an element/stub dict (borrowed — no retain).
+///
+/// Must go through `dict_get_exact_str` rather than `map.get(key)`: since
+/// #1028, `DictKey::Str` no longer shares Rust's native `str` hashing
+/// domain, so a raw `IndexMap::get(&str)` probe hashes the query key into
+/// the wrong bucket and silently returns `None` even when the key is
+/// present (e.g. `Element.keys()`/`.get()`/`.set()`/`.items()` all read
+/// "attrib" through this helper and would otherwise see an empty map).
 fn dict_get_key(elem: MbValue, key: &str) -> Option<MbValue> {
     let ptr = elem.as_ptr()?;
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            return lock.read().unwrap().get(key).copied();
+            return super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), key);
         }
     }
     None
