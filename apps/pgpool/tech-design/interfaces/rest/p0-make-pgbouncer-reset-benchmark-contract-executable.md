@@ -34,3 +34,22 @@ flowchart LR
   pgbouncer --> compare([compare complete workloads])
   pgpool --> compare
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh
+    action: modify
+    section: pgbouncer-always-reset-benchmark-contract
+    impl_mode: hand-written
+  - path: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/README.md
+    action: modify
+    section: pgbouncer-always-reset-benchmark-contract
+    impl_mode: hand-written
+  - path: apps/pgpool/tests/pgbouncer_benchmark.rs
+    action: modify
+    section: pgbouncer-always-reset-benchmark-contract
+    impl_mode: hand-written
+```
