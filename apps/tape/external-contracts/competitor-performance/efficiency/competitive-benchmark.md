@@ -57,7 +57,7 @@ e2e_tests:
     claim_id: topic-replay-competitor-performance-baseline
     contract_id: topic-replay-kafka-local-backlog-win
     category: efficiency
-    test_path: tests/tape_vs_kafka.rs
+    test_path: tests/efficiency_tape_claim_competitor_performance_kafka_replay_win.rs
     command: "cargo test -p tape --test tape_vs_kafka -- --nocapture"
     assertions:
       - "The test starts a real single-node apache/kafka:3.9.0 broker in KRaft mode (no ZooKeeper) via docker, skipping gracefully when Docker is unavailable."
