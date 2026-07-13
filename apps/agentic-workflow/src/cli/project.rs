@@ -5133,7 +5133,7 @@ mod tests {
                 command: None,
                 spec: None,
                 dir: None,
-                meter: Some("projects/lumen".into()),
+                meter: Some("apps/lumen".into()),
             },
         );
         let project = ec_project(ec);
@@ -5144,7 +5144,7 @@ mod tests {
         let mut blank_case = ec_case("efficiency");
         blank_case.command.clear();
         let bound = resolve_project_ec_command(&blank_case, Some(&project)).unwrap();
-        assert_eq!(bound, "meter run --target projects/lumen");
+        assert_eq!(bound, "meter run --target apps/lumen");
 
         let unbound = resolve_project_ec_command(&ec_case("correctness"), Some(&project)).unwrap();
         assert_eq!(unbound, "cargo test -p demo");
@@ -5184,7 +5184,7 @@ mod tests {
                 command: None,
                 spec: None,
                 dir: None,
-                meter: Some("projects/lumen".into()),
+                meter: Some("apps/lumen".into()),
             },
         );
         let project = ec_project(ec);
@@ -5192,7 +5192,7 @@ mod tests {
         let mut case = ec_case("benchmark");
         case.command.clear();
         let command = resolve_project_ec_command(&case, Some(&project)).unwrap();
-        assert_eq!(command, "meter run --target projects/lumen");
+        assert_eq!(command, "meter run --target apps/lumen");
     }
 
     /// wi-13 AC4: no `ec` map (or no project model at all) is today's
@@ -5259,11 +5259,11 @@ mod tests {
         let doc = r#"
 [[projects]]
 name = "lumen"
-path = "projects/lumen"
-ec.efficiency = { tool = "meter", meter = "projects/lumen" }
+path = "apps/lumen"
+ec.efficiency = { tool = "meter", meter = "apps/lumen" }
 
 [[projects.workspaces]]
-paths = ["projects/lumen/**"]
+paths = ["apps/lumen/**"]
 target = "rust"
 "#;
         let parsed: crate::models::project::ProjectsToml = toml::from_str(doc).unwrap();
@@ -5271,7 +5271,7 @@ target = "rust"
         assert_eq!(project.ec["efficiency"].tool, "meter");
         assert_eq!(
             project.ec["efficiency"].meter.as_deref(),
-            Some("projects/lumen")
+            Some("apps/lumen")
         );
 
         let reserialized = toml::to_string(&parsed).unwrap();

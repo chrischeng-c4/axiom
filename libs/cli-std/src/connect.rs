@@ -7,7 +7,7 @@
 //! Secret convention (map key IS the bearer token), so this module owns the
 //! reusable primitives. Each adopter supplies only its own flag surface,
 //! CR-kind lookup convention, and role mapping into [`Role`] — see
-//! `projects/lumen/src/bin/lumen.rs`'s `connect`/`resolve_token` for the
+//! `apps/lumen/src/bin/lumen.rs`'s `connect`/`resolve_token` for the
 //! reference thin adapter.
 
 use std::collections::HashMap;

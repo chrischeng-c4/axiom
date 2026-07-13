@@ -10,7 +10,7 @@ publish = false
 anyhow.workspace = true
 cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
 h2c = { path = "../../libs/h2c" }
-lumen = { path = "../../projects/lumen" }
+lumen = { path = "../../apps/lumen" }
 reqwest.workspace = true
 service-http = { path = "../../libs/service-http" }
 tokio.workspace = true

@@ -702,7 +702,7 @@ them with `libs/build-stamp`'s `stamp("<PREFIX>")`, not a hand-rolled
 provides only its clap surface, that `ToolInfo`, and (for `llm`) its topic list;
 the crate does the rest. The network paths (`upgrade` install, `issue`
 search/view/create) sit behind cli-std's `online` feature — enable it in release
-builds. Reference adopters: `apps/jet` and `projects/lumen`.
+builds. Reference adopters: `apps/jet` and `apps/lumen`.
 
 - **`llm`** — `cli_std::llm::render(project, version, topics, topic, format)`. The
   tool supplies `&[cli_std::llm::Topic]` (`id`/`summary`/`body` — the one in-code
@@ -735,7 +735,7 @@ resolution chain (`kubectl_get_json`, `cr_tokens_secret`,
 `resolve_token`) are universal to any k8s-native service CLI — a tool adopts
 `connect` by supplying only its own flag surface, its CR-kind lookup
 convention (the `resource_kind` string passed to `resolve_cr_tokens_secret`),
-and a role mapping into `cli_std::connect::Role`. `projects/lumen`
+and a role mapping into `cli_std::connect::Role`. `apps/lumen`
 (`lumen connect`, extracted #1321/#1376) is the reference adopter; keep/relay/
 loom/beam adopting `connect` is tracked as follow-up work per project, not
 required by this convention alone.
@@ -830,7 +830,7 @@ Gate expectations:
   its underlying convention (`connect`'s port-forward lifecycle, etc.)
   rather than inventing a new one.
 
-`projects/lumen` is the reference instantiation: `### Developer & Agent
+`apps/lumen` is the reference instantiation: `### Developer & Agent
 Experience` (`developer-agent-experience`, `AgentFirst`) with
 `offline-contract` (`clients/openapi.json` byte-diff-tested against
 `lumen spec --format openapi`), `agent-onboarding` (`lumen llm` topics

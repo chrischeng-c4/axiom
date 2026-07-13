@@ -1755,7 +1755,7 @@ mod tests {
     // at run time, not relative to `dir` — never on-disk-checked, so it never
     // produces a warning even though it doesn't exist as a file next to the
     // runner's workdir. Regression coverage for a real false positive found
-    // smoke-testing against projects/lumen/vat.toml (`cmd = ["sh", "-c", ...]`).
+    // smoke-testing against apps/lumen/vat.toml (`cmd = ["sh", "-c", ...]`).
     #[test]
     fn vat_runner_binding_skips_bare_command_name() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -1855,7 +1855,7 @@ changes:
       command name with no path separator (e.g. `sh`, `cargo` — resolved via
       `PATH`, not relative to the runner's workdir) is never checked for
       existence; this guards against a real false positive found
-      smoke-testing against `projects/lumen/vat.toml`'s `cmd = ["sh", "-c",
+      smoke-testing against `apps/lumen/vat.toml`'s `cmd = ["sh", "-c",
       ...]` runners. guard's `--meter-command` flag value is a further,
       nested third hop this deliberately does not recurse into (documented
       as executed-only, already covered by `--verify-ec`).

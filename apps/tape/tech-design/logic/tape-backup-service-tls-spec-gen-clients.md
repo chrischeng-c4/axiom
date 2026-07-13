@@ -203,7 +203,7 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: "make gen-ts/gen-py/gen-rust targets wrapping `cargo run -p tape --features self-update -- spec gen --lang <lang> --out clients/<lang>`, plus a refresh-openapi target regenerating clients/openapi.json, mirroring lumen's projects/lumen/clients/Makefile layout."
+    description: "make gen-ts/gen-py/gen-rust targets wrapping `cargo run -p tape --features self-update -- spec gen --lang <lang> --out clients/<lang>`, plus a refresh-openapi target regenerating clients/openapi.json, mirroring lumen's apps/lumen/clients/Makefile layout."
   - path: apps/tape/clients/README.md
     action: create
     section: logic

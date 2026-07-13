@@ -1,7 +1,7 @@
 // SPEC-MANAGED: apps/arena/tech-design/semantic/source/projects-arena-src-compare-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Ratio classification — a direct port of lumen's `judge()`
-//! (projects/lumen/tests/perf_gate_vs_db.rs). `ratio = peer / base` over a
+//! (apps/lumen/tests/perf_gate_vs_db.rs). `ratio = peer / base` over a
 //! lower-is-better metric, so `ratio > 1` means the base target wins.
 
 /// The outcome of classifying one (cell, peer) ratio against its gate.

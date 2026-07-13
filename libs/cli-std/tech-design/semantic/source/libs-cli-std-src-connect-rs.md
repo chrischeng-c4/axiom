@@ -17,7 +17,7 @@ fill_sections: [overview, source, changes]
 
 `<cli> connect` — the k8s-native service CLI convention verb's shared
 implementation, gated behind the `k8s` feature (#1376). Extracted from
-`lumen connect`'s #1321 implementation (`projects/lumen/src/bin/lumen.rs`),
+`lumen connect`'s #1321 implementation (`apps/lumen/src/bin/lumen.rs`),
 the first adopter: the `kubectl port-forward` process lifecycle
 (`ChildGuard`, `free_local_port`, `wait_for_local_port_ready`) and the
 token-registry Secret resolution chain (`kubectl_get_json`,
@@ -63,7 +63,7 @@ on `service-auth` without a cycle).
 //! Secret convention (map key IS the bearer token), so this module owns the
 //! reusable primitives. Each adopter supplies only its own flag surface,
 //! CR-kind lookup convention, and role mapping into [`Role`] — see
-//! `projects/lumen/src/bin/lumen.rs`'s `connect`/`resolve_token` for the
+//! `apps/lumen/src/bin/lumen.rs`'s `connect`/`resolve_token` for the
 //! reference thin adapter.
 
 use std::collections::HashMap;

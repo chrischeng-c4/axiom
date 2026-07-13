@@ -1721,7 +1721,7 @@ mod tests {
     // at run time, not relative to `dir` — never on-disk-checked, so it never
     // produces a warning even though it doesn't exist as a file next to the
     // runner's workdir. Regression coverage for a real false positive found
-    // smoke-testing against projects/lumen/vat.toml (`cmd = ["sh", "-c", ...]`).
+    // smoke-testing against apps/lumen/vat.toml (`cmd = ["sh", "-c", ...]`).
     #[test]
     fn vat_runner_binding_skips_bare_command_name() {
         let tmp = tempfile::tempdir().expect("tempdir");
