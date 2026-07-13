@@ -32,6 +32,12 @@ capability_refs:
     claim: td-apply-section-lookup-parity
     coverage: full
     rationale: "The CLI semantic domain owns generic TD payload normalization, typed single-section merge boundaries, and pre-write applicability validation in src/cli/td.rs."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: terminal-ec-process-liveness
+    claim: terminal-ec-process-liveness
+    coverage: full
+    rationale: "The CLI semantic domain owns bounded terminal EC process-group cleanup, cross-process single-flight, typed failure results, and exact code-check retry envelopes in src/cli/ec.rs and src/cli/cb.rs."
 fill_sections: [schema, changes]
 ---
 
@@ -354,6 +360,24 @@ semantic_domain:
           - name: "EC_CATEGORIES"
             kind: "constant"
             public: false
+          - name: "EC_COMMAND_TIMEOUT_ENV"
+            kind: "constant"
+            public: false
+          - name: "DEFAULT_EC_COMMAND_TIMEOUT_SECS"
+            kind: "constant"
+            public: false
+          - name: "EC_PROCESS_TERM_GRACE"
+            kind: "constant"
+            public: false
+          - name: "EC_PROCESS_KILL_GRACE"
+            kind: "constant"
+            public: false
+          - name: "EC_OUTPUT_CLOSE_GRACE"
+            kind: "constant"
+            public: false
+          - name: "TERMINAL_EC_GATE_PATHS"
+            kind: "constant"
+            public: false
           - name: "ec_categories"
             kind: "function"
             public: true
@@ -423,6 +447,24 @@ semantic_domain:
           - name: "EcVerifyCommandResult"
             kind: "struct"
             public: true
+          - name: "EcVerifyFailureKind"
+            kind: "enum"
+            public: true
+          - name: "EcCommandOutput"
+            kind: "struct"
+            public: false
+          - name: "EcCommandTimeoutError"
+            kind: "struct"
+            public: false
+          - name: "TerminalEcGateLock"
+            kind: "struct"
+            public: false
+          - name: "TerminalEcGateSession"
+            kind: "struct"
+            public: true
+          - name: "TerminalEcGateAcquisition"
+            kind: "enum"
+            public: true
           - name: "EcProjectContext"
             kind: "struct"
             public: true
@@ -431,6 +473,69 @@ semantic_domain:
             public: false
           - name: "E2eYamlCase"
             kind: "struct"
+            public: false
+          - name: "evaluate"
+            kind: "function"
+            public: true
+          - name: "acquire_terminal_ec_gate"
+            kind: "function"
+            public: true
+          - name: "terminal_ec_gate_blocked_summary"
+            kind: "function"
+            public: false
+          - name: "try_acquire_terminal_ec_gate_lock"
+            kind: "function"
+            public: false
+          - name: "release_terminal_ec_gate_path"
+            kind: "function"
+            public: false
+          - name: "terminal_ec_gate_lock_path"
+            kind: "function"
+            public: false
+          - name: "run_ec_verify_command_with_timeout"
+            kind: "function"
+            public: false
+          - name: "ec_command_timeout"
+            kind: "function"
+            public: false
+          - name: "run_ec_command_with_timeout"
+            kind: "function"
+            public: false
+          - name: "spawn_ec_output_reader"
+            kind: "function"
+            public: false
+          - name: "join_ec_output_reader_until"
+            kind: "function"
+            public: false
+          - name: "configure_ec_command_process_group"
+            kind: "function"
+            public: false
+          - name: "terminate_ec_command"
+            kind: "function"
+            public: false
+          - name: "terminate_residual_ec_process_group"
+            kind: "function"
+            public: false
+          - name: "signal_ec_process_group"
+            kind: "function"
+            public: false
+          - name: "ec_process_group_is_alive"
+            kind: "function"
+            public: false
+          - name: "reap_ec_child_in_background"
+            kind: "function"
+            public: false
+          - name: "ec_verify_bounds_a_wrapper_after_its_child_exits"
+            kind: "function"
+            public: false
+          - name: "ec_verify_kills_surviving_group_member_after_leader_exits_on_sigterm"
+            kind: "function"
+            public: false
+          - name: "ec_verify_rejects_natural_leader_success_with_live_descendant"
+            kind: "function"
+            public: false
+          - name: "terminal_ec_gate_rejects_a_duplicate_inflight_inventory"
+            kind: "function"
             public: false
         source_evidence_node:
           layer: "backend"
@@ -449,6 +554,21 @@ semantic_domain:
           - name: "run"
             kind: "function"
             public: true
+          - name: "terminal_ec_failure_envelope"
+            kind: "function"
+            public: false
+          - name: "terminal_ec_test_barrier"
+            kind: "function"
+            public: false
+          - name: "terminal_ec_test_barrier_after_initial_issue_read"
+            kind: "function"
+            public: false
+          - name: "terminal_ec_test_barrier_after_phase_update"
+            kind: "function"
+            public: false
+          - name: "run_check_lifecycle_terminal"
+            kind: "function"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -3547,7 +3667,7 @@ changes:
       `EcVerifyCommandResult.results` (`stderr_tail: "skipped (advisory)"`)
       so the demotion stays auditable — and `command_count`/`passed_count`/
       `failed_count` (and therefore `clean`) only count executed entries.
-      `terminal_ec_gate_summary` (the #858 per-close terminal EC gate) now
+      `TerminalEcGateSession::evaluate` (the #858 per-close terminal EC gate)
       calls `verify_ec_context(&ctx, true)`; `EcVerifyArgs` gained a
       `required_only` flag (`aw ec verify --required-only`) that threads the
       same `true` into `run_verify`, while the bare `aw ec verify` default
@@ -3555,13 +3675,20 @@ changes:
       Tool-manifest commands have no `required_for_production` concept and
       always run regardless of the filter. See this file's `cb.rs` entry
       below for the terminal-gate envelope's `cases` list rendering of
-      skipped entries. #1579 bounds every EC shell command with a configurable
-      `AW_EC_COMMAND_TIMEOUT_SECS` deadline (30 minutes by default), captures
-      output while polling, and terminates the command's whole process group
-      on timeout so a VAT wrapper cannot outlive its completed Cargo child.
-      The terminal path holds a per-project process/file single-flight lock;
-      a concurrent `aw td code-check` receives a failed lifecycle result with
-      retry guidance instead of launching a duplicate VAT/Cargo tree.
+      skipped entries. #1579 assigns each EC command its own process group and
+      bounds it with `AW_EC_COMMAND_TIMEOUT_SECS`; the 30-minute default keeps
+      legitimate long Cargo/VAT evaluations viable while tests and operators
+      can select a shorter deadline. On timeout, AW sends TERM to the group,
+      preserves the full grace even when the leader exits first, KILLs any
+      surviving descendants, probes ESRCH safely, bounds leader reaping and
+      output-pipe joins. A normal leader exit with live same-group descendants
+      is cleaned but rejected as `RunnerError`; it can never preserve an exit-0
+      false green. Results classify command failure, timeout, runner error, and
+      single-flight separately. `acquire_terminal_ec_gate` returns a lease
+      before evaluation; `cb.rs` re-reads the WI under that lease, skips EC when
+      a stale fresh phase has already become `td_merged`, and keeps the lease
+      through the full terminal transition. Thus both overlapping callers and
+      late-acquiring stale readers execute one VAT/Cargo inventory.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/tasks.rs"
     action: modify
@@ -3580,18 +3707,28 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-      #1469: the `terminal_ec_gate_summary` success-envelope branch (issue
-      #858's per-close EC gate, `run_check_lifecycle_terminal`) renders each
+      #1469: the terminal session success-envelope branch (issue #858's
+      per-close EC gate, `run_check_lifecycle_terminal`) renders each
       `EcVerifyCommandResult` whose `status` is `"skipped"` as
       `"<case_id> (skipped (advisory))"` in the `ec_gate.cases` list instead
       of the bare case id, so a `required_for_production: false` case the
       gate's `verify_ec_context(&ctx, true)` filter skipped stays auditable
       in the envelope; `ec_gate.commands_consulted` is unchanged
       (`summary.command_count`, which `ec.rs` already restricts to executed
-      cases). #1579 includes each failed result's stderr tail in the refusal
-      and emits `next.command = aw ec gen --project <project> --verify`, so a
-      timeout or single-flight refusal is a structured, runnable remediation.
-      See `ec.rs`'s entry above for the runner implementation.
+      cases). #1579 includes each failed result's stderr tail, emits distinct
+      `terminal_ec_failure`, `terminal_ec_timeout`,
+      `terminal_ec_runner_error`, or `terminal_ec_single_flight` error kinds,
+      and always returns the exact runnable retry
+      `next.command = aw td code-check <slug>`. The refusal happens before
+      issue phase, close state, or terminal commit mutation. The function now
+      acquires the EC lease before evaluation, re-reads the WI under the lease,
+      routes a stale `td_merged` observation through terminal retry without EC,
+      and holds the lease until remote closure, landing, terminal commit, and
+      workflow unlock finish. Configured-inventory retry entries acquire that
+      same lease while continuing to skip EC, so they cannot race an owner's
+      post-phase terminal steps. Narrowly named bounded debug-only barriers
+      expose the post-initial-read/pre-acquire and post-phase-update seams for
+      deterministic process coverage. See `ec.rs` above for runner and lease.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/chat_members.rs"
     action: modify

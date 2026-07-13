@@ -4536,6 +4536,128 @@ fn bare_code_check_guidance_envelope(project: &str) -> serde_json::Value {
     })
 }
 
+fn terminal_ec_failure_envelope(
+    slug: &str,
+    summary: &crate::cli::ec::EcVerifySummary,
+) -> serde_json::Value {
+    let failing: Vec<String> = summary
+        .results
+        .iter()
+        .filter(|result| result.status != "passed")
+        .map(|result| {
+            let detail = result.stderr_tail.trim();
+            if detail.is_empty() {
+                format!("{} (`{}`)", result.case_id, result.command)
+            } else {
+                format!("{} (`{}`): {detail}", result.case_id, result.command)
+            }
+        })
+        .collect();
+    let has_failure_kind = |kind| {
+        summary
+            .results
+            .iter()
+            .any(|result| result.failure_kind == Some(kind))
+    };
+    let (error_kind, remediation_detail) =
+        if has_failure_kind(crate::cli::ec::EcVerifyFailureKind::SingleFlight) {
+            (
+                "terminal_ec_single_flight",
+                "wait for the in-flight terminal EC evaluation to finish, then retry",
+            )
+        } else if has_failure_kind(crate::cli::ec::EcVerifyFailureKind::Timeout) {
+            (
+                "terminal_ec_timeout",
+                "inspect or fix the timed-out EC command, then retry",
+            )
+        } else if has_failure_kind(crate::cli::ec::EcVerifyFailureKind::RunnerError) {
+            (
+                "terminal_ec_runner_error",
+                "fix the EC runner or process-cleanup error, then retry",
+            )
+        } else {
+            (
+                "terminal_ec_failure",
+                "fix the failing EC command, then retry",
+            )
+        };
+    let remediation = format!("aw td code-check {slug}");
+    serde_json::json!({
+        "action": "error",
+        "error_kind": error_kind,
+        "slug": slug,
+        "message": format!(
+            "td code-check refused: {} of {} configured EC gate(s) failing for \
+             project `{}`: {}; {remediation_detail} with `{remediation}`",
+            summary.failed_count,
+            summary.command_count,
+            summary.project,
+            failing.join(", "),
+        ),
+        "next": { "command": remediation },
+    })
+}
+
+/// Debug/test-only deterministic seam for #1579's stale-read race. A child
+/// `aw` process that receives this env var records that it has read the fresh
+/// issue, then waits before acquiring the terminal EC lease. The bounded wait
+/// prevents a misspelled test fixture from hanging a debug binary forever;
+/// release builds compile this hook to a no-op.
+#[cfg(debug_assertions)]
+fn terminal_ec_test_barrier(slug: &str, env: &str, ready_name: &str) -> Result<()> {
+    let Some(directory) = std::env::var_os(env) else {
+        return Ok(());
+    };
+    let directory = std::path::PathBuf::from(directory);
+    std::fs::create_dir_all(&directory)
+        .with_context(|| format!("create terminal EC test barrier {}", directory.display()))?;
+    std::fs::write(
+        directory.join(ready_name),
+        format!("slug={slug}\npid={}\n", std::process::id()),
+    )
+    .with_context(|| format!("write terminal EC test barrier {}", directory.display()))?;
+    let release = directory.join("release");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !release.is_file() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    if !release.is_file() {
+        anyhow::bail!(
+            "terminal EC test barrier timed out waiting for {}",
+            release.display()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(debug_assertions)]
+fn terminal_ec_test_barrier_after_initial_issue_read(slug: &str) -> Result<()> {
+    terminal_ec_test_barrier(
+        slug,
+        "AW_TEST_TERMINAL_EC_AFTER_INITIAL_ISSUE_READ_BARRIER_DIR",
+        "issue-read.ready",
+    )
+}
+
+#[cfg(debug_assertions)]
+fn terminal_ec_test_barrier_after_phase_update(slug: &str) -> Result<()> {
+    terminal_ec_test_barrier(
+        slug,
+        "AW_TEST_TERMINAL_EC_AFTER_PHASE_UPDATE_BARRIER_DIR",
+        "phase-update.ready",
+    )
+}
+
+#[cfg(not(debug_assertions))]
+fn terminal_ec_test_barrier_after_initial_issue_read(_slug: &str) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(debug_assertions))]
+fn terminal_ec_test_barrier_after_phase_update(_slug: &str) -> Result<()> {
+    Ok(())
+}
+
 /// Terminal `aw td code-check <slug>` — advances a fresh `cb_genned` /
 /// `cb_filled` (or legacy `td_gen_coded`) issue to `td_merged`, then runs the
 /// resumable terminal step sequence (remote closure, `td-<slug>` branch
@@ -4576,7 +4698,7 @@ async fn run_check_lifecycle_terminal(
     use crate::issues::{IssueBackend, IssuePatch, IssueState, LocalBackend};
 
     let backend = LocalBackend::from_project_root(project_root);
-    let Some(issue) = backend.get(slug).await? else {
+    let Some(mut issue) = backend.get(slug).await? else {
         // Issue #859 part c: the local issue cache under `/tmp/aw` is
         // ephemeral (cleared on reboot / a fresh checkout) while git history
         // (`Lifecycle-Slug` trailers) and any remote backend issue persist.
@@ -4619,6 +4741,66 @@ async fn run_check_lifecycle_terminal(
         println!("{}", serde_json::to_string(&env)?);
         return Ok(true);
     };
+    let initial_phase = issue.phase.as_deref().unwrap_or("");
+    let initial_is_retry = td_phase::is_terminal_code_check_retry(initial_phase);
+    if !td_phase::is_terminal_code_checkable(initial_phase) && !initial_is_retry {
+        let env = serde_json::json!({
+            "action": "error",
+            "slug": slug,
+            "message": format!(
+                "cannot complete code-check: phase is '{}', expected '{}', '{}', legacy '{}', or terminal retry '{}'",
+                initial_phase,
+                td_phase::CB_FILLED,
+                td_phase::CB_GENNED,
+                td_phase::LEGACY_TD_GEN_CODED,
+                td_phase::TD_MERGED,
+            ),
+        });
+        println!("{}", serde_json::to_string(&env)?);
+        return Ok(true);
+    }
+
+    // #1579: split acquisition from evaluation. The first issue read above
+    // identifies the project and validates that this is a terminal entry,
+    // but it cannot authorize EC execution: another process may complete the
+    // same WI between that read and lease acquisition. Acquire first, re-read
+    // under the lease, and only evaluate later if the refreshed phase is
+    // still a fresh terminal phase. Keep this session in function scope so
+    // its RAII lock covers backend.update and every remaining terminal step.
+    let mut terminal_ec_session = None;
+    if let Some(project) = project_label_for_wi(&issue) {
+        if !initial_is_retry {
+            terminal_ec_test_barrier_after_initial_issue_read(slug)?;
+        }
+        match crate::cli::ec::acquire_terminal_ec_gate(project_root, project) {
+            Some(crate::cli::ec::TerminalEcGateAcquisition::Blocked(summary)) => {
+                println!(
+                    "{}",
+                    serde_json::to_string(&terminal_ec_failure_envelope(slug, &summary))?
+                );
+                return Ok(true);
+            }
+            Some(crate::cli::ec::TerminalEcGateAcquisition::Acquired(session)) => {
+                terminal_ec_session = Some(session);
+                let Some(refreshed) = backend.get(slug).await? else {
+                    let env = serde_json::json!({
+                        "action": "error",
+                        "error_kind": "terminal_ec_stale_work_item",
+                        "slug": slug,
+                        "message": format!(
+                            "td code-check refused: work-item `{slug}` disappeared after the terminal EC lease was acquired; rehydrate it, then retry `aw td code-check {slug}`"
+                        ),
+                        "next": { "command": format!("aw td code-check {slug}") },
+                    });
+                    println!("{}", serde_json::to_string(&env)?);
+                    return Ok(true);
+                };
+                issue = refreshed;
+            }
+            None => {}
+        }
+    }
+
     let phase = issue.phase.as_deref().unwrap_or("");
     let is_retry = td_phase::is_terminal_code_check_retry(phase);
     if !td_phase::is_terminal_code_checkable(phase) && !is_retry {
@@ -4626,13 +4808,15 @@ async fn run_check_lifecycle_terminal(
             "action": "error",
             "slug": slug,
             "message": format!(
-                "cannot complete code-check: phase is '{}', expected '{}', '{}', legacy '{}', or terminal retry '{}'",
+                "cannot complete code-check after terminal EC lease acquisition: phase is '{}', expected '{}', '{}', legacy '{}', or terminal retry '{}'; retry `aw td code-check {}`",
                 phase,
                 td_phase::CB_FILLED,
                 td_phase::CB_GENNED,
                 td_phase::LEGACY_TD_GEN_CODED,
                 td_phase::TD_MERGED,
+                slug,
             ),
+            "next": { "command": format!("aw td code-check {slug}") },
         });
         println!("{}", serde_json::to_string(&env)?);
         return Ok(true);
@@ -4810,41 +4994,12 @@ async fn run_check_lifecycle_terminal(
         // every cheap structural gate above it so an obviously-broken WI
         // (dirty scope, unmarked files, empty implementation) never pays
         // for a potentially expensive EC command run first.
-        let ec_gate_json = match project_label_for_wi(&issue)
-            .and_then(|project| crate::cli::ec::terminal_ec_gate_summary(project_root, project))
+        let ec_gate_json = match terminal_ec_session
+            .as_ref()
+            .map(|session| session.evaluate())
         {
             Some(summary) if !summary.clean => {
-                let failing: Vec<String> = summary
-                    .results
-                    .iter()
-                    .filter(|result| result.status != "passed")
-                    .map(|result| {
-                        let detail = result.stderr_tail.trim();
-                        if detail.is_empty() {
-                            format!("{} (`{}`)", result.case_id, result.command)
-                        } else {
-                            format!("{} (`{}`): {detail}", result.case_id, result.command)
-                        }
-                    })
-                    .collect();
-                let remediation = format!("aw ec gen --project {} --verify", summary.project);
-                let env = serde_json::json!({
-                    "action": "error",
-                    "slug": slug,
-                    "message": format!(
-                        "td code-check refused: {} of {} configured EC gate(s) failing for \
-                         project `{}`: {}; fix the failing gate(s), then re-run `aw ec gen \
-                         --project {} --verify` to confirm green before re-running `aw td \
-                         code-check {}`",
-                        summary.failed_count,
-                        summary.command_count,
-                        summary.project,
-                        failing.join(", "),
-                        summary.project,
-                        slug,
-                    ),
-                    "next": { "command": remediation },
-                });
+                let env = terminal_ec_failure_envelope(slug, &summary);
                 println!("{}", serde_json::to_string(&env)?);
                 return Ok(true);
             }
@@ -4907,7 +5062,9 @@ async fn run_check_lifecycle_terminal(
         // `Issue` — reuse it directly instead of a redundant second
         // `backend.get` that would just re-read the same write back off
         // disk.
-        (backend.update(slug, &patch).await?, ec_gate_json)
+        let closed_issue = backend.update(slug, &patch).await?;
+        terminal_ec_test_barrier_after_phase_update(slug)?;
+        (closed_issue, ec_gate_json)
     };
     let closed_path = backend.issue_path(&closed_issue);
 
