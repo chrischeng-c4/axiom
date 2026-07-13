@@ -9,6 +9,12 @@ capability_refs:
     claim: cb-lifecycle-dispatch
     coverage: full
     rationale: "CLI tests cover TD/CB lifecycle dispatch, including CB claim and lifecycle command behavior."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: td-apply-section-lookup-parity
+    claim: td-apply-section-lookup-parity
+    coverage: full
+    rationale: "The in-place real-CLI fixture proves body-only Logic normalization, malformed non-mutation, and sequential applicability Logic to structured Unit Test dispatch."
 ---
 
 # Semantic TD: agentic-workflow/tests/cli/tests
@@ -352,6 +358,9 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "wi_validate_accepts_apply_dirty_issue_file_on_issue_branch"
+            kind: "function"
+            public: false
+          - name: "td_create_apply_normalizes_body_only_logic_then_advances_structured_unit_test"
             kind: "function"
             public: false
         source_evidence_node:
@@ -1072,6 +1081,12 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      Issue #1562 adds a deterministic real-CLI fixture with a canonical
+      capability reference and an already-valid Logic plus Unit Test TD. It
+      proves read-only `aw td check` reports zero findings, missing and
+      malformed generic payloads leave the spec byte-identical, body-only
+      Logic restores exactly one typed wrapper, and the initialized queue
+      advances through applicability Unit Test before contract Logic.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/tests/cli/tests/cb_review_revise_test.rs"
     action: modify

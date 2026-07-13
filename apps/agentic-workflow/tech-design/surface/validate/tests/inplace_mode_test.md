@@ -965,6 +965,382 @@ path = "."
     );
 }
 
+/// Issue #1562 / pgpool #1561: an already-valid TD may be re-authored through
+/// the initialized per-section payload using a generic JSON `body` that holds
+/// only the Mermaid fence. Applying that payload must preserve/restore the
+/// requested typed wrapper, then advance to the structured Unit Test payload.
+/// Malformed body-only input must fail before changing one byte of the spec.
+#[test]
+fn td_create_apply_normalizes_body_only_logic_then_advances_structured_unit_test() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+
+    std::fs::write(
+        root.join("aw.toml"),
+        r#"
+[agentic_workflow.workspace]
+mode = "in_place"
+
+[[projects]]
+name = "agentic-workflow"
+path = "apps/agentic-workflow"
+"#,
+    )
+    .unwrap();
+
+    let project_root = root.join("apps/agentic-workflow");
+    std::fs::create_dir_all(project_root.join("tech-design/semantic")).unwrap();
+    std::fs::write(
+        project_root.join("README.md"),
+        r#"# Agentic Workflow Fixture
+
+## Brief
+
+Fixture for TD section apply parity.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| TD Apply Parity | #1562 | implemented | verified | smoke | ready | typed section payload parity |
+
+### TD Apply Parity
+
+ID: td-apply-parity
+Type: DeveloperTool
+Surfaces:
+- CLI: `aw td create --apply` - applies exactly one initialized TD section payload.
+Root WI: #1562
+Status: verified
+Required Verification: smoke
+Promise:
+Valid typed TD sections can be re-authored through initialized payload paths without losing their wrapper.
+Gate Inventory:
+- real CLI fixture
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Body-only Logic apply parity | change | #1562 | implemented | verified | smoke | real CLI fixture |
+"#,
+    )
+    .unwrap();
+
+    let slug = "1562";
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\n\
+             slug: '{slug}'\n\
+             title: td apply section lookup parity\n\
+             state: open\n\
+             type: bug\n\
+             labels: [\"app:agentic-workflow\"]\n\
+             ---\n\n# Body\n"
+        ),
+    );
+
+    let spec_path = "apps/agentic-workflow/tech-design/semantic/td-apply-section-lookup-parity.md";
+    let spec_abs = root.join(spec_path);
+    std::fs::write(
+        &spec_abs,
+        r#"---
+id: '1562'
+summary: Keep mutating TD section lookup aligned with valid typed TD files.
+fill_sections: [logic, unit-test]
+capability_refs:
+  - id: td-apply-parity
+    role: primary
+    claim: body-only-logic-apply-parity
+    coverage: full
+    rationale: "Proves initialized payload apply preserves typed section lookup."
+---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+---
+id: td_apply_parity_before
+entry: start
+nodes:
+  start: { kind: start }
+  done: { kind: terminal }
+edges:
+  - { from: start, to: done }
+---
+flowchart TD
+  start --> done
+```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: td-apply-parity-before-verification
+requirements:
+  parity:
+    id: R1
+    text: "The initial spec passes the read-only checker."
+    kind: regression
+    risk: high
+    verify: initial_td_check
+---
+flowchart TD
+  r1[R1 parity] --> initial_td_check[initial_td_check]
+```
+"#,
+    )
+    .unwrap();
+
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "bootstrap #1562 fixture"])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", "app/fixture"])
+        .status()
+        .unwrap();
+
+    let check = Command::new(&bin)
+        .args(["td", "check", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("run preflight aw td check");
+    assert!(
+        check.status.success(),
+        "the #1561-shaped file must pass read-only TD check:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr),
+    );
+    assert!(
+        String::from_utf8_lossy(&check.stderr).contains("0 findings"),
+        "preflight should prove read-only checker parity: {}",
+        String::from_utf8_lossy(&check.stderr),
+    );
+
+    let brief = Command::new(&bin)
+        .args(["td", "create", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("initialize Logic payload");
+    assert!(
+        brief.status.success(),
+        "td create brief should initialize Logic:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&brief.stdout),
+        String::from_utf8_lossy(&brief.stderr),
+    );
+    let brief_envelope: serde_json::Value = serde_json::from_slice(&brief.stdout).unwrap();
+    assert_eq!(brief_envelope["invoke"]["args"]["section"], "logic");
+    let logic_payload = std::path::PathBuf::from(
+        brief_envelope["invoke"]["args"]["payload_path"]
+            .as_str()
+            .expect("initialized Logic payload path"),
+    );
+    assert!(logic_payload.exists());
+
+    // A missing initialized payload is actionable and must not mutate the
+    // already-valid spec. The replay guard reseeds it from the existing Logic
+    // wrapper so the caller can continue safely.
+    std::fs::remove_file(&logic_payload).unwrap();
+    let before_missing = std::fs::read(&spec_abs).unwrap();
+    let missing = Command::new(&bin)
+        .args([
+            "td",
+            "create",
+            slug,
+            "--apply",
+            "--phase",
+            "applicability",
+            "--section",
+            "logic",
+            "--spec-path",
+            spec_path,
+        ])
+        .current_dir(root)
+        .output()
+        .expect("run missing Logic payload apply");
+    assert!(!missing.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing.stdout).contains("seeded from the existing section"),
+        "missing payload should fail actionably: {}",
+        String::from_utf8_lossy(&missing.stdout),
+    );
+    assert_eq!(std::fs::read(&spec_abs).unwrap(), before_missing);
+
+    // The exact malformed body-only class must fail in the real CLI before
+    // the spec write, not merely in the pure normalization helper.
+    std::fs::write(
+        &logic_payload,
+        serde_json::json!({ "body": "```yaml\nkind: wrong-language\n```\n" }).to_string(),
+    )
+    .unwrap();
+    let before_malformed = std::fs::read(&spec_abs).unwrap();
+    let malformed = Command::new(&bin)
+        .args([
+            "td",
+            "create",
+            slug,
+            "--apply",
+            "--phase",
+            "applicability",
+            "--section",
+            "logic",
+            "--spec-path",
+            spec_path,
+        ])
+        .current_dir(root)
+        .output()
+        .expect("run malformed body-only Logic apply");
+    assert!(!malformed.status.success());
+    let malformed_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&malformed.stdout),
+        String::from_utf8_lossy(&malformed.stderr),
+    );
+    assert!(
+        malformed_output.contains("matching-lang fenced block"),
+        "malformed payload should name its fence mismatch: {malformed_output}"
+    );
+    assert_eq!(
+        std::fs::read(&spec_abs).unwrap(),
+        before_malformed,
+        "malformed payload must not mutate the spec"
+    );
+
+    let body_only_logic = concat!(
+        "```mermaid\n",
+        "---\n",
+        "id: td_apply_parity_after\n",
+        "entry: start\n",
+        "nodes:\n",
+        "  start: { kind: start }\n",
+        "  normalized: { kind: process }\n",
+        "  done: { kind: terminal }\n",
+        "edges:\n",
+        "  - { from: start, to: normalized }\n",
+        "  - { from: normalized, to: done }\n",
+        "---\n",
+        "flowchart TD\n",
+        "  start --> normalized --> done\n",
+        "```\n",
+    );
+    std::fs::write(
+        &logic_payload,
+        serde_json::json!({ "body": body_only_logic }).to_string(),
+    )
+    .unwrap();
+    let apply_logic = Command::new(&bin)
+        .args([
+            "td",
+            "create",
+            slug,
+            "--apply",
+            "--phase",
+            "applicability",
+            "--section",
+            "logic",
+            "--spec-path",
+            spec_path,
+        ])
+        .current_dir(root)
+        .output()
+        .expect("apply body-only Logic payload");
+    assert!(
+        apply_logic.status.success(),
+        "body-only Logic should apply:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&apply_logic.stdout),
+        String::from_utf8_lossy(&apply_logic.stderr),
+    );
+    let logic_envelope: serde_json::Value = serde_json::from_slice(&apply_logic.stdout).unwrap();
+    assert_eq!(logic_envelope["invoke"]["args"]["phase"], "applicability");
+    assert_eq!(logic_envelope["invoke"]["args"]["section"], "unit-test");
+    let unit_payload = std::path::PathBuf::from(
+        logic_envelope["invoke"]["args"]["payload_path"]
+            .as_str()
+            .expect("initialized Unit Test payload path"),
+    );
+    assert!(unit_payload.ends_with("applicability/unit-test.json"));
+    assert!(unit_payload.exists());
+
+    let after_logic = std::fs::read_to_string(&spec_abs).unwrap();
+    assert!(after_logic.contains("## Logic\n<!-- type: logic lang: mermaid -->"));
+    assert!(after_logic.contains("id: td_apply_parity_after"));
+    assert_eq!(
+        after_logic
+            .matches("<!-- type: logic lang: mermaid -->")
+            .count(),
+        1,
+        "the body-only merge must preserve exactly one Logic wrapper"
+    );
+    assert!(after_logic.contains("## Unit Test"));
+
+    std::fs::write(
+        &unit_payload,
+        serde_json::json!({
+            "id": "td-apply-parity-after-verification",
+            "requirements": {
+                "body_only_parity": {
+                    "id": "R1",
+                    "text": "Body-only Logic remains typed before Unit Test advances.",
+                    "kind": "regression",
+                    "risk": "high",
+                    "verify": "td_create_apply_normalizes_body_only_logic_then_advances_structured_unit_test"
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let apply_unit = Command::new(&bin)
+        .args([
+            "td",
+            "create",
+            slug,
+            "--apply",
+            "--phase",
+            "applicability",
+            "--section",
+            "unit-test",
+            "--spec-path",
+            spec_path,
+        ])
+        .current_dir(root)
+        .output()
+        .expect("apply structured Unit Test payload");
+    assert!(
+        apply_unit.status.success(),
+        "structured Unit Test should apply:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&apply_unit.stdout),
+        String::from_utf8_lossy(&apply_unit.stderr),
+    );
+    let unit_envelope: serde_json::Value = serde_json::from_slice(&apply_unit.stdout).unwrap();
+    assert_eq!(unit_envelope["invoke"]["args"]["phase"], "contract");
+    assert_eq!(unit_envelope["invoke"]["args"]["section"], "logic");
+    let final_spec = std::fs::read_to_string(&spec_abs).unwrap();
+    assert!(final_spec.contains("id: td-apply-parity-after-verification"));
+    assert!(final_spec.contains("## Logic\n<!-- type: logic lang: mermaid -->"));
+    assert!(final_spec.contains("## Unit Test\n<!-- type: unit-test lang: mermaid -->"));
+}
+
 // CODEGEN-END
 ````
 
@@ -982,4 +1358,9 @@ changes:
       wrapped in a tracked HANDWRITE block until deterministic generator
       coverage can replace it with CODEGEN. Issue #1556 adds a real-CLI
       regression assertion that the default queue cannot skip unit-test.
+      Issue #1562 adds the valid annotated Logic/Unit Test parity fixture:
+      missing or malformed generic payloads leave the spec byte-identical,
+      body-only Logic is normalized into one requested typed wrapper, and the
+      initialized applicability queue advances through structured Unit Test
+      before contract Logic.
 ```
