@@ -9,24 +9,23 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: pgpool-direct-reader-buffer-read
-entry: relay
+id: pgpool-direct-reader-buffer-read-contract
+entry: need_bytes
 nodes:
-  relay: { kind: start, label: "Relay needs more bytes" }
-  read_buf: { kind: process, label: "Append socket bytes directly into FrameReader BytesMut" }
-  validate: { kind: process, label: "Existing frame bounds and structural validation" }
-  frame: { kind: terminal, label: "Validated raw frame or EOF/error" }
+  need_bytes: { kind: start, label: "FrameReader has no complete frame" }
+  append: { kind: process, label: "Async read_buf appends directly to owned BytesMut" }
+  parser: { kind: process, label: "Existing take_frame and validation" }
+  result: { kind: terminal, label: "Frame, EOF, or mapped I/O error" }
 edges:
-  - { from: relay, to: read_buf }
-  - { from: read_buf, to: validate }
-  - { from: validate, to: frame }
+  - { from: need_bytes, to: append }
+  - { from: append, to: parser }
+  - { from: parser, to: result }
 ---
 flowchart LR
-  relay([need relay bytes]) --> read_buf[direct read_buf into FrameReader]
-  read_buf --> validate[existing bounds and validation]
-  validate --> frame([validated frame or EOF/error])
+  need_bytes([incomplete frame]) --> append[direct append to BytesMut]
+  append --> parser[unchanged parser validation]
+  parser --> result([frame EOF or I/O error])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
