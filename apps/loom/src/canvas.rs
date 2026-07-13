@@ -107,7 +107,10 @@ mod tests {
         let c = b.then(t("b"));
         let run = b.build();
         assert!(run.nodes[&a].deps.is_empty());
-        assert_eq!(run.nodes[&c].deps.iter().cloned().collect::<Vec<_>>(), vec![a]);
+        assert_eq!(
+            run.nodes[&c].deps.iter().cloned().collect::<Vec<_>>(),
+            vec![a]
+        );
         // only the root is ready.
         assert_eq!(run.ready_nodes().len(), 1);
     }

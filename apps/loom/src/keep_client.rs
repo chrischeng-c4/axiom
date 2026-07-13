@@ -31,12 +31,19 @@ impl KeepStore for KeepHttp {
         // /v1/results. This is what makes inter-node data flow work (a downstream
         // node's input_ref is an upstream node's result_ref).
         for ns in ["inputs", "results"] {
-            let resp =
-                self.client.get(format!("{}/v1/{}/{}", self.base, ns, id)).send().await?;
+            let resp = self
+                .client
+                .get(format!("{}/v1/{}/{}", self.base, ns, id))
+                .send()
+                .await?;
             if resp.status().as_u16() == 404 {
                 continue;
             }
-            anyhow::ensure!(resp.status().is_success(), "keep get {ns}: {}", resp.status());
+            anyhow::ensure!(
+                resp.status().is_success(),
+                "keep get {ns}: {}",
+                resp.status()
+            );
             return Ok(Some(resp.bytes().await?.to_vec()));
         }
         Ok(None)
@@ -50,7 +57,11 @@ impl KeepStore for KeepHttp {
             .body(bytes)
             .send()
             .await?;
-        anyhow::ensure!(resp.status().is_success(), "keep put_input: {}", resp.status());
+        anyhow::ensure!(
+            resp.status().is_success(),
+            "keep put_input: {}",
+            resp.status()
+        );
         Ok(())
     }
 
@@ -62,7 +73,11 @@ impl KeepStore for KeepHttp {
             .body(bytes)
             .send()
             .await?;
-        anyhow::ensure!(resp.status().is_success(), "keep put_result: {}", resp.status());
+        anyhow::ensure!(
+            resp.status().is_success(),
+            "keep put_result: {}",
+            resp.status()
+        );
         Ok(())
     }
 }

@@ -119,7 +119,16 @@ impl Node {
         } else {
             NodeState::Pending
         };
-        Self { id, stage, task, deps, state, attempt: 0, result_ref: None, result_inline: None }
+        Self {
+            id,
+            stage,
+            task,
+            deps,
+            state,
+            attempt: 0,
+            result_ref: None,
+            result_inline: None,
+        }
     }
 }
 
@@ -152,14 +161,22 @@ pub struct WorkflowRun {
 
 impl WorkflowRun {
     pub fn new(id: WorkflowRunId) -> Self {
-        Self { id, nodes: BTreeMap::new(), stages: BTreeMap::new(), status: RunStatus::Pending }
+        Self {
+            id,
+            nodes: BTreeMap::new(),
+            stages: BTreeMap::new(),
+            status: RunStatus::Pending,
+        }
     }
 
     /// Insert a node and register it in its stage.
     pub fn add_node(&mut self, node: Node) {
         self.stages
             .entry(node.stage.clone())
-            .or_insert_with(|| Stage { id: node.stage.clone(), members: BTreeSet::new() })
+            .or_insert_with(|| Stage {
+                id: node.stage.clone(),
+                members: BTreeSet::new(),
+            })
             .members
             .insert(node.id.clone());
         self.nodes.insert(node.id.clone(), node);
@@ -240,7 +257,10 @@ impl WorkflowRun {
     pub fn stage_complete(&self, stage: &StageId) -> bool {
         match self.stages.get(stage) {
             Some(s) => s.members.iter().all(|id| {
-                self.nodes.get(id).map(|n| n.state == NodeState::Done).unwrap_or(false)
+                self.nodes
+                    .get(id)
+                    .map(|n| n.state == NodeState::Done)
+                    .unwrap_or(false)
             }),
             None => false,
         }
@@ -307,7 +327,8 @@ impl WorkflowRun {
     fn recompute_status(&mut self) {
         if self.nodes.values().any(|n| n.state == NodeState::Failed) {
             self.status = RunStatus::Failed;
-        } else if self.nodes.values().all(|n| n.state == NodeState::Done) && !self.nodes.is_empty() {
+        } else if self.nodes.values().all(|n| n.state == NodeState::Done) && !self.nodes.is_empty()
+        {
             self.status = RunStatus::Succeeded;
         }
     }
@@ -412,7 +433,10 @@ mod tests {
         assert_eq!(run.status, RunStatus::Running);
         let mut ready = run.ready_nodes();
         ready.sort();
-        assert_eq!(ready, vec![NodeId::new("c0"), NodeId::new("c1"), NodeId::new("c2")]);
+        assert_eq!(
+            ready,
+            vec![NodeId::new("c0"), NodeId::new("c1"), NodeId::new("c2")]
+        );
         assert_eq!(run.nodes[&NodeId::new("merge")].state, NodeState::Pending);
 
         // completing all children releases the merge barrier.

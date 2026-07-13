@@ -16,7 +16,9 @@ use axum::routing::{get, post};
 use axum::Router;
 use serde::{Deserialize, Serialize};
 
-use crate::model::{KeepRef, Node, NodeId, RunStatus, StageId, TaskSpec, WorkflowRun, WorkflowRunId};
+use crate::model::{
+    KeepRef, Node, NodeId, RunStatus, StageId, TaskSpec, WorkflowRun, WorkflowRunId,
+};
 use crate::runner::RunnerClass;
 use crate::scheduler::{dispatch_ready, CompletionMsg, Dispatcher, FanOutSpec, MemDispatcher};
 use crate::store::{MemStore, RunStore};
@@ -75,7 +77,10 @@ struct ApiError {
 }
 
 fn bad_request(msg: impl Into<String>) -> (StatusCode, Json<ApiError>) {
-    (StatusCode::BAD_REQUEST, Json(ApiError { error: msg.into() }))
+    (
+        StatusCode::BAD_REQUEST,
+        Json(ApiError { error: msg.into() }),
+    )
 }
 
 /// Build a [`WorkflowRun`] from a submit request, validating that every `deps`
@@ -92,7 +97,10 @@ fn build_run(req: &SubmitRequest) -> Result<WorkflowRun, String> {
     for spec in &req.nodes {
         for dep in &spec.deps {
             if !ids.contains(dep.as_str()) {
-                return Err(format!("node `{}` depends on unknown node `{}`", spec.id, dep));
+                return Err(format!(
+                    "node `{}` depends on unknown node `{}`",
+                    spec.id, dep
+                ));
             }
         }
         let mut task = TaskSpec::new(&spec.task_name);
@@ -116,7 +124,11 @@ fn view(run: &WorkflowRun) -> RunView {
         nodes: run
             .nodes
             .values()
-            .map(|n| NodeView { id: n.id.0.clone(), state: n.state, attempt: n.attempt })
+            .map(|n| NodeView {
+                id: n.id.0.clone(),
+                state: n.state,
+                attempt: n.attempt,
+            })
             .collect(),
     }
 }
@@ -136,7 +148,12 @@ async fn submit(
     // Dispatch the root nodes immediately (loom → relay); the run advances as
     // completions arrive at `/runs/{id}/nodes/{node}/complete`.
     if let Err(e) = dispatch_ready(&mut run, state.dispatcher.as_ref()).await {
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e.to_string() }))
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: e.to_string(),
+            }),
+        )
             .into_response();
     }
     let resp = SubmitResponse {
@@ -145,7 +162,12 @@ async fn submit(
         node_count: run.nodes.len(),
     };
     if let Err(e) = state.store.put(run).await {
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e.to_string() }))
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: e.to_string(),
+            }),
+        )
             .into_response();
     }
     (StatusCode::CREATED, Json(resp)).into_response()
@@ -221,18 +243,34 @@ async fn complete_node(
     let mut run = match state.store.get(&run_id).await {
         Ok(Some(run)) => run,
         Ok(None) => {
-            return (StatusCode::NOT_FOUND, Json(ApiError { error: "run not found".into() }))
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ApiError {
+                    error: "run not found".into(),
+                }),
+            )
                 .into_response()
         }
         Err(e) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e.to_string() }))
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError {
+                    error: e.to_string(),
+                }),
+            )
                 .into_response()
         }
     };
-    let result_ref = if req.failed { None } else { req.result_ref.clone().map(KeepRef) };
+    let result_ref = if req.failed {
+        None
+    } else {
+        req.result_ref.clone().map(KeepRef)
+    };
     let node_id = NodeId::new(&node);
     // Manual completes may omit attempt → target the node's current in-flight one.
-    let attempt = req.attempt.unwrap_or_else(|| run.nodes.get(&node_id).map_or(0, |n| n.attempt));
+    let attempt = req
+        .attempt
+        .unwrap_or_else(|| run.nodes.get(&node_id).map_or(0, |n| n.attempt));
     if let Err(e) = apply_node_completion(
         &mut run,
         state.dispatcher.as_ref(),
@@ -245,12 +283,22 @@ async fn complete_node(
     )
     .await
     {
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e.to_string() }))
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: e.to_string(),
+            }),
+        )
             .into_response();
     }
     let v = view(&run);
     if let Err(e) = state.store.put(run).await {
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e.to_string() }))
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: e.to_string(),
+            }),
+        )
             .into_response();
     }
     (StatusCode::OK, Json(v)).into_response()
@@ -259,9 +307,19 @@ async fn complete_node(
 async fn get_run(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     match state.store.get(&WorkflowRunId::new(&id)).await {
         Ok(Some(run)) => (StatusCode::OK, Json(view(&run))).into_response(),
-        Ok(None) => (StatusCode::NOT_FOUND, Json(ApiError { error: "run not found".into() }))
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(ApiError {
+                error: "run not found".into(),
+            }),
+        )
             .into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e.to_string() }))
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: e.to_string(),
+            }),
+        )
             .into_response(),
     }
 }
@@ -287,9 +345,7 @@ pub fn run() -> anyhow::Result<()> {
         // single-voter raft (LOOM_RAFT_DIR) > file crash-recovery (LOOM_DATA_DIR)
         // > in-memory. The cluster store also exposes a raft router peers reach.
         let mut raft_router: Option<Router> = None;
-        let store: Arc<dyn RunStore> = if let Ok(peers_env) =
-            std::env::var("LOOM_CLUSTER_PEERS")
-        {
+        let store: Arc<dyn RunStore> = if let Ok(peers_env) = std::env::var("LOOM_CLUSTER_PEERS") {
             let id = std::env::var("LOOM_NODE_ID")
                 .ok()
                 .and_then(|s| s.parse::<u64>().ok())
@@ -423,7 +479,9 @@ async fn completion_consumer(
         // without blocking; dropping `up_tx` at loop end ends the request body.
         let (up_tx, up_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
         if up_tx
-            .send(encode_frame(&serde_json::json!({ "type": "subscribe", "prefetch": 64 })))
+            .send(encode_frame(
+                &serde_json::json!({ "type": "subscribe", "prefetch": 64 }),
+            ))
             .await
             .is_err()
         {
@@ -446,7 +504,9 @@ async fn completion_consumer(
             let Ok(chunk) = chunk else { break };
             dec.push(&chunk);
             while let Some(raw) = dec.next_frame() {
-                let Ok(v) = serde_json::from_slice::<serde_json::Value>(&raw) else { continue };
+                let Ok(v) = serde_json::from_slice::<serde_json::Value>(&raw) else {
+                    continue;
+                };
                 let (Some(lease_id), Some(epoch), Some(payload)) = (
                     v.get("lease_id").and_then(|x| x.as_str()),
                     v.get("epoch").and_then(|x| x.as_u64()),
@@ -475,12 +535,20 @@ async fn completion_consumer(
     }
 }
 
-async fn apply_completion_msg(store: &Arc<dyn RunStore>, dispatcher: &dyn Dispatcher, cm: CompletionMsg) {
+async fn apply_completion_msg(
+    store: &Arc<dyn RunStore>,
+    dispatcher: &dyn Dispatcher,
+    cm: CompletionMsg,
+) {
     let run_id = WorkflowRunId::new(&cm.run_id);
     let Ok(Some(mut run)) = store.get(&run_id).await else {
         return;
     };
-    let result_ref = if cm.failed { None } else { cm.result_ref.map(KeepRef) };
+    let result_ref = if cm.failed {
+        None
+    } else {
+        cm.result_ref.map(KeepRef)
+    };
     let result_inline = if cm.failed { None } else { cm.result_inline };
     if apply_node_completion(
         &mut run,
@@ -646,27 +714,49 @@ mod tests {
         // — no re-spliced fan-out, no reset/re-run of already-progressed children.
         let app = test_router();
         let cpost = |path: &str, body: &'static str| {
-            Request::post(path).header("content-type", "application/json").body(Body::from(body)).unwrap()
+            Request::post(path)
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap()
         };
         let fanout = r#"{"fan_out":[{"id":"c0","task_name":"t"},{"id":"c1","task_name":"t"}]}"#;
 
         app.clone()
-            .oneshot(cpost("/runs", r#"{"run_id":"idem","nodes":[{"id":"a","task_name":"t"}]}"#))
+            .oneshot(cpost(
+                "/runs",
+                r#"{"run_id":"idem","nodes":[{"id":"a","task_name":"t"}]}"#,
+            ))
             .await
             .unwrap();
         // complete `a` → splices c0,c1
-        app.clone().oneshot(cpost("/runs/idem/nodes/a/complete", fanout)).await.unwrap();
+        app.clone()
+            .oneshot(cpost("/runs/idem/nodes/a/complete", fanout))
+            .await
+            .unwrap();
         // complete c0 → c0 Done
-        app.clone().oneshot(cpost("/runs/idem/nodes/c0/complete", "{}")).await.unwrap();
+        app.clone()
+            .oneshot(cpost("/runs/idem/nodes/c0/complete", "{}"))
+            .await
+            .unwrap();
         // DUPLICATE complete of `a` (same fan-out) — must be ignored by the guard
-        let dup = app.clone().oneshot(cpost("/runs/idem/nodes/a/complete", fanout)).await.unwrap();
+        let dup = app
+            .clone()
+            .oneshot(cpost("/runs/idem/nodes/a/complete", fanout))
+            .await
+            .unwrap();
         assert_eq!(dup.status(), StatusCode::OK);
 
-        let g = app.oneshot(Request::get("/runs/idem").body(Body::empty()).unwrap()).await.unwrap();
+        let g = app
+            .oneshot(Request::get("/runs/idem").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
         let view = body_json(g).await;
         let nodes = view["nodes"].as_array().unwrap();
         assert_eq!(nodes.len(), 3, "duplicate must not add nodes");
         let c0 = nodes.iter().find(|n| n["id"] == "c0").unwrap();
-        assert_eq!(c0["state"], "done", "duplicate completion must NOT reset/re-run c0");
+        assert_eq!(
+            c0["state"], "done",
+            "duplicate completion must NOT reset/re-run c0"
+        );
     }
 }
