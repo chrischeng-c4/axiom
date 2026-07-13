@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-16T02:38:44.000622+00:00"
-digest = "sha256:9c021a627b164161c9638a775bd6ae830d6fe5a35c5ffd11b9660bf575b3ac23"
-source_digest = "sha256:9c021a627b164161c9638a775bd6ae830d6fe5a35c5ffd11b9660bf575b3ac23"
-ir_digest = "sha256:afc4ae88f81e47a18da88831c27fb665709b81ed4a4c965f535ce4d383461d64"
+generated_at = "2026-07-16T02:39:44.225022+00:00"
+digest = "sha256:c582a6df6e5bb12f397157cf2ab89d5a047ca37686989f6f27322f030be3011c"
+source_digest = "sha256:c582a6df6e5bb12f397157cf2ab89d5a047ca37686989f6f27322f030be3011c"
+ir_digest = "sha256:16b397911beaf7151c7885f3deb53dae1470ed3d569ad72f95c7caa25e17e047"
 
 [[files]]
 path = "README.md"
@@ -162,6 +162,12 @@ path = "semantic/tape-install-script.md"
 digest = "sha256:4212305a743b209d7977347730c010de5a3c6c7cb8850f9ea5098fa146e057d2"
 ir_digest = "sha256:a17e69751a12aaafa6775f753a194fcde6acfa0f827ae5f845e840d88a1c3e47"
 section_count = 3
+
+[[files]]
+path = "validate/align-release-dockerfile-fixture-with-renderer.md"
+digest = "sha256:11b96d9462a8d0966bb7c39447c3919f1bc03276e3fe52ad2f659a71b3640783"
+ir_digest = "sha256:803d66d1523dbc42a5027b44556a1a1a1ce737cdb46434afaee263d75f47b8a2"
+section_count = 2
 
 [[files]]
 path = "validate/real-kafka-calibrated-performance-benchmark-kraft-docker-mirrors.md"
