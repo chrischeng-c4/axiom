@@ -9,69 +9,87 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: pgpool-trust-startup-replay
-entry: frontend_startup
+id: pgpool-trust-startup-replay-contract
+entry: read_startup
 nodes:
-  frontend_startup:
-    kind: process
-    label: "Read the client startup message before backend admission."
-  cached_reply:
+  read_startup:
+    kind: start
+    label: "Read and decode SSL-refused then ordered StartupMessage before a backend lease."
+  cache_lookup:
     kind: decision
-    label: "Does an exact no-challenge startup reply exist?"
-  replay_ready:
+    label: "Lookup an exact ordered StartupMessage cache key."
+  replay:
     kind: process
-    label: "Replay the cached ready response without leasing a backend."
+    label: "Write cached AuthenticationOk, ParameterStatus, synthetic non-routable BackendKeyData, and ReadyForQuery frames."
+  fresh_wait:
+    kind: process
+    label: "Wait for capacity while rechecking the startup cache after every pool notification."
   fresh_handshake:
     kind: process
-    label: "Lease one fresh backend and relay startup authentication."
-  challenge_seen:
+    label: "Connect one fresh backend, forward StartupMessage, and relay authentication to ReadyForQuery."
+  auth_challenge:
     kind: decision
-    label: "Did the backend require a client authentication challenge?"
-  publish_reply:
+    label: "Did the backend send a password, MD5, or SASL client-response challenge?"
+  publish:
     kind: process
-    label: "Store the complete safe startup reply for this exact startup."
+    label: "Publish a clone of the complete no-challenge reply under the exact startup key."
+  reset:
+    kind: process
+    label: "Return the handshake backend through DISCARD ALL reset to idle."
   transaction_loop:
     kind: terminal
-    label: "Lease and reset backends per transaction as normal."
+    label: "Acquire, relay, reset, and reuse one backend per simple-query transaction."
 edges:
-  - from: frontend_startup
-    to: cached_reply
-  - from: cached_reply
-    to: replay_ready
+  - from: read_startup
+    to: cache_lookup
+  - from: cache_lookup
+    to: replay
     label: hit
-  - from: replay_ready
+  - from: replay
     to: transaction_loop
-  - from: cached_reply
-    to: fresh_handshake
+  - from: cache_lookup
+    to: fresh_wait
     label: miss
+  - from: fresh_wait
+    to: cache_lookup
+    label: notified
+  - from: fresh_wait
+    to: fresh_handshake
+    label: fresh permit
   - from: fresh_handshake
-    to: challenge_seen
-  - from: challenge_seen
-    to: publish_reply
+    to: auth_challenge
+  - from: auth_challenge
+    to: publish
     label: no challenge
-  - from: publish_reply
-    to: transaction_loop
-  - from: challenge_seen
-    to: transaction_loop
+  - from: publish
+    to: reset
+  - from: auth_challenge
+    to: reset
     label: challenge passthrough
+  - from: reset
+    to: transaction_loop
 ---
 flowchart TD
-    frontend_startup[Read startup before admission] --> cached_reply{Exact safe reply cached?}
-    cached_reply -->|hit| replay_ready[Replay ready response with no backend lease]
-    replay_ready --> transaction_loop([Normal transaction leasing])
-    cached_reply -->|miss| fresh_handshake[Fresh backend startup/auth relay]
-    fresh_handshake --> challenge_seen{Authentication challenge observed?}
-    challenge_seen -->|no| publish_reply[Publish exact safe startup reply]
-    publish_reply --> transaction_loop
-    challenge_seen -->|yes| transaction_loop
+    read_startup([Read StartupMessage before a lease]) --> cache_lookup{Exact no-challenge reply cached?}
+    cache_lookup -->|hit| replay[Replay protocol-ready response; no backend lease]
+    replay --> transaction_loop([Normal transaction pool loop])
+    cache_lookup -->|miss| fresh_wait[Wait for capacity and recheck cache]
+    fresh_wait -->|notified| cache_lookup
+    fresh_wait -->|fresh permit| fresh_handshake[Forward startup and relay backend authentication]
+    fresh_handshake --> auth_challenge{Password, MD5, or SASL challenge?}
+    auth_challenge -->|no| publish[Publish exact safe response]
+    publish --> reset[DISCARD ALL then park backend idle]
+    auth_challenge -->|yes| reset
+    reset --> transaction_loop
 ```
 
-### Safety boundary
+### Admission contract
 
-A cache key is the complete ordered `StartupMessage`, not merely user or database. A cached reply is publishable only when the backend handshake reaches `ReadyForQuery` without any client-response authentication challenge. Cleartext-password, MD5, and SASL paths stay on the existing pass-through flow and never populate or consume this cache.
+`TransactionHandler` reads a `StartupMessage` before it asks the pool for a backend. The shared `BackendPool` holds at most one replay entry per exact ordered startup message. On every admission loop iteration, it first checks this entry; a cache hit yields a reply-only admission and does not consume a backend permit, dial a socket, or retain a lease. When capacity is unavailable, waiters subscribe to the existing pool notification and re-check the cache before retrying capacity.
 
-A replay hit sends the cached protocol-ready frames to the matching client and starts the ordinary transaction loop with no retained backend lease. The first successful trust/no-challenge handshake returns its backend through the existing `DISCARD ALL` reset path before any later transaction is acquired.
+The first fresh handshake stays byte/protocol equivalent to the existing pass-through path. `relay_until_ready` captures the backend messages only if no frontend authentication response was required: `AuthenticationOk`, all `ParameterStatus` frames, a non-routable synthetic `BackendKeyData`, notices, and the terminal `ReadyForQuery`. Cleartext, MD5, and every SASL challenge mark the handshake non-replayable; their client response is forwarded and neither their partial nor complete reply can populate the cache.
 
+The cached reply is an optimization for the existing unsupported-cancel surface, not cancellation routing. Replayed `BackendKeyData` is synthetic zero data so it cannot direct a later client at a pooled physical backend. A cache hit remains limited to the exact trust/no-challenge startup identity; new credential identities, TLS, IAM, password/SCRAM verification, and cancel routing are intentionally outside this P0.
 ## Changes
 <!-- type: changes lang: yaml -->
 
