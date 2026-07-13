@@ -1023,7 +1023,24 @@ fn tempdir_method(recv: MbValue, method: &str, _args: &[MbValue]) -> Option<MbVa
     let name = field_get(recv, "name").unwrap_or_else(MbValue::none);
     match method {
         "__enter__" => {
-            unsafe { super::super::rc::retain_if_ptr(name) };
+            // Retain the returned `name` string (the with-binding's own
+            // owned ref) AND `recv` (the TemporaryDirectory instance itself,
+            // i.e. the with-lowering's ctx_vreg). Every other mb_context_enter
+            // branch (generic __enter__ dunder dispatch, threading Lock/RLock/
+            // Condition, tarfile.TarFile) retains the context-manager object
+            // once here, because the with-exit lowering (hir_to_mir.rs) both
+            // explicitly calls `mb_release_value(ctx_vreg)` AND then overwrites
+            // ctx_vreg via `Copy`, whose codegen-level release-before-overwrite
+            // preamble (#1129 R2) releases ctx_vreg's old value a SECOND time.
+            // Without this retain, ctx_vreg starts the exit block holding only
+            // its original creation-time reference, so the first release frees
+            // it and the second is a use-after-free (matches the SpooledTemporaryFile/
+            // NamedTemporaryFile `__enter__` returning self, which already got this
+            // for free via retaining `recv`).
+            unsafe {
+                super::super::rc::retain_if_ptr(name);
+                super::super::rc::retain_if_ptr(recv);
+            }
             Some(name)
         }
         "__exit__" | "cleanup" => {
