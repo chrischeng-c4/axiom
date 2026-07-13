@@ -34,7 +34,6 @@ flowchart LR
   readable --> live
   immediate_probe -->|EOF or error| dead[drop and retry]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
