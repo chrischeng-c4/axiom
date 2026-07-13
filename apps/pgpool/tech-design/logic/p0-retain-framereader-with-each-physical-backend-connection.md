@@ -56,3 +56,28 @@ changes:
     section: pgpool-physical-backend-reader-lifecycle
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-physical-backend-reader-lifecycle-verification
+requirements:
+  isolation:
+    id: R2
+    text: "Reset failure still closes a physical backend and cross-owner state remains isolated after reader reuse."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool --lib --test pool --test pool_modes
+  reader_lifetime:
+    id: R1
+    text: "An idle backend retains reader state and transaction reuse uses that reader through reset before safe reuse."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool --test pool
+---
+flowchart TD
+    r1[R1 reader lifetime] --> cargo_test_p_pgpool_test_pool[cargo test -p pgpool --test pool]
+    r2[R2 isolation] --> cargo_test_p_pgpool_lib_test_pool_test_pool_modes[cargo test -p pgpool --lib --test pool --test pool_modes]
+```
