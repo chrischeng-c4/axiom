@@ -102,6 +102,16 @@ fn crd_flattens_cluster_spec() {
         yaml.contains("minimum"),
         "normalized uints keep a minimum floor"
     );
+    assert!(
+        yaml.contains("default: \"off\""),
+        "the auth default must remain a string when Kubernetes parses YAML 1.1"
+    );
+    assert_eq!(props["auth"]["default"], "off");
+    assert_eq!(
+        include_str!("../k8s/operator/crd.yaml"),
+        yaml,
+        "checked-in CRD must be regenerated from the renderer"
+    );
 }
 
 /// R5 — the rendered StatefulSet carries exactly the downward-API env tape's
@@ -297,5 +307,13 @@ fn status_patch_reports_pending_reconciling_ready() {
         ready: HashMap::new(),
     });
     assert_eq!(status["status"]["phase"], "Pending");
+}
+
+/// The binary installs this process-level provider before CLI dispatch. The
+/// shared helper is intentionally safe when an earlier TLS path installed it.
+#[test]
+fn rustls_provider_install_is_idempotent() {
+    service_tls::install_default_crypto_provider();
+    service_tls::install_default_crypto_provider();
 }
 // HANDWRITE-END
