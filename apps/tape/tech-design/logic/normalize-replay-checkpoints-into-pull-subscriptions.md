@@ -9,53 +9,58 @@ fill_sections: [logic]
 
 ```mermaid
 ---
-id: tape-pull-subscription-applicability
-entry: pull
+id: tape-pull-subscription-contract
+entry: pull_request
 nodes:
-  pull:
+  pull_request:
     kind: start
-    label: "tape subscription pull TOPIC NAME --limit L addresses an existing pull subscription"
-  mode:
+    label: "PullSubscriptionBatch uses the durable topic/name checkpoint as a next-offset cursor"
+  validate_limit:
     kind: decision
-    label: "subscription exists and delivery.mode is pull"
-  reject:
+    label: "--limit defaults to 100 and must not exceed MAX_PULL_BATCH=1000"
+  limit_error:
     kind: terminal
-    label: "push or missing subscription is rejected without changing the journal"
-  cursor:
+    label: "oversized request returns SubscriptionError::PullBatchTooLarge without replaying or advancing state"
+  resolve_pull:
+    kind: decision
+    label: "topic/name resolves to SubscriptionDelivery::Pull"
+  mode_error:
+    kind: terminal
+    label: "missing or push resource returns SubscriptionError; push remains endpoint metadata only"
+  replay_window:
     kind: process
-    label: "read the existing topic/name checkpoint as the next unread offset; absent checkpoint means offset 0"
-  bounded:
+    label: "read checkpoint offset or 0, then replay the bounded event window; next_offset is last event offset + 1 or cursor when empty"
+  pull_result:
+    kind: terminal
+    label: "emit PullSubscriptionBatch { events, cursor, next_offset, limit }; no cursor mutation occurs on pull"
+  ack_request:
     kind: process
-    label: "replay at most min(requested limit, max batch) events; caller-driven limit is the backpressure boundary"
-  response:
+    label: "subscription ack confirms the resource is pull, then calls put_checkpoint(topic, name, offset)"
+  ack_result:
     kind: terminal
-    label: "return events, cursor, and next_offset; pull never advances the durable cursor itself"
-  ack:
-    kind: process
-    label: "tape subscription ack TOPIC NAME --offset N delegates to checkpoint advance for the same topic/name"
-  stale:
+    label: "checkpoint success is the durable ack; stale and beyond-end errors propagate unchanged through SubscriptionAckError"
+  inventory:
     kind: terminal
-    label: "existing stale and beyond-end checkpoint rejections remain the ack safety contract"
-  claims:
-    kind: terminal
-    label: "README and EC performance wording call this bounded pull/replay path; no push worker, lease scheduler, or raft cursor consensus"
+    label: "offline spec declares pull and ack route schemas; live h2c handlers, leases, push workers, and raft cursor consensus stay excluded"
 edges:
-  - { from: pull, to: mode }
-  - { from: mode, to: reject, label: "missing or push" }
-  - { from: mode, to: cursor, label: "pull" }
-  - { from: cursor, to: bounded }
-  - { from: bounded, to: response }
-  - { from: response, to: ack }
-  - { from: ack, to: stale }
-  - { from: stale, to: claims }
+  - { from: pull_request, to: validate_limit }
+  - { from: validate_limit, to: limit_error, label: "limit > 1000" }
+  - { from: validate_limit, to: resolve_pull, label: "bounded" }
+  - { from: resolve_pull, to: mode_error, label: "missing or push" }
+  - { from: resolve_pull, to: replay_window, label: "pull" }
+  - { from: replay_window, to: pull_result }
+  - { from: pull_result, to: ack_request }
+  - { from: ack_request, to: ack_result }
+  - { from: ack_result, to: inventory }
 ---
 flowchart TD
-    pull["subscription pull TOPIC NAME --limit L"] --> mode{"existing pull subscription?"}
-    mode -->|missing or push| reject(["reject; journal unchanged"])
-    mode -->|pull| cursor["checkpoint topic/name = next unread offset; default 0"]
-    cursor --> bounded["replay <= requested/max batch; client pull is backpressure"]
-    bounded --> response(["events + cursor + next_offset; no implicit ack"])
-    response --> ack["subscription ack delegates to durable checkpoint"]
-    ack --> stale(["stale and beyond-end ack rejection unchanged"])
-    stale --> claims(["performance claims describe bounded pull/replay only"])
+    pull_request["PullSubscriptionBatch from topic/name checkpoint cursor"] --> validate_limit{"limit <= 1000; default 100?"}
+    validate_limit -->|oversized| limit_error(["PullBatchTooLarge; no state changes"])
+    validate_limit -->|bounded| resolve_pull{"subscription delivery=pull?"}
+    resolve_pull -->|missing or push| mode_error(["SubscriptionError; no delivery"])
+    resolve_pull -->|pull| replay_window["replay bounded window from checkpoint or 0; compute next_offset"]
+    replay_window --> pull_result(["events/cursor/next_offset; pull never advances cursor"])
+    pull_result --> ack_request["ack validates pull then delegates to put_checkpoint"]
+    ack_request --> ack_result(["durable ack or stale/beyond-end rejection"])
+    ack_result --> inventory(["offline pull/ack schema only; no h2c/lease/push/raft implementation"])
 ```
