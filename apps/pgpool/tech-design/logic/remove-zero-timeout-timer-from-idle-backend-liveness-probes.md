@@ -49,3 +49,28 @@ changes:
     section: pgpool-immediate-idle-liveness-probe
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-immediate-idle-liveness-probe-verification
+requirements:
+  dead_backend:
+    id: R2
+    text: "EOF and I/O failure from an idle backend discard it before it is leased, while queued readable bytes are never consumed by the liveness check."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool --test pool --test pool_modes
+  timer_free_pending:
+    id: R1
+    text: "An idle backend with no readability event remains reusable after one immediate non-consuming poll without constructing a zero-timeout timer."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool --test pool
+---
+flowchart TD
+    r1[R1 timer free pending] --> cargo_test_p_pgpool_test_pool[cargo test -p pgpool --test pool]
+    r2[R2 dead backend] --> cargo_test_p_pgpool_test_pool_test_pool_modes[cargo test -p pgpool --test pool --test pool_modes]
+```
