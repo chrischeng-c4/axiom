@@ -9,50 +9,50 @@ fill_sections: [logic]
 
 ```mermaid
 ---
-id: tape-subscription-resource-flow
-entry: request
+id: tape-subscription-resource-contract
+entry: create
 nodes:
-  request:
+  create:
     kind: start
-    label: "Tape adds a first-class subscription resource for one topic"
-  cli_create:
-    kind: process
-    label: "tape subscription create TOPIC NAME --pull or --push ENDPOINT validates exactly one delivery mode and saves the journal"
-  model:
-    kind: process
-    label: "TapeJournal stores Subscription { topic, name, delivery }; delivery is pull or push { endpoint }"
-  pull:
-    kind: process
-    label: "pull subscription uses its name as the existing durable consumer checkpoint identity; create does not move the cursor"
-  push:
+    label: "tape subscription create TOPIC NAME accepts exactly one of --pull or --push ENDPOINT"
+  validate:
+    kind: decision
+    label: "mode flags are valid, push endpoint is non-empty, and the topic/name resource does not already exist"
+  invalid:
     kind: terminal
-    label: "push subscription records its callback endpoint only; no HTTP delivery, retry, or worker runs in this WI"
-  inspect:
+    label: "nonzero CLI result names the invalid mode or existing resource; the journal stays unchanged"
+  persist:
     kind: process
-    label: "tape subscription list/show/delete reads or mutates the same file-backed journal resource"
-  contract:
+    label: "persist Subscription in the existing file-backed TapeJournal; create has no side effect on checkpoints"
+  pull_view:
     kind: process
-    label: "spec.rs declares topic-scoped create/list/show/delete routes plus Subscription and delivery schemas in routes/OpenAPI/JSON Schema"
-  unchanged:
+    label: "a pull subscription exposes the current optional checkpoint at topic/name so existing checkpoint get/put remains the cursor API"
+  push_view:
     kind: terminal
-    label: "server.rs live h2c routes, raft replication, push execution, retries, auth expansion, and redelivery remain out of scope"
+    label: "a push subscription exposes its configured endpoint only; it never sends an outbound request in this WI"
+  resource_ops:
+    kind: process
+    label: "list/show/delete address subscriptions by topic/name; delete removes only resource metadata and does not delete the consumer checkpoint"
+  api_inventory:
+    kind: terminal
+    label: "spec inventory declares POST/GET /topics/{topic}/subscriptions and GET/DELETE /topics/{topic}/subscriptions/{subscription}; schemas encode delivery.mode=pull|push and push endpoint"
 edges:
-  - { from: request, to: cli_create }
-  - { from: cli_create, to: model }
-  - { from: model, to: pull, label: "mode=pull" }
-  - { from: model, to: push, label: "mode=push" }
-  - { from: pull, to: inspect }
-  - { from: push, to: inspect }
-  - { from: inspect, to: contract }
-  - { from: contract, to: unchanged }
+  - { from: create, to: validate }
+  - { from: validate, to: invalid, label: "invalid" }
+  - { from: validate, to: persist, label: "valid" }
+  - { from: persist, to: pull_view, label: "pull" }
+  - { from: persist, to: push_view, label: "push" }
+  - { from: pull_view, to: resource_ops }
+  - { from: push_view, to: resource_ops }
+  - { from: resource_ops, to: api_inventory }
 ---
 flowchart TD
-    request["Tape adds a first-class subscription resource for one topic"] --> cli_create["tape subscription create TOPIC NAME --pull or --push ENDPOINT validates exactly one delivery mode and saves the journal"]
-    cli_create --> model["TapeJournal stores Subscription topic/name/delivery"]
-    model -->|mode=pull| pull["pull uses subscription name as existing durable consumer checkpoint identity"]
-    model -->|mode=push| push(["push records endpoint only; no worker runs"])
-    pull --> inspect["subscription list/show/delete uses the file-backed resource"]
-    push --> inspect
-    inspect --> contract["spec routes/OpenAPI/JSON Schema declare the resource"]
-    contract --> unchanged(["live h2c routes, raft state, push execution/retry/redelivery remain out of scope"])
+    create["subscription create TOPIC NAME --pull or --push ENDPOINT"] --> validate{"valid unique mode and resource?"}
+    validate -->|invalid| invalid(["nonzero; journal unchanged"])
+    validate -->|valid| persist["persist Subscription in the file-backed journal; do not advance checkpoint"]
+    persist -->|pull| pull_view["checkpoint remains topic/name cursor API"]
+    persist -->|push| push_view(["endpoint metadata only; no delivery request"])
+    pull_view --> resource_ops["list/show/delete by topic/name; delete preserves checkpoint"]
+    push_view --> resource_ops
+    resource_ops --> api_inventory(["declare create/list/show/delete routes and delivery schemas in spec inventory"])
 ```
