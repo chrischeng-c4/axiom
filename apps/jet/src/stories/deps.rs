@@ -1,18 +1,18 @@
-// <HANDWRITE gap="missing-generator:logic:b3d9a1f2" tracker="standardize-gap-projects-jet-src-stories-deps-rs" reason="Shared node_modules bare-import resolution for the stories workbench (dev server + static export): resolve a bare specifier to an on-disk node_modules file via the project ModuleResolver, extract every import specifier (incl. bare) from source, and key a dep by its node_modules-relative path so both the dev route and the static layout map a dep consistently.">
-//! Shared `node_modules` bare-import resolution for `jet stories` (#197).
+// <HANDWRITE gap="missing-generator:logic:b3d9a1f2" tracker="standardize-gap-projects-jet-src-stories-deps-rs" reason="Shared bare-import resolution for the stories workbench (dev server + static export): resolve an installed dependency or workspace source entry, extract every import specifier (incl. bare) from source, and key node_modules deps by their relative path so both surfaces map them consistently.">
+//! Shared bare-import resolution for `jet stories` (#197).
 //!
 //! Both the dev workbench server ([`super::server`]) and the static exporter
 //! ([`super::build`]) need to turn a bare import specifier in a served/emitted
-//! module — `import x from "clsx"` — into a real file inside the project's
-//! `node_modules`, so a real component's third-party deps actually load in the
-//! preview. This module is the single place that:
+//! module — `import x from "clsx"` — into a real installed dependency or
+//! workspace source entry, so a real component's dependencies actually load in
+//! the preview. This module is the single place that:
 //!
 //! 1. [`resolve_bare_specifier`] — resolve a bare specifier against an importing
 //!    file using the project's [`crate::resolver::ModuleResolver`] (the same
 //!    Node-resolution + `package.json` `exports`/`module`/`main` honoring that
-//!    `jet install` / the bundler use), returning the on-disk file **only** when
-//!    it resolves into `node_modules` (so React-class specifiers with no local
-//!    install fall through to the esm.sh importmap, unchanged).
+//!    `jet install` / the bundler use), returning installed `node_modules`
+//!    dependencies or a workspace package entry. React-class specifiers with no
+//!    local install still fall through to the esm.sh importmap unchanged.
 //! 2. [`extract_all_import_specifiers`] — extract every import specifier in a
 //!    source file, **including** bare ones (the dev server's
 //!    [`crate::dev_server::source_analysis::extract_imports_from_source`]
@@ -37,11 +37,11 @@ use std::path::{Path, PathBuf};
 use crate::resolver::{ModuleResolver, ResolveKind, ResolveOptions};
 
 /// Resolve a bare specifier (`clsx`, `@scope/pkg`, `clsx/dist/x`) to an existing
-/// file inside `root`'s `node_modules`, resolving from `importer_file`.
+/// file inside `root`'s `node_modules`, or a workspace package entry, resolving
+/// from `importer_file`.
 ///
-/// Returns `Some(absolute_path)` only when the specifier resolves to a real file
-/// whose path contains a `node_modules` segment (so it is a genuinely-installed
-/// dep we can serve/emit locally). Returns `None` for:
+/// Returns `Some(absolute_path)` when the specifier resolves to a real installed
+/// dep or workspace package entry we can emit locally. Returns `None` for:
 ///   - relative / absolute specifiers (the caller handles those separately),
 ///   - specifiers that do not resolve on disk (e.g. `react` with no local
 ///     install) — the caller leaves them for the esm.sh importmap/CDN,
@@ -72,28 +72,22 @@ pub fn resolve_bare_specifier(
     let resolver = ModuleResolver::new(options).ok()?;
     let resolved = match resolver.resolve(specifier, importer_file).ok() {
         Some(resolved) => resolved,
-        None => {
-            return resolve_nested_bare_specifier(importer_file, specifier)
-                .or_else(|| resolve_bare_asset_export(root, specifier));
-        }
+        None => return resolve_bare_fallback(root, importer_file, specifier),
     };
 
     // External (or anything not a package resolution) is not something we serve
     // from disk — leave it for the importmap.
     if resolved.is_external || resolved.kind != ResolveKind::Package {
-        return resolve_nested_bare_specifier(importer_file, specifier)
-            .or_else(|| resolve_bare_asset_export(root, specifier));
+        return resolve_bare_fallback(root, importer_file, specifier);
     }
 
     // Must be a real file genuinely inside node_modules. (`resolve` returns the
     // specifier path verbatim for externals, which would not be a real file.)
     if !resolved.path.is_file() {
-        return resolve_nested_bare_specifier(importer_file, specifier)
-            .or_else(|| resolve_bare_asset_export(root, specifier));
+        return resolve_bare_fallback(root, importer_file, specifier);
     }
     if !path_has_node_modules(&resolved.path) {
-        return resolve_nested_bare_specifier(importer_file, specifier)
-            .or_else(|| resolve_bare_asset_export(root, specifier));
+        return resolve_bare_fallback(root, importer_file, specifier);
     }
     Some(canonical_node_modules_path(&resolved.path))
 }
@@ -122,6 +116,78 @@ fn canonical_node_modules_path(path: &Path) -> PathBuf {
     } else {
         path.to_path_buf()
     }
+}
+
+fn resolve_bare_fallback(root: &Path, importer_file: &Path, specifier: &str) -> Option<PathBuf> {
+    resolve_nested_bare_specifier(importer_file, specifier)
+        .or_else(|| resolve_bare_asset_export(root, specifier))
+        .or_else(|| resolve_bare_workspace_package_entry(root, specifier))
+}
+
+/// Resolve a bare workspace package's JS/TS entry when it is not linked through
+/// `node_modules`. This keeps static stories builds on the real source barrel,
+/// so its relative SVG re-exports are walked and transformed (#1534).
+fn resolve_bare_workspace_package_entry(root: &Path, specifier: &str) -> Option<PathBuf> {
+    let (package_name, subpath) = split_package_specifier(specifier)?;
+    let package_dir = workspace_package_dir(root, &package_name)?;
+    package_entry_file(&package_dir, &subpath)
+        .or_else(|| workspace_source_entry_file(&package_dir, &subpath))
+}
+
+fn workspace_source_entry_file(package_dir: &Path, subpath: &str) -> Option<PathBuf> {
+    let package = std::fs::read_to_string(package_dir.join("package.json"))
+        .ok()
+        .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok());
+    let mut targets = Vec::new();
+    if let Some(package) = &package {
+        if let Some(exports) = package.get("exports") {
+            if let Some(target) =
+                export_target_for_subpath(exports, specifier_path_without_query(subpath))
+            {
+                targets.push(target);
+            }
+        }
+        if subpath == "." {
+            for field in ["module", "main"] {
+                if let Some(target) = package.get(field).and_then(|value| value.as_str()) {
+                    targets.push(target.to_string());
+                }
+            }
+        }
+    }
+    if subpath == "." {
+        targets.push("./index".to_string());
+    } else {
+        targets.push(subpath.to_string());
+    }
+    targets
+        .into_iter()
+        .find_map(|target| workspace_source_target_file(package_dir, &target))
+}
+
+fn workspace_source_target_file(package_dir: &Path, target: &str) -> Option<PathBuf> {
+    let clean = specifier_path_without_query(target)
+        .trim_start_matches("./")
+        .trim_start_matches('/');
+    let clean = clean.strip_prefix("dist/").unwrap_or(clean);
+    for source_root in ["src/lib", "src"] {
+        let direct = package_dir.join(source_root).join(clean);
+        if direct.is_file() {
+            return Some(direct);
+        }
+        let stem = if direct.extension().is_some() {
+            direct.with_extension("")
+        } else {
+            direct
+        };
+        for extension in ["ts", "tsx", "js", "jsx", "mjs", "cjs"] {
+            let candidate = stem.with_extension(extension);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
 }
 
 fn resolve_bare_asset_export(root: &Path, specifier: &str) -> Option<PathBuf> {
@@ -356,8 +422,9 @@ fn is_raw_asset_specifier(path: &str) -> bool {
 /// the dev server serves it at `/@dep/<key>` and the static exporter writes it
 /// to `out_dir/deps/<key>` (extension normalized to `.js`).
 ///
-/// Falls back to the file name when no `node_modules` segment is present (should
-/// not happen for a value returned by [`resolve_bare_specifier`]).
+/// Falls back to the file name when no `node_modules` segment is present.
+/// Callers must route workspace source entries as normal modules rather than
+/// using this fallback key.
 pub fn dep_key(resolved_file: &Path) -> String {
     let components: Vec<String> = resolved_file
         .iter()
@@ -790,6 +857,34 @@ const dyn = import("ignored");
             resolve_bare_specifier(root, &importer, "@tw-tech/shared-assets/icons/list.svg")
                 .expect("resolves workspace asset export source file");
         assert_eq!(resolved, pkg.join("src/lib/icons/list.svg"));
+    }
+
+    #[test]
+    fn resolve_finds_workspace_package_root_source_fallback() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let pkg = root.join("packages/assets");
+        std::fs::create_dir_all(pkg.join("src/lib")).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            r#"{
+  "name": "@tw-tech/shared-assets",
+  "version": "1.0.0",
+  "main": "./dist/index.js"
+}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            pkg.join("src/lib/index.tsx"),
+            "export const Asset = null;\n",
+        )
+        .unwrap();
+
+        let importer = root.join("src/IconBox.tsx");
+        std::fs::create_dir_all(importer.parent().unwrap()).unwrap();
+        let resolved = resolve_bare_specifier(root, &importer, "@tw-tech/shared-assets")
+            .expect("resolves workspace package source entry");
+        assert_eq!(resolved, pkg.join("src/lib/index.tsx"));
     }
 
     #[test]

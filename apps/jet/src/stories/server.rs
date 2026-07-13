@@ -1378,7 +1378,12 @@ fn rewrite_bare_imports_to_dep_routes(code: &str, root: &Path, importer_file: &P
             out = rewrite_asset_import_for_spec(&out, &spec, &route);
             continue;
         }
-        let route = if spec == "dayjs" {
+        let route = if !path_has_node_modules(&resolved) {
+            // Workspace package source entries are served through the regular
+            // module route, not `/@dep/`. The dep handler only resolves files
+            // inside node_modules (#1534).
+            module_url_for(root, &resolved)
+        } else if spec == "dayjs" {
             format!("{DEP_PREFIX}dayjs")
         } else {
             format!("{DEP_PREFIX}{}", super::deps::dep_key(&resolved))
@@ -1810,6 +1815,43 @@ mod tests {
         assert!(
             rewritten.contains("/@dep/dom-helpers/esm/animate.js"),
             "relative dep import should use package-relative dep route: {rewritten}"
+        );
+    }
+
+    #[test]
+    fn rewrites_workspace_package_entries_to_module_routes() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = dir.path();
+        let package_dir = root.join("packages/assets");
+        std::fs::create_dir_all(package_dir.join("src/lib")).expect("mkdir package");
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{"name":"@tw-tech/shared-assets","main":"./dist/index.js"}"#,
+        )
+        .expect("write package");
+        std::fs::write(
+            package_dir.join("src/lib/index.tsx"),
+            "export const Asset = null;",
+        )
+        .expect("write workspace source");
+        let importer = root.join("src/IconBox.tsx");
+        std::fs::create_dir_all(importer.parent().expect("importer parent"))
+            .expect("mkdir importer");
+        std::fs::write(&importer, "export const IconBox = null;").expect("write importer");
+
+        let rewritten = rewrite_bare_imports_to_dep_routes(
+            "import { Asset } from '@tw-tech/shared-assets';",
+            root,
+            &importer,
+        );
+
+        assert!(
+            rewritten.contains("from '/packages/assets/src/lib/index.tsx'"),
+            "workspace package should use a regular module route: {rewritten}"
+        );
+        assert!(
+            !rewritten.contains("/@dep/"),
+            "workspace package must not be routed through the node_modules dep handler: {rewritten}"
         );
     }
 
