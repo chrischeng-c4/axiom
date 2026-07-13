@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-16T02:32:08.209297+00:00"
-digest = "sha256:1060ddec37efbdf62f99755a57c7be73a9905e8586f680cc303666e39d25aaa1"
-source_digest = "sha256:1060ddec37efbdf62f99755a57c7be73a9905e8586f680cc303666e39d25aaa1"
-ir_digest = "sha256:61b81d25e1051adab652294f2e47525483cac6dacf36a850d4659e3d6f626cf9"
+generated_at = "2026-07-16T02:33:10.544438+00:00"
+digest = "sha256:28ed4001a42fc1862c2d4377f6b395a4d6b82362b9261959ac739679acf6389f"
+source_digest = "sha256:28ed4001a42fc1862c2d4377f6b395a4d6b82362b9261959ac739679acf6389f"
+ir_digest = "sha256:0a412819ef7734bfb3a79262275878e5ab37c360047f415a96face6f9d6f2414"
 
 [[files]]
 path = "README.md"
@@ -93,26 +93,26 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-tape-src-bin-tape-rs.md"
-digest = "sha256:c73310d4348958639b7894c8e768f0dd8346ab1314fb96c9187efcac625fc883"
-ir_digest = "sha256:d436416b1bb970ce00d330bccf344dde58dd052d3d6babc4a202aadf9036fd6a"
+digest = "sha256:689a64b10983b1539ca7bb6d22e9554a558af9835b3637a47d99acab666a90ea"
+ir_digest = "sha256:563b8797a2fd2453b03805c5ce2d8858d36d8dc9221315ca57510d7e2ceadf28"
 section_count = 4
 
 [[files]]
 path = "semantic/source/apps-tape-src-lib-rs.md"
-digest = "sha256:02d35a42dcd4a2ed3a6e2e1f39923376a932639b0a8fe4a390b2a535cf173a04"
-ir_digest = "sha256:69e4d27fa24958e93a208c4380f095a92f35c527fc8744065cc7f541d8d99437"
+digest = "sha256:e8f1bd86979160862245c78731751210fff2ea349f7850453e1c6e1504e4b981"
+ir_digest = "sha256:f5240f572c30d42ef9851f6a836ce71685265d8d8e8ca6b37b0fed061111411b"
 section_count = 4
 
 [[files]]
 path = "semantic/source/apps-tape-src-spec-rs.md"
-digest = "sha256:9d5cc9fc94364202a8c19b8d500407482ced1b30f1414d0f9ccffddb38387502"
-ir_digest = "sha256:24d5c39506969c73d044f64520128e05349548d66b411c2995a0da154c2065c2"
+digest = "sha256:0bde87c2f625f20372de10eb7c1d88f4456a3827509de1482c261719614e34ac"
+ir_digest = "sha256:c6b054847fe3377f1ec41f28bf3a943d3cb20f395df05dc771190d3c691b85fb"
 section_count = 4
 
 [[files]]
 path = "semantic/source/apps-tape-tests-cli-contract-rs.md"
-digest = "sha256:ccae58f10a530a48a3ee05f3f5985d989032c5b867be397e339d5e7d5e83ce0a"
-ir_digest = "sha256:f6110fd06ab7d20409ec9d7d2afdcc7244ad952ad0cebc32c90044684a3f6d96"
+digest = "sha256:bd804274ba4436fb3f58daba677f68a2a987f457c59648938f56dcf9fdfc50d2"
+ir_digest = "sha256:e256f239ab9c673ef834cd9b1f555c3bc27d477fc9b2a24fafd97abe887ebfd5"
 section_count = 3
 
 [[files]]

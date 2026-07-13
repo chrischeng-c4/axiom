@@ -20,6 +20,12 @@ capability_refs:
     gap: "local-replay-command-next-markers"
     coverage: partial
     rationale: "Operational commands emit a next marker or terminal next: done."
+  - id: "subscription-delivery-resources"
+    role: primary
+    claim: "topic-subscription-resource-contract"
+    gap: "topic-subscription-resource-contract"
+    coverage: partial
+    rationale: "The binary creates and inspects local pull/push topic delivery resources."
 fill_sections: [overview, logic, unit-test, changes]
 ---
 
@@ -51,6 +57,9 @@ flowchart TD
     cli["tape CLI"] --> append["append: load store -> append event -> save -> print next replay"]
     cli --> replay["replay: load store -> print events -> next: done"]
     cli --> checkpoint["checkpoint get|put: read or advance durable cursor"]
+    cli --> subscription["subscription create|list|show|delete: persist topic delivery metadata"]
+    subscription --> pull["--pull uses the subscription name as the existing checkpoint identity"]
+    subscription --> push["--push stores endpoint metadata only; no delivery worker"]
     cli --> spec["spec: print routes/openapi/schema"]
     cli --> std["llm/upgrade/issue: delegate to cli-std"]
 ```
@@ -65,8 +74,10 @@ id: tape-td-flow
 flowchart TD
     test["cargo test -p tape --test cli_contract -- --nocapture"] --> help["help_ships_standard_and_replay_commands"]
     test --> roundtrip["append_replay_checkpoint_roundtrip"]
+    test --> subscriptiontest["subscription_cli_surface and subscription_resource_roundtrip"]
     help --> surface["standard and Tape-specific commands visible"]
     roundtrip --> workflow["local file-backed workflow passes"]
+    subscriptiontest --> subscriptionproof["pull/push resource forms and next markers are stable"]
 ```
 
 ## Changes
@@ -84,4 +95,9 @@ changes:
     section: unit-test
     impl_mode: hand-written
     description: "Binary contract tests proving the Tape CLI workflow."
+  - path: apps/tape/src/bin/tape.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Add subscription create/list/show/delete with mutually exclusive pull/push configuration and file-backed journal persistence (#1254)."
 ```
