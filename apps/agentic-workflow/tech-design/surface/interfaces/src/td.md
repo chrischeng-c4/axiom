@@ -47,6 +47,11 @@ numeric GitHub WI id such as `1487` remains validator-compatible when the first
 applicability section is applied. Existing skeletons remain byte-preserved on
 repeated initialization.
 
+Fresh skeletons persist the complete minimal section queue (`logic`, then
+`unit-test`) before applicability starts. Empty legacy skeleton queues expand to
+that same default on their first default-section merge, while non-empty custom
+queues remain authoritative and order-preserving from the brief dispatch onward.
+
 ### Symbols
 
 | Name | Target | Kind | Visibility | Line | Signature |
@@ -1333,8 +1338,25 @@ fn ensure_fill_sections_has_section(content: &str, section_type: &str) -> String
                 .filter(|item| !item.is_empty())
                 .map(ToOwned::to_owned)
                 .collect();
+            let mut changed = false;
+            // An empty generated queue means "use the minimal default", not
+            // "the first applied section is the entire queue". Preserve the
+            // full default before recording the first applicability payload,
+            // otherwise `logic` mutates `[]` into `[logic]` and silently
+            // skips the required `unit-test` section (#1556). A non-empty
+            // list is explicitly authored and remains authoritative.
+            if sections.is_empty() {
+                let default_queue = td_section_queue("applicability");
+                if default_queue.iter().any(|section| section == section_type) {
+                    sections = default_queue;
+                    changed = true;
+                }
+            }
             if !sections.iter().any(|section| section == section_type) {
                 sections.push(section_type.to_string());
+                changed = true;
+            }
+            if changed {
                 lines[idx] = format!("{indent}fill_sections: [{}]", sections.join(", "));
             }
             return finish_lines(lines, content.ends_with('\n'));
@@ -2463,8 +2485,9 @@ fn initialize_td_payload_file(payload_path: &str, content: &str) -> Result<bool>
     Ok(true)
 }
 
-/// Write the initial TD skeleton (frontmatter with `id`/`summary`/
-/// `fill_sections`, no sections yet) for a spec that does not exist on disk.
+/// Write the initial TD skeleton (frontmatter with `id`/`summary` and the
+/// complete minimal default `fill_sections` queue, but no section bodies yet)
+/// for a spec that does not exist on disk.
 /// Idempotent — a no-op when the file already exists, so this never
 /// clobbers authored content on a repeat `aw td create` call. Returns
 /// whether a file was written.
@@ -2490,7 +2513,9 @@ fn initialize_td_spec_skeleton(spec_abs: &std::path::Path, slug: &str) -> Result
         .context("failed to serialize TD skeleton id")?
         .trim_end_matches(['\r', '\n'])
         .to_string();
-    let skeleton = format!("---\nid: {yaml_id}\nsummary: (fill)\nfill_sections: []\n---\n");
+    let default_sections = td_section_queue("applicability").join(", ");
+    let skeleton =
+        format!("---\nid: {yaml_id}\nsummary: (fill)\nfill_sections: [{default_sections}]\n---\n");
     std::fs::write(spec_abs, skeleton)
         .with_context(|| format!("failed to write TD skeleton {}", spec_abs.display()))?;
     Ok(true)
@@ -3141,7 +3166,10 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
         backend.write(&issue_with_implements).await?;
     }
 
-    let queue = td_section_queue(pass);
+    // The generated skeleton carries the full minimal default queue. If an
+    // existing spec explicitly declares a non-empty custom queue, preserve
+    // that exact membership and order from the first dispatch onward (#1556).
+    let queue = td_section_queue_for_spec(&project_root, &spec_path, pass);
     let mut first_payload_created = None;
     if let Some(first_section) = queue.first() {
         let expected_payload = section_payload_path(&project_root, &slug, pass, first_section);
@@ -3300,7 +3328,7 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
             .join(" → "),
     );
     println!();
-    println!("Only sections listed in `fill_sections` are required. Before the skeleton exists, the workflow seeds `logic` then `unit-test` as the minimal default.");
+    println!("Only sections listed in `fill_sections` are required. A fresh skeleton records `logic` then `unit-test` as the minimal default; an existing non-empty custom queue keeps its declared members and order.");
     println!();
     println!(
         "Use frontmatter `summary:` for overview text; requirements stay in the WI body. Do not add legacy prose sections such as `scenarios` unless migrating an older TD."
@@ -5091,6 +5119,47 @@ label = "lib:pg"
     }
 
     #[test]
+    fn merge_spec_section_preserves_complete_default_queue_from_empty_skeleton() {
+        let base = "---\nid: default-queue\nfill_sections: []\n---\n";
+        let payload = concat!(
+            "## Logic\n",
+            "<!-- type: logic lang: mermaid -->\n\n",
+            "```mermaid\n",
+            "---\n",
+            "id: default_queue\n",
+            "entry: start\n",
+            "nodes:\n",
+            "  start: { kind: start }\n",
+            "edges: []\n",
+            "---\n",
+            "flowchart TD\n",
+            "```\n",
+        );
+
+        let merged = merge_spec_section(base, "logic", payload).unwrap();
+
+        assert!(merged.contains("fill_sections: [logic, unit-test]"));
+        assert_eq!(
+            remaining_after_section_in_content(&merged, "applicability", "logic"),
+            vec!["unit-test".to_string()]
+        );
+    }
+
+    #[test]
+    fn merge_spec_section_preserves_explicit_custom_queue_order() {
+        let base = "---\nid: custom-queue\nfill_sections: [unit-test, logic]\n---\n";
+        let payload = "## Logic\n<!-- type: logic lang: mermaid -->\n\n```mermaid\ncustom\n```\n";
+
+        let merged = merge_spec_section(base, "logic", payload).unwrap();
+
+        assert!(merged.contains("fill_sections: [unit-test, logic]"));
+        assert_eq!(
+            td_section_queue_for_content(&merged, "applicability"),
+            vec!["unit-test".to_string(), "logic".to_string()]
+        );
+    }
+
+    #[test]
     fn merge_spec_section_repairs_fill_sections_for_existing_type() {
         let base = concat!(
             "---\n",
@@ -5707,7 +5776,10 @@ label = "lib:pg"
         let content = std::fs::read_to_string(&spec_abs).unwrap();
         assert!(content.starts_with("---\n"), "content: {content}");
         assert!(content.contains("id: some-slug"), "content: {content}");
-        assert!(content.contains("fill_sections: []"), "content: {content}");
+        assert!(
+            content.contains("fill_sections: [logic, unit-test]"),
+            "content: {content}"
+        );
 
         // Idempotent: a second call on an already-authored file must not
         // clobber it (a repeat `aw td create` brief call between section
@@ -5754,6 +5826,11 @@ label = "lib:pg"
         assert!(
             errors.is_empty(),
             "numeric skeleton must accept its first applicability section: {errors:?}\n{merged}"
+        );
+        assert_eq!(
+            remaining_after_section_in_content(&merged, "applicability", "logic"),
+            vec!["unit-test".to_string()],
+            "numeric TDs must preserve the default test section after logic"
         );
 
         let (frontmatter, _) = split_frontmatter(&skeleton).expect("skeleton frontmatter");
