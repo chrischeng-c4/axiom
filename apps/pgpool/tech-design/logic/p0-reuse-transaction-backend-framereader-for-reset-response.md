@@ -26,3 +26,22 @@ flowchart LR
   release --> reset[DISCARD ALL using same reader]
   reset --> idle([safe idle reuse])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/pool/backend_pool.rs
+    action: modify
+    section: pgpool-reset-reader-reuse
+    impl_mode: hand-written
+  - path: apps/pgpool/src/pool/transaction.rs
+    action: modify
+    section: pgpool-reset-reader-reuse
+    impl_mode: hand-written
+  - path: apps/pgpool/tests/pool_modes.rs
+    action: modify
+    section: pgpool-reset-reader-reuse
+    impl_mode: hand-written
+```
