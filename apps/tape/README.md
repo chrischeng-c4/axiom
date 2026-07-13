@@ -39,6 +39,8 @@ real-service external peer calibration remain separate work roots.
 | Standard Operational Endpoints | #768 | implemented | verified | smoke | ready | `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` served for real via `libs/service-http` (#1325), with drain-aware readiness and `tape serve` |
 | Kubernetes-Native Deployment | #768 | implemented | verified | smoke | ready | CRD/operator/instance render + dockerfile CLI (#1328); StatefulSet topology, offline render tests; no live kind cluster proof yet |
 | Stateful Service Workload | #1554 | implemented | verified | smoke | ready | shared stateful-storage baseline composed from Tape's journal, raft, snapshot/backup, security boundary, and StatefulSet evidence; no duplicated runtime contract |
+| Backup & Restore | #1585 | implemented | passing | conformance | not_ready | exact journal snapshots ship through `libs/service-backup`; cold recovery only seeds a fresh PVC before Raft catch-up, never a live in-place restore |
+| Replica Sync & Bootstrap | #1327, #1585 | implemented | passing | conformance | not_ready | Raft owns live replica synchronization; an explicit `TAPE_BOOTSTRAP_SEED_URI` can seed only an empty replacement PVC before normal delta catch-up |
 | Primary Replicas | #1327 | implemented | planned | dogfood | not_ready | raft-host auto-mode leader/follower primary-replica topology over the whole journal; live 3-node kill-9 failover proven, peer-TLS is config-surface + fail-fast validation only (raft-host h2c has no TLS seam yet) |
 | CLI Interface | #768 | implemented | verified | smoke | ready | `tape` CLI for local replay/admin, spec, and agent docs |
 | CLI Standard Surface | #768 | implemented | verified | smoke | ready | shared `llm`, `upgrade`, and `issue` command groups |
@@ -429,6 +431,68 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | stateful-service-workload-projection | change | #1554 | implemented | passing | smoke | `aw capability check --project tape --skip-issue-inventory`; composes Topic Replay Journal, Primary Replicas, HTTP/2 API List, Kubernetes-Native Deployment, and Security Hardening without duplicating their claims |
+
+### Backup & Restore
+
+ID: backup-restore
+Type: Service
+Root WI: #1585
+Status: confirmed
+Surfaces: Admin HTTP: `GET /admin/backup` yields the exact whole-journal
+`JournalSnapshot`; CLI: `tape backup` ships those bytes through
+`libs/service-backup`; Runtime: `tape serve --bootstrap-seed-uri` restores only
+into a fresh replica PVC before Raft starts.
+EC Dimensions: behavior: `cargo test -p tape --test backup --test bootstrap` -
+snapshot transport and cold-seed conformance.
+Required Verification: conformance
+Promise:
+Tape writes no second backup format. A backup object is the same
+`JournalSnapshot` bytes that the state machine snapshots and restores. A
+disaster-recovery seed is deliberately cold and destructive only to an *empty*
+PVC: Tape validates the object, atomically prepares the per-node state-machine
+snapshot and applied floor, then lets normal Raft log/snapshot catch-up resume.
+There is no online `POST /admin/restore` that can overwrite a live leader or
+follower.
+Gate Inventory:
+- apps/tape/src/{backup,raft}.rs
+- libs/service-backup/src/source.rs
+- apps/tape/tests/{backup,bootstrap}.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| exact-journal-snapshot-backup | epic | #1329 | implemented | passing | conformance | apps/tape/src/backup.rs<br>apps/tape/tests/backup.rs |
+| fresh-pvc-cold-recovery-seed | change | #1585 | implemented | passing | conformance | apps/tape/src/raft.rs<br>apps/tape/tests/bootstrap.rs |
+
+### Replica Sync & Bootstrap
+
+ID: replica-sync-bootstrap
+Type: Service
+Root WI: #1327, #1585
+Status: confirmed
+Surfaces: RaftHost: leader forwarding, committed apply, InstallSnapshot, and
+follower catch-up; Backup seed: exact `file://` or backup-enabled `s3://`
+object read through `libs/service-backup` before an empty PVC joins the group.
+EC Dimensions: behavior: `cargo test -p tape --test raft_cluster --test
+bootstrap` - live replica convergence and seed-before-catch-up conformance;
+stability: `cargo test -p tape --test raft_failover --test raft_persistence` -
+kill-9 failover and restart recovery.
+Required Verification: conformance, dogfood
+Promise:
+Existing PVCs recover their local Raft state and synchronise through
+`raft-host`; a replacement with no local state may load one exact external
+snapshot before it catches up. Backup artifacts are a cold seed or DR path,
+not a substitute for ordinary live replication, leader forwarding, or
+InstallSnapshot.
+Gate Inventory:
+- apps/tape/src/{raft,bin/tape}.rs
+- apps/tape/tests/{raft_cluster,raft_failover,raft_persistence,bootstrap}.rs
+- libs/raft-host
+- libs/service-backup/src/source.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| raft-log-existing-pvc-sync | epic | #1327 | implemented | passing | conformance | apps/tape/tests/raft_cluster.rs<br>apps/tape/tests/raft_persistence.rs |
+| empty-pvc-external-backup-seed | change | #1585 | implemented | passing | conformance | apps/tape/src/raft.rs<br>apps/tape/tests/bootstrap.rs |
 
 ### Primary Replicas
 

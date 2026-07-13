@@ -140,6 +140,9 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
         extra_env.push(json!({ "name": "TAPE_AUTH", "value": "required" }));
         extra_env.push(json!({ "name": "TAPE_TOKEN_REGISTRY_FILE", "value": TOKEN_REGISTRY_FILE }));
     }
+    if let Some(seed_uri) = &s.bootstrap_seed_uri {
+        extra_env.push(json!({ "name": "TAPE_BOOTSTRAP_SEED_URI", "value": seed_uri }));
+    }
 
     let mut sts = render::sharded_statefulset(ShardedStatefulSet {
         cx,
