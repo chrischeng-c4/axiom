@@ -43,3 +43,10 @@ command = "cargo test -p vat --test vat_compose -- --nocapture"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "vat-compose-bounded-compose-subset-up-down-ps-logs"
 description = "Full compose import -> up -d -> ps -> logs -> down cycle against a real Docker backend (skips when docker not available)"
+
+[[test_commands]]
+id = "vat-local-k8s-phase0-real-host"
+command = "VAT_LOCAL_K8S_E2E=1 cargo test -p vat --test vat_local_k8s_phase0 -- --ignored --nocapture"
+capability_id = "agent-native-gpu-native-dev-containers"
+claim_id = "local-kubernetes-cluster-service-and-vat-cluster"
+description = "Opt-in Apple-container Phase 0 control gate: creates an isolated Alpine machine, records machine API evidence, and blocks k3s probing until command execution succeeds"
