@@ -2,16 +2,16 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-13T17:11:50.450299+00:00"
-digest = "sha256:4fabaab33fc50f5660ff7463d93733a55c8bc6dbf14f1cc85ceda651a494cd12"
-source_digest = "sha256:4fabaab33fc50f5660ff7463d93733a55c8bc6dbf14f1cc85ceda651a494cd12"
-ir_digest = "sha256:4d69bcae5046c267f3326ba2c81fc072664e6de7f0947c35c610c5b2c4a23d05"
+generated_at = "2026-07-13T17:14:34.565280+00:00"
+digest = "sha256:dab6ece99e055667e526fb72bcfe53da5939e652d5e2603bf323c25be358705c"
+source_digest = "sha256:dab6ece99e055667e526fb72bcfe53da5939e652d5e2603bf323c25be358705c"
+ir_digest = "sha256:42dcad9769d4d8130742dd2d122577c868a935ceb01772a6f1a7ba556e69f263"
 
 [[files]]
 path = "interfaces/rest/adopt-shared-runtime-security-and-agent-interface.md"
-digest = "sha256:01e3fc3d046de387d1513baddbe653f4b947b1ed587f1af01c3ceb1950c5e6ef"
-ir_digest = "sha256:410da80057cfb2255570fa2ba1327f796ad41360b64ca797e80571df063fc21a"
-section_count = 1
+digest = "sha256:8395a766b9af0286c99d3c84f759c4873de305419e6cc289111661654220b9ce"
+ir_digest = "sha256:39f7956255e89b5e88153e4673abde9ecf7f38cb2134e582b59354e771f7be62"
+section_count = 2
 
 [[files]]
 path = "interfaces/rest/bootstrap-service-contract-and-durable-raw-event-vertical-slice.md"
