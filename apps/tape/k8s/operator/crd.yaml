@@ -35,6 +35,10 @@ spec:
                 default: off
                 description: 'Request-auth mode for the data plane: `off` (default) or `required`. A flat string, not an enum with divergent variant schemas (Kubernetes structural schemas cannot represent those). `required` takes effect only together with [`Self::tokens_secret`].'
                 type: string
+              bootstrapSeedUri:
+                description: Exact backup object URI used only when a replacement replica starts on a fresh PVC. The server consumes it before Raft catch-up and refuses a non-empty data directory, so this is cold recovery rather than live replica synchronization.
+                nullable: true
+                type: string
               graceSecs:
                 default: 10
                 description: Graceful drain window on SIGTERM (seconds); tracks `terminationGracePeriodSeconds`. Defaults to 10 (`TAPE_GRACE_SECS`).
@@ -57,7 +61,7 @@ spec:
                 default:
                   cpu: ''
                   memory: ''
-                description: CPU/memory request==limit (Guaranteed QoS).
+                description: CPU/memory request==limit (Guaranteed QoS). @spec libs/operator/tech-design/semantic/source/libs-operator-src-service-rs.md#source
                 properties:
                   cpu:
                     default: ''
