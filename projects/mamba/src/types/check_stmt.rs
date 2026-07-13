@@ -1455,7 +1455,27 @@ impl TypeChecker {
         let value_ty = self.check_expr(value);
         let is_slice = matches!(index.node, Expr::Slice { .. });
         let expected = match self.semantic_ty(obj_ty) {
-            Ty::List(elem) if is_slice => Some(self.tcx.intern(Ty::List(elem))),
+            Ty::List(elem) if is_slice => {
+                // #1595: slice assignment (`obj[a:b:c] = rhs`) accepts ANY
+                // iterable RHS in Python — CPython copies elements by
+                // iterating, it never requires `rhs` to literally be a
+                // list (a generator, a custom `__iter__` class, a tuple,
+                // a str, ... are all legal). Only enforce the element-type
+                // contract when the RHS is a statically classifiable
+                // container/string shape; an RHS we can't classify this
+                // way (a user/external class, `Any`, a union, ...) defers
+                // permissively rather than hard-erroring, since we cannot
+                // prove it wrong.
+                let rhs_classifiable = matches!(
+                    self.semantic_ty(value_ty),
+                    Ty::List(_) | Ty::Set(_) | Ty::Dict(..) | Ty::Str | Ty::Tuple(_)
+                );
+                if rhs_classifiable {
+                    Some(self.tcx.intern(Ty::List(elem)))
+                } else {
+                    None
+                }
+            }
             Ty::List(elem) => Some(elem),
             Ty::Dict(_, value) => Some(value),
             Ty::Any | Ty::Error => None,

@@ -965,6 +965,16 @@ impl TypeChecker {
                         ..
                     } => {
                         if role == ClassRole::Instance {
+                            // #1595: an external/stdlib class instance (e.g.
+                            // `functools.partial(...)`) with a typeshed-modeled
+                            // `__call__` is resolved+arg-checked above via
+                            // `external_callable_target`'s BoundMember branch;
+                            // honor that result instead of falling through to
+                            // the user-class-only dunder check below, which
+                            // never recognizes external classes as callable.
+                            if structured_stdlib_handled {
+                                return stdlib_ret.unwrap_or_else(|| self.tcx.any());
+                            }
                             for arg in args {
                                 self.check_call_arg(arg);
                             }
@@ -2254,6 +2264,26 @@ impl TypeChecker {
         ))
     }
 
+    /// `typing.NamedTuple` (and its internal
+    /// `_typeshed._type_checker_internals.NamedTupleFallback` twin — typeshed
+    /// models `NamedTuple` as inheriting straight from it) own an `__init__`
+    /// whose signature is the *functional*
+    /// `collections.namedtuple(typename, field_names, ...)` factory shape.
+    /// That contract is only meaningful when `NamedTuple`/`NamedTupleFallback`
+    /// is the callee *itself* (`NamedTuple("Point", [...])`) — it is never the
+    /// real constructor for a concrete `class Foo(NamedTuple): ...` subclass
+    /// (e.g. `inspect.ClosureVars`), whose fields are metaclass-synthesized
+    /// into their own field-positional `__new__`/`__init__` that typeshed
+    /// doesn't model per-subclass. So matching an *inherited* hit against the
+    /// factory's params falsely rejects legal field-positional construction
+    /// (#1595); treat that specific case as unresolved rather than as an
+    /// enforceable owner. A *direct* hit (the callee is `NamedTuple` itself)
+    /// must still be enforced, so this only applies to the MRO-walked path.
+    fn is_named_tuple_base_owner(module: &str, qualifier: &str) -> bool {
+        (module == "typing" && qualifier == "NamedTuple")
+            || (module == "_typeshed._type_checker_internals" && qualifier == "NamedTupleFallback")
+    }
+
     fn structured_stdlib_constructor(
         module: &str,
         qualifier: &str,
@@ -2269,6 +2299,10 @@ impl TypeChecker {
             if let Some((owner_module, owner_qualifier)) =
                 Self::structured_stdlib_member_owner(module, qualifier, name)
             {
+                // Inherited-only guard: see `is_named_tuple_base_owner` (#1595).
+                if Self::is_named_tuple_base_owner(&owner_module, &owner_qualifier) {
+                    return None;
+                }
                 return Some((owner_module, owner_qualifier, name));
             }
         }
@@ -2357,6 +2391,32 @@ impl TypeChecker {
                     qualifier,
                     name: name.to_string(),
                     access: StdlibSpecAccess::Constructor,
+                    receiver: Some(receiver.clone()),
+                })
+            }
+            // #1595: an *instance* of an external/stdlib class (e.g. the
+            // `functools.partial` object bound to `usd = functools.partial(...)`)
+            // is itself callable whenever typeshed models a `__call__` method
+            // on that class. `class_defines_dunder` only walks user-defined
+            // classes, so without this the call-checking fallback in the
+            // `Ty::Class { role: Instance, .. }` arm always hard-errors
+            // "called value is not a function" for external instances,
+            // regardless of a real `__call__` contract existing.
+            Ty::Class {
+                role: ClassRole::Instance,
+                external: Some(receiver),
+                ..
+            } => {
+                let (module, qualifier) = Self::structured_stdlib_member_owner(
+                    &receiver.module,
+                    &receiver.name,
+                    "__call__",
+                )?;
+                Some(ResolvedStdlibSpecCall {
+                    module,
+                    qualifier,
+                    name: "__call__".to_string(),
+                    access: StdlibSpecAccess::BoundMember,
                     receiver: Some(receiver.clone()),
                 })
             }
@@ -4251,7 +4311,26 @@ impl TypeChecker {
             }
         }
         if accepted.is_empty() {
-            if !indeterminate && rejected.len() == candidates.len() {
+            // A small allow-list of constructors (`ImportError`, `range`,
+            // `type`) are frequently probed with deliberately mismatched
+            // shapes whose *legal* Python outcome is a catchable runtime
+            // `TypeError` (e.g. `ImportError(msg, invalid=1)`,
+            // `range(1, 2, 3, 4)`) rather than a compile-time abort, because
+            // mamba's own runtime constructors for these three independently
+            // validate their arguments and raise the matching TypeError —
+            // hard-rejecting here would kill the whole program before that
+            // runtime check ever runs. This is deliberately NOT a blanket
+            // bypass for every stdlib constructor: most other constructors
+            // (e.g. `bytearray`, `bytes`, `complex`, `classmethod`,
+            // `staticmethod`, `property`, `filter`, `Unicode*Error`) have no
+            // such runtime arg validation in mamba yet, so removing their
+            // compile-time wall would let bad-typed args leak through with
+            // no error at all — regressing the `type/` dimension guard
+            // fixtures for those classes (#1595).
+            let constructor_bypass = target.access == StdlibSpecAccess::Constructor
+                && target.module == "builtins"
+                && matches!(target.qualifier.as_str(), "ImportError" | "range" | "type");
+            if !indeterminate && rejected.len() == candidates.len() && !constructor_bypass {
                 if let Some((span, message, _)) = rejected.into_iter().max_by(|left, right| {
                     left.2
                         .cmp(&right.2)

@@ -334,25 +334,39 @@ unsafe extern "C" fn dispatch_total_ordering(args_ptr: *const MbValue, nargs: us
     let cls = args.get(0).copied().unwrap_or_else(MbValue::none);
     // Resolve the class name (bare-name string from class-body decoration, or
     // a `type` object from `type("E", (), {...})`).
-    let name = extract_str(cls).or_else(|| {
-        cls.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
-                if class_name == "type" {
-                    return fields
-                        .read()
-                        .unwrap()
-                        .get("__name__")
-                        .copied()
-                        .and_then(extract_str);
+    //
+    // #1595: a `type` object's `__name__` field is the *display* name, which
+    // diverges from its `CLASS_REGISTRY` key whenever the declaration goes
+    // through the execution-unique runtime-key aliasing (every ordinary
+    // `class Order: ...` statement does, e.g. key
+    // `__mamba_user_class__:file.py:N:Order@1` for display name `"Order"`).
+    // Reading `__name__` directly always missed the registry, so
+    // `class_defines_own_method` never found the class's own `__lt__`/`__eq__`
+    // and total_ordering wrongly raised "no ordering operation" for every
+    // decorated class. `type_object_registry_key` is the established
+    // accessor other stdlib modules use to go from a `type` object back to
+    // its real registry key.
+    let name = extract_str(cls)
+        .or_else(|| super::super::builtins::type_object_registry_key(cls))
+        .or_else(|| {
+            cls.as_ptr().and_then(|ptr| unsafe {
+                if let ObjData::Instance {
+                    ref class_name,
+                    ref fields,
+                } = (*ptr).data
+                {
+                    if class_name == "type" {
+                        return fields
+                            .read()
+                            .unwrap()
+                            .get("__name__")
+                            .copied()
+                            .and_then(extract_str);
+                    }
                 }
-            }
-            None
-        })
-    });
+                None
+            })
+        });
     match name {
         Some(name) => install_total_ordering(&name, cls),
         None => raise_exc("TypeError", "total_ordering() argument must be a type"),
