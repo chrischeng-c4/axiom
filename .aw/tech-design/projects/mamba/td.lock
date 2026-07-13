@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/mamba"
-generated_at = "2026-07-13T02:45:03.459871+00:00"
-digest = "sha256:466c076566c81906a71f8fa8efdf770bfce05dabc362c6ca4fd98cc4bc55b1d3"
-source_digest = "sha256:466c076566c81906a71f8fa8efdf770bfce05dabc362c6ca4fd98cc4bc55b1d3"
-ir_digest = "sha256:258dc2eef4c5a5c1deed83d42e1dd728bcc032ef757435a941511926f15e2634"
+generated_at = "2026-07-13T02:52:06.209097+00:00"
+digest = "sha256:c3d14815ad0f5cc0c87b86b8eba02ce02f9dcf93a4d11998eae30f0d5cd29873"
+source_digest = "sha256:c3d14815ad0f5cc0c87b86b8eba02ce02f9dcf93a4d11998eae30f0d5cd29873"
+ir_digest = "sha256:3ac520bbb0b5ee35e81781adc6957966eccfeda50c1f80f5f86f06ca1fb36b3d"
 
 [[files]]
 path = "README.md"
@@ -93,8 +93,8 @@ section_count = 3
 
 [[files]]
 path = "logic/mamba-language-core-restore-class-comprehension-cells.md"
-digest = "sha256:718968aa376ab61b85d7c981b7f1a100e7eb094074e28eb3b0e7c5a1caded8af"
-ir_digest = "sha256:2d1db0771e57f2949432e1df2656a00b9db0acf33310b11e773f95d68b802901"
+digest = "sha256:4a4a00abddeada1b354a9ffa7a87c64e7976e248fde4bc26dc5ba92c7804605d"
+ir_digest = "sha256:6de52fb98fcf7df896dc10e9cc57b2f243cf63064da5906b1006228baab2dd21"
 section_count = 2
 
 [[files]]
