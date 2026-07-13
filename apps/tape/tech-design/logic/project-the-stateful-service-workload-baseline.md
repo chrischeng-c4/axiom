@@ -1,5 +1,12 @@
 ---
 id: "1554"
+capability_refs:
+  - id: "stateful-service-workload"
+    role: primary
+    gap: "stateful-service-workload-projection"
+    claim: "stateful-service-workload-projection"
+    coverage: partial
+    rationale: "This TD adds the shared baseline projection and explicitly composes existing Tape evidence without duplicating runtime ownership."
 summary: >
   WI #1554 adds the required stateful-service-workload baseline root to the
   Tape capability map. The root composes existing journal, raft, backup,
