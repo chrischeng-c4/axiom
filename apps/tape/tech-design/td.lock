@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-13T07:58:32.246111+00:00"
-digest = "sha256:c28025c299e96384d01bdac7ec3eca967d25c079c413c93fc54c34071115e134"
-source_digest = "sha256:c28025c299e96384d01bdac7ec3eca967d25c079c413c93fc54c34071115e134"
-ir_digest = "sha256:511f28d16f0cab4db5dad61e917b0e25498c033bf0870b11611ec87bd9d820f7"
+generated_at = "2026-07-13T08:07:47.233233+00:00"
+digest = "sha256:88daa94faf3374217b17d1c48f5c404b531a8c3c6c219c4a0874699adf353389"
+source_digest = "sha256:88daa94faf3374217b17d1c48f5c404b531a8c3c6c219c4a0874699adf353389"
+ir_digest = "sha256:fdb235bce168db023e2f0a5c63ea0629cd39dd3fc425d3b7b055c218ecba40de"
 
 [[files]]
 path = "README.md"
@@ -29,6 +29,12 @@ section_count = 3
 path = "logic/expose-subscriptions-as-topic-delivery-resources.md"
 digest = "sha256:3b21917a9022ea8cd1410f913e1a0382057b62162b50d086fe1c99bc8a55e984"
 ir_digest = "sha256:09aacd5ec58eaab92a149135287d13b492e0cf980a000ec3290e2e322a46ca99"
+section_count = 3
+
+[[files]]
+path = "logic/normalize-replay-checkpoints-into-pull-subscriptions.md"
+digest = "sha256:1f61ae73eb41d5ef90d5aa04670eef210064f4246d2821ce70de0ce7a3ea63db"
+ir_digest = "sha256:aca744a06a27f4f86ab56d5eead6f8561c915e3693257dd924223af272b9abd3"
 section_count = 3
 
 [[files]]
