@@ -40,6 +40,8 @@ mod td_claim_test;
 mod td_dispatch_chain_test;
 #[path = "cli/tests/td_no_merge_test.rs"]
 mod td_no_merge_test;
+#[path = "cli/tests/wi_close_remote_test.rs"]
+mod wi_close_remote_test;
 // CODEGEN-END
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/semantic/agentic-workflow-tests.md#schema
 // CODEGEN-BEGIN

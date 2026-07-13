@@ -3412,41 +3412,182 @@ async fn run_update(args: UpdateArgs) -> Result<()> {
 // Close
 // ---------------------------------------------------------------------------
 
+// @spec apps/agentic-workflow/tech-design/semantic/wi-close-remote-rehydration.md#R3
+fn remote_close_not_found_message(kind: &str, repo: Option<&str>, id: &str) -> String {
+    let repo_context = repo
+        .map(|repo| format!(" for repository '{repo}'"))
+        .unwrap_or_else(|| " for the configured repository".to_string());
+    let repo_arg = repo
+        .map(|repo| format!(" --repo {repo}"))
+        .unwrap_or_default();
+    format!(
+        "issue '{id}' not found on {kind} backend{repo_context}; verify the tracker id and repository with `aw wi show {id}{repo_arg}`"
+    )
+}
+
+// Resolve and close through the configured remote backend. The initial read is
+// both the existence check and the state rehydration needed for idempotence:
+// an already-closed issue is cached/output as closed without posting the
+// reason or issuing a second close mutation.
+// @spec apps/agentic-workflow/tech-design/semantic/wi-close-remote-rehydration.md#R1 #R2
+async fn close_rehydrated_remote_issue(
+    project_root: &Path,
+    kind: &str,
+    repo: Option<String>,
+    host: Option<String>,
+    id: &str,
+    reason: Option<&str>,
+) -> Result<Option<Issue>> {
+    let remote = make_backend(kind, project_root, repo.clone(), host.clone())
+        .context("Failed to create remote backend")?;
+    let Some(mut issue) = remote
+        .get(id)
+        .await
+        .with_context(|| format!("failed to resolve issue '{id}' on {kind} backend"))?
+    else {
+        return Ok(None);
+    };
+
+    if issue.state != IssueState::Closed {
+        remote
+            .close(id, reason)
+            .await
+            .with_context(|| format!("failed to close issue '{id}' on {kind} backend"))?;
+        issue.state = IssueState::Closed;
+    }
+
+    let cache = remote_read_cache_backend(kind, repo.as_deref(), host.as_deref());
+    cache
+        .write(&issue)
+        .await
+        .with_context(|| format!("failed to cache closed {kind} issue '{id}'"))?;
+    Ok(Some(issue))
+}
+
 // @spec apps/agentic-workflow/tech-design/core/logic/issues-backend.md#R3
+// @spec apps/agentic-workflow/tech-design/semantic/wi-close-remote-rehydration.md#R1 #R2 #R3 #R4
 async fn run_close(args: CloseArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
 
-    // Close locally first
+    // Preserve the existing local lifecycle path whenever a mirror is present.
+    // A missing numeric mirror is not terminal when --push names a configured
+    // tracker: resolve and rehydrate the canonical remote issue instead.
     let local = make_backend("local", &project_root, None, None)?;
-    if let Err(e) = local.close(&args.id, args.reason.as_deref()).await {
-        if args.json {
-            let msg = e.to_string();
-            if msg.contains("not found") {
-                emit_json_error(&msg, IssueErrorCode::NotFound);
-            } else {
-                emit_json_error(&msg, IssueErrorCode::Backend);
+    let local_current = match local.get(&args.id).await {
+        Ok(issue) => issue,
+        Err(e) => {
+            if args.json {
+                emit_json_error(&e.to_string(), IssueErrorCode::Backend);
+            }
+            return Err(e);
+        }
+    };
+
+    let mut remote_handled = false;
+    let closed_issue = if local_current.is_some() {
+        if let Err(e) = local.close(&args.id, args.reason.as_deref()).await {
+            if args.json {
+                let msg = e.to_string();
+                if msg.contains("not found") {
+                    emit_json_error(&msg, IssueErrorCode::NotFound);
+                } else {
+                    emit_json_error(&msg, IssueErrorCode::Backend);
+                }
+            }
+            return Err(e);
+        }
+        local.get(&args.id).await?
+    } else if args.push && args.id.parse::<u64>().is_ok() {
+        let (kind, repo, host) = match resolve_backend(args.repo.clone(), &project_root) {
+            Ok(resolved) => resolved,
+            Err(e) => {
+                if args.json {
+                    emit_json_error(&e.to_string(), IssueErrorCode::Backend);
+                }
+                return Err(e);
+            }
+        };
+        match close_rehydrated_remote_issue(
+            &project_root,
+            &kind,
+            repo.clone(),
+            host,
+            &args.id,
+            args.reason.as_deref(),
+        )
+        .await
+        {
+            Ok(Some(issue)) => {
+                remote_handled = true;
+                Some(issue)
+            }
+            Ok(None) => {
+                let msg = remote_close_not_found_message(&kind, repo.as_deref(), &args.id);
+                if args.json {
+                    emit_json_error(&msg, IssueErrorCode::NotFound);
+                }
+                anyhow::bail!(msg);
+            }
+            Err(e) => {
+                if args.json {
+                    emit_json_error(&e.to_string(), IssueErrorCode::Backend);
+                }
+                return Err(e);
             }
         }
-        return Err(e);
-    }
+    } else {
+        let msg = format!("issue '{}' not found", args.id);
+        if args.json {
+            emit_json_error(&msg, IssueErrorCode::NotFound);
+        }
+        anyhow::bail!(msg);
+    };
 
-    // Fetch the updated issue for output
-    let closed_issue = local.get(&args.id).await?;
-
-    // Optionally push to remote
-    if args.push {
+    // A real local lifecycle mirror still pushes its platform identity after
+    // the local close. Resolve the configured backend (GitHub or GitLab), not a
+    // hard-coded GitHub backend, and reuse the same idempotent remote path.
+    if args.push && !remote_handled {
         if let Some(ref issue) = closed_issue {
-            if let Some(remote_id) = issue.github_id.or(issue.gitlab_id) {
-                let remote = make_backend("github", &project_root, args.repo.clone(), None)
-                    .context("Failed to create remote backend")?;
-                if let Err(e) = remote
-                    .close(&remote_id.to_string(), args.reason.as_deref())
-                    .await
-                {
+            let (kind, repo, host) = match resolve_backend(args.repo.clone(), &project_root) {
+                Ok(resolved) => resolved,
+                Err(e) => {
                     if args.json {
                         emit_json_error(&e.to_string(), IssueErrorCode::Backend);
                     }
                     return Err(e);
+                }
+            };
+            let remote_id = match kind.as_str() {
+                "github" => issue.github_id,
+                "gitlab" => issue.gitlab_id,
+                _ => issue.github_id.or(issue.gitlab_id),
+            };
+            if let Some(remote_id) = remote_id {
+                match close_rehydrated_remote_issue(
+                    &project_root,
+                    &kind,
+                    repo.clone(),
+                    host,
+                    &remote_id.to_string(),
+                    args.reason.as_deref(),
+                )
+                .await
+                {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        let id = remote_id.to_string();
+                        let msg = remote_close_not_found_message(&kind, repo.as_deref(), &id);
+                        if args.json {
+                            emit_json_error(&msg, IssueErrorCode::NotFound);
+                        }
+                        anyhow::bail!(msg);
+                    }
+                    Err(e) => {
+                        if args.json {
+                            emit_json_error(&e.to_string(), IssueErrorCode::Backend);
+                        }
+                        return Err(e);
+                    }
                 }
             }
         }
@@ -8314,5 +8455,7 @@ changes:
       WI routing moved to issue_platform projection. Issue #1506 factors the
       shared create implementation into emitting and silent variants so
       explicit-source adoption can link its tracker without adding a second
-      stdout document.
+      stdout document. Issue #1551 adds configured-backend numeric close
+      rehydration, idempotent remote mutation, and backend/repository-specific
+      recovery diagnostics; #1583 is duplicate reproduction evidence.
 ```

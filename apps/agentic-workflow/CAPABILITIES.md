@@ -115,6 +115,7 @@ Gate Inventory:
 | Wi Create Help Smoke | change | - | implemented | verified | smoke | `./target/debug/aw wi create --help`; apps/agentic-workflow/tech-design/specs/3909.md |
 | Wi Create Remote Flag Tests | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib wi_create_remote -- --nocapture`; apps/agentic-workflow/tech-design/specs/3909.md |
 | Wi Remove Agent Estimate Unit Command | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib wi_remove_agent_estimate -- --nocapture`; apps/agentic-workflow/tech-design/specs/3910.md |
+| WI close remote rehydration | change | #1551 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests wi_close_remote_ -- --nocapture`; apps/agentic-workflow/tech-design/semantic/wi-close-remote-rehydration.md; #1583 is a duplicate field reproducer |
 
 ### TD/CB Lifecycle Automation
 
