@@ -596,6 +596,11 @@ async fn test_code_check_refuses_configured_red_ec_gate() {
         stdout
     );
     assert!(
+        stdout.contains("\"next\":{\"command\":\"aw ec gen --project demo --verify\"}"),
+        "error envelope must carry the runnable EC remediation command, got:\n{}",
+        stdout
+    );
+    assert!(
         stdout.contains(&format!("aw td code-check {slug}")),
         "error message must name the re-run command, got:\n{}",
         stdout

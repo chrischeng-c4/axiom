@@ -4,11 +4,20 @@
 // reason: EC inventory/check generation is a new workflow surface not yet covered by deterministic CLI codegen primitives.
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
+use std::collections::{hash_map::DefaultHasher, BTreeMap, BTreeSet};
+use std::fs::{self, File, OpenOptions};
+use std::hash::{Hash, Hasher};
+use std::io::Read;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
+use std::process::{Child, ExitStatus, Stdio};
+use std::sync::{Mutex, OnceLock};
+use std::thread;
+use std::time::{Duration, Instant};
 use walkdir::WalkDir;
 
 const EC_MANIFEST_VERSION: u8 = 1;
@@ -26,6 +35,14 @@ const EC_TOOL_END_MARKER: &str = "AW-EC-TOOL-END";
 const EC_DOC_BEGIN_MARKER: &str = "AW-EC-DOC-BEGIN";
 const EC_DOC_END_MARKER: &str = "AW-EC-DOC-END";
 const EC_CATEGORIES: [&str; 4] = ["behavior", "efficiency", "security", "stability"];
+const EC_COMMAND_TIMEOUT_ENV: &str = "AW_EC_COMMAND_TIMEOUT_SECS";
+const DEFAULT_EC_COMMAND_TIMEOUT_SECS: u64 = 30 * 60;
+
+/// Process-local companion to the cross-process file lock below. `flock`
+/// behavior for a second descriptor in the same process differs by platform,
+/// while tests and embedded callers can issue concurrent terminal checks from
+/// one process. Keep that shape single-flight too.
+static TERMINAL_EC_GATE_PATHS: OnceLock<Mutex<BTreeSet<PathBuf>>> = OnceLock::new();
 
 /// The canonical EC dimension/category names. The single source of truth shared
 /// with capability-type required-dimension derivation.
@@ -492,6 +509,30 @@ pub struct EcVerifyCommandResult {
     pub exit_code: Option<i32>,
     pub stdout_tail: String,
     pub stderr_tail: String,
+}
+
+struct EcCommandOutput {
+    status: ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    timed_out: bool,
+}
+
+/// Keeps one terminal EC inventory evaluation active for a project across both
+/// processes and in-process callers. The file lock is automatically released
+/// if AW itself exits, so a crashed caller cannot leave a stale gate behind.
+struct TerminalEcGateLock {
+    path: PathBuf,
+    file: Option<File>,
+}
+
+impl Drop for TerminalEcGateLock {
+    fn drop(&mut self) {
+        // Close first, then allow another in-process caller to acquire the
+        // path. That preserves the same ordering as the cross-process lock.
+        self.file.take();
+        release_terminal_ec_gate_path(&self.path);
+    }
 }
 
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -3784,10 +3825,123 @@ pub(crate) fn terminal_ec_gate_summary(
     // "no inventory configured" advisory case (never a silent pass, but
     // never a spurious command run either).
     load_ec_manifest(&ctx).ok()??;
+    let _lock = match try_acquire_terminal_ec_gate_lock(&ctx.project_root, &ctx.project) {
+        Ok(Some(lock)) => lock,
+        Ok(None) => {
+            return Some(terminal_ec_gate_blocked_summary(
+                &ctx,
+                "another terminal EC evaluation is already running; wait for it to finish, then retry the same `aw td code-check <slug>` command",
+            ));
+        }
+        Err(err) => {
+            return Some(terminal_ec_gate_blocked_summary(
+                &ctx,
+                &format!(
+                    "could not acquire the terminal EC single-flight lock: {err}; retry `aw td code-check <slug>`"
+                ),
+            ));
+        }
+    };
     // #1469: the per-close gate runs required_for_production cases only —
     // advisory cases are recorded as skipped, not executed, keeping wall
     // clock proportional to what production actually requires.
     verify_ec_context(&ctx, true).ok()
+}
+
+fn terminal_ec_gate_blocked_summary(ctx: &EcProjectContext, reason: &str) -> EcVerifySummary {
+    EcVerifySummary {
+        project: ctx.project.clone(),
+        inventory_path: relative_to(&ctx.project_root, &ctx.inventory_path),
+        clean: false,
+        // This is a lifecycle gate result rather than a project EC command,
+        // but count it so the terminal refusal never renders an incoherent
+        // "1 of 0" failure summary.
+        command_count: 1,
+        passed_count: 0,
+        failed_count: 1,
+        results: vec![EcVerifyCommandResult {
+            case_id: "terminal-ec-single-flight".to_string(),
+            capability_id: String::new(),
+            claim_id: String::new(),
+            category: "lifecycle".to_string(),
+            command: "terminal EC inventory evaluation".to_string(),
+            status: "failed".to_string(),
+            exit_code: None,
+            stdout_tail: String::new(),
+            stderr_tail: reason.to_string(),
+        }],
+    }
+}
+
+fn try_acquire_terminal_ec_gate_lock(
+    project_root: &Path,
+    project: &str,
+) -> Result<Option<TerminalEcGateLock>> {
+    let path = terminal_ec_gate_lock_path(project_root, project);
+    let active = TERMINAL_EC_GATE_PATHS.get_or_init(|| Mutex::new(BTreeSet::new()));
+    {
+        let mut active = active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !active.insert(path.clone()) {
+            return Ok(None);
+        }
+    }
+
+    let parent = path
+        .parent()
+        .context("terminal EC lock path has no parent")?;
+    if let Err(err) = fs::create_dir_all(parent)
+        .with_context(|| format!("create terminal EC lock directory {}", parent.display()))
+    {
+        release_terminal_ec_gate_path(&path);
+        return Err(err);
+    }
+    let file = match OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(&path)
+        .with_context(|| format!("open terminal EC lock {}", path.display()))
+    {
+        Ok(file) => file,
+        Err(err) => {
+            release_terminal_ec_gate_path(&path);
+            return Err(err);
+        }
+    };
+    match file.try_lock_exclusive() {
+        Ok(()) => Ok(Some(TerminalEcGateLock {
+            path,
+            file: Some(file),
+        })),
+        Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+            release_terminal_ec_gate_path(&path);
+            Ok(None)
+        }
+        Err(err) => {
+            release_terminal_ec_gate_path(&path);
+            Err(err).with_context(|| format!("lock terminal EC gate {}", path.display()))
+        }
+    }
+}
+
+fn release_terminal_ec_gate_path(path: &Path) {
+    let active = TERMINAL_EC_GATE_PATHS.get_or_init(|| Mutex::new(BTreeSet::new()));
+    let mut active = active
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    active.remove(path);
+}
+
+fn terminal_ec_gate_lock_path(project_root: &Path, project: &str) -> PathBuf {
+    let mut hasher = DefaultHasher::new();
+    project_root.hash(&mut hasher);
+    project.hash(&mut hasher);
+    std::env::temp_dir()
+        .join("aw")
+        .join("terminal-ec-gates")
+        .join(format!("{:016x}.lock", hasher.finish()))
 }
 
 fn run_ec_tool_manifest_command(
@@ -3831,18 +3985,47 @@ fn run_ec_verify_command(
     command: String,
     project_root: &Path,
 ) -> EcVerifyCommandResult {
-    let output = crate::cli::shell_env::protected_shell_command(project_root, &command)
-        .current_dir(project_root)
-        .output();
+    run_ec_verify_command_with_timeout(
+        case_id,
+        capability_id,
+        claim_id,
+        category,
+        command,
+        project_root,
+        ec_command_timeout(),
+    )
+}
+
+fn run_ec_verify_command_with_timeout(
+    case_id: String,
+    capability_id: String,
+    claim_id: String,
+    category: String,
+    command: String,
+    project_root: &Path,
+    timeout: Duration,
+) -> EcVerifyCommandResult {
+    let output = run_ec_command_with_timeout(project_root, &command, timeout);
     match output {
         Ok(output) => {
             let false_green = ec_false_green_reason(&command, &output.stdout, &output.stderr);
-            let status = if output.status.success() && false_green.is_none() {
+            let status = if !output.timed_out && output.status.success() && false_green.is_none() {
                 "passed".to_string()
             } else {
                 "failed".to_string()
             };
             let mut stderr_tail = tail_lossy(&output.stderr, 4000);
+            if output.timed_out {
+                let reason = format!(
+                    "EC command timed out after {timeout:?}; terminated its process group. \
+                     Inspect the command, then re-run the terminal code-check."
+                );
+                if stderr_tail.trim().is_empty() {
+                    stderr_tail = reason;
+                } else {
+                    stderr_tail = format!("{reason}\n{stderr_tail}");
+                }
+            }
             if let Some(reason) = false_green {
                 if stderr_tail.trim().is_empty() {
                     stderr_tail = reason;
@@ -3873,6 +4056,126 @@ fn run_ec_verify_command(
             stdout_tail: String::new(),
             stderr_tail: err.to_string(),
         },
+    }
+}
+
+fn ec_command_timeout() -> Duration {
+    std::env::var(EC_COMMAND_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(DEFAULT_EC_COMMAND_TIMEOUT_SECS))
+}
+
+fn run_ec_command_with_timeout(
+    project_root: &Path,
+    command: &str,
+    timeout: Duration,
+) -> Result<EcCommandOutput> {
+    let mut process = crate::cli::shell_env::protected_shell_command(project_root, command);
+    configure_ec_command_process_group(&mut process);
+    process
+        .current_dir(project_root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = process
+        .spawn()
+        .with_context(|| format!("spawn EC command `{command}`"))?;
+    let stdout = spawn_ec_output_reader(
+        child
+            .stdout
+            .take()
+            .context("EC command stdout was not piped")?,
+    );
+    let stderr = spawn_ec_output_reader(
+        child
+            .stderr
+            .take()
+            .context("EC command stderr was not piped")?,
+    );
+
+    let deadline = Instant::now() + timeout;
+    let (status, timed_out) = loop {
+        if let Some(status) = child
+            .try_wait()
+            .with_context(|| format!("poll EC command `{command}`"))?
+        {
+            break (status, false);
+        }
+        if Instant::now() >= deadline {
+            break (terminate_ec_command(&mut child)?, true);
+        }
+        thread::sleep(Duration::from_millis(25));
+    };
+
+    Ok(EcCommandOutput {
+        status,
+        stdout: join_ec_output_reader(stdout, "stdout")?,
+        stderr: join_ec_output_reader(stderr, "stderr")?,
+        timed_out,
+    })
+}
+
+fn spawn_ec_output_reader<R>(mut reader: R) -> thread::JoinHandle<std::io::Result<Vec<u8>>>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    })
+}
+
+fn join_ec_output_reader(
+    reader: thread::JoinHandle<std::io::Result<Vec<u8>>>,
+    stream: &str,
+) -> Result<Vec<u8>> {
+    reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("EC {stream} reader panicked"))?
+        .with_context(|| format!("read EC command {stream}"))
+}
+
+#[cfg(unix)]
+fn configure_ec_command_process_group(command: &mut std::process::Command) {
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_ec_command_process_group(_command: &mut std::process::Command) {}
+
+fn terminate_ec_command(child: &mut Child) -> Result<ExitStatus> {
+    #[cfg(unix)]
+    {
+        let process_group = -(child.id() as i32);
+        // The shell, cap wrapper, VAT, and any Cargo children share this
+        // group. A shell-only kill would recreate the orphaned-child shape
+        // this timeout is intended to prevent.
+        unsafe {
+            libc::kill(process_group, libc::SIGTERM);
+        }
+        let grace_deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            if let Some(status) = child.try_wait().context("poll terminated EC command")? {
+                return Ok(status);
+            }
+            if Instant::now() >= grace_deadline {
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        unsafe {
+            libc::kill(process_group, libc::SIGKILL);
+        }
+        return child.wait().context("reap timed-out EC command");
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+        child.wait().context("reap timed-out EC command")
     }
 }
 
@@ -5639,6 +5942,77 @@ e2e_tests:
         assert_eq!(summary.command_count, 1);
         assert_eq!(summary.failed_count, 1);
         assert!(summary.results[0].stderr_tail.contains("executed 0 tests"));
+    }
+
+    #[test]
+    fn ec_verify_bounds_a_wrapper_after_its_child_exits() {
+        let tmp = tempfile::tempdir().unwrap();
+        let started = Instant::now();
+        let result = run_ec_verify_command_with_timeout(
+            "wrapper-stall".to_string(),
+            "demo".to_string(),
+            "demo-wrapper-stall".to_string(),
+            "efficiency".to_string(),
+            "sh -c 'true; while :; do sleep 1; done'".to_string(),
+            tmp.path(),
+            Duration::from_millis(100),
+        );
+
+        assert_eq!(result.status, "failed");
+        assert!(result.stderr_tail.contains("timed out after 100ms"));
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "timed-out wrapper must return promptly, elapsed: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn terminal_ec_gate_rejects_a_duplicate_inflight_inventory() {
+        let (tmp, ctx) = write_demo_repo();
+        let marker = tmp.path().join("terminal-ec-started");
+        let command = format!("sh -c 'echo started > {}; sleep 1'", marker.display());
+        let manifest = EcManifest {
+            version: EC_MANIFEST_VERSION,
+            project: "demo".to_string(),
+            generated_from_td_digest: "sha256:test".to_string(),
+            cases: vec![EcManifestCase {
+                id: "slow-terminal-gate".to_string(),
+                capability_id: "demo".to_string(),
+                claim_id: "demo-slow".to_string(),
+                contract_id: "demo-slow-contract".to_string(),
+                category: "stability".to_string(),
+                td_ref: "projects/demo/tech-design/specs/contract.md#slow".to_string(),
+                test_path: "projects/demo/tests/slow.rs".to_string(),
+                command,
+                required_for_production: true,
+                assertions: vec![],
+                evidence: vec![],
+                evaluators: vec![],
+            }],
+            tool_manifests: vec![],
+        };
+        write_ec_manifest(&ctx, &manifest).unwrap();
+
+        let root = tmp.path().to_path_buf();
+        let first_root = root.clone();
+        let first = thread::spawn(move || terminal_ec_gate_summary(&first_root, "demo").unwrap());
+        for _ in 0..50 {
+            if marker.is_file() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(marker.is_file(), "first terminal EC gate never started");
+
+        let duplicate = terminal_ec_gate_summary(&root, "demo").unwrap();
+        assert!(!duplicate.clean);
+        assert_eq!(duplicate.failed_count, 1);
+        assert_eq!(duplicate.results[0].case_id, "terminal-ec-single-flight");
+        assert!(duplicate.results[0].stderr_tail.contains("already running"));
+
+        let first = first.join().expect("join first terminal EC gate");
+        assert!(first.clean, "{:?}", first.results);
     }
 
     #[test]
