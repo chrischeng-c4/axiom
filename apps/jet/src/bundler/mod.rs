@@ -380,6 +380,9 @@ pub struct Bundler {
     /// already consults during graph-walk resolution also reaches the
     /// post-graph-walk resolver.
     alias_entries: Vec<(String, PathBuf)>,
+    /// Explicit tsconfig `baseUrl`, retained for the codegen-time resolver so
+    /// emitted requires use the same local-module mapping as graph discovery.
+    base_url: Option<PathBuf>,
 }
 
 /// Compilation cache for incremental builds
@@ -411,6 +414,7 @@ impl Bundler {
         // `resolve_options` moves into `ModuleResolver::new` below, so the
         // codegen-time resolver (`transform_modules`) can also consult it.
         let alias_entries = resolve_options.alias.clone();
+        let base_url = resolve_options.base_url.clone();
         // Forward externalize_all_packages to the resolver
         if options.externalize_all_packages {
             resolve_options.externalize_all_packages = true;
@@ -430,6 +434,7 @@ impl Bundler {
             minify,
             defines,
             alias_entries,
+            base_url,
             unresolved_deps: Mutex::new(Vec::new()),
             parsed_trees: Mutex::new(HashMap::new()),
         })
@@ -602,7 +607,12 @@ impl Bundler {
                         if reusable {
                             tree = Some(parsed);
                         }
-                        imports = Ok(module_imports);
+                        imports = Ok(self.runtime_static_imports(
+                            src,
+                            module_path,
+                            is_typescript,
+                            module_imports,
+                        ));
                     }
                     Err(e) => imports = Err(e.to_string()),
                 }
@@ -637,6 +647,46 @@ impl Bundler {
             resolutions,
             tree,
         }
+    }
+
+    /// Remove TypeScript imports that the existing transform erases before
+    /// runtime code generation. Graph construction happens first, so treating
+    /// those declarations as dependencies would incorrectly resolve a
+    /// declaration-only `.d.ts` file (or an unexported package type path) as a
+    /// runtime module.
+    ///
+    /// Reusing the transform as the semantic source of truth covers both
+    /// explicit `import type` syntax and ordinary PascalCase imports that are
+    /// only referenced from type positions. If transformation or re-parsing
+    /// fails, retain the original imports and let the normal diagnostic path
+    /// report the problem rather than silently hiding a value dependency.
+    fn runtime_static_imports(
+        &self,
+        source: &str,
+        module_path: &Path,
+        is_typescript: bool,
+        mut module_imports: imports::ModuleImports,
+    ) -> imports::ModuleImports {
+        if !is_typescript || module_imports.static_imports.is_empty() {
+            return module_imports;
+        }
+
+        let Ok(transformed) = self.transformer.transform_js(source, module_path) else {
+            return module_imports;
+        };
+        let Ok(runtime_imports) = imports::extract_imports(&transformed.code, false) else {
+            return module_imports;
+        };
+        let runtime_sources: std::collections::HashSet<String> = runtime_imports
+            .static_imports
+            .into_iter()
+            .map(|import| import.source)
+            .collect();
+
+        module_imports
+            .static_imports
+            .retain(|import| runtime_sources.contains(&import.source));
+        module_imports
     }
 
     async fn build_graph(&self, entry: &PathBuf) -> Result<()> {
@@ -721,7 +771,12 @@ impl Bundler {
                         continue;
                     }
                     None => match imports::extract_imports(&source, is_typescript) {
-                        Ok(imports) => imports,
+                        Ok(imports) => self.runtime_static_imports(
+                            &source,
+                            &module_path,
+                            is_typescript,
+                            imports,
+                        ),
                         Err(e) => {
                             tracing::warn!(
                                 "Failed to extract imports from {:?}: {}",
@@ -922,9 +977,10 @@ impl Bundler {
 
         tracing::debug!("Built module map with {} entries", module_map.len());
         let resolution_index =
-            crate::transform::modules::ModuleResolutionIndex::from_module_map_and_aliases(
+            crate::transform::modules::ModuleResolutionIndex::from_module_map_and_aliases_and_base_url(
                 &module_map,
                 &self.alias_entries,
+                self.base_url.clone(),
             );
         let side_effect_free_module_ids =
             collect_side_effect_free_module_indices(&graph, &sorted_ids);
@@ -2286,6 +2342,90 @@ mod unresolved_deps_tests {
             .bundle(entry)
             .await
             .expect("explicit externals must continue to skip the specifier");
+    }
+
+    #[tokio::test]
+    async fn type_only_declaration_import_is_elided_before_graph_resolution() {
+        let tmp = tempfile::tempdir().unwrap();
+        let entry = write_fixture(
+            tmp.path(),
+            &[
+                (
+                    "entry.ts",
+                    "import { CreateWorkspaceValues } from './type';\nexport const marker = (value: CreateWorkspaceValues) => value;\n",
+                ),
+                (
+                    "type.d.ts",
+                    "export interface CreateWorkspaceValues { name: string; }\n",
+                ),
+            ],
+        );
+
+        let opts = BundleOptions {
+            entry: entry.clone(),
+            output_dir: tmp.path().join("dist"),
+            ..Default::default()
+        };
+        let bundler = Bundler::new(opts).unwrap();
+        let output = bundler
+            .bundle(entry)
+            .await
+            .expect("type-only declaration import must not become a runtime dependency");
+
+        assert!(
+            output.code.contains("marker"),
+            "bundle lost value code: {}",
+            output.code
+        );
+        assert!(
+            !output.code.contains("CreateWorkspaceValues") && !output.code.contains("./type"),
+            "type-only declaration must not survive as a runtime import: {}",
+            output.code
+        );
+    }
+
+    #[tokio::test]
+    async fn type_only_unexported_package_subpath_is_elided_before_graph_resolution() {
+        let tmp = tempfile::tempdir().unwrap();
+        let entry = write_fixture(
+            tmp.path(),
+            &[
+                (
+                    "entry.ts",
+                    "import type { ClosestEdge } from '@scope/pkg/dist/types/closest-edge';\nexport const marker = 'TYPE_PATH_ELIDED';\n",
+                ),
+                (
+                    "node_modules/@scope/pkg/package.json",
+                    "{\"exports\":{\".\":\"./index.js\"}}",
+                ),
+                (
+                    "node_modules/@scope/pkg/index.js",
+                    "export const value = 'runtime';\n",
+                ),
+                (
+                    "node_modules/@scope/pkg/dist/types/closest-edge.d.ts",
+                    "export interface ClosestEdge { edge: string; }\n",
+                ),
+            ],
+        );
+
+        let opts = BundleOptions {
+            entry: entry.clone(),
+            output_dir: tmp.path().join("dist"),
+            ..Default::default()
+        };
+        let bundler = Bundler::new(opts).unwrap();
+        let output = bundler
+            .bundle(entry)
+            .await
+            .expect("unexported package type path must not become a runtime dependency");
+
+        assert!(output.code.contains("TYPE_PATH_ELIDED"));
+        assert!(
+            !output.code.contains("@scope/pkg/dist/types/closest-edge"),
+            "type-only package subpath must not survive in runtime code: {}",
+            output.code
+        );
     }
 
     #[test]

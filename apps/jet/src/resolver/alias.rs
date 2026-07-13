@@ -2,7 +2,8 @@
 // CODEGEN-BEGIN
 //! Path alias resolver for the Jet bundler.
 //!
-//! Combines alias entries from three sources (in priority order):
+//! Combines alias entries and tsconfig baseUrl resolution from three sources
+//! (in priority order):
 //!
 //! 1. `tsconfig.base.json` → `compilerOptions.paths` (Nx/workspace base priority)
 //! 2. `tsconfig.json` → `compilerOptions.paths` (project priority)
@@ -25,6 +26,12 @@ use std::path::{Path, PathBuf};
 pub struct AliasResolver {
     /// Sorted by descending prefix length (longest-prefix wins).
     pub entries: Vec<(String, PathBuf)>,
+    /// Explicit `compilerOptions.baseUrl` from the workspace tsconfig.
+    ///
+    /// This stays `None` when neither tsconfig declares `baseUrl`: the
+    /// implicit project-root fallback used for `paths` must not turn every
+    /// bare package import into a local lookup.
+    base_url: Option<PathBuf>,
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-resolver.md#schema
@@ -36,12 +43,18 @@ impl AliasResolver {
     /// prefix matches a jet-config key is replaced.
     pub fn load(project_root: &Path, config_aliases: &HashMap<String, String>) -> Self {
         let mut entries: Vec<(String, PathBuf)> = Vec::new();
+        let mut base_url = None;
 
         // 1. Load Nx/workspace tsconfig.base.json first, then project tsconfig.json.
         // Later files replace the same alias prefix.
         for tsconfig_name in ["tsconfig.base.json", "tsconfig.json"] {
-            if let Some(tsconfig_entries) = load_tsconfig_paths_from(project_root, tsconfig_name) {
-                for (prefix, target_path) in tsconfig_entries {
+            if let Some(tsconfig) = load_tsconfig_from(project_root, tsconfig_name) {
+                if let Some(tsconfig_base_url) = tsconfig.base_url {
+                    // An explicit project tsconfig value overrides the workspace
+                    // one; an absent value leaves the inherited base intact.
+                    base_url = Some(tsconfig_base_url);
+                }
+                for (prefix, target_path) in tsconfig.entries {
                     entries.retain(|(k, _)| k != &prefix);
                     entries.push((prefix, target_path));
                 }
@@ -63,12 +76,17 @@ impl AliasResolver {
         // Sort by descending prefix length so longest match wins.
         entries.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
 
-        Self { entries }
+        Self { entries, base_url }
     }
 
     /// Return entries in the format expected by [`crate::resolver::ResolveOptions::alias`].
     pub fn to_resolve_aliases(&self) -> Vec<(String, PathBuf)> {
         self.entries.clone()
+    }
+
+    /// Return the explicit tsconfig `baseUrl`, when one is configured.
+    pub fn base_url(&self) -> Option<&Path> {
+        self.base_url.as_deref()
     }
 
     /// Returns `true` if no alias entries are configured.
@@ -94,6 +112,12 @@ struct CompilerOptions {
     /// `compilerOptions.baseUrl` — base directory for path resolution.
     #[serde(rename = "baseUrl")]
     base_url: Option<String>,
+}
+
+#[derive(Debug)]
+struct TsConfigResolution {
+    entries: Vec<(String, PathBuf)>,
+    base_url: Option<PathBuf>,
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -187,6 +211,45 @@ mod tests {
                     && path == &project_root.join("libs/tech-platform-mock/src/")),
             "tsconfig.base.json glob alias must be loaded: {entries:?}"
         );
+    }
+
+    #[test]
+    fn base_url_is_loaded_without_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+
+        std::fs::write(
+            project_root.join("tsconfig.base.json"),
+            r#"{"compilerOptions":{"baseUrl":"."}}"#,
+        )
+        .unwrap();
+
+        let resolver = AliasResolver::load(project_root, &HashMap::new());
+
+        assert!(resolver.is_empty(), "baseUrl is not an alias entry");
+        assert_eq!(resolver.base_url(), Some(project_root));
+    }
+
+    #[test]
+    fn project_base_url_overrides_workspace_base_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+
+        std::fs::write(
+            project_root.join("tsconfig.base.json"),
+            r#"{"compilerOptions":{"baseUrl":"workspace"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            project_root.join("tsconfig.json"),
+            r#"{"compilerOptions":{"baseUrl":"project"}}"#,
+        )
+        .unwrap();
+
+        let resolver = AliasResolver::load(project_root, &HashMap::new());
+        let expected = project_root.join("project");
+
+        assert_eq!(resolver.base_url(), Some(expected.as_path()));
     }
 
     #[test]
@@ -380,6 +443,10 @@ fn load_tsconfig_paths(project_root: &Path) -> Option<Vec<(String, PathBuf)>> {
 }
 
 fn load_tsconfig_paths_from(project_root: &Path, filename: &str) -> Option<Vec<(String, PathBuf)>> {
+    load_tsconfig_from(project_root, filename).map(|tsconfig| tsconfig.entries)
+}
+
+fn load_tsconfig_from(project_root: &Path, filename: &str) -> Option<TsConfigResolution> {
     let tsconfig_path = project_root.join(filename);
 
     let content = match std::fs::read_to_string(&tsconfig_path) {
@@ -389,7 +456,7 @@ fn load_tsconfig_paths_from(project_root: &Path, filename: &str) -> Option<Vec<(
             tracing::warn!(
                 target: "jet::resolver::tsconfig",
                 "tsconfig at {:?} exists but could not be read: {e}; \
-                 path aliases will not be loaded (GH #3157)",
+                 path aliases and baseUrl resolution will not be loaded (GH #3157)",
                 tsconfig_path
             );
             return None;
@@ -400,7 +467,7 @@ fn load_tsconfig_paths_from(project_root: &Path, filename: &str) -> Option<Vec<(
         Err(e) => {
             eprintln!(
                 "[jet resolver] {} at {} could not be parsed: \
-                 {e}. Path aliases (compilerOptions.paths) will not be \
+                 {e}. Path aliases (compilerOptions.paths) and baseUrl resolution will not be \
                  loaded for this project (GH #3157).",
                 filename,
                 tsconfig_path.display()
@@ -413,8 +480,8 @@ fn load_tsconfig_paths_from(project_root: &Path, filename: &str) -> Option<Vec<(
         .compiler_options
         .base_url
         .as_deref()
-        .map(|b| project_root.join(b))
-        .unwrap_or_else(|| project_root.to_path_buf());
+        .map(|b| project_root.join(b));
+    let paths_base_url = base_url.as_deref().unwrap_or(project_root);
 
     let mut entries = Vec::new();
 
@@ -428,11 +495,11 @@ fn load_tsconfig_paths_from(project_root: &Path, filename: &str) -> Option<Vec<(
         let prefix = alias.trim_end_matches('*').to_string();
         // Normalise path: strip glob suffix ("./src/*" → "./src/")
         let path_str = first_pattern.trim_end_matches('*');
-        let target_path = base_url.join(path_str);
+        let target_path = paths_base_url.join(path_str);
 
         entries.push((prefix, target_path));
     }
 
-    Some(entries)
+    Some(TsConfigResolution { entries, base_url })
 }
 // CODEGEN-END
