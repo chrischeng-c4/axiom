@@ -23,6 +23,12 @@ capability_refs:
     rationale: "The in-place real-CLI fixture applies fresh Logic, Changes, and Unit Test payloads in both passes, checks every projection lock, validates and locks the final TD, then proves aw td gen creates its explicit new target."
   - id: td-cb-lifecycle-automation
     role: primary
+    gap: rebased-td-lifecycle-recovery
+    claim: rebased-td-lifecycle-recovery
+    coverage: full
+    rationale: "Real CLI fixtures prove stale rewritten TD history is re-provisioned with a fresh projection, reachable exact Td-Init resumes without reset, and ordinary phase created still provisions."
+  - id: td-cb-lifecycle-automation
+    role: primary
     gap: terminal-ec-process-liveness
     claim: terminal-ec-process-liveness
     coverage: full
@@ -366,6 +372,12 @@ semantic_domain:
           - name: "git_status"
             kind: "function"
             public: false
+          - name: "commit_all_with_message"
+            kind: "function"
+            public: false
+          - name: "git_log_messages"
+            kind: "function"
+            public: false
           - name: "write_td_review_fixture"
             kind: "function"
             public: false
@@ -376,6 +388,12 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "td_create_on_project_branch_stays_on_current_branch"
+            kind: "function"
+            public: false
+          - name: "td_create_rebased_lifecycle_reprovisions_unreachable_exact_td_init"
+            kind: "function"
+            public: false
+          - name: "td_create_rebased_lifecycle_preserves_reachable_exact_td_init"
             kind: "function"
             public: false
           - name: "td_create_numeric_id_uses_tracker_id_branch_with_legacy_cache_file"
@@ -1169,6 +1187,13 @@ changes:
       first contract Logic lock), runs the final read-only checker, writes and
       commits the fixture TD IR lock, and proves `aw td gen` creates a new
       explicitly named target with source ownership and contract block refs.
+      Issue #1602 adds a rewritten-history fixture whose old exact Td-Init is
+      unreachable while a later same-slug lifecycle commit and stale lock
+      survive. Real `aw td create` emits one recovery reset and one fresh init,
+      replaces the old projection with the applicability Logic command and
+      payload, and preserves existing spec/source bytes. Its negative fixture
+      proves a reachable exact init emits neither reset nor second init; the
+      project-branch fixture explicitly covers fresh WI phase `created`.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/tests/cli/tests/cb_review_revise_test.rs"
     action: modify

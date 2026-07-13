@@ -40,6 +40,12 @@ capability_refs:
     rationale: "Fresh applicability and contract authoring queues initialize and projection-lock an editable Changes target plan between Logic and Unit Test, preserving explicit custom queues and supplying aw td gen with authoritative targets."
   - id: td-cb-lifecycle-automation
     role: primary
+    gap: rebased-td-lifecycle-recovery
+    claim: rebased-td-lifecycle-recovery
+    coverage: full
+    rationale: "TD create shares CB's exact reachable Td-Init lookup, safely resets stale authoring state and projection after rewritten history, and preserves valid resume plus fail-closed implementation evidence."
+  - id: td-cb-lifecycle-automation
+    role: primary
     gap: terminal-ec-process-liveness
     claim: terminal-ec-process-liveness
     coverage: full
@@ -624,6 +630,15 @@ semantic_domain:
           - name: "CbCheckArgs"
             kind: "struct"
             public: true
+          - name: "TdInitReachability"
+            kind: "enum"
+            public: false
+          - name: "reachable_td_init_from_head"
+            kind: "function"
+            public: false
+          - name: "committed_paths_since_td_init"
+            kind: "function"
+            public: false
           - name: "run"
             kind: "function"
             public: true
@@ -1826,6 +1841,9 @@ semantic_domain:
           - name: "td_branch_name"
             kind: "function"
             public: false
+          - name: "is_recoverable_td_authoring_phase"
+            kind: "function"
+            public: false
           - name: "activate_td_workspace_for_lifecycle"
             kind: "function"
             public: false
@@ -1856,7 +1874,13 @@ semantic_domain:
           - name: "provision_td_workspace"
             kind: "function"
             public: false
+          - name: "reset_unreachable_td_init"
+            kind: "function"
+            public: false
           - name: "bootstrap_td_issue"
+            kind: "function"
+            public: false
+          - name: "run_create_brief"
             kind: "function"
             public: false
           - name: "discover_worktree_spec"
@@ -3759,6 +3783,11 @@ changes:
       post-phase terminal steps. Narrowly named bounded debug-only barriers
       expose the post-initial-read/pre-acquire and post-phase-update seams for
       deterministic process coverage. See `ec.rs` above for runner and lease.
+      Issue #1602 extracts the exact HEAD-reachable slug plus Td-Init lookup
+      into `TdInitReachability`. The hand-written implementation gate retains
+      its prior distinction: no slug history stays legacy-compatible, while
+      same-slug lifecycle history without an exact Td-Init remains a hard
+      verification error rather than becoming implementation evidence.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/chat_members.rs"
     action: modify
@@ -3938,6 +3967,13 @@ changes:
       the real CLI regression applies both target plans, passes `aw td check`,
       writes the fixture TD IR lock, and proves `aw td gen` creates the named
       new target instead of falling back to impossible new-path inference.
+      Issue #1602 activates an existing TD branch before inspecting reachable
+      history. An exact slug plus Td-Init resumes normally; missing or
+      same-slug-without-init history clears the stale authoring phase, branch,
+      projection, and lock labels, records an unreachable-td-init Td-Reset,
+      then reuses normal provisioning for a fresh baseline and Logic queue.
+      Post-gen and terminal retry phases are excluded from recovery, and
+      ordinary WI phase `created` remains a fresh provisioning entry.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/project.rs"
     action: modify

@@ -39,6 +39,11 @@ structured dispatch next or HITL envelope for explicit files; tracker creation
 is performed through the silent internal WI create path so nested tracker
 output cannot corrupt stdout.
 
+The implementation-evidence baseline lookup exposes a shared three-state
+exact HEAD query: reachable slug plus Td-Init, no slug history, or same-slug
+history without Td-Init. Code-check keeps its fail-closed behavior for the
+third state while TD create reuses the same query for rebase recovery.
+
 ### Symbols
 
 | Name | Target | Kind | Visibility | Line | Signature |
@@ -5507,19 +5512,20 @@ fn empty_implementation_gate_message(
     }
 }
 
-/// Return the committed, repo-relative paths changed after this slug's most
-/// recent exact `Td-Init` trailer. The init commit's parent is the baseline:
-/// the TD/spec commit itself is lifecycle setup, while implementation must be
-/// introduced by later commits. This keeps a persistent project branch's old
-/// divergence from satisfying a new WI's hand-written implementation gate.
-///
-/// `Ok(None)` is reserved for synthetic/legacy entries with no lifecycle
-/// history at all. If the slug has lifecycle commits but no usable `Td-Init`,
-/// verification fails closed and the caller requires `--allow-empty-impl`.
-fn committed_paths_since_td_init(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TdInitReachability {
+    Found(String),
+    NoSlugHistory,
+    SlugHistoryWithoutInit,
+}
+
+/// Locate this slug's most recent exact `Td-Init` commit reachable from HEAD.
+/// Slug and stage matching are both line-exact so prefix-colliding slugs and
+/// stage names cannot be adopted as lifecycle baselines.
+pub(crate) fn reachable_td_init_from_head(
     project_root: &std::path::Path,
     slug: &str,
-) -> Result<Option<BTreeSet<String>>> {
+) -> Result<TdInitReachability> {
     use crate::issues::types::lifecycle_trailer;
 
     let git_bin = crate::git::find_git_bin()
@@ -5562,11 +5568,113 @@ fn committed_paths_since_td_init(
         }
     }
 
-    let Some(init_commit) = init_commit else {
-        if saw_slug_history {
-            anyhow::bail!("lifecycle history for '{slug}' has no exact Td-Init trailer");
+    match init_commit {
+        Some(commit) => Ok(TdInitReachability::Found(commit)),
+        None if saw_slug_history => Ok(TdInitReachability::SlugHistoryWithoutInit),
+        None => Ok(TdInitReachability::NoSlugHistory),
+    }
+}
+
+#[cfg(test)]
+mod td_init_reachability_tests {
+    use super::{committed_paths_since_td_init, reachable_td_init_from_head, TdInitReachability};
+
+    fn git(root: &std::path::Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .status()
+            .expect("git command");
+        assert!(status.success(), "git {:?} failed", args);
+    }
+
+    #[test]
+    fn rebased_td_lifecycle_exact_lookup_rejects_slug_and_stage_collisions() {
+        if crate::git::find_git_bin().is_none() {
+            return;
         }
-        return Ok(None);
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        git(root, &["init", "-q", "-b", "main"]);
+        git(root, &["config", "user.email", "test@example.com"]);
+        git(root, &["config", "user.name", "Test"]);
+        git(root, &["commit", "--allow-empty", "-m", "seed", "-q"]);
+        git(
+            root,
+            &[
+                "commit",
+                "--allow-empty",
+                "-m",
+                "prefix collision\n\nLifecycle-Slug: 16020\nLifecycle-Stage: Td-Init",
+                "-q",
+            ],
+        );
+        git(
+            root,
+            &[
+                "commit",
+                "--allow-empty",
+                "-m",
+                "stage collision\n\nLifecycle-Slug: 1602\nLifecycle-Stage: Td-Init-Rebase",
+                "-q",
+            ],
+        );
+
+        assert_eq!(
+            reachable_td_init_from_head(root, "160").unwrap(),
+            TdInitReachability::NoSlugHistory
+        );
+        assert_eq!(
+            reachable_td_init_from_head(root, "1602").unwrap(),
+            TdInitReachability::SlugHistoryWithoutInit
+        );
+        assert!(
+            committed_paths_since_td_init(root, "1602")
+                .unwrap_err()
+                .to_string()
+                .contains("no exact Td-Init"),
+            "CB implementation evidence must remain fail-closed"
+        );
+
+        git(
+            root,
+            &[
+                "commit",
+                "--allow-empty",
+                "-m",
+                "exact init\n\nLifecycle-Slug: 1602\nLifecycle-Stage: Td-Init",
+                "-q",
+            ],
+        );
+        assert!(matches!(
+            reachable_td_init_from_head(root, "1602").unwrap(),
+            TdInitReachability::Found(_)
+        ));
+    }
+}
+
+/// Return the committed, repo-relative paths changed after this slug's most
+/// recent exact `Td-Init` trailer. The init commit's parent is the baseline:
+/// the TD/spec commit itself is lifecycle setup, while implementation must be
+/// introduced by later commits. This keeps a persistent project branch's old
+/// divergence from satisfying a new WI's hand-written implementation gate.
+///
+/// `Ok(None)` is reserved for synthetic/legacy entries with no lifecycle
+/// history at all. If the slug has lifecycle commits but no usable `Td-Init`,
+/// verification fails closed and the caller requires `--allow-empty-impl`.
+fn committed_paths_since_td_init(
+    project_root: &std::path::Path,
+    slug: &str,
+) -> Result<Option<BTreeSet<String>>> {
+    let git_bin = crate::git::find_git_bin()
+        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let init_commit = match reachable_td_init_from_head(project_root, slug)? {
+        TdInitReachability::Found(commit) => commit,
+        TdInitReachability::NoSlugHistory => return Ok(None),
+        TdInitReachability::SlugHistoryWithoutInit => {
+            anyhow::bail!("lifecycle history for '{slug}' has no exact Td-Init trailer")
+        }
     };
 
     let parent = std::process::Command::new(&git_bin)
@@ -6548,4 +6656,14 @@ changes:
       skipping EC, preventing a second terminal transition from racing the
       first. Bounded debug-only barriers expose the pre-acquire and post-phase
       seams for deterministic real-process tests.
+  - path: apps/agentic-workflow/src/cli/cb.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1602 extracts the exact HEAD-reachable slug plus Td-Init lookup
+      into a shared three-state result for TD recovery and code-check. Prefix
+      slug and stage collisions remain rejected, no-history compatibility is
+      preserved, and same-slug history without an exact init remains a hard
+      implementation-evidence error.
 ```

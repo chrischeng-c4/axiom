@@ -3027,14 +3027,14 @@ mod tests {
         extract_cold_rebuild_target_paths, extract_project_root_llms_target_paths,
         extract_spec_managed_ref, extract_spec_managed_refs, fillback_dispatch_next,
         fillback_hitl_next, format_rust_files, has_handwrite_ownership_marker,
-        is_minified_asset_file, reachable_td_init_commit, repo_relative_code_path,
-        resolve_project_force_regen_scope, run_force_regen_specs, sample_count,
-        sample_semantic_review_units, spec_declares_source_section,
-        td_public_symbol_semantic_coverage, upsert_public_api_overview,
-        upsert_public_api_overview_targets, verify_force_regen_conformance,
-        write_project_root_llms_targets, CbCodegenOriginClass, CbCommand, CbGenArgs, ClaimIssueRef,
-        ForceRegenConformanceReport, ForceRegenScope, PublicApiManifestSymbol,
-        PublicApiManifestTarget, PublicSymbolSemanticCoverage, SemanticReviewUnit,
+        is_minified_asset_file, repo_relative_code_path, resolve_project_force_regen_scope,
+        run_force_regen_specs, sample_count, sample_semantic_review_units,
+        spec_declares_source_section, td_public_symbol_semantic_coverage,
+        upsert_public_api_overview, upsert_public_api_overview_targets,
+        verify_force_regen_conformance, write_project_root_llms_targets, CbCodegenOriginClass,
+        CbCommand, CbGenArgs, ClaimIssueRef, ForceRegenConformanceReport, ForceRegenScope,
+        PublicApiManifestSymbol, PublicApiManifestTarget, PublicSymbolSemanticCoverage,
+        SemanticReviewUnit,
     };
     use crate::fillback::ast::{Symbol, SymbolKind};
     use clap::Parser;
@@ -3136,67 +3136,6 @@ console.log('ok');
             String::from_utf8_lossy(&out.stderr)
         );
         String::from_utf8_lossy(&out.stdout).trim().to_string()
-    }
-
-    #[test]
-    fn reachable_td_init_ignores_lifecycle_commits_lost_after_branch_rewrite() {
-        if !git_available() {
-            return;
-        }
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        init_git_repo(root);
-
-        let commit = |args: &[&str]| {
-            let out = std::process::Command::new("git")
-                .args(args)
-                .current_dir(root)
-                .output()
-                .expect("git command");
-            assert!(
-                out.status.success(),
-                "git {:?} failed: {}",
-                args,
-                String::from_utf8_lossy(&out.stderr)
-            );
-        };
-        commit(&["checkout", "-q", "-b", "before-rebase"]);
-        commit(&[
-            "commit",
-            "--allow-empty",
-            "-q",
-            "-m",
-            "td(4242) — prior lifecycle init\n\nLifecycle-Slug: 4242\nWork-Item: 4242\nLifecycle-Stage: Td-Init",
-        ]);
-        commit(&["checkout", "-q", "main"]);
-        commit(&[
-            "commit",
-            "--allow-empty",
-            "-q",
-            "-m",
-            "td(4242) — hydrated after rebase\n\nLifecycle-Slug: 4242\nWork-Item: 4242\nLifecycle-Stage: Td-Hydrate",
-        ]);
-
-        let (saw_history, init) = reachable_td_init_commit(root, "4242").unwrap();
-        assert!(saw_history);
-        assert!(
-            init.is_none(),
-            "side-branch init must not satisfy HEAD evidence"
-        );
-
-        commit(&[
-            "commit",
-            "--allow-empty",
-            "-q",
-            "-m",
-            "td(4242) — repaired lifecycle init\n\nLifecycle-Slug: 4242\nWork-Item: 4242\nLifecycle-Stage: Td-Init",
-        ]);
-        let (saw_history, init) = reachable_td_init_commit(root, "4242").unwrap();
-        assert!(saw_history);
-        assert!(
-            init.is_some(),
-            "reachable exact init must restore resumability"
-        );
     }
 
     #[test]
@@ -5501,14 +5440,20 @@ fn empty_implementation_gate_message(
     }
 }
 
-/// Resolve the most recent exact `Td-Init` lifecycle commit reachable from
-/// `HEAD` for one work-item. A rewritten persistent branch may retain a
-/// remote `td_*` phase while dropping this commit, so callers must not infer
-/// resumability from issue frontmatter alone.
-pub(crate) fn reachable_td_init_commit(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TdInitReachability {
+    Found(String),
+    NoSlugHistory,
+    SlugHistoryWithoutInit,
+}
+
+/// Locate this slug's most recent exact `Td-Init` commit reachable from HEAD.
+/// Slug and stage matching are both line-exact so prefix-colliding slugs and
+/// stage names cannot be adopted as lifecycle baselines.
+pub(crate) fn reachable_td_init_from_head(
     project_root: &std::path::Path,
     slug: &str,
-) -> Result<(bool, Option<String>)> {
+) -> Result<TdInitReachability> {
     use crate::issues::types::lifecycle_trailer;
 
     let git_bin = crate::git::find_git_bin()
@@ -5535,6 +5480,7 @@ pub(crate) fn reachable_td_init_commit(
     }
 
     let mut saw_slug_history = false;
+    let mut init_commit = None;
     for record in String::from_utf8_lossy(&log.stdout).split('\x1e') {
         let record = record.trim_start_matches('\n');
         let Some((hash, body)) = record.split_once('\0') else {
@@ -5545,11 +5491,95 @@ pub(crate) fn reachable_td_init_commit(
         }
         saw_slug_history = true;
         if lifecycle_trailer::body_has_stage_trailer(body, lifecycle_trailer::TD_INIT) {
-            return Ok((true, Some(hash.trim().to_string())));
+            init_commit = Some(hash.trim().to_string());
+            break;
         }
     }
 
-    Ok((saw_slug_history, None))
+    match init_commit {
+        Some(commit) => Ok(TdInitReachability::Found(commit)),
+        None if saw_slug_history => Ok(TdInitReachability::SlugHistoryWithoutInit),
+        None => Ok(TdInitReachability::NoSlugHistory),
+    }
+}
+
+#[cfg(test)]
+mod td_init_reachability_tests {
+    use super::{committed_paths_since_td_init, reachable_td_init_from_head, TdInitReachability};
+
+    fn git(root: &std::path::Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .status()
+            .expect("git command");
+        assert!(status.success(), "git {:?} failed", args);
+    }
+
+    #[test]
+    fn rebased_td_lifecycle_exact_lookup_rejects_slug_and_stage_collisions() {
+        if crate::git::find_git_bin().is_none() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        git(root, &["init", "-q", "-b", "main"]);
+        git(root, &["config", "user.email", "test@example.com"]);
+        git(root, &["config", "user.name", "Test"]);
+        git(root, &["commit", "--allow-empty", "-m", "seed", "-q"]);
+        git(
+            root,
+            &[
+                "commit",
+                "--allow-empty",
+                "-m",
+                "prefix collision\n\nLifecycle-Slug: 16020\nLifecycle-Stage: Td-Init",
+                "-q",
+            ],
+        );
+        git(
+            root,
+            &[
+                "commit",
+                "--allow-empty",
+                "-m",
+                "stage collision\n\nLifecycle-Slug: 1602\nLifecycle-Stage: Td-Init-Rebase",
+                "-q",
+            ],
+        );
+
+        assert_eq!(
+            reachable_td_init_from_head(root, "160").unwrap(),
+            TdInitReachability::NoSlugHistory
+        );
+        assert_eq!(
+            reachable_td_init_from_head(root, "1602").unwrap(),
+            TdInitReachability::SlugHistoryWithoutInit
+        );
+        assert!(
+            committed_paths_since_td_init(root, "1602")
+                .unwrap_err()
+                .to_string()
+                .contains("no exact Td-Init"),
+            "CB implementation evidence must remain fail-closed"
+        );
+
+        git(
+            root,
+            &[
+                "commit",
+                "--allow-empty",
+                "-m",
+                "exact init\n\nLifecycle-Slug: 1602\nLifecycle-Stage: Td-Init",
+                "-q",
+            ],
+        );
+        assert!(matches!(
+            reachable_td_init_from_head(root, "1602").unwrap(),
+            TdInitReachability::Found(_)
+        ));
+    }
 }
 
 /// Return the committed, repo-relative paths changed after this slug's most
@@ -5567,13 +5597,12 @@ fn committed_paths_since_td_init(
 ) -> Result<Option<BTreeSet<String>>> {
     let git_bin = crate::git::find_git_bin()
         .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
-    let (saw_slug_history, init_commit) = reachable_td_init_commit(project_root, slug)?;
-
-    let Some(init_commit) = init_commit else {
-        if saw_slug_history {
-            anyhow::bail!("lifecycle history for '{slug}' has no exact Td-Init trailer");
+    let init_commit = match reachable_td_init_from_head(project_root, slug)? {
+        TdInitReachability::Found(commit) => commit,
+        TdInitReachability::NoSlugHistory => return Ok(None),
+        TdInitReachability::SlugHistoryWithoutInit => {
+            anyhow::bail!("lifecycle history for '{slug}' has no exact Td-Init trailer")
         }
-        return Ok(None);
     };
 
     let parent = std::process::Command::new(&git_bin)

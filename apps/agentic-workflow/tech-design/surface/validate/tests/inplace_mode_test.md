@@ -15,7 +15,7 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs` generated from AST during Score force-regeneration standardization. The TD create replay fixture asserts the default `logic` to `changes` to `unit-test` queue, and the #1598 fixture applies both passes through the real CLI before proving `aw td gen` consumes the explicit Changes target plan, creates the named Logic target, and preserves the hand-written Unit Test target.
+Public API manifest for `apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs` generated from AST during Score force-regeneration standardization. The TD create replay fixture asserts the default `logic` to `changes` to `unit-test` queue, and the #1598 fixture applies both passes through the real CLI before proving `aw td gen` consumes the explicit Changes target plan, creates the named Logic target, and preserves the hand-written Unit Test target. The #1602 fixtures prove rewritten lifecycle history gets one safe reset and fresh init/projection, while an exact reachable init resumes with no reset or duplicate init and ordinary phase `created` still provisions.
 
 ### Symbols
 
@@ -136,6 +136,34 @@ fn write_issue_fixture(root: &std::path::Path, slug: &str, body: impl AsRef<str>
 
 fn read_issue_fixture(root: &std::path::Path, slug: &str) -> String {
     std::fs::read_to_string(issue_path(root, slug)).unwrap()
+}
+
+fn commit_all_with_message(git: &std::path::Path, root: &std::path::Path, message: &str) {
+    assert!(Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap()
+        .success());
+    assert!(Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "--allow-empty", "-m", message])
+        .status()
+        .unwrap()
+        .success());
+}
+
+fn git_log_messages(git: &std::path::Path, root: &std::path::Path) -> String {
+    let output = Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(["log", "--format=%B%x1e", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
 /// `td init` in InPlace mode should switch the host repo from `main` to branch
@@ -282,6 +310,7 @@ path = "."
          state: open\n\
          type: enhancement\n\
          labels: [\"app:agentic-workflow\"]\n\
+         phase: created\n\
          review_count: 1\n\
          flagged_sections: [scope]\n\
          fill_retry_count: 1\n\
@@ -341,6 +370,200 @@ path = "."
             && !updated_issue.contains("fill_retry_count:"),
         "td create should clear inherited issue review state:\n{updated_issue}"
     );
+}
+
+/// Issue #1602: after history rewriting removes the exact Td-Init commit,
+/// `aw td create` clears the stale phase/projection and re-provisions a fresh
+/// baseline without touching existing spec or source bytes.
+#[test]
+fn td_create_rebased_lifecycle_reprovisions_unreachable_exact_td_init() {
+    use agentic_workflow::cli::workflow_guard::{
+        parse_projection, upsert_projection, WorkflowProjection,
+    };
+
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+    std::fs::write(
+        root.join("aw.toml"),
+        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n",
+    )
+    .unwrap();
+
+    let slug = "1602-rebased-recovery";
+    let spec_path = "tech-design/logic/rebase-recovery.md";
+    let spec_bytes = "---\nid: rebase-recovery\nfill_sections: [logic]\n---\n\n# Rebase recovery\n";
+    let source_bytes = "pub fn preserved_by_td_recovery() {}\n";
+    std::fs::create_dir_all(root.join("tech-design/logic")).unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join(spec_path), spec_bytes).unwrap();
+    std::fs::write(root.join("src/preserved.rs"), source_bytes).unwrap();
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\nslug: {slug}\ntitle: rebased TD recovery\nstate: open\ntype: bug\nlabels: [\"app:agentic-workflow\"]\n---\n\n# Body\n"
+        ),
+    );
+    commit_all_with_message(&git, root, "bootstrap #1602 fixture");
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", "app/fixture"])
+        .status()
+        .unwrap()
+        .success());
+
+    let stale_projection = WorkflowProjection {
+        version: 1,
+        issue_id: slug.to_string(),
+        locked: true,
+        owner: Some("td".to_string()),
+        active_phase: Some("td_contract_created".to_string()),
+        active_branch: Some("app/fixture".to_string()),
+        expected_payload: Some("/tmp/aw/stale/contract/unit-test.json".to_string()),
+        expected_command: Some("aw td create stale --apply".to_string()),
+        current_section: Some("unit-test".to_string()),
+        remaining_sections: Vec::new(),
+        dirty_paths: vec!["stale/spec.md".to_string()],
+        blocker_summary: None,
+        updated_at: None,
+    };
+    let stale_body = upsert_projection("# Body\n", &stale_projection).unwrap();
+    let active_issue = format!(
+        "---\nslug: {slug}\ntitle: rebased TD recovery\nstate: open\ntype: bug\nlabels: [\"app:agentic-workflow\", \"score:locked\", \"score:lock:td\"]\nphase: td_created\nbranch: app/fixture\n---\n\n{stale_body}"
+    );
+    write_issue_fixture(root, slug, &active_issue);
+    commit_all_with_message(
+        &git,
+        root,
+        &format!("initial lifecycle\n\nLifecycle-Slug: {slug}\nLifecycle-Stage: Td-Init"),
+    );
+
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["reset", "--hard", "HEAD^"])
+        .status()
+        .unwrap()
+        .success());
+    write_issue_fixture(root, slug, &active_issue);
+    commit_all_with_message(
+        &git,
+        root,
+        &format!(
+            "rebased remote phase projection\n\nLifecycle-Slug: {slug}\nLifecycle-Stage: Td-Queue-Start"
+        ),
+    );
+
+    let output = Command::new(&bin)
+        .args(["td", "create", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("recover rebased TD lifecycle");
+    assert!(
+        output.status.success(),
+        "recovery should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let recovered_issue = read_issue_fixture(root, slug);
+    let projection = parse_projection(&recovered_issue).expect("fresh workflow projection");
+    assert!(projection.locked);
+    assert_eq!(projection.current_section.as_deref(), Some("logic"));
+    assert!(projection
+        .expected_payload
+        .as_deref()
+        .is_some_and(|path| path.ends_with("/applicability/logic.json")));
+    assert!(projection
+        .expected_command
+        .as_deref()
+        .is_some_and(|command| command.contains(slug) && command.contains(spec_path)));
+    assert!(!recovered_issue.contains("aw td create stale --apply"));
+    assert!(recovered_issue.contains("phase: td_inited"));
+    assert!(recovered_issue.contains("branch: app/fixture"));
+    assert_eq!(
+        std::fs::read_to_string(root.join(spec_path)).unwrap(),
+        spec_bytes
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/preserved.rs")).unwrap(),
+        source_bytes
+    );
+
+    let log = git_log_messages(&git, root);
+    assert!(log.contains("Lifecycle-Stage: Td-Reset"));
+    assert!(log.contains("Reset-Reason: unreachable-td-init"));
+    assert!(log.contains("Reset-History-State: slug-history-without-init"));
+    assert_eq!(log.matches("Lifecycle-Stage: Td-Init").count(), 1);
+}
+
+/// Issue #1602 negative: an active lifecycle with an exact reachable Td-Init
+/// is an ordinary resume, with neither Td-Reset nor a second Td-Init.
+#[test]
+fn td_create_rebased_lifecycle_preserves_reachable_exact_td_init() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+    std::fs::write(
+        root.join("aw.toml"),
+        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n",
+    )
+    .unwrap();
+    let slug = "1602-valid-resume";
+    let spec_path = "tech-design/logic/valid-resume.md";
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\nslug: {slug}\ntitle: valid TD resume\nstate: open\ntype: bug\nlabels: [\"app:agentic-workflow\"]\n---\n\n# Body\n"
+        ),
+    );
+    commit_all_with_message(&git, root, "bootstrap valid #1602 resume");
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", "app/fixture"])
+        .status()
+        .unwrap()
+        .success());
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\nslug: {slug}\ntitle: valid TD resume\nstate: open\ntype: bug\nlabels: [\"app:agentic-workflow\"]\nphase: td_inited\nbranch: app/fixture\n---\n\n# Body\n"
+        ),
+    );
+    commit_all_with_message(
+        &git,
+        root,
+        &format!("valid init\n\nLifecycle-Slug: {slug}\nLifecycle-Stage: Td-Init"),
+    );
+
+    let output = Command::new(&bin)
+        .args(["td", "create", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("resume reachable TD lifecycle");
+    assert!(
+        output.status.success(),
+        "reachable resume should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let log = git_log_messages(&git, root);
+    assert!(!log.contains("Lifecycle-Stage: Td-Reset"));
+    assert_eq!(log.matches("Lifecycle-Stage: Td-Init").count(), 1);
+    assert!(read_issue_fixture(root, slug).contains("phase: td_inited"));
 }
 
 #[test]
@@ -1776,4 +1999,10 @@ changes:
       editable Changes scaffold, runs final `aw td check` and `aw td lock`, and
       proves real `aw td gen` creates a new Logic target while preserving the
       explicit hand-written Unit Test target without no-target inference.
+      Issue #1602 rewrites away an exact Td-Init while retaining a later
+      same-slug lifecycle commit and stale lock. Real `aw td create` clears
+      that projection, emits one reset plus one fresh init, installs a fresh
+      applicability Logic projection, and preserves existing spec/source
+      bytes. A reachable exact init emits neither reset nor duplicate init;
+      the persistent-branch fixture covers fresh WI phase `created`.
 ```
