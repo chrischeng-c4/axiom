@@ -2,10 +2,10 @@ version = 2
 project = "cap"
 ir_kind = "td"
 td_path = "apps/cap/tech-design"
-generated_at = "2026-07-11T04:18:06.766655+00:00"
-digest = "sha256:3e727a50c6dd2e30c3b6403e1f3c17a996a01236e0b172f8540f6b07beb39dde"
-source_digest = "sha256:3e727a50c6dd2e30c3b6403e1f3c17a996a01236e0b172f8540f6b07beb39dde"
-ir_digest = "sha256:7df222df6fc07bab88558c09750c5e5b653094a91ff97a6a145d1e10d5247e10"
+generated_at = "2026-07-13T05:03:42.629422+00:00"
+digest = "sha256:6648335a789837f7ca0864174efe42179d77af908a87201f984650c58b2bb9f1"
+source_digest = "sha256:6648335a789837f7ca0864174efe42179d77af908a87201f984650c58b2bb9f1"
+ir_digest = "sha256:30588c0c5dca9c297e9fb54c13350e7e7428c6c452485c68ca4b159b9662703c"
 
 [[files]]
 path = "interfaces/cli/adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std.md"
@@ -35,6 +35,12 @@ section_count = 3
 path = "logic/cap-hook-auto-command-optimizer-whitelist.md"
 digest = "sha256:282847c501ca72102a57a09e9a1268f6db5ccd624c48fc116729e0216105508a"
 ir_digest = "sha256:ec06bb4be8b2822819560b5db127167675353a1c5ca2efac26075d81d0bae0fd"
+section_count = 3
+
+[[files]]
+path = "logic/command-resources-dual-win-rss-gate-fails-unconditionally-blocki.md"
+digest = "sha256:3648bd8bb60659a1278eb3e9c7671d574ea2bdb1d3a5351601ef4dff663f16db"
+ir_digest = "sha256:adae03b3c81985b812616e7ffffdb00b0759f627b0b1d15fed7fe5263bc7d4ae"
 section_count = 3
 
 [[files]]
