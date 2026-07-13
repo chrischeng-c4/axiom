@@ -9,6 +9,11 @@ use server_tcp::TcpSocketOptions;
 
 pub mod spec;
 
+// SPEC-MANAGED: apps/pgpool/tech-design/semantic/pgpool-runtime-connection-limit-discovery.md#logic
+// <HANDWRITE gap="missing-generator:logic:pgpool-platform-discovery" tracker="#1570" reason="Provider-typed live PostgreSQL discovery needs an async adapter primitive.">
+pub mod platform;
+// </HANDWRITE>
+
 // SPEC-MANAGED: apps/pgpool/tech-design/semantic/pgpool-stateless-deployment-instance.md#logic
 // <HANDWRITE gap="missing-generator:logic:pgpool-k8s-instance" tracker="#1561" reason="Typed shared-renderer composition needs a Rust manifest generator primitive.">
 pub mod k8s;

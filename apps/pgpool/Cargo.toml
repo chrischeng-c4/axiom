@@ -32,13 +32,13 @@ server-lifecycle = { path = "../../libs/server-lifecycle" }
 server-tcp = { path = "../../libs/server-tcp" }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tokio-postgres = "0.7"
 tracing = { workspace = true }
 
 [dev-dependencies]
 transport-h2c = { path = "../../libs/transport-h2c" }
 http-body-util = "0.1"
 reqwest = { workspace = true }
-tokio-postgres = "0.7"
 tower = { workspace = true }
 
 [build-dependencies]

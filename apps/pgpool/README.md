@@ -146,6 +146,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | backend-adapter-seam | epic | 1283 | planned | planned | none | pending: adapter seam contract tests |
+| runtime-connection-limit-discovery | change | 1570 | planned | planned | none | pending: live pg_settings/pg_stat_activity discovery and provider-role tests |
 
 ### CLI Interface
 
