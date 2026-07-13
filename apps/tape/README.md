@@ -33,6 +33,7 @@ real-service external peer calibration remain separate work roots.
 |---|---:|---|---|---|---|---|
 | Topic Replay Journal | #768 | implemented | verified | smoke | ready | local file-backed append and offset/time replay; raft/h2c deferred |
 | Consumer Checkpoints | #768 | implemented | verified | smoke | ready | local durable consumer cursor and stale-write rejection |
+| Subscription Delivery Resources | #1254 | implemented | verified | smoke | ready | file-backed topic subscription resources; pull reuses checkpoint cursors, push stores endpoint contract only |
 | Retention And Backfill | #768 | planned | planned | none | not_ready | retention windows, compaction policy, and batch backfill |
 | HTTP/2 API List | #768 | implemented | verified | smoke | ready | offline `tape spec` route/OpenAPI inventory plus a real h2c + HTTP/1.1 server (#1325) serving `/topics` append/replay/checkpoint; `GET /admin/backup` + `tape backup`/`tape spec gen` client codegen (#1329) |
 | Standard Operational Endpoints | #768 | implemented | verified | smoke | ready | `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` served for real via `libs/service-http` (#1325), with drain-aware readiness and `tape serve` |
@@ -241,6 +242,31 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | durable-consumer-cursor-contract | epic | #768 | implemented | passing | smoke | apps/tape/src/lib.rs<br>apps/tape/tests/cli_contract.rs |
+
+### Subscription Delivery Resources
+
+ID: subscription-delivery-resources
+Type: RuntimeTool
+Root WI: #1254
+Status: verified
+Surfaces: CLI: `tape subscription create|list|show|delete`; API inventory: `/topics/{topic}/subscriptions` and `/topics/{topic}/subscriptions/{subscription}`.
+EC Dimensions: behavior: `cargo test -p tape --test cli_contract` - local pull/push resource and spec inventory contract
+Required Verification: smoke, conformance
+Promise:
+Tape exposes named topic delivery resources without becoming Relay: pull
+subscriptions reuse the existing durable `topic/name` checkpoint cursor, while
+push subscriptions persist an endpoint declaration only. This slice does not
+start a push worker, send outbound requests, add live h2c subscription routes,
+or replicate subscription state through raft.
+Gate Inventory:
+- apps/tape/src/lib.rs
+- apps/tape/src/bin/tape.rs
+- apps/tape/src/spec.rs
+- apps/tape/tests/cli_contract.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| topic-subscription-resource-contract | change | #1254 | implemented | passing | smoke | apps/tape/tests/cli_contract.rs |
 
 ### Retention And Backfill
 

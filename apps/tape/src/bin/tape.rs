@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::{json, Value};
-use tape::{spec, TapeJournal};
+use tape::{spec, SubscriptionDelivery, TapeJournal};
 
 #[derive(Parser)]
 #[command(name = "tape", version, about = "tape - topic replay journal service")]
@@ -24,6 +24,8 @@ enum Command {
     Replay(ReplayArgs),
     /// Manage durable consumer replay checkpoints.
     Checkpoint(CheckpointArgs),
+    /// Manage named topic delivery resources (pull checkpoints or push endpoint metadata).
+    Subscription(SubscriptionArgs),
     /// Serve the topic journal over HTTP (h2c + HTTP/1.1 on one port).
     Serve(ServeArgs),
     /// Print Tape's machine-readable API contract, offline.
@@ -114,6 +116,64 @@ struct CheckpointPutArgs {
     consumer: String,
     #[arg(long)]
     offset: u64,
+    #[arg(long, default_value = ".tape/journal.json")]
+    store: PathBuf,
+}
+
+#[derive(clap::Args)]
+struct SubscriptionArgs {
+    #[command(subcommand)]
+    command: SubscriptionCommand,
+}
+
+#[derive(Subcommand)]
+enum SubscriptionCommand {
+    /// Create a topic delivery resource with pull or push configuration.
+    Create(SubscriptionCreateArgs),
+    /// List the delivery resources for one topic.
+    List(SubscriptionListArgs),
+    /// Show one topic delivery resource and its pull checkpoint, if any.
+    Show(SubscriptionShowArgs),
+    /// Delete resource metadata while preserving a matching pull checkpoint.
+    Delete(SubscriptionDeleteArgs),
+}
+
+#[derive(clap::Args)]
+struct SubscriptionCreateArgs {
+    /// Topic that owns the subscription.
+    topic: String,
+    /// Subscription name. Pull subscriptions use this as their checkpoint consumer name.
+    name: String,
+    /// Use the existing durable checkpoint API as the pull cursor.
+    #[arg(long, conflicts_with = "push")]
+    pull: bool,
+    /// Persist a push callback endpoint without starting a delivery worker.
+    #[arg(long, value_name = "ENDPOINT", required_unless_present = "pull")]
+    push: Option<String>,
+    /// Journal file. Defaults to `.tape/journal.json`.
+    #[arg(long, default_value = ".tape/journal.json")]
+    store: PathBuf,
+}
+
+#[derive(clap::Args)]
+struct SubscriptionListArgs {
+    topic: String,
+    #[arg(long, default_value = ".tape/journal.json")]
+    store: PathBuf,
+}
+
+#[derive(clap::Args)]
+struct SubscriptionShowArgs {
+    topic: String,
+    name: String,
+    #[arg(long, default_value = ".tape/journal.json")]
+    store: PathBuf,
+}
+
+#[derive(clap::Args)]
+struct SubscriptionDeleteArgs {
+    topic: String,
+    name: String,
     #[arg(long, default_value = ".tape/journal.json")]
     store: PathBuf,
 }
@@ -528,6 +588,7 @@ async fn main() -> Result<()> {
         Command::Append(args) => append(args),
         Command::Replay(args) => replay(args),
         Command::Checkpoint(args) => checkpoint(args),
+        Command::Subscription(args) => subscription(args),
         Command::Serve(args) => serve_main(args).await,
         Command::Spec(args) => spec(args),
         Command::Llm(args) => llm(args),
@@ -597,6 +658,85 @@ fn checkpoint(args: CheckpointArgs) -> Result<()> {
             save_journal(&args.store, &journal)?;
             println!("{}", serde_json::to_string_pretty(&checkpoint)?);
             println!("next: done");
+            Ok(())
+        }
+    }
+}
+
+// @spec apps/tape/tech-design/logic/expose-subscriptions-as-topic-delivery-resources.md#changes
+fn subscription(args: SubscriptionArgs) -> Result<()> {
+    match args.command {
+        SubscriptionCommand::Create(args) => {
+            let delivery = if args.pull {
+                SubscriptionDelivery::Pull
+            } else {
+                SubscriptionDelivery::Push {
+                    endpoint: args
+                        .push
+                        .expect("clap requires --push when --pull is absent"),
+                }
+            };
+            let mut journal = load_journal(&args.store)?;
+            let subscription = journal.create_subscription(args.topic, args.name, delivery)?;
+            save_journal(&args.store, &journal)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({ "subscription": subscription }))?
+            );
+            println!(
+                "next: tape subscription show {} {} --store {}",
+                subscription.topic,
+                subscription.name,
+                args.store.display()
+            );
+            Ok(())
+        }
+        SubscriptionCommand::List(args) => {
+            let journal = load_journal(&args.store)?;
+            let subscriptions = journal.subscriptions(&args.topic);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({ "subscriptions": subscriptions }))?
+            );
+            println!("next: done");
+            Ok(())
+        }
+        SubscriptionCommand::Show(args) => {
+            let journal = load_journal(&args.store)?;
+            let subscription = journal
+                .subscription(&args.topic, &args.name)
+                .cloned()
+                .with_context(|| {
+                    format!(
+                        "subscription {} does not exist for topic {}",
+                        args.name, args.topic
+                    )
+                })?;
+            let checkpoint = matches!(&subscription.delivery, SubscriptionDelivery::Pull)
+                .then(|| journal.checkpoint(&subscription.topic, &subscription.name))
+                .flatten();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &json!({ "subscription": subscription, "checkpoint": checkpoint })
+                )?
+            );
+            println!("next: done");
+            Ok(())
+        }
+        SubscriptionCommand::Delete(args) => {
+            let mut journal = load_journal(&args.store)?;
+            let subscription = journal.delete_subscription(&args.topic, &args.name)?;
+            save_journal(&args.store, &journal)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({ "deleted": subscription }))?
+            );
+            println!(
+                "next: tape subscription list {} --store {}",
+                args.topic,
+                args.store.display()
+            );
             Ok(())
         }
     }
