@@ -85,6 +85,17 @@ impl ManagedService for Sift {
         ];
         let mut volume_mounts = vec![json!({"name":"data", "mountPath":"/var/lib/sift"})];
         let mut pod_volumes = Vec::new();
+        let pod_security_context = json!({
+            "runAsNonRoot": true,
+            "runAsUser": 65532,
+            "runAsGroup": 65532,
+            "seccompProfile": {"type": "RuntimeDefault"},
+        });
+        let container_security_context = json!({
+            "allowPrivilegeEscalation": false,
+            "readOnlyRootFilesystem": true,
+            "capabilities": {"drop": ["ALL"]},
+        });
         if matches!(self.spec.auth, AuthMode::Required) {
             if let Some(secret) = &self.spec.tokens_secret {
                 env.push(json!({
@@ -116,12 +127,13 @@ impl ManagedService for Sift {
                     "selector": {"matchLabels": labels.clone()},
                     "template": {
                         "metadata": {"labels": labels},
-                        "spec": {"volumes": pod_volumes, "containers": [{
+                        "spec": {"securityContext": pod_security_context.clone(), "volumes": pod_volumes, "containers": [{
                             "name": "sift", "image": self.spec.image,
                             "args": ["serve", "--data-dir", "/var/lib/sift"],
                             "ports": [{"name":"http", "containerPort":7380}],
                             "env": env,
                             "volumeMounts": volume_mounts,
+                            "securityContext": container_security_context.clone(),
                             "readinessProbe": {"httpGet":{"path":"/readyz","port":"http"}},
                             "livenessProbe": {"httpGet":{"path":"/healthz","port":"http"}}
                         }]}
@@ -154,11 +166,13 @@ impl ManagedService for Sift {
                         "spec": {
                             "template": {
                                 "spec": {
+                                    "securityContext": pod_security_context,
                                     "restartPolicy": "OnFailure",
                                     "containers": [{
                                         "name": "backup", "image": self.spec.image,
                                         "args": args,
-                                        "volumeMounts": [{"name":"data", "mountPath":"/var/lib/sift", "readOnly":true}]
+                                        "volumeMounts": [{"name":"data", "mountPath":"/var/lib/sift", "readOnly":true}],
+                                        "securityContext": container_security_context
                                     }]
                                 }
                             }

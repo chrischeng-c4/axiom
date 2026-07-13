@@ -47,10 +47,19 @@ spec:
       labels: { app.kubernetes.io/name: sift-operator }
     spec:
       serviceAccountName: sift-operator
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: operator
-          image: sift:latest
+          image: ghcr.io/chrischeng-c4/axiom/sift:0.1.0
           args: ["k8s", "operator", "run"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
           env:
             - name: POD_NAMESPACE
               valueFrom:

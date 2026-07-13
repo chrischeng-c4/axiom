@@ -58,7 +58,7 @@ pub fn instance_yaml(profile: InstanceProfile) -> String {
 kind: Sift
 metadata: { name: sift, namespace: staging }
 spec:
-  image: sift:latest
+  image: ghcr.io/chrischeng-c4/axiom/sift:0.1.0
   replicasPerShard: 3
   voterCount: 3
   dataSize: 100Gi
@@ -69,7 +69,7 @@ spec:
 kind: Sift
 metadata: { name: sift, namespace: production }
 spec:
-  image: ghcr.io/chrischeng-c4/axiom/sift:latest
+  image: ghcr.io/chrischeng-c4/axiom/sift:0.1.0
   replicasPerShard: 3
   voterCount: 3
   dataSize: 500Gi
