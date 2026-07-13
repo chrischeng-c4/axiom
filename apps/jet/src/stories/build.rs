@@ -507,7 +507,8 @@ fn rewrite_imports(
             let emitted = item.emitted_path(root);
             (item, emitted)
         } else {
-            // Bare import → resolve against node_modules via the shared helper.
+            // Bare import → resolve an installed dep or workspace package via
+            // the shared helper.
             let Some(dep_file) = super::deps::resolve_bare_specifier(root, importer_file, &spec)
             else {
                 continue; // not installed locally — leave for the importmap
@@ -527,7 +528,15 @@ fn rewrite_imports(
                 assets.push(asset);
                 continue;
             }
-            let item = EmitItem::Dep(dep_file);
+            // A workspace package entry must stay a project module. Treating
+            // it as a `deps/` file collapses its identity to the file name and
+            // skips the normal source-module traversal that rewrites SVGR
+            // barrel exports (#1534).
+            let item = if path_has_node_modules(&dep_file) {
+                EmitItem::Dep(dep_file)
+            } else {
+                EmitItem::Module(file_to_root_url(root, &dep_file))
+            };
             let emitted = item.emitted_path(root);
             (item, emitted)
         };

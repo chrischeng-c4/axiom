@@ -843,6 +843,91 @@ fn object_literal_arrow_property_with_object_assign_computed_key_body_emits_dts(
 }
 
 #[test]
+fn library_dts_keeps_all_query_members_after_object_assign_computed_key_reexport() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "query-dts-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(root, "src/index.ts", "export * from \"./lib/query\";\n");
+    write_file(
+        root,
+        "src/lib/query.ts",
+        r#"export const _Query = {
+    parse: (search: string): Record<string, string> =>
+        Object.assign(
+            {},
+            ...search
+                .replace(/^\?/, '')
+                .split('&')
+                .filter(Boolean)
+                .map((pair) => {
+                    const [key, value] = pair.split('=');
+                    return { [key]: value };
+                }),
+        ),
+    formatToQueryObject: (obj: Record<string, string>): string =>
+        Object.entries(obj)
+            .map(([k, v]) => `${k}=${v}`)
+            .join('&'),
+    getOperatorsInOrder: (obj: Record<string, string>): string[] => Object.keys(obj),
+    transformCase: (str: string): string => str.trim(),
+    camelCase: (str: string): string => str.replace(/-./g, (m) => m[1].toUpperCase()),
+    snakeCase: (str: string): string => str.replace(/([A-Z])/g, '_$1').toLowerCase(),
+    kebabCase: (str: string): string => str.replace(/([A-Z])/g, '-$1').toLowerCase(),
+    formatToQueryString: (obj: Record<string, string>): string =>
+        Object.entries(obj)
+            .map(([k, v]) => `${k}=${v}`)
+            .join('&'),
+    int: (str: string): number => parseInt(str, 10),
+    genOrderList: (list: string[]): string[] => [...list],
+    genOrderStrList: (list: string[]): string => list.join(','),
+};
+"#,
+    );
+
+    let mut options = lib_options(root);
+    options.formats = vec![OutputFormat::Esm, OutputFormat::Cjs];
+    build_library(options).expect("query declaration tree must build");
+
+    let dts = std::fs::read_to_string(root.join("dist/lib/query.d.ts"))
+        .expect("read re-exported query declaration");
+    let expected_members = [
+        "parse: (search: string) => Record<string, string>;",
+        "formatToQueryObject: (obj: Record<string, string>) => string;",
+        "getOperatorsInOrder: (obj: Record<string, string>) => string[];",
+        "transformCase: (str: string) => string;",
+        "camelCase: (str: string) => string;",
+        "snakeCase: (str: string) => string;",
+        "kebabCase: (str: string) => string;",
+        "formatToQueryString: (obj: Record<string, string>) => string;",
+        "int: (str: string) => number;",
+        "genOrderList: (list: string[]) => string[];",
+        "genOrderStrList: (list: string[]) => string;",
+    ];
+    for member in expected_members {
+        assert!(
+            dts.contains(member),
+            "expected member `{member}` missing from re-exported query declaration:\n{dts}"
+        );
+    }
+    let member_line_count = dts
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            trimmed.ends_with(';') && !trimmed.starts_with("export") && trimmed != "};"
+        })
+        .count();
+    assert_eq!(
+        member_line_count, 11,
+        "expected exactly 11 query members after library re-export traversal, got {member_line_count}:\n{dts}"
+    );
+}
+
+#[test]
 fn exported_class_member_infers_string_return_type() {
     let dir = tempdir().unwrap();
     let root = dir.path();
