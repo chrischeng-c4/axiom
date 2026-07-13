@@ -38,7 +38,6 @@ flowchart TD
  verify -->|no| fail([Emit diagnostics and fail])
  verify -->|yes| pass([Clean cluster and pass])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
