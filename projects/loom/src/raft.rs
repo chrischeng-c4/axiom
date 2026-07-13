@@ -120,7 +120,10 @@ impl RaftRunStore {
         let path = dir.join("raft.json");
         let snap_path = dir.join("runs.snapshot.json");
         let membership = raft_core::auto_membership(1);
-        let node = match std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()) {
+        let node = match std::fs::read(&path)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+        {
             Some(state) => raft_core::RaftNode::from_persisted(node_id, &membership, state),
             None => raft_core::RaftNode::new(node_id, &membership),
         };

@@ -2,3 +2,19 @@ version = "1"
 
 [agentic_workflow.projects]
 discover = ["projects/*/aw.toml", "libs/*/aw.toml"]
+
+[agentic_workflow.issue_platform]
+type = "github"
+repo = "chrischeng-c4/axiom"
+auth_method = "cli"
+
+[agentic_workflow.repo_platform]
+type = "github"
+repo = "chrischeng-c4/axiom"
+default_branch = "main"
+auto_commit = true
+auto_pr = false
+
+[agentic_workflow.tech_design_platform]
+type = "local"
+path = "tech-design"

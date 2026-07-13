@@ -43,7 +43,7 @@ use crate::types::{
     SortMissing, SortOrder, SortSpec, StatsResponse, StorageStats, TermQuery, TermsQuery,
     VectorSpec,
 };
-use crate::vector_index::{FlatCpuIndex, HnswCpuIndex, ScalarCodebook, VectorIndex, open_backend};
+use crate::vector_index::{open_backend, FlatCpuIndex, HnswCpuIndex, ScalarCodebook, VectorIndex};
 use roaring::RoaringBitmap;
 
 const IDEMPOTENCY_TTL: Duration = Duration::from_secs(300);
@@ -8086,7 +8086,7 @@ enum PageCursor {
 }
 
 fn encode_cursor(json: String) -> String {
-    use base64::{Engine, engine::general_purpose::STANDARD_NO_PAD};
+    use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
     STANDARD_NO_PAD.encode(json)
 }
 
@@ -8118,7 +8118,7 @@ fn make_score_cursor(score: f32, eid: &str) -> String {
 }
 
 fn parse_page_cursor(s: &str) -> Option<PageCursor> {
-    use base64::{Engine, engine::general_purpose::STANDARD_NO_PAD};
+    use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
     let raw = STANDARD_NO_PAD.decode(s).ok()?;
     let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
     if let Some(offset) = v.get("offset").and_then(|o| o.as_u64()) {
@@ -10647,7 +10647,7 @@ mod segment_keyword_inverted_diff_tests {
             .__seal_keyword_field_to_segment("c", "cat", dir.path())
             .unwrap();
         assert_terms_dropped(&subject); // RAM `terms` gone — drives from mmap
-        // Delete AFTER the seal, with NO re-seal → exercises the tombstone path.
+                                        // Delete AFTER the seal, with NO re-seal → exercises the tombstone path.
         for d in to_delete {
             subject.delete("c", d, None).unwrap();
         }

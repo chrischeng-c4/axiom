@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 
 use crate::routing::VirtualBucketShardMap;
 use crate::storage::{CollectionSnapshot, FieldIndexSnapshot, SnapshotV1};
@@ -567,11 +567,9 @@ mod tests {
         let batches = snapshot_reshard_batches(&snapshot, &from, &to, 3).unwrap();
 
         assert!(!batches.is_empty());
-        assert!(
-            batches
-                .iter()
-                .all(|b| b.external_ids.values().map(BTreeSet::len).sum::<usize>() <= 3)
-        );
+        assert!(batches
+            .iter()
+            .all(|b| b.external_ids.values().map(BTreeSet::len).sum::<usize>() <= 3));
         assert!(batches.iter().any(|b| b.to_shard == 1));
 
         let mut target_snapshot = SnapshotV1 {
