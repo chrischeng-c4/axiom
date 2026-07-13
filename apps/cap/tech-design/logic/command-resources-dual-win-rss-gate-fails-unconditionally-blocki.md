@@ -83,3 +83,35 @@ flowchart TD
     r3[R3 bounded xargs fixture] --> cargo_test_p_cap_test_command_resources_gate
     r4[R4 end to end benchmark] --> cargo_bench_p_cap_bench_command_resources[cargo bench -p cap --bench command_resources]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/cap/tech-design/semantic/source/projects-cap-benches-command_resources-rs.md
+    action: modify
+    section: rust-source-unit
+    impl_mode: codegen
+    description: Replace the impossible strict dual-win RSS comparison with an explicitly named strict-CPU plus 1.25x-RSS-budget gate, preserve raw measurement reporting, and use a dedicated bounded stdin fixture for the xargs -n 1 scenario.
+  - path: apps/cap/benches/command_resources.rs
+    action: modify
+    section: e2e-test
+    impl_mode: codegen
+    description: Regenerate the benchmark from the semantic source so the runtime policy, gate label, diagnostic, and bounded xargs fixture are synchronized.
+  - path: apps/cap/tests/command_resources_gate.rs
+    action: add
+    section: unit-test
+    impl_mode: hand-written
+    description: Test CPU rejection, exact RSS-budget acceptance, above-budget rejection, and the bounded xargs-n1 fixture invariant without executing the full benchmark.
+  - path: apps/cap/tech-design/logic/cap-hook-auto-command-optimizer-whitelist.md
+    action: modify
+    section: e2e-test
+    impl_mode: hand-written
+    description: Update the resource-gate contract to name the calibrated CPU-plus-RSS budget rather than a strict dual-win requirement.
+  - path: apps/cap/BENCHMARKS.md
+    action: modify
+    section: documentation
+    impl_mode: hand-written
+    description: Record the macOS process-floor rationale, 1.25x RSS ceiling, and bounded xargs-n1 fixture policy so the threshold is deliberate and auditable.
+```
