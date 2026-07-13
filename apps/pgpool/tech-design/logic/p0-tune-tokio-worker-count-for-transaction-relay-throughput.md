@@ -26,3 +26,14 @@ flowchart LR
   workers --> relay[existing relay and reset semantics]
   relay --> benchmark([repeat complete benchmark])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/bin/pgpool.rs
+    action: modify
+    section: pgpool-worker-count-tuning
+    impl_mode: hand-written
+```
