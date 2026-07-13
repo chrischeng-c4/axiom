@@ -2833,7 +2833,10 @@ fn mb_os_w_zero(_args: &[MbValue]) -> MbValue {
 fn require_int_arg(args: &[MbValue], idx: usize, name: &str) -> Option<MbValue> {
     if let Some(value) = args.get(idx) {
         if value.as_int_pyint().is_none() {
-            return Some(raise("TypeError", format!("an integer is required for {name}")));
+            return Some(raise(
+                "TypeError",
+                format!("an integer is required for {name}"),
+            ));
         }
     }
     None

@@ -642,10 +642,7 @@ fn register_sched() {
     register_with(
         "sched",
         &["scheduler", "Event"],
-        &[(
-            "scheduler",
-            dispatch_sched_scheduler as *const () as usize,
-        )],
+        &[("scheduler", dispatch_sched_scheduler as *const () as usize)],
         &[],
         &[],
     );

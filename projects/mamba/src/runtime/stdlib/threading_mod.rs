@@ -1970,10 +1970,7 @@ mod tests {
         MbValue::from_func(test_local_trace_hook as *const () as usize)
     }
 
-    unsafe extern "C" fn test_global_trace_hook(
-        args_ptr: *const MbValue,
-        nargs: usize,
-    ) -> MbValue {
+    unsafe extern "C" fn test_global_trace_hook(args_ptr: *const MbValue, nargs: usize) -> MbValue {
         crate::icf_guard!();
         let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
         push_test_trace_event("global", args);
@@ -2091,11 +2088,7 @@ mod tests {
         register_test_hooks(&[test_trace_hook as *const () as usize]);
         let hook = MbValue::from_func(test_trace_hook as *const () as usize);
         mb_threading_setprofile(hook);
-        traceback_mod::mb_traceback_push_frame(
-            s("profile_test.py"),
-            MbValue::from_int(11),
-            s("g"),
-        );
+        traceback_mod::mb_traceback_push_frame(s("profile_test.py"), MbValue::from_int(11), s("g"));
         traceback_mod::mb_traceback_pop_frame();
         assert_eq!(
             test_trace_events(),
@@ -2208,11 +2201,7 @@ mod tests {
     fn test_trace_hook_does_not_backfill_existing_frame_line_events() {
         clear_test_trace_events();
         register_test_hooks(&[test_trace_hook as *const () as usize]);
-        traceback_mod::mb_traceback_push_frame(
-            s("module.py"),
-            MbValue::from_int(1),
-            s("<module>"),
-        );
+        traceback_mod::mb_traceback_push_frame(s("module.py"), MbValue::from_int(1), s("<module>"));
         let hook = MbValue::from_func(test_trace_hook as *const () as usize);
         mb_threading_settrace(hook);
         traceback_mod::mb_traceback_set_current_line(MbValue::from_int(2));
@@ -2244,15 +2233,13 @@ mod tests {
             test_local_trace_hook as *const () as usize,
         ]);
         TEST_GLOBAL_TRACE_RETURN.with(|hook| {
-            hook.set(MbValue::from_func(test_local_trace_hook as *const () as usize));
+            hook.set(MbValue::from_func(
+                test_local_trace_hook as *const () as usize,
+            ));
         });
         let hook = MbValue::from_func(test_global_trace_hook as *const () as usize);
         mb_threading_settrace(hook);
-        traceback_mod::mb_traceback_push_frame(
-            s("trace_local.py"),
-            MbValue::from_int(20),
-            s("f"),
-        );
+        traceback_mod::mb_traceback_push_frame(s("trace_local.py"), MbValue::from_int(20), s("f"));
         traceback_mod::mb_traceback_set_current_line(MbValue::from_int(21));
         traceback_mod::mb_traceback_set_current_line(MbValue::from_int(22));
         traceback_mod::mb_traceback_pop_frame();
@@ -2276,7 +2263,9 @@ mod tests {
             test_local_trace_hook as *const () as usize,
         ]);
         TEST_GLOBAL_TRACE_RETURN.with(|hook| {
-            hook.set(MbValue::from_func(test_local_trace_hook as *const () as usize));
+            hook.set(MbValue::from_func(
+                test_local_trace_hook as *const () as usize,
+            ));
         });
         let hook = MbValue::from_func(test_global_trace_hook as *const () as usize);
         mb_threading_settrace(hook);

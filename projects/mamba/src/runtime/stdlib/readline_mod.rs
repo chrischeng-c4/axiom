@@ -302,10 +302,7 @@ unsafe extern "C" fn dispatch_set_pre_input_hook(
     MbValue::none()
 }
 
-unsafe extern "C" fn dispatch_set_startup_hook(
-    args_ptr: *const MbValue,
-    nargs: usize,
-) -> MbValue {
+unsafe extern "C" fn dispatch_set_startup_hook(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
     let Some(func) = args.first().copied() else {
         return MbValue::none();

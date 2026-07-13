@@ -1295,8 +1295,8 @@ pub fn mb_sqlite3_cursor(conn: MbValue) -> MbValue {
 }
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::exception::{current_exception_type, mb_clear_exception};
+    use super::*;
 
     fn s(val: &str) -> MbValue {
         MbValue::from_ptr(MbObject::new_str(val.to_string()))

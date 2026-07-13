@@ -70,10 +70,26 @@ fn register_func(attrs: &mut HashMap<String, MbValue>, name: &str, addr: usize) 
 
 pub fn register() {
     let mut attrs = HashMap::new();
-    register_func(&mut attrs, "LOG_MASK", dispatch_log_mask as *const () as usize);
-    register_func(&mut attrs, "LOG_UPTO", dispatch_log_upto as *const () as usize);
-    register_func(&mut attrs, "closelog", dispatch_closelog as *const () as usize);
-    register_func(&mut attrs, "openlog", dispatch_openlog as *const () as usize);
+    register_func(
+        &mut attrs,
+        "LOG_MASK",
+        dispatch_log_mask as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "LOG_UPTO",
+        dispatch_log_upto as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "closelog",
+        dispatch_closelog as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "openlog",
+        dispatch_openlog as *const () as usize,
+    );
     register_func(
         &mut attrs,
         "setlogmask",
