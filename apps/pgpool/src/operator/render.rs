@@ -1,5 +1,5 @@
 // SPEC-MANAGED: apps/pgpool/tech-design/semantic/pgpool-crd-operator-control-plane.md#logic
-// HANDWRITE-BEGIN gap="missing-generator:logic:133c6ad7" tracker="#1575" reason="Purely render a Pgpool CR through the shared stateless Deployment/common Service modules and attach owner references."
+// <HANDWRITE gap="missing-generator:logic:133c6ad7" tracker="#1575" reason="Purely render a Pgpool CR through the shared stateless Deployment/common Service modules and attach owner references.">
 use kube::ResourceExt;
 use service_k8s::render::common::owner_ref;
 use serde_json::Value;
@@ -46,4 +46,4 @@ fn nonempty(value: &str, default: &str) -> String {
         value.into()
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

@@ -1,5 +1,5 @@
 // SPEC-MANAGED: apps/pgpool/tech-design/semantic/pgpool-crd-operator-control-plane.md#unit-test
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:4dbe8f81" tracker="#1575" reason="Verify CRD schema, stateless owned rendering, ManagedService readiness, and rich control-plane status projection."
+// <HANDWRITE gap="missing-generator:unit-test:4dbe8f81" tracker="#1575" reason="Verify CRD schema, stateless owned rendering, ManagedService readiness, and rich control-plane status projection.">
 use std::collections::HashMap;
 
 use kube::CustomResourceExt;
@@ -178,4 +178,4 @@ fn operator_assets_are_leader_elected_and_layered() {
     assert!(yaml.contains("coordination.k8s.io"));
     assert!(yaml.contains("namespace: database-system"));
 }
-// HANDWRITE-END
+// </HANDWRITE>

@@ -1,5 +1,5 @@
 // SPEC-MANAGED: apps/pgpool/tech-design/semantic/pgpool-crd-operator-control-plane.md#logic
-// HANDWRITE-BEGIN gap="missing-generator:logic:4a951ea7" tracker="#1575" reason="Export Pgpool CRD, render, reconcile, CRD YAML normalization, and operator deployment-manifest rendering."
+// <HANDWRITE gap="missing-generator:logic:4a951ea7" tracker="#1575" reason="Export Pgpool CRD, render, reconcile, CRD YAML normalization, and operator deployment-manifest rendering.">
 pub mod crd;
 pub mod reconcile;
 pub mod render;
@@ -145,4 +145,4 @@ fn normalize_kubernetes_schema_formats(value: &mut Value) {
         _ => {}
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

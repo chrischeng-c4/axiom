@@ -1,5 +1,5 @@
 // SPEC-MANAGED: apps/pgpool/tech-design/semantic/pgpool-crd-operator-control-plane.md#logic
-// HANDWRITE-BEGIN gap="missing-generator:logic:2b5d164e" tracker="#1575" reason="Define the namespaced Pgpool custom resource, provider/role endpoint budgets, and readiness plus connection-budget status schema."
+// <HANDWRITE gap="missing-generator:logic:2b5d164e" tracker="#1575" reason="Define the namespaced Pgpool custom resource, provider/role endpoint budgets, and readiness plus connection-budget status schema.">
 use std::collections::BTreeMap;
 
 use kube::CustomResource;
@@ -266,4 +266,4 @@ fn default_endpoint_ref() -> &'static PgpoolEndpointBudgetSpec {
     static ENDPOINT: std::sync::OnceLock<PgpoolEndpointBudgetSpec> = std::sync::OnceLock::new();
     ENDPOINT.get_or_init(PgpoolEndpointBudgetSpec::default)
 }
-// HANDWRITE-END
+// </HANDWRITE>
