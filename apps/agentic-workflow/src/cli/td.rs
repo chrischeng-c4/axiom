@@ -382,6 +382,14 @@ fn td_branch_name(slug: &str) -> String {
     format!("td-{}", slug)
 }
 
+/// A remote active phase is resumable only when its lifecycle baseline is
+/// still reachable from the current checkout. Persistent project branches can
+/// be rebased without changing the issue's phase, which otherwise skips the
+/// provisioning path that writes the required exact `Td-Init` trailer.
+fn can_resume_active_td(phase: Option<&str>, has_reachable_td_init: bool) -> bool {
+    phase.is_some_and(|phase| phase.starts_with("td_")) && has_reachable_td_init
+}
+
 fn activate_td_workspace_for_lifecycle(
     project_root: &std::path::Path,
     workflow_slug: &str,
@@ -603,9 +611,9 @@ fn normalize_checkout_rel_path(path: &str) -> String {
 /// trailer. A fresh `aw td create <slug>` does this itself.
 ///
 /// Auto-heals stale frontmatter: if the issue says it has an active `td_*`
-/// phase but the branch does not exist, the frontmatter is a leftover from a
-/// prior aborted run — scrub it (commit a `Td-Reset` trailer on the current
-/// checkout) and continue with fresh branch activation.
+/// phase but its branch does not exist or its exact `Td-Init` is no longer
+/// reachable, scrub it (commit a `Td-Reset` trailer on the current checkout)
+/// and continue with fresh branch activation.
 async fn provision_td_workspace(
     project_root: &std::path::Path,
     issue_ref: &str,
@@ -636,13 +644,17 @@ async fn provision_td_workspace(
     }
 
     // Guard: no active td_ phase. Auto-heal stale frontmatter when the
-    // issue claims an active phase but neither workspace nor branch exist.
+    // issue claims an active phase but neither workspace nor branch exists,
+    // or when a rebase dropped the exact Td-Init baseline code-check needs.
     if let Some(phase) = issue.phase.clone() {
         if phase.starts_with("td_") {
             let worktree_abs = td_workspace_path(project_root, workflow_slug);
             let branch_present =
                 crate::branch_switch::branch_exists_local(project_root, branch).unwrap_or(false);
-            let stale = !worktree_abs.exists() && !branch_present;
+            let (_, init_commit) =
+                super::cb::reachable_td_init_commit(project_root, workflow_slug)?;
+            let missing_reachable_td_init = init_commit.is_none();
+            let stale = (!worktree_abs.exists() && !branch_present) || missing_reachable_td_init;
             if stale {
                 issue.phase = None;
                 issue.branch = None;
@@ -657,7 +669,14 @@ async fn provision_td_workspace(
                     "Td-Reset",
                     &[issue_path_s.as_str()],
                     &[
-                        ("Reset-Reason", "stale-frontmatter"),
+                        (
+                            "Reset-Reason",
+                            if missing_reachable_td_init {
+                                "missing-reachable-td-init"
+                            } else {
+                                "stale-frontmatter"
+                            },
+                        ),
                         ("Reset-From-Phase", phase.as_str()),
                     ],
                 )?;
@@ -3237,11 +3256,8 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     let bootstrap_issue = bootstrap_td_issue(&project_root, issue_ref).await?;
     let slug = workflow_slug_for_issue(&bootstrap_issue, issue_ref);
     let branch = td_branch_name(&slug);
-    if bootstrap_issue
-        .phase
-        .as_deref()
-        .is_some_and(|phase| phase.starts_with("td_"))
-    {
+    let (_, init_commit) = super::cb::reachable_td_init_commit(&project_root, &slug)?;
+    if can_resume_active_td(bootstrap_issue.phase.as_deref(), init_commit.is_some()) {
         td_activate_inplace_if_present(&project_root, &slug)?;
     } else {
         provision_td_workspace(&project_root, issue_ref, &slug, &branch).await?;
@@ -4944,6 +4960,14 @@ mod tests {
             String::from_utf8_lossy(&out.stderr)
         );
         String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn active_td_phase_requires_a_reachable_init_to_resume() {
+        assert!(can_resume_active_td(Some("td_created"), true));
+        assert!(!can_resume_active_td(Some("td_created"), false));
+        assert!(!can_resume_active_td(None, true));
+        assert!(!can_resume_active_td(Some("created"), true));
     }
 
     #[test]
