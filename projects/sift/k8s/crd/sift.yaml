@@ -1,3 +1,45 @@
-// HANDWRITE-BEGIN gap="sift-crd-artifact" tracker="1606" reason="Define the cluster-scoped Sift custom resource API."
-// TODO: hand-write content for `projects/sift/k8s/crd/sift.yaml`.
-// HANDWRITE-END
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: sifts.sift.axiom.dev
+spec:
+  group: sift.axiom.dev
+  scope: Namespaced
+  names:
+    plural: sifts
+    singular: sift
+    kind: Sift
+    shortNames: [sift]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [image]
+              properties:
+                image: { type: string }
+                replicasPerShard: { type: integer, minimum: 1 }
+                voterCount: { type: integer, minimum: 1 }
+                dataSize: { type: string }
+                auth: { type: string, enum: [off, required] }
+                tokensSecret: { type: string }
+                backup:
+                  type: object
+                  properties:
+                    schedule: { type: string }
+                    destination: { type: string }
+                    retentionSecs: { type: integer, minimum: 1 }
+            status:
+              type: object
+              properties:
+                phase: { type: string }
+                readyReplicas: { type: integer }
+      subresources:
+        status: {}
+
+<!-- marker: sift-crd-artifact path: projects/sift/k8s/crd/sift.yaml reason: Define the cluster-scoped Sift custom resource API. -->
