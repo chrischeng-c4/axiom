@@ -89,25 +89,25 @@ changes:
     action: modify
     section: rust-source-unit
     impl_mode: codegen
-    description: Replace the impossible strict dual-win RSS comparison with an explicitly named strict-CPU plus 1.25x-RSS-budget gate, preserve raw measurement reporting, and use a dedicated bounded stdin fixture for the xargs -n 1 scenario.
+    description: Define an explicit CPU-win-with-RSS-budget gate with a 1.25 ceiling, preserve raw ratio reporting, and create an independent bounded stdin fixture for xargs -n 1.
   - path: apps/cap/benches/command_resources.rs
     action: modify
     section: e2e-test
     impl_mode: codegen
-    description: Regenerate the benchmark from the semantic source so the runtime policy, gate label, diagnostic, and bounded xargs fixture are synchronized.
+    description: Regenerate the runtime benchmark from its semantic source so policy behavior and fixture sizing stay synchronized.
   - path: apps/cap/tests/command_resources_gate.rs
     action: add
     section: unit-test
     impl_mode: hand-written
-    description: Test CPU rejection, exact RSS-budget acceptance, above-budget rejection, and the bounded xargs-n1 fixture invariant without executing the full benchmark.
+    description: Cover the CPU and RSS policy boundaries plus the bounded xargs-n1 fixture without running the benchmark workload.
   - path: apps/cap/tech-design/logic/cap-hook-auto-command-optimizer-whitelist.md
     action: modify
     section: e2e-test
     impl_mode: hand-written
-    description: Update the resource-gate contract to name the calibrated CPU-plus-RSS budget rather than a strict dual-win requirement.
+    description: Replace obsolete strict dual-win wording with the calibrated CPU-plus-RSS-budget verification contract.
   - path: apps/cap/BENCHMARKS.md
     action: modify
     section: documentation
     impl_mode: hand-written
-    description: Record the macOS process-floor rationale, 1.25x RSS ceiling, and bounded xargs-n1 fixture policy so the threshold is deliberate and auditable.
+    description: Document the macOS process-floor rationale, 1.25 RSS ceiling, and bounded fixture choice as the auditable benchmark policy.
 ```
