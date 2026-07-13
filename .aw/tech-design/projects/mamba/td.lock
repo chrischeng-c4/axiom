@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/mamba"
-generated_at = "2026-07-13T02:52:06.209097+00:00"
-digest = "sha256:c3d14815ad0f5cc0c87b86b8eba02ce02f9dcf93a4d11998eae30f0d5cd29873"
-source_digest = "sha256:c3d14815ad0f5cc0c87b86b8eba02ce02f9dcf93a4d11998eae30f0d5cd29873"
-ir_digest = "sha256:3ac520bbb0b5ee35e81781adc6957966eccfeda50c1f80f5f86f06ca1fb36b3d"
+generated_at = "2026-07-13T02:59:38.756877+00:00"
+digest = "sha256:32b492ff527bf2cfef9257d53b2cb1975acafdaaac4ed570464da920dca048ec"
+source_digest = "sha256:32b492ff527bf2cfef9257d53b2cb1975acafdaaac4ed570464da920dca048ec"
+ir_digest = "sha256:72b7f3ae796df68e46c7d6dbbe3a2b2ed595d8d5dfca4f340c261c47ca1f7a55"
 
 [[files]]
 path = "README.md"
@@ -92,7 +92,7 @@ ir_digest = "sha256:6c27e4e10521f7638f4ec32a12ba404c60260e7c7f1414d4474b27d0671f
 section_count = 3
 
 [[files]]
-path = "logic/mamba-language-core-restore-class-comprehension-cells.md"
+path = "logic/mamba-language-core-materialize-generator-expression-closures.md"
 digest = "sha256:4a4a00abddeada1b354a9ffa7a87c64e7976e248fde4bc26dc5ba92c7804605d"
 ir_digest = "sha256:6de52fb98fcf7df896dc10e9cc57b2f243cf63064da5906b1006228baab2dd21"
 section_count = 2
