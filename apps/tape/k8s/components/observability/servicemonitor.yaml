@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:3c73ca53" tracker="pending-tracker" reason="Select the Tape server Service, scrape port http at /metrics, and propagate app/role service labels into metric targets. generator gap: missing-generator:servicemonitor (#1588)."
+// TODO: hand-write content for `apps/tape/k8s/components/observability/servicemonitor.yaml`.
+// HANDWRITE-END

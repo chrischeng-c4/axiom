@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:4449c2ec" tracker="pending-tracker" reason="Alert on real Tape append/replay average-latency series and Kubernetes restart loops without inventing domain lag metrics. generator gap: missing-generator:prometheus-rule (#1588)."
+// TODO: hand-write content for `apps/tape/k8s/components/observability/prometheusrule.yaml`.
+// HANDWRITE-END
