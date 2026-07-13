@@ -120,7 +120,10 @@ impl RaftRunStore {
         let path = dir.join("raft.json");
         let snap_path = dir.join("runs.snapshot.json");
         let membership = raft_core::auto_membership(1);
-        let node = match std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()) {
+        let node = match std::fs::read(&path)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+        {
             Some(state) => raft_core::RaftNode::from_persisted(node_id, &membership, state),
             None => raft_core::RaftNode::new(node_id, &membership),
         };
@@ -139,7 +142,11 @@ impl RaftRunStore {
                 inner.sm.apply(&entry);
             }
         }
-        Ok(Self { inner: std::sync::Mutex::new(inner), path, snap_path })
+        Ok(Self {
+            inner: std::sync::Mutex::new(inner),
+            path,
+            snap_path,
+        })
     }
 
     fn persist(&self, inner: &RaftInner) -> anyhow::Result<()> {
@@ -157,7 +164,10 @@ impl RaftRunStore {
 impl RaftRunStore {
     /// Propose a command on the (single-voter) node and drive to commit+apply.
     fn propose_and_commit(&self, cmd: Command) -> anyhow::Result<()> {
-        let mut guard = self.inner.lock().map_err(|_| anyhow::anyhow!("raft store poisoned"))?;
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("raft store poisoned"))?;
         let inner = &mut *guard;
         for _ in 0..500 {
             if inner.node.is_leader() {
@@ -178,7 +188,10 @@ impl RaftRunStore {
                 inner.sm.apply(&entry);
             }
         }
-        anyhow::ensure!(inner.sm.applied_index() >= idx, "raft command did not commit");
+        anyhow::ensure!(
+            inner.sm.applied_index() >= idx,
+            "raft command did not commit"
+        );
         self.persist(inner)
     }
 }
@@ -194,12 +207,18 @@ impl crate::store::RunStore for RaftRunStore {
     }
 
     async fn get(&self, id: &WorkflowRunId) -> anyhow::Result<Option<WorkflowRun>> {
-        let guard = self.inner.lock().map_err(|_| anyhow::anyhow!("raft store poisoned"))?;
+        let guard = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("raft store poisoned"))?;
         Ok(guard.sm.get(id).cloned())
     }
 
     async fn list(&self) -> anyhow::Result<Vec<WorkflowRunId>> {
-        let guard = self.inner.lock().map_err(|_| anyhow::anyhow!("raft store poisoned"))?;
+        let guard = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("raft store poisoned"))?;
         Ok(guard.sm.run_ids())
     }
 }
@@ -254,7 +273,10 @@ mod tests {
         }
 
         fn leader(&self) -> Option<NodeId> {
-            self.nodes.iter().find(|(_, n)| n.is_leader()).map(|(id, _)| *id)
+            self.nodes
+                .iter()
+                .find(|(_, n)| n.is_leader())
+                .map(|(id, _)| *id)
         }
 
         fn run_until_leader(&mut self) -> NodeId {
@@ -294,7 +316,9 @@ mod tests {
     fn survives_a_follower_apply_lag_then_converges() {
         let mut c = Cluster::new(3);
         for i in 0..3 {
-            c.propose(Command::PutRun(WorkflowRun::new(WorkflowRunId::new(format!("r{i}")))));
+            c.propose(Command::PutRun(WorkflowRun::new(WorkflowRunId::new(
+                format!("r{i}"),
+            ))));
         }
         // a few more steps to flush replication to every follower
         for _ in 0..30 {

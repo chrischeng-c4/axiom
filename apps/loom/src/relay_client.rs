@@ -17,7 +17,9 @@ use crate::worker::{CompletionSink, LeasedTask, RelayConsumer};
 /// The loom deployment's namespace (LOOM_NAMESPACE), if set — scopes every relay
 /// subject vhost-style (#451).
 pub fn loom_namespace() -> Option<String> {
-    std::env::var("LOOM_NAMESPACE").ok().filter(|s| !s.is_empty())
+    std::env::var("LOOM_NAMESPACE")
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 /// h2c reqwest client for relay calls, baking in `X-Relay-Namespace` as a default
@@ -63,7 +65,10 @@ impl RelayDispatcher {
 impl Dispatcher for RelayDispatcher {
     async fn dispatch(&self, route: &str, msg: TaskMessage) -> anyhow::Result<()> {
         let url = format!("{}/v1/{}/publish", self.base, route);
-        let body = PublishBody { message_id: msg.message_id(), payload: &msg };
+        let body = PublishBody {
+            message_id: msg.message_id(),
+            payload: &msg,
+        };
         let resp = self.client.post(&url).json(&body).send().await?;
         anyhow::ensure!(
             resp.status().is_success(),
@@ -123,9 +128,14 @@ impl RelayConsumer for RelayWorkConsumer {
         let lr: LeaseResp = resp.json().await?;
         match (lr.lease, lr.entry) {
             (Some(l), Some(e)) => {
-                let message: TaskMessage = serde_json::from_value(e.payload)
-                    .map_err(|err| anyhow::anyhow!("leased payload is not a loom TaskMessage: {err}"))?;
-                Ok(Some(LeasedTask { lease_id: l.lease_id, epoch: l.epoch, message }))
+                let message: TaskMessage = serde_json::from_value(e.payload).map_err(|err| {
+                    anyhow::anyhow!("leased payload is not a loom TaskMessage: {err}")
+                })?;
+                Ok(Some(LeasedTask {
+                    lease_id: l.lease_id,
+                    epoch: l.epoch,
+                    message,
+                }))
             }
             _ => Ok(None),
         }
@@ -253,7 +263,10 @@ mod tests {
     #[test]
     fn publish_body_matches_relay_publish_request_shape() {
         let m = msg();
-        let body = PublishBody { message_id: m.message_id(), payload: &m };
+        let body = PublishBody {
+            message_id: m.message_id(),
+            payload: &m,
+        };
         let v = serde_json::to_value(&body).unwrap();
         // relay PublishRequest: { message_id, payload (opaque), headers? }.
         assert_eq!(v["message_id"], "r1:n2:3");

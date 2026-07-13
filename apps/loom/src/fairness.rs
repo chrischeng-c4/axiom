@@ -66,11 +66,18 @@ mod tests {
     use super::*;
 
     fn demand(id: &str, ready: usize, weight: u32) -> RunDemand {
-        RunDemand { id: WorkflowRunId::new(id), ready, weight }
+        RunDemand {
+            id: WorkflowRunId::new(id),
+            ready,
+            weight,
+        }
     }
 
     fn granted(v: &[(WorkflowRunId, usize)], id: &str) -> usize {
-        v.iter().find(|(r, _)| r.0 == id).map(|(_, n)| *n).unwrap_or(0)
+        v.iter()
+            .find(|(r, _)| r.0 == id)
+            .map(|(_, n)| *n)
+            .unwrap_or(0)
     }
 
     #[test]

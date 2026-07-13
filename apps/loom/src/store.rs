@@ -73,7 +73,10 @@ impl RunStore for MemStore {
     }
 
     async fn delete(&self, id: &WorkflowRunId) -> anyhow::Result<()> {
-        self.runs.lock().map_err(|_| anyhow::anyhow!("run store poisoned"))?.remove(id);
+        self.runs
+            .lock()
+            .map_err(|_| anyhow::anyhow!("run store poisoned"))?
+            .remove(id);
         Ok(())
     }
 }
@@ -100,7 +103,10 @@ impl FileStore {
         } else {
             BTreeMap::new()
         };
-        Ok(Self { path, cache: Mutex::new(cache) })
+        Ok(Self {
+            path,
+            cache: Mutex::new(cache),
+        })
     }
 
     fn persist(&self, map: &BTreeMap<WorkflowRunId, WorkflowRun>) -> anyhow::Result<()> {
@@ -115,7 +121,10 @@ impl FileStore {
 #[async_trait]
 impl RunStore for FileStore {
     async fn put(&self, run: WorkflowRun) -> anyhow::Result<()> {
-        let mut g = self.cache.lock().map_err(|_| anyhow::anyhow!("run store poisoned"))?;
+        let mut g = self
+            .cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("run store poisoned"))?;
         g.insert(run.id.clone(), run);
         self.persist(&g)
     }
@@ -140,7 +149,10 @@ impl RunStore for FileStore {
     }
 
     async fn delete(&self, id: &WorkflowRunId) -> anyhow::Result<()> {
-        let mut g = self.cache.lock().map_err(|_| anyhow::anyhow!("run store poisoned"))?;
+        let mut g = self
+            .cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("run store poisoned"))?;
         if g.remove(id).is_some() {
             self.persist(&g)?;
         }
@@ -162,7 +174,11 @@ mod tests {
 
         assert_eq!(store.get(&id).await.unwrap().unwrap().id, id);
         assert_eq!(store.list().await.unwrap(), vec![id.clone()]);
-        assert!(store.get(&WorkflowRunId::new("missing")).await.unwrap().is_none());
+        assert!(store
+            .get(&WorkflowRunId::new("missing"))
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]
@@ -172,7 +188,10 @@ mod tests {
         let mut run = WorkflowRun::new(id.clone());
         run.status = crate::model::RunStatus::Running;
         store.put(run).await.unwrap();
-        assert_eq!(store.get(&id).await.unwrap().unwrap().status, crate::model::RunStatus::Running);
+        assert_eq!(
+            store.get(&id).await.unwrap().unwrap().status,
+            crate::model::RunStatus::Running
+        );
         assert_eq!(store.list().await.unwrap().len(), 1);
     }
 

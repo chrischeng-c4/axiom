@@ -71,7 +71,10 @@ pub struct TaskOutput {
 
 impl From<Vec<u8>> for TaskOutput {
     fn from(result: Vec<u8>) -> Self {
-        Self { result, fan_out: Vec::new() }
+        Self {
+            result,
+            fan_out: Vec::new(),
+        }
     }
 }
 
@@ -101,7 +104,10 @@ impl Registry {
 /// Max result size (bytes) reported inline instead of via keep (#127). From
 /// LOOM_INLINE_MAX_BYTES (default 4096); 0 disables inline (always claim-check).
 pub fn inline_max() -> usize {
-    std::env::var("LOOM_INLINE_MAX_BYTES").ok().and_then(|s| s.parse().ok()).unwrap_or(4096)
+    std::env::var("LOOM_INLINE_MAX_BYTES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4096)
 }
 
 /// Execute one task: fetch its claim-check input from keep, run the handler,
@@ -128,7 +134,10 @@ pub async fn execute_task(
 
     let outcome = match registry.get(&m.task_name) {
         Some(handler) => handler(input),
-        None => Err(anyhow::anyhow!("no handler registered for task `{}`", m.task_name)),
+        None => Err(anyhow::anyhow!(
+            "no handler registered for task `{}`",
+            m.task_name
+        )),
     };
 
     match outcome {
@@ -139,7 +148,8 @@ pub async fn execute_task(
                 (None, Some(std::mem::take(&mut out.result)))
             } else {
                 let result_id = format!("{}:{}:result", m.run_id, m.node_id);
-                keep.put_result(&result_id, std::mem::take(&mut out.result)).await?;
+                keep.put_result(&result_id, std::mem::take(&mut out.result))
+                    .await?;
                 (Some(KeepRef(result_id)), None)
             };
             // Persist any inline child inputs to keep (claim-check) and replace
@@ -164,7 +174,8 @@ pub async fn execute_task(
         }
         Err(_) => {
             // Let loom decide retry-or-fail (it owns the DAG + retry policy).
-            sink.report(&m.run_id, &m.node_id, m.attempt, None, None, true, &[]).await?;
+            sink.report(&m.run_id, &m.node_id, m.attempt, None, None, true, &[])
+                .await?;
         }
     }
     Ok(())
@@ -212,7 +223,10 @@ pub fn default_registry() -> Registry {
                     input_data: None,
                 })
                 .collect();
-            Ok(TaskOutput { result: Vec::new(), fan_out })
+            Ok(TaskOutput {
+                result: Vec::new(),
+                fan_out,
+            })
         }),
     );
     // Chunk size is configurable (LOOM_CSV_CHUNK_ROWS, default 2 for demos) so a
@@ -237,7 +251,10 @@ pub fn default_registry() -> Registry {
                     input_data: Some(chunk.join("\n").into_bytes()),
                 })
                 .collect();
-            Ok(TaskOutput { result: Vec::new(), fan_out })
+            Ok(TaskOutput {
+                result: Vec::new(),
+                fan_out,
+            })
         }),
     );
     registry.register(
@@ -357,11 +374,26 @@ pub(crate) async fn bidi_session(
         let mut rx = up_rx;
         while let Some(b) = rx.recv().await { yield Ok::<Vec<u8>, std::io::Error>(b); }
     });
-    let resp = client.post(format!("{schema_url}/v1/work/stream")).body(body).send().await?;
-    anyhow::ensure!(resp.status().is_success(), "schema-layer connect: {}", resp.status());
+    let resp = client
+        .post(format!("{schema_url}/v1/work/stream"))
+        .body(body)
+        .send()
+        .await?;
+    anyhow::ensure!(
+        resp.status().is_success(),
+        "schema-layer connect: {}",
+        resp.status()
+    );
     let mut down = resp.bytes_stream();
-    up_tx.send(encode_frame(&UpFrame::Subscribe { group: group.to_string(), prefetch })).await?;
-    eprintln!("loom worker: bidi to schema-layer {schema_url} (group {group}, prefetch {prefetch})");
+    up_tx
+        .send(encode_frame(&UpFrame::Subscribe {
+            group: group.to_string(),
+            prefetch,
+        }))
+        .await?;
+    eprintln!(
+        "loom worker: bidi to schema-layer {schema_url} (group {group}, prefetch {prefetch})"
+    );
 
     let mut dec = FrameDecoder::default();
     loop {
@@ -391,9 +423,12 @@ pub(crate) async fn bidi_session(
         };
         let input = match &env.input {
             InputSource::Inline { bytes } => bytes.clone(),
-            InputSource::KeepUrl { url } => {
-                with_auth(client.get(url)).send().await?.bytes().await?.to_vec()
-            }
+            InputSource::KeepUrl { url } => with_auth(client.get(url))
+                .send()
+                .await?
+                .bytes()
+                .await?
+                .to_vec(),
             InputSource::Empty => Vec::new(),
         };
         let up = match registry.get(&env.task_name) {
@@ -423,7 +458,11 @@ pub(crate) async fn bidi_session(
                             .await?;
                         None
                     };
-                    UpFrame::Done { id: env.id.clone(), result_inline, fan_out: out.fan_out }
+                    UpFrame::Done {
+                        id: env.id.clone(),
+                        result_inline,
+                        fan_out: out.fan_out,
+                    }
                 }
                 Err(e) => {
                     eprintln!("loom worker: handler `{}` failed: {e}", env.task_name);
@@ -470,7 +509,10 @@ mod tests {
             Ok(self.next.lock().unwrap().take())
         }
         async fn ack(&self, lease_id: &str, epoch: u64) -> anyhow::Result<()> {
-            self.acked.lock().unwrap().push((lease_id.to_string(), epoch));
+            self.acked
+                .lock()
+                .unwrap()
+                .push((lease_id.to_string(), epoch));
             Ok(())
         }
     }
@@ -512,7 +554,10 @@ mod tests {
             failed: bool,
             fan_out: &[FanOutSpec],
         ) -> anyhow::Result<()> {
-            self.reports.lock().unwrap().push((node.to_string(), failed, fan_out.len()));
+            self.reports
+                .lock()
+                .unwrap()
+                .push((node.to_string(), failed, fan_out.len()));
             self.inline.lock().unwrap().push(result_inline);
             Ok(())
         }
@@ -526,29 +571,57 @@ mod tests {
 
     #[tokio::test]
     async fn runs_task_end_to_end_and_acks() {
-        let consumer = FakeConsumer { next: Mutex::new(Some(task("echo"))), ..Default::default() };
+        let consumer = FakeConsumer {
+            next: Mutex::new(Some(task("echo"))),
+            ..Default::default()
+        };
         let keep = FakeKeep::default();
         let sink = FakeSink::default();
 
-        let did = run_once("w1", &consumer, &keep, &sink, &echo_registry()).await.unwrap();
+        let did = run_once("w1", &consumer, &keep, &sink, &echo_registry())
+            .await
+            .unwrap();
         assert!(did);
         // "hello" is small → reported inline, NOT written to keep (#127 inline).
-        assert!(keep.results.lock().unwrap().is_empty(), "small result should skip keep");
-        assert_eq!(sink.inline.lock().unwrap().as_slice(), &[Some(b"hello".to_vec())]);
-        assert_eq!(consumer.acked.lock().unwrap().as_slice(), &[("L1".to_string(), 7)]);
-        assert_eq!(sink.reports.lock().unwrap().as_slice(), &[("n".to_string(), false, 0)]);
+        assert!(
+            keep.results.lock().unwrap().is_empty(),
+            "small result should skip keep"
+        );
+        assert_eq!(
+            sink.inline.lock().unwrap().as_slice(),
+            &[Some(b"hello".to_vec())]
+        );
+        assert_eq!(
+            consumer.acked.lock().unwrap().as_slice(),
+            &[("L1".to_string(), 7)]
+        );
+        assert_eq!(
+            sink.reports.lock().unwrap().as_slice(),
+            &[("n".to_string(), false, 0)]
+        );
     }
 
     #[tokio::test]
     async fn large_result_is_claim_checked_not_inlined() {
-        let consumer = FakeConsumer { next: Mutex::new(Some(task("big"))), ..Default::default() };
+        let consumer = FakeConsumer {
+            next: Mutex::new(Some(task("big"))),
+            ..Default::default()
+        };
         let keep = FakeKeep::default();
         let sink = FakeSink::default();
         let mut reg = Registry::new();
         reg.register("big", Arc::new(|_| Ok(vec![b'x'; 5000].into()))); // > 4096 default
         run_once("w1", &consumer, &keep, &sink, &reg).await.unwrap();
         // large result → keep (claim-check), reported by ref, not inline
-        assert_eq!(keep.results.lock().unwrap().get("r:n:result").unwrap().len(), 5000);
+        assert_eq!(
+            keep.results
+                .lock()
+                .unwrap()
+                .get("r:n:result")
+                .unwrap()
+                .len(),
+            5000
+        );
         assert_eq!(sink.inline.lock().unwrap().as_slice(), &[None]);
     }
 
@@ -561,34 +634,72 @@ mod tests {
                 Ok(TaskOutput {
                     result: Vec::new(),
                     fan_out: vec![
-                        FanOutSpec { id: "c0".into(), task_name: "echo".into(), input_refs: vec![], input_data: None },
-                        FanOutSpec { id: "c1".into(), task_name: "echo".into(), input_refs: vec![], input_data: None },
+                        FanOutSpec {
+                            id: "c0".into(),
+                            task_name: "echo".into(),
+                            input_refs: vec![],
+                            input_data: None,
+                        },
+                        FanOutSpec {
+                            id: "c1".into(),
+                            task_name: "echo".into(),
+                            input_refs: vec![],
+                            input_data: None,
+                        },
                     ],
                 })
             }),
         );
-        let consumer = FakeConsumer { next: Mutex::new(Some(task("split"))), ..Default::default() };
+        let consumer = FakeConsumer {
+            next: Mutex::new(Some(task("split"))),
+            ..Default::default()
+        };
         let sink = FakeSink::default();
-        run_once("w1", &consumer, &FakeKeep::default(), &sink, &reg).await.unwrap();
+        run_once("w1", &consumer, &FakeKeep::default(), &sink, &reg)
+            .await
+            .unwrap();
         // the completion carries the 2 runtime children.
-        assert_eq!(sink.reports.lock().unwrap().as_slice(), &[("n".to_string(), false, 2)]);
+        assert_eq!(
+            sink.reports.lock().unwrap().as_slice(),
+            &[("n".to_string(), false, 2)]
+        );
     }
 
     #[tokio::test]
     async fn empty_lease_is_noop() {
         let consumer = FakeConsumer::default();
-        let did = run_once("w1", &consumer, &FakeKeep::default(), &FakeSink::default(), &echo_registry())
-            .await
-            .unwrap();
+        let did = run_once(
+            "w1",
+            &consumer,
+            &FakeKeep::default(),
+            &FakeSink::default(),
+            &echo_registry(),
+        )
+        .await
+        .unwrap();
         assert!(!did);
     }
 
     #[tokio::test]
     async fn missing_handler_reports_failure() {
-        let consumer = FakeConsumer { next: Mutex::new(Some(task("unknown"))), ..Default::default() };
+        let consumer = FakeConsumer {
+            next: Mutex::new(Some(task("unknown"))),
+            ..Default::default()
+        };
         let sink = FakeSink::default();
-        run_once("w1", &consumer, &FakeKeep::default(), &sink, &echo_registry()).await.unwrap();
-        assert_eq!(sink.reports.lock().unwrap().as_slice(), &[("n".to_string(), true, 0)]);
+        run_once(
+            "w1",
+            &consumer,
+            &FakeKeep::default(),
+            &sink,
+            &echo_registry(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            sink.reports.lock().unwrap().as_slice(),
+            &[("n".to_string(), true, 0)]
+        );
         // still acked (lease released) so loom drives retry.
         assert_eq!(consumer.acked.lock().unwrap().len(), 1);
     }

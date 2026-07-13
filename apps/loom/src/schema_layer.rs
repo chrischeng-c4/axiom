@@ -118,9 +118,13 @@ pub struct TaskEnvelope {
 pub fn build_envelope(task: &TaskMessage, keep_base: &str, token: String) -> TaskEnvelope {
     let result_key = format!("{}:{}:result", task.run_id, task.node_id);
     let input = if let Some(bytes) = &task.input_inline {
-        InputSource::Inline { bytes: bytes.clone() }
+        InputSource::Inline {
+            bytes: bytes.clone(),
+        }
     } else if let Some(first) = task.input_refs.first() {
-        InputSource::KeepUrl { url: format!("{keep_base}/v1/inputs/{}", first.0) }
+        InputSource::KeepUrl {
+            url: format!("{keep_base}/v1/inputs/{}", first.0),
+        }
     } else {
         InputSource::Empty
     };
@@ -201,7 +205,11 @@ async fn read_up(stream: &mut BodyDataStream, dec: &mut FrameDecoder) -> Option<
 
 /// Drive one worker session: Subscribe, then keep ≤ `prefetch` tasks in flight
 /// (a credit freed per Ack/Done); redeliver via the source on Nack / disconnect.
-async fn drive_session(source: Arc<dyn TaskSource>, mut up: BodyDataStream, down: mpsc::Sender<Vec<u8>>) {
+async fn drive_session(
+    source: Arc<dyn TaskSource>,
+    mut up: BodyDataStream,
+    down: mpsc::Sender<Vec<u8>>,
+) {
     let mut dec = FrameDecoder::default();
     let (group, prefetch) = match read_up(&mut up, &mut dec).await {
         Some(UpFrame::Subscribe { group, prefetch }) => (group, prefetch.max(1)),
@@ -229,9 +237,17 @@ async fn drive_session(source: Arc<dyn TaskSource>, mut up: BodyDataStream, down
 }
 
 /// Apply one up-frame; returns false when the session should end (disconnect).
-async fn handle_up(source: &Arc<dyn TaskSource>, frame: Option<UpFrame>, inflight: &mut u32) -> bool {
+async fn handle_up(
+    source: &Arc<dyn TaskSource>,
+    frame: Option<UpFrame>,
+    inflight: &mut u32,
+) -> bool {
     match frame {
-        Some(UpFrame::Done { id, result_inline, fan_out }) => {
+        Some(UpFrame::Done {
+            id,
+            result_inline,
+            fan_out,
+        }) => {
             source.done(&id, result_inline, fan_out).await;
             *inflight = inflight.saturating_sub(1);
             true
@@ -294,19 +310,38 @@ fn completion_for(
     fan_out: Vec<FanOutSpec>,
 ) -> Option<CompletionMsg> {
     let (run_id, node_id, attempt) = parse_id(id)?;
-    let result_ref =
-        if result_inline.is_some() { None } else { Some(format!("{run_id}:{node_id}:result")) };
-    Some(CompletionMsg { run_id, node_id, attempt, result_ref, result_inline, failed: false, fan_out })
+    let result_ref = if result_inline.is_some() {
+        None
+    } else {
+        Some(format!("{run_id}:{node_id}:result"))
+    };
+    Some(CompletionMsg {
+        run_id,
+        node_id,
+        attempt,
+        result_ref,
+        result_inline,
+        failed: false,
+        fan_out,
+    })
 }
 
 /// Sign a scoped keep token for one task (readable input key `r` / writable result
 /// key `w`, 5-min TTL) — so the worker hits keep directly but only within scope.
 fn sign_token(secret: &Option<Vec<u8>>, task: &TaskMessage) -> String {
-    let Some(secret) = secret else { return String::new() };
-    let now =
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let Some(secret) = secret else {
+        return String::new();
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let scope = claimtoken::Scope {
-        r: task.input_refs.first().map(|k| k.0.clone()).unwrap_or_default(),
+        r: task
+            .input_refs
+            .first()
+            .map(|k| k.0.clone())
+            .unwrap_or_default(),
         w: format!("{}:{}:result", task.run_id, task.node_id),
         exp: now + 300,
     };
@@ -361,7 +396,9 @@ impl RelayTaskSource {
         }
         let (up_tx, up_rx) = mpsc::channel::<Vec<u8>>(256);
         let (down_tx, down_rx) = mpsc::channel::<TaskEnvelope>(256);
-        let _ = up_tx.try_send(encode_frame(&serde_json::json!({"type": "subscribe", "prefetch": 64})));
+        let _ = up_tx.try_send(encode_frame(
+            &serde_json::json!({"type": "subscribe", "prefetch": 64}),
+        ));
         let (client, relay, keep, secret, g, inflight) = (
             self.client.clone(),
             self.relay.clone(),
@@ -375,7 +412,12 @@ impl RelayTaskSource {
                 let mut rx = up_rx;
                 while let Some(b) = rx.recv().await { yield Ok::<Vec<u8>, std::io::Error>(b); }
             });
-            let resp = match client.post(format!("{relay}/v1/{g}/consume")).body(body).send().await {
+            let resp = match client
+                .post(format!("{relay}/v1/{g}/consume"))
+                .body(body)
+                .send()
+                .await
+            {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("schema-layer: consume connect {g} failed: {e}");
@@ -388,7 +430,9 @@ impl RelayTaskSource {
                 let Ok(chunk) = chunk else { break };
                 dec.push(&chunk);
                 while let Some(raw) = dec.next_frame() {
-                    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&raw) else { continue };
+                    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&raw) else {
+                        continue;
+                    };
                     let (Some(lease_id), Some(epoch), Some(payload)) = (
                         v.get("lease_id").and_then(|x| x.as_str()),
                         v.get("epoch").and_then(|x| x.as_u64()),
@@ -400,14 +444,20 @@ impl RelayTaskSource {
                         continue;
                     };
                     let env = build_envelope(&task, &keep, sign_token(&secret, &task));
-                    inflight.lock().await.insert(env.id.clone(), (lease_id.to_string(), epoch, g.clone()));
+                    inflight
+                        .lock()
+                        .await
+                        .insert(env.id.clone(), (lease_id.to_string(), epoch, g.clone()));
                     if down_tx.send(env).await.is_err() {
                         return;
                     }
                 }
             }
         });
-        let gs = Arc::new(GroupStream { down: tokio::sync::Mutex::new(down_rx), up: up_tx });
+        let gs = Arc::new(GroupStream {
+            down: tokio::sync::Mutex::new(down_rx),
+            up: up_tx,
+        });
         groups.insert(group.to_string(), gs.clone());
         gs
     }
@@ -434,7 +484,9 @@ impl TaskSource for RelayTaskSource {
     }
 
     async fn done(&self, id: &str, result_inline: Option<Vec<u8>>, fan_out: Vec<FanOutSpec>) {
-        let Some((lease_id, epoch, group)) = self.inflight.lock().await.remove(id) else { return };
+        let Some((lease_id, epoch, group)) = self.inflight.lock().await.remove(id) else {
+            return;
+        };
         if let Some(cm) = completion_for(id, result_inline, fan_out) {
             let subj = format!("loom.completions.{}", shard_of(&cm.run_id, self.shards));
             let _ = self
@@ -445,14 +497,26 @@ impl TaskSource for RelayTaskSource {
                 .await;
         }
         if let Some(gs) = self.groups.lock().await.get(&group) {
-            let _ = gs.up.send(encode_frame(&serde_json::json!({"type": "ack", "lease_id": lease_id, "epoch": epoch}))).await;
+            let _ = gs
+                .up
+                .send(encode_frame(
+                    &serde_json::json!({"type": "ack", "lease_id": lease_id, "epoch": epoch}),
+                ))
+                .await;
         }
     }
 
     async fn nack(&self, id: &str) {
-        let Some((lease_id, _epoch, group)) = self.inflight.lock().await.remove(id) else { return };
+        let Some((lease_id, _epoch, group)) = self.inflight.lock().await.remove(id) else {
+            return;
+        };
         if let Some(gs) = self.groups.lock().await.get(&group) {
-            let _ = gs.up.send(encode_frame(&serde_json::json!({"type": "nack", "lease_id": lease_id}))).await;
+            let _ = gs
+                .up
+                .send(encode_frame(
+                    &serde_json::json!({"type": "nack", "lease_id": lease_id}),
+                ))
+                .await;
         }
     }
 }
@@ -472,8 +536,10 @@ pub fn run() -> anyhow::Result<()> {
         .unwrap_or(8);
     // Scoped keep tokens (#444): sign per-task tokens when set (must match keep's
     // KEEP_TOKEN_SECRET). Absent → no tokens (open claim-check).
-    let secret =
-        std::env::var("LOOM_KEEP_TOKEN_SECRET").ok().filter(|s| !s.is_empty()).map(String::into_bytes);
+    let secret = std::env::var("LOOM_KEEP_TOKEN_SECRET")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(String::into_bytes);
     let tokens_on = secret.is_some();
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
@@ -508,15 +574,33 @@ mod tests {
     #[test]
     fn envelope_owns_keys_and_resolves_input() {
         // input ref → keep GET url; result → keep PUT url; id = run:node:attempt
-        let e = build_envelope(&task(vec![KeepRef("in:7".into())], None), "http://keep", "tok".into());
+        let e = build_envelope(
+            &task(vec![KeepRef("in:7".into())], None),
+            "http://keep",
+            "tok".into(),
+        );
         assert_eq!(e.id, "run1:nodeA:2");
-        assert_eq!(e.input, InputSource::KeepUrl { url: "http://keep/v1/inputs/in:7".into() });
+        assert_eq!(
+            e.input,
+            InputSource::KeepUrl {
+                url: "http://keep/v1/inputs/in:7".into()
+            }
+        );
         assert_eq!(e.result_put_url, "http://keep/v1/results/run1:nodeA:result");
         assert_eq!(e.token, "tok");
 
         // inline input wins over refs
-        let e2 = build_envelope(&task(vec![], Some(b"hi".to_vec())), "http://keep", "t".into());
-        assert_eq!(e2.input, InputSource::Inline { bytes: b"hi".to_vec() });
+        let e2 = build_envelope(
+            &task(vec![], Some(b"hi".to_vec())),
+            "http://keep",
+            "t".into(),
+        );
+        assert_eq!(
+            e2.input,
+            InputSource::Inline {
+                bytes: b"hi".to_vec()
+            }
+        );
 
         // no input → empty
         let e3 = build_envelope(&task(vec![], None), "http://keep", "t".into());
@@ -526,9 +610,20 @@ mod tests {
     #[test]
     fn up_frames_round_trip_and_reject_malformed() {
         for f in [
-            UpFrame::Subscribe { group: "w".into(), prefetch: 4 },
-            UpFrame::Done { id: "run1:nodeA:2".into(), result_inline: Some(b"r".to_vec()), fan_out: vec![] },
-            UpFrame::Done { id: "x".into(), result_inline: None, fan_out: vec![] },
+            UpFrame::Subscribe {
+                group: "w".into(),
+                prefetch: 4,
+            },
+            UpFrame::Done {
+                id: "run1:nodeA:2".into(),
+                result_inline: Some(b"r".to_vec()),
+                fan_out: vec![],
+            },
+            UpFrame::Done {
+                id: "x".into(),
+                result_inline: None,
+                fan_out: vec![],
+            },
             // a Done that carries runtime fan-out children (#462) round-trips too.
             UpFrame::Done {
                 id: "r:n:1".into(),
@@ -554,7 +649,10 @@ mod tests {
     #[test]
     fn frame_codec_handles_partial_and_coalesced() {
         let a = encode_frame(&UpFrame::Nack { id: "a".into() });
-        let b = encode_frame(&UpFrame::Subscribe { group: "g".into(), prefetch: 2 });
+        let b = encode_frame(&UpFrame::Subscribe {
+            group: "g".into(),
+            prefetch: 2,
+        });
         let mut d = FrameDecoder::default();
 
         // partial: header only, then the rest → one frame
@@ -562,7 +660,10 @@ mod tests {
         assert!(d.next_frame().is_none());
         d.push(&a[3..]);
         let f1 = d.next_frame().unwrap();
-        assert_eq!(UpFrame::parse(&f1).unwrap(), UpFrame::Nack { id: "a".into() });
+        assert_eq!(
+            UpFrame::parse(&f1).unwrap(),
+            UpFrame::Nack { id: "a".into() }
+        );
         assert!(d.next_frame().is_none());
 
         // coalesced: two frames in one push → both decode in order
@@ -571,7 +672,10 @@ mod tests {
         d.push(&both);
         assert_eq!(
             UpFrame::parse(&d.next_frame().unwrap()).unwrap(),
-            UpFrame::Subscribe { group: "g".into(), prefetch: 2 }
+            UpFrame::Subscribe {
+                group: "g".into(),
+                prefetch: 2
+            }
         );
         assert_eq!(
             UpFrame::parse(&d.next_frame().unwrap()).unwrap(),
@@ -644,7 +748,10 @@ mod tests {
             let mut rx = up_rx;
             while let Some(b) = rx.recv().await { yield Ok::<Bytes, std::io::Error>(b); }
         });
-        let client = reqwest::Client::builder().http2_prior_knowledge().build().unwrap();
+        let client = reqwest::Client::builder()
+            .http2_prior_knowledge()
+            .build()
+            .unwrap();
         let resp = client
             .post(format!("http://{addr}/v1/work/stream"))
             .body(body)
@@ -654,7 +761,10 @@ mod tests {
         let mut down = resp.bytes_stream();
 
         up_tx
-            .send(Bytes::from(encode_frame(&UpFrame::Subscribe { group: "w".into(), prefetch: 4 })))
+            .send(Bytes::from(encode_frame(&UpFrame::Subscribe {
+                group: "w".into(),
+                prefetch: 4,
+            })))
             .await
             .unwrap();
 
@@ -761,12 +871,21 @@ mod tests {
         handle.abort();
 
         let fan = fan.expect("schema layer never received fan-out over the bidi path");
-        assert_eq!(fan.len(), 2, "csv-split (4 rows / 2 per chunk) → 2 children");
+        assert_eq!(
+            fan.len(),
+            2,
+            "csv-split (4 rows / 2 per chunk) → 2 children"
+        );
         // inline child inputs were rewritten to refs (input_data never crosses)…
-        let mut refs: Vec<String> =
-            fan.iter().flat_map(|c| c.input_refs.iter().map(|r| r.0.clone())).collect();
+        let mut refs: Vec<String> = fan
+            .iter()
+            .flat_map(|c| c.input_refs.iter().map(|r| r.0.clone()))
+            .collect();
         refs.sort();
-        assert_eq!(refs, vec!["run1:rows-0:in".to_string(), "run1:rows-1:in".to_string()]);
+        assert_eq!(
+            refs,
+            vec!["run1:rows-0:in".to_string(), "run1:rows-1:in".to_string()]
+        );
         assert!(fan.iter().all(|c| c.input_data.is_none()));
         // …and the actual chunk bytes landed in keep at those keys.
         let mut got: Vec<(String, Vec<u8>)> = puts.lock().unwrap().clone();
@@ -782,13 +901,25 @@ mod tests {
 
     #[test]
     fn id_parse_and_completion() {
-        assert_eq!(parse_id("run1:nodeA:2"), Some(("run1".into(), "nodeA".into(), 2)));
-        assert_eq!(parse_id("a:b:node:5"), Some(("a:b".into(), "node".into(), 5))); // run keeps colons
+        assert_eq!(
+            parse_id("run1:nodeA:2"),
+            Some(("run1".into(), "nodeA".into(), 2))
+        );
+        assert_eq!(
+            parse_id("a:b:node:5"),
+            Some(("a:b".into(), "node".into(), 5))
+        ); // run keeps colons
         assert!(parse_id("bad").is_none());
         // small result → inline (no ref); large → ref at the conventional key
         let c = completion_for("r:n:1", Some(b"x".to_vec()), vec![]).unwrap();
-        assert_eq!((c.result_ref, c.result_inline, c.failed), (None, Some(b"x".to_vec()), false));
-        assert_eq!(completion_for("r:n:1", None, vec![]).unwrap().result_ref, Some("r:n:result".into()));
+        assert_eq!(
+            (c.result_ref, c.result_inline, c.failed),
+            (None, Some(b"x".to_vec()), false)
+        );
+        assert_eq!(
+            completion_for("r:n:1", None, vec![]).unwrap().result_ref,
+            Some("r:n:result".into())
+        );
         // runtime fan-out children are threaded into the forwarded completion (#462).
         let fanned = completion_for(
             "r:n:1",
@@ -807,7 +938,10 @@ mod tests {
 
     #[test]
     fn signed_token_scopes_to_input_and_result_keys() {
-        let tok = sign_token(&Some(b"secret".to_vec()), &task(vec![KeepRef("in:1".into())], None));
+        let tok = sign_token(
+            &Some(b"secret".to_vec()),
+            &task(vec![KeepRef("in:1".into())], None),
+        );
         let scope = claimtoken::verify(b"secret", &tok, 0).unwrap();
         assert_eq!(scope.r, "in:1");
         assert_eq!(scope.w, "run1:nodeA:result");
