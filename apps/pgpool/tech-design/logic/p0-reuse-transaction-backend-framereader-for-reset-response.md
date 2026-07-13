@@ -33,18 +33,17 @@ flowchart LR
 changes:
   - path: apps/pgpool/src/pool/backend_pool.rs
     action: modify
-    section: pgpool-reset-reader-reuse
+    section: pgpool-reset-reader-reuse-contract
     impl_mode: hand-written
   - path: apps/pgpool/src/pool/transaction.rs
     action: modify
-    section: pgpool-reset-reader-reuse
+    section: pgpool-reset-reader-reuse-contract
     impl_mode: hand-written
   - path: apps/pgpool/tests/pool_modes.rs
     action: modify
-    section: pgpool-reset-reader-reuse
+    section: pgpool-reset-reader-reuse-contract
     impl_mode: hand-written
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
