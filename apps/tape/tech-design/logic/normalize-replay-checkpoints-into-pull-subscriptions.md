@@ -1,7 +1,7 @@
 ---
 id: "1255"
 summary: (fill)
-fill_sections: [logic, unit-test]
+fill_sections: [logic, unit-test, changes]
 ---
 
 ## Logic
@@ -116,4 +116,66 @@ flowchart TD
     r4[R4 cli surface] --> cargo_test_p_tape_test_cli_contract_pull_subscription_cli_roundtrip_exact[cargo test -p tape --test cli_contract pull_subscription_cli_roundtrip -- --exact]
     r5[R5 inventory scope] --> cargo_test_p_tape_test_cli_contract_pull_subscription_spec_inventory_exact[cargo test -p tape --test cli_contract pull_subscription_spec_inventory -- --exact]
     r6[R6 performance scope] --> cargo_test_p_tape_test_tape_perf_gate_nocapture[cargo test -p tape --test tape_perf_gate -- --nocapture]
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/tape/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Add bounded PullSubscriptionBatch reads from pull subscription checkpoint cursors, explicit pull ack delegation, MAX_PULL_BATCH validation, and regression tests. Preserve existing checkpoint errors through a subscription-specific ack error; do not add leases, workers, or raft cursor commands. generator gap: missing-generator:logic:tape-pull-subscription (#1255)."
+  - path: apps/tape/src/bin/tape.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Add `tape subscription pull TOPIC NAME [--limit]` and `tape subscription ack TOPIC NAME --offset`; output cursor/window metadata and next markers, and keep explicit ack separate from pull. generator gap: missing-generator:cli:tape-pull-subscription (#1255)."
+  - path: apps/tape/src/spec.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Add offline topic subscription pull/ack route inventory and PullSubscriptionBatch/PullAck schemas. Do not add matching server.rs h2c handlers. generator gap: missing-generator:openapi:tape-pull-subscription (#1255)."
+  - path: apps/tape/tests/cli_contract.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Add deterministic CLI and spec-inventory coverage for bounded pull followed by explicit ack. generator gap: missing-generator:test:tape-pull-subscription (#1255)."
+  - path: apps/tape/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Describe bounded pull/replay as Tape's high-QPS subscription path, explain cursor/ack/backpressure semantics, and keep push worker/raft consensus claims excluded."
+  - path: apps/tape/external-contracts/claim-closure/production-claims.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Scope the checkpoint and performance claims to pull cursor/ack and bounded replay, with no push reliability claim."
+  - path: apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md
+    action: modify
+    section: e2e-test
+    impl_mode: hand-written
+    description: "Call existing local and peer replay benchmarks the bounded pull/replay path; leave all existing calibration ratios and peer exclusions unchanged."
+  - path: apps/tape/tech-design/semantic/source/apps-tape-src-lib-rs.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Refresh semantic source coverage for pull cursor, explicit ack, and bounded-window behavior."
+  - path: apps/tape/tech-design/semantic/source/apps-tape-src-bin-tape-rs.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Refresh semantic source coverage for the pull/ack CLI surface."
+  - path: apps/tape/tech-design/semantic/source/apps-tape-src-spec-rs.md
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Refresh semantic source coverage for pull/ack offline contract inventory."
+  - path: apps/tape/tech-design/semantic/source/apps-tape-tests-cli-contract-rs.md
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Refresh semantic source coverage for pull/ack CLI contract tests."
 ```
