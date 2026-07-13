@@ -52,22 +52,22 @@ changes:
 
 ```mermaid
 ---
-id: pgbouncer-always-reset-benchmark-contract-verification
+id: pgbouncer-always-reset-contract-verification
 requirements:
-  always_reset_config:
-    id: R1
-    text: "The benchmark-generated PgBouncer configuration explicitly pairs DISCARD ALL with server_reset_query_always = 1."
+  profile_stability:
+    id: R2
+    text: "The benchmark profile remains simple protocol with 64 clients, 16 backend connections, and 30 seconds."
     kind: regression
     risk: high
     verify: cargo test -p pgpool --test pgbouncer_benchmark
-  immutable_profile:
-    id: R2
-    text: "The fairness correction keeps simple protocol, 64 clients, 16 backend connections, and 30-second duration unchanged."
+  reset_parity:
+    id: R1
+    text: "The generated PgBouncer configuration forces DISCARD ALL on every transaction-pool return, matching pgpool's reset-before-idle invariant."
     kind: regression
     risk: high
     verify: cargo test -p pgpool --test pgbouncer_benchmark
 ---
 flowchart TD
-    r1[R1 always reset config] --> cargo_test_p_pgpool_test_pgbouncer_benchmark[cargo test -p pgpool --test pgbouncer_benchmark]
-    r2[R2 immutable profile] --> cargo_test_p_pgpool_test_pgbouncer_benchmark
+    r1[R1 reset parity] --> cargo_test_p_pgpool_test_pgbouncer_benchmark[cargo test -p pgpool --test pgbouncer_benchmark]
+    r2[R2 profile stability] --> cargo_test_p_pgpool_test_pgbouncer_benchmark
 ```
