@@ -7,6 +7,7 @@ const SCRIPT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/benchmarks/pgbouncer-transaction-pooling/run.sh"
 );
+const RUNNER_SOURCE: &str = include_str!("../benchmarks/pgbouncer-transaction-pooling/run.sh");
 
 fn command(args: &[&str]) -> std::process::Output {
     Command::new("bash")
@@ -37,7 +38,10 @@ fn dry_run_profile_stays_immutable_when_meter_is_requested() {
     );
     let with_meter: Value =
         serde_json::from_slice(&output.stdout).expect("meter dry run should emit JSON");
-    assert_eq!(with_meter, ordinary, "meter must not mutate the fixed profile");
+    assert_eq!(
+        with_meter, ordinary,
+        "meter must not mutate the fixed profile"
+    );
 }
 
 #[test]
@@ -55,12 +59,40 @@ fn dry_run_profile_declares_equal_transaction_pooling_inputs() {
     assert_eq!(profile["targets"]["pgbouncer"]["pool_mode"], "transaction");
     assert_eq!(profile["targets"]["pgpool"]["pool_mode"], "transaction");
     assert_eq!(
+        profile["targets"]["pgbouncer"]["reset_between_owners"],
+        "DISCARD ALL"
+    );
+    assert_eq!(
+        profile["targets"]["pgpool"]["reset_between_owners"],
+        "DISCARD ALL"
+    );
+    assert_eq!(
+        profile["targets"]["pgbouncer"]["reset_on_return_to_idle"],
+        true
+    );
+    assert_eq!(
+        profile["targets"]["pgpool"]["reset_on_return_to_idle"],
+        true
+    );
+    assert_eq!(
         profile["targets"]["pgbouncer"]["backend_connection_cap"],
         profile["targets"]["pgpool"]["backend_connection_cap"]
     );
     assert_eq!(
         profile["targets"]["pgpool"]["pool_acquire_timeout_ms"],
         profile["profile"]["pool_acquire_timeout_ms"]
+    );
+}
+
+#[test]
+fn pgbouncer_config_forces_discard_all_on_every_transaction_release() {
+    assert!(
+        RUNNER_SOURCE.contains("server_reset_query = DISCARD ALL"),
+        "PgBouncer must configure DISCARD ALL as its reset query"
+    );
+    assert!(
+        RUNNER_SOURCE.contains("server_reset_query_always = 1"),
+        "PgBouncer must run its configured reset query on every transaction-pool return"
     );
 }
 

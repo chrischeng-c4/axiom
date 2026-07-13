@@ -41,7 +41,7 @@ USAGE
 
 emit_dry_run_profile() {
     cat <<JSON
-{"schema":"$PROFILE_SCHEMA","profile":{"workload":"pgbench-tpcb","protocol":"simple","pool_mode":"transaction","backend_connection_cap":$BACKEND_CAP,"clients":$CLIENTS,"jobs":$JOBS,"duration_seconds":$DURATION_SECONDS,"scale":$SCALE,"pool_acquire_timeout_ms":$POOL_ACQUIRE_TIMEOUT_MS},"targets":{"pgbouncer":{"pool_mode":"transaction","backend_connection_cap":$BACKEND_CAP},"pgpool":{"pool_mode":"transaction","backend_connection_cap":$BACKEND_CAP,"pool_acquire_timeout_ms":$POOL_ACQUIRE_TIMEOUT_MS}}}
+{"schema":"$PROFILE_SCHEMA","profile":{"workload":"pgbench-tpcb","protocol":"simple","pool_mode":"transaction","backend_connection_cap":$BACKEND_CAP,"clients":$CLIENTS,"jobs":$JOBS,"duration_seconds":$DURATION_SECONDS,"scale":$SCALE,"pool_acquire_timeout_ms":$POOL_ACQUIRE_TIMEOUT_MS},"targets":{"pgbouncer":{"pool_mode":"transaction","backend_connection_cap":$BACKEND_CAP,"reset_between_owners":"DISCARD ALL","reset_on_return_to_idle":true},"pgpool":{"pool_mode":"transaction","backend_connection_cap":$BACKEND_CAP,"pool_acquire_timeout_ms":$POOL_ACQUIRE_TIMEOUT_MS,"reset_between_owners":"DISCARD ALL","reset_on_return_to_idle":true}}}
 JSON
 }
 
@@ -294,6 +294,7 @@ pool_mode = transaction
 max_client_conn = 1000
 default_pool_size = $BACKEND_CAP
 server_reset_query = DISCARD ALL
+server_reset_query_always = 1
 ignore_startup_parameters = extra_float_digits
 admin_users = postgres
 pidfile = $WORK_DIR/pgbouncer.pid

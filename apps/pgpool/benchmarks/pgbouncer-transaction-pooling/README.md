@@ -18,7 +18,10 @@ Both targets use the same intentionally constrained workload:
   PgBouncer's queueing behavior instead of aborting a client during a
   transient slow host interval
 - one freshly initialized, trust-authenticated loopback PostgreSQL database
-- `DISCARD ALL` when PgBouncer returns a backend connection to its pool
+- `DISCARD ALL` when either target returns a backend connection to its pool;
+  the PgBouncer target sets both `server_reset_query = DISCARD ALL` and
+  `server_reset_query_always = 1`, so the reset is executed on every
+  transaction-pool return rather than merely configured
 
 The runner warms the shared backend before measurement and then measures the
 two targets sequentially. Its JSON includes raw TPS, average latency, and the
