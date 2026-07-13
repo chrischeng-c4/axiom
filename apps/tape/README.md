@@ -47,7 +47,7 @@ real-service external peer calibration remain separate work roots.
 | CLI Standard Surface | #768 | implemented | verified | smoke | ready | shared `llm`, `upgrade`, and `issue` command groups |
 | Chainable Output Conformance | #768 | implemented | verified | smoke | ready | replay/admin commands emit terminal `next:` hints |
 | EC Gates Configured | #768, #1330 | implemented | verified | smoke | ready | crate smoke tests + vat/meter/guard EC inventory (vat.toml, meter-tape-performance.toml, guard-tape-security.toml) |
-| Long-Running Stability | #768 | planned | planned | none | not_ready | soak, retention, compaction, and replay recovery gates |
+| Long-Running Stability | #768, #1589 | implemented | passing | conformance | not_ready | repeated Raft restart recovery proves bounded append/checkpoint endurance; live soak and retention remain follow-ups |
 | Security Hardening | #768 | planned | planned | none | not_ready | producer/consumer authz, tenant isolation, audit, and secret rotation |
 | Competitor Feature Parity | #768 | implemented | verified | smoke | ready | Kafka/Redpanda/Pulsar/JetStream/RabbitMQ Streams replay matrix; feature win only over RabbitMQ topic exchange replay gap |
 | Competitor Performance | #768 | implemented | verified | smoke | ready | Tape zero-copy replay beats NATS JetStream 20k-event local backlog replay >=1.5x; other replay-log broker wins remain unclaimed |
@@ -120,17 +120,17 @@ Type: Runtime
 Root WI: #768
 Status: confirmed
 Surfaces: Runtime: append log, replay readers, retention/compaction workers, checkpoint store, snapshot, and recovery paths.
-EC Dimensions: stability: pending long-running replay gate - soak, restart, retention, compaction, bounded memory, and replay continuity
+EC Dimensions: stability: `cargo test -p tape --test long_running_stability` - bounded repeated append/checkpoint restart recovery; pending live soak, retention, compaction, and bounded-memory gates
 Required Verification: conformance, dogfood
 Promise:
 Tape remains stable under sustained append/replay load, retention work, and
 restart cycles without losing committed events or corrupting checkpoints.
 Gate Inventory:
-- pending: apps/tape/tests/long_running_stability.rs
+- apps/tape/tests/long_running_stability.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| topic-replay-soak-and-recovery | epic | #768 | planned | planned | none | pending long-running replay gate |
+| repeated-raft-restart-endurance | change | #1589 | implemented | passing | conformance | apps/tape/tests/long_running_stability.rs |
 
 ### Security Hardening
 
