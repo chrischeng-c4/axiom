@@ -2,10 +2,10 @@ version = 2
 project = "vat"
 ir_kind = "td"
 td_path = "apps/vat/tech-design"
-generated_at = "2026-07-12T17:31:37.120870+00:00"
-digest = "sha256:21b9fc2b4ce09dc34ebfb1bd1f9cab415a02c4b02f1d267fe6a41fc7e5de5880"
-source_digest = "sha256:21b9fc2b4ce09dc34ebfb1bd1f9cab415a02c4b02f1d267fe6a41fc7e5de5880"
-ir_digest = "sha256:7a7ab559a1a8ce28aebcf241d5f3ade62db291917767d76f78bf40d8be2eaca7"
+generated_at = "2026-07-13T08:13:47.957282+00:00"
+digest = "sha256:262dcc2b23fa2a60c5961b173fa5c1b51950bd8ccd003ca26e9b1f5f589890a2"
+source_digest = "sha256:262dcc2b23fa2a60c5961b173fa5c1b51950bd8ccd003ca26e9b1f5f589890a2"
+ir_digest = "sha256:9c0ecda1a6ae33b30938223327a98b298ddba2b3cd592ef8292a15f173900bc7"
 
 [[files]]
 path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
@@ -126,6 +126,12 @@ path = "logic/vat-llm-guide-cloud-tasks-cloud-scheduler-emulator-usage.md"
 digest = "sha256:be652b6a9c51e68098aecac854fe2c457ea9e32204e651b098be4c889c11460d"
 ir_digest = "sha256:f0b8df1b3e8d196008871322b5821cd589e0bdcfd8884a825dccf54dd5ee53fb"
 section_count = 7
+
+[[files]]
+path = "logic/vat-local-k8s-phase-0-prove-k3s-on-apple-container-machine.md"
+digest = "sha256:81b7eaf0f6bcad02d56f4a686773fb19aaa575595fbb2254ea0727fea6df8c39"
+ir_digest = "sha256:3688e1194c71b03c383be6cc0276658f13e9f46df6d547fa61c1ab4d5fcfea0b"
+section_count = 1
 
 [[files]]
 path = "logic/vat-microvm-phase-1-isolation-microvm-sandbox-backend-for-vat-ru.md"
