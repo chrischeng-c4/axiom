@@ -306,9 +306,9 @@ test_cmd = "cargo test -p mamba"
 
 [[projects]]
 name = "lumen"
-path = "projects/lumen"
-td_path = "projects/lumen/tech-design"
-cap_path = "projects/lumen/README.md"
+path = "apps/lumen"
+td_path = "apps/lumen/tech-design"
+cap_path = "apps/lumen/README.md"
 label = "app:lumen"
 # EC tool bindings (contract before implementation). `aw health --verify-ec`
 # dispatches each bound dimension to its external tool; unbound categories
@@ -318,12 +318,12 @@ label = "app:lumen"
 #   stability (穩定性) -> vat provisions lumen/toxiproxy, then rig runs the
 #                        resilience scenarios and p99 budgets.
 # behavior (功能) and security (安全) stay cargo gates per the EC-gatekeeper map.
-ec.efficiency = { tool = "meter", meter = "projects/lumen", command = "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter" }
-ec.stability = { tool = "rig", dir = "projects/lumen/tests/rig/cases/resilience", command = "cd projects/lumen && ../../target/debug/vat run rig-resilience" }
+ec.efficiency = { tool = "meter", meter = "apps/lumen", command = "cd apps/lumen && ../../target/debug/vat run ec-efficiency-meter" }
+ec.stability = { tool = "rig", dir = "apps/lumen/tests/rig/cases/resilience", command = "cd apps/lumen && ../../target/debug/vat run rig-resilience" }
 
 [[projects.workspaces]]
 name = "lumen"
-paths = ["projects/lumen/**"]
+paths = ["apps/lumen/**"]
 target = "rust"
 test_cmd = "cargo test -p lumen"
 verify_cold = true
@@ -758,10 +758,10 @@ verify_cold = false
 
 [[projects]]
 name = "lumen"
-path = "projects/lumen"
+path = "apps/lumen"
 
 [[projects.workspaces]]
-paths = ["projects/lumen/**"]
+paths = ["apps/lumen/**"]
 target = "rust"
 test_cmd = "cargo test -p lumen"
 verify_cold = false

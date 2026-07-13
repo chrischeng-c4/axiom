@@ -13987,7 +13987,7 @@ Gate Inventory:
             false,
         ));
         planable.project = "lumen".to_string();
-        planable.cap_path = PathBuf::from("projects/lumen/README.md");
+        planable.cap_path = PathBuf::from("apps/lumen/README.md");
 
         let mut skipped_inventory = sample_report(sample_action(
             CapabilityActionKind::ReconcileWiRefs,
@@ -14019,7 +14019,7 @@ Gate Inventory:
             .collect::<Vec<_>>();
         assert_eq!(
             plan_projects,
-            vec![("lumen", "projects/lumen/README.md".to_string())]
+            vec![("lumen", "apps/lumen/README.md".to_string())]
         );
         let groups = sweep
             .groups
@@ -14177,7 +14177,7 @@ Gate Inventory:
                 path: PathBuf::from(
                     "/tmp/aw/workspaces/axiom/workitems/lumen/capability-plan/plan.md",
                 ),
-                cap_path: PathBuf::from("projects/lumen/README.md"),
+                cap_path: PathBuf::from("apps/lumen/README.md"),
                 capability_count: 17,
                 planning_row_count: 54,
                 issue_count: 0,
@@ -14260,7 +14260,7 @@ Gate Inventory:
             hitl_question: None,
         });
         missing_work.project = "lumen".to_string();
-        missing_work.cap_path = PathBuf::from("projects/lumen/README.md");
+        missing_work.cap_path = PathBuf::from("apps/lumen/README.md");
 
         let index = capability_sweep_check_index(&[skipped_inventory, missing_work], false, false);
 
@@ -14303,7 +14303,7 @@ Gate Inventory:
                     command:
                         "aw capability check --project lumen --verify --include-issue-inventory"
                             .to_string(),
-                    cap_path: PathBuf::from("projects/lumen/README.md"),
+                    cap_path: PathBuf::from("apps/lumen/README.md"),
                     next_action_kind: "create_wi",
                     target: "Lexical (BM25)".to_string(),
                     reason: "open capability gap has no active WI in README".to_string(),
@@ -14320,7 +14320,7 @@ Gate Inventory:
         assert!(index.contains("verify: true"));
         assert!(index.contains("include_issue_inventory: true"));
         assert!(index.contains("| jet | passed | `aw capability check --project jet --skip-issue-inventory` | none | apps/jet/README.md | apps/jet/README.md | capability format and TD refs are valid |"));
-        assert!(index.contains("| lumen | failed | `aw capability check --project lumen --verify --include-issue-inventory` | create_wi | Lexical (BM25) | projects/lumen/README.md | open capability gap has no active WI in README |"));
+        assert!(index.contains("| lumen | failed | `aw capability check --project lumen --verify --include-issue-inventory` | create_wi | Lexical (BM25) | apps/lumen/README.md | open capability gap has no active WI in README |"));
         assert!(index.contains(
             "Re-run the command in the table after each README, WI, TD, or verification change."
         ));
@@ -14405,7 +14405,7 @@ Gate Inventory:
             project: "lumen".to_string(),
             backend: "unavailable".to_string(),
             path: PathBuf::from("/tmp/aw/workspaces/axiom/workitems/lumen/capability-plan/plan.md"),
-            cap_path: PathBuf::from("projects/lumen/README.md"),
+            cap_path: PathBuf::from("apps/lumen/README.md"),
             capability_count: 17,
             planning_row_count: 54,
             issue_count: 0,
@@ -15399,13 +15399,13 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Query planner | epic | #4141 | implemented | passing | conformance | `cargo test -p lumen planner` |
-| Fixture inventory | epic | - | implemented | passing | conformance | projects/lumen/tests/planner_diff.rs |
+| Fixture inventory | epic | - | implemented | passing | conformance | apps/lumen/tests/planner_diff.rs |
 | Prose follow-up | epic | - | planned | none | smoke | future service hardening chapter |
 
 ### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)
 
 Operating point: 1M docs, qps=100, metric=p99_ms, ratchet=0.8
-Cube: projects/lumen/tests/perf-cube.json
+Cube: apps/lumen/tests/perf-cube.json
 
 | feature | lumen | pg |
 |---|---|---|
@@ -15432,7 +15432,7 @@ Cube: projects/lumen/tests/perf-cube.json
             slot.operating_point,
             "1M docs, qps=100, metric=p99_ms, ratchet=0.8"
         );
-        assert_eq!(slot.cube, "projects/lumen/tests/perf-cube.json");
+        assert_eq!(slot.cube, "apps/lumen/tests/perf-cube.json");
 
         let wi_rows = capability_rows_for_wi_plan(&doc, &[], &[]).unwrap();
         let query_planner = wi_rows
@@ -15455,7 +15455,7 @@ Cube: projects/lumen/tests/perf-cube.json
             .ec_dimensions
             .contains("efficiency: `rig load search-perf` - backfills latency and qps."));
         assert!(query_planner.ec_dimensions.contains(
-            "operating point: 1M docs, qps=100, metric=p99_ms, ratchet=0.8; cube: projects/lumen/tests/perf-cube.json"
+            "operating point: 1M docs, qps=100, metric=p99_ms, ratchet=0.8; cube: apps/lumen/tests/perf-cube.json"
         ));
         assert!(query_planner
             .ec_dimensions
@@ -15469,7 +15469,7 @@ Cube: projects/lumen/tests/perf-cube.json
         assert_eq!(fixture_inventory.active_wi, "none");
         assert!(fixture_inventory
             .evidence
-            .contains("claim inventory: projects/lumen/tests/planner_diff.rs"));
+            .contains("claim inventory: apps/lumen/tests/planner_diff.rs"));
         assert!(!fixture_inventory
             .evidence
             .contains("Add at least one concrete verification gate"));
@@ -15478,7 +15478,7 @@ Cube: projects/lumen/tests/perf-cube.json
             &doc,
             &[
                 TdCapabilityEvidence {
-                    spec_path: "projects/lumen/tech-design/semantic/search.md".to_string(),
+                    spec_path: "apps/lumen/tech-design/semantic/search.md".to_string(),
                     spec_id: Some("semantic-search".to_string()),
                     review_status: None,
                     capability_id: "search".to_string(),
@@ -15489,7 +15489,7 @@ Cube: projects/lumen/tests/perf-cube.json
                     rationale: None,
                 },
                 TdCapabilityEvidence {
-                    spec_path: "projects/lumen/tech-design/semantic/hardening.md".to_string(),
+                    spec_path: "apps/lumen/tech-design/semantic/hardening.md".to_string(),
                     spec_id: Some("semantic-hardening".to_string()),
                     review_status: None,
                     capability_id: "search".to_string(),
@@ -15542,11 +15542,11 @@ Required Verification: smoke, conformance
 Promise:
 Serve search queries as ranked external ids only.
 Gate Inventory:
-- projects/lumen/tests/planner_diff.rs
+- apps/lumen/tests/planner_diff.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Query planner | epic | - | implemented | passing | conformance | projects/lumen/tests/planner_diff.rs |
+| Query planner | epic | - | implemented | passing | conformance | apps/lumen/tests/planner_diff.rs |
 "#;
         let doc = cap_doc(body);
         let mut report_item = sample_report_item_with_gap(None);
@@ -15755,7 +15755,7 @@ Root WI: #78
 Status: auditing
 Type: Service
 Efficiency Operating Point: 1M docs, qps=100, metric=p99_ms, ratchet=0.8
-Efficiency Cube: projects/lumen/.aw/ec/efficiency/search.cube.json
+Efficiency Cube: apps/lumen/.aw/ec/efficiency/search.cube.json
 Required Verification: smoke
 Promise:
 Expose a service search capability.
@@ -16026,11 +16026,11 @@ Required Verification: smoke, conformance
 Promise:
 Search returns external ids only.
 Gate Inventory:
-- projects/lumen/tests/planner_diff.rs
+- apps/lumen/tests/planner_diff.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Query planner | epic | - | implemented | passing | conformance | projects/lumen/tests/planner_diff.rs |
+| Query planner | epic | - | implemented | passing | conformance | apps/lumen/tests/planner_diff.rs |
 
 ## Benchmarks
 
@@ -16133,11 +16133,11 @@ Required Verification: smoke, conformance
 Promise:
 BM25 ranking over text.
 Gate Inventory:
-- projects/lumen/scripts/bench_vs_db.py
+- apps/lumen/scripts/bench_vs_db.py
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| BM25 ranking | subepic | - | implemented | passing | conformance | projects/lumen/scripts/bench_vs_db.py |
+| BM25 ranking | subepic | - | implemented | passing | conformance | apps/lumen/scripts/bench_vs_db.py |
 
 ### Agentic Integration
 
@@ -16148,11 +16148,11 @@ Required Verification: conformance
 Promise:
 Offline CLI schema and topics.
 Gate Inventory:
-- projects/lumen/tests/spec_cli.rs
+- apps/lumen/tests/spec_cli.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| `lumen spec` | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
+| `lumen spec` | epic | 4143 | implemented | passing | conformance | apps/lumen/tests/spec_cli.rs |
 "#;
         let doc = cap_doc(body);
         let migrated = render_capability_markdown_migration(body, &doc, "lumen");
@@ -16198,11 +16198,11 @@ Required Verification: smoke, conformance
 Promise:
 Deploy declaratively.
 Gate Inventory:
-- projects/lumen/k8s
+- apps/lumen/k8s
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| kustomize base | epic | - | implemented | passing | conformance | projects/lumen/k8s |
+| kustomize base | epic | - | implemented | passing | conformance | apps/lumen/k8s |
 
 Deployment handoff:
 
@@ -16220,11 +16220,11 @@ Required Verification: smoke, conformance
 Promise:
 REST clients work.
 Gate Inventory:
-- projects/lumen/src
+- apps/lumen/src
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| REST API | epic | - | implemented | passing | conformance | projects/lumen/src |
+| REST API | epic | - | implemented | passing | conformance | apps/lumen/src |
 "#;
         let doc = cap_doc(body);
         let migrated = render_capability_markdown_migration(body, &doc, "lumen");
@@ -16273,7 +16273,7 @@ Gate Inventory:
 #### Efficiency
 
 Operating point: 1M docs, qps=100, metric=p99_ms
-Cube: projects/lumen/.aw/ec/efficiency/search.cube.json
+Cube: apps/lumen/.aw/ec/efficiency/search.cube.json
 "#;
         let doc = cap_doc(body);
         assert!(doc.requires_format_migration());
@@ -16282,7 +16282,7 @@ Cube: projects/lumen/.aw/ec/efficiency/search.cube.json
 
         assert!(!migrated.contains("\n#### Efficiency\n"));
         assert!(migrated.contains(
-            "\n#### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)\n\nOperating point: 1M docs, qps=100, metric=p99_ms\nCube: projects/lumen/.aw/ec/efficiency/search.cube.json\n"
+            "\n#### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)\n\nOperating point: 1M docs, qps=100, metric=p99_ms\nCube: apps/lumen/.aw/ec/efficiency/search.cube.json\n"
         ));
     }
 

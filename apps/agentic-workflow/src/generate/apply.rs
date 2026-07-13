@@ -3180,10 +3180,10 @@ mod tests {
     #[test]
     fn test_runtime_image_supports_dockerfile_variants() {
         for path in [
-            "projects/lumen/Dockerfile",
-            "projects/lumen/Dockerfile.release",
-            "projects/lumen/Dockerfile.bench",
-            "projects/lumen/service.dockerfile",
+            "apps/lumen/Dockerfile",
+            "apps/lumen/Dockerfile.release",
+            "apps/lumen/Dockerfile.bench",
+            "apps/lumen/service.dockerfile",
         ] {
             assert_eq!(
                 target_language(std::path::Path::new(path), Some("runtime-image")),
@@ -3309,8 +3309,8 @@ pub struct Widget {
 "#;
         let source = generate_source_section_code(
             spec,
-            ".aw/tech-design/projects/lumen/widget.md",
-            Some("projects/lumen/src/does-not-exist.rs"),
+            ".aw/tech-design/apps/lumen/widget.md",
+            Some("apps/lumen/src/does-not-exist.rs"),
             std::path::Path::new("/nonexistent-root"),
         );
 
@@ -3340,8 +3340,8 @@ echo "build ${1:-debug}"   # kept exactly
 "#;
         let source = generate_source_section_code(
             spec,
-            ".aw/tech-design/projects/lumen/build-sh.md",
-            Some("projects/lumen/build.sh"),
+            ".aw/tech-design/apps/lumen/build-sh.md",
+            Some("apps/lumen/build.sh"),
             std::path::Path::new("/nonexistent-root"),
         );
         // Fence content is emitted verbatim, trailing newline included (the
@@ -8539,9 +8539,9 @@ mod source_backed_replay_tests {
     #[test]
     fn project_root_llms_txt_schema_uses_source_backed_replay() {
         assert!(supports_source_backed_replay_for_spec(
-            "projects/lumen/llms.txt",
+            "apps/lumen/llms.txt",
             Some("schema"),
-            "projects/lumen/tech-design/semantic/lumen-projects-lumen.md",
+            "apps/lumen/tech-design/semantic/lumen-projects-lumen.md",
         ));
     }
 

@@ -7667,10 +7667,10 @@ test_cmd = "cargo test -p tool"
     #[test]
     fn codegen_replay_supports_dockerfile_variants() {
         for rel in [
-            "projects/lumen/Dockerfile",
-            "projects/lumen/Dockerfile.release",
-            "projects/lumen/Dockerfile.bench",
-            "projects/lumen/service.dockerfile",
+            "apps/lumen/Dockerfile",
+            "apps/lumen/Dockerfile.release",
+            "apps/lumen/Dockerfile.bench",
+            "apps/lumen/service.dockerfile",
         ] {
             let file = SourceFile {
                 rel: rel.into(),
@@ -9944,8 +9944,8 @@ target = "python"
     #[test]
     fn source_evidence_node_falls_back_for_unclassified_source_languages() {
         let file = SourceFile {
-            rel: "projects/lumen/build.sh".into(),
-            abs: PathBuf::from("projects/lumen/build.sh"),
+            rel: "apps/lumen/build.sh".into(),
+            abs: PathBuf::from("apps/lumen/build.sh"),
             language: "shell".into(),
             markers: FileMarkers::default(),
             handwrite_gaps: Vec::new(),
@@ -9954,7 +9954,7 @@ target = "python"
         let node = build_source_evidence_node(&file, &[], &["source_unit".to_string()], None)
             .expect("all in-scope source units should have evidence nodes");
 
-        assert_eq!(node.path, "projects/lumen/build.sh");
+        assert_eq!(node.path, "apps/lumen/build.sh");
         assert_eq!(node.layer, "source");
         assert_eq!(node.ecosystem, "shell");
         assert_eq!(node.section_type, "schema");
@@ -9965,16 +9965,16 @@ target = "python"
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
-            "projects/lumen/build.sh",
+            "apps/lumen/build.sh",
             "# <HANDWRITE gap=\"standardize:shell\" tracker=\"shell\" reason=\"r\">\n#!/usr/bin/env bash\ncargo build -p lumen\n# </HANDWRITE>\n",
         );
         write(
             tmp.path(),
-            "projects/lumen/tech-design/semantic/lumen-projects-lumen.md",
-            "---\nid: semantic-lumen-projects-lumen\nfill_sections: [schema, unit-test, changes]\n---\n\n## Schema\n<!-- type: schema lang: yaml -->\n\n```yaml\nsemantic_domain:\n  coverage_kind: semantic\n  evidence:\n    source_units:\n      - path: \"projects/lumen/build.sh\"\n        language: shell\n        source_evidence_node:\n          layer: source\n          ecosystem: shell\n          role: source\n          section_type: schema\n          domain: projects/lumen\n```\n\n## Unit Test\n<!-- type: unit-test lang: mermaid -->\n\n```mermaid\n---\nid: unit-test\n---\nrequirementDiagram\n```\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\ncoverage_kind: semantic\nchanges:\n  - path: \"projects/lumen/build.sh\"\n    action: modify\n    section: schema\n    impl_mode: hand-written\n  - action: annotate\n    section: unit-test\n    impl_mode: hand-written\n```\n",
+            "apps/lumen/tech-design/semantic/lumen-projects-lumen.md",
+            "---\nid: semantic-lumen-projects-lumen\nfill_sections: [schema, unit-test, changes]\n---\n\n## Schema\n<!-- type: schema lang: yaml -->\n\n```yaml\nsemantic_domain:\n  coverage_kind: semantic\n  evidence:\n    source_units:\n      - path: \"apps/lumen/build.sh\"\n        language: shell\n        source_evidence_node:\n          layer: source\n          ecosystem: shell\n          role: source\n          section_type: schema\n          domain: apps/lumen\n```\n\n## Unit Test\n<!-- type: unit-test lang: mermaid -->\n\n```mermaid\n---\nid: unit-test\n---\nrequirementDiagram\n```\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\ncoverage_kind: semantic\nchanges:\n  - path: \"apps/lumen/build.sh\"\n    action: modify\n    section: schema\n    impl_mode: hand-written\n  - action: annotate\n    section: unit-test\n    impl_mode: hand-written\n```\n",
         );
 
-        let inventory = build_inventory(tmp.path(), &["projects/lumen/**".into()], None, false)
+        let inventory = build_inventory(tmp.path(), &["apps/lumen/**".into()], None, false)
             .expect("inventory should build");
         let coverage =
             build_semantic_coverage(tmp.path(), &inventory).expect("semantic coverage builds");
@@ -9983,7 +9983,7 @@ target = "python"
         assert!(coverage
             .generator_primitive_gaps
             .iter()
-            .all(|gap| { gap.target != "projects/lumen/build.sh" }));
+            .all(|gap| { gap.target != "apps/lumen/build.sh" }));
     }
 
     #[test]
