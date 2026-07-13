@@ -49,38 +49,37 @@ The `xargs -n 1` stdin benchmark uses an independent, fixed-size fixture. It kee
 ---
 id: command-resources-rss-budget-verification
 requirements:
-  boundary_rejection:
-    id: R2
-    text: "The gate accepts the exact RSS budget boundary but rejects CPU parity/regression and RSS values above the budget with an explicit diagnostic."
-    kind: regression
-    risk: high
-    verify: cargo test -p cap --test command_resources_gate
-  bounded_xargs_fixture:
-    id: R3
-    text: "The xargs -n 1 benchmark scenario receives a dedicated finite fixture rather than the 500000-line sort workload, while preserving stdin pipeline parity coverage."
-    kind: regression
-    risk: medium
-    verify: cargo test -p cap --test command_resources_gate
-  cpu_and_rss_budget:
-    id: R1
-    text: "Resource-gated rows require a strict CPU ratio below 1.0 and an RSS ratio no greater than the documented 1.25 process-floor budget."
-    kind: functional
-    risk: high
-    verify: cargo test -p cap --test command_resources_gate
-  end_to_end_benchmark:
+  benchmark_gate:
     id: R4
-    text: "The full command_resources benchmark completes and reports the calibrated resource-gate policy without a pre-existing unconditional RSS failure."
+    text: "The command_resources benchmark completes with the calibrated policy and emits its raw CPU and RSS evidence."
     kind: integration
     risk: high
     verify: cargo bench -p cap --bench command_resources
+  cpu_and_rss_budget:
+    id: R1
+    text: "Resource-gated rows require CPU ratio strictly below 1.0 and peak-RSS ratio at or below 1.25."
+    kind: functional
+    risk: high
+    verify: cargo test -p cap --test command_resources_gate
+  finite_fixture:
+    id: R3
+    text: "The xargs -n 1 stdin case uses an independent bounded fixture, preserving its command shape without multiplying benchmark rounds into millions of child processes."
+    kind: regression
+    risk: medium
+    verify: cargo test -p cap --test command_resources_gate
+  policy_boundaries:
+    id: R2
+    text: "CPU parity or regression and RSS above 1.25 are rejected, while the exact 1.25 RSS boundary is accepted."
+    kind: regression
+    risk: high
+    verify: cargo test -p cap --test command_resources_gate
 ---
 flowchart TD
     r1[R1 cpu and rss budget] --> cargo_test_p_cap_test_command_resources_gate[cargo test -p cap --test command_resources_gate]
-    r2[R2 boundary rejection] --> cargo_test_p_cap_test_command_resources_gate
-    r3[R3 bounded xargs fixture] --> cargo_test_p_cap_test_command_resources_gate
-    r4[R4 end to end benchmark] --> cargo_bench_p_cap_bench_command_resources[cargo bench -p cap --bench command_resources]
+    r2[R2 policy boundaries] --> cargo_test_p_cap_test_command_resources_gate
+    r3[R3 finite fixture] --> cargo_test_p_cap_test_command_resources_gate
+    r4[R4 benchmark gate] --> cargo_bench_p_cap_bench_command_resources[cargo bench -p cap --bench command_resources]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
