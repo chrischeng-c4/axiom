@@ -51,7 +51,7 @@ changes:
   - path: apps/tape/k8s/operator/crd.yaml
     action: modify
     section: manifest
-    impl_mode: generated
+    impl_mode: codegen
     description: "Regenerate the checked-in CRD from Tape's corrected operator serializer."
   - path: apps/tape/tests/operator.rs
     action: modify
