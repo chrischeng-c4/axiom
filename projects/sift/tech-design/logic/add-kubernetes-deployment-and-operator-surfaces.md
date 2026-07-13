@@ -1,7 +1,20 @@
 ---
 id: "1606"
-summary: (fill)
-fill_sections: [logic]
+summary: Add reproducible Docker image, layered Kubernetes, and operator artifact surfaces for Sift.
+capability_refs:
+  - id: kubernetes-native-deployment
+    role: primary
+    gap: sift-layered-kubernetes-artifacts
+    claim: sift-layered-kubernetes-artifacts
+    coverage: partial
+    rationale: Sift needs independently rendered image, CRD, operator, and instance layers.
+  - id: developer-and-agent-experience
+    role: contributes
+    gap: sift-deployment-cli-contract
+    claim: sift-deployment-cli-contract
+    coverage: partial
+    rationale: Deployment artifacts must be inspectable offline with runnable continuations.
+fill_sections: [logic, changes]
 ---
 
 ## Logic
@@ -40,4 +53,74 @@ flowchart TD
     crd --> apply
     operator --> apply
     instance --> apply
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/sift/src/deploy.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    gap: sift-layered-deployment-renderer
+    tracker: "1606"
+    description: Render Sift Dockerfile, CRD, operator, and instance artifacts from checked-in templates.
+  - path: projects/sift/src/bin/sift.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: sift-deployment-cli-surface
+    tracker: "1606"
+    description: Expose dockerfile and layered k8s render/operator commands with executable continuations.
+  - path: projects/sift/Dockerfile
+    action: create
+    section: changes
+    impl_mode: hand-written
+    gap: sift-source-image-artifact
+    tracker: "1606"
+    description: Provide the source-build Sift image contract.
+  - path: projects/sift/Dockerfile.release
+    action: create
+    section: changes
+    impl_mode: hand-written
+    gap: sift-release-image-artifact
+    tracker: "1606"
+    description: Provide the verified release-binary Sift image contract.
+  - path: projects/sift/k8s/crd/sift.yaml
+    action: create
+    section: changes
+    impl_mode: hand-written
+    gap: sift-crd-artifact
+    tracker: "1606"
+    description: Define the cluster-scoped Sift custom resource API.
+  - path: projects/sift/k8s/operator/operator.yaml
+    action: create
+    section: changes
+    impl_mode: hand-written
+    gap: sift-operator-artifact
+    tracker: "1606"
+    description: Define Sift operator service account, RBAC, and controller deployment.
+  - path: projects/sift/k8s/instances/dev.yaml
+    action: create
+    section: changes
+    impl_mode: hand-written
+    gap: sift-instance-artifact
+    tracker: "1606"
+    description: Define the development Sift custom resource with standard probes and single-node topology.
+  - path: projects/sift/HA.md
+    action: create
+    section: changes
+    impl_mode: hand-written
+    gap: sift-ha-operations-document
+    tracker: "1606"
+    description: Document Sift single-node and Raft replica deployment, backup, restore, and failure recovery.
+  - path: projects/sift/tests/deployment_cli.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    gap: sift-deployment-cli-tests
+    tracker: "1606"
+    description: Verify all Dockerfile and layered Kubernetes artifact commands render expected contracts.
 ```
