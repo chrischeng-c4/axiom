@@ -210,8 +210,7 @@ unsafe extern "C" fn dispatch_dumps(args_ptr: *const MbValue, nargs: usize) -> M
                         dict_get_exact_str(&map, "default").filter(|v| !v.is_none())
                     {
                         d
-                    } else if let Some(c) =
-                        dict_get_exact_str(&map, "cls").filter(|v| !v.is_none())
+                    } else if let Some(c) = dict_get_exact_str(&map, "cls").filter(|v| !v.is_none())
                     {
                         super::super::class::mb_call0(c)
                     } else {
@@ -1174,8 +1173,14 @@ mod tests {
         unsafe {
             if let ObjData::Dict(ref lock) = (*result.as_ptr().unwrap()).data {
                 let map = lock.read().unwrap();
-                assert_eq!(dict_get_exact_str(&map, "a").and_then(|v| v.as_int()), Some(1));
-                assert_eq!(dict_get_exact_str(&map, "b").and_then(|v| v.as_int()), Some(2));
+                assert_eq!(
+                    dict_get_exact_str(&map, "a").and_then(|v| v.as_int()),
+                    Some(1)
+                );
+                assert_eq!(
+                    dict_get_exact_str(&map, "b").and_then(|v| v.as_int()),
+                    Some(2)
+                );
             }
         }
     }
@@ -1196,7 +1201,10 @@ mod tests {
         unsafe {
             if let ObjData::Dict(ref lock) = (*parsed.as_ptr().unwrap()).data {
                 let map = lock.read().unwrap();
-                assert_eq!(dict_get_exact_str(&map, "age").and_then(|v| v.as_int()), Some(30));
+                assert_eq!(
+                    dict_get_exact_str(&map, "age").and_then(|v| v.as_int()),
+                    Some(30)
+                );
             }
         }
     }
@@ -1404,8 +1412,14 @@ mod tests {
         unsafe {
             if let ObjData::Dict(ref lock) = (*parsed.as_ptr().unwrap()).data {
                 let map = lock.read().unwrap();
-                assert_eq!(dict_get_exact_str(&map, "a").and_then(|v| v.as_int()), Some(1));
-                assert_eq!(dict_get_exact_str(&map, "b").and_then(|v| v.as_int()), Some(2));
+                assert_eq!(
+                    dict_get_exact_str(&map, "a").and_then(|v| v.as_int()),
+                    Some(1)
+                );
+                assert_eq!(
+                    dict_get_exact_str(&map, "b").and_then(|v| v.as_int()),
+                    Some(2)
+                );
             } else {
                 panic!("expected dict");
             }
@@ -1550,7 +1564,10 @@ mod tests {
         unsafe {
             if let ObjData::Dict(ref lock) = (*decoded.as_ptr().unwrap()).data {
                 let map = lock.read().unwrap();
-                assert_eq!(dict_get_exact_str(&map, "k").and_then(|v| v.as_int()), Some(99));
+                assert_eq!(
+                    dict_get_exact_str(&map, "k").and_then(|v| v.as_int()),
+                    Some(99)
+                );
                 assert_eq!(get_str(dict_get_exact_str(&map, "name").unwrap()), "mamba");
             } else {
                 panic!("expected dict");

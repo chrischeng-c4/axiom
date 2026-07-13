@@ -1674,8 +1674,9 @@ fn proxy_name(self_v: MbValue) -> String {
 
 fn proxy_option_arg(pos: &[MbValue]) -> Result<String, MbValue> {
     match pos.first().copied() {
-        Some(value) => extract_str(value)
-            .ok_or_else(|| raise_type_error("SectionProxy option must be str")),
+        Some(value) => {
+            extract_str(value).ok_or_else(|| raise_type_error("SectionProxy option must be str"))
+        }
         None => Ok(String::new()),
     }
 }

@@ -1958,8 +1958,8 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::exception::{current_exception_type, mb_clear_exception};
+    use super::*;
     use std::sync::Once;
 
     fn register_ssl_once() {
@@ -2020,10 +2020,8 @@ mod tests {
     #[test]
     fn get_ca_certs_bound_method_rejects_non_bool_binary_form() {
         register_ssl_once();
-        let method = super::super::super::class::mb_getattr(
-            ssl_context_instance(),
-            new_str("get_ca_certs"),
-        );
+        let method =
+            super::super::super::class::mb_getattr(ssl_context_instance(), new_str("get_ca_certs"));
         mb_clear_exception();
         let result = super::super::super::builtins::mb_call_spread(
             method,

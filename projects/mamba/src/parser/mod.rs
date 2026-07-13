@@ -1,7 +1,7 @@
 pub mod ast;
 pub mod expr;
-mod mangle;
 pub mod expr_compound;
+mod mangle;
 pub mod pattern;
 pub mod stmt;
 pub mod stmt_compound;
@@ -549,8 +549,11 @@ mod tests {
 
     #[test]
     fn test_parse_unicode_ident_assignment_and_use() {
-        let module = parse("def f():\n    áóí = 20\n    return 10 + áóí / 0 + 30\n", fid())
-            .expect("unicode identifier should parse");
+        let module = parse(
+            "def f():\n    áóí = 20\n    return 10 + áóí / 0 + 30\n",
+            fid(),
+        )
+        .expect("unicode identifier should parse");
         assert_eq!(module.stmts.len(), 1);
 
         let body = match &module.stmts[0].node {

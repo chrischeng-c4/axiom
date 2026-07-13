@@ -838,10 +838,7 @@ f()
     );
     // Result may be raw i64 (typed path) or NaN-boxed i64 (dynamic dispatch path).
     let result = decode_mbvalue_int(raw);
-    assert_eq!(
-        result, 6765,
-        "fib(20) should be 6765 (got raw={raw:#x})"
-    );
+    assert_eq!(result, 6765, "fib(20) should be 6765 (got raw={raw:#x})");
 }
 
 /// Smaller fib(10) = 55 sanity check — faster than fib(30) and verifies
