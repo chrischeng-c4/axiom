@@ -1,3 +1,4 @@
+# HANDWRITE-BEGIN gap="sift-source-image-artifact" tracker="1606" reason="Provide the source-build Sift image contract."
 FROM rust:1.96-bookworm AS build
 WORKDIR /workspace
 COPY . .
@@ -14,3 +15,4 @@ EXPOSE 7380
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/sift"]
 CMD ["serve"]
+# HANDWRITE-END
