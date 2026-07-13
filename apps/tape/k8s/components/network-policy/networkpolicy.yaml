@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:manifest:18492c18" tracker="pending-tracker" reason="Default-deny ingress to only Tape server pods, with explicit labeled client and monitoring namespace peers restricted to TCP 7137. generator gap: missing-generator:kubernetes-network-policy (#1593)."
+// TODO: hand-write content for `apps/tape/k8s/components/network-policy/networkpolicy.yaml`.
+// HANDWRITE-END
