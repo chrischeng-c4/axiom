@@ -1,7 +1,7 @@
 ---
 id: "1539"
 summary: (fill)
-fill_sections: [logic]
+fill_sections: [logic, e2e-test]
 ---
 
 ## Logic
@@ -90,4 +90,24 @@ flowchart TD
     classify -- yes --> go([GO])
     classify -- P2 only --> conditional_go([CONDITIONAL GO])
     classify -- no --> no_go([NO-GO])
+```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: vat-local-k8s-phase0-real-host
+    name: "Apple container machine runs the Phase 0 single-node k3s developer journey"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: local-kubernetes-cluster-service-and-vat-cluster
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "VAT_LOCAL_K8S_E2E=1 cargo test -p vat --test vat_local_k8s_phase0 -- --ignored --nocapture"
+    assertions:
+      - "R1/R2: On an explicit opt-in Apple Silicon host, the test creates a uniquely named persistent `container machine`, proves a root-owned sentinel survives stop/run, and records the exact container CLI and guest kernel/runtime matrix. It skips cleanly when the Apple container CLI is absent."
+      - "R3/R4: The test starts k3s without Docker, waits for a Ready node plus CoreDNS/CNI/metrics/Traefik/service-load-balancer/local-path readiness, exports an isolated kubeconfig, and proves host kubectl access before and after machine restart."
+      - "R5/R6/R7: The test exercises a Deployment, Job, StatefulSet/PVC, ConfigMap, Secret, ClusterIP Service, host port-forward, and the documented Ingress/NodePort path; it proves a local OCI image reaches k3s containerd without a public push and verifies the pod image digest."
+      - "R8: A best-effort two-machine server/agent probe always records join/CNI/DNS/Service evidence; lack of multi-node support is a recorded P2 limitation, not a false single-node success."
+      - "R9/AC4: A scope guard removes every VAT-owned machine/network/forwarder/image artifact on success and failure, then prints cold/warm/RSS/disk evidence and a GO, CONDITIONAL GO, or NO-GO record."
 ```
