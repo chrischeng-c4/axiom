@@ -232,6 +232,11 @@ struct ServeArgs {
     /// unused in single-node serving.
     #[arg(long, env = "TAPE_DATA_DIR")]
     data_dir: Option<PathBuf>,
+    /// Exact `file://` (or backup-enabled `s3://`) journal snapshot used only
+    /// to seed a fresh replica PVC before Raft starts. Refuses non-empty
+    /// `TAPE_DATA_DIR`; this is cold recovery, not a live restore endpoint.
+    #[arg(long, env = "TAPE_BOOTSTRAP_SEED_URI")]
+    bootstrap_seed_uri: Option<String>,
     /// Headless service name peers are resolved against in replica/HA mode
     /// (`ClusterTopology::from_env`).
     #[arg(long, env = "TAPE_PEER_SERVICE", default_value = "tape")]
@@ -836,7 +841,18 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     // slice — raft-host's h2c transport has no TLS seam yet). Held for the
     // process lifetime via `state` — dropping it would abort the tick/pump
     // tasks.
-    if raft_host::cluster::replica_mode() {
+    let replica_mode = raft_host::cluster::replica_mode();
+    if args.bootstrap_seed_uri.is_some() {
+        anyhow::ensure!(
+            replica_mode,
+            "--bootstrap-seed-uri (TAPE_BOOTSTRAP_SEED_URI) requires replica/HA mode"
+        );
+        anyhow::ensure!(
+            args.store.is_none(),
+            "--bootstrap-seed-uri cannot be combined with --store; seed only a fresh replica PVC"
+        );
+    }
+    if replica_mode {
         // Peer-mTLS material (#1327): load + validate BEFORE the raft group
         // spawns, so a misconfigured deployment (partial TAPE_PEER_TLS_* set,
         // mis-pointed path, unusable PEM) exits nonzero at startup instead of
@@ -887,6 +903,16 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
             !data_dir.as_os_str().is_empty(),
             "replica/HA mode requires a durable --data-dir (TAPE_DATA_DIR)"
         );
+        if let Some(seed_uri) = args.bootstrap_seed_uri.as_deref() {
+            let bytes = service_backup::fetch_backup_object(seed_uri)
+                .with_context(|| format!("read bootstrap seed {seed_uri}"))?;
+            tape::raft::prepare_bootstrap_seed(&data_dir, topo.node_id, &bytes)?;
+            tracing::info!(
+                seed_uri,
+                bytes = bytes.len(),
+                "bootstrap seed prepared before raft catch-up"
+            );
+        }
         let raft = std::sync::Arc::new(tape::raft::TapeRaft::from_topology(
             state.journal_handle(),
             &data_dir,
