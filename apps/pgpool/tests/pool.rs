@@ -198,6 +198,20 @@ async fn spawn_reusable_fake_backend() -> (u16, tokio::task::JoinHandle<()>) {
 // R1: idle reuse, liveness check, reset-before-return-to-idle.
 // ---------------------------------------------------------------------
 
+/// Every physical backend leg uses the same low-latency TCP policy as the
+/// accepted frontend server socket before it is exposed to a lease holder.
+#[tokio::test]
+async fn fresh_backend_lease_enables_tcp_nodelay() {
+    let (port, _backend) = spawn_fake_backend_accept_and_hold().await;
+    let pool = BackendPool::new(pool_config(port, 1));
+
+    let lease = pool.acquire_fresh().await.expect("fresh acquire succeeds");
+    assert!(
+        lease.stream.nodelay().expect("read TCP_NODELAY option"),
+        "new backend streams must disable Nagle coalescing before relay use"
+    );
+}
+
 /// verify: pool::acquire_reuses_idle_connection_after_liveness_check_passes (R1)
 #[tokio::test]
 async fn acquire_reuses_idle_connection_after_liveness_check_passes() {

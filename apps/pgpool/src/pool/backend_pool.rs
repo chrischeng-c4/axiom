@@ -443,6 +443,15 @@ impl BackendPool {
             }
         };
 
+        if let Err(error) = stream.set_nodelay(true) {
+            drop(stream);
+            drop(permit);
+            self.inner.notify.notify_waiters();
+            return Err(PoolError::BackendUnreachable(format!(
+                "backend connect to {addr} could not enable TCP_NODELAY: {error}"
+            )));
+        }
+
         let id = {
             let mut state = self.inner.state.lock().expect("pool state lock");
             let id = BackendConnectionId(state.next_id);
