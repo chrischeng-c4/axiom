@@ -62,22 +62,22 @@ changes:
 
 ```mermaid
 ---
-id: pgpool-physical-backend-reader-lifecycle-verification
+id: pgpool-physical-backend-reader-contract-verification
 requirements:
   isolation:
     id: R2
-    text: "Reset failure still closes a physical backend and cross-owner state remains isolated after reader reuse."
+    text: "Session state cannot leak across transaction owners and failed reset cannot yield a reused reader/socket pair."
     kind: regression
     risk: high
     verify: cargo test -p pgpool --lib --test pool --test pool_modes
-  reader_lifetime:
+  reader_pooling:
     id: R1
-    text: "An idle backend retains reader state and transaction reuse uses that reader through reset before safe reuse."
+    text: "Physical backend reuse returns a reader only after reset consumes a valid ReadyForQuery response."
     kind: regression
     risk: high
     verify: cargo test -p pgpool --test pool
 ---
 flowchart TD
-    r1[R1 reader lifetime] --> cargo_test_p_pgpool_test_pool[cargo test -p pgpool --test pool]
+    r1[R1 reader pooling] --> cargo_test_p_pgpool_test_pool[cargo test -p pgpool --test pool]
     r2[R2 isolation] --> cargo_test_p_pgpool_lib_test_pool_test_pool_modes[cargo test -p pgpool --lib --test pool --test pool_modes]
 ```
