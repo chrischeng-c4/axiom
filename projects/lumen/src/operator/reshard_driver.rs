@@ -419,7 +419,47 @@ pub fn oversize_block_condition(
 /// `DRIVER_POLL_INTERVAL * CONVERGENCE_STALL_TICKS` = 10 minutes at the
 /// current 20s poll interval, the same order of magnitude as
 /// `OVERSIZE_RECHECK_TICKS`'s ~5 minutes.
+///
+/// #1485 R2: [`convergence_stall_cache`]/[`record_convergence_await`] below
+/// (this tick-count budget) stay in place as a fast, driver-memory-only
+/// signal, but they are no longer the authoritative source for whether the
+/// stall budget has been exceeded — [`CONVERGENCE_STALL_SECS`], checked
+/// against the durable `workflow.convergenceWaitStartedAt` timestamp, is.
 const CONVERGENCE_STALL_TICKS: u32 = 30;
+
+/// #1485 R2: wall-clock equivalent of [`CONVERGENCE_STALL_TICKS`] at the
+/// current [`DRIVER_POLL_INTERVAL`] — the durable stall budget
+/// [`convergence_stall_condition`] applies to `workflow.
+/// convergenceWaitStartedAt`. Computing the budget this way (elapsed time
+/// since a persisted CR timestamp) rather than from an in-process tick
+/// count is what makes both the budget and the `topologyConvergenceStalled`
+/// condition it gates survive an operator restart mid-wait. `pub(crate)` so
+/// `reconcile.rs`'s own tests can position a wait-start timestamp precisely
+/// past the budget without sleeping in a unit test.
+pub(crate) const CONVERGENCE_STALL_SECS: u64 =
+    CONVERGENCE_STALL_TICKS as u64 * DRIVER_POLL_INTERVAL.as_secs();
+
+/// The production [`CONVERGENCE_STALL_SECS`] value (#1485 R2), exposed the
+/// same way [`default_write_fence_ttl_secs`] exposes [`WRITE_FENCE_TTL_SECS`]
+/// — so integration tests can back-date `workflow.convergenceWaitStartedAt`
+/// past the real budget (simulating an extended wait without sleeping)
+/// without needing the constant itself to be `pub`.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
+pub fn convergence_stall_budget_secs() -> u64 {
+    CONVERGENCE_STALL_SECS
+}
+
+/// Current wall-clock time as epoch seconds, saturating to `0` on a clock
+/// error (mirrors [`KubeClusterControl::trigger_rolling_restart`]'s own
+/// inline `SystemTime::now()` call) — the source of every `#1485` durable
+/// timestamp this module stamps into `workflow.convergenceWaitStartedAt` /
+/// `workflow.convergenceRemediationRestartedAt`.
+fn now_epoch_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
 
 /// `"<namespace>/<name>" -> (uid, map_version being awaited, consecutive
 /// awaiting ticks)` — tracks how long [`advance_convergence`] has been
@@ -487,25 +527,20 @@ pub(crate) fn prune_convergence_stall_cache(live_uids: &BTreeSet<String>) {
         .retain(|_, (uid, _, _)| live_uids.contains(uid));
 }
 
-/// Whether `namespace/name`'s current `uid`+`map_version` pairing is
-/// currently past the [`CONVERGENCE_STALL_TICKS`] budget, for `reconcile.
-/// rs`'s `status_patch` to layer a `topologyConvergenceStalled` blocking
-/// condition onto the policy/usage-derived status. A cached entry belonging
-/// to a different `uid` or `map_version` is treated as not stalled.
+/// Whether an `awaitingTopologyConvergence` wait that began at
+/// `wait_started_at` (`workflow.convergenceWaitStartedAt`, #1485 R2) has run
+/// longer than [`CONVERGENCE_STALL_SECS`], for `reconcile.rs`'s
+/// `status_patch` to layer a `topologyConvergenceStalled` blocking condition
+/// onto the policy/usage-derived status. Computed purely from this one
+/// persisted CR timestamp — not driver memory — so the answer is the same
+/// whether or not the driver process has restarted since the wait began;
+/// [`advance_convergence`]'s own bounded-remediation gate uses the exact
+/// same computation. `None` (convergence not pending, or no wait recorded
+/// yet) is never stalled.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-pub fn convergence_stall_condition(
-    namespace: &str,
-    name: &str,
-    uid: &str,
-    map_version: u64,
-) -> bool {
-    convergence_stall_cache()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(&convergence_stall_key(namespace, name))
-        .is_some_and(|(cached_uid, cached_version, ticks)| {
-            cached_uid == uid && *cached_version == map_version && *ticks > CONVERGENCE_STALL_TICKS
-        })
+pub fn convergence_stall_condition(wait_started_at: Option<u64>) -> bool {
+    wait_started_at
+        .is_some_and(|started| now_epoch_secs().saturating_sub(started) > CONVERGENCE_STALL_SECS)
 }
 
 /// Everything [`drive_tick`] needs from a live cluster, abstracted so the
@@ -2171,6 +2206,15 @@ async fn advance_convergence(
                 "reshardPolicy": {
                     "workflow": {
                         "convergedShardMapVersion": map_version,
+                        // #1485 R1/R2: episode resolved — clear the durable
+                        // wait-start/remediation bookkeeping in the SAME
+                        // patch so a future, unrelated wait (a later
+                        // split's own convergence) starts from a fresh
+                        // budget and a fresh one-shot remediation slot,
+                        // instead of inheriting this episode's state.
+                        "convergenceWaitStartedAt": null,
+                        "convergenceRemediationRestartCount": 0,
+                        "convergenceRemediationRestartedAt": null,
                     }
                 }
             }
@@ -2182,26 +2226,97 @@ async fn advance_convergence(
     }
 
     // #1467 R7: bounded escalation — bump this map_version's
-    // consecutive-awaiting-ticks counter. The fence keeps re-arming below
-    // regardless of the outcome (never silently dropped); once the budget
-    // is exceeded, `reconcile.rs`'s `status_patch` layers a distinct
-    // `topologyConvergenceStalled` condition via `convergence_stall_
-    // condition` so operators see it instead of an indefinitely-quiet wait.
-    let stalled = record_convergence_await(
+    // consecutive-awaiting-ticks counter. This in-process cache stays as a
+    // fast-path/logging-only signal (#1485 R2); it is no longer what decides
+    // whether the budget is exceeded (see below).
+    record_convergence_await(
         namespace,
         name,
         &lumen.uid().unwrap_or_default(),
         map_version,
     );
+
+    // #1485 R2: the durable wait-start checkpoint. Stamped once, on the
+    // first tick this map_version is observed unconverged — every later
+    // tick (including after an operator restart, when the in-process cache
+    // above is empty again) reads the SAME persisted value back off `lumen`,
+    // so the elapsed-time budget below is computed identically regardless of
+    // driver process lifetime.
+    let now = now_epoch_secs();
+    let wait_started_at = workflow.convergence_wait_started_at;
+    if wait_started_at.is_none() {
+        let patch = json!({
+            "spec": {
+                "reshardPolicy": {
+                    "workflow": {
+                        "convergenceWaitStartedAt": now,
+                    }
+                }
+            }
+        });
+        if let Err(err) = control.patch_spec(namespace, name, patch).await {
+            return Some(DriveOutcome::Blocked(format!(
+                "persist convergence-wait start: {err}"
+            )));
+        }
+    }
+    // `wait_started_at.or(Some(now))`: on this very first tick the patch
+    // above just persisted `now`, but `lumen` itself (this tick's snapshot)
+    // still predates it — treat this tick as freshly started (elapsed 0),
+    // exactly like the pre-#1485 tick-count budget did.
+    let stalled = convergence_stall_condition(wait_started_at.or(Some(now)));
     if stalled {
         tracing::warn!(
             namespace,
             name,
             map_version,
             "reshard driver: topology convergence has not been confirmed after \
-             CONVERGENCE_STALL_TICKS ticks; fence stays armed, raising \
-             topologyConvergenceStalled"
+             CONVERGENCE_STALL_SECS; fence stays armed, raising topologyConvergenceStalled"
         );
+    }
+
+    // #1485 R1: bounded remediation restart. The ConfigMap-race signature is
+    // exactly what this branch already establishes above: the StatefulSet
+    // rollout itself is done (`rollout_converged`) but at least one pod is
+    // still reporting the old shard-map version (`!converged`, this
+    // function's outer `if converged` already returned). Bounded to exactly
+    // one re-trigger per episode via `convergenceRemediationRestartCount`
+    // (persisted, so a driver restart never re-triggers a second time for
+    // the same episode) — the fence stays armed and `stalled` stays raised
+    // either way; this only attempts a self-heal, it never changes whether
+    // the wait keeps being reported.
+    if stalled && rollout_converged && workflow.convergence_remediation_restart_count == 0 {
+        tracing::warn!(
+            namespace,
+            name,
+            map_version,
+            "reshard driver: convergence stalled on a version mismatch (rollout complete, pod(s) \
+             still on the old shard-map version); triggering one bounded remediation rolling \
+             restart"
+        );
+        if let Err(err) = control.trigger_rolling_restart(namespace, name).await {
+            // Non-fatal, matching the cutover-tick trigger's own handling —
+            // the re-trigger attempt is still bounded to one per episode
+            // below regardless of whether k8s actually accepted it; a
+            // repeatedly-failing rolling-restart trigger is a cluster-level
+            // problem the stalled condition already surfaces.
+            tracing::warn!(error = %err, "reshard driver: convergence remediation rolling-restart trigger failed");
+        }
+        let patch = json!({
+            "spec": {
+                "reshardPolicy": {
+                    "workflow": {
+                        "convergenceRemediationRestartCount": 1,
+                        "convergenceRemediationRestartedAt": now,
+                    }
+                }
+            }
+        });
+        if let Err(err) = control.patch_spec(namespace, name, patch).await {
+            return Some(DriveOutcome::Blocked(format!(
+                "persist convergence remediation re-trigger: {err}"
+            )));
+        }
     }
 
     if !moving_buckets.is_empty() {

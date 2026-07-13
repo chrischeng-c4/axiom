@@ -222,6 +222,40 @@ pub struct ReshardWorkflowSpec {
     /// actually changed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_cutover_shard_map_version: Option<u64>,
+    /// Epoch-seconds wall-clock timestamp `reshard_driver::advance_convergence`
+    /// first observed the *current* `shardMap.version`'s post-cutover
+    /// convergence wait as pending (#1485 R2) — stamped once, on the first
+    /// `AwaitingTopologyConvergence` tick, in the same `Patch::Merge` style
+    /// `lastCutoverShardMapVersion` already uses (spec-is-checkpoint, not
+    /// driver memory). Cleared (patched to `null`) the moment convergence is
+    /// confirmed, so it is always either `None` or the start of the wait
+    /// still in progress. `reshard_driver::convergence_stall_condition`
+    /// computes the `topologyConvergenceStalled` budget directly from this
+    /// field, so both the budget and the raised condition survive an
+    /// operator restart — replacing the prior process-local-cache-only
+    /// computation, which reset to zero on every restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub convergence_wait_started_at: Option<u64>,
+    /// Count of bounded remediation rolling-restart re-triggers
+    /// `reshard_driver::advance_convergence` has fired for the current
+    /// convergence-stall episode — the same wait `convergenceWaitStartedAt`
+    /// tracks (#1485 R1). Bounded to at most `1`: once the stall budget is
+    /// exceeded with the ConfigMap-race signature (StatefulSet rollout
+    /// complete but some pod still reporting the old shard-map version), the
+    /// driver calls `ClusterControl::trigger_rolling_restart` exactly once
+    /// per episode and bumps this to `1`; a later stall in the same episode
+    /// never re-triggers. Reset to `0` alongside `convergenceWaitStartedAt`
+    /// once the episode resolves.
+    #[serde(default)]
+    pub convergence_remediation_restart_count: u32,
+    /// Epoch-seconds timestamp of the last remediation rolling-restart
+    /// re-trigger this episode, if any (#1485 R1) — surfaced alongside
+    /// `convergenceRemediationRestartCount` in `status.reshard` so operators
+    /// can see when the self-heal fired without reading driver logs. `None`
+    /// until `convergenceRemediationRestartCount` first becomes non-zero;
+    /// cleared together with it once the episode resolves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub convergence_remediation_restarted_at: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -518,6 +552,18 @@ pub struct LumenReshardStatus {
     pub blocking_conditions: Vec<String>,
     #[serde(default)]
     pub message: String,
+    /// Mirrors `spec.reshardPolicy.workflow.convergenceRemediationRestartCount`
+    /// (#1485 R1) — count of bounded remediation rolling-restart re-triggers
+    /// the reshard driver has fired for the current convergence-stall
+    /// episode, so operators can see the self-heal fired without reading
+    /// `spec`. `status_patch` copies this straight from the spec field.
+    #[serde(default)]
+    pub convergence_remediation_restart_count: u32,
+    /// Mirrors `spec.reshardPolicy.workflow.convergenceRemediationRestartedAt`
+    /// (#1485 R1) — epoch-seconds timestamp of the last remediation restart
+    /// re-trigger, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub convergence_remediation_restarted_at: Option<u64>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
@@ -583,6 +629,12 @@ impl LumenSpec {
             usage_measured_at_map_version: None,
             blocking_conditions,
             message,
+            convergence_remediation_restart_count: policy
+                .workflow
+                .convergence_remediation_restart_count,
+            convergence_remediation_restarted_at: policy
+                .workflow
+                .convergence_remediation_restarted_at,
         }
     }
 

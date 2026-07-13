@@ -27,7 +27,7 @@ Public API manifest for `projects/lumen/src/operator/reconcile.rs` generated fro
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `run` | projects/lumen/src/operator/reconcile.rs | function | pub | 593 | run() -> anyhow::Result<()> |
+| `run` | projects/lumen/src/operator/reconcile.rs | function | pub | 603 | run() -> anyhow::Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -568,23 +568,33 @@ impl ManagedService for Lumen {
             }
         }
         // #1467 R7: distinct, named condition once the wait above has
-        // exceeded `CONVERGENCE_STALL_TICKS` re-arms — the driver keeps
-        // re-arming the fence (never silently drops it), but operators need
-        // a visible signal that convergence has been pending unusually
-        // long, not just that it's pending. Reads the driver's own live
-        // stall-tracking cache (`record_convergence_await`), matching the
-        // `oversize_block_condition` pattern above.
+        // exceeded the stall budget — the driver keeps re-arming the fence
+        // (never silently drops it), but operators need a visible signal
+        // that convergence has been pending unusually long, not just that
+        // it's pending.
+        //
+        // #1485 R2: computed purely from the persisted `workflow.
+        // convergenceWaitStartedAt` checkpoint (the same field `advance_
+        // convergence` itself stamps and reads), not the driver's
+        // process-local stall-tracking cache — so this condition, and the
+        // budget it is derived from, survive an operator restart mid-wait
+        // rather than resetting to "not stalled" until the cache re-fills.
         if awaiting_convergence
             && crate::operator::reshard_driver::convergence_stall_condition(
-                &namespace,
-                &name,
-                &uid,
-                map_version,
+                workflow.convergence_wait_started_at,
             )
         {
             reshard
                 .blocking_conditions
                 .push("topologyConvergenceStalled".to_string());
+            // #1485 R1: surface the bounded remediation restart's own
+            // re-trigger count/timestamp alongside the condition, so
+            // operators can see the self-heal fired without reading driver
+            // logs.
+            reshard.convergence_remediation_restart_count =
+                workflow.convergence_remediation_restart_count;
+            reshard.convergence_remediation_restarted_at =
+                workflow.convergence_remediation_restarted_at;
             if !reshard
                 .blocking_conditions
                 .contains(&"reshardOversizedDocument".to_string())
@@ -915,31 +925,37 @@ mod tests {
         );
     }
 
+    /// Wall-clock "epoch seconds" helper duplicated from `reshard_driver`'s
+    /// own private one (not exposed beyond `pub fn
+    /// convergence_stall_budget_secs`) — this test only needs `now`, not the
+    /// budget constant itself, to back-date `convergenceWaitStartedAt`.
+    fn test_now_epoch_secs() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    }
+
     #[test]
     fn status_patch_surfaces_topology_convergence_stall_as_distinct_condition() {
         let namespace = "acme-convergence-stalled";
         let name = "search";
         let map_version = 1u64;
-        let lumen = cutover_pending_convergence_lumen(name, namespace, map_version);
-        let uid = lumen.metadata.uid.clone().unwrap_or_default();
+        let mut lumen = cutover_pending_convergence_lumen(name, namespace, map_version);
 
-        // Drive the driver-side stall cache past CONVERGENCE_STALL_TICKS the
-        // same way `advance_convergence` does every tick it stays unconverged
-        // (private to `reshard_driver`, so replicate it via the same
-        // `pub(crate)` helper rather than driving 30+ real ticks here).
-        let mut stalled = false;
-        for _ in 0..40 {
-            stalled = crate::operator::reshard_driver::record_convergence_await(
-                namespace,
-                name,
-                &uid,
-                map_version,
-            );
-        }
-        assert!(
-            stalled,
-            "record_convergence_await must report stalled after enough consecutive ticks"
-        );
+        // #1485 R2: the stall budget is now computed purely from the
+        // persisted `workflow.convergenceWaitStartedAt` checkpoint — no
+        // driver-side cache to drive here — so simulate an extended wait by
+        // back-dating it past `convergence_stall_budget_secs()` directly,
+        // exactly what a real long-running wait (or a wait that started
+        // before the operator restarted) would leave behind in the CR.
+        let stall_budget = crate::operator::reshard_driver::convergence_stall_budget_secs();
+        lumen
+            .spec
+            .reshard_policy
+            .workflow
+            .convergence_wait_started_at =
+            Some(test_now_epoch_secs().saturating_sub(stall_budget + 1));
 
         let ready = ReadyFacts {
             ready: std::collections::HashMap::new(),
@@ -962,6 +978,71 @@ mod tests {
                 .any(|c| c.as_str() == Some("topologyConvergenceStalled")),
             "expected a distinct topologyConvergenceStalled condition once the stall budget \
              is exceeded, got: {reshard}"
+        );
+    }
+
+    /// #1485 R2/AC2: the raised `topologyConvergenceStalled` condition is a
+    /// pure function of the persisted CR (`workflow.convergenceWaitStartedAt`
+    /// alone) — it is computed identically whether or not the operator
+    /// process serving this reconcile has ever seen this CR before, i.e. it
+    /// survives an operator restart by construction, unlike the pre-#1485
+    /// process-local-cache-only computation which required 30+ consecutive
+    /// in-process ticks to re-accumulate before re-raising.
+    #[test]
+    fn status_patch_stalled_condition_survives_a_fresh_process_seeing_the_cr_for_the_first_time() {
+        let map_version = 1u64;
+        let mut lumen = cutover_pending_convergence_lumen(
+            "search",
+            "acme-convergence-restart-durable",
+            map_version,
+        );
+        let stall_budget = crate::operator::reshard_driver::convergence_stall_budget_secs();
+        lumen
+            .spec
+            .reshard_policy
+            .workflow
+            .convergence_wait_started_at =
+            Some(test_now_epoch_secs().saturating_sub(stall_budget + 1));
+        // #1485 R1: also prove a completed remediation restart's own
+        // bookkeeping round-trips through status untouched by process
+        // identity — status_patch never resets it.
+        lumen
+            .spec
+            .reshard_policy
+            .workflow
+            .convergence_remediation_restart_count = 1;
+        lumen
+            .spec
+            .reshard_policy
+            .workflow
+            .convergence_remediation_restarted_at = Some(test_now_epoch_secs());
+
+        // No driver-side cache is ever populated in this test process for
+        // this namespace/name — `status_patch` (called by whichever operator
+        // replica happens to reconcile this CR next) must still report the
+        // stall purely from `lumen.spec` above.
+        let ready = ReadyFacts {
+            ready: std::collections::HashMap::new(),
+        };
+        let patch = lumen.status_patch(&ready);
+        let reshard = &patch["status"]["reshard"];
+        let blocking = reshard["blockingConditions"]
+            .as_array()
+            .expect("blockingConditions must be present");
+        assert!(
+            blocking
+                .iter()
+                .any(|c| c.as_str() == Some("topologyConvergenceStalled")),
+            "stalled condition must be derived purely from persisted spec state, got: {reshard}"
+        );
+        assert_eq!(
+            reshard["convergenceRemediationRestartCount"].as_u64(),
+            Some(1),
+            "convergenceRemediationRestartCount must be surfaced in status.reshard, got: {reshard}"
+        );
+        assert!(
+            reshard["convergenceRemediationRestartedAt"].is_number(),
+            "convergenceRemediationRestartedAt must be surfaced in status.reshard, got: {reshard}"
         );
     }
 

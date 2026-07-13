@@ -319,6 +319,15 @@ struct FakeControl {
     /// test can assert it is only scraped once StatefulSet-level rollout
     /// convergence is already true (never wastefully mid-rollout).
     pods_report_map_version_calls: AtomicI64,
+    /// #1485 R1/AC1: when set, `trigger_rolling_restart` flips this flag to
+    /// `true` as a side effect — standing in for a real remediation rolling
+    /// restart actually fixing the stale pod that was still reporting the
+    /// old shard-map version. A test wires this to the same
+    /// `Arc<AtomicBool>` passed to [`Self::with_pods_report_map_version`] so
+    /// convergence only completes once the driver's own bounded remediation
+    /// restart has fired, proving the restart (not an unrelated tick) is
+    /// what unblocks it.
+    restart_flips: Option<Arc<AtomicBool>>,
 }
 
 impl FakeControl {
@@ -332,6 +341,7 @@ impl FakeControl {
             convergence_check_calls: AtomicI64::new(0),
             pods_report_map_version: None,
             pods_report_map_version_calls: AtomicI64::new(0),
+            restart_flips: None,
         }
     }
 
@@ -347,6 +357,16 @@ impl FakeControl {
 
     fn with_pods_report_map_version(mut self, reported: Arc<AtomicBool>) -> Self {
         self.pods_report_map_version = Some(reported);
+        self
+    }
+
+    /// #1485 R1/AC1: wire `trigger_rolling_restart` to flip `flag` to `true`
+    /// — typically the same flag passed to
+    /// [`Self::with_pods_report_map_version`], so the fake only reports
+    /// convergence after the driver's own bounded remediation restart has
+    /// actually fired.
+    fn with_restart_flips_pods_report(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.restart_flips = Some(flag);
         self
     }
 
@@ -380,6 +400,11 @@ impl ClusterControl for FakeControl {
 
     async fn trigger_rolling_restart(&self, _namespace: &str, _name: &str) -> anyhow::Result<()> {
         self.restart_trigger_calls.fetch_add(1, Ordering::SeqCst);
+        // #1485 R1/AC1: simulate the remediation restart actually fixing
+        // the stale pod.
+        if let Some(flag) = &self.restart_flips {
+            flag.store(true, Ordering::SeqCst);
+        }
         Ok(())
     }
 
@@ -1550,6 +1575,291 @@ async fn convergence_stall_never_drops_the_fence_across_an_extended_wait() {
             503,
             "fence must stay armed through the entire stalled wait, well past the stall \
              escalation budget"
+        );
+    }
+}
+
+/// #1485 R1/AC1: once a convergence wait exceeds its (now durable,
+/// timestamp-based) stall budget with the ConfigMap-race signature
+/// (StatefulSet rollout complete — `topology_converged` default `true` here
+/// — but pods still reporting the old map version), the driver fires exactly
+/// one bounded remediation rolling restart, surfaces the re-trigger
+/// count/timestamp in `workflow`, and — once the restart's effect is
+/// observed (this fake's `with_restart_flips_pods_report` flips the same
+/// flag `serving_pods_report_map_version` reads) — convergence completes and
+/// the fence clears on the very next tick.
+#[tokio::test]
+async fn convergence_stall_triggers_exactly_one_remediation_restart_then_converges() {
+    let shard0 = spin_up_shard();
+    let shard1 = spin_up_shard();
+    create_users_collection(&shard0.server).await;
+    create_users_collection(&shard1.server).await;
+
+    let ids: Vec<String> = (0..40).map(|i| format!("u-{i:03}")).collect();
+    for id in &ids {
+        index_user(&shard0.server, id).await;
+    }
+    let moving: Vec<&String> = ids.iter().filter(|id| bucket_of(id) < 4).collect();
+    assert!(!moving.is_empty());
+
+    let cluster = Arc::new(Mutex::new(initial_lumen(
+        Some(1_000_000_000),
+        Some("urgentThresholdCrossed"),
+    )));
+    let shard_urls = vec![shard0.base_url.clone(), shard1.base_url.clone()];
+    let http = reqwest::Client::new();
+    // Rollout itself is instantly converged (fake default); pods have not
+    // yet loaded the new map until the remediation restart flips this flag.
+    let pods_report = Arc::new(AtomicBool::new(false));
+    let control = FakeControl::new(cluster.clone(), shard_urls.clone())
+        .with_pods_report_map_version(pods_report.clone())
+        .with_restart_flips_pods_report(pods_report.clone());
+
+    // Drive Complete -> PrepareSplit -> Splitting -> CatchingUp -> Complete.
+    for _ in 0..4 {
+        let lumen = control.snapshot();
+        drive_tick(&control, &http, &lumen).await;
+    }
+    assert_eq!(control.snapshot().spec.shard_map.version, 1);
+
+    // First not-converged tick: stamps `workflow.convergenceWaitStartedAt`
+    // for the first time — not stalled yet (elapsed ~0), so no remediation.
+    let lumen = control.snapshot();
+    let outcome = drive_tick(&control, &http, &lumen).await;
+    assert_eq!(
+        outcome,
+        DriveOutcome::AwaitingTopologyConvergence { map_version: 1 }
+    );
+    assert_eq!(control.restart_trigger_calls.load(Ordering::SeqCst), 0);
+    assert!(control
+        .snapshot()
+        .spec
+        .reshard_policy
+        .workflow
+        .convergence_wait_started_at
+        .is_some());
+
+    // Back-date the persisted wait-start past the stall budget directly in
+    // the CR — simulating an extended wait without sleeping in a test.
+    let stall_budget = lumen::operator::reshard_driver::convergence_stall_budget_secs();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    cluster
+        .lock()
+        .unwrap()
+        .spec
+        .reshard_policy
+        .workflow
+        .convergence_wait_started_at = Some(now.saturating_sub(stall_budget + 1));
+
+    // Next tick: stall budget exceeded + rollout converged + pods still
+    // stale -> exactly one bounded remediation restart fires.
+    let lumen = control.snapshot();
+    let outcome = drive_tick(&control, &http, &lumen).await;
+    assert_eq!(
+        outcome,
+        DriveOutcome::AwaitingTopologyConvergence { map_version: 1 },
+        "the remediation restart only attempts a self-heal; this tick itself still hasn't \
+         observed the pods reporting the new map version yet"
+    );
+    assert_eq!(
+        control.restart_trigger_calls.load(Ordering::SeqCst),
+        1,
+        "exactly one remediation rolling-restart re-trigger must fire once the stall budget \
+         is exceeded"
+    );
+    let workflow_after_restart = control.snapshot().spec.reshard_policy.workflow;
+    assert_eq!(
+        workflow_after_restart.convergence_remediation_restart_count,
+        1
+    );
+    assert!(workflow_after_restart
+        .convergence_remediation_restarted_at
+        .is_some());
+
+    // Final tick: the remediation restart's side effect (pods_report
+    // flipped) is now observed -> convergence completes and the fence
+    // clears, exactly like a normal (non-stalled) convergence.
+    let lumen = control.snapshot();
+    let outcome = drive_tick(&control, &http, &lumen).await;
+    assert_eq!(outcome, DriveOutcome::TopologyConverged { map_version: 1 });
+    let workflow_resolved = control.snapshot().spec.reshard_policy.workflow;
+    assert_eq!(workflow_resolved.converged_shard_map_version, Some(1));
+    assert!(
+        workflow_resolved.convergence_wait_started_at.is_none(),
+        "the episode's durable wait-start checkpoint must be cleared once resolved"
+    );
+    assert_eq!(
+        workflow_resolved.convergence_remediation_restart_count, 0,
+        "the episode's remediation-restart bookkeeping must be cleared once resolved"
+    );
+    assert!(workflow_resolved
+        .convergence_remediation_restarted_at
+        .is_none());
+}
+
+/// #1485 R1/AC3: a second stall observed in the *same* episode (the driver
+/// never converges, e.g. pods never actually catch up even after the
+/// remediation restart fires) must never re-trigger a second remediation
+/// restart — bounded to exactly one per episode via the persisted
+/// `convergenceRemediationRestartCount`, not just an in-process guard.
+#[tokio::test]
+async fn convergence_stall_remediation_restart_never_fires_twice_in_the_same_episode() {
+    let shard0 = spin_up_shard();
+    let shard1 = spin_up_shard();
+    create_users_collection(&shard0.server).await;
+    create_users_collection(&shard1.server).await;
+
+    let ids: Vec<String> = (0..40).map(|i| format!("u-{i:03}")).collect();
+    for id in &ids {
+        index_user(&shard0.server, id).await;
+    }
+    let moving: Vec<&String> = ids.iter().filter(|id| bucket_of(id) < 4).collect();
+    assert!(!moving.is_empty());
+
+    let cluster = Arc::new(Mutex::new(initial_lumen(
+        Some(1_000_000_000),
+        Some("urgentThresholdCrossed"),
+    )));
+    let shard_urls = vec![shard0.base_url.clone(), shard1.base_url.clone()];
+    let http = reqwest::Client::new();
+    // Pods never catch up in this test — no `with_restart_flips_pods_report`
+    // — so the episode never resolves and stays stalled indefinitely.
+    let pods_report = Arc::new(AtomicBool::new(false));
+    let control = FakeControl::new(cluster.clone(), shard_urls.clone())
+        .with_pods_report_map_version(pods_report.clone());
+
+    for _ in 0..4 {
+        let lumen = control.snapshot();
+        drive_tick(&control, &http, &lumen).await;
+    }
+    assert_eq!(control.snapshot().spec.shard_map.version, 1);
+
+    let lumen = control.snapshot();
+    drive_tick(&control, &http, &lumen).await;
+
+    let stall_budget = lumen::operator::reshard_driver::convergence_stall_budget_secs();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    cluster
+        .lock()
+        .unwrap()
+        .spec
+        .reshard_policy
+        .workflow
+        .convergence_wait_started_at = Some(now.saturating_sub(stall_budget + 1));
+
+    // First stalled tick: fires the one bounded remediation restart.
+    let lumen = control.snapshot();
+    drive_tick(&control, &http, &lumen).await;
+    assert_eq!(control.restart_trigger_calls.load(Ordering::SeqCst), 1);
+
+    // Many further stalled ticks (the episode never resolves): the
+    // persisted `convergenceRemediationRestartCount == 1` must keep blocking
+    // any further re-trigger.
+    for _ in 0..10 {
+        let lumen = control.snapshot();
+        let outcome = drive_tick(&control, &http, &lumen).await;
+        assert_eq!(
+            outcome,
+            DriveOutcome::AwaitingTopologyConvergence { map_version: 1 }
+        );
+        assert_eq!(
+            control.restart_trigger_calls.load(Ordering::SeqCst),
+            1,
+            "a second stall in the same episode must never re-trigger a second remediation \
+             restart"
+        );
+    }
+}
+
+/// #1485 R1/R2/AC2: the persisted `convergenceRemediationRestartCount` (not
+/// driver memory) is what bounds the remediation restart to one per episode
+/// — proven by triggering it once, then constructing a brand-new
+/// `FakeControl` over the same `cluster` (this harness's "operator process
+/// restarted" simulation), and driving further stalled ticks against the
+/// new control: its own fresh `restart_trigger_calls` counter must stay at
+/// `0` because the persisted CR state already blocks the re-trigger.
+#[tokio::test]
+async fn convergence_stall_remediation_restart_count_survives_a_simulated_operator_restart() {
+    let shard0 = spin_up_shard();
+    let shard1 = spin_up_shard();
+    create_users_collection(&shard0.server).await;
+    create_users_collection(&shard1.server).await;
+
+    let ids: Vec<String> = (0..40).map(|i| format!("u-{i:03}")).collect();
+    for id in &ids {
+        index_user(&shard0.server, id).await;
+    }
+    let moving: Vec<&String> = ids.iter().filter(|id| bucket_of(id) < 4).collect();
+    assert!(!moving.is_empty());
+
+    let cluster = Arc::new(Mutex::new(initial_lumen(
+        Some(1_000_000_000),
+        Some("urgentThresholdCrossed"),
+    )));
+    let shard_urls = vec![shard0.base_url.clone(), shard1.base_url.clone()];
+    let http = reqwest::Client::new();
+    let pods_report = Arc::new(AtomicBool::new(false));
+    let control = FakeControl::new(cluster.clone(), shard_urls.clone())
+        .with_pods_report_map_version(pods_report.clone());
+
+    for _ in 0..4 {
+        let lumen = control.snapshot();
+        drive_tick(&control, &http, &lumen).await;
+    }
+    assert_eq!(control.snapshot().spec.shard_map.version, 1);
+
+    let lumen = control.snapshot();
+    drive_tick(&control, &http, &lumen).await;
+
+    let stall_budget = lumen::operator::reshard_driver::convergence_stall_budget_secs();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    cluster
+        .lock()
+        .unwrap()
+        .spec
+        .reshard_policy
+        .workflow
+        .convergence_wait_started_at = Some(now.saturating_sub(stall_budget + 1));
+
+    let lumen = control.snapshot();
+    drive_tick(&control, &http, &lumen).await;
+    assert_eq!(control.restart_trigger_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        control
+            .snapshot()
+            .spec
+            .reshard_policy
+            .workflow
+            .convergence_remediation_restart_count,
+        1
+    );
+
+    // Simulate an operator restart: zero in-process state carries over,
+    // only what is persisted in `cluster`.
+    let restarted = FakeControl::new(cluster.clone(), shard_urls.clone())
+        .with_pods_report_map_version(pods_report.clone());
+    for _ in 0..5 {
+        let lumen = restarted.snapshot();
+        let outcome = drive_tick(&restarted, &http, &lumen).await;
+        assert_eq!(
+            outcome,
+            DriveOutcome::AwaitingTopologyConvergence { map_version: 1 }
+        );
+        assert_eq!(
+            restarted.restart_trigger_calls.load(Ordering::SeqCst),
+            0,
+            "a fresh driver process's own local restart_trigger_calls counter must stay at 0 \
+             — the persisted convergenceRemediationRestartCount, not driver memory, is what \
+             blocks the re-trigger across a restart"
         );
     }
 }

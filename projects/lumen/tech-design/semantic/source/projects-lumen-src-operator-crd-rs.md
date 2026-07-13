@@ -20,26 +20,26 @@ Public API manifest for `projects/lumen/src/operator/crd.rs` generated from AST 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AuthMode` | projects/lumen/src/operator/crd.rs | enum | pub | 286 |  |
-| `Autoscaling` | projects/lumen/src/operator/crd.rs | struct | pub | 427 |  |
-| `LogFormat` | projects/lumen/src/operator/crd.rs | enum | pub | 263 |  |
-| `LumenReshardStatus` | projects/lumen/src/operator/crd.rs | struct | pub | 479 |  |
+| `AuthMode` | projects/lumen/src/operator/crd.rs | enum | pub | 320 |  |
+| `Autoscaling` | projects/lumen/src/operator/crd.rs | struct | pub | 461 |  |
+| `LogFormat` | projects/lumen/src/operator/crd.rs | enum | pub | 297 |  |
+| `LumenReshardStatus` | projects/lumen/src/operator/crd.rs | struct | pub | 513 | adds `convergence_remediation_restart_count: u32` (#1485 R1); adds `convergence_remediation_restarted_at: Option<u64>` (#1485 R1) |
 | `LumenSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 39 |  |
-| `LumenStatus` | projects/lumen/src/operator/crd.rs | struct | pub | 451 |  |
-| `ReshardPhase` | projects/lumen/src/operator/crd.rs | enum | pub | 230 |  |
+| `LumenStatus` | projects/lumen/src/operator/crd.rs | struct | pub | 485 |  |
+| `ReshardPhase` | projects/lumen/src/operator/crd.rs | enum | pub | 264 |  |
 | `ReshardPolicy` | projects/lumen/src/operator/crd.rs | struct | pub | 163 |  |
-| `ReshardWorkflowSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 198 | adds `converged_shard_map_version: Option<u64>` (#1458 R1); adds `last_cutover_shard_map_version: Option<u64>` (#1467 R7) |
-| `ServingBackupSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 404 |  |
-| `ServingBootstrapSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 381 |  |
-| `ServingSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 313 |  |
+| `ReshardWorkflowSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 198 | adds `converged_shard_map_version: Option<u64>` (#1458 R1); adds `last_cutover_shard_map_version: Option<u64>` (#1467 R7); adds `convergence_wait_started_at: Option<u64>` (#1485 R2); adds `convergence_remediation_restart_count: u32` (#1485 R1); adds `convergence_remediation_restarted_at: Option<u64>` (#1485 R1) |
+| `ServingBackupSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 438 |  |
+| `ServingBootstrapSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 415 |  |
+| `ServingSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 347 |  |
 | `ShardMapSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 135 |  |
-| `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 274 | as_env(self) -> &'static str |
-| `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 301 | as_env(self) -> &'static str |
-| `as_str` | projects/lumen/src/operator/crd.rs | function | pub | 240 | as_str(self) -> &'static str |
-| `progress_percent` | projects/lumen/src/operator/crd.rs | function | pub | 249 | progress_percent(self) -> u8 |
-| `reshard_status` | projects/lumen/src/operator/crd.rs | function | pub | 544 | reshard_status(&self) -> LumenReshardStatus |
-| `reshard_status_with_usage` | projects/lumen/src/operator/crd.rs | function | pub | 623 | reshard_status_with_usage(&self, shard_usage_bytes: &BTreeMap<u32, u64>, measured_at_map_version: u64) -> LumenReshardStatus |
-| `storage_pod_count` | projects/lumen/src/operator/crd.rs | function | pub | 525 | storage_pod_count(&self) -> i32 |
+| `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 308 | as_env(self) -> &'static str |
+| `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 335 | as_env(self) -> &'static str |
+| `as_str` | projects/lumen/src/operator/crd.rs | function | pub | 274 | as_str(self) -> &'static str |
+| `progress_percent` | projects/lumen/src/operator/crd.rs | function | pub | 283 | progress_percent(self) -> u8 |
+| `reshard_status` | projects/lumen/src/operator/crd.rs | function | pub | 590 | reshard_status(&self) -> LumenReshardStatus |
+| `reshard_status_with_usage` | projects/lumen/src/operator/crd.rs | function | pub | 675 | reshard_status_with_usage(&self, shard_usage_bytes: &BTreeMap<u32, u64>, measured_at_map_version: u64) -> LumenReshardStatus |
+| `storage_pod_count` | projects/lumen/src/operator/crd.rs | function | pub | 571 | storage_pod_count(&self) -> i32 |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -268,6 +268,40 @@ pub struct ReshardWorkflowSpec {
     /// actually changed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_cutover_shard_map_version: Option<u64>,
+    /// Epoch-seconds wall-clock timestamp `reshard_driver::advance_convergence`
+    /// first observed the *current* `shardMap.version`'s post-cutover
+    /// convergence wait as pending (#1485 R2) — stamped once, on the first
+    /// `AwaitingTopologyConvergence` tick, in the same `Patch::Merge` style
+    /// `lastCutoverShardMapVersion` already uses (spec-is-checkpoint, not
+    /// driver memory). Cleared (patched to `null`) the moment convergence is
+    /// confirmed, so it is always either `None` or the start of the wait
+    /// still in progress. `reshard_driver::convergence_stall_condition`
+    /// computes the `topologyConvergenceStalled` budget directly from this
+    /// field, so both the budget and the raised condition survive an
+    /// operator restart — replacing the prior process-local-cache-only
+    /// computation, which reset to zero on every restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub convergence_wait_started_at: Option<u64>,
+    /// Count of bounded remediation rolling-restart re-triggers
+    /// `reshard_driver::advance_convergence` has fired for the current
+    /// convergence-stall episode — the same wait `convergenceWaitStartedAt`
+    /// tracks (#1485 R1). Bounded to at most `1`: once the stall budget is
+    /// exceeded with the ConfigMap-race signature (StatefulSet rollout
+    /// complete but some pod still reporting the old shard-map version), the
+    /// driver calls `ClusterControl::trigger_rolling_restart` exactly once
+    /// per episode and bumps this to `1`; a later stall in the same episode
+    /// never re-triggers. Reset to `0` alongside `convergenceWaitStartedAt`
+    /// once the episode resolves.
+    #[serde(default)]
+    pub convergence_remediation_restart_count: u32,
+    /// Epoch-seconds timestamp of the last remediation rolling-restart
+    /// re-trigger this episode, if any (#1485 R1) — surfaced alongside
+    /// `convergenceRemediationRestartCount` in `status.reshard` so operators
+    /// can see when the self-heal fired without reading driver logs. `None`
+    /// until `convergenceRemediationRestartCount` first becomes non-zero;
+    /// cleared together with it once the episode resolves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub convergence_remediation_restarted_at: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -564,6 +598,18 @@ pub struct LumenReshardStatus {
     pub blocking_conditions: Vec<String>,
     #[serde(default)]
     pub message: String,
+    /// Mirrors `spec.reshardPolicy.workflow.convergenceRemediationRestartCount`
+    /// (#1485 R1) — count of bounded remediation rolling-restart re-triggers
+    /// the reshard driver has fired for the current convergence-stall
+    /// episode, so operators can see the self-heal fired without reading
+    /// `spec`. `status_patch` copies this straight from the spec field.
+    #[serde(default)]
+    pub convergence_remediation_restart_count: u32,
+    /// Mirrors `spec.reshardPolicy.workflow.convergenceRemediationRestartedAt`
+    /// (#1485 R1) — epoch-seconds timestamp of the last remediation restart
+    /// re-trigger, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub convergence_remediation_restarted_at: Option<u64>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
@@ -629,6 +675,12 @@ impl LumenSpec {
             usage_measured_at_map_version: None,
             blocking_conditions,
             message,
+            convergence_remediation_restart_count: policy
+                .workflow
+                .convergence_remediation_restart_count,
+            convergence_remediation_restarted_at: policy
+                .workflow
+                .convergence_remediation_restarted_at,
         }
     }
 
