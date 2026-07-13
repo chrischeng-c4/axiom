@@ -178,36 +178,92 @@ pub struct CbCheckArgs {
     pub allow_empty_impl: bool,
 }
 
-// Args for `aw td gen-source --spec <td> --target <rs>`.
+// Args for `aw td gen-source --spec <td> --target <source-file>`.
 #[derive(Debug, Args)]
 pub struct CbGenSourceArgs {
-    // Repo-relative path to the per-file source TD (with a `## Source`
-    // rust-source-unit fence).
+    // Repo-relative path to the per-file source TD (with a lossless
+    // `## Source` source-unit payload).
     #[arg(long)]
     pub spec: String,
     // Repo-relative path to the target source file to write.
     #[arg(long)]
     pub target: String,
-    // Print the generated source to stdout without writing the target.
+    // Verify generation without writing the target; stdout remains the
+    // terminal aw.cli.v1 protocol envelope.
     #[arg(long)]
     pub dry_run: bool,
 }
 
-// Forward-generate a target source file from a per-file rust-source-unit TD,
-// reusing the same generator path as codegen (@spec injection + lossless
-// item-tree regeneration). The forward inverse of `td gen --force-regen`
-// (which syncs TD<-source); this writes source<-TD.
+// Forward-generate a target source file from a per-file source-unit TD,
+// reusing the normal apply path. The forward inverse of `td gen
+// --force-regen` (which syncs TD<-source); this writes source<-TD.
 pub fn run_gen_source(args: CbGenSourceArgs) -> Result<()> {
-    let root = crate::find_project_root()?;
+    let root = match crate::find_project_root() {
+        Ok(root) => root,
+        Err(error) => {
+            let message = format!("gen-source could not resolve a repository root: {error}");
+            print_gen_source_terminal(
+                &args,
+                "error",
+                false,
+                &message,
+                None,
+                Some("aw td gen-source --help"),
+            )?;
+            anyhow::bail!(message);
+        }
+    };
+    for (label, value) in [
+        ("spec", args.spec.as_str()),
+        ("target", args.target.as_str()),
+    ] {
+        if let Err(message) = validate_gen_source_cli_path(label, value) {
+            print_gen_source_terminal(
+                &args,
+                "error",
+                false,
+                &message,
+                None,
+                Some("aw td gen-source --help"),
+            )?;
+            anyhow::bail!(message);
+        }
+    }
     let spec_abs = root.join(&args.spec);
     let target_abs = root.join(&args.target);
-    let report = crate::generate::apply::run_apply_scoped_targets(
+    let target_rel = args.target.replace('\\', "/");
+    let report = match crate::generate::apply::run_apply_exact_source_target(
         &spec_abs,
         &root,
         args.dry_run,
-        std::slice::from_ref(&target_abs),
-    )
-    .map_err(|e| anyhow::anyhow!("gen-source apply {} -> {}: {e}", args.spec, args.target))?;
+        &target_abs,
+    ) {
+        Ok(report) => report,
+        Err(error) => {
+            let message = format!("gen-source apply {} -> {}: {error}", args.spec, args.target);
+            print_gen_source_terminal(&args, "error", false, &message, None, None)?;
+            anyhow::bail!(message);
+        }
+    };
+    let processed = report
+        .files
+        .iter()
+        .filter(|file| file.processed)
+        .collect::<Vec<_>>();
+    if processed.len() != 1 || processed[0].path.to_string_lossy().replace('\\', "/") != target_rel
+    {
+        let reported = report
+            .files
+            .iter()
+            .map(|file| file.path.to_string_lossy().replace('\\', "/"))
+            .collect::<Vec<_>>();
+        let message = format!(
+            "gen-source refused ambiguous apply report: requested exactly `{target_rel}`, reported [{}]",
+            reported.join(", ")
+        );
+        print_gen_source_terminal(&args, "error", false, &message, None, None)?;
+        anyhow::bail!(message);
+    }
     eprintln!(
         "gen-source {} -> {}: {} block(s) updated, {} file(s) created, wrote={} (dry_run={})",
         args.spec,
@@ -217,6 +273,78 @@ pub fn run_gen_source(args: CbGenSourceArgs) -> Result<()> {
         report.wrote_files,
         args.dry_run,
     );
+    print_gen_source_terminal(
+        &args,
+        "done",
+        true,
+        "source-unit generation completed",
+        Some(&report),
+        None,
+    )?;
+    Ok(())
+}
+
+fn validate_gen_source_cli_path(label: &str, value: &str) -> Result<(), String> {
+    let path = std::path::Path::new(value);
+    if value.trim().is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(format!(
+            "gen-source --{label} must be a normalized repository-relative file path: `{value}`"
+        ));
+    }
+    Ok(())
+}
+
+fn print_gen_source_terminal(
+    args: &CbGenSourceArgs,
+    action: &str,
+    workflow_complete: bool,
+    message: &str,
+    report: Option<&crate::generate::apply::ApplyReport>,
+    error_command: Option<&str>,
+) -> Result<()> {
+    let remediation = (!workflow_complete).then(|| {
+        if let Some(command) = error_command {
+            command.to_string()
+        } else if validate_gen_source_cli_path("spec", &args.spec).is_ok() {
+            format!("aw td check {}", shell_quote_cli_arg(&args.spec))
+        } else {
+            "aw td gen-source --help".to_string()
+        }
+    });
+    let env = serde_json::json!({
+        "schema_version": "aw.cli.v1",
+        "status": if workflow_complete { "done" } else { "blocked" },
+        "action": action,
+        "message": message,
+        "artifacts": [args.spec.as_str(), args.target.as_str()],
+        "requires_hitl": false,
+        "summary": {
+            "dry_run": args.dry_run,
+            "blocks_updated": report.map_or(0, |value| value.total_blocks_updated()),
+            "files_created": report.map_or(0, |value| value.files_created()),
+            "wrote_files": report.is_some_and(|value| value.wrote_files),
+        },
+        "next": {
+            "kind": if workflow_complete { "done" } else { "run_command" },
+            "command": remediation,
+            "reason": message,
+            "requires_hitl": false,
+            "payload_path": serde_json::Value::Null,
+        },
+        "completion": {
+            "root_complete": workflow_complete,
+            "workflow_complete": workflow_complete,
+            "requires_hitl": false,
+            "criteria": if workflow_complete { vec!["requested target processed exactly once"] } else { Vec::<&str>::new() },
+            "missing": if workflow_complete { Vec::<&str>::new() } else { vec!["valid source-unit generation"] },
+        },
+    });
+    println!("{}", serde_json::to_string(&env)?);
     Ok(())
 }
 
@@ -710,8 +838,10 @@ fn classify_codegen_origin_spec(spec_content: &str) -> CbCodegenOriginClass {
     if spec_content.contains("source-from-target") || spec_content.contains("<!-- source-snapshot:")
     {
         CbCodegenOriginClass::ArtifactReplay
-    } else if source_section_has_type_marker(spec_content, "type: rust-source-unit")
-        || source_section_has_type_marker(spec_content, "type: text-source-unit")
+    } else if crate::generate::apply::typed_source_unit_kind(spec_content)
+        .ok()
+        .flatten()
+        .is_some()
     {
         CbCodegenOriginClass::TdAst
     } else if spec_declares_source_section(spec_content) {
@@ -719,21 +849,6 @@ fn classify_codegen_origin_spec(spec_content: &str) -> CbCodegenOriginClass {
     } else {
         CbCodegenOriginClass::TdAst
     }
-}
-
-fn source_section_has_type_marker(spec_content: &str, marker: &str) -> bool {
-    let mut in_source = false;
-    for line in spec_content.lines() {
-        if line.starts_with("## ") {
-            let heading = line.trim_start_matches('#').trim();
-            in_source = heading.eq_ignore_ascii_case("Source");
-            continue;
-        }
-        if in_source && line.trim().contains(marker) {
-            return true;
-        }
-    }
-    false
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -2910,15 +3025,16 @@ mod tests {
         collect_source_scope_files, collect_tree_files, commit_cb_claim_trailer,
         commit_force_regen, compare_source_roots, copy_tree, ensure_claim_issue,
         extract_cold_rebuild_target_paths, extract_project_root_llms_target_paths,
-        extract_spec_managed_ref, extract_spec_managed_refs, format_rust_files,
-        has_handwrite_ownership_marker, is_minified_asset_file, repo_relative_code_path,
-        resolve_project_force_regen_scope, run_force_regen_specs, sample_count,
-        sample_semantic_review_units, spec_declares_source_section,
-        td_public_symbol_semantic_coverage, upsert_public_api_overview,
-        upsert_public_api_overview_targets, verify_force_regen_conformance,
-        write_project_root_llms_targets, CbCodegenOriginClass, CbCommand, CbGenArgs, ClaimIssueRef,
-        ForceRegenConformanceReport, ForceRegenScope, PublicApiManifestSymbol,
-        PublicApiManifestTarget, PublicSymbolSemanticCoverage, SemanticReviewUnit,
+        extract_spec_managed_ref, extract_spec_managed_refs, fillback_dispatch_next,
+        fillback_hitl_next, format_rust_files, has_handwrite_ownership_marker,
+        is_minified_asset_file, repo_relative_code_path, resolve_project_force_regen_scope,
+        run_force_regen_specs, sample_count, sample_semantic_review_units,
+        spec_declares_source_section, td_public_symbol_semantic_coverage,
+        upsert_public_api_overview, upsert_public_api_overview_targets,
+        verify_force_regen_conformance, write_project_root_llms_targets, CbCodegenOriginClass,
+        CbCommand, CbGenArgs, ClaimIssueRef, ForceRegenConformanceReport, ForceRegenScope,
+        PublicApiManifestSymbol, PublicApiManifestTarget, PublicSymbolSemanticCoverage,
+        SemanticReviewUnit,
     };
     use crate::fillback::ast::{Symbol, SymbolKind};
     use clap::Parser;
@@ -4155,6 +4271,24 @@ pub fn signature_only() -> Result<()>
             repo_relative_code_path(root, "/repo/src/lib.rs"),
             "src/lib.rs"
         );
+    }
+
+    #[test]
+    fn fillback_next_envelopes_are_chain_followable() {
+        let command = "aw td gen-source --spec spec.md --target src/lib.rs --dry-run";
+        let dispatch = fillback_dispatch_next(command);
+        assert_eq!(dispatch["kind"], "dispatch");
+        assert_eq!(dispatch["command"], command);
+        assert_eq!(dispatch["requires_hitl"], false);
+        assert!(dispatch["reason"].as_str().is_some_and(|v| !v.is_empty()));
+        assert!(dispatch["payload_path"].is_null());
+
+        let hitl = fillback_hitl_next("ownership is ambiguous");
+        assert_eq!(hitl["kind"], "hitl");
+        assert!(hitl["command"].is_null());
+        assert_eq!(hitl["reason"], "ownership is ambiguous");
+        assert_eq!(hitl["requires_hitl"], true);
+        assert!(hitl["payload_path"].is_null());
     }
 
     // Mirrors `standardize::gap_issue_create_args_uses_typed_fields_and_bounded_skeleton`
@@ -5566,12 +5700,25 @@ pub async fn run_claim(args: CbClaimArgs) -> Result<()> {
 
     // 1. Validate code-path exists.
     let code_path = PathBuf::from(&args.code_path);
+    let derived_slug = derive_slug_from_path(&code_path);
     if !code_path.exists() {
+        let message = format!("code-path not found: {}", args.code_path);
         let env = serde_json::json!({
+            "schema_version": "aw.cli.v1",
+            "status": "blocked",
             "action": "error",
-            "message": format!("code-path not found: {}", args.code_path),
+            "slug": derived_slug,
+            "message": message,
+            "artifacts": [],
+            "next": fillback_error_next("aw td create --help", &message),
+            "requires_hitl": false,
+            "completion": {
+                "root_complete": false,
+                "workflow_complete": false,
+                "requires_hitl": false,
+            },
         });
-        println!("{}", serde_json::to_string_pretty(&env)?);
+        println!("{}", serde_json::to_string(&env)?);
         std::process::exit(1);
     }
 
@@ -5600,15 +5747,62 @@ pub async fn run_claim(args: CbClaimArgs) -> Result<()> {
         std::env::set_var("SCORE_NON_INTERACTIVE", "1");
     }
     let path_str = args.code_path.clone();
-    if let Err(e) =
-        crate::cli::fillback::run(Some(&path_str), None, false, args.project.as_deref()).await
+    let fillback_outcome = match crate::cli::fillback::run(
+        Some(&path_str),
+        None,
+        false,
+        args.project.as_deref(),
+    )
+    .await
     {
+        Ok(outcome) => outcome,
+        Err(e) => {
+            let message = format!("fillback pipeline failed: {}", e);
+            let env = serde_json::json!({
+                "schema_version": "aw.cli.v1",
+                "status": "blocked",
+                "action": "error",
+                "slug": derived_slug,
+                "message": message,
+                "artifacts": [],
+                "next": fillback_error_next("aw td create --help", &message),
+                "requires_hitl": false,
+                "completion": {
+                    "root_complete": false,
+                    "workflow_complete": false,
+                    "requires_hitl": false,
+                },
+            });
+            println!("{}", serde_json::to_string(&env)?);
+            std::process::exit(1);
+        }
+    };
+
+    if fillback_outcome.requires_hitl {
+        let message = fillback_outcome.message;
+        let resume_command = fillback_resume_command(&args);
         let env = serde_json::json!({
-            "action": "error",
-            "message": format!("fillback pipeline failed: {}", e),
+            "schema_version": "aw.cli.v1",
+            "status": "blocked",
+            "action": "done",
+            "slug": derived_slug,
+            "message": message,
+            "artifacts": [],
+            "next": fillback_hitl_next(&message),
+            "hitl_question": fillback_hitl_question(
+                &args.code_path,
+                &message,
+                &resume_command,
+            ),
+            "requires_hitl": true,
+            "completion": {
+                "root_complete": false,
+                "workflow_complete": false,
+                "requires_hitl": true,
+            },
         });
-        println!("{}", serde_json::to_string_pretty(&env)?);
-        std::process::exit(1);
+        println!("{}", serde_json::to_string(&env)?);
+        return Ok(());
     }
 
     // 3. Tracker linkage (default-on; issue #925). Adopted code needs a
@@ -5619,7 +5813,6 @@ pub async fn run_claim(args: CbClaimArgs) -> Result<()> {
     //    Best-effort either way: a skipped or failed tracker link must
     //    never fail the claim itself (`aw td create --from-source` has to
     //    keep working offline / with no issue backend configured).
-    let derived_slug = derive_slug_from_path(&code_path);
     let code_path_rel = repo_relative_code_path(&project_root, &args.code_path);
     let claim_issue = if args.no_issue {
         eprintln!(
@@ -5655,20 +5848,130 @@ pub async fn run_claim(args: CbClaimArgs) -> Result<()> {
     }
 
     // 5. Emit result envelope.
+    let next_command = fillback_outcome
+        .next_command
+        .as_deref()
+        .context("successful fillback did not provide a runnable next command")?;
     let env = serde_json::json!({
-        "action": "done",
+        "schema_version": "aw.cli.v1",
+        "status": "continue",
+        "action": "dispatch",
         "slug": derived_slug,
         "claim_issue": claim_issue.as_ref().map(|r| r.trailer_value()),
+        "artifacts": fillback_outcome.artifact_paths.iter()
+            .map(|path| path.strip_prefix(&project_root).unwrap_or(path).to_string_lossy().replace('\\', "/"))
+            .collect::<Vec<_>>(),
+        "source_analysis": {
+            "partitions": fillback_outcome.partition_count,
+            "ast_items": fillback_outcome.item_count,
+            "ownership": if fillback_outcome.refreshed_existing {
+                "refreshed-existing"
+            } else {
+                "created"
+            },
+        },
+        "invoke": {
+            "command": next_command,
+            "args": {},
+        },
+        "next": fillback_dispatch_next(next_command),
+        "requires_hitl": false,
+        "completion": {
+            "root_complete": false,
+            "workflow_complete": false,
+            "requires_hitl": false,
+        },
         "message": if committed {
             "td create --from-source: spec written; Cb-Claim trailer committed"
         } else {
             "td create --from-source: spec written (no trailer committed)"
         },
     });
-    println!("{}", serde_json::to_string_pretty(&env)?);
+    println!("{}", serde_json::to_string(&env)?);
     let _ = args.json;
     let _ = args.group; // group inference handled by fillback's output_dir wiring
     Ok(())
+}
+
+fn fillback_dispatch_next(command: &str) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "dispatch",
+        "command": command,
+        "reason": "verify the imported source unit is losslessly regenerable",
+        "requires_hitl": false,
+        "payload_path": null,
+    })
+}
+
+fn fillback_hitl_next(reason: &str) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "hitl",
+        "command": null,
+        "reason": reason,
+        "requires_hitl": true,
+        "payload_path": null,
+    })
+}
+
+fn fillback_error_next(command: &str, reason: &str) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "run_command",
+        "command": command,
+        "reason": reason,
+        "requires_hitl": false,
+        "payload_path": null,
+    })
+}
+
+fn fillback_hitl_question(target: &str, reason: &str, resume_command: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": "resolve-source-ownership",
+        "question": "How should AW resolve the unsafe or ambiguous whole-file source ownership?",
+        "target": target,
+        "resume_command": resume_command,
+        "tool_hint": "ask_user_question",
+        "choices": [
+            {
+                "id": "repair-owner",
+                "label": "Repair the existing owner",
+                "description": "Make one TD own one whole-file source block, then rerun the resume command."
+            },
+            {
+                "id": "leave-unchanged",
+                "label": "Leave source unchanged",
+                "description": "Do not adopt this source file until ownership is clarified."
+            }
+        ],
+        "default_choice": "leave-unchanged",
+        "freeform_prompt": reason,
+    })
+}
+
+fn fillback_resume_command(args: &CbClaimArgs) -> String {
+    let mut command = format!(
+        "aw td create --from-source {}",
+        shell_quote_cli_arg(&args.code_path)
+    );
+    if let Some(project) = args.project.as_deref() {
+        command.push_str(" --project ");
+        command.push_str(&shell_quote_cli_arg(project));
+    }
+    if args.no_issue {
+        command.push_str(" --no-issue");
+    }
+    command
+}
+
+fn shell_quote_cli_arg(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-'))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
 }
 
 // Derive a kebab-case slug from a code path.
@@ -5863,15 +6166,10 @@ fn ensure_claim_issue(
         });
     }
 
-    let issues_args = crate::cli::issues::IssuesArgs {
-        command: crate::cli::issues::IssuesCommand::Create(claim_issue_create_args(
-            &title,
-            project_name,
-        )),
-    };
+    let create_args = claim_issue_create_args(&title, project_name);
     {
         let _cwd = CwdGuard::enter(project_root)?;
-        block_on_bridge(crate::cli::issues::run(issues_args))
+        block_on_bridge(crate::cli::issues::run_create_silent(create_args))
             .with_context(|| format!("aw wi create failed for code-claim `{code_path_rel}`"))?;
     }
 

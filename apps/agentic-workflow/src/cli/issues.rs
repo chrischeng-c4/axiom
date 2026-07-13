@@ -2226,6 +2226,18 @@ async fn run_draft_init(args: DraftInitArgs) -> Result<()> {
 
 // @spec apps/agentic-workflow/tech-design/core/logic/issues-backend.md#R1
 async fn run_create(args: CreateArgs) -> Result<()> {
+    run_create_inner(args, true).await
+}
+
+/// Internal create service for callers that own stdout's outer protocol
+/// envelope (for example explicit-file `aw td create --from-source`).
+/// Backend behavior is identical to `aw wi create`; only nested CLI output is
+/// suppressed so the caller can emit exactly one canonical JSON envelope.
+pub(crate) async fn run_create_silent(args: CreateArgs) -> Result<()> {
+    run_create_inner(args, false).await
+}
+
+async fn run_create_inner(args: CreateArgs, emit_output: bool) -> Result<()> {
     if args.draft_path.is_some() {
         return run_create_from_draft(args).await;
     }
@@ -2360,17 +2372,19 @@ async fn run_create(args: CreateArgs) -> Result<()> {
         let cache = remote_read_cache_backend(&kind, repo.as_deref(), host.as_deref());
         cache.write(&created).await?;
 
-        if args.json {
-            println!("{}", serde_json::to_string_pretty(&created)?);
-        } else {
-            let id_str = created
-                .github_id
-                .or(created.gitlab_id)
-                .map(|n| format!("#{}", n))
-                .unwrap_or_default();
-            println!("Created {} ({})", created.slug, id_str);
-            if let Some(url) = &created.url {
-                println!("{}", url);
+        if emit_output {
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&created)?);
+            } else {
+                let id_str = created
+                    .github_id
+                    .or(created.gitlab_id)
+                    .map(|n| format!("#{}", n))
+                    .unwrap_or_default();
+                println!("Created {} ({})", created.slug, id_str);
+                if let Some(url) = &created.url {
+                    println!("{}", url);
+                }
             }
         }
     } else {
@@ -2435,7 +2449,9 @@ async fn run_create(args: CreateArgs) -> Result<()> {
                 }),
             },
         };
-        print_envelope(&envelope)?;
+        if emit_output {
+            print_envelope(&envelope)?;
+        }
     }
 
     Ok(())

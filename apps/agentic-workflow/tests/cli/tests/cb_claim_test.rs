@@ -98,7 +98,8 @@ fn test_from_source_fillback_invoked_e2e() {
     // Reserved for end-to-end: feed a small fixture into
     // `aw td create --from-source`, assert
     // <project>/tech-design/<group>/<derived>.md exists and contains YAML
-    // frontmatter; assert the result envelope action == "done".
+    // frontmatter; assert the result envelope action == "dispatch" and its
+    // emitted `aw td gen-source` command reaches a terminal envelope.
 }
 
 /// Writes a minimal `aw.toml` registering one project (`name`/`path` both
@@ -137,6 +138,13 @@ fn write_from_source_fixture(root: &std::path::Path, project_rel: &str, type_nam
     .unwrap();
 }
 
+fn enable_fixture_local_issue_platform(root: &std::path::Path) {
+    let path = root.join("aw.toml");
+    let mut config = std::fs::read_to_string(&path).unwrap();
+    config.push_str("\n[agentic_workflow.issue_platform]\ntype = \"local\"\n");
+    std::fs::write(path, config).unwrap();
+}
+
 fn run_from_source(
     aw_bin: &str,
     root: &std::path::Path,
@@ -150,6 +158,7 @@ fn run_from_source(
         .arg("create")
         .args(extra_args)
         .arg("--non-interactive")
+        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
         .current_dir(root)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -173,6 +182,39 @@ fn run_from_source(
             Err(e) => panic!("try_wait failed: {}", e),
         }
     }
+}
+
+fn nonempty_stdout_lines(output: &std::process::Output) -> Vec<&str> {
+    std::str::from_utf8(&output.stdout)
+        .expect("stdout utf8")
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect()
+}
+
+fn single_stdout_envelope(output: &std::process::Output) -> serde_json::Value {
+    let lines = nonempty_stdout_lines(output);
+    assert_eq!(
+        lines.len(),
+        1,
+        "expected exactly one non-empty stdout JSON line, got:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    serde_json::from_str(lines[0]).expect("stdout envelope JSON")
+}
+
+fn run_emitted_aw_command(
+    aw_bin: &str,
+    root: &std::path::Path,
+    command: &str,
+) -> std::process::Output {
+    let parts = command.split_whitespace().collect::<Vec<_>>();
+    assert_eq!(parts.first().copied(), Some("aw"), "{command}");
+    std::process::Command::new(aw_bin)
+        .args(&parts[1..])
+        .current_dir(root)
+        .output()
+        .expect("run emitted aw command")
 }
 
 /// #1243 regression proof: `aw td create --from-source <path> --project
@@ -361,6 +403,220 @@ fn test_from_source_no_issue_flag_skips_tracker_creation_with_warning() {
         stderr.contains("--no-issue") || stderr.contains("skip"),
         "expected a skip-tracker-creation note on stderr, got:\n{stderr}"
     );
+}
+
+/// #1506: an explicit supported file is one quiet, chain-followable protocol
+/// route even with default tracker linkage enabled. The real >100 KiB file is
+/// selected directly (its sibling is never scanned), and its emitted dry-run
+/// inverse terminates with one JSON envelope.
+#[test]
+fn test_explicit_large_file_emits_single_dispatch_and_terminal_gen_source_json() {
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_from_source_fixture(root, "demo", "LargeDirect");
+    enable_fixture_local_issue_platform(root);
+    let selected = root.join("demo/src/direct.py");
+    let sibling = root.join("demo/src/sibling.py");
+    let source = (0..2_600)
+        .map(|idx| format!("def item_{idx}(value: int) -> int:\n    return value + {idx}\n\n"))
+        .collect::<String>();
+    assert!(source.len() > 100_000);
+    std::fs::write(&selected, &source).unwrap();
+    std::fs::write(&sibling, "raise RuntimeError('must not be scanned')\n").unwrap();
+
+    let output = run_from_source(
+        &aw_bin,
+        root,
+        &["--from-source", "demo/src/direct.py", "--project", "demo"],
+    );
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope = single_stdout_envelope(&output);
+    assert_eq!(envelope["schema_version"], "aw.cli.v1");
+    assert_eq!(envelope["status"], "continue");
+    assert_eq!(envelope["action"], "dispatch");
+    assert_eq!(envelope["requires_hitl"], false);
+    assert!(envelope["claim_issue"].as_str().is_some());
+    let issue_dir = agentic_workflow::shared::workspace::issues_path(root);
+    assert!(
+        !collect_md_recursive(&issue_dir).is_empty(),
+        "default tracker path must create a durable local fixture issue under {}",
+        issue_dir.display()
+    );
+    assert!(envelope["source_analysis"]["partitions"]
+        .as_u64()
+        .is_some_and(|count| count > 1));
+    let artifact = envelope["artifacts"][0].as_str().expect("artifact path");
+    let artifact_text = std::fs::read_to_string(root.join(artifact)).unwrap();
+    assert!(artifact_text.contains("source_lang=python"));
+    assert!(artifact_text.contains("### Source Partition 0001"));
+    assert!(
+        !root
+            .join("demo/tech-design/specs/demo/src/sibling.md")
+            .exists(),
+        "explicit-file route must not scan a sibling"
+    );
+
+    let next = envelope["invoke"]["command"]
+        .as_str()
+        .expect("invoke.command");
+    assert_eq!(envelope["next"]["command"].as_str(), Some(next));
+    assert!(next.starts_with("aw td gen-source --spec "), "{next}");
+    assert!(next.ends_with(" --dry-run"), "{next}");
+    let terminal_output = run_emitted_aw_command(&aw_bin, root, next);
+    assert!(
+        terminal_output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&terminal_output.stderr)
+    );
+    let terminal = single_stdout_envelope(&terminal_output);
+    assert_eq!(terminal["status"], "done");
+    assert_eq!(terminal["action"], "done");
+    assert_eq!(terminal["completion"]["workflow_complete"], true);
+    assert_eq!(terminal["next"]["kind"], "done");
+    assert!(terminal["next"]["command"].is_null());
+    assert_eq!(std::fs::read_to_string(&selected).unwrap(), source);
+    assert_eq!(
+        std::fs::read_to_string(&sibling).unwrap(),
+        "raise RuntimeError('must not be scanned')\n"
+    );
+
+    // Corrupt the authoritative annotation and prove gen-source failure is a
+    // non-HITL, non-zero terminal envelope with runnable remediation.
+    let corrupted = artifact_text.replacen(
+        "<!-- type: text-source-unit lang: bash -->",
+        "<!-- type: text-source-unit lang: bash -->\n<!-- type: text-source-unit lang: bash -->",
+        1,
+    );
+    std::fs::write(root.join(artifact), corrupted).unwrap();
+    let failed = run_emitted_aw_command(&aw_bin, root, next);
+    assert!(!failed.status.success());
+    let failed_env = single_stdout_envelope(&failed);
+    assert_eq!(failed_env["action"], "error");
+    assert_eq!(failed_env["requires_hitl"], false);
+    assert_eq!(failed_env["next"]["kind"], "run_command");
+    assert!(failed_env["next"]["command"]
+        .as_str()
+        .is_some_and(|command| command.starts_with("aw td check ")));
+    assert_eq!(std::fs::read_to_string(&selected).unwrap(), source);
+}
+
+#[test]
+fn test_explicit_missing_path_is_non_hitl_error_envelope() {
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+    let tmp = tempfile::tempdir().expect("tempdir");
+    write_from_source_fixture(tmp.path(), "demo", "MissingDirect");
+    let output = run_from_source(
+        &aw_bin,
+        tmp.path(),
+        &["--from-source", "demo/src/missing.rs", "--project", "demo"],
+    );
+    assert!(!output.status.success());
+    let envelope = single_stdout_envelope(&output);
+    assert_eq!(envelope["action"], "error");
+    assert_eq!(envelope["requires_hitl"], false);
+    assert_eq!(envelope["next"]["kind"], "run_command");
+    assert!(envelope["next"]["command"].as_str().is_some());
+}
+
+#[test]
+fn test_gen_source_missing_spec_is_non_hitl_error_envelope() {
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let output = run_emitted_aw_command(
+        &aw_bin,
+        tmp.path(),
+        "aw td gen-source --spec tech-design/direct.md --target src/lib.rs --dry-run",
+    );
+    assert!(!output.status.success());
+    let envelope = single_stdout_envelope(&output);
+    assert_eq!(envelope["action"], "error");
+    assert_eq!(envelope["requires_hitl"], false);
+    assert_eq!(envelope["next"]["kind"], "run_command");
+    assert_eq!(
+        envelope["next"]["command"],
+        "aw td check tech-design/direct.md"
+    );
+}
+
+#[test]
+fn test_explicit_unsafe_owner_is_structured_hitl_without_mutation() {
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_from_source_fixture(root, "demo", "UnsafeDirect");
+    let selected = root.join("demo/src/unsafe.rs");
+    let source = "// CODEGEN-BEGIN\npub fn unsafe_owner() {}\n";
+    std::fs::write(&selected, source).unwrap();
+    let output = run_from_source(
+        &aw_bin,
+        root,
+        &["--from-source", "demo/src/unsafe.rs", "--project", "demo"],
+    );
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope = single_stdout_envelope(&output);
+    assert_eq!(envelope["status"], "blocked");
+    assert_eq!(envelope["action"], "done");
+    assert_eq!(envelope["requires_hitl"], true);
+    assert_eq!(envelope["next"]["kind"], "hitl");
+    assert!(envelope["hitl_question"]["question"].as_str().is_some());
+    assert!(envelope["hitl_question"]["resume_command"]
+        .as_str()
+        .is_some_and(|command| command.starts_with("aw td create --from-source ")));
+    assert_eq!(std::fs::read_to_string(&selected).unwrap(), source);
+    assert!(collect_md_recursive(&root.join("demo/tech-design")).is_empty());
+}
+
+#[test]
+fn test_directory_from_source_keeps_progress_and_ends_with_json_envelope() {
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+    let tmp = tempfile::tempdir().expect("tempdir");
+    write_from_source_fixture(tmp.path(), "demo", "DirectoryDirect");
+    let output = run_from_source(
+        &aw_bin,
+        tmp.path(),
+        &["--from-source", "demo", "--project", "demo", "--no-issue"],
+    );
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let lines = nonempty_stdout_lines(&output);
+    assert!(
+        lines.len() > 1,
+        "directory route should retain progress output"
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_str(lines.last().unwrap()).expect("last stdout line JSON");
+    assert_eq!(envelope["action"], "dispatch");
+    assert!(envelope["next"]["command"]
+        .as_str()
+        .is_some_and(|command| command.starts_with("aw td check ")));
 }
 
 fn collect_md_recursive(dir: &std::path::Path) -> Vec<std::path::PathBuf> {

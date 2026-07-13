@@ -200,7 +200,7 @@ pub fn rust_raw_string_line_mask(file_content: &str) -> Vec<bool> {
     rust_string_line_mask(file_content, false)
 }
 
-fn rust_marker_fixture_line_mask(file_content: &str) -> Vec<bool> {
+pub(crate) fn rust_marker_fixture_line_mask(file_content: &str) -> Vec<bool> {
     rust_string_line_mask(file_content, true)
 }
 

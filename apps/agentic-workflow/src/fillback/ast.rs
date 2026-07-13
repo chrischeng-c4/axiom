@@ -7,7 +7,7 @@
 // CODEGEN-BEGIN
 use crate::generate::diagrams::content::logic::{FlowEdge, FlowNode, FlowNodeKind, LogicContent};
 use crate::Result;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use tree_sitter::{Language, Parser, Tree};
 // CODEGEN-END
@@ -302,6 +302,118 @@ impl AstAnalyzer {
             symbols,
             imports,
         })
+    }
+
+    /// Return deterministic top-level AST end-byte boundaries for lossless
+    /// source partitioning.
+    ///
+    /// A tree containing an error node is deliberately rejected: callers can
+    /// then use their bounded byte/newline fallback instead of pretending a
+    /// partial parse supplied trustworthy semantic boundaries (#1506).
+    pub(crate) fn top_level_byte_boundaries(
+        &mut self,
+        path: &Path,
+        content: &str,
+    ) -> std::result::Result<Vec<usize>, ParseError> {
+        let ext = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        let language = SupportedLanguage::from_extension(ext).ok_or_else(|| ParseError {
+            path: path.display().to_string(),
+            reason: format!("Unsupported file extension: {ext}"),
+        })?;
+        let parser = self.parsers.get_mut(&language).ok_or_else(|| ParseError {
+            path: path.display().to_string(),
+            reason: format!("No parser for language: {language:?}"),
+        })?;
+        let tree = parser.parse(content, None).ok_or_else(|| ParseError {
+            path: path.display().to_string(),
+            reason: "Failed to parse file".to_string(),
+        })?;
+        let root = tree.root_node();
+        if root.has_error() {
+            return Err(ParseError {
+                path: path.display().to_string(),
+                reason: "Parse tree is incomplete".to_string(),
+            });
+        }
+
+        let mut cursor = root.walk();
+        let mut boundaries = root
+            .children(&mut cursor)
+            .map(|node| node.end_byte())
+            .filter(|end| *end > 0 && *end <= content.len())
+            .collect::<Vec<_>>();
+        boundaries.sort_unstable();
+        boundaries.dedup();
+        Ok(boundaries)
+    }
+
+    /// Return zero-based rows occupied by real AST comment nodes. This keeps
+    /// marker-looking lines inside Python strings, JavaScript templates, and
+    /// Go raw strings from being mistaken for CODEGEN ownership. Incomplete
+    /// parses fail so callers can conservatively require HITL.
+    pub(crate) fn comment_line_numbers(
+        &mut self,
+        path: &Path,
+        content: &str,
+    ) -> std::result::Result<BTreeSet<usize>, ParseError> {
+        fn collect(
+            node: tree_sitter::Node<'_>,
+            content: &str,
+            source_lines: &[&str],
+            lines: &mut BTreeSet<usize>,
+        ) {
+            // tree-sitter-rust distinguishes line_comment/block_comment;
+            // the other supported grammars expose single-line comments as
+            // `comment`.  Ownership markers are deliberately restricted to
+            // standalone single-line comment nodes, never block comments.
+            if matches!(node.kind(), "comment" | "line_comment") {
+                let row = node.start_position().row;
+                if row == node.end_position().row
+                    && source_lines.get(row).is_some_and(|line| {
+                        node.utf8_text(content.as_bytes())
+                            .is_ok_and(|comment| line.trim() == comment.trim())
+                    })
+                {
+                    lines.insert(row);
+                }
+                return;
+            }
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                collect(child, content, source_lines, lines);
+            }
+        }
+
+        let ext = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        let language = SupportedLanguage::from_extension(ext).ok_or_else(|| ParseError {
+            path: path.display().to_string(),
+            reason: format!("Unsupported file extension: {ext}"),
+        })?;
+        let parser = self.parsers.get_mut(&language).ok_or_else(|| ParseError {
+            path: path.display().to_string(),
+            reason: format!("No parser for language: {language:?}"),
+        })?;
+        let tree = parser.parse(content, None).ok_or_else(|| ParseError {
+            path: path.display().to_string(),
+            reason: "Failed to parse file".to_string(),
+        })?;
+        let root = tree.root_node();
+        if root.has_error() {
+            return Err(ParseError {
+                path: path.display().to_string(),
+                reason: "Parse tree is incomplete".to_string(),
+            });
+        }
+        let mut lines = BTreeSet::new();
+        let source_lines = content.lines().collect::<Vec<_>>();
+        collect(root, content, &source_lines, &mut lines);
+        Ok(lines)
     }
 
     /// Extract symbols and imports from a parsed tree
