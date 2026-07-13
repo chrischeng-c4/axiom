@@ -15,7 +15,7 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs` generated from AST during Score force-regeneration standardization. The TD create replay fixture also asserts that applying default `logic` applicability dispatches `unit-test` applicability before contract authoring.
+Public API manifest for `apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs` generated from AST during Score force-regeneration standardization. The TD create replay fixture asserts the default `logic` to `changes` to `unit-test` queue, and the #1598 fixture applies both passes through the real CLI before proving `aw td gen` consumes the explicit Changes target plan, creates the named Logic target, and preserves the hand-written Unit Test target.
 
 ### Symbols
 
@@ -744,6 +744,414 @@ fn extract_json_string_field(stdout: &str, field: &str) -> Option<String> {
     Some(stdout[start..end].replace("\\/", "/"))
 }
 
+fn td_dispatch_envelope(output: &std::process::Output, context: &str) -> serde_json::Value {
+    assert!(
+        output.status.success(),
+        "{context} should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("{context} should emit one JSON envelope: {error}"))
+}
+
+fn run_td_section_apply(
+    bin: &str,
+    root: &std::path::Path,
+    slug: &str,
+    pass: &str,
+    section: &str,
+    spec_path: &str,
+) -> serde_json::Value {
+    let output = Command::new(bin)
+        .args([
+            "td",
+            "create",
+            slug,
+            "--apply",
+            "--phase",
+            pass,
+            "--section",
+            section,
+            "--spec-path",
+            spec_path,
+        ])
+        .current_dir(root)
+        .output()
+        .unwrap_or_else(|error| panic!("run {pass} {section} apply: {error}"));
+    td_dispatch_envelope(&output, &format!("{pass} {section} apply"))
+}
+
+fn dispatched_payload_path(envelope: &serde_json::Value) -> std::path::PathBuf {
+    std::path::PathBuf::from(
+        envelope["invoke"]["args"]["payload_path"]
+            .as_str()
+            .unwrap_or_else(|| panic!("dispatch is missing payload_path: {envelope}")),
+    )
+}
+
+fn assert_td_projection(
+    root: &std::path::Path,
+    slug: &str,
+    pass: &str,
+    section: &str,
+    payload_suffix: &str,
+    remaining: &[&str],
+) {
+    let issue = read_issue_fixture(root, slug);
+    let projection = agentic_workflow::cli::workflow_guard::parse_projection(&issue)
+        .unwrap_or_else(|| panic!("{pass} {section} dispatch must project a workflow lock"));
+    assert!(
+        projection.locked,
+        "projection should be locked: {projection:?}"
+    );
+    assert_eq!(projection.owner.as_deref(), Some("td"));
+    assert_eq!(projection.current_section.as_deref(), Some(section));
+    let active_phase = format!("td_{pass}_in_progress");
+    assert_eq!(
+        projection.active_phase.as_deref(),
+        Some(active_phase.as_str())
+    );
+    assert!(
+        projection
+            .expected_payload
+            .as_deref()
+            .is_some_and(|path| path.ends_with(payload_suffix)),
+        "projection must expose the editable {pass} {section} payload: {projection:?}"
+    );
+    assert!(
+        projection
+            .expected_command
+            .as_deref()
+            .is_some_and(|command| command.contains(&format!(
+                "--phase {pass} --section {section}"
+            ))),
+        "projection must expose the exact apply command: {projection:?}"
+    );
+    assert_eq!(
+        projection.remaining_sections,
+        remaining
+            .iter()
+            .map(|section| section.to_string())
+            .collect::<Vec<_>>()
+    );
+}
+
+fn td_1598_logic_payload(id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "body": format!(
+            "```mermaid\n---\nid: {id}\nentry: start\nnodes:\n  start: {{ kind: start }}\n  done: {{ kind: terminal }}\nedges:\n  - {{ from: start, to: done }}\n---\nflowchart TD\n  start --> done\n```\n"
+        )
+    })
+}
+
+fn td_1598_changes_payload(target: &str, test_target: &str) -> serde_json::Value {
+    serde_json::json!({
+        "body": format!(
+            "```yaml\nchanges:\n  - path: {target}\n    action: create\n    section: logic\n    impl_mode: codegen\n  - path: {test_target}\n    action: modify\n    section: unit-test\n    impl_mode: hand-written\n```\n"
+        )
+    })
+}
+
+fn td_1598_unit_test_payload(id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": format!("{id}-verification"),
+        "requirements": {
+            "explicit_target": {
+                "id": "R1",
+                "text": "The default Changes payload supplies a concrete codegen target.",
+                "kind": "regression",
+                "risk": "high",
+                "verify": "td_create_default_changes_queue_applies_both_passes_then_gen_uses_explicit_target"
+            }
+        }
+    })
+}
+
+fn td_1598_changes_skeleton_body(path: &std::path::Path) -> String {
+    let payload: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(path)
+            .unwrap_or_else(|error| panic!("read Changes skeleton {}: {error}", path.display())),
+    )
+    .unwrap_or_else(|error| panic!("parse Changes skeleton {}: {error}", path.display()));
+    payload["body"]
+        .as_str()
+        .unwrap_or_else(|| panic!("Changes skeleton {} is missing JSON body", path.display()))
+        .to_string()
+}
+
+/// Issue #1598: a fresh TD must author a concrete Changes target plan between
+/// Logic and Unit Test in both passes. This real-binary lifecycle edits the
+/// initialized Changes skeleton through `aw td create --apply`, proves every
+/// transition is represented by the projection lock (including the first
+/// contract section), and finally runs `aw td gen` to create a brand-new target
+/// that target inference could never discover.
+#[test]
+fn td_create_default_changes_queue_applies_both_passes_then_gen_uses_explicit_target() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+
+    std::fs::write(
+        root.join("aw.toml"),
+        r#"
+[agentic_workflow.workspace]
+mode = "in_place"
+
+[[projects]]
+name = "agentic-workflow"
+path = "."
+"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("tests")).unwrap();
+    let hand_written_test_target = "// hand-written fixture test target\n";
+    std::fs::write(
+        root.join("tests/default_target_plan_test.rs"),
+        hand_written_test_target,
+    )
+    .unwrap();
+
+    let slug = "1598-default-target-plan";
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\n\
+             slug: {slug}\n\
+             title: default TD target plan\n\
+             state: open\n\
+             type: bug\n\
+             labels: [\"app:agentic-workflow\"]\n\
+             ---\n\n# Body\n"
+        ),
+    );
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "bootstrap #1598 fixture"])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", "app/fixture"])
+        .status()
+        .unwrap();
+
+    let spec_path = "tech-design/logic/default-target-plan.md";
+    let target_path = "src/generated_1598.rs";
+    let test_target_path = "tests/default_target_plan_test.rs";
+
+    let brief = Command::new(&bin)
+        .args(["td", "create", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("initialize fresh TD lifecycle");
+    let mut envelope = td_dispatch_envelope(&brief, "fresh TD brief");
+    assert_eq!(envelope["invoke"]["args"]["section"], "logic");
+    assert_td_projection(
+        root,
+        slug,
+        "applicability",
+        "logic",
+        "/applicability/logic.json",
+        &["changes", "unit-test"],
+    );
+
+    std::fs::write(
+        dispatched_payload_path(&envelope),
+        td_1598_logic_payload("default_target_applicability").to_string(),
+    )
+    .unwrap();
+    envelope = run_td_section_apply(&bin, root, slug, "applicability", "logic", spec_path);
+    assert_eq!(envelope["invoke"]["args"]["section"], "changes");
+    assert_td_projection(
+        root,
+        slug,
+        "applicability",
+        "changes",
+        "/applicability/changes.json",
+        &["unit-test"],
+    );
+
+    let applicability_changes = dispatched_payload_path(&envelope);
+    let changes_skeleton = td_1598_changes_skeleton_body(&applicability_changes);
+    assert!(changes_skeleton.contains("repo-relative target path"));
+    assert!(changes_skeleton.contains("action: \"(fill: create|modify)\""));
+    assert!(changes_skeleton.contains("artifact-driving section id"));
+    std::fs::write(
+        &applicability_changes,
+        td_1598_changes_payload(target_path, test_target_path).to_string(),
+    )
+    .unwrap();
+    envelope = run_td_section_apply(&bin, root, slug, "applicability", "changes", spec_path);
+    assert_eq!(envelope["invoke"]["args"]["section"], "unit-test");
+    assert_td_projection(
+        root,
+        slug,
+        "applicability",
+        "unit-test",
+        "/applicability/unit-test.json",
+        &[],
+    );
+
+    std::fs::write(
+        dispatched_payload_path(&envelope),
+        td_1598_unit_test_payload("default-target-applicability").to_string(),
+    )
+    .unwrap();
+    envelope = run_td_section_apply(&bin, root, slug, "applicability", "unit-test", spec_path);
+    assert_eq!(envelope["invoke"]["args"]["phase"], "contract");
+    assert_eq!(envelope["invoke"]["args"]["section"], "logic");
+    assert_td_projection(
+        root,
+        slug,
+        "contract",
+        "logic",
+        "/contract/logic.json",
+        &["changes", "unit-test"],
+    );
+
+    std::fs::write(
+        dispatched_payload_path(&envelope),
+        td_1598_logic_payload("default_target_contract").to_string(),
+    )
+    .unwrap();
+    envelope = run_td_section_apply(&bin, root, slug, "contract", "logic", spec_path);
+    assert_eq!(envelope["invoke"]["args"]["section"], "changes");
+    assert_td_projection(
+        root,
+        slug,
+        "contract",
+        "changes",
+        "/contract/changes.json",
+        &["unit-test"],
+    );
+
+    let contract_changes = dispatched_payload_path(&envelope);
+    assert!(
+        td_1598_changes_skeleton_body(&contract_changes).contains("repo-relative target path"),
+        "contract Changes must receive its own editable initialized skeleton"
+    );
+    std::fs::write(
+        &contract_changes,
+        td_1598_changes_payload(target_path, test_target_path).to_string(),
+    )
+    .unwrap();
+    envelope = run_td_section_apply(&bin, root, slug, "contract", "changes", spec_path);
+    assert_eq!(envelope["invoke"]["args"]["section"], "unit-test");
+    assert_td_projection(
+        root,
+        slug,
+        "contract",
+        "unit-test",
+        "/contract/unit-test.json",
+        &[],
+    );
+
+    std::fs::write(
+        dispatched_payload_path(&envelope),
+        td_1598_unit_test_payload("default-target-contract").to_string(),
+    )
+    .unwrap();
+    envelope = run_td_section_apply(&bin, root, slug, "contract", "unit-test", spec_path);
+    assert_eq!(envelope["invoke"]["command"], "aw td gen");
+    let projection =
+        agentic_workflow::cli::workflow_guard::parse_projection(&read_issue_fixture(root, slug))
+            .expect("terminal contract apply should retain an unlocked projection record");
+    assert!(
+        !projection.locked,
+        "contract completion must unlock: {projection:?}"
+    );
+
+    let spec = std::fs::read_to_string(root.join(spec_path)).unwrap();
+    assert!(spec.contains("fill_sections: [logic, changes, unit-test]"));
+    assert!(spec.contains(&format!("path: {target_path}")));
+    assert_eq!(spec.matches("<!-- type: changes lang: yaml -->").count(), 1);
+
+    let final_check = Command::new(&bin)
+        .args(["td", "check", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("check fully authored #1598 TD");
+    assert!(
+        final_check.status.success(),
+        "both-pass target plan must produce a valid TD before lock/gen:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&final_check.stdout),
+        String::from_utf8_lossy(&final_check.stderr),
+    );
+
+    let lock = Command::new(&bin)
+        .args(["td", "lock", "--project", "agentic-workflow"])
+        .current_dir(root)
+        .output()
+        .expect("write fixture TD IR lock");
+    assert!(
+        lock.status.success(),
+        "fixture TD lock should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&lock.stdout),
+        String::from_utf8_lossy(&lock.stderr),
+    );
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "tech-design/td.lock"])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "lock #1598 fixture TD"])
+        .status()
+        .unwrap();
+
+    let gen = Command::new(&bin)
+        .args(["td", "gen", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("run emitted aw td gen");
+    let gen_stdout = String::from_utf8_lossy(&gen.stdout);
+    let gen_stderr = String::from_utf8_lossy(&gen.stderr);
+    assert!(
+        gen.status.success(),
+        "td gen should consume the explicit Changes target:\nstdout={gen_stdout}\nstderr={gen_stderr}"
+    );
+    assert!(!gen_stdout.contains("No target files inferred"));
+    assert!(!gen_stderr.contains("No target files inferred"));
+    assert_eq!(
+        std::fs::read_to_string(root.join(test_target_path)).unwrap(),
+        hand_written_test_target,
+        "td gen must preserve the explicit hand-written Unit Test target",
+    );
+    let generated = std::fs::read_to_string(root.join(target_path))
+        .expect("explicit Changes target should be created");
+    assert!(
+        generated.contains(&format!("SPEC-MANAGED: {spec_path}#logic")),
+        "generated target must be owned by the authored Logic section:\n{generated}"
+    );
+    assert!(
+        generated.contains(&format!(
+            "SPEC-REF: {spec_path}#default_target_contract-body"
+        )),
+        "generated block must trace to the final contract Logic payload:\n{generated}"
+    );
+    assert!(
+        read_issue_fixture(root, slug).contains("phase: cb_genned"),
+        "successful generation must advance the lifecycle"
+    );
+}
+
 /// Issue #813 (incident #799): a replayed `aw td create --apply` must never
 /// clobber an already-authored TD section with a missing or still-`(fill)`
 /// placeholder payload. Exercises the exact wedge scenario — a completed
@@ -874,20 +1282,20 @@ path = "."
         "the default queue must finish applicability before contract authoring: {apply_envelope}"
     );
     assert_eq!(
-        apply_envelope["invoke"]["args"]["section"], "unit-test",
-        "logic applicability must dispatch the default unit-test section next: {apply_envelope}"
+        apply_envelope["invoke"]["args"]["section"], "changes",
+        "logic applicability must dispatch the target-owning Changes section next: {apply_envelope}"
     );
     assert!(
         apply_envelope["invoke"]["args"]["payload_path"]
             .as_str()
-            .is_some_and(|path| path.ends_with("/applicability/unit-test.json")),
+            .is_some_and(|path| path.ends_with("/applicability/changes.json")),
         "the next payload must remain in the applicability pass: {apply_envelope}"
     );
 
     let spec_abs = root.join(spec_path);
     let spec_after_authoring = std::fs::read_to_string(&spec_abs).unwrap();
     assert!(
-        spec_after_authoring.contains("fill_sections: [logic, unit-test]"),
+        spec_after_authoring.contains("fill_sections: [logic, changes, unit-test]"),
         "the first merge must retain the complete default queue:\n{spec_after_authoring}"
     );
     assert!(
@@ -1363,4 +1771,9 @@ changes:
       body-only Logic is normalized into one requested typed wrapper, and the
       initialized applicability queue advances through structured Unit Test
       before contract Logic.
+      Issue #1598 applies Logic, Changes, and Unit Test through applicability
+      and contract with projection-lock assertions at every step, validates the
+      editable Changes scaffold, runs final `aw td check` and `aw td lock`, and
+      proves real `aw td gen` creates a new Logic target while preserving the
+      explicit hand-written Unit Test target without no-target inference.
 ```
