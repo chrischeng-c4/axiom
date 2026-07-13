@@ -45,6 +45,7 @@ Gate Inventory:
 | Client boundary model | change | #3896 | implemented | verified | smoke | apps/agentic-workflow/tech-design/surface/specs/aw-client-boundaries.md |
 | Agent orientation surface | change | #178 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib llm_outline_uses_cli_std_and_standard_commands`; apps/agentic-workflow/tech-design/logic/aw-llm-offline-agent-orientation-command.md |
 | WorkItem loop-state model | change | #189 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib loop_state_round_trips`; apps/agentic-workflow/tech-design/logic/workitem-loop-state-model-additive-foundation.md |
+| AW epic project label dispatch | change | #1518 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib epic_project_label_dispatch_ -- --nocapture`; apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md |
 
 ### Workflow Root Runner
 

@@ -8,6 +8,12 @@ capability_refs:
     claim: "core-concept-model-and-invariants"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `apps/agentic-workflow/src/cli`."
+  - id: "aw-core-client-model-workitem-first-artifact-lifecycle"
+    role: primary
+    gap: "aw-epic-project-label-dispatch"
+    claim: "aw-epic-project-label-dispatch"
+    coverage: full
+    rationale: "The CLI semantic domain owns run.rs project-label resolution, epic atomize dispatch, and the unresolved-label HITL envelope."
   - id: project-local-td-and-ec-gates
     role: primary
     gap: ec-evidence-documentation
@@ -1183,6 +1189,15 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "write_goal_payload"
+            kind: "function"
+            public: false
+          - name: "wi_envelope"
+            kind: "function"
+            public: false
+          - name: "open_epic_envelope"
+            kind: "function"
+            public: false
+          - name: "project_from_labels"
             kind: "function"
             public: false
         source_evidence_node:
@@ -3649,6 +3664,28 @@ changes:
       catch-all's reason string, which still said "WI -> TD -> CB -> TD
       merge lifecycle" after the merge step was removed (#842-#860), to
       "WI -> TD -> CB -> code-check lifecycle".
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/run.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1518 extends the centralized project-label resolver with the
+      canonical `project:<name>` prefix while preserving `app:` and `lib:`.
+      Open epic routing now uses `open_epic_envelope`: a resolved identity
+      emits an exact `aw wi atomize --project <name>` command, while missing,
+      empty, or whitespace-only identity labels return a blocked/HITL
+      envelope with `aw wi show <id>` remediation instead of the retired
+      `PROJECT` placeholder. Focused tests cover the historical #1511 pgpool
+      label shape, app/lib compatibility, invalid values, and real-CLI chain
+      parsing.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/chain.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1518 registers `run.rs:open_epic_envelope` in EMIT_REGISTRY with
+      `aw wi atomize --project pgpool`, so the exact epic handoff is parsed
+      against the real clap tree by the chain-conformance suite.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/production.rs"
     action: modify
