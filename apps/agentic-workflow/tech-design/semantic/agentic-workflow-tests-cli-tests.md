@@ -882,6 +882,44 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "apps/agentic-workflow/tests/cli/tests"
+      - path: "apps/agentic-workflow/tests/cli/tests/wi_close_remote_test.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["data_model", "service_method", "test_case"]
+        symbols:
+          - name: "GhFixtureState"
+            kind: "struct"
+            public: false
+          - name: "gh_fixture"
+            kind: "function"
+            public: false
+          - name: "start_gh_fixture"
+            kind: "function"
+            public: false
+          - name: "write_project"
+            kind: "function"
+            public: false
+          - name: "write_gh_adapter"
+            kind: "function"
+            public: false
+          - name: "run_aw"
+            kind: "function"
+            public: false
+          - name: "wi_close_remote_numeric_rehydrates_reason_and_closes_once"
+            kind: "function"
+            public: false
+          - name: "wi_close_missing_remote_reports_backend_repo_and_recovery_command"
+            kind: "function"
+            public: false
+          - name: "wi_close_local_issue_behavior_is_preserved"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "tests"
+          domain: "apps/agentic-workflow/tests/cli/tests"
 ```
 
 ## Tests
@@ -916,6 +954,7 @@ tests:
       - path: "apps/agentic-workflow/tests/cli/tests/phase_migration_test.rs"
       - path: "apps/agentic-workflow/tests/cli/tests/cb_fill_test.rs"
       - path: "apps/agentic-workflow/tests/cli/tests/cb_claim_test.rs"
+      - path: "apps/agentic-workflow/tests/cli/tests/wi_close_remote_test.rs"
 ```
 
 ## Changes
@@ -1102,6 +1141,15 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/tests/cli/tests/wi_close_remote_test.rs"
+    action: create
+    section: schema
+    description: |
+      Issue #1551 adds isolated real-CLI coverage for configured-backend
+      numeric close rehydration, explicit repository selection, exactly-once
+      close/reason mutation, actionable missing diagnostics, and preserved
+      local close behavior. Issue #1583 is duplicate reproduction evidence.
     impl_mode: hand-written
   - action: annotate
     section: unit-test
