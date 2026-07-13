@@ -2,10 +2,10 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-13T18:14:56.010078+00:00"
-digest = "sha256:9b8f86ef67bc778f54f54ac1f830f83f1d586ea2e78aca84e1261ee20110097b"
-source_digest = "sha256:9b8f86ef67bc778f54f54ac1f830f83f1d586ea2e78aca84e1261ee20110097b"
-ir_digest = "sha256:d95dfacbcf3d273f3741bafb3a17ad5e48343d57faa0ade6805b61c0aeae42af"
+generated_at = "2026-07-13T18:35:59.637545+00:00"
+digest = "sha256:80b45ac1c88af13c5be0b4e57f23c68e260472e8cfa8bca9fc3ab89b04b8281a"
+source_digest = "sha256:80b45ac1c88af13c5be0b4e57f23c68e260472e8cfa8bca9fc3ab89b04b8281a"
+ir_digest = "sha256:c9890f4fe3655a27b6b16858d95ff375b76f65d3dca2197b0c7ff62966166849"
 
 [[files]]
 path = "interfaces/rest/adopt-shared-runtime-security-and-agent-interface.md"
@@ -38,6 +38,12 @@ ir_digest = "sha256:43109e85d0b32ebc28dff78cd9b636189c556c79a91dc448023079ccd870
 section_count = 2
 
 [[files]]
+path = "logic/adopted-td-code-claim-projects-sift.md"
+digest = "sha256:cd37b62312bd1c1c6ee3038678b18f29b5cceec4960742d3a57fe2345283fada"
+ir_digest = "sha256:b63b4378c4ee21ff862195680e65d2aee80814dd9572731a59c2bf0c74c435ee"
+section_count = 2
+
+[[files]]
 path = "logic/remediate-deployment-guard-hardening-findings.md"
 digest = "sha256:f027f1c1b8c5245ae709b1acf128c61fecbbc32228475740b26b38b41abd9b8a"
 ir_digest = "sha256:7d6539a077ba8e319c3f9e35832c1a9ea7eb5dae7a69edd4cff921da182d944f"
@@ -45,6 +51,6 @@ section_count = 2
 
 [[files]]
 path = "semantic/sift-projects-sift.md"
-digest = "sha256:b9d61ae0e5f261e15ab49488b3780ec229d37f515f5e0d8542da1511c9af2f2a"
-ir_digest = "sha256:f304af97e03996f054ba60cfa10be7ce9e8b94350163dadb23123450f54a0118"
+digest = "sha256:256c6d8e3f563c203028e4449f81ad0d7980575b944bedf029dced5d62b9e335"
+ir_digest = "sha256:a6a8a5d2e8ef61922cca80554a845f35101036126428e5ac79ba1fcbf37ceff6"
 section_count = 3
