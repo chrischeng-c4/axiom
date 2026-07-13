@@ -323,6 +323,13 @@ const EMIT_REGISTRY: &[EmitSite] = &[
                and project_ready_wi_envelope",
     },
     EmitSite {
+        source: "run.rs:open_epic_envelope",
+        sample: "aw wi atomize --project pgpool",
+        note: "#1518: an open epic resolves project:/app:/lib: identity labels before \
+               emitting its atomize handoff; unresolved labels block with remediation \
+               instead of substituting a PROJECT placeholder",
+    },
+    EmitSite {
         source: "run.rs:capability_run_command",
         sample: "aw capability run work-item-planning --project agentic-workflow",
         note: "#917: canonical `aw capability run <capability-id> --project <project>` \

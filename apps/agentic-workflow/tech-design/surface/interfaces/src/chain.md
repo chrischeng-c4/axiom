@@ -8,6 +8,12 @@ capability_refs:
     claim: cb-lifecycle-dispatch
     coverage: full
     rationale: "Validates and normalizes emitted `aw ...` next-command strings against the real CLI surface so TD/CB lifecycle dispatch cannot silently run the wrong command (#844/#845, epic #914 slice A / issue #915)."
+  - id: aw-core-client-model-workitem-first-artifact-lifecycle
+    role: primary
+    gap: aw-epic-project-label-dispatch
+    claim: aw-epic-project-label-dispatch
+    coverage: partial
+    rationale: "The emit registry parses the project-labelled epic atomize handoff against the real CLI so #1518 cannot regress to an unresolved placeholder."
 ---
 
 # Standardized apps/agentic-workflow/src/cli/chain.rs
@@ -21,6 +27,8 @@ The emit registry includes both explicit-file and directory
 `td create --from-source` handoffs, so their generated `td gen-source` or
 `td check` commands are parsed against the real clap tree. `td.gen-source` is
 classified as lifecycle-mutating because exact replay can write its one target.
+It also includes the `aw wi run` open-epic atomize handoff, whose project value
+must be resolved from a canonical tracker label before the command is emitted.
 
 ### Symbols
 
@@ -360,6 +368,13 @@ const EMIT_REGISTRY: &[EmitSite] = &[
                `aw run --wi <id>` / `aw run --root wi:<id>` forms; shared by \
                loop_state_envelope, closed_wi_envelope's parent_inspection_command, \
                and project_ready_wi_envelope",
+    },
+    EmitSite {
+        source: "run.rs:open_epic_envelope",
+        sample: "aw wi atomize --project pgpool",
+        note: "#1518: an open epic resolves project:/app:/lib: identity labels before \
+               emitting its atomize handoff; unresolved labels block with remediation \
+               instead of substituting a PROJECT placeholder",
     },
     EmitSite {
         source: "run.rs:capability_run_command",
@@ -1912,4 +1927,12 @@ changes:
       Issue #1506 registers the explicit-file `td gen-source` and directory
       `td check` from-source emit sites, and classifies `td.gen-source` as a
       lifecycle mutation so stale-binary and emitted-command gates cover it.
+  - path: apps/agentic-workflow/src/cli/chain.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1518 registers `run.rs:open_epic_envelope` with the concrete
+      `aw wi atomize --project pgpool` sample. The all-emit-sites chain test
+      now rejects any future invalid epic atomize handoff.
 
