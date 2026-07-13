@@ -9,47 +9,49 @@ fill_sections: [logic]
 
 ```mermaid
 ---
-id: vat-microvm-published-port-readiness
+id: vat-microvm-host-endpoint-contract
 entry: start
 nodes:
-  start: { kind: start, label: "vat run or vat compose starts an image-backed service" }
-  runtime: { kind: decision, label: "resolved service runtime" }
-  existing: { kind: process, label: "native and Docker retain their existing preparation and readiness paths unchanged" }
-  microvm_start: { kind: process, label: "start the VAT-owned Apple container service and persist a provisional Starting service record" }
-  readiness_kind: { kind: decision, label: "configured readiness contract" }
-  tcp_only: { kind: process, label: "perform the existing host TCP readiness check only when no application-level contract exists" }
-  http_round_trip: { kind: process, label: "perform the configured ready_http request through the published host endpoint, not the guest address" }
-  host_ok: { kind: decision, label: "published endpoint completes the required host-side round trip" }
-  ready: { kind: process, label: "persist Ready evidence with host endpoint and only then expose the service as ready" }
-  diagnose: { kind: process, label: "collect service id, host endpoint, known guest endpoint, container runtime/version, readiness error, and owned container name" }
-  teardown: { kind: process, label: "remove only the VAT-owned Apple container and persist terminal Failed state" }
-  fail: { kind: terminal, label: "return a nonzero actionable published-endpoint failure; never report Ready" }
-  compose_start: { kind: process, label: "vat compose up --detach creates or retains only a Starting registry record while the background vat run gathers readiness evidence" }
-  compose_poll: { kind: decision, label: "persisted service/run state" }
-  compose_starting: { kind: terminal, label: "report status starting with vat id while evidence is still pending" }
-  compose_ready: { kind: terminal, label: "report ready only after every owned service persisted Ready evidence" }
-  compose_failed: { kind: process, label: "remove stale compose running state after terminal startup failure" }
-  compose_fail: { kind: terminal, label: "return the terminal startup failure with its actionable diagnostics" }
-  success: { kind: terminal, label: "service lifecycle continues with verified host-published readiness" }
+  start: { kind: start, label: "prepare_service receives an image-backed service" }
+  route: { kind: decision, label: "ServiceRuntime" }
+  unchanged: { kind: process, label: "Auto, Docker, and Native retain docker_ready_probe and existing lifecycle behavior" }
+  prepare: { kind: process, label: "prepare_microvm_service creates a VAT-owned container name, loopback mapping, and a MicroVm-specific readiness probe" }
+  probe_kind: { kind: decision, label: "explicit ready_http present" }
+  http: { kind: process, label: "substitute the allocated host port and require an HTTP 2xx or 3xx round trip through 127.0.0.1:published-port" }
+  tcp_usable: { kind: process, label: "require a MicroVm-only TCP usability probe: connect, then distinguish immediate EOF or ECONNRESET from an open idle protocol connection" }
+  start_service: { kind: process, label: "start_service persists Running evidence, including owned microvm_name, host, port, and log paths" }
+  wait: { kind: decision, label: "wait_for_services probe outcome before timeout" }
+  ready: { kind: process, label: "persist ProcessStatus::Ready and ready duration only after the host endpoint contract succeeds" }
+  observe_failure: { kind: process, label: "persist Failed or Timeout; retain the last readiness error and collect best-effort container --version and container inspect evidence" }
+  cleanup: { kind: process, label: "stop_services force-removes exactly service.microvm_name and persists the terminal service evidence" }
+  error: { kind: terminal, label: "return nonzero microvm_published_endpoint_unusable with service id, host endpoint, known guest endpoint or unavailable, runtime evidence, and a runnable inspect/logs remediation" }
+  detach_start: { kind: process, label: "compose up --detach writes status starting, spawns vat run, and records vat_id when it appears" }
+  reconcile: { kind: decision, label: "load persisted vat test_run service states" }
+  still_starting: { kind: terminal, label: "emit status starting when vat id or every Ready record is not yet available" }
+  compose_ready: { kind: terminal, label: "persist and emit status ready only when every compose service is Ready" }
+  compose_failed: { kind: process, label: "remove the compose registry running record after a terminal startup failure while preserving vat logs/state for diagnosis" }
+  compose_error: { kind: terminal, label: "return nonzero terminal startup failure rather than status started" }
+  success: { kind: terminal, label: "continue runner or compose lifecycle with verified service evidence" }
 edges:
-  - { from: start, to: runtime }
-  - { from: runtime, to: existing, label: "native or Docker" }
-  - { from: runtime, to: microvm_start, label: "MicroVm" }
-  - { from: existing, to: success }
-  - { from: microvm_start, to: readiness_kind }
-  - { from: readiness_kind, to: tcp_only, label: "no ready_http" }
-  - { from: readiness_kind, to: http_round_trip, label: "ready_http configured" }
-  - { from: tcp_only, to: host_ok }
-  - { from: http_round_trip, to: host_ok }
-  - { from: host_ok, to: ready, label: "yes" }
-  - { from: host_ok, to: diagnose, label: "no, reset, timeout, or bad response" }
+  - { from: start, to: route }
+  - { from: route, to: unchanged, label: "not MicroVm" }
+  - { from: route, to: prepare, label: "MicroVm" }
+  - { from: unchanged, to: success }
+  - { from: prepare, to: probe_kind }
+  - { from: probe_kind, to: http, label: "yes" }
+  - { from: probe_kind, to: tcp_usable, label: "no" }
+  - { from: http, to: start_service }
+  - { from: tcp_usable, to: start_service }
+  - { from: start_service, to: wait }
+  - { from: wait, to: ready, label: "success" }
+  - { from: wait, to: observe_failure, label: "reset, EOF, timeout, or bad response" }
   - { from: ready, to: success }
-  - { from: diagnose, to: teardown }
-  - { from: teardown, to: fail }
-  - { from: compose_start, to: compose_poll }
-  - { from: compose_poll, to: compose_starting, label: "Starting" }
-  - { from: compose_poll, to: compose_ready, label: "all Ready" }
-  - { from: compose_poll, to: compose_failed, label: "terminal Failed" }
-  - { from: compose_failed, to: compose_fail }
+  - { from: observe_failure, to: cleanup }
+  - { from: cleanup, to: error }
+  - { from: detach_start, to: reconcile }
+  - { from: reconcile, to: still_starting, label: "pending" }
+  - { from: reconcile, to: compose_ready, label: "all Ready" }
+  - { from: reconcile, to: compose_failed, label: "terminal failure" }
+  - { from: compose_failed, to: compose_error }
 ---
 ```
