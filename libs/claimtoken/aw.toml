@@ -1,7 +1,7 @@
 [project]
 name = "claimtoken"
 cap_path = "README.md"
-label = "project:claimtoken"
+label = "lib:claimtoken"
 
 [[workspaces]]
 name = "claimtoken"

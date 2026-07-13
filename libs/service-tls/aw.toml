@@ -1,7 +1,7 @@
 [project]
 name = "service-tls"
 cap_path = "README.md"
-label = "project:service-tls"
+label = "lib:service-tls"
 
 [[workspaces]]
 name = "service-tls"

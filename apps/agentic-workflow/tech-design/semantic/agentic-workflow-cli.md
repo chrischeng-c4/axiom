@@ -26,6 +26,12 @@ capability_refs:
     claim: ec-external-contract-source
     coverage: partial
     rationale: "The CLI semantic domain covers `aw ec draft/fill/gen` project-local external-contract markdown and generated aw.toml EC inventory behavior in src/cli/ec.rs."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: project-label-producer-td-routing
+    claim: project-label-producer-td-routing
+    coverage: full
+    rationale: "The WI --project producer receives path-canonical app/lib labels from registered rows before the default TD resolver accepts them; a raw retired project label remains invalid at the TD boundary."
   - id: td-cb-lifecycle-automation
     role: primary
     gap: td-apply-section-lookup-parity
@@ -1041,6 +1047,12 @@ semantic_domain:
           - name: "normalize_known_draft_sections"
             kind: "function"
             public: false
+          - name: "resolve_project_label"
+            kind: "function"
+            public: true
+          - name: "build_create_label_vec"
+            kind: "function"
+            public: true
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -1817,6 +1829,12 @@ semantic_domain:
           - name: "td_section_queue_for_spec"
             kind: "function"
             public: false
+          - name: "project_label_for_issue"
+            kind: "function"
+            public: false
+          - name: "default_spec_path_for_issue_in_project"
+            kind: "function"
+            public: true
           - name: "td_section_payload_template"
             kind: "function"
             public: false
@@ -3806,6 +3824,12 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      Issue #1519 keeps `resolve_project_label` as the WI `--project` producer
+      boundary: registry rows canonicalize the retired `project:` family before
+      `build_create_label_vec` persists an issue label, so current commands emit
+      only path-correct `app:` or `lib:` identities using the registered row
+      name. The regression includes a project-local stale-label override of a
+      label-free root row.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/conf.rs"
     action: modify
@@ -3974,6 +3998,11 @@ changes:
       then reuses normal provisioning for a fresh baseline and Logic queue.
       Post-gen and terminal retry phases are excluded from recovery, and
       ordinary WI phase `created` remains a fresh provisioning entry.
+      Issue #1519 adds a producer-to-resolver regression that sends stale
+      registered library and app labels through `resolve_project_label`, the
+      create label vector, and `default_spec_path_for_issue_in_project`.
+      Libraries resolve under `libs/<name>/tech-design`, apps retain their
+      existing root, and a raw `project:` issue label still fails loudly.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/project.rs"
     action: modify

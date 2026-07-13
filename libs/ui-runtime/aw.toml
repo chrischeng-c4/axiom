@@ -2,7 +2,7 @@
 name = "ui-runtime"
 aliases = ["cclab-ui-runtime"]
 cap_path = "README.md"
-label = "project:ui-runtime"
+label = "lib:ui-runtime"
 
 [[workspaces]]
 name = "ui-runtime"

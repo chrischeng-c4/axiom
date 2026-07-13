@@ -5133,6 +5133,75 @@ label = "app:agentic-workflow"
         );
     }
 
+    #[test]
+    fn project_label_canonicalization_bridges_producer_to_default_td_resolver() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("libs/service-backup")).unwrap();
+        std::fs::write(
+            tmp.path().join("aw.toml"),
+            r#"
+[agentic_workflow.projects]
+discover = ["libs/*/aw.toml"]
+
+[[projects]]
+name = "service-backup"
+path = "libs/service-backup"
+
+[[projects]]
+name = "jet"
+path = "apps/jet"
+label = "project:jet"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("libs/service-backup/aw.toml"),
+            r#"
+[project]
+name = "service-backup"
+label = "project:service-backup"
+"#,
+        )
+        .unwrap();
+
+        for (project, expected_label, expected_path) in [
+            (
+                "service-backup",
+                "lib:service-backup",
+                "libs/service-backup/tech-design/logic/library-backup-routing.md",
+            ),
+            (
+                "jet",
+                "app:jet",
+                "apps/jet/tech-design/logic/app-routing.md",
+            ),
+        ] {
+            let produced = crate::cli::issues::resolve_project_label(tmp.path(), project)
+                .unwrap_or_else(|e| panic!("{project} producer must resolve: {e:?}"));
+            assert_eq!(produced, expected_label);
+            let produced_labels = crate::cli::issues::build_create_label_vec(
+                "type:enhancement",
+                std::slice::from_ref(&produced),
+                None,
+                None,
+            );
+            assert_eq!(produced_labels, vec!["type:enhancement", expected_label]);
+
+            let title = match project {
+                "service-backup" => "Library backup routing",
+                "jet" => "App routing",
+                _ => unreachable!(),
+            };
+            let mut issue = issue_with_title(title);
+            issue.labels = produced_labels;
+            assert_eq!(
+                default_spec_path_for_issue_in_project(tmp.path(), &issue, "1519")
+                    .unwrap_or_else(|e| panic!("{project} TD path must resolve: {e}")),
+                expected_path
+            );
+        }
+    }
+
     // #1403 AC2: an issue whose labels use no recognized project-label
     // convention (`crate:`/`app:`/`lib:`) must error loudly, naming the
     // expected conventions — never fall back to a legacy default path.

@@ -8,6 +8,12 @@ capability_refs:
     claim: capability-to-epic-planning
     coverage: full
     rationale: "Issue/update CLI surfaces support work-item planning, projection, and platform synchronization."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: project-label-producer-td-routing
+    claim: project-label-producer-td-routing
+    coverage: full
+    rationale: "The --project producer resolves registered rows through the canonical path-derived app/lib label boundary before creating or filtering work items."
 command_refs:
   - command: aw wi
   - command: aw wi arbitrate
@@ -44,6 +50,11 @@ Public API manifest for `apps/agentic-workflow/src/cli/issues.rs` generated from
 a single machine-readable stdout envelope. It shares the same backend
 selection, validation, labels, and persistence as public `aw wi create`, but
 suppresses only the nested WI output; public behavior remains unchanged.
+
+Registered rows carrying a retired `project:` label are canonicalized by their
+source path before `resolve_project_label` and `build_create_label_vec` emit the
+current `app:` or `lib:` identity. The suffix comes from the registered name,
+including when a discovered project-local row supplies the stale override.
 
 ### Symbols
 
@@ -8457,5 +8468,7 @@ changes:
       explicit-source adoption can link its tracker without adding a second
       stdout document. Issue #1551 adds configured-backend numeric close
       rehydration, idempotent remote mutation, and backend/repository-specific
-      recovery diagnostics; #1583 is duplicate reproduction evidence.
+      recovery diagnostics; #1583 is duplicate reproduction evidence. Issue
+      #1519 hardens the registered-row boundary so the WI `--project` producer
+      never emits a retired `project:` label.
 ```
