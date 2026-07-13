@@ -53,22 +53,22 @@ changes:
 
 ```mermaid
 ---
-id: pgpool-direct-reader-buffer-read-verification
+id: pgpool-direct-reader-buffer-read-contract-verification
 requirements:
-  relay_isolation:
+  pool_safety:
     id: R2
-    text: "Transaction relay retains reset boundaries and session-state isolation after using direct reader-buffer reads."
+    text: "Reset and transaction relay behavior remain session-isolated with no changed failure path."
     kind: regression
     risk: high
     verify: cargo test -p pgpool --lib --test pool --test pool_modes
-  split_and_eof:
+  wire_equivalence:
     id: R1
-    text: "Direct reads preserve split-frame accumulation, exact raw bytes, clean EOF, and I/O error behavior."
+    text: "Direct buffer reads preserve exact frame bytes, split-frame recovery, bounds, and EOF semantics."
     kind: regression
     risk: high
     verify: cargo test -p pgpool --test wire_codec
 ---
 flowchart TD
-    r1[R1 split and eof] --> cargo_test_p_pgpool_test_wire_codec[cargo test -p pgpool --test wire_codec]
-    r2[R2 relay isolation] --> cargo_test_p_pgpool_lib_test_pool_test_pool_modes[cargo test -p pgpool --lib --test pool --test pool_modes]
+    r1[R1 wire equivalence] --> cargo_test_p_pgpool_test_wire_codec[cargo test -p pgpool --test wire_codec]
+    r2[R2 pool safety] --> cargo_test_p_pgpool_lib_test_pool_test_pool_modes[cargo test -p pgpool --lib --test pool --test pool_modes]
 ```
