@@ -2,15 +2,15 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-13T17:51:26.802025+00:00"
-digest = "sha256:ea4a5a6db2b75587f6aaa646b92ef0a7f774d972d78af7a1ae2ccfd39e800fa3"
-source_digest = "sha256:ea4a5a6db2b75587f6aaa646b92ef0a7f774d972d78af7a1ae2ccfd39e800fa3"
-ir_digest = "sha256:12bb7cd5c5da3d83ddd9c1fcfb8a8c58b9a378cd1a7541ed77805241b169cc2b"
+generated_at = "2026-07-13T17:59:01.054728+00:00"
+digest = "sha256:8a3b831aef6aea721f80861b6341bf2c53b2c70806dd766e283c7086ba6d98e6"
+source_digest = "sha256:8a3b831aef6aea721f80861b6341bf2c53b2c70806dd766e283c7086ba6d98e6"
+ir_digest = "sha256:2f2b3793a19248959f64786d88945a9f59a8c18c46f925e6ed15252b40dd8995"
 
 [[files]]
 path = "interfaces/rest/adopt-shared-runtime-security-and-agent-interface.md"
-digest = "sha256:fc698dcfdc3d916f2ad587fcc396caa738a69972525dc7ec7aaa0ca7eb14920d"
-ir_digest = "sha256:ad9e7b3915a510c29ad2a7b23c2cc42a1357c2d18a909bebe54bb897657933a7"
+digest = "sha256:0223408ec2311ec43520cd6e0c51c5d31b142e8d9cfb0cae3c7182cb688eead1"
+ir_digest = "sha256:748e0624fc39b66ba8c40f8a0e278bc8295b7fbc99da19fe6700a238a6144cce"
 section_count = 2
 
 [[files]]
@@ -21,14 +21,20 @@ section_count = 2
 
 [[files]]
 path = "logic/add-kubernetes-deployment-and-operator-surfaces.md"
-digest = "sha256:0f8551287992792ce5232475465d1394976aa04458d4fd97f1865e7b24d72204"
-ir_digest = "sha256:519184bcfc0f9f5a94eac4793e08fba9a91f54817f6b7992a365c732223ad6ac"
+digest = "sha256:9b6f2a3218e854412694f67da3a826b698f96537ab3004a973146eb5dff6ed8d"
+ir_digest = "sha256:bc96432ba6a1f38ec53195ae5815290b215ae8ee0bc44964d54b50301116ec0a"
+section_count = 2
+
+[[files]]
+path = "logic/add-operational-ec-stability-and-governance-gates.md"
+digest = "sha256:026daacc4691c7e7555d78ec27b858cb93439cd4b1dd75de0208db91c0345d69"
+ir_digest = "sha256:50421a8ecdb5e2b482a261fca055669fe927ec620e4170033830e7e999da97fb"
 section_count = 2
 
 [[files]]
 path = "logic/add-shared-ha-and-backup-lifecycle.md"
-digest = "sha256:b9e6cfaef91d1c26ef696e4487a967d02169035db234a1850cf9f1df3b1ef597"
-ir_digest = "sha256:112316cb12f5088ee5057006fb99908760c10d9c38571eb379159b5eb8e44b0d"
+digest = "sha256:d0adc50ad77a0494a3f6bc644903260efef1519c0e0598b6fea53e0935219b8c"
+ir_digest = "sha256:43109e85d0b32ebc28dff78cd9b636189c556c79a91dc448023079ccd8702b76"
 section_count = 2
 
 [[files]]
