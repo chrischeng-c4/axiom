@@ -23,11 +23,14 @@ use crate::pool::types::{
     BackendConnectionId, BackendPoolStats, LeaseDisposition, PoolConfig, PoolError,
 };
 use crate::wire::{
-    BackendMessage, FrameReader, FrontendMessage, Query, Role, StartupMessage, WireCodecConfig,
+    BackendMessage, FrameReader, FrontendMessage, Role, StartupMessage, WireCodecConfig,
     WireMessage,
 };
 
 const MAX_STARTUP_REPLAYS: usize = 64;
+/// Byte-exact PostgreSQL simple Query frame for `DISCARD ALL`: tag `Q`,
+/// 16-byte length (including its four-byte length field), SQL, and NUL.
+const DISCARD_ALL_QUERY_FRAME: &[u8] = b"Q\0\0\0\x10DISCARD ALL\0";
 
 /// One leased physical backend connection, handed out by
 /// [`BackendPool::acquire`]/[`BackendPool::acquire_fresh`].
@@ -545,12 +548,7 @@ async fn reset_connection(
     wire: &WireCodecConfig,
     reset_timeout: Duration,
 ) -> Result<TcpStream, TcpStream> {
-    let mut buf = BytesMut::new();
-    FrontendMessage::Query(Query {
-        sql: "DISCARD ALL".to_string(),
-    })
-    .encode(&mut buf);
-    if stream.write_all(&buf).await.is_err() {
+    if stream.write_all(DISCARD_ALL_QUERY_FRAME).await.is_err() {
         return Err(stream);
     }
 
@@ -579,6 +577,25 @@ async fn reset_connection(
             }
             Err(_) => return Err(stream),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::BytesMut;
+
+    use super::DISCARD_ALL_QUERY_FRAME;
+    use crate::wire::{FrontendMessage, Query};
+
+    #[test]
+    fn discard_all_static_frame_matches_the_wire_encoder() {
+        let mut encoded = BytesMut::new();
+        FrontendMessage::Query(Query {
+            sql: "DISCARD ALL".to_string(),
+        })
+        .encode(&mut encoded);
+
+        assert_eq!(DISCARD_ALL_QUERY_FRAME, encoded.as_ref());
     }
 }
 // </HANDWRITE>
