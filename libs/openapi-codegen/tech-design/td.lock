@@ -2,16 +2,16 @@ version = 2
 project = "openapi-codegen"
 ir_kind = "td"
 td_path = "libs/openapi-codegen/tech-design"
-generated_at = "2026-07-13T10:55:12.193303+00:00"
-digest = "sha256:e0d00282bf5d2d0283929475b284f7a96f59884b19346a5fb25a618d67acdb7a"
-source_digest = "sha256:e0d00282bf5d2d0283929475b284f7a96f59884b19346a5fb25a618d67acdb7a"
-ir_digest = "sha256:3a0872e7844615e70538780f1d5eb674ff550ca0cab109dee34feb25b71e1d54"
+generated_at = "2026-07-13T10:57:26.875180+00:00"
+digest = "sha256:b7cb39c524842b2c7fe08a95fa6e33566b0c1482f6ec0375be337b153e423183"
+source_digest = "sha256:b7cb39c524842b2c7fe08a95fa6e33566b0c1482f6ec0375be337b153e423183"
+ir_digest = "sha256:86d267f252baf946834c522f1af0fbc36fd3f92778c037ea43ebad188bcc0207"
 
 [[files]]
 path = "config/add-versioned-target-profiles-to-openapi-code-generation.md"
-digest = "sha256:38d4eee083722fc4c53bf7377e5ad98d02dff66483f45d79ea069f0acd7dc315"
-ir_digest = "sha256:bf94b13031d2b36953d3b43a1d0bd58a52d41d88cf9c32b36c372e41025f99b1"
-section_count = 1
+digest = "sha256:0caffca408673cd0d68a2d4f71ebe63ee1bfc6b90a47ee401db49f2171265121"
+ir_digest = "sha256:c62ff20062ddc7695d81e58b87c55f1516801103211a01d0d5b1bbc2ed27e4ed"
+section_count = 2
 
 [[files]]
 path = "semantic/openapi-codegen-libs-openapi-codegen.md"

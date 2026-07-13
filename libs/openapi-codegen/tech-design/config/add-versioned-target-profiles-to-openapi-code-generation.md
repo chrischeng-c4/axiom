@@ -1,6 +1,6 @@
 ---
 id: "1569"
-summary: (fill)
+summary: Versioned Python, TypeScript, and Rust target profiles for deterministic OpenAPI client artifacts.
 fill_sections: [logic]
 ---
 
@@ -50,4 +50,52 @@ flowchart TD
   typescript --> requirements
   rust --> requirements
   requirements --> output([return GeneratedOutput])
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: behavior
+changes:
+  - path: "libs/openapi-codegen/src/target.rs"
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: "Public language-valid target profiles and deterministic generated-artifact requirements."
+  - path: "libs/openapi-codegen/src/lib.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Expose target profiles and validate them with generation options."
+  - path: "libs/openapi-codegen/src/emit/py/pymap.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Render Python typing forms selected by the Python target profile."
+  - path: "libs/openapi-codegen/src/emit/py/models_emit.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Render profile-aware Python model aliases and imports."
+  - path: "libs/openapi-codegen/src/emit/py/client_emit.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Render profile-aware Python client annotations and imports."
+  - path: "libs/openapi-codegen/src/emit/py/runtime_emit.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Keep generated Python runtime annotation behavior compatible with its profile."
+  - path: "libs/openapi-codegen/src/emit/ts/client_emit.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Attach TypeScript compiler and module requirements without changing OpenAPI semantics."
+  - path: "libs/openapi-codegen/src/emit/rust/models_emit.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Use Rust edition-aware generated identifiers, including Rust 2024 gen."
 ```
