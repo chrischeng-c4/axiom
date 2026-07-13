@@ -3027,14 +3027,14 @@ mod tests {
         extract_cold_rebuild_target_paths, extract_project_root_llms_target_paths,
         extract_spec_managed_ref, extract_spec_managed_refs, fillback_dispatch_next,
         fillback_hitl_next, format_rust_files, has_handwrite_ownership_marker,
-        is_minified_asset_file, repo_relative_code_path, resolve_project_force_regen_scope,
-        run_force_regen_specs, sample_count, sample_semantic_review_units,
-        spec_declares_source_section, td_public_symbol_semantic_coverage,
-        upsert_public_api_overview, upsert_public_api_overview_targets,
-        verify_force_regen_conformance, write_project_root_llms_targets, CbCodegenOriginClass,
-        CbCommand, CbGenArgs, ClaimIssueRef, ForceRegenConformanceReport, ForceRegenScope,
-        PublicApiManifestSymbol, PublicApiManifestTarget, PublicSymbolSemanticCoverage,
-        SemanticReviewUnit,
+        is_minified_asset_file, reachable_td_init_commit, repo_relative_code_path,
+        resolve_project_force_regen_scope, run_force_regen_specs, sample_count,
+        sample_semantic_review_units, spec_declares_source_section,
+        td_public_symbol_semantic_coverage, upsert_public_api_overview,
+        upsert_public_api_overview_targets, verify_force_regen_conformance,
+        write_project_root_llms_targets, CbCodegenOriginClass, CbCommand, CbGenArgs, ClaimIssueRef,
+        ForceRegenConformanceReport, ForceRegenScope, PublicApiManifestSymbol,
+        PublicApiManifestTarget, PublicSymbolSemanticCoverage, SemanticReviewUnit,
     };
     use crate::fillback::ast::{Symbol, SymbolKind};
     use clap::Parser;
@@ -3136,6 +3136,67 @@ console.log('ok');
             String::from_utf8_lossy(&out.stderr)
         );
         String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn reachable_td_init_ignores_lifecycle_commits_lost_after_branch_rewrite() {
+        if !git_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        init_git_repo(root);
+
+        let commit = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .expect("git command");
+            assert!(
+                out.status.success(),
+                "git {:?} failed: {}",
+                args,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        commit(&["checkout", "-q", "-b", "before-rebase"]);
+        commit(&[
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "td(4242) — prior lifecycle init\n\nLifecycle-Slug: 4242\nWork-Item: 4242\nLifecycle-Stage: Td-Init",
+        ]);
+        commit(&["checkout", "-q", "main"]);
+        commit(&[
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "td(4242) — hydrated after rebase\n\nLifecycle-Slug: 4242\nWork-Item: 4242\nLifecycle-Stage: Td-Hydrate",
+        ]);
+
+        let (saw_history, init) = reachable_td_init_commit(root, "4242").unwrap();
+        assert!(saw_history);
+        assert!(
+            init.is_none(),
+            "side-branch init must not satisfy HEAD evidence"
+        );
+
+        commit(&[
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "td(4242) — repaired lifecycle init\n\nLifecycle-Slug: 4242\nWork-Item: 4242\nLifecycle-Stage: Td-Init",
+        ]);
+        let (saw_history, init) = reachable_td_init_commit(root, "4242").unwrap();
+        assert!(saw_history);
+        assert!(
+            init.is_some(),
+            "reachable exact init must restore resumability"
+        );
     }
 
     #[test]
@@ -5440,19 +5501,14 @@ fn empty_implementation_gate_message(
     }
 }
 
-/// Return the committed, repo-relative paths changed after this slug's most
-/// recent exact `Td-Init` trailer. The init commit's parent is the baseline:
-/// the TD/spec commit itself is lifecycle setup, while implementation must be
-/// introduced by later commits. This keeps a persistent project branch's old
-/// divergence from satisfying a new WI's hand-written implementation gate.
-///
-/// `Ok(None)` is reserved for synthetic/legacy entries with no lifecycle
-/// history at all. If the slug has lifecycle commits but no usable `Td-Init`,
-/// verification fails closed and the caller requires `--allow-empty-impl`.
-fn committed_paths_since_td_init(
+/// Resolve the most recent exact `Td-Init` lifecycle commit reachable from
+/// `HEAD` for one work-item. A rewritten persistent branch may retain a
+/// remote `td_*` phase while dropping this commit, so callers must not infer
+/// resumability from issue frontmatter alone.
+pub(crate) fn reachable_td_init_commit(
     project_root: &std::path::Path,
     slug: &str,
-) -> Result<Option<BTreeSet<String>>> {
+) -> Result<(bool, Option<String>)> {
     use crate::issues::types::lifecycle_trailer;
 
     let git_bin = crate::git::find_git_bin()
@@ -5479,7 +5535,6 @@ fn committed_paths_since_td_init(
     }
 
     let mut saw_slug_history = false;
-    let mut init_commit = None;
     for record in String::from_utf8_lossy(&log.stdout).split('\x1e') {
         let record = record.trim_start_matches('\n');
         let Some((hash, body)) = record.split_once('\0') else {
@@ -5490,10 +5545,29 @@ fn committed_paths_since_td_init(
         }
         saw_slug_history = true;
         if lifecycle_trailer::body_has_stage_trailer(body, lifecycle_trailer::TD_INIT) {
-            init_commit = Some(hash.trim().to_string());
-            break;
+            return Ok((true, Some(hash.trim().to_string())));
         }
     }
+
+    Ok((saw_slug_history, None))
+}
+
+/// Return the committed, repo-relative paths changed after this slug's most
+/// recent exact `Td-Init` trailer. The init commit's parent is the baseline:
+/// the TD/spec commit itself is lifecycle setup, while implementation must be
+/// introduced by later commits. This keeps a persistent project branch's old
+/// divergence from satisfying a new WI's hand-written implementation gate.
+///
+/// `Ok(None)` is reserved for synthetic/legacy entries with no lifecycle
+/// history at all. If the slug has lifecycle commits but no usable `Td-Init`,
+/// verification fails closed and the caller requires `--allow-empty-impl`.
+fn committed_paths_since_td_init(
+    project_root: &std::path::Path,
+    slug: &str,
+) -> Result<Option<BTreeSet<String>>> {
+    let git_bin = crate::git::find_git_bin()
+        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let (saw_slug_history, init_commit) = reachable_td_init_commit(project_root, slug)?;
 
     let Some(init_commit) = init_commit else {
         if saw_slug_history {
