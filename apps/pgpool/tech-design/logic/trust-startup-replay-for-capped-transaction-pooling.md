@@ -100,29 +100,28 @@ changes:
     action: update
     section: logic
     impl_mode: hand-written
-    reason: Store and select exact safe startup replies while waiters re-check the cache before consuming backend capacity.
+    reason: Add exact-startup replay storage and admission that rechecks a safe reply while waiting for backend capacity.
   - path: apps/pgpool/src/pool/transaction.rs
     action: update
     section: logic
     impl_mode: hand-written
-    reason: Read startup before admission and branch between cached reply replay and the fresh handshake path.
+    reason: Perform startup selection before leasing and replay a safe cached ready response before ordinary transaction pooling.
   - path: apps/pgpool/src/proxy/relay.rs
     action: update
     section: logic
     impl_mode: hand-written
-    reason: Capture only complete no-challenge backend startup replies for safe replay.
+    reason: Classify challenge-bearing startup handshakes and capture only a complete safe no-challenge reply.
   - path: apps/pgpool/tests/trust_startup_replay.rs
     action: create
     section: unit-test
     impl_mode: hand-written
-    reason: Exercise exact-match replay, challenge exclusion, and capped concurrent trust startup behavior.
+    reason: Verify exact match, synthetic cancellation key, challenge exclusion, and concurrent capped trust startup.
   - path: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh
     action: update
     section: unit-test
     impl_mode: hand-written
-    reason: Assert the fixed 64-client capped benchmark detects startup-cap rejection instead of silently reporting a partial run.
+    reason: Fail when either pgbench target cannot establish all requested clients, preserving benchmark comparability.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
