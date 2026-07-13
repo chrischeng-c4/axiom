@@ -2276,6 +2276,29 @@ fn sd_lookup_impl(inst: MbValue, type_name: &str) -> MbValue {
     sd_lookup_registered_impl(inst, type_name).unwrap_or_else(|| sd_field(inst, "_func"))
 }
 
+/// Runtime-registry-key type name of `val`, for singledispatch /
+/// singledispatchmethod dispatch. Mirrors #1595's `type_object_registry_key`
+/// fix for `total_ordering`: `sd_registry_insert` stores impls under the
+/// class's `CLASS_REGISTRY` runtime key (via `resolve_class_name` /
+/// `type_object_registry_key`), e.g. `__mamba_user_class__:file.py:N:A@1` —
+/// not the short *display* name `"A"`. An `Instance`'s raw `class_name` field
+/// already IS that runtime key, so dispatch must read it directly rather than
+/// going through `value_type_name` (which reports the display name for error
+/// messages). Using the display name here made every registered user-class
+/// dispatch miss the registry and silently fall back to the base impl.
+fn sd_dispatch_type_key(val: MbValue) -> String {
+    if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if class_name != "__instance_dict_proxy__" {
+                    return class_name.clone();
+                }
+            }
+        }
+    }
+    super::super::builtins::value_type_name(val)
+}
+
 /// `singledispatch.register(...)`:
 ///   - `register(type, impl)` → store and return `impl`.
 ///   - `register(type)`       → return a `_sd_register` decorator instance.
@@ -2345,7 +2368,7 @@ pub fn mb_singledispatch_call(inst: MbValue, args: Vec<MbValue>) -> MbValue {
         );
         return MbValue::none();
     };
-    let type_name = super::super::builtins::value_type_name(first);
+    let type_name = sd_dispatch_type_key(first);
     let impl_val = sd_lookup_impl(inst, &type_name);
     let args_list = MbValue::from_ptr(MbObject::new_list(args));
     super::super::builtins::mb_call_spread(impl_val, args_list)
@@ -2467,6 +2490,20 @@ fn sdm_receiver_class(receiver: MbValue) -> MbValue {
     if let Some(ptr) = receiver.as_ptr() {
         unsafe {
             match &(*ptr).data {
+                // A `type` object receiver (class-level access, e.g.
+                // `Factory.make(...)`, binds `cls` via `class_type_object`,
+                // a `type`-kind Instance) always has the literal class_name
+                // "type" — the raw field never names the actual class, unlike
+                // a genuine instance receiver below. Resolve its real
+                // CLASS_REGISTRY key via `resolve_class_name` (same
+                // `type_object_registry_key` accessor #1595 established for
+                // total_ordering), or `cls("...")` inside the base impl would
+                // wrongly try to call the string "type". (#1600)
+                ObjData::Instance { class_name, .. } if class_name == "type" => {
+                    if let Some(key) = super::super::class::resolve_class_name(receiver) {
+                        return MbValue::from_ptr(MbObject::new_str(key));
+                    }
+                }
                 ObjData::Instance { class_name, .. } => {
                     return MbValue::from_ptr(MbObject::new_str(class_name.clone()));
                 }
@@ -2519,7 +2556,7 @@ pub fn mb_singledispatchmethod_call(
         );
         return MbValue::none();
     };
-    let type_name = super::super::builtins::value_type_name(dispatch_arg);
+    let type_name = sd_dispatch_type_key(dispatch_arg);
     let impl_val = sd_lookup_registered_impl(sd, &type_name).unwrap_or(base);
     let (callable, kind) = sdm_unwrap_impl(impl_val);
     let mut call_args = Vec::with_capacity(args.len() + 1);
