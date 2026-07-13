@@ -28,3 +28,8 @@ been fsynced. Reuse an `event_id` to retry idempotently. HTTP/1.1 and h2c use
 one port; standard routes are `/healthz`, `/readyz`, `/metrics`,
 `/openapi.json`, and `/docs`.
 <!-- HANDWRITE-END -->
+// SPEC-MANAGED: projects/sift/tech-design/semantic/sift-projects-sift.md#schema
+// CODEGEN-BEGIN
+// SPEC-REF: projects/sift/tech-design/semantic/sift-projects-sift.md#schema
+// TODO: TD-first project agent context generated from the configured service contract.
+// CODEGEN-END
