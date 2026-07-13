@@ -120,6 +120,11 @@ async fn read_frontend_query(stream: &mut TcpStream) -> Query {
     };
     let tag = buf[0];
     let frame_bytes = buf.split_to(total).freeze();
+    assert_eq!(
+        frame_bytes.as_ref(),
+        b"Q\0\0\0\x10DISCARD ALL\0",
+        "reset must emit the exact fixed PostgreSQL Query frame"
+    );
     let payload = frame_bytes.slice(5..);
     let frame = Frame {
         tag: Some(tag),
