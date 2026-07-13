@@ -26,3 +26,26 @@ flowchart LR
   read_buf --> validate[existing bounds and validation]
   validate --> frame([validated frame or EOF/error])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/wire/reader.rs
+    action: modify
+    section: pgpool-direct-reader-buffer-read
+    impl_mode: hand-written
+  - path: apps/pgpool/src/proxy/relay.rs
+    action: modify
+    section: pgpool-direct-reader-buffer-read
+    impl_mode: hand-written
+  - path: apps/pgpool/src/pool/backend_pool.rs
+    action: modify
+    section: pgpool-direct-reader-buffer-read
+    impl_mode: hand-written
+  - path: apps/pgpool/tests/wire_codec.rs
+    action: modify
+    section: pgpool-direct-reader-buffer-read
+    impl_mode: hand-written
+```
