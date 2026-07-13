@@ -7061,3 +7061,7 @@ fn strings<const N: usize>(values: [&str; N]) -> Vec<String> {
     values.into_iter().map(ToString::to_string).collect()
 }
 // CODEGEN-END
+// SPEC-MANAGED: apps/cap/tech-design/logic/command-resources-dual-win-rss-gate-fails-unconditionally-blocki.md#e2e-test
+// CODEGEN-BEGIN
+
+// CODEGEN-END
