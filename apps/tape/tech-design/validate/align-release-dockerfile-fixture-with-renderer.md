@@ -9,28 +9,30 @@ fill_sections: [logic]
 
 ```mermaid
 ---
-id: tape-release-dockerfile-fixture-parity-applicability
-entry: version
+id: tape-release-dockerfile-fixture-parity-contract
+entry: render
 nodes:
-  version:
-    kind: start
-    label: "Tape release renderer derives the current package release version"
   render:
+    kind: start
+    label: "tape dockerfile render --variant release emits tape@0.4.5 from the current renderer"
+  compare:
+    kind: decision
+    label: "Does committed Dockerfile.release exactly match the rendered release artifact?"
+  stale:
     kind: process
-    label: "tape dockerfile render --variant release produces the canonical artifact"
-  fixture:
-    kind: process
-    label: "Committed apps/tape/Dockerfile.release must contain the same versioned artifact"
-  gate:
+    label: "Replace only the stale tape@0.4.4 fixture version and matching build comment"
+  pass:
     kind: terminal
-    label: "deploy_cli byte-parity test passes; no runtime or image-publish behavior changes"
+    label: "cargo test -p tape --test deploy_cli dockerfile_render_reproduces_committed_fixtures -- --exact passes"
 edges:
-  - { from: version, to: render }
-  - { from: render, to: fixture }
-  - { from: fixture, to: gate }
+  - { from: render, to: compare }
+  - { from: compare, to: stale, label: "no" }
+  - { from: stale, to: pass }
+  - { from: compare, to: pass, label: "yes" }
 ---
 flowchart TD
-    version[Tape release renderer derives the current package release version] --> render[tape dockerfile render --variant release produces the canonical artifact]
-    render --> fixture[Committed apps/tape/Dockerfile.release must contain the same versioned artifact]
-    fixture --> gate([deploy_cli byte-parity test passes; no runtime or image-publish behavior changes])
+    render[tape dockerfile render --variant release emits tape@0.4.5 from the current renderer] --> compare{Does committed Dockerfile.release exactly match the rendered release artifact?}
+    compare -->|no| stale[Replace only the stale tape@0.4.4 fixture version and matching build comment]
+    stale --> pass([cargo test -p tape --test deploy_cli dockerfile_render_reproduces_committed_fixtures -- --exact passes])
+    compare -->|yes| pass
 ```
