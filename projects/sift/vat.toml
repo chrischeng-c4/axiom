@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="sift-vat-real-service-runner" tracker="1607" reason="Define the COW workspace and real Sift service runner used by operational evidence."
+# HANDWRITE-BEGIN gap="sift-vat-real-service-runner" tracker="1607" reason="Define the COW workspace and real Sift service runner used by operational evidence."
 version = 1
 name = "sift-operational"
 default_runner = "ec-stability"
@@ -28,4 +28,4 @@ id = "ec-stability"
 requires = ["sift"]
 cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" && exec cargo test -p sift --test stability_e2e -- --nocapture"]
 timeout_s = 180
-// HANDWRITE-END
+# HANDWRITE-END
