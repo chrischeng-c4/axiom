@@ -16117,10 +16117,22 @@ pub fn mb_call_method_kwargs(
             return None;
         }
         let params = super::closure::func_params(method_val)?;
-        if params.iter().any(|p| matches!(p.kind, 2 | 4)) {
+        // `pos` contains only caller-provided arguments. For a regular user
+        // instance method, `mb_call_method` injects the receiver as the first
+        // physical argument after this binding step, so binding `self` here
+        // makes every keyword call fail before dispatch (#1491).
+        let bindable_params = if receiver.as_ptr().is_some_and(|ptr| unsafe {
+            matches!(&(*ptr).data, ObjData::Instance { .. })
+        }) && params.first().is_some_and(|param| param.name == "self")
+        {
+            &params[1..]
+        } else {
+            params.as_slice()
+        };
+        if bindable_params.iter().any(|p| matches!(p.kind, 2 | 4)) {
             return None;
         }
-        let bindable_pos: Vec<usize> = params
+        let bindable_pos: Vec<usize> = bindable_params
             .iter()
             .enumerate()
             .filter_map(|(idx, p)| {
@@ -16131,7 +16143,7 @@ pub fn mb_call_method_kwargs(
                 }
             })
             .collect();
-        let mut slots: Vec<Option<MbValue>> = vec![None; params.len()];
+        let mut slots: Vec<Option<MbValue>> = vec![None; bindable_params.len()];
         if pos.len() > bindable_pos.len() {
             super::builtins::raise_type_error(format!(
                 "{}() takes {} positional arguments but {} were given",
@@ -16163,9 +16175,9 @@ pub fn mb_call_method_kwargs(
             }
         };
         for (k, v) in &pairs {
-            match params.iter().position(|p| p.name == *k) {
+            match bindable_params.iter().position(|p| p.name == *k) {
                 Some(idx) => {
-                    if params[idx].kind == 0 {
+                    if bindable_params[idx].kind == 0 {
                         super::exception::mb_raise(
                             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                             MbValue::from_ptr(MbObject::new_str(format!(
@@ -16196,8 +16208,8 @@ pub fn mb_call_method_kwargs(
                 }
             }
         }
-        let mut out = Vec::with_capacity(params.len());
-        for (idx, p) in params.iter().enumerate() {
+        let mut out = Vec::with_capacity(bindable_params.len());
+        for (idx, p) in bindable_params.iter().enumerate() {
             if let Some(value) = slots[idx] {
                 out.push(value);
             } else if p.has_default {
