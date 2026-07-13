@@ -12,24 +12,12 @@ fill_sections: [logic]
 id: tape-restart-endurance
 entry: cycle
 nodes:
-  cycle:
-    kind: start
-    label: "Start a real single-node TapeRaft on the same durable directory"
-  write:
-    kind: process
-    label: "Commit a bounded batch of appends and one monotonic checkpoint"
-  restart:
-    kind: process
-    label: "Drop the host and reopen a fresh journal from the same durable directory"
-  verify:
-    kind: decision
-    label: "Did recovery preserve all events, applied floor, and checkpoint?"
-  fail:
-    kind: terminal
-    label: "Fail on loss, duplicate offset, or checkpoint regression"
-  next:
-    kind: terminal
-    label: "Repeat bounded cycles; prove sustained restart recovery"
+  cycle: { kind: start, label: "Start real TapeRaft from durable dir" }
+  write: { kind: process, label: "Commit bounded appends and checkpoint" }
+  restart: { kind: process, label: "Reopen fresh journal from same directory" }
+  verify: { kind: decision, label: "Events and checkpoint preserved?" }
+  fail: { kind: terminal, label: "Fail on loss, duplicate, or regression" }
+  next: { kind: terminal, label: "Repeat bounded recovery cycles" }
 edges:
   - { from: cycle, to: write }
   - { from: write, to: restart }
@@ -38,9 +26,25 @@ edges:
   - { from: verify, to: next, label: "yes" }
 ---
 flowchart TD
- cycle[Start real TapeRaft] --> write[Commit appends and checkpoint]
- write --> restart[Restart from same durable directory]
+ cycle[Start TapeRaft] --> write[Commit appends and checkpoint] --> restart[Restart]
  restart --> verify{State preserved?}
  verify -->|no| fail([Fail])
- verify -->|yes| next([Repeat bounded cycles])
+ verify -->|yes| next([Repeat cycles])
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/tape/tests/long_running_stability.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: "Run several real TapeRaft restart cycles against one durable directory, advancing append batches and checkpoints, then assert full replay and durable checkpoint state after every reopen. generator gap: missing-generator:raft-endurance-test (#1589)."
+  - path: apps/tape/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Record the bounded repeated-restart conformance gate under Long-Running Stability without claiming retention or unbounded soak. generator gap: missing-generator:stability-capability (#1589)."
 ```
