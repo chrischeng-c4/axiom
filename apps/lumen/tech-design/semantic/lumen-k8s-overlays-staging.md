@@ -1,0 +1,132 @@
+---
+id: semantic-lumen-k8s-overlays-staging
+summary: Semantic coverage for "apps/lumen/k8s/overlays/staging"
+capability_refs:
+  - id: "long-running-stability"
+    role: primary
+    claim: "kustomize-base-overlays-hpa"
+    coverage: partial
+    rationale: "Semantic takeover coverage for existing source group `apps/lumen/k8s/overlays/staging`."
+fill_sections: [deployment, changes]
+---
+
+# Semantic TD: lumen/k8s/overlays/staging
+
+## Deployment
+<!-- type: deployment lang: yaml -->
+
+```yaml
+deployment:
+  format: kustomize
+  layout:
+    group: "lumen/k8s/overlays/staging"
+    role: "overlay"
+  semantic_domain:
+    key: "lumen/k8s/overlays/staging"
+    source_group: "apps/lumen/k8s/overlays/staging"
+    coverage_kind: semantic
+  evidence:
+    source_units:
+      - path: "apps/lumen/k8s/overlays/staging/kustomization.yaml"
+        language: "kustomize"
+        ownership_state: "codegen"
+        generator_primitives: ["kustomize_manifest"]
+        source_evidence_node:
+          layer: "operations"
+          ecosystem: "kustomize"
+          role: "kustomization"
+          section_type: "deployment"
+          domain: "apps/lumen/k8s/overlays/staging"
+  artifacts:
+    - path: "apps/lumen/k8s/overlays/staging/kustomization.yaml"
+      kind: "kustomization"
+      content: |
+        # SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-k8s-overlays-staging.md#deployment
+        # CODEGEN-BEGIN
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        
+        namespace: lumen
+        
+        resources:
+          - ../../base
+        
+        # staging runs the prometheus-operator, so pull in the ServiceMonitor +
+        # PrometheusRule SLO alerts.
+        components:
+          - ../../components/observability
+        
+        # staging: single-node direct install, modest resources, json logs, auth off.
+        # Use `lumen k8s instance render --profile staging` plus the operator for
+        # raft-backed multi-replica soak environments.
+        
+        replicas:
+          - name: lumen
+            count: 1
+        
+        patches:
+          # Staging ConfigMap values: 3 shards, json logs, auth off.
+          - target:
+              kind: ConfigMap
+              name: lumen-config
+            patch: |-
+              - op: replace
+                path: /data/SHARD_COUNT
+                value: "3"
+              - op: replace
+                path: /data/LUMEN_LOG_FORMAT
+                value: "json"
+              - op: add
+                path: /data/LUMEN_AUTH
+                value: "off"
+          - target:
+              kind: Deployment
+              name: lumen
+            patch: |-
+              - op: replace
+                path: /spec/template/spec/containers/0/resources/requests/cpu
+                value: "1"
+              - op: replace
+                path: /spec/template/spec/containers/0/resources/requests/memory
+                value: "2Gi"
+              - op: replace
+                path: /spec/template/spec/containers/0/resources/limits/cpu
+                value: "1"
+              - op: replace
+                path: /spec/template/spec/containers/0/resources/limits/memory
+                value: "2Gi"
+              - op: add
+                path: /spec/template/spec/containers/0/env/-
+                value:
+                  name: LUMEN_AUTH
+                  valueFrom:
+                    configMapKeyRef:
+                      name: lumen-config
+                      key: LUMEN_AUTH
+          # Match the HPA floor to the Deployment replica count.
+          - target:
+              kind: HorizontalPodAutoscaler
+              name: lumen
+            patch: |-
+              - op: replace
+                path: /spec/minReplicas
+                value: 1
+              - op: replace
+                path: /spec/maxReplicas
+                value: 1
+        # CODEGEN-END
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "apps/lumen/k8s/overlays/staging/kustomization.yaml"
+    action: modify
+    section: deployment
+    description: |
+      Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: codegen
+```

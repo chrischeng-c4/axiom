@@ -1,0 +1,21 @@
+# SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-k8s-operator.md#deployment
+# CODEGEN-BEGIN
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Installs the lumen Operator: the Lumen CRD, its RBAC, and the controller
+# Deployment (in the lumen-system namespace). After this is applied, create
+# `Lumen` objects (see ../../examples/lumen-cr.yaml) instead of hand-applying
+# k8s/base + overlays.
+#
+#   kubectl apply -k k8s/operator
+#   kubectl apply -f examples/lumen-cr.yaml
+#
+# crd.yaml is generated — regenerate with:
+#   cargo run -p lumen --features operator --bin lumen -- k8s crd render > k8s/operator/crd.yaml
+
+resources:
+  - crd.yaml
+  - rbac.yaml
+  - deployment.yaml
+# CODEGEN-END
