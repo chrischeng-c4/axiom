@@ -9,24 +9,23 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: pgpool-worker-count-tuning
-entry: pgpool
+id: pgpool-worker-count-contract
+entry: runtime
 nodes:
-  pgpool: { kind: start, label: "pgpool multi-thread CLI runtime" }
-  workers: { kind: process, label: "Bounded worker count for 64 client and 16 backend relay topology" }
-  relay: { kind: process, label: "Existing concurrent wire relay and pool state machine" }
-  benchmark: { kind: terminal, label: "Repeated complete no-error release comparison" }
+  runtime: { kind: start, label: "Tokio multi-thread runtime" }
+  tuning: { kind: process, label: "Fixed worker cardinality" }
+  invariant: { kind: process, label: "Unchanged proxy protocol and reset state machine" }
+  evidence: { kind: terminal, label: "Repeated clean benchmark evidence" }
 edges:
-  - { from: pgpool, to: workers }
-  - { from: workers, to: relay }
-  - { from: relay, to: benchmark }
+  - { from: runtime, to: tuning }
+  - { from: tuning, to: invariant }
+  - { from: invariant, to: evidence }
 ---
 flowchart LR
-  pgpool([pgpool CLI]) --> workers[bounded Tokio worker count]
-  workers --> relay[existing relay and reset semantics]
-  relay --> benchmark([repeat complete benchmark])
+  runtime([Tokio multi-thread]) --> tuning[fixed worker cardinality]
+  tuning --> invariant[unchanged reset and wire semantics]
+  invariant --> evidence([repeat benchmark evidence])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
