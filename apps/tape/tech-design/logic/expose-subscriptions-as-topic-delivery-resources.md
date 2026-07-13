@@ -1,7 +1,7 @@
 ---
 id: "1254"
 summary: (fill)
-fill_sections: [logic]
+fill_sections: [logic, unit-test]
 ---
 
 ## Logic
@@ -55,4 +55,50 @@ flowchart TD
     pull_view --> resource_ops["list/show/delete by topic/name; delete preserves checkpoint"]
     push_view --> resource_ops
     resource_ops --> api_inventory(["declare create/list/show/delete routes and delivery schemas in spec inventory"])
+```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: tape-subscription-resource-verification
+requirements:
+  pull_checkpoint_compatibility:
+    id: R3
+    text: "Creating or deleting a pull subscription does not advance or remove the existing topic/name consumer checkpoint; checkpoint get/put remains the durable pull cursor interface."
+    kind: regression
+    risk: high
+    verify: cargo test -p tape pull_subscription_preserves_checkpoint_compatibility --lib -- --exact
+  push_scope_boundary:
+    id: R5
+    text: "Push creation only stores its configured endpoint; this work item starts no delivery worker and makes no outbound HTTP request."
+    kind: negative
+    risk: medium
+    verify: cargo test -p tape --test cli_contract subscription_resource_roundtrip -- --exact
+  spec_inventory:
+    id: R4
+    text: "The offline routes, OpenAPI, and JSON Schema inventories declare the topic-scoped subscription collection/item routes and delivery configuration schemas."
+    kind: contract
+    risk: medium
+    verify: cargo test -p tape --test cli_contract subscription_spec_inventory -- --exact
+  subscription_cli_surface:
+    id: R1
+    text: "tape --help and tape subscription create --help expose subscription creation, inspection, deletion, and the mutually exclusive pull/push delivery forms."
+    kind: functional
+    risk: medium
+    verify: cargo test -p tape --test cli_contract subscription_cli_surface -- --exact
+  subscription_local_lifecycle:
+    id: R2
+    text: "A pull and a push subscription can be created, listed, shown, and deleted in one file-backed journal without changing unrelated entries."
+    kind: functional
+    risk: high
+    verify: cargo test -p tape --test cli_contract subscription_resource_roundtrip -- --exact
+---
+flowchart TD
+    r1[R1 subscription cli surface] --> cargo_test_p_tape_test_cli_contract_subscription_cli_surface_exact[cargo test -p tape --test cli_contract subscription_cli_surface -- --exact]
+    r2[R2 subscription local lifecycle] --> cargo_test_p_tape_test_cli_contract_subscription_resource_roundtrip_exact[cargo test -p tape --test cli_contract subscription_resource_roundtrip -- --exact]
+    r5[R5 push scope boundary] --> cargo_test_p_tape_test_cli_contract_subscription_resource_roundtrip_exact
+    r3[R3 pull checkpoint compatibility] --> cargo_test_p_tape_pull_subscription_preserves_checkpoint_compatibility_lib_exact[cargo test -p tape pull_subscription_preserves_checkpoint_compatibility --lib -- --exact]
+    r4[R4 spec inventory] --> cargo_test_p_tape_test_cli_contract_subscription_spec_inventory_exact[cargo test -p tape --test cli_contract subscription_spec_inventory -- --exact]
 ```
