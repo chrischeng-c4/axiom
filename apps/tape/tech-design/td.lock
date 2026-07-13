@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-16T02:51:16.211293+00:00"
-digest = "sha256:dbef5379ee95e86c73819c8e3c7cb79177fd00f28520a63426676cab99448b92"
-source_digest = "sha256:dbef5379ee95e86c73819c8e3c7cb79177fd00f28520a63426676cab99448b92"
-ir_digest = "sha256:e0a06ab3bf49ac0bd30b4870aabfdd464d5719732911a4ee8aa445a15f141610"
+generated_at = "2026-07-16T02:51:58.584800+00:00"
+digest = "sha256:bf323e69a10cca71a66afcaa336e8cf01a44dcae6c7cffd83889ec70ee69e79d"
+source_digest = "sha256:bf323e69a10cca71a66afcaa336e8cf01a44dcae6c7cffd83889ec70ee69e79d"
+ir_digest = "sha256:8538508d8f5e22266a2de3e18e95ce2999adaf7796c4db5455952527f2b05467"
 
 [[files]]
 path = "README.md"
@@ -75,9 +75,9 @@ section_count = 2
 
 [[files]]
 path = "logic/ship-opt-in-default-deny-networkpolicy-component.md"
-digest = "sha256:b016b4b8b923bad66ff389e9b3bc18965d2c067c6451e991b936a31fa2ea1946"
-ir_digest = "sha256:78b93cebda98a32e2ba2095efd771a43cf7c4a0459106c7b70500d07325dd820"
-section_count = 1
+digest = "sha256:25d36690e57e938f3745049f70d59f51e68d5a97b74cc42281756ec615d6ff41"
+ir_digest = "sha256:a5c9e0863f9ae0bcb170fb09deb6e78a524073143983322aad34aea992680215"
+section_count = 2
 
 [[files]]
 path = "logic/ship-prometheus-operator-scrape-and-alert-manifests.md"
