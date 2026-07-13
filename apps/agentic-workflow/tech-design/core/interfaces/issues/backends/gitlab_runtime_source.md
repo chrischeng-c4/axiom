@@ -8,6 +8,12 @@ capability_refs:
     claim: client-boundary-model
     coverage: full
     rationale: "Issue backend interfaces implement the AW Core client boundary for projecting workflow state to configured issue platforms."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: project-label-producer-td-routing
+    claim: project-label-producer-td-routing
+    coverage: partial
+    rationale: "GitLab WI updates must honor explicit stale project-label removals while preserving unrelated remote labels."
 ---
 
 # GitLab Backend Runtime Source
@@ -16,6 +22,10 @@ capability_refs:
 <!-- type: overview lang: markdown -->
 
 Public API manifest for `apps/agentic-workflow/src/issues/backends/gitlab.rs` generated from AST during Score force-regeneration standardization.
+
+`IssueBackend::write` remains conservative for unmanaged remote labels;
+`IssueBackend::update` selects the explicit-removal write variant so requested
+unmanaged removals become `glab issue update --unlabel` arguments.
 
 ### Symbols
 
@@ -39,5 +49,5 @@ changes:
     impl_mode: codegen
     replaces:
       - "<handwrite-gap:gitlab-backend-runtime>"
-    description: "Source template owns GitLab backend runtime behavior and tests."
+    description: "Source template owns GitLab backend runtime behavior and tests, including authoritative IssuePatch label removals."
 ```

@@ -104,9 +104,17 @@ impl GitHubBackend {
             args.push(format!("body={body}"));
         }
         if let Some(labels) = labels {
-            for label in labels {
-                args.push("-f".to_string());
-                args.push(format!("labels[]={label}"));
+            if labels.is_empty() {
+                // `gh api` documents `key[]` without a value as the explicit
+                // empty-array form. This must differ from labels=None, which
+                // intentionally leaves the remote label set unchanged.
+                args.push("-F".to_string());
+                args.push("labels[]".to_string());
+            } else {
+                for label in labels {
+                    args.push("-f".to_string());
+                    args.push(format!("labels[]={label}"));
+                }
             }
         }
         if let Some(state) = state {
@@ -168,6 +176,100 @@ impl GitHubBackend {
             // clearer error if the label still cannot be applied.
             let _ = gh_command().args(&args).output();
         }
+        Ok(())
+    }
+
+    /// Persist one issue while honoring removals explicitly authorized by an
+    /// `IssuePatch`. An empty removal slice retains the conservative full-write
+    /// contract: unmanaged remote labels absent from `issue` are preserved.
+    async fn write_with_explicit_label_removals(
+        &self,
+        issue: &Issue,
+        explicit_remove_labels: &[String],
+    ) -> Result<()> {
+        // Resolve target issue number — prefer github_id, then numeric slug,
+        // then legacy slug label.
+        let number: u64 = match issue.github_id {
+            Some(n) => n,
+            None => match issue.slug.parse::<u64>() {
+                Ok(n) => n,
+                Err(_) => self.resolve_slug(&issue.slug)?.ok_or_else(|| {
+                    anyhow!(
+                        "GitHubBackend::write: cannot locate issue (slug='{}', no github_id)",
+                        issue.slug
+                    )
+                })?,
+            },
+        };
+
+        // Fetch current state for diffing. Prefer the legacy gh issue path,
+        // but fall back to REST when gh issue uses a GraphQL path that the
+        // current token cannot access.
+        let mut view_args = self.gh_args_prefix();
+        view_args.push("view".into());
+        view_args.push(number.to_string());
+        view_args.push("--json".into());
+        view_args.push("number,title,state,labels,author,createdAt,updatedAt,url,body".into());
+        let current = match run_gh(&view_args) {
+            Ok(view_out) => {
+                let view: Value = serde_json::from_str(&view_out)
+                    .with_context(|| format!("failed to parse gh view JSON: {}", view_out))?;
+                parse_gh_issue(&view)?
+            }
+            Err(err) => {
+                let msg = err.to_string();
+                if !is_graphql_or_auth_error(&msg) {
+                    return Err(err);
+                }
+                self.get_via_rest(number).with_context(|| {
+                    format!("gh issue view failed, REST fallback also failed: {msg}")
+                })?
+            }
+        };
+
+        let current_title = current.title.clone();
+        let current_body = current.body.clone();
+        let current_labels = current.labels.clone();
+
+        let desired_labels = labels::encode_labels(issue);
+        let (to_add, to_remove) = labels::diff_labels_with_explicit_removals(
+            &current_labels,
+            &desired_labels,
+            explicit_remove_labels,
+        );
+
+        if !to_add.is_empty() {
+            self.ensure_labels_exist(&to_add)?;
+        }
+
+        // Edit title / body / labels in one REST PATCH when anything changed.
+        // PATCH receives the full next label set so user labels are preserved
+        // while stale AW-managed or explicitly removed labels are removed.
+        let title_changed = issue.title != current_title;
+        let body_changed = issue.body != current_body;
+        let labels_changed = !to_add.is_empty() || !to_remove.is_empty();
+
+        // State transitions are handled by REST too, avoiding gh issue's
+        // GraphQL path for reopen/close.
+        let desired_open = matches!(issue.state, IssueState::Open | IssueState::Draft);
+        let currently_open = matches!(current.state, IssueState::Open | IssueState::Draft);
+        let state_changed = desired_open != currently_open;
+
+        if title_changed || body_changed || labels_changed || state_changed {
+            let mut next_labels = current_labels.clone();
+            next_labels.retain(|label| !to_remove.contains(label));
+            for label in to_add {
+                if !next_labels.contains(&label) {
+                    next_labels.push(label);
+                }
+            }
+            let title = title_changed.then_some(issue.title.as_str());
+            let body = body_changed.then_some(issue.body.as_str());
+            let labels = labels_changed.then_some(next_labels.as_slice());
+            let state = state_changed.then_some(if desired_open { "open" } else { "closed" });
+            run_gh_api(&self.rest_patch_args(number, title, body, labels, state))?;
+        }
+
         Ok(())
     }
 }
@@ -298,88 +400,7 @@ impl IssueBackend for GitHubBackend {
     /// Persist the full issue: round-trip title, state, body, and CRRR-state
     /// labels. Labels not in the score-managed set are preserved.
     async fn write(&self, issue: &Issue) -> Result<()> {
-        // Resolve target issue number — prefer github_id, then numeric slug,
-        // then legacy slug label.
-        let number: u64 = match issue.github_id {
-            Some(n) => n,
-            None => match issue.slug.parse::<u64>() {
-                Ok(n) => n,
-                Err(_) => self.resolve_slug(&issue.slug)?.ok_or_else(|| {
-                    anyhow!(
-                        "GitHubBackend::write: cannot locate issue (slug='{}', no github_id)",
-                        issue.slug
-                    )
-                })?,
-            },
-        };
-
-        // Fetch current state for diffing. Prefer the legacy gh issue path,
-        // but fall back to REST when gh issue uses a GraphQL path that the
-        // current token cannot access.
-        let mut view_args = self.gh_args_prefix();
-        view_args.push("view".into());
-        view_args.push(number.to_string());
-        view_args.push("--json".into());
-        view_args.push("number,title,state,labels,author,createdAt,updatedAt,url,body".into());
-        let current = match run_gh(&view_args) {
-            Ok(view_out) => {
-                let view: Value = serde_json::from_str(&view_out)
-                    .with_context(|| format!("failed to parse gh view JSON: {}", view_out))?;
-                parse_gh_issue(&view)?
-            }
-            Err(err) => {
-                let msg = err.to_string();
-                if !is_graphql_or_auth_error(&msg) {
-                    return Err(err);
-                }
-                self.get_via_rest(number).with_context(|| {
-                    format!("gh issue view failed, REST fallback also failed: {msg}")
-                })?
-            }
-        };
-
-        let current_title = current.title.clone();
-        let current_body = current.body.clone();
-        let current_labels = current.labels.clone();
-
-        // Compute desired label set + diff.
-        let desired_labels = labels::encode_labels(issue);
-        let (to_add, to_remove) = labels::diff_labels(&current_labels, &desired_labels);
-
-        // Pre-create any unknown labels so --add-label doesn't fail.
-        if !to_add.is_empty() {
-            self.ensure_labels_exist(&to_add)?;
-        }
-
-        // Edit title / body / labels in one REST PATCH when anything changed.
-        // PATCH receives the full next label set so user labels are preserved
-        // while stale AW-managed labels are removed.
-        let title_changed = issue.title != current_title;
-        let body_changed = issue.body != current_body;
-        let labels_changed = !to_add.is_empty() || !to_remove.is_empty();
-
-        // State transitions are handled by REST too, avoiding gh issue's
-        // GraphQL path for reopen/close.
-        let desired_open = matches!(issue.state, IssueState::Open | IssueState::Draft);
-        let currently_open = matches!(current.state, IssueState::Open | IssueState::Draft);
-        let state_changed = desired_open != currently_open;
-
-        if title_changed || body_changed || labels_changed || state_changed {
-            let mut next_labels = current_labels.clone();
-            next_labels.retain(|label| !to_remove.contains(label));
-            for label in to_add {
-                if !next_labels.contains(&label) {
-                    next_labels.push(label);
-                }
-            }
-            let title = title_changed.then_some(issue.title.as_str());
-            let body = body_changed.then_some(issue.body.as_str());
-            let labels = labels_changed.then_some(next_labels.as_slice());
-            let state = state_changed.then_some(if desired_open { "open" } else { "closed" });
-            run_gh_api(&self.rest_patch_args(number, title, body, labels, state))?;
-        }
-
-        Ok(())
+        self.write_with_explicit_label_removals(issue, &[]).await
     }
 
     // @spec apps/agentic-workflow/tech-design/core/logic/issues-backend.md#R1
@@ -436,7 +457,8 @@ impl IssueBackend for GitHubBackend {
             .await?
             .ok_or_else(|| anyhow!("issue #{} not found", number))?;
         patch.apply(&mut current);
-        self.write(&current).await?;
+        self.write_with_explicit_label_removals(&current, &patch.remove_labels)
+            .await?;
 
         self.get(&number.to_string())
             .await?
@@ -798,6 +820,31 @@ mod tests {
                 "labels[]=type:enhancement",
                 "-f",
                 "labels[]=phase:created",
+            ]
+        );
+    }
+
+    #[test]
+    fn rest_patch_args_distinguishes_omitted_from_explicit_empty_labels() {
+        let backend = GitHubBackend::new(Some("owner/repo".to_string()));
+        let empty = Vec::<String>::new();
+
+        let omitted = backend.rest_patch_args(42, None, None, None, None);
+        let explicit_empty = backend.rest_patch_args(42, None, None, Some(empty.as_slice()), None);
+
+        assert_eq!(
+            omitted,
+            vec!["api", "-X", "PATCH", "repos/owner/repo/issues/42"]
+        );
+        assert_eq!(
+            explicit_empty,
+            vec![
+                "api",
+                "-X",
+                "PATCH",
+                "repos/owner/repo/issues/42",
+                "-F",
+                "labels[]",
             ]
         );
     }
