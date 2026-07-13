@@ -32,7 +32,7 @@ spec:
             description: '`tape.dev/v1alpha1` `Tape`. Namespaced: every child object the operator renders lands in this object''s namespace, so independent tape deployments coexist by name.'
             properties:
               auth:
-                default: off
+                default: "off"
                 description: 'Request-auth mode for the data plane: `off` (default) or `required`. A flat string, not an enum with divergent variant schemas (Kubernetes structural schemas cannot represent those). `required` takes effect only together with [`Self::tokens_secret`].'
                 type: string
               bootstrapSeedUri:

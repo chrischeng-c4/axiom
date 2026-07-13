@@ -233,7 +233,8 @@ struct ServeArgs {
     token_registry_file: Option<PathBuf>,
     /// Durable directory for raft hard state + the applied-index marker
     /// (#1327). Required in replica/HA mode (`REPLICAS_PER_SHARD > 1`);
-    /// unused in single-node serving.
+    /// in single-node mode it selects `journal.json` unless `--store` is
+    /// supplied explicitly.
     #[arg(long, env = "TAPE_DATA_DIR")]
     data_dir: Option<PathBuf>,
     /// Exact `file://` (or backup-enabled `s3://`) journal snapshot used only
@@ -614,6 +615,10 @@ const LLM_TOPICS: &[cli_std::llm::Topic] = &[
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // kube-rs (operator), raft peer TLS, and online CLI paths can link
+    // different rustls providers. Install the shared aws-lc-rs default before
+    // any of those paths construct a TLS client or server.
+    service_tls::install_default_crypto_provider();
     let cli = Cli::parse();
     match cli.command {
         Command::Append(args) => append(args),
@@ -837,11 +842,18 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         "request auth resolved (TAPE_AUTH; probes stay tokenless)"
     );
 
-    let journal = match &args.store {
+    // The operator mounts `/data` for every StatefulSet member. In its
+    // single-node topology there is no Raft state machine to own durability,
+    // so use that PVC for the ordinary journal store. An explicit --store
+    // still wins, and replica mode continues to keep journal durability in
+    // the Raft state machine instead of a second local store.
+    let replica_mode = raft_runtime::cluster::replica_mode();
+    let store = resolve_journal_store(args.store.clone(), args.data_dir.as_deref(), replica_mode);
+    let journal = match &store {
         Some(path) => load_journal(path)?,
         None => TapeJournal::default(),
     };
-    let mut state = tape::server::AppState::with_auth(journal, args.store.clone(), auth);
+    let mut state = tape::server::AppState::with_auth(journal, store, auth);
 
     // Auto-mode HA (#1327): the standard downward-API quartet flips replica
     // mode (REPLICAS_PER_SHARD > 1) — no tape-specific flag. Topology comes
@@ -852,7 +864,6 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     // slice — raft-host's h2c transport has no TLS seam yet). Held for the
     // process lifetime via `state` — dropping it would abort the tick/pump
     // tasks.
-    let replica_mode = raft_runtime::cluster::replica_mode();
     if args.bootstrap_seed_uri.is_some() {
         anyhow::ensure!(
             replica_mode,
@@ -955,6 +966,23 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     )
     .await;
     Ok(())
+}
+
+/// Resolve the local journal path for a serving process. Replica mode owns
+/// durability through Raft; only a single-node process derives a store from
+/// its mounted data directory.
+fn resolve_journal_store(
+    explicit_store: Option<PathBuf>,
+    data_dir: Option<&std::path::Path>,
+    replica_mode: bool,
+) -> Option<PathBuf> {
+    explicit_store.or_else(|| {
+        if replica_mode {
+            None
+        } else {
+            data_dir.map(|dir| dir.join("journal.json"))
+        }
+    })
 }
 
 fn spec(args: SpecArgs) -> Result<()> {
@@ -1423,6 +1451,29 @@ mod tests {
         let cli =
             Cli::try_parse_from(["tape", "append", "orders", "--payload", "{\"n\":1}"]).unwrap();
         assert!(matches!(cli.command, Command::Append(_)));
+    }
+
+    #[test]
+    fn single_node_data_dir_resolves_to_the_pvc_journal_store() {
+        let data_dir = PathBuf::from("/data");
+        assert_eq!(
+            resolve_journal_store(None, Some(&data_dir), false),
+            Some(PathBuf::from("/data/journal.json"))
+        );
+        assert_eq!(
+            resolve_journal_store(
+                Some(PathBuf::from("/tmp/override.json")),
+                Some(&data_dir),
+                false,
+            ),
+            Some(PathBuf::from("/tmp/override.json")),
+            "an explicit --store must keep precedence over TAPE_DATA_DIR"
+        );
+        assert_eq!(
+            resolve_journal_store(None, Some(&data_dir), true),
+            None,
+            "replica mode persists through Raft rather than a parallel journal file"
+        );
     }
 
     /// #1328: `tape k8s <crd|operator|instance>` parses with the expected

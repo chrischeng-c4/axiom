@@ -37,7 +37,7 @@ real-service external peer calibration remain separate work roots.
 | Retention And Backfill | #768 | planned | planned | none | not_ready | retention windows, compaction policy, and batch backfill |
 | HTTP/2 API List | #768 | implemented | verified | smoke | ready | offline `tape spec` route/OpenAPI inventory plus a real h2c + HTTP/1.1 server (#1325) serving `/topics` append/replay/checkpoint; `GET /admin/backup` + `tape backup`/`tape spec gen` client codegen (#1329) |
 | Standard Operational Endpoints | #768 | implemented | verified | smoke | ready | `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` served for real via `libs/service-http` (#1325), with drain-aware readiness and `tape serve` |
-| Kubernetes-Native Deployment | #768 | implemented | verified | smoke | ready | CRD/operator/instance render + dockerfile CLI (#1328); StatefulSet topology, offline render tests; no live kind cluster proof yet |
+| Kubernetes-Native Deployment | #768, #1590 | implemented | passing | dogfood | not_ready | CRD/operator/instance render + dockerfile CLI, plus disposable Kind proof of single-node operator reconciliation, PVC-backed append/replay, and replay after pod replacement; multi-shard and soak coverage remain separate |
 | Stateful Service Workload | #1554 | implemented | verified | smoke | ready | shared stateful-storage baseline composed from Tape's journal, raft, snapshot/backup, security boundary, and StatefulSet evidence; no duplicated runtime contract |
 | Observability | #1588 | implemented | passing | conformance | not_ready | shared Prometheus pull metrics plus optional ServiceMonitor/PrometheusRule; OTLP remains a shared-library gap rather than copied Lumen code |
 | Backup & Restore | #1585 | implemented | passing | conformance | not_ready | exact journal snapshots ship through `libs/service-backup`; cold recovery only seeds a fresh PVC before Raft catch-up, never a live in-place restore |
@@ -412,20 +412,23 @@ Type: Devops
 Root WI: #768
 Status: confirmed
 Surfaces: K8s: dedicated StatefulSet/operator topology for topic partitions, storage, probes, and PDBs (#1328); `tape k8s crd|operator|instance render`, `tape k8s operator run` (behind the `operator` cargo feature), and `tape dockerfile render --variant source|release`.
-EC Dimensions: behavior: offline render/CLI gates (`tests/deploy_cli.rs`, `tests/operator.rs`) - CRD structural-schema safety, operator render shape, instance profiles, dockerfile fixture parity; stability: pending live kind replay dogfood (no cluster available in this slice)
-Required Verification: smoke
+EC Dimensions: behavior: offline render/CLI gates (`tests/deploy_cli.rs`, `tests/operator.rs`) - CRD structural-schema safety, operator render shape, instance profiles, dockerfile fixture parity; stability: `bash apps/tape/scripts/kind-e2e.sh` builds the real image, creates a disposable Kind cluster, and proves append/replay survives one single-node StatefulSet pod replacement with its PVC retained.
+Required Verification: smoke, dogfood
 Promise:
 Tape runs as a dedicated k8s-native replay service with stable identity,
-persistent storage, and operator-managed lifecycle. Live-cluster
-dogfood (kind smoke) is a deferred follow-up.
+persistent storage, and operator-managed lifecycle. The bounded Kind dogfood
+gate covers one single-node replacement; multi-shard and long-running soak
+remain separate work roots.
 Gate Inventory:
 - apps/tape/k8s/operator/{crd,rbac,deployment}.yaml
 - apps/tape/tests/deploy_cli.rs
 - apps/tape/tests/operator.rs
+- apps/tape/scripts/kind-e2e.sh
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | dedicated-statefulset-operator-topology | epic | #768 | implemented | verified | smoke | apps/tape/tests/{deploy_cli,operator}.rs; #1328 |
+| operator-kind-pvc-restart-replay | test | #1590 | implemented | passing | dogfood | apps/tape/scripts/kind-e2e.sh |
 
 ### Stateful Service Workload
 
