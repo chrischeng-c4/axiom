@@ -43,6 +43,19 @@ fn run_rules_on_file(
             return;
         }
     };
+    // Source bodies are masked before the ordinary registry runs so embedded
+    // fixtures do not trigger unrelated rules. Partition controls are the
+    // exception: validate their complete, unmasked Source section first,
+    // because masking the sentinel fence would otherwise hide corruption (or
+    // make every valid partitioned artifact look corrupt). Tag the finding as
+    // SectionFormat so `aw td check` exposes one canonical structural gate.
+    if let Err(error) = crate::generate::apply::decode_partitioned_source(&content) {
+        report.push(crate::validate::Finding::error(
+            crate::validate::RuleId::SectionFormat,
+            path,
+            format!("invalid source partition manifest: {error}"),
+        ));
+    }
     let checkable_content = mask_source_section_bodies(&content);
     for rule in rules {
         rule.check(path, &checkable_content, report);
@@ -224,6 +237,44 @@ rust_type: Option<Option<u16>>
             "source fixtures should be masked, got: {:#?}",
             report.findings
         );
+    }
+
+    #[test]
+    fn registry_rejects_corrupt_partition_manifest_before_source_masking() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let source_path = root.join("src/direct.py");
+        let output_dir = root.join("tech-design/specs");
+        std::fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&output_dir).unwrap();
+        std::fs::write(&source_path, "def direct():\n    return 42\n").unwrap();
+        let outcome = crate::fillback::code::CodeStrategy::new()
+            .import_explicit_source_file(&source_path, root, &output_dir)
+            .unwrap();
+        let spec_path = outcome.spec_path.unwrap();
+
+        let valid = run_rules(std::slice::from_ref(&spec_path));
+        assert!(
+            !valid.findings.iter().any(|finding| {
+                finding.rule == crate::validate::RuleId::SectionFormat
+                    && finding
+                        .message
+                        .contains("invalid source partition manifest")
+            }),
+            "valid partition controls must survive the runner's Source masking path: {:#?}",
+            valid.findings
+        );
+
+        let content = std::fs::read_to_string(&spec_path).unwrap();
+        let corrupted = content.replacen("digest=sha256:", "digest=sha256:0", 1);
+        std::fs::write(&spec_path, corrupted).unwrap();
+        let report = run_rules(&[spec_path]);
+        assert!(report.findings.iter().any(|finding| {
+            finding.rule == crate::validate::RuleId::SectionFormat
+                && finding
+                    .message
+                    .contains("invalid source partition manifest")
+        }));
     }
 }
 

@@ -7,13 +7,13 @@ capability_refs:
     gap: td-lifecycle-dispatch
     claim: td-lifecycle-dispatch
     coverage: full
-    rationale: "TD CLI surface manifests cover tech-design artifact authoring, validation, merge, and generated-code iteration behavior."
+    rationale: "TD CLI surface manifests cover tech-design artifact authoring, validation, and linear generated-code iteration behavior."
   - id: td-cb-lifecycle-automation
     role: primary
     gap: cb-lifecycle-dispatch
     claim: cb-lifecycle-dispatch
     coverage: full
-    rationale: "TD CLI surface manifests cover lifecycle dispatch, generation, fill, code-check, and merge command behavior."
+    rationale: "TD CLI surface manifests cover lifecycle dispatch, generation, fill, and terminal code-check behavior."
 command_refs:
   - command: aw td
   - command: aw td ast
@@ -21,9 +21,10 @@ command_refs:
   - command: aw td claim
   - command: aw td create
   - command: aw td code-check
+  - command: aw td gen
+  - command: aw td gen-source
+  - command: aw td fill
   - command: aw td promote
-  - command: aw td review
-  - command: aw td revise
 ---
 
 # Standardized apps/agentic-workflow/src/cli/td.rs
@@ -32,6 +33,14 @@ command_refs:
 <!-- type: overview lang: markdown -->
 
 Public API manifest for `apps/agentic-workflow/src/cli/td.rs` generated from AST during Score force-regeneration standardization.
+
+The LINEAR TD surface mounts `gen-source` as the forward-generation verb for
+one explicit source-unit TD and exact target. It delegates to the CB-owned
+implementation and participates in the same single-envelope, strict-preflight
+contract. The shared `td check` validation path also runs the strict partition
+decoder so missing, reordered, duplicated, oversized, or digest-mismatched
+chunks fail before generation. Retired review/revise/merge verbs are not public
+lifecycle steps.
 
 ### Symbols
 
@@ -1695,6 +1704,15 @@ fn validate_spec_inner(
         if !seen.insert(*t) {
             errors.push(format!("duplicate section type: '{}'", t));
         }
+    }
+
+    // #1506: partitioned large-source artifacts use one typed H2 Source
+    // section plus untyped H3 payload partitions. Validate the manifest with
+    // the same strict decoder production gen-source uses, so missing,
+    // duplicate, reordered, oversized, or digest-mismatched chunks fail
+    // `aw td check` before any target can be generated.
+    if let Err(error) = crate::generate::apply::decode_partitioned_source(spec_content) {
+        errors.push(format!("invalid source partition manifest: {error}"));
     }
 
     for (heading, ann, content) in &sections {
@@ -6770,4 +6788,13 @@ changes:
       YAML frontmatter and a generated `flowchart TD` diagram from that data,
       and rejects hand-written mermaid/YAML payloads for JSON-payload sections
       with a schema-pointing error.
+  - path: apps/agentic-workflow/src/cli/td.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1506 mounts `aw td gen-source` in the LINEAR TD dispatcher and
+      delegates it to the CB exact single-target replay implementation. The TD
+      check path validates partition manifests with the same strict decoder
+      used by generation.
 ```

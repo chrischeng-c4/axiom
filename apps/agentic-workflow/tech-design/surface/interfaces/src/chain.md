@@ -17,6 +17,11 @@ capability_refs:
 
 Public API manifest for `apps/agentic-workflow/src/cli/chain.rs` generated from AST during Score force-regeneration standardization.
 
+The emit registry includes both explicit-file and directory
+`td create --from-source` handoffs, so their generated `td gen-source` or
+`td check` commands are parsed against the real clap tree. `td.gen-source` is
+classified as lifecycle-mutating because exact replay can write its one target.
+
 ### Symbols
 
 | Name | Target | Kind | Visibility | Line | Signature |
@@ -332,10 +337,16 @@ const EMIT_REGISTRY: &[EmitSite] = &[
         note: "capability lifecycle driver's terminal-check command for a cb_filled/cb_reviewed WI",
     },
     EmitSite {
-        source: "td.rs:run_claim (dispatch envelope)",
-        sample: "aw td gen 915",
-        note: "structured Invoke{command: \"aw td gen\", args: {slug}} reconstructed as the flat \
-               command an agent runs from invoke.command + invoke.args.slug",
+        source: "fillback.rs:run (explicit source-file dispatch envelope)",
+        sample: "aw td gen-source --spec apps/agentic-workflow/tech-design/example.md --target apps/agentic-workflow/src/example.rs --dry-run",
+        note: "lossless explicit source adoption emits the concrete per-file gen-source \
+               verification command with both authoritative artifact paths",
+    },
+    EmitSite {
+        source: "fillback.rs:run (directory completion envelope)",
+        sample: "aw td check apps/agentic-workflow/tech-design/specs",
+        note: "directory fillback keeps its existing human progress stream and ends with a \
+               runnable TD artifact check",
     },
     EmitSite {
         source: "cb_fill.rs:td_code_check_command",
@@ -389,7 +400,7 @@ const EMIT_REGISTRY: &[EmitSite] = &[
 ///   - `Utility`: support tooling that is not itself a lifecycle-loop step —
 ///     the CLI-convention trio (`llm`/`upgrade`/`issue`), `chat`/`guard`/
 ///     `view`/`new`/`report-issue`/`generator`, and the read-only/debug `td`
-///     verbs (`ast`, `check`, `lock`, `gen-source`, `promote`,
+///     verbs (`ast`, `check`, `lock`, `promote`,
 ///     `audit-record` -- the former `standardize audit record`, rehomed by
 ///     #1278).
 ///   - `Migration`: scheduled for removal or fold-in once a stated condition
@@ -758,7 +769,7 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     VerbLifecycle {
         path: "td.gen-source",
         class: VerbLifecycleClass::Utility,
-        mutates_lifecycle: false,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
@@ -1400,6 +1411,7 @@ mod tests {
             "wi.arbitrate",
             "td.create",
             "td.gen",
+            "td.gen-source",
             "td.fill",
             "td.claim",
             "td.promote",
@@ -1892,5 +1904,12 @@ changes:
       Added `mutates_lifecycle_classification_matches_1417_design`,
       `verb_mutates_lifecycle_none_for_unknown_path`, and
       `resolve_invoked_verb_path_*` regression tests.
-
+  - path: apps/agentic-workflow/src/cli/chain.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1506 registers the explicit-file `td gen-source` and directory
+      `td check` from-source emit sites, and classifies `td.gen-source` as a
+      lifecycle mutation so stale-binary and emitted-command gates cover it.
 

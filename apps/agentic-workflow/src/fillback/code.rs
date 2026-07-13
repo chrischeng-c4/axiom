@@ -16,8 +16,9 @@ use async_trait::async_trait;
 use colored::Colorize;
 use dialoguer::{Confirm, Input, MultiSelect};
 use ignore::WalkBuilder;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/core/generate/fillback/code.md#schema
@@ -48,6 +49,142 @@ pub struct CodeStrategyConfig {
 
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/core/generate/fillback/code.md#source
 // CODEGEN-BEGIN
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExplicitSourceFileOutcome {
+    pub(crate) spec_path: Option<PathBuf>,
+    pub(crate) target_path: PathBuf,
+    pub(crate) refreshed_existing: bool,
+    pub(crate) partition_count: usize,
+    pub(crate) item_count: usize,
+    pub(crate) requires_hitl: bool,
+    pub(crate) message: String,
+}
+
+impl ExplicitSourceFileOutcome {
+    fn hitl(target_path: PathBuf, message: impl Into<String>) -> Self {
+        Self {
+            spec_path: None,
+            target_path,
+            refreshed_existing: false,
+            partition_count: 0,
+            item_count: 0,
+            requires_hitl: true,
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceUnitPersistOutcome {
+    Written,
+    ConcurrentDrift,
+}
+
+fn persist_source_unit_candidate(
+    spec_path: &Path,
+    candidate: &str,
+    existing_snapshot: Option<&str>,
+) -> std::io::Result<SourceUnitPersistOutcome> {
+    if let Some(snapshot) = existing_snapshot {
+        let current = fs::read_to_string(spec_path)?;
+        if current != snapshot {
+            return Ok(SourceUnitPersistOutcome::ConcurrentDrift);
+        }
+        fs::write(spec_path, candidate)?;
+        return Ok(SourceUnitPersistOutcome::Written);
+    }
+
+    let mut file = match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(spec_path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Ok(SourceUnitPersistOutcome::ConcurrentDrift);
+        }
+        Err(error) => return Err(error),
+    };
+    file.write_all(candidate.as_bytes())?;
+    Ok(SourceUnitPersistOutcome::Written)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourcePartitionBoundary {
+    Ast,
+    OversizedAstFallback,
+    ParseFallback,
+}
+
+impl SourcePartitionBoundary {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Ast => "ast",
+            Self::OversizedAstFallback => "oversized-ast-fallback",
+            Self::ParseFallback => "parse-fallback",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SourcePartition {
+    content: String,
+    boundary: SourcePartitionBoundary,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SourceUnitFormat {
+    language: SupportedLanguage,
+    section_type: &'static str,
+    fence_lang: &'static str,
+}
+
+impl SourceUnitFormat {
+    fn for_language(language: SupportedLanguage) -> Self {
+        match language {
+            SupportedLanguage::Rust => Self {
+                language,
+                section_type: "rust-source-unit",
+                fence_lang: "rust",
+            },
+            SupportedLanguage::Python => Self {
+                language,
+                section_type: "text-source-unit",
+                fence_lang: "bash",
+            },
+            SupportedLanguage::JavaScript => Self {
+                language,
+                section_type: "text-source-unit",
+                fence_lang: "bash",
+            },
+            SupportedLanguage::TypeScript => Self {
+                language,
+                section_type: "text-source-unit",
+                fence_lang: "bash",
+            },
+            SupportedLanguage::Go => Self {
+                language,
+                section_type: "text-source-unit",
+                fence_lang: "bash",
+            },
+        }
+    }
+
+    fn accepts_owner_section(self, section: &str) -> bool {
+        section == "source" || section == self.section_type
+    }
+
+    fn source_lang(self) -> &'static str {
+        match self.language {
+            SupportedLanguage::Rust => "rust",
+            SupportedLanguage::Python => "python",
+            SupportedLanguage::JavaScript => "javascript",
+            SupportedLanguage::TypeScript => "typescript",
+            SupportedLanguage::Go => "go",
+        }
+    }
+}
+
 /// @spec apps/agentic-workflow/tech-design/core/generate/fillback/code.md#source
 impl Default for CodeStrategyConfig {
     fn default() -> Self {
@@ -73,8 +210,28 @@ impl CodeStrategy {
         Self { config }
     }
 
-    /// Scan source directory and collect files for analysis
+    /// Scan a source directory or one explicitly selected file for analysis.
+    ///
+    /// The directory path keeps the bounded 100 KB/file discovery ceiling.
+    /// An explicit file is the user's already-bounded selection: analyze only
+    /// that file, never its siblings, and do not apply the directory scanner's
+    /// size ceiling (#1506).
     fn scan_files(&self, source: &Path) -> Result<Vec<(String, String)>> {
+        if source.is_file() {
+            let ext = source.extension().and_then(|s| s.to_str()).unwrap_or("");
+            if SupportedLanguage::from_extension(ext).is_none() {
+                anyhow::bail!("Unsupported source file: {}", source.display());
+            }
+            let content = fs::read_to_string(source)
+                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", source.display()))?;
+            let name = source
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("source")
+                .to_string();
+            return Ok(vec![(name, content)]);
+        }
+
         let mut files = Vec::new();
         let max_files = 500; // Higher limit since we're using AST
         let max_file_size = 100_000; // 100KB limit per file
@@ -154,7 +311,11 @@ impl CodeStrategy {
         );
 
         for (rel_path, content) in files {
-            let full_path = source.join(&rel_path);
+            let full_path = if source.is_file() {
+                source.to_path_buf()
+            } else {
+                source.join(&rel_path)
+            };
 
             match analyzer.parse_file(&full_path, &content) {
                 Ok(module) => {
@@ -187,6 +348,340 @@ impl CodeStrategy {
         }
 
         Ok((context, parse_errors))
+    }
+
+    /// Adopt one supported source file as a lossless source-unit TD.
+    ///
+    /// Existing CODEGEN ownership is refreshed only when the target resolves
+    /// to exactly one project-local owner and that owner already declares a
+    /// compatible whole-file source unit. Ambiguous or partial ownership is a
+    /// no-mutation HITL result. New files receive a deterministic per-source
+    /// spec under the caller's fillback output directory.
+    pub(crate) fn import_explicit_source_file(
+        &self,
+        source: &Path,
+        project_root: &Path,
+        output_dir: &Path,
+    ) -> Result<ExplicitSourceFileOutcome> {
+        let canonical_root = project_root.canonicalize().map_err(|e| {
+            anyhow::anyhow!(
+                "failed to canonicalize project root {}: {e}",
+                project_root.display()
+            )
+        })?;
+        let canonical_source = source.canonicalize().map_err(|e| {
+            anyhow::anyhow!("failed to canonicalize source {}: {e}", source.display())
+        })?;
+        let Ok(target_rel_path) = canonical_source.strip_prefix(&canonical_root) else {
+            return Ok(ExplicitSourceFileOutcome::hitl(
+                source.to_path_buf(),
+                format!(
+                    "explicit source is outside the repository root: {}",
+                    source.display()
+                ),
+            ));
+        };
+        let target_rel = normalize_spec_path(target_rel_path);
+        let target_path = PathBuf::from(&target_rel);
+        if target_rel.chars().any(char::is_whitespace) {
+            return Ok(ExplicitSourceFileOutcome::hitl(
+                target_path,
+                "explicit source paths containing whitespace cannot yet be emitted as a chain-validated next command",
+            ));
+        }
+        let extension = canonical_source
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or_default();
+        let Some(language) = SupportedLanguage::from_extension(extension) else {
+            return Ok(ExplicitSourceFileOutcome::hitl(
+                target_path,
+                format!("unsupported explicit source extension: {extension}"),
+            ));
+        };
+        let source_format = SourceUnitFormat::for_language(language);
+        let source_content = fs::read_to_string(&canonical_source)
+            .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", source.display()))?;
+
+        let (partitions, item_count) = if language == SupportedLanguage::Rust {
+            let parsed_unit = crate::generate::rust_source_unit::parse(&source_content).ok();
+            if parsed_unit
+                .as_ref()
+                .is_some_and(|unit| unit.emit() != source_content)
+            {
+                return Ok(ExplicitSourceFileOutcome::hitl(
+                    target_path,
+                    "rust-source-unit parse/emit was not byte-identical; refusing to mutate TD ownership",
+                ));
+            }
+            let item_count = parsed_unit.as_ref().map_or(0, |unit| unit.items().count());
+            let partitions = if source_content.len()
+                > crate::generate::apply::RUST_SOURCE_PARTITION_MAX_BYTES
+                || parsed_unit.is_none()
+                || source_needs_partition_encoding(&source_content)
+            {
+                Some(partition_rust_source(&source_content, parsed_unit.as_ref()))
+            } else {
+                None
+            };
+            (partitions, item_count)
+        } else {
+            let mut analyzer = AstAnalyzer::new()?;
+            let ast_boundaries = analyzer
+                .top_level_byte_boundaries(&canonical_source, &source_content)
+                .ok();
+            let item_count = ast_boundaries.as_ref().map_or(0, Vec::len);
+            // Non-Rust source units always use the partition manifest, even
+            // when small, so the real parser language is explicit and can be
+            // checked against the target extension while the TD's canonical
+            // text-source-unit fence language remains `bash`.
+            let partitions = Some(partition_text_source(
+                &source_content,
+                ast_boundaries.as_deref(),
+            ));
+            (partitions, item_count)
+        };
+        let partition_count = partitions.as_ref().map_or(1, Vec::len);
+
+        let Some(td_root) = tech_design_root_from_output(output_dir) else {
+            return Ok(ExplicitSourceFileOutcome::hitl(
+                target_path,
+                format!(
+                    "fillback output {} is not inside a tech-design root",
+                    output_dir.display()
+                ),
+            ));
+        };
+
+        let blocks = match crate::generate::apply::parse_source_codegen_blocks(
+            &canonical_source,
+            &source_content,
+        ) {
+            Ok(blocks) => blocks,
+            Err(error) => {
+                return Ok(ExplicitSourceFileOutcome::hitl(
+                    target_path,
+                    format!("source ownership markers are ambiguous: {error}"),
+                ));
+            }
+        };
+        let marker_owner_section = blocks
+            .first()
+            .and_then(|block| spec_ref_section(&block.spec_ref))
+            .map(str::to_string);
+        let marker_refs: BTreeSet<String> = blocks
+            .iter()
+            .filter_map(|block| spec_ref_path(&block.spec_ref))
+            .collect();
+        if !blocks.is_empty() {
+            if marker_refs.len() != 1 {
+                return Ok(ExplicitSourceFileOutcome::hitl(
+                    target_path,
+                    "source has CODEGEN markers without exactly one resolvable TD owner; whole-file fillback requires HITL",
+                ));
+            }
+            let source_lines = source_content.lines().collect::<Vec<_>>();
+            let block_start = blocks[0].begin_line.saturating_sub(1);
+            let prefix = source_lines.get(..block_start).unwrap_or_default();
+            let suffix = source_lines
+                .get(blocks[0].end_line.saturating_add(1)..)
+                .unwrap_or_default();
+            let allowed_prefix = prefix.iter().all(|line| line.trim().is_empty())
+                || (prefix
+                    .first()
+                    .is_some_and(|line| crate::generate::apply::is_unix_shebang(line))
+                    && prefix[1..].iter().all(|line| line.trim().is_empty()));
+            let is_one_full_file_block = blocks.len() == 1
+                && blocks[0].begin_line > 0
+                && allowed_prefix
+                && suffix.iter().all(|line| line.trim().is_empty())
+                && spec_ref_section(&blocks[0].spec_ref)
+                    .is_some_and(|section| source_format.accepts_owner_section(section));
+            if !is_one_full_file_block {
+                return Ok(ExplicitSourceFileOutcome::hitl(
+                    target_path,
+                    "source has partial, multiple, or non-source CODEGEN ownership; whole-file fillback requires HITL",
+                ));
+            }
+        }
+
+        let mut owners = collect_codegen_owner_specs(&td_root, &canonical_root, &target_rel)?;
+        owners.extend(marker_refs);
+        if owners.len() > 1 {
+            return Ok(ExplicitSourceFileOutcome::hitl(
+                target_path,
+                format!(
+                    "multiple CODEGEN TD owners claim `{target_rel}`: {}",
+                    owners.into_iter().collect::<Vec<_>>().join(", ")
+                ),
+            ));
+        }
+
+        let (spec_path, candidate, refreshed_existing, existing_snapshot) = if let Some(owner_ref) =
+            owners.first()
+        {
+            let owner_path = canonical_root.join(owner_ref);
+            if !path_is_within(&owner_path, &td_root) || !owner_path.is_file() {
+                return Ok(ExplicitSourceFileOutcome::hitl(
+                    target_path,
+                    format!(
+                        "CODEGEN owner `{owner_ref}` is missing or outside {}",
+                        td_root.display()
+                    ),
+                ));
+            }
+            let existing = fs::read_to_string(&owner_path)
+                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", owner_path.display()))?;
+            if let Err(error) = crate::generate::apply::validate_exact_source_spec_contract(
+                &existing,
+                &canonical_root,
+                &canonical_source,
+            ) {
+                return Ok(ExplicitSourceFileOutcome::hitl(
+                    target_path,
+                    format!(
+                        "CODEGEN owner `{owner_ref}` is not safe to refresh as one exact source unit: {error}"
+                    ),
+                ));
+            }
+            let change_entries = crate::generate::apply::extract_change_entries(&existing);
+            let generated_source_entries = change_entries
+                .iter()
+                .filter(|entry| {
+                    matches!(
+                        entry.section_id.as_deref(),
+                        Some("source" | "rust-source-unit" | "text-source-unit")
+                    ) && entry.impl_mode == crate::generate::apply::ImplMode::Codegen
+                })
+                .collect::<Vec<_>>();
+            let target_codegen_entries: Vec<_> = change_entries
+                .iter()
+                .filter(|entry| {
+                    normalize_spec_path(Path::new(&entry.path)) == target_rel
+                        && entry.impl_mode == crate::generate::apply::ImplMode::Codegen
+                })
+                .collect();
+            if generated_source_entries.len() != 1
+                || target_codegen_entries.len() != 1
+                || !std::ptr::eq(generated_source_entries[0], target_codegen_entries[0])
+            {
+                return Ok(ExplicitSourceFileOutcome::hitl(
+                    target_path,
+                    format!(
+                        "CODEGEN owner `{owner_ref}` must contain exactly one authoritative generated source entry and it must target `{target_rel}`",
+                    ),
+                ));
+            }
+            let owner_section = target_codegen_entries[0].section_id.as_deref();
+            if !owner_section.is_some_and(|section| source_format.accepts_owner_section(section)) {
+                return Ok(ExplicitSourceFileOutcome::hitl(
+                    target_path,
+                    format!(
+                        "CODEGEN owner `{owner_ref}` does not contain a compatible {} change entry",
+                        source_format.section_type,
+                    ),
+                ));
+            }
+            if marker_owner_section
+                .as_deref()
+                .is_some_and(|marker_section| Some(marker_section) != owner_section)
+            {
+                return Ok(ExplicitSourceFileOutcome::hitl(
+                    target_path,
+                    format!(
+                        "source CODEGEN marker fragment `{}` does not match owner Changes section `{}`",
+                        marker_owner_section.as_deref().unwrap_or_default(),
+                        owner_section.unwrap_or_default(),
+                    ),
+                ));
+            }
+            let Some(updated) = replace_source_unit_section(
+                &existing,
+                &source_content,
+                partitions.as_deref(),
+                source_format,
+            ) else {
+                return Ok(ExplicitSourceFileOutcome::hitl(
+                    target_path,
+                    format!("CODEGEN owner `{owner_ref}` has no replaceable `## Source` section"),
+                ));
+            };
+            (owner_path, updated, true, Some(existing))
+        } else {
+            let mut spec_path = output_dir.join(&target_rel);
+            spec_path.set_extension("md");
+            if spec_path.exists() {
+                return Ok(ExplicitSourceFileOutcome::hitl(
+                    target_path,
+                    format!(
+                        "unclaimed fillback artifact already exists at {}; refusing to overwrite it",
+                        spec_path.display()
+                    ),
+                ));
+            }
+            (
+                spec_path,
+                render_source_unit_spec(
+                    &target_rel,
+                    &source_content,
+                    partitions.as_deref(),
+                    source_format,
+                ),
+                false,
+                None,
+            )
+        };
+
+        crate::td_ast::parse_td_str(&candidate).map_err(|e| {
+            anyhow::anyhow!(
+                "generated {} TD for {} is invalid: {}",
+                source_format.section_type,
+                source.display(),
+                e.message
+            )
+        })?;
+        let spec_rel = spec_path
+            .strip_prefix(&canonical_root)
+            .map(normalize_spec_path)
+            .unwrap_or_else(|_| normalize_spec_path(&spec_path));
+        let regenerated = crate::generate::apply::try_generate_source_section_code(
+            &candidate,
+            &spec_rel,
+            Some(&target_rel),
+            &canonical_root,
+        )
+        .map_err(anyhow::Error::msg)?;
+        if regenerated != source_content {
+            return Ok(ExplicitSourceFileOutcome::hitl(
+                target_path,
+                "normal source-unit generation would not reproduce the selected source; refusing to mutate TD ownership",
+            ));
+        }
+
+        if let Some(parent) = spec_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        if persist_source_unit_candidate(&spec_path, &candidate, existing_snapshot.as_deref())?
+            == SourceUnitPersistOutcome::ConcurrentDrift
+        {
+            return Ok(ExplicitSourceFileOutcome::hitl(
+                target_path,
+                format!(
+                    "source-unit TD `{}` changed or was created after preflight; refusing concurrent overwrite",
+                    spec_path.display()
+                ),
+            ));
+        }
+
+        Ok(ExplicitSourceFileOutcome {
+            spec_path: Some(spec_path),
+            target_path,
+            refreshed_existing,
+            partition_count,
+            item_count,
+            requires_hitl: false,
+            message: format!("lossless {} artifact written", source_format.section_type),
+        })
     }
 
     /// Display analysis summary
@@ -1045,11 +1540,526 @@ impl ImportStrategy for CodeStrategy {
 
     fn can_handle(&self, source: &Path) -> bool {
         source.is_dir()
+            || (source.is_file()
+                && source
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .and_then(SupportedLanguage::from_extension)
+                    .is_some())
     }
 
     fn name(&self) -> &'static str {
         "code"
     }
+}
+
+fn normalize_spec_path(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .to_string()
+}
+
+fn spec_ref_path(spec_ref: &str) -> Option<String> {
+    let (path, _) = spec_ref.trim().split_once('#')?;
+    let path = path.trim();
+    (!path.is_empty()).then(|| normalize_spec_path(Path::new(path)))
+}
+
+fn spec_ref_section(spec_ref: &str) -> Option<&str> {
+    spec_ref
+        .trim()
+        .split_once('#')
+        .map(|(_, section)| section.trim())
+}
+
+fn tech_design_root_from_output(output_dir: &Path) -> Option<PathBuf> {
+    output_dir
+        .ancestors()
+        .find(|path| path.file_name().is_some_and(|name| name == "tech-design"))
+        .map(Path::to_path_buf)
+}
+
+fn path_is_within(candidate: &Path, root: &Path) -> bool {
+    let Ok(root) = root.canonicalize() else {
+        return false;
+    };
+    candidate
+        .canonicalize()
+        .is_ok_and(|candidate| candidate.starts_with(root))
+}
+
+fn collect_codegen_owner_specs(
+    td_root: &Path,
+    project_root: &Path,
+    target_rel: &str,
+) -> Result<BTreeSet<String>> {
+    let mut owners = BTreeSet::new();
+    if !td_root.exists() {
+        return Ok(owners);
+    }
+    for entry in WalkBuilder::new(td_root).standard_filters(true).build() {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        if crate::generate::apply::extract_change_entries(&content)
+            .into_iter()
+            .any(|change| {
+                normalize_spec_path(Path::new(&change.path)) == target_rel
+                    && change.impl_mode == crate::generate::apply::ImplMode::Codegen
+            })
+        {
+            let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+            let spec_rel = canonical_path
+                .strip_prefix(project_root)
+                .map(normalize_spec_path)
+                .unwrap_or_else(|_| normalize_spec_path(&canonical_path));
+            owners.insert(spec_rel);
+        }
+    }
+    Ok(owners)
+}
+
+fn replace_source_unit_section(
+    existing: &str,
+    source: &str,
+    partitions: Option<&[SourcePartition]>,
+    source_format: SourceUnitFormat,
+) -> Option<String> {
+    let lines: Vec<&str> = existing.lines().collect();
+    let start = lines.iter().position(|line| line.trim() == "## Source")?;
+    let end = next_h2_outside_markdown_fences(&lines, start + 1);
+
+    let mut out = lines[..start].join("\n");
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out.push_str(&render_source_unit_section(
+        source,
+        partitions,
+        source_format,
+    ));
+    if end < lines.len() {
+        out.push_str(&lines[end..].join("\n"));
+        out.push('\n');
+    } else if existing.ends_with('\n') {
+        out.push('\n');
+    }
+    Some(out)
+}
+
+fn next_h2_outside_markdown_fences(lines: &[&str], start: usize) -> usize {
+    let mut open: Option<(u8, usize)> = None;
+    for (idx, line) in lines.iter().enumerate().skip(start) {
+        if let Some((open_char, open_len)) = open {
+            if markdown_fence_marker(line).is_some_and(|(close_char, close_len, suffix)| {
+                close_char == open_char && close_len >= open_len && suffix.trim().is_empty()
+            }) {
+                open = None;
+            }
+            continue;
+        }
+        if let Some((fence_char, fence_len, _)) = markdown_fence_marker(line) {
+            open = Some((fence_char, fence_len));
+            continue;
+        }
+        if line.starts_with("## ") {
+            return idx;
+        }
+    }
+    lines.len()
+}
+
+fn markdown_fence_marker(line: &str) -> Option<(u8, usize, &str)> {
+    let leading = line.len() - line.trim_start_matches(' ').len();
+    if leading > 3 {
+        return None;
+    }
+    let trimmed = &line[leading..];
+    let first = *trimmed.as_bytes().first()?;
+    if !matches!(first, b'`' | b'~') {
+        return None;
+    }
+    let count = trimmed
+        .as_bytes()
+        .iter()
+        .take_while(|byte| **byte == first)
+        .count();
+    (count >= 3).then_some((first, count, &trimmed[count..]))
+}
+
+fn render_source_unit_spec(
+    target_rel: &str,
+    source: &str,
+    partitions: Option<&[SourcePartition]>,
+    source_format: SourceUnitFormat,
+) -> String {
+    let slug = target_rel
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    let escaped_target = target_rel.replace('\\', "\\\\").replace('"', "\\\"");
+    format!(
+        "---\nid: {slug}\nsummary: Lossless {} coverage for `{target_rel}`.\nfill_sections: [{}, changes]\n---\n\n# Fillback {target_rel}\n\n{}## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: \"{escaped_target}\"\n    action: modify\n    section: {}\n    impl_mode: codegen\n    description: |\n      Lossless {} ownership created from explicit file fillback.\n```\n",
+        source_format.section_type,
+        source_format.section_type,
+        render_source_unit_section(source, partitions, source_format),
+        source_format.section_type,
+        source_format.section_type,
+    )
+}
+
+fn render_source_unit_section(
+    source: &str,
+    partitions: Option<&[SourcePartition]>,
+    source_format: SourceUnitFormat,
+) -> String {
+    let Some(partitions) = partitions else {
+        return render_source_fence_section(
+            "## Source",
+            source_format.section_type,
+            source_format.fence_lang,
+            source,
+            None,
+        );
+    };
+
+    let source_digest = crate::generate::apply::partition_sha256(source.as_bytes());
+    let manifest = format!(
+        "// AW source partition manifest v1: {} ordered {} chunks, max {} decoded / {} encoded bytes, digest {}\n",
+        partitions.len(),
+        source_format.source_lang(),
+        crate::generate::apply::RUST_SOURCE_PARTITION_MAX_BYTES,
+        crate::generate::apply::RUST_SOURCE_PARTITION_MAX_PAYLOAD_BYTES,
+        source_digest,
+    );
+    let mut section = format!(
+        "## Source\n<!-- type: {} lang: {} -->\n<!-- aw-source-partitions: version=1 count={} max_bytes={} max_payload_bytes={} encoding=base64 source_lang={} digest={} -->\n\n{}",
+        source_format.section_type,
+        source_format.fence_lang,
+        partitions.len(),
+        crate::generate::apply::RUST_SOURCE_PARTITION_MAX_BYTES,
+        crate::generate::apply::RUST_SOURCE_PARTITION_MAX_PAYLOAD_BYTES,
+        source_format.source_lang(),
+        source_digest,
+        render_dynamic_fence(source_format.fence_lang, &manifest),
+    );
+    section.push('\n');
+
+    for (idx, partition) in partitions.iter().enumerate() {
+        let index = idx + 1;
+        let terminal_newline = partition.content.ends_with('\n');
+        let digest = crate::generate::apply::partition_sha256(partition.content.as_bytes());
+        let payload =
+            crate::generate::apply::encode_source_partition_payload(partition.content.as_bytes());
+        debug_assert!(
+            payload.len() <= crate::generate::apply::RUST_SOURCE_PARTITION_MAX_PAYLOAD_BYTES
+        );
+        section.push_str(&format!(
+            "### Source Partition {index:04}\n<!-- aw-source-partition: index={index} count={} bytes={} payload_bytes={} encoding=base64 digest={} boundary={} terminal_newline={} -->\n\n```text\n{}\n```\n\n",
+            partitions.len(),
+            partition.content.len(),
+            payload.len(),
+            digest,
+            partition.boundary.as_str(),
+            terminal_newline,
+            payload,
+        ));
+    }
+    section
+}
+
+fn render_source_fence_section(
+    heading: &str,
+    section_type: &str,
+    fence_lang: &str,
+    source: &str,
+    extra_annotation: Option<&str>,
+) -> String {
+    let mut section = format!("{heading}\n<!-- type: {section_type} lang: {fence_lang} -->\n");
+    if let Some(annotation) = extra_annotation {
+        section.push_str(annotation);
+        section.push('\n');
+    }
+    section.push('\n');
+    section.push_str(&render_dynamic_fence(fence_lang, source));
+    section.push_str("\n\n");
+    section
+}
+
+fn render_dynamic_fence(lang: &str, source: &str) -> String {
+    let max_ticks = source
+        .lines()
+        .map(|line| {
+            line.as_bytes()
+                .iter()
+                .fold((0usize, 0usize), |(best, run), byte| {
+                    if *byte == b'`' {
+                        (best.max(run + 1), run + 1)
+                    } else {
+                        (best, 0)
+                    }
+                })
+                .0
+        })
+        .max()
+        .unwrap_or(0);
+    let fence = "`".repeat((max_ticks + 1).max(3));
+    let mut section = format!("{fence}{lang}\n{source}");
+    if !source.ends_with('\n') {
+        section.push('\n');
+    }
+    section.push_str(&fence);
+    section
+}
+
+fn source_needs_partition_encoding(source: &str) -> bool {
+    source.contains('\r')
+        || !source.ends_with('\n')
+        || source.contains("// AW source partition manifest v1:")
+        || source.contains("<!-- aw-source-partition")
+        || source.contains("### Source Partition ")
+        || source.lines().any(|line| {
+            let trimmed = line.trim_start();
+            line.len() - trimmed.len() <= 3
+                && (trimmed.starts_with("```") || trimmed.starts_with("~~~"))
+        })
+}
+
+fn partition_rust_source(
+    source: &str,
+    parsed: Option<&crate::generate::rust_source_unit::RustSourceUnit>,
+) -> Vec<SourcePartition> {
+    let Some(unit) = parsed else {
+        return split_bounded_source(source, SourcePartitionBoundary::ParseFallback);
+    };
+
+    let mut partitions = Vec::new();
+    let mut current = String::new();
+    for segment in &unit.segments {
+        let segment_source = match segment {
+            crate::generate::rust_source_unit::Segment::Item(item) => item.text.as_str(),
+            crate::generate::rust_source_unit::Segment::Trivia { text } => text.as_str(),
+        };
+        if segment_source.len() > crate::generate::apply::RUST_SOURCE_PARTITION_MAX_BYTES {
+            if !current.is_empty() {
+                partitions.push(SourcePartition {
+                    content: std::mem::take(&mut current),
+                    boundary: SourcePartitionBoundary::Ast,
+                });
+            }
+            partitions.extend(split_bounded_source(
+                segment_source,
+                SourcePartitionBoundary::OversizedAstFallback,
+            ));
+            continue;
+        }
+        if !current.is_empty()
+            && current.len() + segment_source.len()
+                > crate::generate::apply::RUST_SOURCE_PARTITION_MAX_BYTES
+        {
+            partitions.push(SourcePartition {
+                content: std::mem::take(&mut current),
+                boundary: SourcePartitionBoundary::Ast,
+            });
+        }
+        current.push_str(segment_source);
+    }
+    if !current.is_empty() {
+        partitions.push(SourcePartition {
+            content: current,
+            boundary: SourcePartitionBoundary::Ast,
+        });
+    }
+    if partitions.is_empty() {
+        partitions.push(SourcePartition {
+            content: String::new(),
+            boundary: SourcePartitionBoundary::Ast,
+        });
+    }
+    debug_assert_eq!(
+        partitions
+            .iter()
+            .map(|partition| partition.content.as_str())
+            .collect::<String>(),
+        source
+    );
+    debug_assert!(partitions.iter().all(|partition| partition.content.len()
+        <= crate::generate::apply::RUST_SOURCE_PARTITION_MAX_BYTES));
+    partitions
+}
+
+fn partition_text_source(source: &str, ast_boundaries: Option<&[usize]>) -> Vec<SourcePartition> {
+    let Some(ast_boundaries) = ast_boundaries else {
+        return split_bounded_source(source, SourcePartitionBoundary::ParseFallback);
+    };
+
+    let mut partitions = Vec::new();
+    let mut current = String::new();
+    let mut start = 0usize;
+    for end in ast_boundaries
+        .iter()
+        .copied()
+        .chain(std::iter::once(source.len()))
+    {
+        if end <= start || end > source.len() || !source.is_char_boundary(end) {
+            continue;
+        }
+        let segment = &source[start..end];
+        if segment.len() > crate::generate::apply::RUST_SOURCE_PARTITION_MAX_BYTES {
+            if !current.is_empty() {
+                partitions.push(SourcePartition {
+                    content: std::mem::take(&mut current),
+                    boundary: SourcePartitionBoundary::Ast,
+                });
+            }
+            partitions.extend(split_bounded_source(
+                segment,
+                SourcePartitionBoundary::OversizedAstFallback,
+            ));
+        } else {
+            if !current.is_empty()
+                && current.len() + segment.len()
+                    > crate::generate::apply::RUST_SOURCE_PARTITION_MAX_BYTES
+            {
+                partitions.push(SourcePartition {
+                    content: std::mem::take(&mut current),
+                    boundary: SourcePartitionBoundary::Ast,
+                });
+            }
+            current.push_str(segment);
+        }
+        start = end;
+    }
+    if start < source.len() {
+        let tail = &source[start..];
+        if tail.len() > crate::generate::apply::RUST_SOURCE_PARTITION_MAX_BYTES {
+            if !current.is_empty() {
+                partitions.push(SourcePartition {
+                    content: std::mem::take(&mut current),
+                    boundary: SourcePartitionBoundary::Ast,
+                });
+            }
+            partitions.extend(split_bounded_source(
+                tail,
+                SourcePartitionBoundary::OversizedAstFallback,
+            ));
+        } else {
+            current.push_str(tail);
+        }
+    }
+    if !current.is_empty() {
+        partitions.push(SourcePartition {
+            content: current,
+            boundary: SourcePartitionBoundary::Ast,
+        });
+    }
+    if partitions.is_empty() {
+        partitions.push(SourcePartition {
+            content: String::new(),
+            boundary: SourcePartitionBoundary::Ast,
+        });
+    }
+    debug_assert_eq!(
+        partitions
+            .iter()
+            .map(|partition| partition.content.as_str())
+            .collect::<String>(),
+        source
+    );
+    debug_assert!(partitions.iter().all(|partition| partition.content.len()
+        <= crate::generate::apply::RUST_SOURCE_PARTITION_MAX_BYTES));
+    partitions
+}
+
+fn split_bounded_source(source: &str, boundary: SourcePartitionBoundary) -> Vec<SourcePartition> {
+    if source.is_empty() {
+        return vec![SourcePartition {
+            content: String::new(),
+            boundary,
+        }];
+    }
+    let mut partitions = Vec::new();
+    let mut remaining = source;
+    while remaining.len() > crate::generate::apply::RUST_SOURCE_PARTITION_MAX_BYTES {
+        let mut limit =
+            crate::generate::apply::RUST_SOURCE_PARTITION_MAX_BYTES.min(remaining.len());
+        while !remaining.is_char_boundary(limit) {
+            limit -= 1;
+        }
+        let split_at = remaining[..limit]
+            .rfind('\n')
+            .map(|idx| idx + 1)
+            .filter(|idx| *idx > 0)
+            .unwrap_or(limit);
+        partitions.push(SourcePartition {
+            content: remaining[..split_at].to_string(),
+            boundary,
+        });
+        remaining = &remaining[split_at..];
+    }
+    if !remaining.is_empty() {
+        partitions.push(SourcePartition {
+            content: remaining.to_string(),
+            boundary,
+        });
+    }
+    partitions
+}
+
+/// Recompute the one canonical partition sequence for a decoded source unit.
+/// The strict decoder uses this to prove that declared `ast`/fallback labels
+/// and chunk endpoints came from AW's deterministic partitioner rather than a
+/// digest-consistent but arbitrary mid-token split (#1506).
+pub(crate) fn canonical_source_partition_plan(
+    source: &str,
+    source_lang: &str,
+) -> Result<Vec<(String, String)>> {
+    let language = match source_lang {
+        "rust" => SupportedLanguage::Rust,
+        "python" => SupportedLanguage::Python,
+        "javascript" => SupportedLanguage::JavaScript,
+        "typescript" => SupportedLanguage::TypeScript,
+        "go" => SupportedLanguage::Go,
+        other => anyhow::bail!("unsupported source partition language `{other}`"),
+    };
+    let partitions = if language == SupportedLanguage::Rust {
+        let parsed = crate::generate::rust_source_unit::parse(source).ok();
+        partition_rust_source(source, parsed.as_ref())
+    } else {
+        let extension = match language {
+            SupportedLanguage::Python => "py",
+            SupportedLanguage::JavaScript => "js",
+            SupportedLanguage::TypeScript => "ts",
+            SupportedLanguage::Go => "go",
+            SupportedLanguage::Rust => unreachable!(),
+        };
+        let synthetic_path = PathBuf::from(format!("source.{extension}"));
+        let mut analyzer = AstAnalyzer::new()?;
+        let boundaries = analyzer
+            .top_level_byte_boundaries(&synthetic_path, source)
+            .ok();
+        partition_text_source(source, boundaries.as_deref())
+    };
+    Ok(partitions
+        .into_iter()
+        .map(|partition| (partition.content, partition.boundary.as_str().to_string()))
+        .collect())
 }
 
 #[cfg(test)]
@@ -1128,6 +2138,28 @@ enum InternalEnum {
         assert!(files.iter().any(|(path, _)| path.contains("main.rs")));
         assert!(files.iter().any(|(path, _)| path.contains("lib.rs")));
         assert!(files.iter().any(|(path, _)| path.contains("utils.rs")));
+    }
+
+    #[test]
+    fn test_scan_explicit_large_file_ignores_siblings_and_directory_size_limit() {
+        let temp_dir = TempDir::new().unwrap();
+        let selected = temp_dir.path().join("selected.rs");
+        let sibling = temp_dir.path().join("sibling.rs");
+        let mut source = String::new();
+        let payload = "x".repeat(2_048);
+        for idx in 0..64 {
+            source.push_str(&format!(
+                "fn selected_{idx}() -> &'static str {{ \"{payload}\" }}\n"
+            ));
+        }
+        assert!(source.len() > 100_000);
+        fs::write(&selected, &source).unwrap();
+        fs::write(&sibling, "pub fn sibling_must_not_be_scanned() {}\n").unwrap();
+
+        let strategy = CodeStrategy::new();
+        let files = strategy.scan_files(&selected).unwrap();
+
+        assert_eq!(files, vec![("selected.rs".to_string(), source)]);
     }
 
     #[test]
@@ -1357,6 +2389,758 @@ enum InternalEnum {
         assert_eq!(project_root_from_tech_design_output(no_tech_design), None);
     }
 
+    fn large_complete_source(extension: &str) -> String {
+        match extension {
+            "py" => {
+                let mut source = "#!/usr/bin/env python3\n".to_string();
+                for idx in 0..2_500 {
+                    source.push_str(&format!(
+                        "def item_{idx}(value: int) -> int:\n    return value + {idx}\n\n"
+                    ));
+                }
+                source
+            }
+            "js" => (0..2_500)
+                .map(|idx| {
+                    format!("export function item_{idx}(value) {{ return value + {idx}; }}\n")
+                })
+                .collect(),
+            "ts" => (0..2_500)
+                .map(|idx| {
+                    format!(
+                        "export function item_{idx}(value: number): number {{ return value + {idx}; }}\n"
+                    )
+                })
+                .collect(),
+            "go" => {
+                let mut source = "package direct\n\n".to_string();
+                for idx in 0..2_500 {
+                    source.push_str(&format!(
+                        "func Item{idx}(value int) int {{ return value + {idx} }}\n"
+                    ));
+                }
+                source
+            }
+            other => panic!("unsupported fixture extension {other}"),
+        }
+    }
+
+    #[test]
+    fn explicit_large_python_javascript_typescript_and_go_files_are_lossless() {
+        let cases = [
+            ("py", "python", "# SPEC-MANAGED:"),
+            ("js", "javascript", "// SPEC-MANAGED:"),
+            ("ts", "typescript", "// SPEC-MANAGED:"),
+            ("go", "go", "// SPEC-MANAGED:"),
+        ];
+        for (extension, source_lang, marker_prefix) in cases {
+            let temp_dir = TempDir::new().unwrap();
+            let root = temp_dir.path();
+            let source_path = root.join(format!("apps/demo/src/direct.{extension}"));
+            let output_dir = root.join("apps/demo/tech-design/specs");
+            fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+            fs::create_dir_all(&output_dir).unwrap();
+            let source = large_complete_source(extension);
+            assert!(source.len() > 100_000, "{extension}");
+            fs::write(&source_path, &source).unwrap();
+
+            let first = CodeStrategy::new()
+                .import_explicit_source_file(&source_path, root, &output_dir)
+                .unwrap();
+            assert!(!first.requires_hitl, "{extension}: {}", first.message);
+            assert!(first.partition_count > 1, "{extension}");
+            assert!(first.item_count > 2_000, "{extension}");
+            let spec_path = first.spec_path.unwrap();
+            let first_spec = fs::read_to_string(&spec_path).unwrap();
+            assert!(first_spec.contains("<!-- type: text-source-unit lang: bash -->"));
+            let decoded = crate::generate::apply::decode_partitioned_source(&first_spec)
+                .unwrap()
+                .unwrap();
+            assert_eq!(decoded.source_lang, source_lang, "{extension}");
+            assert_eq!(decoded.source, source, "{extension}");
+
+            let generated = crate::generate::apply::try_generate_source_section_code(
+                &first_spec,
+                &normalize_spec_path(spec_path.strip_prefix(root).unwrap()),
+                Some(&normalize_spec_path(
+                    source_path.strip_prefix(root).unwrap(),
+                )),
+                root,
+            )
+            .unwrap();
+            assert_eq!(generated, source, "{extension}: selected payload");
+
+            let plan = canonical_source_partition_plan(&source, source_lang).unwrap();
+            assert_eq!(plan.len(), first.partition_count, "{extension}");
+            assert!(plan.iter().all(|(chunk, boundary)| {
+                chunk.len() <= crate::generate::apply::RUST_SOURCE_PARTITION_MAX_BYTES
+                    && crate::generate::apply::encode_source_partition_payload(chunk.as_bytes())
+                        .len()
+                        <= crate::generate::apply::RUST_SOURCE_PARTITION_MAX_PAYLOAD_BYTES
+                    && boundary == "ast"
+            }));
+            assert_eq!(
+                plan.iter()
+                    .map(|(chunk, _)| chunk.as_str())
+                    .collect::<String>(),
+                source,
+                "{extension}: bounded plan reassembles exactly"
+            );
+
+            let second = CodeStrategy::new()
+                .import_explicit_source_file(&source_path, root, &output_dir)
+                .unwrap();
+            assert!(!second.requires_hitl, "{extension}: {}", second.message);
+            assert_eq!(second.partition_count, first.partition_count, "{extension}");
+            assert_eq!(
+                fs::read_to_string(&spec_path).unwrap(),
+                first_spec,
+                "{extension}"
+            );
+
+            let report = crate::generate::apply::run_apply_exact_source_target(
+                &spec_path,
+                root,
+                false,
+                &source_path,
+            )
+            .unwrap();
+            assert_eq!(report.files.iter().filter(|file| file.processed).count(), 1);
+            let managed = fs::read_to_string(&source_path).unwrap();
+            let blocks =
+                crate::generate::apply::parse_source_codegen_blocks(&source_path, &managed)
+                    .unwrap();
+            assert_eq!(blocks.len(), 1, "{extension}");
+            let expected_body = if extension == "py" {
+                source
+                    .strip_prefix("#!/usr/bin/env python3\n")
+                    .expect("Python fixture shebang")
+            } else {
+                source.as_str()
+            };
+            assert_eq!(
+                blocks[0].content,
+                expected_body.trim_end_matches(['\r', '\n']),
+                "{extension}"
+            );
+            assert!(blocks[0].spec_ref.ends_with("#text-source-unit"));
+            if extension == "py" {
+                assert!(managed.starts_with("#!/usr/bin/env python3\n# SPEC-MANAGED:"));
+            } else {
+                assert!(managed.starts_with(marker_prefix), "{extension}");
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_parse_incomplete_python_uses_deterministic_bounded_fallback() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let source_path = root.join("apps/demo/src/incomplete.py");
+        let output_dir = root.join("apps/demo/tech-design/specs");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(&output_dir).unwrap();
+        let mut source = "def incomplete(\n".to_string();
+        for idx in 0..4_000 {
+            source.push_str(&format!(
+                "# fallback {idx:04} with deterministic unicode-free payload and fake markers\n"
+            ));
+        }
+        assert!(source.len() > 100_000);
+        let mut analyzer = AstAnalyzer::new().unwrap();
+        assert!(analyzer
+            .top_level_byte_boundaries(&source_path, &source)
+            .is_err());
+        fs::write(&source_path, &source).unwrap();
+
+        let first = CodeStrategy::new()
+            .import_explicit_source_file(&source_path, root, &output_dir)
+            .unwrap();
+        assert!(!first.requires_hitl, "{}", first.message);
+        assert_eq!(first.item_count, 0);
+        assert!(first.partition_count > 1);
+        let spec_path = first.spec_path.unwrap();
+        let first_spec = fs::read_to_string(&spec_path).unwrap();
+        let decoded = crate::generate::apply::decode_partitioned_source(&first_spec)
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded.source_lang, "python");
+        assert_eq!(decoded.source, source);
+        let plan = canonical_source_partition_plan(&source, "python").unwrap();
+        assert!(plan.iter().all(|(chunk, boundary)| {
+            boundary == "parse-fallback"
+                && chunk.len() <= crate::generate::apply::RUST_SOURCE_PARTITION_MAX_BYTES
+                && crate::generate::apply::encode_source_partition_payload(chunk.as_bytes()).len()
+                    <= crate::generate::apply::RUST_SOURCE_PARTITION_MAX_PAYLOAD_BYTES
+        }));
+        let second = CodeStrategy::new()
+            .import_explicit_source_file(&source_path, root, &output_dir)
+            .unwrap();
+        assert_eq!(second.partition_count, first.partition_count);
+        assert_eq!(fs::read_to_string(&spec_path).unwrap(), first_spec);
+
+        crate::generate::apply::run_apply_exact_source_target(
+            &spec_path,
+            root,
+            false,
+            &source_path,
+        )
+        .unwrap();
+        let managed = fs::read_to_string(&source_path).unwrap();
+        assert!(managed.starts_with("# SPEC-MANAGED:"));
+        assert!(managed.contains(&source));
+        assert!(managed.ends_with("# CODEGEN-END\n"));
+        let blocks = crate::generate::apply::parse_source_codegen_blocks(&source_path, &managed)
+            .expect("AW's canonical wrapper remains recognizable around incomplete source");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].content, source.trim_end());
+        let dry = crate::generate::apply::run_apply_exact_source_target(
+            &spec_path,
+            root,
+            true,
+            &source_path,
+        )
+        .unwrap();
+        assert!(!dry.wrote_files);
+        assert_eq!(fs::read_to_string(&source_path).unwrap(), managed);
+        let repeated = crate::generate::apply::run_apply_exact_source_target(
+            &spec_path,
+            root,
+            false,
+            &source_path,
+        )
+        .unwrap();
+        assert!(!repeated.wrote_files);
+        assert_eq!(fs::read_to_string(&source_path).unwrap(), managed);
+    }
+
+    #[test]
+    fn javascript_template_literal_marker_fixture_is_not_ownership() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let source_path = root.join("apps/demo/src/fixture.mjs");
+        let output_dir = root.join("apps/demo/tech-design/specs");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(&output_dir).unwrap();
+        let source = "export const fixture = `\n// SPEC-MANAGED: fake.md#source\n// CODEGEN-BEGIN\nnot real ownership\n// CODEGEN-END\n`;\n";
+        fs::write(&source_path, source).unwrap();
+        assert!(
+            crate::generate::apply::parse_source_codegen_blocks(&source_path, source)
+                .unwrap()
+                .is_empty()
+        );
+        let outcome = CodeStrategy::new()
+            .import_explicit_source_file(&source_path, root, &output_dir)
+            .unwrap();
+        assert!(!outcome.requires_hitl, "{}", outcome.message);
+        let spec = fs::read_to_string(outcome.spec_path.unwrap()).unwrap();
+        assert_eq!(
+            crate::generate::apply::decode_partitioned_source(&spec)
+                .unwrap()
+                .unwrap()
+                .source,
+            source
+        );
+    }
+
+    #[test]
+    fn canonical_typescript_owner_can_contain_fake_template_markers_and_refresh() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let source_path = root.join("apps/demo/src/fixture.ts");
+        let spec_path = root.join("apps/demo/tech-design/semantic/source/fixture.md");
+        let output_dir = root.join("apps/demo/tech-design/specs");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(&output_dir).unwrap();
+        let spec_ref = "apps/demo/tech-design/semantic/source/fixture.md#text-source-unit";
+        let source = format!(
+            "// SPEC-MANAGED: {spec_ref}\n// CODEGEN-BEGIN\nconst fixture = `\n// SPEC-MANAGED: fake.md#text-source-unit\n// CODEGEN-BEGIN\n// CODEGEN-END\n`;\nexport const selected = 1;\n// CODEGEN-END\n"
+        );
+        fs::write(&source_path, &source).unwrap();
+        let blocks =
+            crate::generate::apply::parse_source_codegen_blocks(&source_path, &source).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].spec_ref, spec_ref);
+
+        let stale_source = "export const stale = 0;\n";
+        let stale_partitions = partition_text_source(stale_source, None);
+        let format = SourceUnitFormat::for_language(SupportedLanguage::TypeScript);
+        let stale_spec = render_source_unit_spec(
+            "apps/demo/src/fixture.ts",
+            stale_source,
+            Some(&stale_partitions),
+            format,
+        );
+        fs::write(&spec_path, stale_spec).unwrap();
+
+        let outcome = CodeStrategy::new()
+            .import_explicit_source_file(&source_path, root, &output_dir)
+            .unwrap();
+        assert!(!outcome.requires_hitl, "{}", outcome.message);
+        assert!(outcome.refreshed_existing);
+        let refreshed = fs::read_to_string(&spec_path).unwrap();
+        let decoded = crate::generate::apply::decode_partitioned_source(&refreshed)
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded.source_lang, "typescript");
+        assert_eq!(decoded.source, source);
+        assert_eq!(fs::read_to_string(&source_path).unwrap(), source);
+    }
+
+    #[test]
+    fn explicit_large_rust_file_refreshes_one_owner_and_round_trips_losslessly() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let source_path = root.join("apps/demo/src/large.rs");
+        let spec_path = root.join("apps/demo/tech-design/semantic/source/large.md");
+        let output_dir = root.join("apps/demo/tech-design/specs");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(&output_dir).unwrap();
+
+        let spec_ref = "apps/demo/tech-design/semantic/source/large.md#rust-source-unit";
+        let mut original = format!("// SPEC-MANAGED: {spec_ref}\n// CODEGEN-BEGIN\n");
+        original.push_str("fn large_source_unit() {\n");
+        for idx in 0..7_500 {
+            original.push_str(&format!(
+                "    let value_{idx}: usize = {idx}; // realistic large function body\n"
+            ));
+        }
+        original.push_str("}\n// CODEGEN-END\n");
+        assert!(original.len() > 315_000);
+        fs::write(&source_path, &original).unwrap();
+
+        let stale = format!(
+            "---\nid: large\ncapability_refs:\n  - id: preserved-capability\n    role: primary\n    gap: preserved-gap\n    claim: preserved-gap\n    coverage: full\nfill_sections: [overview, rust-source-unit, changes]\n---\n\n# Large\n\n## Overview\n<!-- type: overview lang: markdown -->\n\nPreserve this overview.\n\n## Source\n<!-- type: rust-source-unit lang: rust -->\n\n```rust\n// SPEC-MANAGED: {spec_ref}\n// CODEGEN-BEGIN\nfn stale() {{}}\n// CODEGEN-END\n```\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: apps/demo/src/large.rs\n    action: modify\n    section: rust-source-unit\n    impl_mode: codegen\n```\n"
+        );
+        fs::write(&spec_path, &stale).unwrap();
+
+        let outcome = CodeStrategy::new()
+            .import_explicit_source_file(&source_path, root, &output_dir)
+            .unwrap();
+        assert!(!outcome.requires_hitl, "{}", outcome.message);
+        assert!(outcome.refreshed_existing);
+        assert_eq!(
+            outcome.spec_path.as_deref(),
+            Some(spec_path.canonicalize().unwrap().as_path())
+        );
+        assert_eq!(outcome.item_count, 1);
+        assert!(outcome.partition_count > 1);
+
+        let refreshed = fs::read_to_string(&spec_path).unwrap();
+        assert!(refreshed.contains("preserved-capability"));
+        assert!(refreshed.contains("Preserve this overview."));
+        assert_eq!(
+            refreshed.matches("### Source Partition ").count(),
+            outcome.partition_count
+        );
+        assert_eq!(
+            crate::generate::apply::decode_partitioned_source(&refreshed)
+                .unwrap()
+                .as_ref()
+                .map(|decoded| decoded.source.as_str()),
+            Some(original.as_str())
+        );
+        let annotations = crate::models::section::parse_all_section_annotations(&refreshed);
+        assert!(annotations.iter().all(|(_, meta)| {
+            meta.section_type != crate::models::spec_rules::SectionType::TextSourceUnit
+        }));
+        assert!(
+            crate::validate::rules::section_format::check_section_format(
+                &spec_path,
+                &refreshed,
+                crate::validate::rules::section_format::DEFAULT_LOOKAHEAD,
+            )
+            .is_empty()
+        );
+
+        let parsed = crate::generate::rust_source_unit::parse(&original).unwrap();
+        let partitions = partition_rust_source(&original, Some(&parsed));
+        assert_eq!(
+            partitions
+                .iter()
+                .map(|partition| partition.content.as_str())
+                .collect::<String>(),
+            original
+        );
+        assert!(partitions.iter().all(|partition| {
+            partition.content.len() <= crate::generate::apply::RUST_SOURCE_PARTITION_MAX_BYTES
+                && crate::generate::apply::encode_source_partition_payload(
+                    partition.content.as_bytes(),
+                )
+                .len()
+                    <= crate::generate::apply::RUST_SOURCE_PARTITION_MAX_PAYLOAD_BYTES
+        }));
+        assert!(partitions.iter().any(|partition| {
+            partition.boundary == SourcePartitionBoundary::OversizedAstFallback
+        }));
+
+        let second_outcome = CodeStrategy::new()
+            .import_explicit_source_file(&source_path, root, &output_dir)
+            .unwrap();
+        assert_eq!(second_outcome.partition_count, outcome.partition_count);
+        assert_eq!(fs::read_to_string(&spec_path).unwrap(), refreshed);
+
+        fs::write(&source_path, "fn corrupted() {}\n").unwrap();
+        crate::generate::apply::run_apply_scoped_targets(
+            &spec_path,
+            root,
+            false,
+            std::slice::from_ref(&source_path),
+        )
+        .unwrap();
+        assert_eq!(fs::read_to_string(&source_path).unwrap(), original);
+    }
+
+    #[test]
+    fn explicit_unowned_files_keep_lossless_payload_when_normal_apply_adds_ownership() {
+        let cases = [
+            (
+                "normal",
+                "pub fn normal() -> &'static str { \"ok\" }\n".to_string(),
+                false,
+            ),
+            (
+                "no-final-newline",
+                "pub fn no_final_newline() -> &'static str { \"é\" }".to_string(),
+                true,
+            ),
+            (
+                "crlf",
+                "pub fn crlf() {\r\n    let _ = \"é\";\r\n}\r\n".to_string(),
+                true,
+            ),
+            (
+                "markdown-hazard",
+                "const DOC: &str = r#\"\n## Fake\n<!-- type: text-source-unit lang: rust -->\n```rust\nfn fake() {}\n```\n\"#;\n"
+                    .to_string(),
+                true,
+            ),
+        ];
+
+        for (name, source, expects_partitions) in cases {
+            let temp_dir = TempDir::new().unwrap();
+            let root = temp_dir.path();
+            let source_path = root.join(format!("apps/demo/src/{name}.rs"));
+            let output_dir = root.join("apps/demo/tech-design/specs");
+            fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+            fs::create_dir_all(&output_dir).unwrap();
+            fs::write(&source_path, &source).unwrap();
+
+            let outcome = CodeStrategy::new()
+                .import_explicit_source_file(&source_path, root, &output_dir)
+                .unwrap();
+            assert!(!outcome.requires_hitl, "{name}: {}", outcome.message);
+            let spec_path = outcome.spec_path.unwrap();
+            let spec = fs::read_to_string(&spec_path).unwrap();
+            let decoded = crate::generate::apply::decode_partitioned_source(&spec).unwrap();
+            assert_eq!(decoded.is_some(), expects_partitions, "{name}");
+            if let Some(decoded) = decoded {
+                assert_eq!(decoded.source, source, "{name}");
+                assert_eq!(decoded.source_lang, "rust", "{name}");
+            }
+            let generated_payload = crate::generate::apply::try_generate_source_section_code(
+                &spec,
+                &normalize_spec_path(spec_path.strip_prefix(root).unwrap()),
+                Some(&normalize_spec_path(
+                    source_path.strip_prefix(root).unwrap(),
+                )),
+                root,
+            )
+            .unwrap();
+            assert_eq!(generated_payload, source, "{name}: generator payload");
+
+            fs::write(&source_path, "pub fn corrupted() {}\n").unwrap();
+            crate::generate::apply::run_apply_scoped_targets(
+                &spec_path,
+                root,
+                false,
+                std::slice::from_ref(&source_path),
+            )
+            .unwrap();
+            let managed = fs::read_to_string(&source_path).unwrap();
+            let blocks = crate::generate::marker::parse_codegen_blocks(&managed);
+            assert_eq!(blocks.len(), 1, "{name}: one whole-file CODEGEN owner");
+            assert!(blocks[0].spec_ref.ends_with("#rust-source-unit"), "{name}");
+            assert_eq!(
+                blocks[0].content,
+                source.lines().collect::<Vec<_>>().join("\n"),
+                "{name}: managed wrapper must preserve the selected payload after the marker parser's documented newline normalization"
+            );
+            assert!(managed.starts_with("// SPEC-MANAGED: "), "{name}");
+            assert!(managed.ends_with("// CODEGEN-END\n"), "{name}");
+        }
+    }
+
+    #[test]
+    fn explicit_parse_incomplete_large_file_uses_deterministic_bounded_fallback() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let source_path = root.join("apps/demo/src/incomplete.rs");
+        let output_dir = root.join("apps/demo/tech-design/specs");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(&output_dir).unwrap();
+
+        let mut source = "pub fn incomplete( {\r\n".to_string();
+        for idx in 0..4_000 {
+            source.push_str(&format!(
+                "// é fallback line {idx:04} with ``` and ## fake heading\r\n"
+            ));
+        }
+        source.push_str("// deterministic final line without newline");
+        assert!(source.len() > crate::generate::apply::RUST_SOURCE_PARTITION_MAX_BYTES);
+        assert!(crate::generate::rust_source_unit::parse(&source).is_err());
+        fs::write(&source_path, &source).unwrap();
+
+        let first = CodeStrategy::new()
+            .import_explicit_source_file(&source_path, root, &output_dir)
+            .unwrap();
+        assert!(!first.requires_hitl, "{}", first.message);
+        assert_eq!(first.item_count, 0);
+        assert!(first.partition_count > 1);
+        let spec_path = first.spec_path.unwrap();
+        let first_spec = fs::read_to_string(&spec_path).unwrap();
+        assert_eq!(
+            crate::generate::apply::decode_partitioned_source(&first_spec)
+                .unwrap()
+                .as_ref()
+                .map(|decoded| decoded.source.as_str()),
+            Some(source.as_str())
+        );
+        assert_eq!(
+            crate::generate::apply::try_generate_source_section_code(
+                &first_spec,
+                &normalize_spec_path(spec_path.strip_prefix(root).unwrap()),
+                Some(&normalize_spec_path(source_path.strip_prefix(root).unwrap())),
+                root,
+            )
+            .unwrap(),
+            source,
+            "parse-incomplete fallback must remain lossless through the normal source generator core"
+        );
+        let partitions = partition_rust_source(&source, None);
+        assert!(partitions.iter().all(|partition| {
+            partition.boundary == SourcePartitionBoundary::ParseFallback
+                && partition.content.len()
+                    <= crate::generate::apply::RUST_SOURCE_PARTITION_MAX_BYTES
+                && crate::generate::apply::encode_source_partition_payload(
+                    partition.content.as_bytes(),
+                )
+                .len()
+                    <= crate::generate::apply::RUST_SOURCE_PARTITION_MAX_PAYLOAD_BYTES
+        }));
+
+        let second = CodeStrategy::new()
+            .import_explicit_source_file(&source_path, root, &output_dir)
+            .unwrap();
+        assert_eq!(second.partition_count, first.partition_count);
+        assert_eq!(fs::read_to_string(&spec_path).unwrap(), first_spec);
+
+        fs::write(&source_path, "pub fn corrupted() {}\n").unwrap();
+        crate::generate::apply::run_apply_scoped_targets(
+            &spec_path,
+            root,
+            false,
+            std::slice::from_ref(&source_path),
+        )
+        .unwrap();
+        let managed = fs::read_to_string(&source_path).unwrap();
+        let blocks = crate::generate::marker::parse_codegen_blocks(&managed);
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].spec_ref.ends_with("#rust-source-unit"));
+        assert_eq!(
+            blocks[0].content,
+            source.lines().collect::<Vec<_>>().join("\n"),
+            "managed gen-source must preserve the fallback payload inside its required ownership envelope"
+        );
+    }
+
+    #[test]
+    fn explicit_partial_codegen_owner_returns_hitl_without_mutation() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let source_path = root.join("apps/demo/src/partial.rs");
+        let spec_path = root.join("apps/demo/tech-design/semantic/source/partial.md");
+        let output_dir = root.join("apps/demo/tech-design/specs");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(&output_dir).unwrap();
+
+        let spec_ref = "apps/demo/tech-design/semantic/source/partial.md#rust-source-unit";
+        let source = format!(
+            "fn hand_written() {{}}\n// SPEC-MANAGED: {spec_ref}\n// CODEGEN-BEGIN\nfn generated() {{}}\n// CODEGEN-END\n"
+        );
+        fs::write(&source_path, source).unwrap();
+        let existing = format!(
+            "---\nid: partial\nfill_sections: [rust-source-unit, changes]\n---\n\n## Source\n<!-- type: rust-source-unit lang: rust -->\n\n```rust\nfn stale() {{}}\n```\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: apps/demo/src/partial.rs\n    action: modify\n    section: rust-source-unit\n    impl_mode: codegen\n```\n"
+        );
+        fs::write(&spec_path, &existing).unwrap();
+
+        let outcome = CodeStrategy::new()
+            .import_explicit_source_file(&source_path, root, &output_dir)
+            .unwrap();
+
+        assert!(outcome.requires_hitl);
+        assert!(outcome.message.contains("partial"));
+        assert_eq!(fs::read_to_string(&spec_path).unwrap(), existing);
+    }
+
+    #[test]
+    fn explicit_rust_marker_ambiguity_returns_hitl_without_td_mutation() {
+        let cases = [
+            (
+                "unmatched",
+                "// CODEGEN-BEGIN\npub fn selected() {}\n",
+            ),
+            (
+                "parse-incomplete",
+                "pub fn outside() {}\n// SPEC-MANAGED: apps/demo/tech-design/specs/selected.md#rust-source-unit\n// CODEGEN-BEGIN\npub fn selected( {\n// CODEGEN-END\n",
+            ),
+        ];
+        for (name, source) in cases {
+            let temp_dir = TempDir::new().unwrap();
+            let root = temp_dir.path();
+            let source_path = root.join("apps/demo/src/selected.rs");
+            let output_dir = root.join("apps/demo/tech-design/specs");
+            let expected_spec = output_dir.join("apps/demo/src/selected.md");
+            fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+            fs::create_dir_all(&output_dir).unwrap();
+            fs::write(&source_path, source).unwrap();
+
+            let outcome = CodeStrategy::new()
+                .import_explicit_source_file(&source_path, root, &output_dir)
+                .unwrap();
+            assert!(outcome.requires_hitl, "{name}: {}", outcome.message);
+            assert!(
+                outcome.message.contains("ambiguous"),
+                "{name}: {}",
+                outcome.message
+            );
+            assert!(!expected_spec.exists(), "{name}");
+            assert_eq!(fs::read_to_string(&source_path).unwrap(), source, "{name}");
+        }
+    }
+
+    #[test]
+    fn existing_owner_invalid_exact_contract_is_hitl_before_refresh() {
+        let base = "---\nid: owner\nfill_sections: [rust-source-unit, changes]\n---\n\n## Source\n<!-- type: rust-source-unit lang: rust -->\n\n```rust\npub fn stale() {}\n```\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: apps/demo/src/owned.rs\n    action: modify\n    section: rust-source-unit\n    impl_mode: codegen\n```\n";
+        let cases = [
+            (
+                "create-action",
+                base.replace("action: modify", "action: create"),
+            ),
+            (
+                "replaces",
+                base.replace(
+                    "    impl_mode: codegen",
+                    "    replaces: [owned]\n    impl_mode: codegen",
+                ),
+            ),
+            (
+                "duplicate-annotation",
+                base.replace(
+                    "<!-- type: rust-source-unit lang: rust -->",
+                    "<!-- type: rust-source-unit lang: rust -->\n<!-- type: rust-source-unit lang: rust -->",
+                ),
+            ),
+            (
+                "second-source-entry",
+                base.replace(
+                    "    impl_mode: codegen\n```\n",
+                    "    impl_mode: codegen\n  - path: apps/demo/src/owned.rs\n    action: modify\n    section: schema\n    impl_mode: hand-written\n```\n",
+                ),
+            ),
+        ];
+
+        for (name, existing) in cases {
+            let temp_dir = TempDir::new().unwrap();
+            let root = temp_dir.path();
+            let source_path = root.join("apps/demo/src/owned.rs");
+            let spec_path = root.join("apps/demo/tech-design/semantic/source/owned.md");
+            let output_dir = root.join("apps/demo/tech-design/specs");
+            fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+            fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+            fs::create_dir_all(&output_dir).unwrap();
+            let source = "pub fn owned() {}\n";
+            fs::write(&source_path, source).unwrap();
+            fs::write(&spec_path, &existing).unwrap();
+
+            let outcome = CodeStrategy::new()
+                .import_explicit_source_file(&source_path, root, &output_dir)
+                .unwrap();
+            assert!(outcome.requires_hitl, "{name}: {}", outcome.message);
+            assert_eq!(fs::read_to_string(&spec_path).unwrap(), existing, "{name}");
+            assert_eq!(fs::read_to_string(&source_path).unwrap(), source, "{name}");
+        }
+    }
+
+    #[test]
+    fn source_unit_candidate_persistence_detects_snapshot_drift_and_no_clobber() {
+        let temp_dir = TempDir::new().unwrap();
+        let existing = temp_dir.path().join("existing.md");
+        fs::write(&existing, "original\n").unwrap();
+        let snapshot = fs::read_to_string(&existing).unwrap();
+        fs::write(&existing, "concurrent\n").unwrap();
+        assert_eq!(
+            persist_source_unit_candidate(&existing, "candidate\n", Some(&snapshot)).unwrap(),
+            SourceUnitPersistOutcome::ConcurrentDrift
+        );
+        assert_eq!(fs::read_to_string(&existing).unwrap(), "concurrent\n");
+
+        let raced_new = temp_dir.path().join("new.md");
+        fs::write(&raced_new, "other-agent\n").unwrap();
+        assert_eq!(
+            persist_source_unit_candidate(&raced_new, "candidate\n", None).unwrap(),
+            SourceUnitPersistOutcome::ConcurrentDrift
+        );
+        assert_eq!(fs::read_to_string(&raced_new).unwrap(), "other-agent\n");
+
+        let clean_new = temp_dir.path().join("clean.md");
+        assert_eq!(
+            persist_source_unit_candidate(&clean_new, "candidate\n", None).unwrap(),
+            SourceUnitPersistOutcome::Written
+        );
+        assert_eq!(fs::read_to_string(clean_new).unwrap(), "candidate\n");
+    }
+
+    #[test]
+    fn existing_owner_refresh_is_fence_aware_and_replaces_all_old_partitions() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let source_path = root.join("apps/demo/src/raw_doc.rs");
+        let spec_path = root.join("apps/demo/tech-design/semantic/source/raw-doc.md");
+        let output_dir = root.join("apps/demo/tech-design/specs");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(&output_dir).unwrap();
+
+        let spec_ref = "apps/demo/tech-design/semantic/source/raw-doc.md#rust-source-unit";
+        let source = format!(
+            "// SPEC-MANAGED: {spec_ref}\n// CODEGEN-BEGIN\nconst DOC: &str = r#\"\n## Fake\n```rust\nfn fake() {{}}\n```\n\"#;\n// CODEGEN-END\n"
+        );
+        fs::write(&source_path, &source).unwrap();
+        let existing = format!(
+            "---\nid: raw-doc\ncapability_refs:\n  - id: keep-me\n    role: primary\n    gap: keep-gap\n    claim: keep-gap\n    coverage: full\nfill_sections: [rust-source-unit, changes]\n---\n\n# Raw Doc\n\n## Source\n<!-- type: rust-source-unit lang: rust -->\n\n````rust\nconst OLD: &str = r#\"\n## Fake\n\"#;\n````\n\n### Source Partition 9999\n<!-- aw-source-partition: index=9999 count=9999 bytes=1 payload_bytes=4 encoding=base64 digest=sha256:bad boundary=ast terminal_newline=false -->\n\n```text\neA==\n```\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: apps/demo/src/raw_doc.rs\n    action: modify\n    section: rust-source-unit\n    impl_mode: codegen\n```\n"
+        );
+        fs::write(&spec_path, existing).unwrap();
+
+        let outcome = CodeStrategy::new()
+            .import_explicit_source_file(&source_path, root, &output_dir)
+            .unwrap();
+        assert!(!outcome.requires_hitl, "{}", outcome.message);
+        let refreshed = fs::read_to_string(&spec_path).unwrap();
+        assert!(refreshed.contains("id: keep-me"));
+        assert!(!refreshed.contains("Source Partition 9999"));
+        assert_eq!(
+            crate::generate::apply::decode_partitioned_source(&refreshed)
+                .unwrap()
+                .as_ref()
+                .map(|decoded| decoded.source.as_str()),
+            Some(source.as_str())
+        );
+    }
+
     #[test]
     fn test_can_handle() {
         let temp_dir = TempDir::new().unwrap();
@@ -1365,7 +3149,7 @@ enum InternalEnum {
 
         let strategy = CodeStrategy::new();
         assert!(strategy.can_handle(temp_dir.path()));
-        assert!(!strategy.can_handle(&file));
+        assert!(strategy.can_handle(&file));
     }
 
     #[test]

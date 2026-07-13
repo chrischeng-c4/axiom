@@ -1631,6 +1631,15 @@ fn validate_spec_inner(
         }
     }
 
+    // #1506: partitioned large-source artifacts use one typed H2 Source
+    // section plus untyped H3 payload partitions. Validate the manifest with
+    // the same strict decoder production gen-source uses, so missing,
+    // duplicate, reordered, oversized, or digest-mismatched chunks fail
+    // `aw td check` before any target can be generated.
+    if let Err(error) = crate::generate::apply::decode_partitioned_source(spec_content) {
+        errors.push(format!("invalid source partition manifest: {error}"));
+    }
+
     for (heading, ann, content) in &sections {
         if ann.section_type == "e2e-test" {
             errors.extend(validate_e2e_test_section(heading, content));
