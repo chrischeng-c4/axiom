@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-13T10:59:40.591833+00:00"
-digest = "sha256:43132e5cb582a4f88d731fc07e93deaf2d16fc935c0437db678f087ed43cb8fd"
-source_digest = "sha256:43132e5cb582a4f88d731fc07e93deaf2d16fc935c0437db678f087ed43cb8fd"
-ir_digest = "sha256:2d77d77e99e345ce3615011a792cdc2233814aac2533956da81e560d4eec1afc"
+generated_at = "2026-07-13T11:29:15.813825+00:00"
+digest = "sha256:24b90a7d82ea328815a6aa450b6586217189efa8931b706a8f4db98ed1a28520"
+source_digest = "sha256:24b90a7d82ea328815a6aa450b6586217189efa8931b706a8f4db98ed1a28520"
+ir_digest = "sha256:fbefa0ae27cc547ffc8dd8d001ac091eb880fde650829f461e82c470be904911"
 
 [[files]]
 path = "README.md"
@@ -36,6 +36,12 @@ path = "logic/normalize-replay-checkpoints-into-pull-subscriptions.md"
 digest = "sha256:1f61ae73eb41d5ef90d5aa04670eef210064f4246d2821ce70de0ce7a3ea63db"
 ir_digest = "sha256:aca744a06a27f4f86ab56d5eead6f8561c915e3693257dd924223af272b9abd3"
 section_count = 3
+
+[[files]]
+path = "logic/project-the-stateful-service-workload-baseline.md"
+digest = "sha256:7262a8a2df58875b30337cd3b2dd24a37daf9b147c1800dde40dcf7b56b27d07"
+ir_digest = "sha256:16e3ef655ba06e9e326d18a3833a6c4a233ac95c45cd0f46779552566df28ad6"
+section_count = 1
 
 [[files]]
 path = "logic/tape-backup-service-tls-spec-gen-clients.md"
