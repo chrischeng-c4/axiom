@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:824020c4" tracker="pending-tracker" reason="Implement the versioned operational-event envelope, durable raw journal, idempotency, query, and replay core."
+// HANDWRITE-BEGIN gap="sift-service-core" tracker="1576" reason="Implement the versioned operational-event envelope, durable raw journal, idempotency, query, and replay core."
 //! Sift's bootstrap service core: a versioned six-signal envelope and the
 //! canonical, fsync-before-ack raw event journal. Materialized log, trace,
 //! error, metric, and audit/change stores deliberately build from this journal
@@ -33,9 +33,7 @@ pub const EVENT_SCHEMA_VERSION: u16 = 1;
 const JOURNAL_FILE: &str = "raw-events.ndjson";
 
 /// The six operational signal kinds accepted into Sift's canonical event log.
-#[derive(
-    Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, ToSchema, ValueEnum,
-)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, ToSchema, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum SignalKind {
     Log,
@@ -229,21 +227,28 @@ impl DurableJournal {
             let file = File::open(&journal_path)
                 .with_context(|| format!("open journal {}", journal_path.display()))?;
             for (line_number, line) in BufReader::new(file).lines().enumerate() {
-                let line = line.with_context(|| format!("read journal line {}", line_number + 1))?;
+                let line =
+                    line.with_context(|| format!("read journal line {}", line_number + 1))?;
                 if line.trim().is_empty() {
                     continue;
                 }
                 let stored: StoredEvent = serde_json::from_str(&line)
                     .with_context(|| format!("decode journal line {}", line_number + 1))?;
                 stored.event.validate().with_context(|| {
-                    format!("validate recovered event at journal line {}", line_number + 1)
+                    format!(
+                        "validate recovered event at journal line {}",
+                        line_number + 1
+                    )
                 })?;
                 if state
                     .cursors_by_event_id
                     .insert(stored.event.event_id.clone(), stored.cursor)
                     .is_some()
                 {
-                    bail!("journal contains duplicate event_id {}", stored.event.event_id);
+                    bail!(
+                        "journal contains duplicate event_id {}",
+                        stored.event.event_id
+                    );
                 }
                 state.events.push(stored);
             }
@@ -271,7 +276,11 @@ impl DurableJournal {
             });
         }
 
-        let cursor = state.events.last().map(|entry| entry.cursor + 1).unwrap_or(1);
+        let cursor = state
+            .events
+            .last()
+            .map(|entry| entry.cursor + 1)
+            .unwrap_or(1);
         let stored = StoredEvent {
             cursor,
             acknowledged_at: now_rfc3339(),
@@ -285,7 +294,8 @@ impl DurableJournal {
             .with_context(|| format!("open journal {} for append", self.journal_path.display()))?;
         file.write_all(&encoded).context("append raw event")?;
         file.write_all(b"\n").context("terminate raw event")?;
-        file.sync_data().context("fsync raw event before acknowledgement")?;
+        file.sync_data()
+            .context("fsync raw event before acknowledgement")?;
         self.fsyncs.fetch_add(1, Ordering::Relaxed);
 
         state
@@ -311,7 +321,11 @@ impl DurableJournal {
             .events
             .iter()
             .filter(|entry| entry.cursor > query.after)
-            .filter(|entry| query.signal.is_none_or(|signal| entry.event.signal == signal))
+            .filter(|entry| {
+                query
+                    .signal
+                    .is_none_or(|signal| entry.event.signal == signal)
+            })
             .take(limit)
             .cloned()
             .collect())
@@ -434,7 +448,8 @@ async fn ingest(
     State(state): State<Arc<ServiceState>>,
     payload: Result<Json<EventEnvelope>, JsonRejection>,
 ) -> Result<(StatusCode, Json<AppendResult>), ApiError> {
-    let Json(event) = payload.map_err(|error| ApiError::bad_request("invalid_json", error.body_text()))?;
+    let Json(event) =
+        payload.map_err(|error| ApiError::bad_request("invalid_json", error.body_text()))?;
     let result = state
         .journal
         .append(event)
@@ -444,7 +459,11 @@ async fn ingest(
     } else {
         StatusCode::CREATED
     };
-    tracing::info!(cursor = result.cursor, duplicate = result.duplicate, "raw event acknowledged");
+    tracing::info!(
+        cursor = result.cursor,
+        duplicate = result.duplicate,
+        "raw event acknowledged"
+    );
     Ok((status, Json(result)))
 }
 

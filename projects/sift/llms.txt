@@ -1,0 +1,28 @@
+# Sift Agent Context
+
+Sift is the unified GCP/GKE operational-event service. Its raw journal is the
+canonical source of truth for logs, spans, exceptions, direct metric points
+with exemplars, audit events, and change events.
+
+## Workflow
+
+- Capability contract: `README.md`
+- Tech design: `tech-design/`
+- Readiness: `aw health --project sift full`
+- Verify TD: `aw td check tech-design`
+
+## Commands
+
+- Build debug: `./build.sh debug`
+- Build release profile: `./build.sh release`
+- Test: `cargo test -p sift`
+- Run: `sift serve --data-dir ./sift-data`
+- Contract: `sift spec`
+- Agent documentation: `sift llm --topic outline`
+
+## Service contract
+
+`POST /v1/events` acknowledges only after the raw-event journal append has
+been fsynced. Reuse an `event_id` to retry idempotently. HTTP/1.1 and h2c use
+one port; standard routes are `/healthz`, `/readyz`, `/metrics`,
+`/openapi.json`, and `/docs`.

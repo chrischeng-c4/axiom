@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:22621a19" tracker="pending-tracker" reason="Implement serve, event, query, replay, spec, llm, upgrade, and issue CLI surfaces."
+// HANDWRITE-BEGIN gap="sift-service-cli" tracker="1576" reason="Implement serve, event, query, replay, spec, llm, upgrade, and issue CLI surfaces."
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
@@ -7,7 +7,11 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use sift::{DurableJournal, EventEnvelope, EventQuery, ServiceState, SignalKind};
 
 #[derive(Parser)]
-#[command(name = "sift", version, about = "Sift — operational event service and CLI")]
+#[command(
+    name = "sift",
+    version,
+    about = "Sift — operational event service and CLI"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -126,6 +130,7 @@ enum IssueCommand {
     Search(IssueSearchArgs),
     View(IssueViewArgs),
     Create(IssueCreateArgs),
+    Comment(IssueCommentArgs),
 }
 
 #[derive(Args)]
@@ -147,6 +152,17 @@ struct IssueViewArgs {
 struct IssueCreateArgs {
     #[arg(short = 't', long)]
     title: Option<String>,
+    #[arg(value_name = "MESSAGE", num_args = 0..)]
+    message: Vec<String>,
+    #[arg(long)]
+    dry_run: bool,
+    #[arg(short = 'y', long)]
+    yes: bool,
+}
+
+#[derive(Args)]
+struct IssueCommentArgs {
+    number: u64,
     #[arg(value_name = "MESSAGE", num_args = 0..)]
     message: Vec<String>,
     #[arg(long)]
@@ -202,16 +218,18 @@ async fn main() -> Result<()> {
             println!("next: done");
             Ok(())
         }
-        Command::Upgrade(args) => cli_std::upgrade::run(
-            &TOOL,
-            cli_std::upgrade::Options {
-                check: args.check,
-                tag: args.tag,
-                force: args.force,
-                yes: args.yes,
-            },
-        )
-        .await,
+        Command::Upgrade(args) => {
+            cli_std::upgrade::run(
+                &TOOL,
+                cli_std::upgrade::Options {
+                    check: args.check,
+                    tag: args.tag,
+                    force: args.force,
+                    yes: args.yes,
+                },
+            )
+            .await
+        }
         Command::Issue(args) => issue(args).await,
     }
 }
@@ -233,9 +251,12 @@ async fn serve(args: ServeArgs) -> Result<()> {
     service_http::init_tracing(&config)?;
 
     let state = Arc::new(ServiceState::open(&args.data_dir)?);
-    let app = service_http::standard_probe_routes(state.clone(), Some(state.clone()), sift::openapi)
-        .merge(sift::router(state.clone()).layer(DefaultBodyLimit::max(config.body_limit_bytes)))
-        .layer(service_http::trace_layer());
+    let app =
+        service_http::standard_probe_routes(state.clone(), Some(state.clone()), sift::openapi)
+            .merge(
+                sift::router(state.clone()).layer(DefaultBodyLimit::max(config.body_limit_bytes)),
+            )
+            .layer(service_http::trace_layer());
     let listener = tokio::net::TcpListener::bind(config.bind_addr())
         .await
         .context("bind Sift service listener")?;
@@ -280,25 +301,42 @@ fn replay(args: ReplayArgs) -> Result<()> {
 
 async fn issue(args: IssueArgs) -> Result<()> {
     match args.command {
-        IssueCommand::Search(args) => cli_std::issue::search(
-            &TOOL,
-            cli_std::issue::SearchOptions {
-                query: (!args.query.is_empty()).then(|| args.query.join(" ")),
-                state: args.state,
-                limit: args.limit,
-            },
-        )
-        .await,
+        IssueCommand::Search(args) => {
+            cli_std::issue::search(
+                &TOOL,
+                cli_std::issue::SearchOptions {
+                    query: (!args.query.is_empty()).then(|| args.query.join(" ")),
+                    state: args.state,
+                    limit: args.limit,
+                },
+            )
+            .await
+        }
         IssueCommand::View(args) => cli_std::issue::view(&TOOL, args.number).await,
         IssueCommand::Create(args) => {
             let message = (!args.message.is_empty()).then(|| args.message.join(" "));
-            let title = args.title.unwrap_or_else(|| "sift: issue report".to_string());
+            let title = args
+                .title
+                .unwrap_or_else(|| "sift: issue report".to_string());
             cli_std::issue::create(
                 &TOOL,
                 cli_std::issue::CreateOptions {
                     title,
                     message,
                     label: vec!["app:sift".to_string()],
+                    dry_run: args.dry_run,
+                    yes: args.yes,
+                    ..Default::default()
+                },
+            )
+            .await
+        }
+        IssueCommand::Comment(args) => {
+            cli_std::issue::comment(
+                &TOOL,
+                cli_std::issue::CommentOptions {
+                    number: args.number,
+                    message: (!args.message.is_empty()).then(|| args.message.join(" ")),
                     dry_run: args.dry_run,
                     yes: args.yes,
                     ..Default::default()

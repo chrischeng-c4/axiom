@@ -1,0 +1,11 @@
+version = 1
+project = "sift"
+ir_kind = "ec"
+ec_path = "projects/sift/external-contracts"
+inventory_path = "projects/sift/aw.toml"
+generated_at = "2026-07-13T12:38:56.647646+00:00"
+ir_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+source_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+sources = []
+cases = []
+tool_contracts = []

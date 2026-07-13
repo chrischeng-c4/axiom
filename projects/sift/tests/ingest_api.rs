@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:e1829143" tracker="pending-tracker" reason="Verify ingest acknowledgement, duplicate idempotency, direct metric preservation, query, and replay."
+// HANDWRITE-BEGIN gap="sift-ingest-contract-tests" tracker="1576" reason="Verify ingest acknowledgement, duplicate idempotency, direct metric preservation, query, and replay."
 use std::sync::Arc;
 
 use axum::{
@@ -13,7 +13,9 @@ use tower::ServiceExt;
 
 fn event(id: &str, signal: SignalKind) -> EventEnvelope {
     let mut event = EventEnvelope::new(id, signal, serde_json::json!({ "message": "accepted" }));
-    event.resource.insert("service.name".to_string(), "checkout".to_string());
+    event
+        .resource
+        .insert("service.name".to_string(), "checkout".to_string());
     event.trace_id = Some("0af7651916cd43dd8448eb211c80319c".to_string());
     event.span_id = Some("b7ad6b7169203331".to_string());
     if signal == SignalKind::Metric {
@@ -65,7 +67,11 @@ fn journal_fsync_boundary_restart_and_replay_are_idempotent() {
 
     let recovered = DurableJournal::open(temp.path()).unwrap();
     let all = recovered.query(EventQuery::default()).unwrap();
-    assert_eq!(all.len(), 2, "acknowledged events survive restart exactly once");
+    assert_eq!(
+        all.len(),
+        2,
+        "acknowledged events survive restart exactly once"
+    );
     assert_eq!(all[0].event.event_id, "metric-1");
     assert_eq!(all[0].event.metric.as_ref().unwrap().exemplars.len(), 1);
 
