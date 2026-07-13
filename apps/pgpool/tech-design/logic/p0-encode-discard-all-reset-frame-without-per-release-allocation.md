@@ -26,3 +26,18 @@ flowchart LR
   frame --> reader[existing FrameReader to ReadyForQuery]
   reader --> idle([safe idle backend])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/pool/backend_pool.rs
+    action: modify
+    section: pgpool-static-discard-all-frame
+    impl_mode: hand-written
+  - path: apps/pgpool/tests/pool.rs
+    action: modify
+    section: pgpool-static-discard-all-frame
+    impl_mode: hand-written
+```
