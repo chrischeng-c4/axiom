@@ -3426,6 +3426,7 @@ fn which(binary: &str) -> Option<PathBuf> {
     None
 }
 
+// <HANDWRITE gap="vat-microvm-published-endpoint-readiness" tracker="#1526" reason="Route MicroVM service probes through an endpoint-usability check that distinguishes an immediate EOF or reset from an idle but open protocol connection, while retaining explicit HTTP round trips.">
 fn readiness_ready(probe: &ReadyProbe) -> Result<bool> {
     match probe {
         ReadyProbe::None => Ok(true),
@@ -3445,6 +3446,7 @@ fn readiness_ready(probe: &ReadyProbe) -> Result<bool> {
         }
     }
 }
+// </HANDWRITE>
 
 fn tcp_ready(host: &str, port: u16) -> Result<bool> {
     let addr = (host, port)
@@ -3454,6 +3456,7 @@ fn tcp_ready(host: &str, port: u16) -> Result<bool> {
     Ok(TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok())
 }
 
+// <HANDWRITE gap="vat-microvm-published-endpoint-failure-evidence" tracker="#1526" reason="Persist terminal MicroVM readiness evidence, collect best-effort runtime and inspect diagnostics, and leave no VAT-owned MicroVM after an unusable published endpoint.">
 fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Result<()> {
     for service in services {
         let started = Instant::now();
@@ -3505,6 +3508,7 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
     }
     Ok(())
 }
+// </HANDWRITE>
 
 fn emit_service_runtime_hints(service: &ServiceHandle) -> Result<()> {
     let stdout = std::fs::read_to_string(&service.record.stdout_log).unwrap_or_default();

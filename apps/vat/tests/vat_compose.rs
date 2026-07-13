@@ -28,6 +28,7 @@ mod tests {
             .unwrap_or(false)
     }
 
+// <HANDWRITE gap="vat-compose-detached-status-regression" tracker="#1526" reason="Update full-cycle compose assertions for evidence-based starting and ready semantics without changing Docker runtime behavior.">
     #[test]
     fn test_compose_full_cycle_up_down() {
         if !docker_available() {
@@ -138,6 +139,7 @@ services:
             .unwrap();
         assert!(!output.status.success());
     }
+// </HANDWRITE>
 
     #[test]
     fn test_compose_import_expands_services() {

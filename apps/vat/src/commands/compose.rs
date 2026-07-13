@@ -89,6 +89,7 @@ fn import_cmd(
     Ok(ExitCode::SUCCESS)
 }
 
+// <HANDWRITE gap="vat-compose-detached-readiness-reconciliation" tracker="#1526" reason="Reconcile persisted VAT service records for detached compose so starting, ready, and terminal startup failure are truthful and diagnosable.">
 /// Start a compose project (foreground or detached).
 fn up_cmd(project: Option<String>, detach: bool) -> Result<ExitCode> {
     let project_name = sanitize_project_name(
@@ -176,6 +177,7 @@ fn up_cmd(project: Option<String>, detach: bool) -> Result<ExitCode> {
         keep: None,
     })
 }
+// </HANDWRITE>
 
 /// Stop a running compose project.
 fn down_cmd(project: String) -> Result<ExitCode> {
@@ -216,6 +218,7 @@ fn down_cmd(project: String) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+// <HANDWRITE gap="vat-compose-detached-readiness-projection" tracker="#1526" reason="Project reconciled detached compose state instead of treating a discovered VAT id as a successful startup.">
 /// List services in a compose project.
 fn ps_cmd(project: String) -> Result<ExitCode> {
     let project_name = sanitize_project_name(&project);
@@ -251,6 +254,7 @@ fn ps_cmd(project: String) -> Result<ExitCode> {
     }
     Ok(ExitCode::SUCCESS)
 }
+// </HANDWRITE>
 
 /// Print logs from a service in a compose project.
 fn logs_cmd(project: String, service: String) -> Result<ExitCode> {
