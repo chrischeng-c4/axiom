@@ -518,6 +518,47 @@ pub(crate) fn td_activate_inplace_allowing_dirty_spec_path(
     Ok(())
 }
 
+/// Activate an existing TD workspace while carrying exactly one CLI-owned
+/// untracked empty skeleton. Unlike the general dirty-spec helper this never
+/// permits tracked/staged content or a second dirty path, and it revalidates
+/// both status and bytes after a branch switch.
+fn activate_td_workspace_with_recoverable_skeleton(
+    project_root: &std::path::Path,
+    slug: &str,
+    spec_path: &str,
+    provision_if_missing: bool,
+) -> Result<String> {
+    if !recoverable_untracked_td_skeleton(project_root, spec_path, slug)? {
+        anyhow::bail!(
+            "in-place td skeleton recovery requires the sole exact untracked known-empty file '{}'",
+            spec_path
+        );
+    }
+    let current = crate::branch_switch::current_branch(project_root)?;
+    let mut active = current.clone();
+    if should_use_td_branch(&current) {
+        let branch = td_branch_name(slug);
+        let branch_exists =
+            crate::branch_switch::branch_exists_local(project_root, &branch).unwrap_or(false);
+        if !branch_exists && !provision_if_missing {
+            anyhow::bail!(
+                "workspace not found: branch '{}' does not exist (run `aw td create {}` first to provision)",
+                branch,
+                slug,
+            );
+        }
+        crate::branch_switch::switch_or_create_branch(project_root, &branch, &current)?;
+        active = branch;
+    }
+    if !recoverable_untracked_td_skeleton(project_root, spec_path, slug)? {
+        anyhow::bail!(
+            "TD skeleton '{}' changed status or bytes during workspace activation",
+            spec_path
+        );
+    }
+    Ok(active)
+}
+
 /// The retired checkout `.aw/issues` tree is no longer a lifecycle dirty-path
 /// exception. Issue working copies now live under the temp-backed
 /// [`LocalBackend`] store, outside git status.
@@ -548,7 +589,7 @@ fn ensure_clean_or_only_dirty_paths(
 ) -> Result<()> {
     let git = crate::git::find_git_bin().context("git binary not found on PATH")?;
     let output = std::process::Command::new(&git)
-        .args(["status", "--porcelain"])
+        .args(["status", "--porcelain=v1", "--untracked-files=all"])
         .current_dir(project_root)
         .output()
         .with_context(|| format!("running git status in {}", project_root.display()))?;
@@ -592,6 +633,61 @@ fn ensure_clean_or_only_dirty_paths(
     )
 }
 
+/// Return whether the checkout contains exactly one status record and that
+/// record is the untracked `path`. `--untracked-files=all` keeps an untracked
+/// directory from collapsing to `?? dir/`, while `-z` makes the byte shape
+/// unambiguous for spaces, quotes, and rename records.
+///
+/// This is intentionally stricter than the lifecycle dirty-path helpers: a
+/// tracked modification, staged addition, rename destination, or unrelated
+/// sibling must never enter TD skeleton recovery.
+fn checkout_has_only_exact_untracked_path(
+    project_root: &std::path::Path,
+    path: &str,
+) -> Result<bool> {
+    let git = crate::git::find_git_bin().context("git binary not found on PATH")?;
+    let normalized = normalize_checkout_rel_path(path);
+    if normalized.is_empty() || std::path::Path::new(&normalized).is_absolute() {
+        return Ok(false);
+    }
+    let expected = format!("?? {normalized}\0").into_bytes();
+
+    let status = |pathspec: Option<&str>| -> Result<std::process::Output> {
+        let mut command = std::process::Command::new(&git);
+        command
+            .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+            .current_dir(project_root);
+        if let Some(pathspec) = pathspec {
+            command.arg("--").arg(pathspec);
+        }
+        command
+            .output()
+            .with_context(|| format!("running git status in {}", project_root.display()))
+    };
+
+    let targeted = status(Some(&normalized))?;
+    if !targeted.status.success() {
+        anyhow::bail!(
+            "git status failed in {}: {}",
+            project_root.display(),
+            String::from_utf8_lossy(&targeted.stderr).trim()
+        );
+    }
+    if targeted.stdout != expected {
+        return Ok(false);
+    }
+
+    let whole_tree = status(None)?;
+    if !whole_tree.status.success() {
+        anyhow::bail!(
+            "git status failed in {}: {}",
+            project_root.display(),
+            String::from_utf8_lossy(&whole_tree.stderr).trim()
+        );
+    }
+    Ok(whole_tree.stdout == expected)
+}
+
 fn porcelain_path(line: &str) -> Option<&str> {
     let path = line.get(3..)?.trim();
     if path.is_empty() {
@@ -619,6 +715,7 @@ async fn provision_td_workspace(
     issue_ref: &str,
     workflow_slug: &str,
     branch: &str,
+    recoverable_spec_path: Option<&str>,
 ) -> Result<()> {
     use crate::issues::IssueBackend;
 
@@ -688,7 +785,15 @@ async fn provision_td_workspace(
 
     // Provision: only split to `td-<slug>` when starting from `main`.
     // Project branches stay as the active TD workspace.
-    let active_branch = activate_td_workspace_for_lifecycle(project_root, workflow_slug)?;
+    let active_branch = match recoverable_spec_path {
+        Some(spec_path) => activate_td_workspace_with_recoverable_skeleton(
+            project_root,
+            workflow_slug,
+            spec_path,
+            true,
+        )?,
+        None => activate_td_workspace_for_lifecycle(project_root, workflow_slug)?,
+    };
 
     // Set phase + branch on the issue, on the workspace.
     let wt_backend = LocalBackend::from_project_root(project_root);
@@ -725,11 +830,22 @@ async fn reset_unreachable_td_init(
     issue_ref: &str,
     workflow_slug: &str,
     history_state: &str,
+    recoverable_spec_path: Option<&str>,
 ) -> Result<()> {
     use crate::issues::IssueBackend;
 
-    crate::branch_switch::ensure_branch_clean(project_root)
-        .map_err(|e| anyhow::anyhow!("TD lifecycle recovery requires a clean tree: {e}"))?;
+    match recoverable_spec_path {
+        Some(spec_path) => {
+            if !recoverable_untracked_td_skeleton(project_root, spec_path, workflow_slug)? {
+                anyhow::bail!(
+                    "TD lifecycle recovery requires the sole exact untracked known-empty skeleton '{}'",
+                    spec_path
+                );
+            }
+        }
+        None => crate::branch_switch::ensure_branch_clean(project_root)
+            .map_err(|e| anyhow::anyhow!("TD lifecycle recovery requires a clean tree: {e}"))?,
+    }
     let backend = LocalBackend::from_project_root(project_root);
     let mut issue = backend
         .get(issue_ref)
@@ -2681,20 +2797,111 @@ fn initialize_td_spec_skeleton(spec_abs: &std::path::Path, slug: &str) -> Result
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create spec directory {}", parent.display()))?;
     }
-    // Serialize through YAML rather than interpolating a plain scalar. A
-    // numeric GitHub WI id such as `1487` must stay a string; otherwise YAML
-    // parses it as a number and the first section-apply validation reports a
-    // missing string `id` (#1521). Safe non-numeric slugs remain plain scalars.
+    let skeleton = td_spec_skeleton(slug)?;
+    std::fs::write(spec_abs, skeleton)
+        .with_context(|| format!("failed to write TD skeleton {}", spec_abs.display()))?;
+    Ok(true)
+}
+
+/// Render the one canonical empty TD skeleton. The id always passes through
+/// serde_yaml so an all-numeric tracker id remains a YAML string, while the
+/// queue comes from the active applicability registry rather than a second
+/// hard-coded source of truth.
+fn td_spec_skeleton(slug: &str) -> Result<String> {
     let yaml_id = serde_yaml::to_string(slug)
         .context("failed to serialize TD skeleton id")?
         .trim_end_matches(['\r', '\n'])
         .to_string();
     let default_sections = td_section_queue("applicability").join(", ");
-    let skeleton =
-        format!("---\nid: {yaml_id}\nsummary: (fill)\nfill_sections: [{default_sections}]\n---\n");
-    std::fs::write(spec_abs, skeleton)
-        .with_context(|| format!("failed to write TD skeleton {}", spec_abs.display()))?;
-    Ok(true)
+    Ok(format!(
+        "---\nid: {yaml_id}\nsummary: (fill)\nfill_sections: [{default_sections}]\n---\n"
+    ))
+}
+
+/// Exact historical empty skeleton byte shapes that may be recovered after a
+/// prior `aw td create` was interrupted before staging its CLI-owned file.
+/// No parser-based or whitespace-tolerant matching is allowed: comments,
+/// authored content, wrong ids, and even an extra newline are immutable.
+fn known_empty_td_spec_skeletons(slug: &str) -> Result<Vec<String>> {
+    let yaml_id = serde_yaml::to_string(slug)
+        .context("failed to serialize TD skeleton id")?
+        .trim_end_matches(['\r', '\n'])
+        .to_string();
+    let candidates = [
+        td_spec_skeleton(slug)?,
+        format!("---\nid: {yaml_id}\nsummary: (fill)\nfill_sections: [logic, unit-test]\n---\n"),
+        format!("---\nid: {yaml_id}\nsummary: (fill)\nfill_sections: []\n---\n"),
+        format!("---\nid: {slug:?}\nsummary: (fill)\nfill_sections: []\n---\n"),
+        format!("---\nid: {slug}\nsummary: (fill)\nfill_sections: []\n---\n"),
+    ];
+    let mut unique = Vec::new();
+    for candidate in candidates {
+        if !unique.contains(&candidate) {
+            unique.push(candidate);
+        }
+    }
+    Ok(unique)
+}
+
+fn is_known_empty_td_spec_skeleton(spec_abs: &std::path::Path, slug: &str) -> Result<bool> {
+    let metadata = match std::fs::symlink_metadata(spec_abs) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to inspect TD skeleton {}", spec_abs.display()))
+        }
+    };
+    if !metadata.file_type().is_file() {
+        return Ok(false);
+    }
+    let content = match std::fs::read_to_string(spec_abs) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to read TD skeleton {}", spec_abs.display()))
+        }
+    };
+    Ok(known_empty_td_spec_skeletons(slug)?
+        .iter()
+        .any(|candidate| candidate == &content))
+}
+
+fn recoverable_untracked_td_skeleton(
+    project_root: &std::path::Path,
+    spec_path: &str,
+    slug: &str,
+) -> Result<bool> {
+    if !checkout_has_only_exact_untracked_path(project_root, spec_path)? {
+        return Ok(false);
+    }
+    is_known_empty_td_spec_skeleton(&project_root.join(spec_path), slug)
+}
+
+/// Canonicalize only after the caller has classified the file as the sole
+/// exact untracked lifecycle-owned skeleton. Re-check the byte allow-list at
+/// the write boundary so branch activation or recovery cannot widen it.
+fn canonicalize_recoverable_td_skeleton(
+    project_root: &std::path::Path,
+    spec_path: &str,
+    slug: &str,
+) -> Result<()> {
+    if !recoverable_untracked_td_skeleton(project_root, spec_path, slug)? {
+        anyhow::bail!(
+            "TD skeleton recovery refused '{}': expected the sole exact untracked known-empty skeleton for '{}'",
+            spec_path,
+            slug
+        );
+    }
+    let spec_abs = project_root.join(spec_path);
+    let canonical = td_spec_skeleton(slug)?;
+    if std::fs::read_to_string(&spec_abs)? != canonical {
+        std::fs::write(&spec_abs, canonical).with_context(|| {
+            format!("failed to canonicalize TD skeleton {}", spec_abs.display())
+        })?;
+    }
+    Ok(())
 }
 
 fn td_section_payload_template(section: &str) -> Result<String> {
@@ -3306,6 +3513,23 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     let slug = workflow_slug_for_issue(&bootstrap_issue, issue_ref);
     let branch = td_branch_name(&slug);
     let bootstrap_phase = bootstrap_issue.phase.as_deref().unwrap_or_default();
+    let spec_path = match args.spec_path.clone() {
+        Some(explicit) => explicit,
+        None => {
+            match default_spec_path_for_issue_in_project(&project_root, &bootstrap_issue, &slug) {
+                Ok(derived) => derived,
+                Err(e) => return td_error(&slug, e.to_string()),
+            }
+        }
+    };
+    // Only pre-gen authoring (or a not-yet-provisioned WI phase) may carry an
+    // interrupted CLI-owned skeleton through activation. Post-gen and terminal
+    // phases deliberately do not even request the exception.
+    let phase_allows_skeleton_recovery = is_recoverable_td_authoring_phase(bootstrap_phase)
+        || !(bootstrap_phase.starts_with("td_") || bootstrap_phase.starts_with("cb_"));
+    let recoverable_skeleton = phase_allows_skeleton_recovery
+        && recoverable_untracked_td_skeleton(&project_root, &spec_path, &slug)?;
+    let recoverable_spec_path = recoverable_skeleton.then_some(spec_path.as_str());
     if is_recoverable_td_authoring_phase(bootstrap_phase) {
         // A valid lifecycle may live on td-<slug> while create is invoked
         // from main. Activate that existing branch before inspecting HEAD or
@@ -3314,19 +3538,50 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
         let resume_workspace_present = !should_use_td_branch(&current)
             || crate::branch_switch::branch_exists_local(&project_root, &branch).unwrap_or(false);
         if resume_workspace_present {
-            td_activate_inplace_if_present(&project_root, &slug)?;
+            if let Some(spec_path) = recoverable_spec_path {
+                activate_td_workspace_with_recoverable_skeleton(
+                    &project_root,
+                    &slug,
+                    spec_path,
+                    false,
+                )?;
+            } else {
+                td_activate_inplace_if_present(&project_root, &slug)?;
+            }
         }
 
         match super::cb::reachable_td_init_from_head(&project_root, &slug)? {
             super::cb::TdInitReachability::Found(_) => {
                 if !resume_workspace_present {
-                    td_activate_inplace_if_present(&project_root, &slug)?;
+                    if let Some(spec_path) = recoverable_spec_path {
+                        activate_td_workspace_with_recoverable_skeleton(
+                            &project_root,
+                            &slug,
+                            spec_path,
+                            false,
+                        )?;
+                    } else {
+                        td_activate_inplace_if_present(&project_root, &slug)?;
+                    }
                 }
             }
             super::cb::TdInitReachability::NoSlugHistory => {
-                reset_unreachable_td_init(&project_root, issue_ref, &slug, "no-slug-history")
-                    .await?;
-                provision_td_workspace(&project_root, issue_ref, &slug, &branch).await?;
+                reset_unreachable_td_init(
+                    &project_root,
+                    issue_ref,
+                    &slug,
+                    "no-slug-history",
+                    recoverable_spec_path,
+                )
+                .await?;
+                provision_td_workspace(
+                    &project_root,
+                    issue_ref,
+                    &slug,
+                    &branch,
+                    recoverable_spec_path,
+                )
+                .await?;
             }
             super::cb::TdInitReachability::SlugHistoryWithoutInit => {
                 reset_unreachable_td_init(
@@ -3334,9 +3589,17 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
                     issue_ref,
                     &slug,
                     "slug-history-without-init",
+                    recoverable_spec_path,
                 )
                 .await?;
-                provision_td_workspace(&project_root, issue_ref, &slug, &branch).await?;
+                provision_td_workspace(
+                    &project_root,
+                    issue_ref,
+                    &slug,
+                    &branch,
+                    recoverable_spec_path,
+                )
+                .await?;
             }
         }
     } else if bootstrap_phase.starts_with("td_") || bootstrap_phase.starts_with("cb_") {
@@ -3345,7 +3608,14 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
         // guard below route/reject without rewriting lifecycle history.
         td_activate_inplace_if_present(&project_root, &slug)?;
     } else {
-        provision_td_workspace(&project_root, issue_ref, &slug, &branch).await?;
+        provision_td_workspace(
+            &project_root,
+            issue_ref,
+            &slug,
+            &branch,
+            recoverable_spec_path,
+        )
+        .await?;
     }
     let active_branch = crate::branch_switch::current_branch(&project_root)?;
 
@@ -3365,14 +3635,15 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
         );
     }
 
+    // Rewriting a historical empty shape is itself a lifecycle mutation. Do
+    // it only after the refreshed issue proves this invocation is admitted to
+    // the td_inited authoring queue. In particular, a reachable td_created
+    // issue must fail without changing the candidate bytes.
+    if recoverable_skeleton {
+        canonicalize_recoverable_td_skeleton(&project_root, &spec_path, &slug)?;
+    }
+
     let pass = td_authoring_pass(args.phase.as_deref());
-    let spec_path = match args.spec_path.clone() {
-        Some(explicit) => explicit,
-        None => match default_spec_path_for_issue_in_project(&project_root, &issue, &slug) {
-            Ok(derived) => derived,
-            Err(e) => return td_error(&slug, e.to_string()),
-        },
-    };
 
     // #1246/#1403: write the initial TD skeleton ourselves (idempotent, never
     // overwrites an already-authored file) so the `apply` command this brief
@@ -3432,7 +3703,26 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
                 &slug,
                 &format!("{pass} queue started"),
                 "Td-Queue-Start",
-                &[issue_path_s.as_str()],
+                &[spec_path.as_str(), issue_path_s.as_str()],
+                &[
+                    ("Lifecycle-Phase", phase_trailer.as_str()),
+                    ("Lifecycle-Pass", pass),
+                    ("TD-Section", first_section.as_str()),
+                    ("Next-Command", "see WI workflow projection"),
+                ],
+            )?;
+        } else if recoverable_skeleton {
+            // A pre-fix locked run may already have its queue projection but
+            // have omitted the exact CLI-owned skeleton from the queue-start
+            // commit. Canonicalize and stage only that skeleton once; after
+            // this commit the next invocation is clean and cannot re-enter.
+            let phase_trailer = lifecycle_pass_phase(pass);
+            commit_lifecycle_with_extra(
+                &project_root,
+                &slug,
+                &format!("{pass} queue skeleton recovered"),
+                "Td-Queue-Start",
+                &[spec_path.as_str()],
                 &[
                     ("Lifecycle-Phase", phase_trailer.as_str()),
                     ("Lifecycle-Pass", pass),
@@ -5064,6 +5354,8 @@ mod tests {
         assert!(!is_recoverable_td_authoring_phase(
             td_phase::LEGACY_TD_GEN_CODED
         ));
+        assert!(!is_recoverable_td_authoring_phase(td_phase::CB_GENNED));
+        assert!(!is_recoverable_td_authoring_phase(td_phase::CB_FILLED));
         assert!(!is_recoverable_td_authoring_phase(td_phase::TD_MERGED));
         assert!(!is_recoverable_td_authoring_phase("created"));
     }
@@ -6465,6 +6757,144 @@ label = "lib:pg"
             parsed.get("id").and_then(|value| value.as_str()),
             Some("1487")
         );
+    }
+
+    #[test]
+    fn td_skeleton_recovery_accepts_only_exact_historical_empty_bytes() {
+        if !git_available() {
+            return;
+        }
+        let slug = "1580";
+        let canonical = td_spec_skeleton(slug).unwrap();
+        let accepted = known_empty_td_spec_skeletons(slug).unwrap();
+        assert!(accepted.len() >= 4, "historical shapes: {accepted:?}");
+
+        for (index, bytes) in accepted.iter().enumerate() {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path();
+            init_git_repo(root);
+            let spec_rel = format!("tech-design/logic/{slug}-{index}.md");
+            let spec_abs = root.join(&spec_rel);
+            std::fs::create_dir_all(spec_abs.parent().unwrap()).unwrap();
+            std::fs::write(&spec_abs, bytes).unwrap();
+
+            assert!(
+                recoverable_untracked_td_skeleton(root, &spec_rel, slug).unwrap(),
+                "exact historical skeleton {index} must be recoverable:\n{bytes}"
+            );
+            canonicalize_recoverable_td_skeleton(root, &spec_rel, slug).unwrap();
+            assert_eq!(std::fs::read_to_string(&spec_abs).unwrap(), canonical);
+        }
+
+        for (name, bytes) in [
+            ("authored", format!("{canonical}\n## Logic\nauthored\n")),
+            ("extra-newline", format!("{canonical}\n")),
+            ("comment", format!("{canonical}<!-- interrupted -->\n")),
+            (
+                "wrong-slug",
+                td_spec_skeleton("1581").expect("wrong-slug skeleton"),
+            ),
+            (
+                "near-match",
+                canonical.replace("summary: (fill)", "summary: fill"),
+            ),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path();
+            init_git_repo(root);
+            let spec_rel = format!("tech-design/logic/{name}.md");
+            let spec_abs = root.join(&spec_rel);
+            std::fs::create_dir_all(spec_abs.parent().unwrap()).unwrap();
+            std::fs::write(&spec_abs, &bytes).unwrap();
+
+            assert!(checkout_has_only_exact_untracked_path(root, &spec_rel).unwrap());
+            assert!(
+                !recoverable_untracked_td_skeleton(root, &spec_rel, slug).unwrap(),
+                "{name} must not be recoverable"
+            );
+            assert!(canonicalize_recoverable_td_skeleton(root, &spec_rel, slug).is_err());
+            assert_eq!(
+                std::fs::read_to_string(&spec_abs).unwrap(),
+                bytes,
+                "{name} bytes must remain immutable"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn td_skeleton_recovery_rejects_untracked_symlink() {
+        use std::os::unix::fs::symlink;
+
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(outside.path(), td_spec_skeleton("1580").unwrap()).unwrap();
+        let spec_rel = "tech-design/logic/1580.md";
+        let spec_abs = root.join(spec_rel);
+        std::fs::create_dir_all(spec_abs.parent().unwrap()).unwrap();
+        symlink(outside.path(), &spec_abs).unwrap();
+
+        assert!(checkout_has_only_exact_untracked_path(root, spec_rel).unwrap());
+        assert!(!recoverable_untracked_td_skeleton(root, spec_rel, "1580").unwrap());
+    }
+
+    #[test]
+    fn td_skeleton_recovery_requires_exact_untracked_status_and_clean_siblings() {
+        if !git_available() {
+            return;
+        }
+        let slug = "1580";
+        let canonical = td_spec_skeleton(slug).unwrap();
+        let spec_rel = "tech-design/logic/1580.md";
+
+        // Sole exact `?? target` is the only accepted checkout shape.
+        let exact = tempfile::tempdir().unwrap();
+        init_git_repo(exact.path());
+        std::fs::create_dir_all(exact.path().join("tech-design/logic")).unwrap();
+        std::fs::write(exact.path().join(spec_rel), &canonical).unwrap();
+        assert!(recoverable_untracked_td_skeleton(exact.path(), spec_rel, slug).unwrap());
+
+        // A tracked target modified to the same empty bytes is authored state.
+        let modified = tempfile::tempdir().unwrap();
+        init_git_repo(modified.path());
+        std::fs::create_dir_all(modified.path().join("tech-design/logic")).unwrap();
+        std::fs::write(modified.path().join(spec_rel), "tracked authored bytes\n").unwrap();
+        git_stdout(modified.path(), &["add", spec_rel]);
+        git_stdout(modified.path(), &["commit", "-m", "track spec"]);
+        std::fs::write(modified.path().join(spec_rel), &canonical).unwrap();
+        assert!(!recoverable_untracked_td_skeleton(modified.path(), spec_rel, slug).unwrap());
+
+        // A staged addition is not an interrupted unstaged CLI write.
+        let staged = tempfile::tempdir().unwrap();
+        init_git_repo(staged.path());
+        std::fs::create_dir_all(staged.path().join("tech-design/logic")).unwrap();
+        std::fs::write(staged.path().join(spec_rel), &canonical).unwrap();
+        git_stdout(staged.path(), &["add", spec_rel]);
+        assert!(!recoverable_untracked_td_skeleton(staged.path(), spec_rel, slug).unwrap());
+
+        // A rename destination with matching bytes is still tracked history.
+        let renamed = tempfile::tempdir().unwrap();
+        init_git_repo(renamed.path());
+        std::fs::create_dir_all(renamed.path().join("tech-design/logic")).unwrap();
+        let source_rel = "tech-design/logic/source.md";
+        std::fs::write(renamed.path().join(source_rel), &canonical).unwrap();
+        git_stdout(renamed.path(), &["add", source_rel]);
+        git_stdout(renamed.path(), &["commit", "-m", "track source"]);
+        git_stdout(renamed.path(), &["mv", source_rel, spec_rel]);
+        assert!(!recoverable_untracked_td_skeleton(renamed.path(), spec_rel, slug).unwrap());
+
+        // Even an exact target is rejected when any other checkout path is dirty.
+        let sibling = tempfile::tempdir().unwrap();
+        init_git_repo(sibling.path());
+        std::fs::create_dir_all(sibling.path().join("tech-design/logic")).unwrap();
+        std::fs::write(sibling.path().join(spec_rel), &canonical).unwrap();
+        std::fs::write(sibling.path().join("unrelated.txt"), "unrelated\n").unwrap();
+        assert!(!recoverable_untracked_td_skeleton(sibling.path(), spec_rel, slug).unwrap());
     }
 
     #[test]

@@ -52,6 +52,12 @@ capability_refs:
     rationale: "TD create shares CB's exact reachable Td-Init lookup, safely resets stale authoring state and projection after rewritten history, and preserves valid resume plus fail-closed implementation evidence."
   - id: td-cb-lifecycle-automation
     role: primary
+    gap: committed-td-skeleton-lifecycle
+    claim: committed-td-skeleton-lifecycle
+    coverage: full
+    rationale: "TD create admits only its sole exact untracked known-empty skeleton, preserves that candidate through activation and rebased reset/provision, and stages the canonical skeleton in exactly one queue-start commit."
+  - id: td-cb-lifecycle-automation
+    role: primary
     gap: terminal-ec-process-liveness
     claim: terminal-ec-process-liveness
     coverage: full
@@ -1874,6 +1880,9 @@ semantic_domain:
           - name: "td_activate_inplace_allowing_dirty_spec_path"
             kind: "function"
             public: true
+          - name: "activate_td_workspace_with_recoverable_skeleton"
+            kind: "function"
+            public: false
           - name: "canonical_issue_path_for_slug"
             kind: "function"
             public: false
@@ -1881,6 +1890,9 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "ensure_clean_or_only_dirty_paths"
+            kind: "function"
+            public: false
+          - name: "checkout_has_only_exact_untracked_path"
             kind: "function"
             public: false
           - name: "porcelain_path"
@@ -1899,6 +1911,21 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "run_create_brief"
+            kind: "function"
+            public: false
+          - name: "td_spec_skeleton"
+            kind: "function"
+            public: false
+          - name: "known_empty_td_spec_skeletons"
+            kind: "function"
+            public: false
+          - name: "is_known_empty_td_spec_skeleton"
+            kind: "function"
+            public: false
+          - name: "recoverable_untracked_td_skeleton"
+            kind: "function"
+            public: false
+          - name: "canonicalize_recoverable_td_skeleton"
             kind: "function"
             public: false
           - name: "discover_worktree_spec"
@@ -3998,6 +4025,18 @@ changes:
       then reuses normal provisioning for a fresh baseline and Logic queue.
       Post-gen and terminal retry phases are excluded from recovery, and
       ordinary WI phase `created` remains a fresh provisioning entry.
+      Issue #1580 makes the CLI-owned empty TD skeleton part of lifecycle
+      history. Recovery requires whole-tree porcelain-v1 bytes to be exactly
+      one untracked target and its regular-file bytes to match a finite set of
+      historical empty skeletons. Tracked, staged, renamed, authored, symlink,
+      or sibling-dirty state remains immutable and fails the ordinary clean
+      gate. The admitted candidate is revalidated across branch activation and
+      #1602 reset/provision, canonicalized through the serde-YAML id renderer,
+      only after the refreshed issue passes the `td_inited` phase guard, then
+      staged by the fresh queue-start commit. An already locked old run receives
+      one spec-only recovery queue-start commit; reruns are clean and
+      history-idempotent. Reachable `td_created`, post-gen, and terminal phases
+      never mutate or commit the candidate.
       Issue #1519 adds a producer-to-resolver regression that sends stale
       registered library and app labels through `resolve_project_label`, the
       create label vector, and `default_spec_path_for_issue_in_project`.
