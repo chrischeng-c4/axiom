@@ -6640,12 +6640,26 @@ fn eval_term(coll: &Collection, t: &TermQuery) -> Result<RoaringBitmap> {
 
 /// #182: resolve an `ids` query to the docid bitmap of the named external_ids.
 /// Unknown ids are skipped (they simply contribute nothing).
+///
+/// #1487: liveness gate — `coll.interner.id(eid)` alone only proves the
+/// external_id was *ever* interned, not that it is still live (the interner
+/// itself is never GC'd; see `Collection::delete`, which removes the doc's
+/// entry from `eid_fields` — not from the interner — on full delete). The
+/// authoritative liveness fact used everywhere else in this module
+/// (`Collection::delete`, the reseal-gather liveness predicate, the cold-load
+/// invariant check) is `eid_fields.get(&id)` being present and non-empty:
+/// a doc is live iff it still has at least one field written. Partial-field
+/// delete leaves `eid_fields[id]` non-empty (matches `term`/`terms` still
+/// hitting on the surviving field), and full delete either removes the entry
+/// or leaves it empty — both read as dead here, consistent with `term`.
 /// @spec projects/lumen/tech-design/logic/native-ids-query-node-filter-by-external-id-set.md
 fn eval_ids(coll: &Collection, q: &IdsQuery) -> Result<RoaringBitmap> {
     let mut out = RoaringBitmap::new();
     for eid in &q.values {
         if let Some(id) = coll.interner.id(eid) {
-            out.insert(id);
+            if coll.eid_fields.get(&id).is_some_and(|fs| !fs.is_empty()) {
+                out.insert(id);
+            }
         }
     }
     Ok(out)
@@ -19089,6 +19103,83 @@ mod ids_query_tests {
         );
         let ordered: Vec<String> = r.hits.iter().map(|h| h.external_id.clone()).collect();
         assert_eq!(ordered, vec!["d0".to_string(), "d2".to_string()]); // 10 then 30
+    }
+
+    /// #1487/R1: a fully-deleted doc (all fields removed) must not match an
+    /// `ids` query, consistent with `term`/`terms` on the same state.
+    #[test]
+    fn ids_excludes_fully_deleted_doc() {
+        let e = seed();
+        e.delete("c", "d1", None).unwrap();
+        let r = run(&e, ids_q(&["d0", "d1", "d2"]), None);
+        assert_eq!(
+            id_set(&r),
+            ["d0".to_string(), "d2".to_string()].into_iter().collect(),
+            "d1 was fully deleted and must not be a hit"
+        );
+        assert_eq!(r.total, 2);
+
+        // Same doc-state, term query on the surviving docs' field agrees.
+        let term_r = run(
+            &e,
+            QueryNode::Terms(TermsQuery {
+                field: "status".into(),
+                values: vec![
+                    FieldValue::String("open".into()),
+                    FieldValue::String("closed".into()),
+                ],
+            }),
+            None,
+        );
+        assert_eq!(
+            id_set(&term_r),
+            ["d0".to_string(), "d2".to_string()].into_iter().collect()
+        );
+    }
+
+    /// #1487: mixed batch — a request naming live and deleted ids together
+    /// returns only the live subset.
+    #[test]
+    fn ids_mixed_batch_returns_only_live_subset() {
+        let e = seed();
+        e.delete("c", "d0", None).unwrap();
+        e.delete("c", "d2", None).unwrap();
+        let r = run(&e, ids_q(&["d0", "d1", "d2", "does-not-exist"]), None);
+        assert_eq!(
+            id_set(&r),
+            ["d1".to_string()].into_iter().collect(),
+            "only the still-live doc survives, deleted + unknown ids drop out"
+        );
+        assert_eq!(r.total, 1);
+    }
+
+    /// #1487: partial-field deletion — a doc with SOME fields deleted but at
+    /// least one field still live stays a hit under `ids` (matches the
+    /// engine's liveness definition used by `term`: live iff any field
+    /// lives).
+    #[test]
+    fn ids_matches_doc_with_partial_field_deletion() {
+        let e = seed();
+        // Delete only the `price` field on d0 — `status` is still live.
+        e.delete("c", "d0", Some("price")).unwrap();
+        let r = run(&e, ids_q(&["d0", "d1", "d2"]), None);
+        assert_eq!(
+            id_set(&r),
+            ["d0".to_string(), "d1".to_string(), "d2".to_string()]
+                .into_iter()
+                .collect(),
+            "d0 still has a live field (status), so it remains a hit"
+        );
+        assert_eq!(r.total, 3);
+
+        // Now delete the remaining field too — d0 becomes fully dead.
+        e.delete("c", "d0", Some("status")).unwrap();
+        let r2 = run(&e, ids_q(&["d0", "d1", "d2"]), None);
+        assert_eq!(
+            id_set(&r2),
+            ["d1".to_string(), "d2".to_string()].into_iter().collect(),
+            "d0 has no live fields left, so it drops out"
+        );
     }
 }
 

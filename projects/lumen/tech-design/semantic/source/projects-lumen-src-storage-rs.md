@@ -21,29 +21,29 @@ Public API manifest for `projects/lumen/src/storage.rs` generated from AST durin
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `ApplyOutcome` | projects/lumen/src/storage.rs | enum | pub | 5005 |  |
-| `CollectionSnapshot` | projects/lumen/src/storage.rs | struct | pub | 9160 |  |
+| `CollectionSnapshot` | projects/lumen/src/storage.rs | struct | pub | 9174 |  |
 | `DropOutcome` | projects/lumen/src/storage.rs | enum | pub | 66 |  |
 | `Engine` | projects/lumen/src/storage.rs | struct | pub | 2951 |  |
-| `FieldIndexSnapshot` | projects/lumen/src/storage.rs | enum | pub | 9202 |  |
+| `FieldIndexSnapshot` | projects/lumen/src/storage.rs | enum | pub | 9216 |  |
 | `MAX_INDEX_ITEMS` | projects/lumen/src/storage.rs | constant | pub | 57 |  |
 | `MAX_SORT_KEYS` | projects/lumen/src/storage.rs | constant | pub | 62 |  |
 | `Postings` | projects/lumen/src/storage.rs | struct | pub(crate) | 336 |  |
-| `ReshardApplyOutcome` | projects/lumen/src/storage.rs | struct | pub | 9170 | #1380 R1 / #1443 R2: response summary for `POST /admin/reshard:apply`, now including `documents_pruned` from the authoritative-replace pass. |
-| `ReshardEvictOutcome` | projects/lumen/src/storage.rs | struct | pub | 9182 | #1380 R3: response summary for `POST /admin/reshard:evict`. |
-| `ReshardPruneOutcome` | projects/lumen/src/storage.rs | struct | pub | 9194 | #1457 R1: response summary for `POST /admin/reshard:prune`; `complete` is `false` while the receiver is still accumulating chunks for a `(to_map_version, bucket, collection_id, total_chunks)` group, `documents_pruned` is only meaningful once `complete` is `true`. |
-| `SnapshotV1` | projects/lumen/src/storage.rs | struct | pub | 9151 |  |
+| `ReshardApplyOutcome` | projects/lumen/src/storage.rs | struct | pub | 9184 | #1380 R1 / #1443 R2: response summary for `POST /admin/reshard:apply`, now including `documents_pruned` from the authoritative-replace pass. |
+| `ReshardEvictOutcome` | projects/lumen/src/storage.rs | struct | pub | 9196 | #1380 R3: response summary for `POST /admin/reshard:evict`. |
+| `ReshardPruneOutcome` | projects/lumen/src/storage.rs | struct | pub | 9208 | #1457 R1: response summary for `POST /admin/reshard:prune`; `complete` is `false` while the receiver is still accumulating chunks for a `(to_map_version, bucket, collection_id, total_chunks)` group, `documents_pruned` is only meaningful once `complete` is `true`. |
+| `SnapshotV1` | projects/lumen/src/storage.rs | struct | pub | 9165 |  |
 | `SortableF64` | projects/lumen/src/storage.rs | struct | pub | 127 |  |
 | `StorageError` | projects/lumen/src/storage.rs | enum | pub | 79 |  |
-| `__collection_schema` | projects/lumen/src/storage.rs | function | pub(crate) | 10714 | __collection_schema(         &self,         collection_id: &str,     ) -> Result<BTreeMap<String, FieldSpec>>  |
-| `__field_forward_probe` | projects/lumen/src/storage.rs | function | pub(crate) | 10751 | __field_forward_probe(         &self,         collection_id: &str,         field: &str,     ) -> Result<(usize, usize, bool)>  |
-| `__open_collection_from_segments` | projects/lumen/src/storage.rs | function | pub(crate) | 10730 | __open_collection_from_segments(         collection_id: &str,         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<std::sync::Arc<Engine>>  |
-| `__seal_collection_to_segments` | projects/lumen/src/storage.rs | function | pub(crate) | 10698 | __seal_collection_to_segments(         &self,         collection_id: &str,         dir: &std::path::Path,         applied_seq: u64,     ) -> Result<()>  |
-| `__seal_hash_field_to_segment` | projects/lumen/src/storage.rs | function | pub(crate) | 10634 | __seal_hash_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_keyword_field_to_segment` | projects/lumen/src/storage.rs | function | pub(crate) | 10444 | __seal_keyword_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_number_field_to_segment` | projects/lumen/src/storage.rs | function | pub(crate) | 10381 | __seal_number_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_set_field_to_segment` | projects/lumen/src/storage.rs | function | pub(crate) | 10510 | __seal_set_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_text_field_to_segment` | projects/lumen/src/storage.rs | function | pub(crate) | 10578 | __seal_text_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_vector_field_to_segment` | projects/lumen/src/storage.rs | function | pub(crate) | 10671 | __seal_vector_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__collection_schema` | projects/lumen/src/storage.rs | function | pub(crate) | 10728 | __collection_schema(         &self,         collection_id: &str,     ) -> Result<BTreeMap<String, FieldSpec>>  |
+| `__field_forward_probe` | projects/lumen/src/storage.rs | function | pub(crate) | 10765 | __field_forward_probe(         &self,         collection_id: &str,         field: &str,     ) -> Result<(usize, usize, bool)>  |
+| `__open_collection_from_segments` | projects/lumen/src/storage.rs | function | pub(crate) | 10744 | __open_collection_from_segments(         collection_id: &str,         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<std::sync::Arc<Engine>>  |
+| `__seal_collection_to_segments` | projects/lumen/src/storage.rs | function | pub(crate) | 10712 | __seal_collection_to_segments(         &self,         collection_id: &str,         dir: &std::path::Path,         applied_seq: u64,     ) -> Result<()>  |
+| `__seal_hash_field_to_segment` | projects/lumen/src/storage.rs | function | pub(crate) | 10648 | __seal_hash_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_keyword_field_to_segment` | projects/lumen/src/storage.rs | function | pub(crate) | 10458 | __seal_keyword_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_number_field_to_segment` | projects/lumen/src/storage.rs | function | pub(crate) | 10395 | __seal_number_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_set_field_to_segment` | projects/lumen/src/storage.rs | function | pub(crate) | 10524 | __seal_set_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_text_field_to_segment` | projects/lumen/src/storage.rs | function | pub(crate) | 10592 | __seal_text_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
+| `__seal_vector_field_to_segment` | projects/lumen/src/storage.rs | function | pub(crate) | 10685 | __seal_vector_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
 | `add_field` | projects/lumen/src/storage.rs | function | pub | 3212 | add_field(&self, collection_id: &str, field_name: &str, spec: FieldSpec) -> Result<u32> |
 | `apply_raft_entry` | projects/lumen/src/storage.rs | function | pub | 4963 | apply_raft_entry(&self, entry: crate::log_entry::RaftLogEntry) -> Result<ApplyOutcome> |
 | `apply_reshard_batch` | projects/lumen/src/storage.rs | function | pub | 4577 | #1380 R1 / #1443 R2, reworked #1457 R1: additively merge one `ReshardBatch`'s snapshot into the live engine (upsert semantics, idempotent on retry), then — when `replace` is `Some` — prune any document this shard holds that routes to `replace.bucket` but is absent from `replace.replace_ids`, closing delete-during-split resurrection. Callers reach the `replace`-scoped branch through `apply_reshard_prune_chunk`'s receiver-side chunk accumulator, not directly from a wire `ReshardBatch` (#1457 R1 split the authoritative-replace scope out of that now purely-additive type). apply_reshard_batch(&self, delta: SnapshotV1, replace: Option<crate::reshard::ReshardBatchReplaceScope>) -> Result<ReshardApplyOutcome> |
@@ -56,7 +56,7 @@ Public API manifest for `projects/lumen/src/storage.rs` generated from AST durin
 | `drop_field` | projects/lumen/src/storage.rs | function | pub | 3157 | drop_field(&self, collection_id: &str, field_name: &str) -> Result<u32> |
 | `duplicates` | projects/lumen/src/storage.rs | function | pub | 4351 | duplicates(         &self,         collection_id: &str,         req: DuplicatesRequest,     ) -> Result<DuplicatesResponse> |
 | `evict_not_owned` | projects/lumen/src/storage.rs | function | pub | 4833 | #1380 R3: source-side post-cutover eviction under a newer `VirtualBucketShardMap` (idempotent). evict_not_owned(         &self,         to: &VirtualBucketShardMap,         this_shard: u32,     ) -> Result<ReshardEvictOutcome> |
-| `flush_to_segments` | projects/lumen/src/storage.rs | function | pub | 10231 | flush_to_segments(&self, dir: &std::path::Path, up_to_seq: u64) -> Result<()>  |
+| `flush_to_segments` | projects/lumen/src/storage.rs | function | pub | 10245 | flush_to_segments(&self, dir: &std::path::Path, up_to_seq: u64) -> Result<()>  |
 | `from_bits` | projects/lumen/src/storage.rs | function | pub(crate) | 172 | from_bits(bits: u64) -> Self |
 | `from_sorted` | projects/lumen/src/storage.rs | function | pub(crate) | 347 | from_sorted(docids: Vec<u32>, tfs: Vec<u32>) -> Self |
 | `index` | projects/lumen/src/storage.rs | function | pub | 3251 | index(&self, collection_id: &str, req: IndexRequest) -> Result<IndexResponse> |
@@ -66,14 +66,14 @@ Public API manifest for `projects/lumen/src/storage.rs` generated from AST durin
 | `new` | projects/lumen/src/storage.rs | function | pub | 133 | new(x: f64) -> Result<Self> |
 | `new` | projects/lumen/src/storage.rs | function | pub | 3031 | new() -> Self  |
 | `number_value_for_external_id` | projects/lumen/src/storage.rs | function | pub | 3795 | number_value_for_external_id(         &self,         collection_id: &str,         external_id: &str,         field: &str,     ) -> Result<Option<f64>> |
-| `open_from_segments` | projects/lumen/src/storage.rs | function | pub | 10041 | open_from_segments(         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<Self>  |
-| `reopen_from_segment_dir` | projects/lumen/src/storage.rs | function | pub | 10275 | reopen_from_segment_dir(&self, dir: &std::path::Path) -> Result<u64>  |
+| `open_from_segments` | projects/lumen/src/storage.rs | function | pub | 10055 | open_from_segments(         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<Self>  |
+| `reopen_from_segment_dir` | projects/lumen/src/storage.rs | function | pub | 10289 | reopen_from_segment_dir(&self, dir: &std::path::Path) -> Result<u64>  |
 | `replace_docs` | projects/lumen/src/storage.rs | function | pub | 3501 | replace_docs(         &self,         collection_id: &str,         req: ReplaceDocsRequest,     ) -> Result<ReplaceDocsResponse> |
 | `restore` | projects/lumen/src/storage.rs | function | pub | 4522 | restore(&self, snap: SnapshotV1) -> Result<()> |
-| `seal_to_segments` | projects/lumen/src/storage.rs | function | pub | 10006 | seal_to_segments(&mut self, dir: &std::path::Path, applied_seq: u64) -> Result<()>  |
+| `seal_to_segments` | projects/lumen/src/storage.rs | function | pub | 10020 | seal_to_segments(&mut self, dir: &std::path::Path, applied_seq: u64) -> Result<()>  |
 | `search` | projects/lumen/src/storage.rs | function | pub | 3823 | search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> |
 | `search_fast_string_term` | projects/lumen/src/storage.rs | function | pub(crate) | 4292 | search_fast_string_term(         &self,         collection_id: &str,         field: &str,         value: &str,         limit: u32,     ) -> Result<SearchResponse> |
-| `segment_field_probe` | projects/lumen/src/storage.rs | function | pub | 10317 | segment_field_probe(&self, collection_id: &str, field: &str) -> Result<(usize, bool)>  |
+| `segment_field_probe` | projects/lumen/src/storage.rs | function | pub | 10331 | segment_field_probe(&self, collection_id: &str, field: &str) -> Result<(usize, bool)>  |
 | `snapshot` | projects/lumen/src/storage.rs | function | pub | 4507 | snapshot(&self) -> Result<SnapshotV1> |
 | `start_drain` | projects/lumen/src/storage.rs | function | pub | 3043 | start_drain(&self) |
 | `stats` | projects/lumen/src/storage.rs | function | pub | 4895 | stats(&self, collection_id: &str) -> Result<StatsResponse> |
@@ -6728,12 +6728,26 @@ fn eval_term(coll: &Collection, t: &TermQuery) -> Result<RoaringBitmap> {
 
 /// #182: resolve an `ids` query to the docid bitmap of the named external_ids.
 /// Unknown ids are skipped (they simply contribute nothing).
+///
+/// #1487: liveness gate — `coll.interner.id(eid)` alone only proves the
+/// external_id was *ever* interned, not that it is still live (the interner
+/// itself is never GC'd; see `Collection::delete`, which removes the doc's
+/// entry from `eid_fields` — not from the interner — on full delete). The
+/// authoritative liveness fact used everywhere else in this module
+/// (`Collection::delete`, the reseal-gather liveness predicate, the cold-load
+/// invariant check) is `eid_fields.get(&id)` being present and non-empty:
+/// a doc is live iff it still has at least one field written. Partial-field
+/// delete leaves `eid_fields[id]` non-empty (matches `term`/`terms` still
+/// hitting on the surviving field), and full delete either removes the entry
+/// or leaves it empty — both read as dead here, consistent with `term`.
 /// @spec projects/lumen/tech-design/logic/native-ids-query-node-filter-by-external-id-set.md
 fn eval_ids(coll: &Collection, q: &IdsQuery) -> Result<RoaringBitmap> {
     let mut out = RoaringBitmap::new();
     for eid in &q.values {
         if let Some(id) = coll.interner.id(eid) {
-            out.insert(id);
+            if coll.eid_fields.get(&id).is_some_and(|fs| !fs.is_empty()) {
+                out.insert(id);
+            }
         }
     }
     Ok(out)
@@ -19177,6 +19191,83 @@ mod ids_query_tests {
         );
         let ordered: Vec<String> = r.hits.iter().map(|h| h.external_id.clone()).collect();
         assert_eq!(ordered, vec!["d0".to_string(), "d2".to_string()]); // 10 then 30
+    }
+
+    /// #1487/R1: a fully-deleted doc (all fields removed) must not match an
+    /// `ids` query, consistent with `term`/`terms` on the same state.
+    #[test]
+    fn ids_excludes_fully_deleted_doc() {
+        let e = seed();
+        e.delete("c", "d1", None).unwrap();
+        let r = run(&e, ids_q(&["d0", "d1", "d2"]), None);
+        assert_eq!(
+            id_set(&r),
+            ["d0".to_string(), "d2".to_string()].into_iter().collect(),
+            "d1 was fully deleted and must not be a hit"
+        );
+        assert_eq!(r.total, 2);
+
+        // Same doc-state, term query on the surviving docs' field agrees.
+        let term_r = run(
+            &e,
+            QueryNode::Terms(TermsQuery {
+                field: "status".into(),
+                values: vec![
+                    FieldValue::String("open".into()),
+                    FieldValue::String("closed".into()),
+                ],
+            }),
+            None,
+        );
+        assert_eq!(
+            id_set(&term_r),
+            ["d0".to_string(), "d2".to_string()].into_iter().collect()
+        );
+    }
+
+    /// #1487: mixed batch — a request naming live and deleted ids together
+    /// returns only the live subset.
+    #[test]
+    fn ids_mixed_batch_returns_only_live_subset() {
+        let e = seed();
+        e.delete("c", "d0", None).unwrap();
+        e.delete("c", "d2", None).unwrap();
+        let r = run(&e, ids_q(&["d0", "d1", "d2", "does-not-exist"]), None);
+        assert_eq!(
+            id_set(&r),
+            ["d1".to_string()].into_iter().collect(),
+            "only the still-live doc survives, deleted + unknown ids drop out"
+        );
+        assert_eq!(r.total, 1);
+    }
+
+    /// #1487: partial-field deletion — a doc with SOME fields deleted but at
+    /// least one field still live stays a hit under `ids` (matches the
+    /// engine's liveness definition used by `term`: live iff any field
+    /// lives).
+    #[test]
+    fn ids_matches_doc_with_partial_field_deletion() {
+        let e = seed();
+        // Delete only the `price` field on d0 — `status` is still live.
+        e.delete("c", "d0", Some("price")).unwrap();
+        let r = run(&e, ids_q(&["d0", "d1", "d2"]), None);
+        assert_eq!(
+            id_set(&r),
+            ["d0".to_string(), "d1".to_string(), "d2".to_string()]
+                .into_iter()
+                .collect(),
+            "d0 still has a live field (status), so it remains a hit"
+        );
+        assert_eq!(r.total, 3);
+
+        // Now delete the remaining field too — d0 becomes fully dead.
+        e.delete("c", "d0", Some("status")).unwrap();
+        let r2 = run(&e, ids_q(&["d0", "d1", "d2"]), None);
+        assert_eq!(
+            id_set(&r2),
+            ["d1".to_string(), "d2".to_string()].into_iter().collect(),
+            "d0 has no live fields left, so it drops out"
+        );
     }
 }
 
