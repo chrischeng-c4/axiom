@@ -15,9 +15,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use service_auth::{
-    AuthError, RoleMapPrincipal, StaticRoleMapVerifier, TokenClaims, Verifier,
-};
+use service_auth::{AuthError, RoleMapPrincipal, StaticRoleMapVerifier, TokenClaims, Verifier};
 
 const TOKEN_REGISTRY_FILE_ENV: &str = "SIFT_TOKEN_REGISTRY_FILE";
 const LEGACY_TOKENS_ENV: &str = "SIFT_TOKENS";
@@ -102,5 +100,4 @@ mod tests {
     }
 }
 
-<!-- marker: sift-shared-bearer-auth path: projects/sift/src/auth.rs reason: Adapt shared bearer-token verification to Sift environment configuration and data-plane middleware. -->
 // HANDWRITE-END

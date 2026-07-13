@@ -9,8 +9,8 @@ fn machine_readable_cli_output_is_valid_json_and_terminal() {
         .expect("run sift llm");
     assert!(output.status.success(), "{output:?}");
 
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .expect("machine-readable output must remain JSON");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("machine-readable output must remain JSON");
     assert_eq!(value["next"], "done");
     assert!(value["topics"].is_array());
 }
@@ -34,5 +34,4 @@ fn spec_gen_writes_a_typed_client_entrypoint() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("next:"));
 }
 
-<!-- marker: sift-agent-cli-contract-tests path: projects/sift/tests/cli_contract.rs reason: Verify JSON CLI output parses and spec generation emits a typed-client entrypoint. -->
 // HANDWRITE-END

@@ -29,8 +29,14 @@ fn required_app(data_dir: &std::path::Path) -> axum::Router {
 }
 
 fn valid_event() -> EventEnvelope {
-    let mut event = EventEnvelope::new("protected-event", SignalKind::Log, serde_json::json!({"message":"ok"}));
-    event.resource.insert("service.name".to_string(), "sift-test".to_string());
+    let mut event = EventEnvelope::new(
+        "protected-event",
+        SignalKind::Log,
+        serde_json::json!({"message":"ok"}),
+    );
+    event
+        .resource
+        .insert("service.name".to_string(), "sift-test".to_string());
     event
 }
 
@@ -41,7 +47,12 @@ async fn required_auth_protects_data_plane_but_not_operational_probes() {
 
     let health = app
         .clone()
-        .oneshot(Request::builder().uri("/healthz").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(health.status(), StatusCode::OK);
@@ -75,5 +86,4 @@ async fn required_auth_protects_data_plane_but_not_operational_probes() {
     assert_eq!(accepted.status(), StatusCode::CREATED);
 }
 
-<!-- marker: sift-auth-route-contract-tests path: projects/sift/tests/runtime_security_e2e.rs reason: Verify required bearer auth protects data-plane routes while probes remain reachable. -->
 // HANDWRITE-END

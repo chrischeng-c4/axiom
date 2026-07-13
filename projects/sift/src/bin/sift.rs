@@ -236,7 +236,7 @@ async fn main() -> Result<()> {
         Command::Spec(args) => match args.command {
             Some(SpecCommand::Gen(args)) => spec_gen(args),
             None => {
-            let _ = args.format;
+                let _ = args.format;
                 print_json_terminal(serde_json::json!({
                     "openapi": serde_json::from_str::<Value>(&sift::openapi_json()?)?
                 }))
