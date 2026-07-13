@@ -57,4 +57,26 @@ exits.
 
 For a failed-run diagnosis only, set `PGPOOL_BENCH_KEEP_WORK_DIR=true`; the
 runner will print and retain its otherwise-temporary logs and configuration.
+
+## Meter diagnostic
+
+To attribute pgpool CPU time before making a performance change, build meter
+and ask the runner to use it for the pgpool leg only:
+
+```bash
+cargo build -p meter-cli --bin meter
+apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh \
+  --meter-bin target/debug/meter
+```
+
+Meter starts the pgpool process and uses its opaque driver to run the same
+64-client simple-protocol pgbench leg. The runner automatically retains the
+temporary directory it prints on exit; it contains `meter-report.json`,
+`meter.log`, `.meter/last-report.json`, and `.meter/*.collapsed` stack data.
+
+Sampling changes the pgpool leg's resource profile, so its comparison JSON adds
+`diagnostics.meter_sampled_pgpool: true` and
+`diagnostics.comparison_valid: false`. Treat this run as hotspot evidence only;
+run the ordinary unsampled command again to establish competitor-performance
+evidence.
 <!-- HANDWRITE-END -->

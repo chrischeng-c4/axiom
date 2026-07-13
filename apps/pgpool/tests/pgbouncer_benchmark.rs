@@ -27,6 +27,20 @@ fn dry_run_profile() -> Value {
 }
 
 #[test]
+fn dry_run_profile_stays_immutable_when_meter_is_requested() {
+    let ordinary = dry_run_profile();
+    let output = command(&["--dry-run", "--meter-bin", "/definitely/not/a/meter-binary"]);
+    assert!(
+        output.status.success(),
+        "meter dry run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let with_meter: Value =
+        serde_json::from_slice(&output.stdout).expect("meter dry run should emit JSON");
+    assert_eq!(with_meter, ordinary, "meter must not mutate the fixed profile");
+}
+
+#[test]
 fn dry_run_profile_declares_equal_transaction_pooling_inputs() {
     let profile = dry_run_profile();
 

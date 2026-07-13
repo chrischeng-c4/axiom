@@ -7,12 +7,14 @@ readonly BACKEND_CAP=16
 readonly CLIENTS=64
 readonly JOBS=4
 readonly DURATION_SECONDS=30
+readonly METER_DURATION_CAP_SECONDS=$((DURATION_SECONDS + 30))
 readonly SCALE=1
 readonly POOL_ACQUIRE_TIMEOUT_MS=60000
 readonly DATABASE="pgpool_bench"
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 
 PGPOOL_BIN="${PGPOOL_BIN:-$REPO_ROOT/target/release/pgpool}"
+METER_BIN=""
 DRY_RUN=false
 WORK_DIR=""
 POSTGRES_STARTED=false
@@ -24,11 +26,16 @@ KEEP_WORK_DIR="${PGPOOL_BENCH_KEEP_WORK_DIR:-false}"
 
 usage() {
     cat <<'USAGE'
-Usage: run.sh [--dry-run] [--pgpool-bin PATH]
+Usage: run.sh [--dry-run] [--pgpool-bin PATH] [--meter-bin PATH]
 
 Compares PgBouncer and pgpool transaction pooling against one temporary local
 PostgreSQL backend. `--dry-run` prints the immutable profile JSON and does not
 inspect the machine, create files, bind ports, or start processes.
+
+`--meter-bin` is an opt-in pgpool-only diagnostic: meter launches and samples
+the pgpool process while its opaque driver runs the same pgbench leg. It retains
+the temporary work directory with the meter JSON and folded stacks, and labels
+the resulting comparison as diagnostic-only rather than win evidence.
 USAGE
 }
 
@@ -45,6 +52,13 @@ fail() {
 
 require_command() {
     command -v "$1" >/dev/null 2>&1 || fail "required command '$1' was not found"
+}
+
+absolute_executable_path() {
+    local path="$1"
+    local directory
+    directory="$(cd "$(dirname "$path")" && pwd)"
+    printf '%s/%s\n' "$directory" "$(basename "$path")"
 }
 
 find_free_port() {
@@ -110,6 +124,75 @@ require_clean_pgbench() {
     fi
 }
 
+write_meter_driver() {
+    cat >"$WORK_DIR/pgpool-meter-drive.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+for _ in $(seq 1 100); do
+    if PGCONNECT_TIMEOUT=1 psql --host "$PGPOOL_BENCH_PGPOOL_HOST" --port "$PGPOOL_BENCH_PGPOOL_PORT" --username postgres --dbname "$PGPOOL_BENCH_DATABASE" --no-psqlrc --quiet --command 'SELECT 1' >/dev/null 2>&1; then
+        exec pgbench --no-vacuum --protocol simple --client "$PGPOOL_BENCH_CLIENTS" --jobs "$PGPOOL_BENCH_JOBS" --time "$PGPOOL_BENCH_DURATION_SECONDS" --host "$PGPOOL_BENCH_PGPOOL_HOST" --port "$PGPOOL_BENCH_PGPOOL_PORT" --username postgres "$PGPOOL_BENCH_DATABASE" >"$PGPOOL_BENCH_PGPOOL_PGBENCH_LOG" 2>&1
+    fi
+    sleep 0.1
+done
+
+echo "pgpool did not accept SQL connections for meter diagnostic" >&2
+exit 1
+SCRIPT
+    chmod +x "$WORK_DIR/pgpool-meter-drive.sh"
+}
+
+require_meter_artifacts() {
+    local collapsed=()
+    [[ -s "$WORK_DIR/meter-report.json" ]] || fail "meter did not produce its JSON report"
+    [[ -s "$WORK_DIR/.meter/last-report.json" ]] || fail "meter did not persist .meter/last-report.json"
+    grep -q '"schema_version": "meter.report/1"' "$WORK_DIR/meter-report.json" || fail "meter report did not use meter.report/1"
+    shopt -s nullglob
+    collapsed=("$WORK_DIR/.meter/"*.collapsed)
+    shopt -u nullglob
+    ((${#collapsed[@]} > 0)) || fail "meter did not produce collapsed stack evidence"
+}
+
+run_pgpool_benchmark() {
+    if [[ -z "$METER_BIN" ]]; then
+        "$PGPOOL_BIN" serve \
+            --backend-host 127.0.0.1 \
+            --backend-port "$POSTGRES_PORT" \
+            --bind "127.0.0.1:$PGPOOL_PORT" \
+            --admin-bind "127.0.0.1:$ADMIN_PORT" \
+            --max-backend-connections "$BACKEND_CAP" \
+            --pool-acquire-timeout-ms "$POOL_ACQUIRE_TIMEOUT_MS" \
+            >"$WORK_DIR/pgpool.log" 2>&1 &
+        PGPOOL_PID=$!
+        wait_for_sql "$PGPOOL_PORT" "pgpool"
+        pgbench --no-vacuum --protocol simple --client "$CLIENTS" --jobs "$JOBS" --time "$DURATION_SECONDS" --host 127.0.0.1 --port "$PGPOOL_PORT" --username postgres "$DATABASE" >"$WORK_DIR/pgpool-pgbench.log" 2>&1
+        return
+    fi
+
+    write_meter_driver
+    KEEP_WORK_DIR=true
+    (
+        cd "$WORK_DIR"
+        PGPOOL_BENCH_PGPOOL_HOST=127.0.0.1 \
+        PGPOOL_BENCH_PGPOOL_PORT="$PGPOOL_PORT" \
+        PGPOOL_BENCH_DATABASE="$DATABASE" \
+        PGPOOL_BENCH_CLIENTS="$CLIENTS" \
+        PGPOOL_BENCH_JOBS="$JOBS" \
+        PGPOOL_BENCH_DURATION_SECONDS="$DURATION_SECONDS" \
+        PGPOOL_BENCH_PGPOOL_PGBENCH_LOG="$WORK_DIR/pgpool-pgbench.log" \
+        "$METER_BIN" measure "$PGPOOL_BIN" --level sample --duration-cap "$METER_DURATION_CAP_SECONDS" --drive ./pgpool-meter-drive.sh -- serve \
+            --backend-host 127.0.0.1 \
+            --backend-port "$POSTGRES_PORT" \
+            --bind "127.0.0.1:$PGPOOL_PORT" \
+            --admin-bind "127.0.0.1:$ADMIN_PORT" \
+            --max-backend-connections "$BACKEND_CAP" \
+            --pool-acquire-timeout-ms "$POOL_ACQUIRE_TIMEOUT_MS" \
+            >"$WORK_DIR/meter-report.json" 2>"$WORK_DIR/meter.log"
+    )
+    require_meter_artifacts
+    echo "meter sampled pgpool only; its comparison result is diagnostic-only, not win evidence" >&2
+}
+
 cleanup() {
     set +e
     if [[ -n "$PGPOOL_PID" ]]; then
@@ -141,6 +224,11 @@ while (($#)); do
             PGPOOL_BIN="$2"
             shift 2
             ;;
+        --meter-bin)
+            (($# >= 2)) || fail "--meter-bin requires a path"
+            METER_BIN="$2"
+            shift 2
+            ;;
         --help|-h)
             usage
             exit 0
@@ -160,6 +248,11 @@ for command in initdb pg_ctl psql pgbench pgbouncer lsof; do
     require_command "$command"
 done
 [[ -x "$PGPOOL_BIN" ]] || fail "pgpool binary is not executable: $PGPOOL_BIN (build with: cargo build --release -p pgpool)"
+PGPOOL_BIN="$(absolute_executable_path "$PGPOOL_BIN")"
+if [[ -n "$METER_BIN" ]]; then
+    [[ -x "$METER_BIN" ]] || fail "meter binary is not executable: $METER_BIN (build with: cargo build -p meter-cli --bin meter)"
+    METER_BIN="$(absolute_executable_path "$METER_BIN")"
+fi
 
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pgpool-pgbouncer-benchmark.XXXXXX")"
 trap cleanup EXIT INT TERM
@@ -211,19 +304,8 @@ pgbouncer "$WORK_DIR/pgbouncer.ini" >"$WORK_DIR/pgbouncer.stdout" 2>&1 &
 PGBOUNCER_PID=$!
 wait_for_sql "$PGBOUNCER_PORT" "PgBouncer"
 
-"$PGPOOL_BIN" serve \
-    --backend-host 127.0.0.1 \
-    --backend-port "$POSTGRES_PORT" \
-    --bind "127.0.0.1:$PGPOOL_PORT" \
-    --admin-bind "127.0.0.1:$ADMIN_PORT" \
-    --max-backend-connections "$BACKEND_CAP" \
-    --pool-acquire-timeout-ms "$POOL_ACQUIRE_TIMEOUT_MS" \
-    >"$WORK_DIR/pgpool.log" 2>&1 &
-PGPOOL_PID=$!
-wait_for_sql "$PGPOOL_PORT" "pgpool"
-
 pgbench --no-vacuum --protocol simple --client "$CLIENTS" --jobs "$JOBS" --time "$DURATION_SECONDS" --host 127.0.0.1 --port "$PGBOUNCER_PORT" --username postgres "$DATABASE" >"$WORK_DIR/pgbouncer-pgbench.log" 2>&1
-pgbench --no-vacuum --protocol simple --client "$CLIENTS" --jobs "$JOBS" --time "$DURATION_SECONDS" --host 127.0.0.1 --port "$PGPOOL_PORT" --username postgres "$DATABASE" >"$WORK_DIR/pgpool-pgbench.log" 2>&1
+run_pgpool_benchmark
 
 PGBOUNCER_TPS="$(metric "$WORK_DIR/pgbouncer-pgbench.log" tps)"
 PGBOUNCER_LATENCY_MS="$(metric "$WORK_DIR/pgbouncer-pgbench.log" latency_ms)"
@@ -242,8 +324,12 @@ require_clean_pgbench "$WORK_DIR/pgpool-pgbench.log" "pgpool"
 
 TPS_RATIO="$(awk -v pgpool="$PGPOOL_TPS" -v pgbouncer="$PGBOUNCER_TPS" 'BEGIN { printf "%.6f", pgpool / pgbouncer }')"
 WINNER="$(awk -v pgpool="$PGPOOL_TPS" -v pgbouncer="$PGBOUNCER_TPS" 'BEGIN { print (pgpool > pgbouncer ? "pgpool" : (pgpool < pgbouncer ? "pgbouncer" : "tie")) }')"
+DIAGNOSTICS_JSON=""
+if [[ -n "$METER_BIN" ]]; then
+    DIAGNOSTICS_JSON=',"diagnostics":{"meter_sampled_pgpool":true,"comparison_valid":false}'
+fi
 
-printf '{"schema":"%s","profile":{"workload":"pgbench-tpcb","protocol":"simple","pool_mode":"transaction","backend_connection_cap":%s,"clients":%s,"jobs":%s,"duration_seconds":%s,"scale":%s},"targets":{"pgbouncer":{"tps":%s,"latency_average_ms":%s},"pgpool":{"tps":%s,"latency_average_ms":%s}},"ratios":{"pgpool_over_pgbouncer_tps":%s},"winner_by_tps":"%s"}\n' \
+printf '{"schema":"%s","profile":{"workload":"pgbench-tpcb","protocol":"simple","pool_mode":"transaction","backend_connection_cap":%s,"clients":%s,"jobs":%s,"duration_seconds":%s,"scale":%s},"targets":{"pgbouncer":{"tps":%s,"latency_average_ms":%s},"pgpool":{"tps":%s,"latency_average_ms":%s}},"ratios":{"pgpool_over_pgbouncer_tps":%s},"winner_by_tps":"%s"%s}\n' \
     "$PROFILE_SCHEMA" "$BACKEND_CAP" "$CLIENTS" "$JOBS" "$DURATION_SECONDS" "$SCALE" \
-    "$PGBOUNCER_TPS" "$PGBOUNCER_LATENCY_MS" "$PGPOOL_TPS" "$PGPOOL_LATENCY_MS" "$TPS_RATIO" "$WINNER"
+    "$PGBOUNCER_TPS" "$PGBOUNCER_LATENCY_MS" "$PGPOOL_TPS" "$PGPOOL_LATENCY_MS" "$TPS_RATIO" "$WINNER" "$DIAGNOSTICS_JSON"
 # HANDWRITE-END
