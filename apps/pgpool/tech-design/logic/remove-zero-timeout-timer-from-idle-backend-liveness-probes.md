@@ -34,3 +34,18 @@ flowchart LR
   readable --> live
   immediate_probe -->|EOF or error| dead[drop and retry]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/pool/backend_pool.rs
+    action: modify
+    section: pgpool-immediate-idle-liveness-probe
+    impl_mode: hand-written
+  - path: apps/pgpool/tests/pool.rs
+    action: modify
+    section: pgpool-immediate-idle-liveness-probe
+    impl_mode: hand-written
+```
