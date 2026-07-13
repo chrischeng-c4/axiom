@@ -2402,7 +2402,15 @@ fn initialize_td_spec_skeleton(spec_abs: &std::path::Path, slug: &str) -> Result
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create spec directory {}", parent.display()))?;
     }
-    let skeleton = format!("---\nid: {slug}\nsummary: (fill)\nfill_sections: []\n---\n");
+    // Serialize through YAML rather than interpolating a plain scalar. A
+    // numeric GitHub WI id such as `1487` must stay a string; otherwise YAML
+    // parses it as a number and the first section-apply validation reports a
+    // missing string `id` (#1521). Safe non-numeric slugs remain plain scalars.
+    let yaml_id = serde_yaml::to_string(slug)
+        .context("failed to serialize TD skeleton id")?
+        .trim_end_matches(['\r', '\n'])
+        .to_string();
+    let skeleton = format!("---\nid: {yaml_id}\nsummary: (fill)\nfill_sections: []\n---\n");
     std::fs::write(spec_abs, skeleton)
         .with_context(|| format!("failed to write TD skeleton {}", spec_abs.display()))?;
     Ok(true)
@@ -5633,6 +5641,46 @@ label = "lib:pg"
         assert_eq!(
             std::fs::read_to_string(&spec_abs).unwrap(),
             "---\nid: some-slug\nfill_sections: [logic]\n---\nauthored\n"
+        );
+    }
+
+    #[test]
+    fn initialize_td_spec_skeleton_numeric_id_accepts_first_section_apply() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spec_abs = tmp.path().join("tech-design/logic/1487.md");
+
+        assert!(initialize_td_spec_skeleton(&spec_abs, "1487").unwrap());
+        let skeleton = std::fs::read_to_string(&spec_abs).unwrap();
+        assert!(
+            !skeleton.lines().any(|line| line == "id: 1487"),
+            "numeric id must not be emitted as a bare YAML number: {skeleton}"
+        );
+        let logic = concat!(
+            "## Logic\n",
+            "<!-- type: logic lang: mermaid -->\n\n",
+            "```mermaid\n",
+            "---\n",
+            "id: numeric_1487\n",
+            "entry: start\n",
+            "nodes:\n",
+            "  start: { kind: start }\n",
+            "edges: []\n",
+            "---\n",
+            "flowchart TD\n",
+            "```\n",
+        );
+        let merged = merge_spec_section(&skeleton, "logic", logic).unwrap();
+        let errors = validate_spec_for_section_apply(&merged, "logic");
+        assert!(
+            errors.is_empty(),
+            "numeric skeleton must accept its first applicability section: {errors:?}\n{merged}"
+        );
+
+        let (frontmatter, _) = split_frontmatter(&skeleton).expect("skeleton frontmatter");
+        let parsed: serde_yaml::Value = serde_yaml::from_str(frontmatter).unwrap();
+        assert_eq!(
+            parsed.get("id").and_then(|value| value.as_str()),
+            Some("1487")
         );
     }
 
