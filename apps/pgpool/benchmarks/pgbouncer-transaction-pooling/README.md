@@ -20,7 +20,8 @@ Both targets use the same intentionally constrained workload:
 The runner warms the shared backend before measurement and then measures the
 two targets sequentially. Its JSON includes raw TPS, average latency, and the
 explicit `pgpool_over_pgbouncer_tps` ratio; it deliberately does not encode a
-pass/fail threshold.
+pass/fail threshold. It does reject a target that cannot establish all 64
+declared clients, so a partial-client run cannot be compared as a valid result.
 
 ## Run
 
@@ -49,4 +50,7 @@ apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh \
 The runner starts and removes a temporary PostgreSQL data directory itself. It
 does not install packages, change a service, or retain benchmark data after it
 exits.
+
+For a failed-run diagnosis only, set `PGPOOL_BENCH_KEEP_WORK_DIR=true`; the
+runner will print and retain its otherwise-temporary logs and configuration.
 <!-- HANDWRITE-END -->

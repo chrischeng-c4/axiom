@@ -18,6 +18,8 @@ POSTGRES_STARTED=false
 PGBOUNCER_PID=""
 PGPOOL_PID=""
 USED_PORTS=()
+NEXT_FREE_PORT=""
+KEEP_WORK_DIR="${PGPOOL_BENCH_KEEP_WORK_DIR:-false}"
 
 usage() {
     cat <<'USAGE'
@@ -52,7 +54,7 @@ find_free_port() {
         fi
         if ! lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
             USED_PORTS+=("$port")
-            printf '%s\n' "$port"
+            NEXT_FREE_PORT="$port"
             return 0
         fi
     done
@@ -82,11 +84,21 @@ metric() {
     esac
 }
 
+reported_clients() {
+    awk -F: '/^number of clients:/ { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit }' "$1"
+}
+
 require_metric() {
     local value="$1"
     local name="$2"
     [[ "$value" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail "could not parse $name from pgbench output"
     awk -v value="$value" 'BEGIN { exit !(value > 0) }' || fail "$name must be positive, got '$value'"
+}
+
+require_client_count() {
+    local value="$1"
+    local target="$2"
+    [[ "$value" == "$CLIENTS" ]] || fail "$target benchmark did not establish all $CLIENTS clients (reported '$value')"
 }
 
 cleanup() {
@@ -102,7 +114,11 @@ cleanup() {
     if [[ "$POSTGRES_STARTED" == true ]]; then
         pg_ctl --pgdata "$WORK_DIR/postgres" --wait --mode fast stop >/dev/null 2>&1
     fi
-    [[ -z "$WORK_DIR" ]] || rm -rf "$WORK_DIR"
+    if [[ -n "$WORK_DIR" && "$KEEP_WORK_DIR" == true ]]; then
+        echo "benchmark artifacts retained at $WORK_DIR" >&2
+    elif [[ -n "$WORK_DIR" ]]; then
+        rm -rf "$WORK_DIR"
+    fi
 }
 
 while (($#)); do
@@ -139,10 +155,14 @@ done
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pgpool-pgbouncer-benchmark.XXXXXX")"
 trap cleanup EXIT INT TERM
 
-POSTGRES_PORT="$(find_free_port)"
-PGBOUNCER_PORT="$(find_free_port)"
-PGPOOL_PORT="$(find_free_port)"
-ADMIN_PORT="$(find_free_port)"
+find_free_port
+POSTGRES_PORT="$NEXT_FREE_PORT"
+find_free_port
+PGBOUNCER_PORT="$NEXT_FREE_PORT"
+find_free_port
+PGPOOL_PORT="$NEXT_FREE_PORT"
+find_free_port
+ADMIN_PORT="$NEXT_FREE_PORT"
 
 initdb --pgdata "$WORK_DIR/postgres" --auth trust --username postgres --no-locale >"$WORK_DIR/initdb.log" 2>&1
 pg_ctl --pgdata "$WORK_DIR/postgres" --options "-h 127.0.0.1 -p $POSTGRES_PORT" --wait start >"$WORK_DIR/postgres.log" 2>&1
@@ -150,6 +170,11 @@ POSTGRES_STARTED=true
 
 psql --host 127.0.0.1 --port "$POSTGRES_PORT" --username postgres --dbname postgres --no-psqlrc --quiet --command "CREATE DATABASE $DATABASE" >"$WORK_DIR/create-db.log"
 pgbench --initialize --scale "$SCALE" --host 127.0.0.1 --port "$POSTGRES_PORT" --username postgres "$DATABASE" >"$WORK_DIR/pgbench-init.log" 2>&1
+
+# PgBouncer 1.25 still requires a recognized login role when auth_type=trust.
+# The ephemeral PostgreSQL cluster itself is trust-authenticated, so the
+# temporary userlist deliberately contains no reusable credential material.
+printf '"postgres" ""\n' >"$WORK_DIR/userlist.txt"
 
 # Warm the identical seeded backend before either target is measured.
 pgbench --no-vacuum --protocol simple --client 8 --jobs 2 --time 3 --host 127.0.0.1 --port "$POSTGRES_PORT" --username postgres "$DATABASE" >"$WORK_DIR/warmup.log" 2>&1
@@ -162,6 +187,7 @@ $DATABASE = host=127.0.0.1 port=$POSTGRES_PORT dbname=$DATABASE
 listen_addr = 127.0.0.1
 listen_port = $PGBOUNCER_PORT
 auth_type = trust
+auth_file = $WORK_DIR/userlist.txt
 pool_mode = transaction
 max_client_conn = 1000
 default_pool_size = $BACKEND_CAP
@@ -193,10 +219,14 @@ PGBOUNCER_TPS="$(metric "$WORK_DIR/pgbouncer-pgbench.log" tps)"
 PGBOUNCER_LATENCY_MS="$(metric "$WORK_DIR/pgbouncer-pgbench.log" latency_ms)"
 PGPOOL_TPS="$(metric "$WORK_DIR/pgpool-pgbench.log" tps)"
 PGPOOL_LATENCY_MS="$(metric "$WORK_DIR/pgpool-pgbench.log" latency_ms)"
+PGBOUNCER_CLIENTS="$(reported_clients "$WORK_DIR/pgbouncer-pgbench.log")"
+PGPOOL_CLIENTS="$(reported_clients "$WORK_DIR/pgpool-pgbench.log")"
 require_metric "$PGBOUNCER_TPS" "PgBouncer TPS"
 require_metric "$PGBOUNCER_LATENCY_MS" "PgBouncer latency"
 require_metric "$PGPOOL_TPS" "pgpool TPS"
 require_metric "$PGPOOL_LATENCY_MS" "pgpool latency"
+require_client_count "$PGBOUNCER_CLIENTS" "PgBouncer"
+require_client_count "$PGPOOL_CLIENTS" "pgpool"
 
 TPS_RATIO="$(awk -v pgpool="$PGPOOL_TPS" -v pgbouncer="$PGBOUNCER_TPS" 'BEGIN { printf "%.6f", pgpool / pgbouncer }')"
 WINNER="$(awk -v pgpool="$PGPOOL_TPS" -v pgbouncer="$PGBOUNCER_TPS" 'BEGIN { print (pgpool > pgbouncer ? "pgpool" : (pgpool < pgbouncer ? "pgbouncer" : "tie")) }')"
