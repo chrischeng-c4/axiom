@@ -15,6 +15,12 @@ capability_refs:
     claim: td-apply-section-lookup-parity
     coverage: full
     rationale: "The in-place real-CLI fixture proves body-only Logic normalization, malformed non-mutation, and sequential applicability Logic to structured Unit Test dispatch."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: terminal-ec-process-liveness
+    claim: terminal-ec-process-liveness
+    coverage: full
+    rationale: "Real CLI regressions prove bounded no-child wrapper cleanup, pre-mutation timeout refusal, and cross-process same-WI single-flight with one EC launch."
 ---
 
 # Semantic TD: agentic-workflow/tests/cli/tests
@@ -103,6 +109,27 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "test_td_merged_constant_value"
+            kind: "function"
+            public: false
+          - name: "wait_for_1579_path"
+            kind: "function"
+            public: false
+          - name: "wait_for_1579_process_exit"
+            kind: "function"
+            public: false
+          - name: "test_code_check_refuses_configured_red_ec_gate"
+            kind: "function"
+            public: false
+          - name: "test_code_check_bounds_no_child_ec_wrapper_and_preserves_phase"
+            kind: "function"
+            public: false
+          - name: "test_code_check_cross_process_single_flight_prevents_duplicate_ec_launch"
+            kind: "function"
+            public: false
+          - name: "test_code_check_fast_green_stale_reader_rechecks_phase_before_ec"
+            kind: "function"
+            public: false
+          - name: "test_code_check_retry_contends_while_terminal_transition_holds_lease"
             kind: "function"
             public: false
         source_evidence_node:
@@ -986,6 +1013,20 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      Issue #1579 adds real-binary regressions for a wrapper whose external
+      child has already exited, proving timeout remains bounded, the wrapper
+      is gone, the WI stays open in its pre-terminal phase, no terminal commit
+      lands, and the envelope returns `terminal_ec_timeout` with exact
+      `aw td code-check <slug>` retry guidance. A separate two-process test
+      launches the same slug concurrently and proves the filesystem lock
+      rejects the second caller with `terminal_ec_single_flight` while the EC
+      launch marker records exactly one execution. The debug-only barrier test
+      pauses a process after its initial `cb_filled` read, lets another process
+      finish a fast-green terminal transition, then proves the stale reader
+      re-reads `td_merged` after lease acquisition, skips EC, and leaves both
+      the launch count and terminal commit count at one. A post-phase-update
+      barrier separately proves that a caller beginning in retry phase still
+      contends on the owner's lease and cannot race landing or terminal commit.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/tests/cli/tests/recovery_flow_test.rs"
     action: modify

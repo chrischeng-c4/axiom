@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{hash_map::DefaultHasher, BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::hash::{Hash, Hasher};
-use std::io::Read;
+use std::io::{self, Read};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -37,6 +37,9 @@ const EC_DOC_END_MARKER: &str = "AW-EC-DOC-END";
 const EC_CATEGORIES: [&str; 4] = ["behavior", "efficiency", "security", "stability"];
 const EC_COMMAND_TIMEOUT_ENV: &str = "AW_EC_COMMAND_TIMEOUT_SECS";
 const DEFAULT_EC_COMMAND_TIMEOUT_SECS: u64 = 30 * 60;
+const EC_PROCESS_TERM_GRACE: Duration = Duration::from_secs(1);
+const EC_PROCESS_KILL_GRACE: Duration = Duration::from_secs(1);
+const EC_OUTPUT_CLOSE_GRACE: Duration = Duration::from_secs(1);
 
 /// Process-local companion to the cross-process file lock below. `flock`
 /// behavior for a second descriptor in the same process differs by platform,
@@ -506,9 +509,20 @@ pub struct EcVerifyCommandResult {
     pub category: String,
     pub command: String,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_kind: Option<EcVerifyFailureKind>,
     pub exit_code: Option<i32>,
     pub stdout_tail: String,
     pub stderr_tail: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EcVerifyFailureKind {
+    CommandFailed,
+    Timeout,
+    RunnerError,
+    SingleFlight,
 }
 
 struct EcCommandOutput {
@@ -517,6 +531,24 @@ struct EcCommandOutput {
     stderr: Vec<u8>,
     timed_out: bool,
 }
+
+#[derive(Debug)]
+struct EcCommandTimeoutError {
+    timeout: Duration,
+    detail: String,
+}
+
+impl std::fmt::Display for EcCommandTimeoutError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "EC command timed out after {:?}; {}",
+            self.timeout, self.detail
+        )
+    }
+}
+
+impl std::error::Error for EcCommandTimeoutError {}
 
 /// Keeps one terminal EC inventory evaluation active for a project across both
 /// processes and in-process callers. The file lock is automatically released
@@ -532,6 +564,37 @@ impl Drop for TerminalEcGateLock {
         // path. That preserves the same ordering as the cross-process lock.
         self.file.take();
         release_terminal_ec_gate_path(&self.path);
+    }
+}
+
+/// Owns the project-scoped terminal EC lease from pre-evaluation stale-state
+/// revalidation through the caller's terminal lifecycle transition. Dropping
+/// this session releases both the process-local path reservation and fs2 lock.
+pub(crate) struct TerminalEcGateSession {
+    ctx: EcProjectContext,
+    _lock: TerminalEcGateLock,
+}
+
+pub(crate) enum TerminalEcGateAcquisition {
+    Acquired(TerminalEcGateSession),
+    Blocked(EcVerifySummary),
+}
+
+impl TerminalEcGateSession {
+    /// Evaluate the inventory only after the caller has re-read its work item
+    /// under this lease. A post-acquisition inventory error is a hard runner
+    /// failure rather than an advisory pass.
+    pub(crate) fn evaluate(&self) -> EcVerifySummary {
+        verify_ec_context(&self.ctx, true).unwrap_or_else(|error| {
+            terminal_ec_gate_blocked_summary(
+                &self.ctx,
+                "terminal-ec-runner-error",
+                EcVerifyFailureKind::RunnerError,
+                &format!(
+                    "terminal EC inventory evaluation failed after lock acquisition: {error}; retry `aw td code-check <slug>`"
+                ),
+            )
+        })
     }
 }
 
@@ -3754,6 +3817,7 @@ fn verify_ec_context(ctx: &EcProjectContext, required_only: bool) -> Result<EcVe
                 category: case.category.clone(),
                 command: case.command.clone(),
                 status: "skipped".to_string(),
+                failure_kind: None,
                 exit_code: None,
                 stdout_tail: String::new(),
                 stderr_tail: "skipped (advisory)".to_string(),
@@ -3800,24 +3864,22 @@ fn verify_ec_context(ctx: &EcProjectContext, required_only: bool) -> Result<EcVe
     })
 }
 
-/// Terminal `aw td code-check` EC gate (issue #858, epic #1270 R1b): resolve
-/// `project`'s EC context under `project_root` and, only when it actually
-/// has a configured `[aw.ec.generated]` inventory, run the same verify
-/// machinery `aw ec verify` uses (`verify_ec_context`) instead of
-/// reimplementing a runner. Returns `None` for every case the terminal
-/// caller must treat as advisory (no inventory configured) rather than a
-/// hard error: an unresolvable/unregistered project row, a project with no
-/// `aw.toml` EC inventory section at all, or a malformed inventory file —
-/// mirroring the fail-open policy the other terminal gates in `cb.rs`
-/// already follow for their own git/lookup failures, so a project that
-/// simply hasn't configured EC yet (or aw itself, before #1280) can never be
-/// bricked by this gate. `Some(summary)` — red or green — means an
-/// inventory genuinely exists and was evaluated; the caller decides what to
-/// do with `summary.clean`.
-pub(crate) fn terminal_ec_gate_summary(
+/// Prepare the terminal `aw td code-check` EC gate (issue #858, #1579):
+/// resolve `project`'s configured inventory and acquire its process/fs2
+/// single-flight lease without executing the inventory yet. This split is
+/// deliberate: the caller must re-read the work item while the lease is held
+/// before calling `TerminalEcGateSession::evaluate`, otherwise a process that
+/// read `cb_filled` before another process completed could acquire after that
+/// completion and execute the same fast-green inventory twice.
+///
+/// Returns `None` for the existing advisory cases (unresolvable project, no
+/// configured inventory, or malformed inventory). Contention and lock errors
+/// are explicit blocked summaries. An acquired session must remain alive
+/// through the caller's terminal lifecycle transition.
+pub(crate) fn acquire_terminal_ec_gate(
     project_root: &Path,
     project: &str,
-) -> Option<EcVerifySummary> {
+) -> Option<TerminalEcGateAcquisition> {
     let ctx = resolve_ec_project_context(project_root, project).ok()?;
     // Cheap existence probe before paying for `verify_ec_context`'s command
     // run: `load_ec_manifest` returns `Ok(None)` when the project's aw.toml
@@ -3825,30 +3887,43 @@ pub(crate) fn terminal_ec_gate_summary(
     // "no inventory configured" advisory case (never a silent pass, but
     // never a spurious command run either).
     load_ec_manifest(&ctx).ok()??;
-    let _lock = match try_acquire_terminal_ec_gate_lock(&ctx.project_root, &ctx.project) {
+    let lock = match try_acquire_terminal_ec_gate_lock(&ctx.project_root, &ctx.project) {
         Ok(Some(lock)) => lock,
         Ok(None) => {
-            return Some(terminal_ec_gate_blocked_summary(
+            return Some(TerminalEcGateAcquisition::Blocked(
+                terminal_ec_gate_blocked_summary(
                 &ctx,
+                "terminal-ec-single-flight",
+                EcVerifyFailureKind::SingleFlight,
                 "another terminal EC evaluation is already running; wait for it to finish, then retry the same `aw td code-check <slug>` command",
+                ),
             ));
         }
         Err(err) => {
-            return Some(terminal_ec_gate_blocked_summary(
+            return Some(TerminalEcGateAcquisition::Blocked(
+                terminal_ec_gate_blocked_summary(
                 &ctx,
+                "terminal-ec-lock-error",
+                EcVerifyFailureKind::RunnerError,
                 &format!(
                     "could not acquire the terminal EC single-flight lock: {err}; retry `aw td code-check <slug>`"
+                ),
                 ),
             ));
         }
     };
-    // #1469: the per-close gate runs required_for_production cases only —
-    // advisory cases are recorded as skipped, not executed, keeping wall
-    // clock proportional to what production actually requires.
-    verify_ec_context(&ctx, true).ok()
+    Some(TerminalEcGateAcquisition::Acquired(TerminalEcGateSession {
+        ctx,
+        _lock: lock,
+    }))
 }
 
-fn terminal_ec_gate_blocked_summary(ctx: &EcProjectContext, reason: &str) -> EcVerifySummary {
+fn terminal_ec_gate_blocked_summary(
+    ctx: &EcProjectContext,
+    case_id: &str,
+    failure_kind: EcVerifyFailureKind,
+    reason: &str,
+) -> EcVerifySummary {
     EcVerifySummary {
         project: ctx.project.clone(),
         inventory_path: relative_to(&ctx.project_root, &ctx.inventory_path),
@@ -3860,12 +3935,13 @@ fn terminal_ec_gate_blocked_summary(ctx: &EcProjectContext, reason: &str) -> EcV
         passed_count: 0,
         failed_count: 1,
         results: vec![EcVerifyCommandResult {
-            case_id: "terminal-ec-single-flight".to_string(),
+            case_id: case_id.to_string(),
             capability_id: String::new(),
             claim_id: String::new(),
             category: "lifecycle".to_string(),
             command: "terminal EC inventory evaluation".to_string(),
             status: "failed".to_string(),
+            failure_kind: Some(failure_kind),
             exit_code: None,
             stdout_tail: String::new(),
             stderr_tail: reason.to_string(),
@@ -3962,6 +4038,7 @@ fn run_ec_tool_manifest_command(
             category,
             command: String::new(),
             status: "failed".to_string(),
+            failure_kind: Some(EcVerifyFailureKind::CommandFailed),
             exit_code: None,
             stdout_tail: String::new(),
             stderr_tail: format!("tool-contract `{}` is missing command", tool.id),
@@ -4014,6 +4091,13 @@ fn run_ec_verify_command_with_timeout(
             } else {
                 "failed".to_string()
             };
+            let failure_kind = if output.timed_out {
+                Some(EcVerifyFailureKind::Timeout)
+            } else if status == "failed" {
+                Some(EcVerifyFailureKind::CommandFailed)
+            } else {
+                None
+            };
             let mut stderr_tail = tail_lossy(&output.stderr, 4000);
             if output.timed_out {
                 let reason = format!(
@@ -4040,22 +4124,31 @@ fn run_ec_verify_command_with_timeout(
                 category,
                 command,
                 status,
+                failure_kind,
                 exit_code: output.status.code(),
                 stdout_tail: tail_lossy(&output.stdout, 4000),
                 stderr_tail,
             }
         }
-        Err(err) => EcVerifyCommandResult {
-            case_id,
-            capability_id,
-            claim_id,
-            category,
-            command,
-            status: "failed".to_string(),
-            exit_code: None,
-            stdout_tail: String::new(),
-            stderr_tail: err.to_string(),
-        },
+        Err(err) => {
+            let failure_kind = if err.downcast_ref::<EcCommandTimeoutError>().is_some() {
+                EcVerifyFailureKind::Timeout
+            } else {
+                EcVerifyFailureKind::RunnerError
+            };
+            EcVerifyCommandResult {
+                case_id,
+                capability_id,
+                claim_id,
+                category,
+                command,
+                status: "failed".to_string(),
+                failure_kind: Some(failure_kind),
+                exit_code: None,
+                stdout_tail: String::new(),
+                stderr_tail: err.to_string(),
+            }
+        }
     }
 }
 
@@ -4082,6 +4175,8 @@ fn run_ec_command_with_timeout(
     let mut child = process
         .spawn()
         .with_context(|| format!("spawn EC command `{command}`"))?;
+    #[cfg(unix)]
+    let process_group_id = child.id() as i32;
     let stdout = spawn_ec_output_reader(
         child
             .stdout
@@ -4096,23 +4191,70 @@ fn run_ec_command_with_timeout(
     );
 
     let deadline = Instant::now() + timeout;
-    let (status, timed_out) = loop {
+    let mut completed = None;
+    while Instant::now() < deadline {
         if let Some(status) = child
             .try_wait()
             .with_context(|| format!("poll EC command `{command}`"))?
         {
-            break (status, false);
-        }
-        if Instant::now() >= deadline {
-            break (terminate_ec_command(&mut child)?, true);
+            completed = Some(status);
+            break;
         }
         thread::sleep(Duration::from_millis(25));
+    }
+
+    let timed_out = completed.is_none();
+    let mut residual_process_group = false;
+    let status = if let Some(status) = completed {
+        #[cfg(unix)]
+        {
+            residual_process_group = terminate_residual_ec_process_group(process_group_id)?;
+        }
+        status
+    } else {
+        terminate_ec_command(child).map_err(|error| {
+            anyhow::Error::new(EcCommandTimeoutError {
+                timeout,
+                detail: error.to_string(),
+            })
+        })?
     };
+
+    let output_deadline = Instant::now() + EC_OUTPUT_CLOSE_GRACE;
+    let stdout =
+        join_ec_output_reader_until(stdout, "stdout", output_deadline).map_err(|error| {
+            if timed_out {
+                anyhow::Error::new(EcCommandTimeoutError {
+                    timeout,
+                    detail: error.to_string(),
+                })
+            } else {
+                error
+            }
+        })?;
+    let stderr =
+        join_ec_output_reader_until(stderr, "stderr", output_deadline).map_err(|error| {
+            if timed_out {
+                anyhow::Error::new(EcCommandTimeoutError {
+                    timeout,
+                    detail: error.to_string(),
+                })
+            } else {
+                error
+            }
+        })?;
+
+    if residual_process_group {
+        anyhow::bail!(
+            "EC command `{command}` leader exited while process-group descendants remained; \
+             bounded residual cleanup completed, but the command result is unsafe to accept"
+        );
+    }
 
     Ok(EcCommandOutput {
         status,
-        stdout: join_ec_output_reader(stdout, "stdout")?,
-        stderr: join_ec_output_reader(stderr, "stderr")?,
+        stdout,
+        stderr,
         timed_out,
     })
 }
@@ -4128,10 +4270,19 @@ where
     })
 }
 
-fn join_ec_output_reader(
+fn join_ec_output_reader_until(
     reader: thread::JoinHandle<std::io::Result<Vec<u8>>>,
     stream: &str,
+    deadline: Instant,
 ) -> Result<Vec<u8>> {
+    while !reader.is_finished() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    if !reader.is_finished() {
+        anyhow::bail!(
+            "EC command {stream} pipe remained open after process-group cleanup; refusing to wait indefinitely"
+        );
+    }
     reader
         .join()
         .map_err(|_| anyhow::anyhow!("EC {stream} reader panicked"))?
@@ -4146,30 +4297,56 @@ fn configure_ec_command_process_group(command: &mut std::process::Command) {
 #[cfg(not(unix))]
 fn configure_ec_command_process_group(_command: &mut std::process::Command) {}
 
-fn terminate_ec_command(child: &mut Child) -> Result<ExitStatus> {
+fn terminate_ec_command(mut child: Child) -> Result<ExitStatus> {
     #[cfg(unix)]
     {
-        let process_group = -(child.id() as i32);
+        let process_group_id = child.id() as i32;
         // The shell, cap wrapper, VAT, and any Cargo children share this
         // group. A shell-only kill would recreate the orphaned-child shape
         // this timeout is intended to prevent.
-        unsafe {
-            libc::kill(process_group, libc::SIGTERM);
+        if let Err(error) = signal_ec_process_group(process_group_id, libc::SIGTERM) {
+            let _ = child.kill();
+            reap_ec_child_in_background(child);
+            return Err(error).context("send SIGTERM to timed-out EC process group");
         }
-        let grace_deadline = Instant::now() + Duration::from_secs(1);
-        loop {
-            if let Some(status) = child.try_wait().context("poll terminated EC command")? {
-                return Ok(status);
+        let mut status = None;
+        let grace_deadline = Instant::now() + EC_PROCESS_TERM_GRACE;
+        while Instant::now() < grace_deadline {
+            if status.is_none() {
+                status = child.try_wait().context("poll terminated EC command")?;
             }
-            if Instant::now() >= grace_deadline {
+            if status.is_some() && !ec_process_group_is_alive(process_group_id)? {
                 break;
             }
             thread::sleep(Duration::from_millis(25));
         }
-        unsafe {
-            libc::kill(process_group, libc::SIGKILL);
+
+        if ec_process_group_is_alive(process_group_id)? {
+            if let Err(error) = signal_ec_process_group(process_group_id, libc::SIGKILL) {
+                let _ = child.kill();
+                reap_ec_child_in_background(child);
+                return Err(error).context("send SIGKILL to timed-out EC process group");
+            }
         }
-        return child.wait().context("reap timed-out EC command");
+        let kill_deadline = Instant::now() + EC_PROCESS_KILL_GRACE;
+        while Instant::now() < kill_deadline {
+            if status.is_none() {
+                status = child.try_wait().context("reap timed-out EC command")?;
+            }
+            if status.is_some() && !ec_process_group_is_alive(process_group_id)? {
+                return Ok(status.expect("status checked above"));
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+
+        let group_alive = ec_process_group_is_alive(process_group_id)?;
+        if status.is_none() {
+            reap_ec_child_in_background(child);
+        }
+        anyhow::bail!(
+            "timed-out EC process cleanup exceeded its bounded grace (leader_reaped={}, process_group_alive={group_alive})",
+            status.is_some()
+        );
     }
 
     #[cfg(not(unix))]
@@ -4177,6 +4354,67 @@ fn terminate_ec_command(child: &mut Child) -> Result<ExitStatus> {
         let _ = child.kill();
         child.wait().context("reap timed-out EC command")
     }
+}
+
+#[cfg(unix)]
+fn terminate_residual_ec_process_group(process_group_id: i32) -> Result<bool> {
+    if !ec_process_group_is_alive(process_group_id)? {
+        return Ok(false);
+    }
+    signal_ec_process_group(process_group_id, libc::SIGTERM)
+        .context("send SIGTERM to residual EC process group")?;
+    let grace_deadline = Instant::now() + EC_PROCESS_TERM_GRACE;
+    while Instant::now() < grace_deadline {
+        if !ec_process_group_is_alive(process_group_id)? {
+            return Ok(true);
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    signal_ec_process_group(process_group_id, libc::SIGKILL)
+        .context("send SIGKILL to residual EC process group")?;
+    let kill_deadline = Instant::now() + EC_PROCESS_KILL_GRACE;
+    while Instant::now() < kill_deadline {
+        if !ec_process_group_is_alive(process_group_id)? {
+            return Ok(true);
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    anyhow::bail!("residual EC process group remained alive after SIGKILL")
+}
+
+#[cfg(unix)]
+fn signal_ec_process_group(process_group_id: i32, signal: i32) -> Result<bool> {
+    let result = unsafe { libc::kill(-process_group_id, signal) };
+    if result == 0 {
+        return Ok(true);
+    }
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        return Ok(false);
+    }
+    Err(error)
+        .with_context(|| format!("signal process group {process_group_id} with signal {signal}"))
+}
+
+#[cfg(unix)]
+fn ec_process_group_is_alive(process_group_id: i32) -> Result<bool> {
+    let result = unsafe { libc::kill(-process_group_id, 0) };
+    if result == 0 {
+        return Ok(true);
+    }
+    let error = io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(libc::ESRCH) => Ok(false),
+        Some(libc::EPERM) => Ok(true),
+        _ => Err(error).with_context(|| format!("probe EC process group {process_group_id}")),
+    }
+}
+
+#[cfg(unix)]
+fn reap_ec_child_in_background(mut child: Child) {
+    thread::spawn(move || {
+        let _ = child.wait();
+    });
 }
 
 fn normalize_ec_command(command: String) -> String {
@@ -5944,25 +6182,219 @@ e2e_tests:
         assert!(summary.results[0].stderr_tail.contains("executed 0 tests"));
     }
 
+    #[cfg(unix)]
+    fn wait_for_test_process_exit(pid: i32, deadline: Instant) -> bool {
+        while Instant::now() < deadline {
+            let result = unsafe { libc::kill(pid, 0) };
+            if result != 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        false
+    }
+
+    #[cfg(unix)]
     #[test]
     fn ec_verify_bounds_a_wrapper_after_its_child_exits() {
         let tmp = tempfile::tempdir().unwrap();
+        let wrapper_pid = tmp.path().join("wrapper.pid");
+        let child_exited = tmp.path().join("child-exited");
+        let wrapper = tmp.path().join("no-child-wrapper.sh");
+        fs::write(
+            &wrapper,
+            r#"#!/bin/sh
+wrapper_pid="$1"
+child_exited="$2"
+echo $$ > "$wrapper_pid"
+/bin/sh -c 'exit 0' &
+child=$!
+wait "$child"
+echo exited > "$child_exited"
+while :; do :; done
+"#,
+        )
+        .unwrap();
         let started = Instant::now();
         let result = run_ec_verify_command_with_timeout(
             "wrapper-stall".to_string(),
             "demo".to_string(),
             "demo-wrapper-stall".to_string(),
             "efficiency".to_string(),
-            "sh -c 'true; while :; do sleep 1; done'".to_string(),
+            format!(
+                "exec sh {} {} {}",
+                wrapper.display(),
+                wrapper_pid.display(),
+                child_exited.display()
+            ),
             tmp.path(),
-            Duration::from_millis(100),
+            Duration::from_millis(500),
         );
 
         assert_eq!(result.status, "failed");
-        assert!(result.stderr_tail.contains("timed out after 100ms"));
+        assert_eq!(result.failure_kind, Some(EcVerifyFailureKind::Timeout));
+        assert!(result.stderr_tail.contains("timed out after 500ms"));
+        assert!(
+            child_exited.is_file(),
+            "fixture must prove the external child exited before the wrapper stalled"
+        );
+        let pid = fs::read_to_string(&wrapper_pid)
+            .unwrap()
+            .trim()
+            .parse::<i32>()
+            .unwrap();
+        assert!(
+            wait_for_test_process_exit(pid, Instant::now() + Duration::from_secs(1)),
+            "timed-out no-child wrapper {pid} remained alive"
+        );
         assert!(
             started.elapsed() < Duration::from_secs(3),
             "timed-out wrapper must return promptly, elapsed: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ec_verify_kills_surviving_group_member_after_leader_exits_on_sigterm() {
+        let tmp = tempfile::tempdir().unwrap();
+        let descendant_pid = tmp.path().join("descendant.pid");
+        let descendant_ready = tmp.path().join("descendant-ready");
+        let leader = tmp.path().join("leader.sh");
+        let descendant = tmp.path().join("term-ignoring-descendant.sh");
+        fs::write(
+            &descendant,
+            r#"#!/bin/sh
+trap '' TERM
+echo $$ > "$1"
+echo ready > "$2"
+while :; do sleep 1; done
+"#,
+        )
+        .unwrap();
+        fs::write(
+            &leader,
+            r#"#!/bin/sh
+sh "$1" "$2" "$3" &
+wait $!
+"#,
+        )
+        .unwrap();
+
+        let started = Instant::now();
+        let result = run_ec_verify_command_with_timeout(
+            "leader-exit-descendant-stall".to_string(),
+            "demo".to_string(),
+            "demo-process-group-cleanup".to_string(),
+            "stability".to_string(),
+            format!(
+                "exec sh {} {} {} {}",
+                leader.display(),
+                descendant.display(),
+                descendant_pid.display(),
+                descendant_ready.display()
+            ),
+            tmp.path(),
+            Duration::from_millis(500),
+        );
+
+        assert_eq!(result.status, "failed");
+        assert_eq!(result.failure_kind, Some(EcVerifyFailureKind::Timeout));
+        assert!(result.stderr_tail.contains("timed out after 500ms"));
+        assert!(
+            descendant_ready.is_file(),
+            "fixture descendant must be alive and holding the output pipe before timeout"
+        );
+        let pid = fs::read_to_string(&descendant_pid)
+            .unwrap()
+            .trim()
+            .parse::<i32>()
+            .unwrap();
+        assert!(
+            wait_for_test_process_exit(pid, Instant::now() + Duration::from_secs(1)),
+            "SIGTERM-ignoring descendant {pid} survived bounded process-group cleanup"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "leader-exit cleanup or pipe collection exceeded the bound: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ec_verify_rejects_natural_leader_success_with_live_descendant() {
+        let tmp = tempfile::tempdir().unwrap();
+        let descendant_pid = tmp.path().join("natural-descendant.pid");
+        let descendant_ready = tmp.path().join("natural-descendant-ready");
+        let leader = tmp.path().join("natural-leader.sh");
+        let descendant = tmp.path().join("natural-term-ignoring-descendant.sh");
+        fs::write(
+            &descendant,
+            r#"#!/bin/sh
+trap '' TERM
+echo $$ > "$1"
+echo ready > "$2"
+while :; do :; done
+"#,
+        )
+        .unwrap();
+        fs::write(
+            &leader,
+            r#"#!/bin/sh
+sh "$1" "$2" "$3" &
+while [ ! -s "$2" ]; do :; done
+exit 0
+"#,
+        )
+        .unwrap();
+
+        let started = Instant::now();
+        let result = run_ec_verify_command_with_timeout(
+            "natural-leader-success".to_string(),
+            "demo".to_string(),
+            "demo-natural-leader-residual".to_string(),
+            "stability".to_string(),
+            format!(
+                "exec sh {} {} {} {}",
+                leader.display(),
+                descendant.display(),
+                descendant_pid.display(),
+                descendant_ready.display()
+            ),
+            tmp.path(),
+            Duration::from_secs(5),
+        );
+
+        assert_eq!(result.status, "failed");
+        assert_eq!(
+            result.failure_kind,
+            Some(EcVerifyFailureKind::RunnerError),
+            "a leader exit 0 with live descendants must never be accepted as a passing EC result"
+        );
+        assert!(
+            result
+                .stderr_tail
+                .contains("leader exited while process-group descendants remained"),
+            "runner error must explain the unsafe residual group: {}",
+            result.stderr_tail
+        );
+        assert!(
+            descendant_ready.is_file(),
+            "fixture must prove the descendant was alive before the leader exited 0"
+        );
+        let pid = fs::read_to_string(&descendant_pid)
+            .unwrap()
+            .trim()
+            .parse::<i32>()
+            .unwrap();
+        assert!(
+            wait_for_test_process_exit(pid, Instant::now() + Duration::from_secs(1)),
+            "natural-exit descendant {pid} survived bounded residual cleanup"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "natural-exit residual cleanup or pipe collection exceeded the bound: {:?}",
             started.elapsed()
         );
     }
@@ -5996,7 +6428,14 @@ e2e_tests:
 
         let root = tmp.path().to_path_buf();
         let first_root = root.clone();
-        let first = thread::spawn(move || terminal_ec_gate_summary(&first_root, "demo").unwrap());
+        let first = thread::spawn(move || {
+            let Some(TerminalEcGateAcquisition::Acquired(session)) =
+                acquire_terminal_ec_gate(&first_root, "demo")
+            else {
+                panic!("first terminal EC gate must acquire its lease");
+            };
+            session.evaluate()
+        });
         for _ in 0..50 {
             if marker.is_file() {
                 break;
@@ -6005,10 +6444,18 @@ e2e_tests:
         }
         assert!(marker.is_file(), "first terminal EC gate never started");
 
-        let duplicate = terminal_ec_gate_summary(&root, "demo").unwrap();
+        let Some(TerminalEcGateAcquisition::Blocked(duplicate)) =
+            acquire_terminal_ec_gate(&root, "demo")
+        else {
+            panic!("duplicate terminal EC gate must be blocked");
+        };
         assert!(!duplicate.clean);
         assert_eq!(duplicate.failed_count, 1);
         assert_eq!(duplicate.results[0].case_id, "terminal-ec-single-flight");
+        assert_eq!(
+            duplicate.results[0].failure_kind,
+            Some(EcVerifyFailureKind::SingleFlight)
+        );
         assert!(duplicate.results[0].stderr_tail.contains("already running"));
 
         let first = first.join().expect("join first terminal EC gate");

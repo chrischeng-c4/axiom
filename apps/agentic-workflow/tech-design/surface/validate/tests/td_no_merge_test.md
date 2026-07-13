@@ -8,6 +8,12 @@ capability_refs:
     claim: remove-td-merge-command
     coverage: full
     rationale: "Regression tests prove the TD merge command is absent from the CLI surface and terminal lifecycle closure uses Cb-CodeCheck."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: terminal-ec-process-liveness
+    claim: terminal-ec-process-liveness
+    coverage: full
+    rationale: "Real CLI regressions prove bounded no-child wrapper cleanup, pre-mutation timeout refusal, and cross-process single-flight with one EC launch."
 ---
 
 # Standardized apps/agentic-workflow/tests/cli/tests/td_no_merge_test.rs
@@ -470,8 +476,8 @@ async fn test_code_check_refuses_dirty_touched_scope_modified_tracked() {
 /// project-local EC inventory file `resolve_ec_project_context` looks up)
 /// and configures `[aw.ec.generated]` with one case per `(id, command,
 /// required_for_production)` triple. Trivially fast `sh -c` runners (`true` /
-/// `false`) stand in for a real EC command — `terminal_ec_gate_summary`'s
-/// `verify_ec_context` call only cares about exit status, not that the
+/// `false`) stand in for a real EC command — the acquired terminal EC
+/// session's `evaluate` call only cares about exit status, not that the
 /// command is `cargo test` (tier-1b `ec.*` cross-CLI binding validation is a
 /// separate `aw ec check`/`gen` concern `verify_ec_context` never consults).
 /// #1469: the third element lets callers author an advisory
@@ -508,6 +514,29 @@ fn write_858_ec_configured_aw_toml(
         ));
     }
     std::fs::write(root.join("aw.toml"), toml).unwrap();
+}
+
+#[cfg(unix)]
+fn wait_for_1579_path(path: &std::path::Path, deadline: std::time::Instant) -> bool {
+    while std::time::Instant::now() < deadline {
+        if path.is_file() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    false
+}
+
+#[cfg(unix)]
+fn wait_for_1579_process_exit(pid: i32, deadline: std::time::Instant) -> bool {
+    while std::time::Instant::now() < deadline {
+        let result = unsafe { libc::kill(pid, 0) };
+        if result != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    false
 }
 
 /// Same shape as `seed_847_open_issue` plus an `app:<project>` label so
@@ -566,9 +595,9 @@ async fn seed_858_open_issue_with_project(
 }
 
 /// AC1: a red (failing) configured EC gate must refuse terminal close,
-/// naming the failing case and routing to the `aw ec gen --verify`
-/// remediation command, and must not advance phase / close the issue / land
-/// any terminal commit.
+/// name the failing case, classify the failure, and route back to the exact
+/// terminal code-check command that owns EC execution. It must not advance
+/// phase / close the issue / land any terminal commit.
 #[tokio::test]
 async fn test_code_check_refuses_configured_red_ec_gate() {
     use agentic_workflow::issues::types::td_phase;
@@ -620,8 +649,15 @@ async fn test_code_check_refuses_configured_red_ec_gate() {
         stdout
     );
     assert!(
-        stdout.contains("aw ec gen") && stdout.contains("--verify"),
-        "error message must route to the EC remediation command, got:\n{}",
+        stdout.contains("\"error_kind\":\"terminal_ec_failure\""),
+        "error envelope must distinguish an ordinary EC command failure, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains(&format!(
+            "\"next\":{{\"command\":\"aw td code-check {slug}\"}}"
+        )),
+        "error envelope must carry the exact runnable terminal retry, got:\n{}",
         stdout
     );
     assert!(
@@ -652,6 +688,460 @@ async fn test_code_check_refuses_configured_red_ec_gate() {
         0,
         "a red EC gate refusal must not land any Cb-CodeCheck trailer commit"
     );
+}
+
+/// #1579: the observed VAT shape is a wrapper that has already reaped its
+/// child yet never reports completion. The real CLI must bound that wrapper,
+/// emit a typed/runnable error, and leave lifecycle state untouched.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_code_check_bounds_no_child_ec_wrapper_and_preserves_phase() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, IssueState, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    let evidence = tempfile::tempdir().expect("out-of-repo process evidence");
+    let wrapper = root.join("no-child-ec-wrapper.sh");
+    let wrapper_pid = evidence.path().join("no-child-ec-wrapper.pid");
+    let child_exited = evidence.path().join("no-child-ec-child-exited");
+    std::fs::write(
+        &wrapper,
+        r#"#!/bin/sh
+wrapper_pid="$1"
+child_exited="$2"
+echo $$ > "$wrapper_pid"
+/bin/sh -c 'exit 0' &
+child=$!
+wait "$child"
+echo exited > "$child_exited"
+while :; do :; done
+"#,
+    )
+    .unwrap();
+    let command = format!(
+        "exec sh {} {} {}",
+        wrapper.display(),
+        wrapper_pid.display(),
+        child_exited.display()
+    );
+    write_858_ec_configured_aw_toml(
+        root,
+        "demo",
+        &[("ec-no-child-wrapper", command.as_str(), true)],
+    );
+    write_847_changes_spec(root, &[("src/demo.rs", "create")]);
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/demo.rs"), "// implemented\n").unwrap();
+    commit_all(&git, root);
+
+    let slug = "ec-no-child-wrapper-timeout";
+    seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
+
+    let started = std::time::Instant::now();
+    let output = Command::new(&aw_bin)
+        .args(["td", "code-check", slug])
+        .env("AW_DISABLE_CAP", "1")
+        .env("AW_EC_COMMAND_TIMEOUT_SECS", "1")
+        .current_dir(root)
+        .output()
+        .expect("run bounded aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "protocol refusal exits 0: {stdout}"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(4),
+        "terminal timeout exceeded its bound: {:?}",
+        started.elapsed()
+    );
+    assert!(
+        child_exited.is_file(),
+        "fixture child must exit before stall"
+    );
+    assert!(
+        stdout.contains("\"action\":\"error\"")
+            && stdout.contains("\"error_kind\":\"terminal_ec_timeout\"")
+            && stdout.contains("timed out after 1s"),
+        "timeout must be a typed structured error, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "\"next\":{{\"command\":\"aw td code-check {slug}\"}}"
+        )),
+        "timeout next must be the exact terminal retry, got:\n{stdout}"
+    );
+    let pid = std::fs::read_to_string(&wrapper_pid)
+        .unwrap()
+        .trim()
+        .parse::<i32>()
+        .unwrap();
+    assert!(
+        wait_for_1579_process_exit(
+            pid,
+            std::time::Instant::now() + std::time::Duration::from_secs(1)
+        ),
+        "no-child wrapper {pid} survived CLI return"
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend.get(slug).await.unwrap().unwrap();
+    assert_eq!(after.phase.as_deref(), Some(td_phase::CB_FILLED));
+    assert_ne!(after.state, IssueState::Closed);
+    assert_eq!(count_cb_code_check_trailer_commits(&git, root), 0);
+}
+
+/// #1579: two independent aw processes targeting the same WI/project must
+/// contend on the fs2 lock. The second process returns a single-flight
+/// envelope and the append-only EC marker proves only one command launched.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_code_check_cross_process_single_flight_prevents_duplicate_ec_launch() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, IssueState, LocalBackend};
+    use std::process::{Command, Stdio};
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    let evidence = tempfile::tempdir().expect("out-of-repo launch evidence");
+    let runner = root.join("slow-terminal-ec.sh");
+    let launches = evidence.path().join("terminal-ec-launches");
+    std::fs::write(
+        &runner,
+        r#"#!/bin/sh
+printf 'launch\n' >> "$1"
+sleep 3
+exit 1
+"#,
+    )
+    .unwrap();
+    let command = format!("exec sh {} {}", runner.display(), launches.display());
+    write_858_ec_configured_aw_toml(
+        root,
+        "demo",
+        &[("ec-slow-single-flight", command.as_str(), true)],
+    );
+    write_847_changes_spec(root, &[("src/demo.rs", "create")]);
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/demo.rs"), "// implemented\n").unwrap();
+    commit_all(&git, root);
+
+    let slug = "ec-cross-process-single-flight";
+    seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
+
+    let first = Command::new(&aw_bin)
+        .args(["td", "code-check", slug])
+        .env("AW_DISABLE_CAP", "1")
+        .env("AW_EC_COMMAND_TIMEOUT_SECS", "10")
+        .current_dir(root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn first terminal code-check");
+    assert!(
+        wait_for_1579_path(
+            &launches,
+            std::time::Instant::now() + std::time::Duration::from_secs(2)
+        ),
+        "first terminal EC command never launched"
+    );
+
+    let second_started = std::time::Instant::now();
+    let second = Command::new(&aw_bin)
+        .args(["td", "code-check", slug])
+        .env("AW_DISABLE_CAP", "1")
+        .env("AW_EC_COMMAND_TIMEOUT_SECS", "10")
+        .current_dir(root)
+        .output()
+        .expect("run duplicate terminal code-check");
+    let second_stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(
+        second.status.success(),
+        "protocol refusal exits 0: {second_stdout}"
+    );
+    assert!(
+        second_started.elapsed() < std::time::Duration::from_secs(2),
+        "duplicate invocation waited for or launched the slow EC command"
+    );
+    assert!(
+        second_stdout.contains("\"error_kind\":\"terminal_ec_single_flight\"")
+            && second_stdout.contains("already running"),
+        "duplicate must receive a single-flight envelope, got:\n{second_stdout}"
+    );
+    assert!(
+        second_stdout.contains(&format!(
+            "\"next\":{{\"command\":\"aw td code-check {slug}\"}}"
+        )),
+        "single-flight next must retry the exact original command, got:\n{second_stdout}"
+    );
+
+    let first = first.wait_with_output().expect("wait for first code-check");
+    let first_stdout = String::from_utf8_lossy(&first.stdout);
+    assert!(
+        first.status.success(),
+        "protocol failure exits 0: {first_stdout}"
+    );
+    assert!(
+        first_stdout.contains("\"error_kind\":\"terminal_ec_failure\""),
+        "first EC failure must stay distinct from single-flight: {first_stdout}"
+    );
+    let launch_count = std::fs::read_to_string(&launches).unwrap().lines().count();
+    assert_eq!(
+        launch_count, 1,
+        "two CLI processes launched duplicate EC trees"
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend.get(slug).await.unwrap().unwrap();
+    assert_eq!(after.phase.as_deref(), Some(td_phase::CB_FILLED));
+    assert_ne!(after.state, IssueState::Closed);
+    assert_eq!(count_cb_code_check_trailer_commits(&git, root), 0);
+}
+
+/// #1579 stale-read shape: process B reads `cb_filled` first but pauses before
+/// acquiring the lease. Process A then runs a fast-green EC and completes the
+/// full terminal transition. Once released, B may acquire the now-free lease,
+/// but it must re-read `td_merged` under that lease and route through terminal
+/// retry semantics without launching the EC command a second time.
+#[cfg(all(unix, debug_assertions))]
+#[tokio::test]
+async fn test_code_check_fast_green_stale_reader_rechecks_phase_before_ec() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, IssueState, LocalBackend};
+    use std::process::{Command, Stdio};
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    let evidence = tempfile::tempdir().expect("out-of-repo stale-read evidence");
+    let runner = root.join("fast-green-terminal-ec.sh");
+    let launches = evidence.path().join("terminal-ec-launches");
+    let stale_barrier = evidence.path().join("stale-reader-barrier");
+    std::fs::write(
+        &runner,
+        r#"#!/bin/sh
+printf 'launch\n' >> "$1"
+exit 0
+"#,
+    )
+    .unwrap();
+    let command = format!("exec sh {} {}", runner.display(), launches.display());
+    write_858_ec_configured_aw_toml(
+        root,
+        "demo",
+        &[("ec-fast-green-stale-reader", command.as_str(), true)],
+    );
+    write_847_changes_spec(root, &[("src/demo.rs", "create")]);
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/demo.rs"), "// implemented\n").unwrap();
+    commit_all(&git, root);
+
+    let slug = "ec-fast-green-stale-reader";
+    seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
+
+    let stale_reader = Command::new(&aw_bin)
+        .args(["td", "code-check", slug])
+        .env("AW_DISABLE_CAP", "1")
+        .env(
+            "AW_TEST_TERMINAL_EC_AFTER_INITIAL_ISSUE_READ_BARRIER_DIR",
+            &stale_barrier,
+        )
+        .current_dir(root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn stale terminal code-check reader");
+    assert!(
+        wait_for_1579_path(
+            &stale_barrier.join("issue-read.ready"),
+            std::time::Instant::now() + std::time::Duration::from_secs(2)
+        ),
+        "stale reader never reached the post-issue-read barrier"
+    );
+
+    let first = Command::new(&aw_bin)
+        .args(["td", "code-check", slug])
+        .env("AW_DISABLE_CAP", "1")
+        .current_dir(root)
+        .output()
+        .expect("run first fast-green terminal code-check");
+    std::fs::write(stale_barrier.join("release"), "release\n").unwrap();
+    let stale_reader = stale_reader
+        .wait_with_output()
+        .expect("wait for stale terminal reader");
+
+    let first_stdout = String::from_utf8_lossy(&first.stdout);
+    let stale_stdout = String::from_utf8_lossy(&stale_reader.stdout);
+    assert!(
+        first.status.success() && first_stdout.contains("\"action\":\"done\""),
+        "first fast-green terminal transition must complete: {first_stdout}"
+    );
+    assert!(
+        stale_reader.status.success()
+            && stale_stdout.contains("\"action\":\"done\"")
+            && stale_stdout.contains("terminal retry")
+            && stale_stdout.contains("not re-evaluated"),
+        "stale reader must route through terminal retry without EC: {stale_stdout}"
+    );
+    let launch_count = std::fs::read_to_string(&launches).unwrap().lines().count();
+    assert_eq!(
+        launch_count, 1,
+        "a stale reader that acquires after completion must not launch fast-green EC again"
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend.get(slug).await.unwrap().unwrap();
+    assert_eq!(after.phase.as_deref(), Some(td_phase::TD_MERGED));
+    assert_eq!(after.state, IssueState::Closed);
+    assert_eq!(
+        count_cb_code_check_trailer_commits(&git, root),
+        1,
+        "two stale readers must still produce one terminal transition commit"
+    );
+}
+
+/// #1579 retry-entry shape: process A has already written `td_merged` but is
+/// still inside the terminal transition with the EC lease held. Process B
+/// therefore starts as a retry, and must contend on that same lease instead
+/// of racing branch landing or the terminal commit.
+#[cfg(all(unix, debug_assertions))]
+#[tokio::test]
+async fn test_code_check_retry_contends_while_terminal_transition_holds_lease() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, IssueState, LocalBackend};
+    use std::process::{Command, Stdio};
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    let evidence = tempfile::tempdir().expect("out-of-repo retry contention evidence");
+    let runner = root.join("fast-green-terminal-transition-ec.sh");
+    let launches = evidence.path().join("terminal-ec-launches");
+    let phase_barrier = evidence.path().join("phase-update-barrier");
+    std::fs::write(
+        &runner,
+        r#"#!/bin/sh
+printf 'launch\n' >> "$1"
+exit 0
+"#,
+    )
+    .unwrap();
+    let command = format!("exec sh {} {}", runner.display(), launches.display());
+    write_858_ec_configured_aw_toml(
+        root,
+        "demo",
+        &[("ec-fast-green-transition", command.as_str(), true)],
+    );
+    write_847_changes_spec(root, &[("src/demo.rs", "create")]);
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/demo.rs"), "// implemented\n").unwrap();
+    commit_all(&git, root);
+
+    let slug = "ec-retry-terminal-transition-lease";
+    seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
+
+    let first = Command::new(&aw_bin)
+        .args(["td", "code-check", slug])
+        .env("AW_DISABLE_CAP", "1")
+        .env(
+            "AW_TEST_TERMINAL_EC_AFTER_PHASE_UPDATE_BARRIER_DIR",
+            &phase_barrier,
+        )
+        .current_dir(root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn terminal transition owner");
+    assert!(
+        wait_for_1579_path(
+            &phase_barrier.join("phase-update.ready"),
+            std::time::Instant::now() + std::time::Duration::from_secs(2)
+        ),
+        "first process never reached the post-phase-update barrier"
+    );
+
+    let retry_started = std::time::Instant::now();
+    let retry = Command::new(&aw_bin)
+        .args(["td", "code-check", slug])
+        .env("AW_DISABLE_CAP", "1")
+        .current_dir(root)
+        .output()
+        .expect("run terminal retry while transition lease is held");
+    let retry_stdout = String::from_utf8_lossy(&retry.stdout);
+    std::fs::write(phase_barrier.join("release"), "release\n").unwrap();
+    let first = first.wait_with_output().expect("wait for transition owner");
+    let first_stdout = String::from_utf8_lossy(&first.stdout);
+
+    assert!(
+        retry.status.success()
+            && retry_stdout.contains("\"error_kind\":\"terminal_ec_single_flight\""),
+        "retry must contend on the transition owner's EC lease: {retry_stdout}"
+    );
+    assert!(
+        retry_started.elapsed() < std::time::Duration::from_secs(2),
+        "retry should refuse promptly while the transition lease is held"
+    );
+    assert!(
+        retry_stdout.contains(&format!(
+            "\"next\":{{\"command\":\"aw td code-check {slug}\"}}"
+        )),
+        "retry contention must preserve exact same-slug guidance: {retry_stdout}"
+    );
+    assert!(
+        first.status.success() && first_stdout.contains("\"action\":\"done\""),
+        "transition owner must finish after release: {first_stdout}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&launches).unwrap().lines().count(),
+        1,
+        "a retry entry must not relaunch EC while terminal transition is in flight"
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend.get(slug).await.unwrap().unwrap();
+    assert_eq!(after.phase.as_deref(), Some(td_phase::TD_MERGED));
+    assert_eq!(after.state, IssueState::Closed);
+    assert_eq!(count_cb_code_check_trailer_commits(&git, root), 1);
 }
 
 /// AC2: a green (passing) configured EC gate must let terminal close
@@ -2946,4 +3436,16 @@ changes:
       violation refuses completion naming the offending file(s), below that
       baseline the same violation only warns to stderr, and an unmarked file
       outside the touched set never affects the verdict.
+      Also covers #1579: a configured one-second terminal EC timeout bounds a
+      wrapper after its external child exits, leaves no wrapper PID, preserves
+      the open `cb_filled` phase, creates no terminal commit, and returns
+      `terminal_ec_timeout` with exact same-slug retry guidance. A separate
+      two-OS-process regression proves the project fs2 single-flight lock
+      returns `terminal_ec_single_flight` to the second caller and records
+      exactly one EC command launch. A bounded post-initial-read barrier proves
+      a stale reader that acquires after a fast-green completion re-reads
+      `td_merged`, skips EC, and leaves one launch plus one terminal commit.
+      A post-phase-update barrier separately proves a caller beginning in
+      retry phase contends on the owner's still-live lease instead of racing
+      landing or terminal commit.
 ```
