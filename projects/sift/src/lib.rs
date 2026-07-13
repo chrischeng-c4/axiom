@@ -4,13 +4,15 @@
 //! error, metric, and audit/change stores deliberately build from this journal
 //! in later slices rather than becoming alternate sources of truth.
 
+pub mod auth;
+
 use std::{
     collections::{BTreeMap, HashMap},
     fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
         Arc, RwLock,
     },
 };
@@ -27,6 +29,7 @@ use chrono::Utc;
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use service_metrics::{Counter, Sample};
 use utoipa::{OpenApi, ToSchema};
 
 pub const EVENT_SCHEMA_VERSION: u16 = 1;
@@ -210,9 +213,9 @@ struct JournalState {
 pub struct DurableJournal {
     journal_path: PathBuf,
     state: RwLock<JournalState>,
-    accepted: AtomicU64,
-    duplicates: AtomicU64,
-    fsyncs: AtomicU64,
+    accepted: Counter,
+    duplicates: Counter,
+    fsyncs: Counter,
 }
 
 impl DurableJournal {
@@ -255,20 +258,22 @@ impl DurableJournal {
         }
 
         let accepted = state.events.len() as u64;
-        Ok(Self {
+        let journal = Self {
             journal_path,
             state: RwLock::new(state),
-            accepted: AtomicU64::new(accepted),
-            duplicates: AtomicU64::new(0),
-            fsyncs: AtomicU64::new(0),
-        })
+            accepted: Counter::new(),
+            duplicates: Counter::new(),
+            fsyncs: Counter::new(),
+        };
+        journal.accepted.add(accepted);
+        Ok(journal)
     }
 
     pub fn append(&self, event: EventEnvelope) -> Result<AppendResult> {
         event.validate()?;
         let mut state = self.state.write().expect("journal state lock poisoned");
         if let Some(cursor) = state.cursors_by_event_id.get(&event.event_id).copied() {
-            self.duplicates.fetch_add(1, Ordering::Relaxed);
+            self.duplicates.incr();
             return Ok(AppendResult {
                 event_id: event.event_id,
                 cursor,
@@ -296,13 +301,13 @@ impl DurableJournal {
         file.write_all(b"\n").context("terminate raw event")?;
         file.sync_data()
             .context("fsync raw event before acknowledgement")?;
-        self.fsyncs.fetch_add(1, Ordering::Relaxed);
+        self.fsyncs.incr();
 
         state
             .cursors_by_event_id
             .insert(stored.event.event_id.clone(), stored.cursor);
         state.events.push(stored.clone());
-        self.accepted.fetch_add(1, Ordering::Relaxed);
+        self.accepted.incr();
         Ok(AppendResult {
             event_id: stored.event.event_id,
             cursor,
@@ -340,12 +345,26 @@ impl DurableJournal {
     }
 
     fn metrics_text(&self) -> String {
-        format!(
-            "# TYPE sift_raw_events_total counter\nsift_raw_events_total {}\n# TYPE sift_duplicate_events_total counter\nsift_duplicate_events_total {}\n# TYPE sift_journal_fsync_total counter\nsift_journal_fsync_total {}\n",
-            self.accepted.load(Ordering::Relaxed),
-            self.duplicates.load(Ordering::Relaxed),
-            self.fsyncs.load(Ordering::Relaxed),
-        )
+        service_metrics::render(&[
+            Sample::new(
+                "sift_raw_events_total",
+                "counter",
+                "Durably accepted Sift raw events.",
+                self.accepted.get(),
+            ),
+            Sample::new(
+                "sift_duplicate_events_total",
+                "counter",
+                "Idempotent duplicate Sift event submissions.",
+                self.duplicates.get(),
+            ),
+            Sample::new(
+                "sift_journal_fsync_total",
+                "counter",
+                "Sift journal fsync operations completed before acknowledgement.",
+                self.fsyncs.get(),
+            ),
+        ])
     }
 }
 
@@ -431,6 +450,16 @@ pub fn router(state: Arc<ServiceState>) -> Router {
         .route("/v1/events", post(ingest).get(query_events))
         .route("/v1/replay", get(replay_events))
         .with_state(state)
+}
+
+/// Build the production data-plane router. The standard operational probe
+/// router is intentionally composed outside this function, so its endpoints
+/// remain reachable when `SIFT_AUTH=required`.
+pub fn protected_router(state: Arc<ServiceState>, verifier: Arc<auth::SiftVerifier>) -> Router {
+    router(state).layer(axum::middleware::from_fn_with_state(
+        verifier,
+        auth::auth_middleware,
+    ))
 }
 
 #[utoipa::path(

@@ -4,7 +4,11 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use anyhow::{Context, Result};
 use axum::extract::DefaultBodyLimit;
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use sift::{DurableJournal, EventEnvelope, EventQuery, ServiceState, SignalKind};
+use serde::Serialize;
+use serde_json::Value;
+use sift::{
+    auth::SiftVerifier, DurableJournal, EventEnvelope, EventQuery, ServiceState, SignalKind,
+};
 
 #[derive(Parser)]
 #[command(
@@ -27,7 +31,7 @@ enum Command {
     Query(QueryArgs),
     /// Replay durable raw events after a cursor without starting a server.
     Replay(ReplayArgs),
-    /// Print the API contract generated from the same OpenAPI document as the service.
+    /// Print Sift's API contract or generate a typed client from it.
     Spec(SpecArgs),
     /// Print offline agent-facing operational documentation.
     Llm(LlmArgs),
@@ -95,8 +99,37 @@ struct ReplayArgs {
 
 #[derive(Args)]
 struct SpecArgs {
+    /// Generate a typed API client rather than print the OpenAPI document.
+    #[command(subcommand)]
+    command: Option<SpecCommand>,
     #[arg(long, default_value = "openapi-json", value_parser = ["openapi-json"])]
     format: String,
+}
+
+#[derive(Subcommand)]
+enum SpecCommand {
+    /// Generate a typed client from Sift's own OpenAPI document.
+    Gen(GenArgs),
+}
+
+#[derive(Args)]
+struct GenArgs {
+    /// Target language for the generated client.
+    #[arg(long, value_enum)]
+    lang: GenLang,
+    /// Directory that receives the generated client files.
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum GenLang {
+    /// TypeScript types and fetch client.
+    Ts,
+    /// Python Pydantic models and HTTP/2 client.
+    Py,
+    /// Rust serde models and reqwest client.
+    Rust,
 }
 
 #[derive(Args)]
@@ -174,10 +207,10 @@ struct IssueCommentArgs {
 const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
     project: "sift",
     repo: "chrischeng-c4/axiom",
-    target: "source",
+    target: env!("SIFT_TARGET"),
     version: env!("CARGO_PKG_VERSION"),
-    git_sha: "unknown",
-    built_at: "unknown",
+    git_sha: env!("SIFT_GIT_SHA"),
+    built_at: env!("SIFT_BUILT_AT"),
 };
 
 const LLM_TOPICS: &[cli_std::llm::Topic] = &[
@@ -200,12 +233,15 @@ async fn main() -> Result<()> {
         Command::Event(args) => append_event(args),
         Command::Query(args) => query(args),
         Command::Replay(args) => replay(args),
-        Command::Spec(args) => {
+        Command::Spec(args) => match args.command {
+            Some(SpecCommand::Gen(args)) => spec_gen(args),
+            None => {
             let _ = args.format;
-            println!("{}", sift::openapi_json()?);
-            println!("next: done");
-            Ok(())
-        }
+                print_json_terminal(serde_json::json!({
+                    "openapi": serde_json::from_str::<Value>(&sift::openapi_json()?)?
+                }))
+            }
+        },
         Command::Llm(args) => {
             let output = cli_std::llm::render(
                 "sift",
@@ -214,9 +250,13 @@ async fn main() -> Result<()> {
                 &args.topic,
                 cli_std::llm::Format::parse(&args.format),
             )?;
-            println!("{output}");
-            println!("next: done");
-            Ok(())
+            if args.format == "json" {
+                print_json_text_terminal(&output)
+            } else {
+                println!("{output}");
+                println!("next: done");
+                Ok(())
+            }
         }
         Command::Upgrade(args) => {
             cli_std::upgrade::run(
@@ -251,10 +291,12 @@ async fn serve(args: ServeArgs) -> Result<()> {
     service_http::init_tracing(&config)?;
 
     let state = Arc::new(ServiceState::open(&args.data_dir)?);
+    let verifier = Arc::new(SiftVerifier::from_env()?);
     let app =
         service_http::standard_probe_routes(state.clone(), Some(state.clone()), sift::openapi)
             .merge(
-                sift::router(state.clone()).layer(DefaultBodyLimit::max(config.body_limit_bytes)),
+                sift::protected_router(state.clone(), verifier)
+                    .layer(DefaultBodyLimit::max(config.body_limit_bytes)),
             )
             .layer(service_http::trace_layer());
     let listener = tokio::net::TcpListener::bind(config.bind_addr())
@@ -276,9 +318,7 @@ fn append_event(args: EventArgs) -> Result<()> {
         .with_context(|| format!("read event file {}", args.file.display()))?;
     let event: EventEnvelope = serde_json::from_str(&source).context("parse EventEnvelope JSON")?;
     let result = DurableJournal::open(&args.data_dir)?.append(event)?;
-    println!("{}", serde_json::to_string_pretty(&result)?);
-    println!("next: done");
-    Ok(())
+    print_json_terminal(result)
 }
 
 fn query(args: QueryArgs) -> Result<()> {
@@ -287,15 +327,67 @@ fn query(args: QueryArgs) -> Result<()> {
         after: args.after,
         limit: args.limit,
     })?;
-    println!("{}", serde_json::to_string_pretty(&rows)?);
-    println!("next: done");
-    Ok(())
+    print_json_terminal(rows)
 }
 
 fn replay(args: ReplayArgs) -> Result<()> {
     let rows = DurableJournal::open(&args.data_dir)?.replay(args.after, args.limit)?;
-    println!("{}", serde_json::to_string_pretty(&rows)?);
-    println!("next: done");
+    print_json_terminal(rows)
+}
+
+fn spec_gen(args: GenArgs) -> Result<()> {
+    use cclab_openapi_codegen::{generate, GenOptions, HttpClient, Lang};
+
+    let lang = match args.lang {
+        GenLang::Ts => Lang::Ts,
+        GenLang::Py => Lang::Py,
+        GenLang::Rust => Lang::Rust,
+    };
+    let output = generate(
+        &sift::openapi_json()?,
+        &GenOptions {
+            lang,
+            spec_path: PathBuf::new(),
+            out_dir: args.out.clone(),
+            client_name: "createClient".to_string(),
+            http_client: HttpClient::Fetch,
+            emit_types: true,
+            emit_client: true,
+            emit_hooks: matches!(lang, Lang::Ts),
+        },
+    )?;
+    std::fs::create_dir_all(&args.out)
+        .with_context(|| format!("create generated client directory {}", args.out.display()))?;
+    for file in output.files {
+        let path = args.out.join(file.rel_path);
+        std::fs::write(&path, file.contents)
+            .with_context(|| format!("write generated client file {}", path.display()))?;
+        println!("generated {}", path.display());
+    }
+    let entrypoint = match lang {
+        Lang::Ts => "index.ts",
+        Lang::Py => "__init__.py",
+        Lang::Rust => "mod.rs",
+    };
+    println!("next: {}", args.out.join(entrypoint).display());
+    Ok(())
+}
+
+fn print_json_text_terminal(text: &str) -> Result<()> {
+    let value: Value = serde_json::from_str(text).context("parse machine-readable CLI output")?;
+    print_json_terminal(value)
+}
+
+fn print_json_terminal(value: impl Serialize) -> Result<()> {
+    let value = serde_json::to_value(value)?;
+    let output = match value {
+        Value::Object(mut object) => {
+            object.insert("next".to_string(), Value::String("done".to_string()));
+            Value::Object(object)
+        }
+        value => serde_json::json!({ "result": value, "next": "done" }),
+    };
+    println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
 }
 

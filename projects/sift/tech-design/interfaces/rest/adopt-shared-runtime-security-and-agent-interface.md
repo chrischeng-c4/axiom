@@ -72,6 +72,13 @@ changes:
     gap: sift-shared-service-dependencies
     tracker: "1604"
     description: Compose service-auth, service-metrics, build-stamp, and typed OpenAPI code generation dependencies.
+  - path: projects/sift/build.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    gap: sift-build-provenance
+    tracker: "1604"
+    description: Stamp Sift source revision, build time, and target through the shared build-stamp crate.
   - path: projects/sift/src/auth.rs
     action: create
     section: logic

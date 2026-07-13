@@ -20,9 +20,12 @@ axum.workspace = true
 chrono.workspace = true
 clap = { workspace = true, features = ["env"] }
 cli-std = { path = "../../libs/cli-std", default-features = false, features = ["online"] }
+cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
 serde.workspace = true
 serde_json.workspace = true
+service-auth = { path = "../../libs/service-auth" }
 service-http = { path = "../../libs/service-http" }
+service-metrics = { path = "../../libs/service-metrics" }
 tokio.workspace = true
 tower.workspace = true
 tracing.workspace = true
@@ -30,3 +33,6 @@ utoipa = { workspace = true, features = ["axum_extras"] }
 
 [dev-dependencies]
 tempfile = "3"
+
+[build-dependencies]
+build-stamp = { path = "../../libs/build-stamp" }
