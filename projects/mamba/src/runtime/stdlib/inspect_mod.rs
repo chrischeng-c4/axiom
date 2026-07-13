@@ -976,7 +976,13 @@ unsafe extern "C" fn d_getclosurevars(args_ptr: *const MbValue, nargs: usize) ->
     let nonlocals = MbValue::from_ptr(MbObject::new_dict());
     for (name, sym_id) in &freevars {
         let key = MbValue::from_ptr(MbObject::new_str(name.clone()));
-        let value = super::super::closure::mb_global_get_id_raw(*sym_id);
+        // Read straight from the closure's own capture cells rather than the
+        // module-scoped active-cell lookup: the latter is keyed to whichever
+        // module is "active" during THIS call (i.e. "inspect", since native
+        // dispatchers carry their own `__module__`), not the module the
+        // inspected closure was defined in, so it would miss the cell.
+        let value = super::super::closure::closure_capture_value_for_id(v, *sym_id)
+            .unwrap_or_else(|| super::super::closure::mb_global_get_id_raw(*sym_id));
         super::super::dict_ops::mb_dict_setitem(nonlocals, key, value);
     }
 
@@ -3163,10 +3169,7 @@ mod tests {
                 "format_exception",
                 "(exc, /, value=<implicit>, tb=<implicit>, limit=None, chain=True)",
             ),
-            (
-                "format_exception_only",
-                "(exc, /, value=<implicit>)",
-            ),
+            ("format_exception_only", "(exc, /, value=<implicit>)"),
         ] {
             let func = module::mb_module_value_getattr("traceback", name)
                 .unwrap_or_else(|| panic!("missing traceback.{name}"));
