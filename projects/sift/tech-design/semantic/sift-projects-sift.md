@@ -95,6 +95,101 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/sift"
+      - path: "projects/sift/Dockerfile"
+        language: "dockerfile"
+        ownership_state: "handwrite"
+        generator_primitives: ["runtime_image"]
+        source_evidence_node: { layer: "operations", ecosystem: "dockerfile", role: "source-image", section_type: "schema", domain: "projects/sift" }
+      - path: "projects/sift/Dockerfile.release"
+        language: "dockerfile"
+        ownership_state: "handwrite"
+        generator_primitives: ["runtime_image"]
+        source_evidence_node: { layer: "operations", ecosystem: "dockerfile", role: "release-image", section_type: "schema", domain: "projects/sift" }
+      - path: "projects/sift/build.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["build_stamp"]
+        source_evidence_node: { layer: "build", ecosystem: "rust", role: "build-script", section_type: "schema", domain: "projects/sift" }
+      - path: "projects/sift/k8s/base/kustomization.yaml"
+        language: "kustomize"
+        ownership_state: "handwrite"
+        generator_primitives: ["kustomize_manifest"]
+        source_evidence_node: { layer: "operations", ecosystem: "kustomize", role: "base", section_type: "schema", domain: "projects/sift" }
+      - path: "projects/sift/k8s/overlays/dev/kustomization.yaml"
+        language: "kustomize"
+        ownership_state: "handwrite"
+        generator_primitives: ["kustomize_manifest"]
+        source_evidence_node: { layer: "operations", ecosystem: "kustomize", role: "dev-overlay", section_type: "schema", domain: "projects/sift" }
+      - path: "projects/sift/k8s/overlays/staging/kustomization.yaml"
+        language: "kustomize"
+        ownership_state: "handwrite"
+        generator_primitives: ["kustomize_manifest"]
+        source_evidence_node: { layer: "operations", ecosystem: "kustomize", role: "staging-overlay", section_type: "schema", domain: "projects/sift" }
+      - path: "projects/sift/k8s/overlays/prod/kustomization.yaml"
+        language: "kustomize"
+        ownership_state: "handwrite"
+        generator_primitives: ["kustomize_manifest"]
+        source_evidence_node: { layer: "operations", ecosystem: "kustomize", role: "production-overlay", section_type: "schema", domain: "projects/sift" }
+      - path: "projects/sift/k8s/overlays/template/kustomization.yaml"
+        language: "kustomize"
+        ownership_state: "handwrite"
+        generator_primitives: ["kustomize_manifest"]
+        source_evidence_node: { layer: "operations", ecosystem: "kustomize", role: "template-overlay", section_type: "schema", domain: "projects/sift" }
+      - path: "projects/sift/src/auth.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["service_auth_adapter"]
+        source_evidence_node: { layer: "runtime", ecosystem: "rust", role: "auth", section_type: "schema", domain: "projects/sift" }
+      - path: "projects/sift/src/backup.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["service_backup_adapter"]
+        source_evidence_node: { layer: "runtime", ecosystem: "rust", role: "backup", section_type: "schema", domain: "projects/sift" }
+      - path: "projects/sift/src/deploy.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["deployment_renderer"]
+        source_evidence_node: { layer: "operations", ecosystem: "rust", role: "deployment-renderer", section_type: "schema", domain: "projects/sift" }
+      - path: "projects/sift/src/durability.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["raft_state_machine"]
+        source_evidence_node: { layer: "runtime", ecosystem: "rust", role: "durability", section_type: "schema", domain: "projects/sift" }
+      - path: "projects/sift/src/operator.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["operator_reconciler"]
+        source_evidence_node: { layer: "operations", ecosystem: "rust", role: "operator", section_type: "schema", domain: "projects/sift" }
+      - path: "projects/sift/tests/cli_contract.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["contract_test"]
+        source_evidence_node: { layer: "verification", ecosystem: "rust", role: "cli-contract", section_type: "schema", domain: "projects/sift" }
+      - path: "projects/sift/tests/deployment_cli.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["contract_test"]
+        source_evidence_node: { layer: "verification", ecosystem: "rust", role: "deployment-contract", section_type: "schema", domain: "projects/sift" }
+      - path: "projects/sift/tests/ha_backup_e2e.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["e2e_test"]
+        source_evidence_node: { layer: "verification", ecosystem: "rust", role: "ha-backup", section_type: "schema", domain: "projects/sift" }
+      - path: "projects/sift/tests/operational_cli.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["contract_test"]
+        source_evidence_node: { layer: "verification", ecosystem: "rust", role: "operational-cli", section_type: "schema", domain: "projects/sift" }
+      - path: "projects/sift/tests/runtime_security_e2e.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["e2e_test"]
+        source_evidence_node: { layer: "verification", ecosystem: "rust", role: "security", section_type: "schema", domain: "projects/sift" }
+      - path: "projects/sift/tests/stability_e2e.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["e2e_test"]
+        source_evidence_node: { layer: "verification", ecosystem: "rust", role: "stability", section_type: "schema", domain: "projects/sift" }
 ```
 
 ## Unit Test
@@ -152,6 +247,101 @@ changes:
     section: schema
     impl_mode: codegen
     description: "TD-first project agent context generated from the configured service contract."
+  - path: "projects/sift/Dockerfile"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Source-build service image with explicit non-root ownership."
+  - path: "projects/sift/Dockerfile.release"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Release-binary service image contract."
+  - path: "projects/sift/build.rs"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Build stamp ownership for CLI metadata."
+  - path: "projects/sift/k8s/base/kustomization.yaml"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Shared Kustomize base ownership."
+  - path: "projects/sift/k8s/overlays/dev/kustomization.yaml"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Development Kustomize overlay ownership."
+  - path: "projects/sift/k8s/overlays/staging/kustomization.yaml"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Staging Kustomize overlay ownership."
+  - path: "projects/sift/k8s/overlays/prod/kustomization.yaml"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Production Kustomize overlay ownership."
+  - path: "projects/sift/k8s/overlays/template/kustomization.yaml"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Template Kustomize overlay ownership."
+  - path: "projects/sift/src/auth.rs"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Shared bearer-auth adapter ownership."
+  - path: "projects/sift/src/backup.rs"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Shared backup lifecycle adapter ownership."
+  - path: "projects/sift/src/deploy.rs"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Offline deployment artifact rendering ownership."
+  - path: "projects/sift/src/durability.rs"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Framed journal and Raft state-machine ownership."
+  - path: "projects/sift/src/operator.rs"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Shared Kubernetes operator adapter ownership."
+  - path: "projects/sift/tests/cli_contract.rs"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "CLI conformance evidence ownership."
+  - path: "projects/sift/tests/deployment_cli.rs"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Deployment render and hardening evidence ownership."
+  - path: "projects/sift/tests/ha_backup_e2e.rs"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "HA backup and restore evidence ownership."
+  - path: "projects/sift/tests/operational_cli.rs"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Operational connect and terminal-output evidence ownership."
+  - path: "projects/sift/tests/runtime_security_e2e.rs"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Bearer auth and probe-exemption evidence ownership."
+  - path: "projects/sift/tests/stability_e2e.rs"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Bounded ingest, drain, and recovery evidence ownership."
   - action: annotate
     section: unit-test
     impl_mode: hand-written
