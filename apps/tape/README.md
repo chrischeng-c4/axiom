@@ -175,28 +175,32 @@ ID: competitor-performance
 Type: RuntimeTool
 Root WI: #768
 Status: verified
-Surfaces: CLI/Test: `tape-bench run`, local append/replay throughput proxy, p50/p95 append latency, full replay latency, checkpoint write latency, real NATS JetStream replay comparison, and explicit peer calibration ledger.
-EC Dimensions: efficiency: `cargo test -p tape --test tape_perf_gate -- --nocapture`; `cargo test -p tape --test tape_vs_nats_jetstream -- --nocapture` - local regression budget plus real JetStream replay win gate
+Surfaces: CLI/Test: `tape-bench run`, local append/replay throughput proxy, p50/p95 append latency, full replay latency, checkpoint write latency, real NATS JetStream replay comparison, real Kafka (KRaft) replay comparison, and explicit peer calibration ledger.
+EC Dimensions: efficiency: `cargo test -p tape --test tape_perf_gate -- --nocapture`; `cargo test -p tape --test tape_vs_nats_jetstream -- --nocapture`; `cargo test -p tape --test tape_vs_kafka -- --nocapture` - local regression budget plus real JetStream and Kafka replay win gates
 Required Verification: smoke, conformance
 Promise:
-Tape maintains a local replay performance regression gate and an executable
-real-service competitor benchmark. For the current local backlog full-replay
+Tape maintains a local replay performance regression gate and executable
+real-service competitor benchmarks. For the current local backlog full-replay
 workload, Tape's zero-copy `replay_refs` path must beat NATS JetStream by at
 least 1.5x using a test that starts `nats-server -js`, publishes the same
-20,000-event, 128-byte-payload backlog, and replays it from the beginning.
-Kafka, Redpanda, Pulsar, and RabbitMQ Streams performance wins remain unclaimed
-until their own real-service calibration gates exist; RabbitMQ topic exchange
-remains routing-only and is not a replay performance baseline.
+20,000-event, 128-byte-payload backlog, and replays it from the beginning. The
+same workload must beat a real single-node Kafka broker (KRaft mode, `docker
+run apache/kafka:3.9.0`) by at least 20x, calibrated from an actual measured
+run (~110-120x observed); this test skips gracefully when Docker is
+unavailable. Redpanda, Pulsar, and RabbitMQ Streams performance wins remain
+unclaimed until their own real-service calibration gates exist; RabbitMQ topic
+exchange remains routing-only and is not a replay performance baseline.
 Gate Inventory:
 - apps/tape/src/bench.rs
 - apps/tape/src/bin/tape-bench.rs
 - apps/tape/tests/tape_perf_gate.rs
 - apps/tape/tests/tape_vs_nats_jetstream.rs
+- apps/tape/tests/tape_vs_kafka.rs
 - apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| topic-replay-competitor-performance-baseline | epic | #768 | implemented | passing | smoke | apps/tape/tests/tape_perf_gate.rs<br>apps/tape/tests/tape_vs_nats_jetstream.rs |
+| topic-replay-competitor-performance-baseline | epic | #768 | implemented | passing | smoke | apps/tape/tests/tape_perf_gate.rs<br>apps/tape/tests/tape_vs_nats_jetstream.rs<br>apps/tape/tests/tape_vs_kafka.rs |
 
 ### Topic Replay Journal
 
