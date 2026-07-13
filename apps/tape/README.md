@@ -39,6 +39,7 @@ real-service external peer calibration remain separate work roots.
 | Standard Operational Endpoints | #768 | implemented | verified | smoke | ready | `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` served for real via `libs/service-http` (#1325), with drain-aware readiness and `tape serve` |
 | Kubernetes-Native Deployment | #768 | implemented | verified | smoke | ready | CRD/operator/instance render + dockerfile CLI (#1328); StatefulSet topology, offline render tests; no live kind cluster proof yet |
 | Stateful Service Workload | #1554 | implemented | verified | smoke | ready | shared stateful-storage baseline composed from Tape's journal, raft, snapshot/backup, security boundary, and StatefulSet evidence; no duplicated runtime contract |
+| Observability | #1588 | implemented | passing | conformance | not_ready | shared Prometheus pull metrics plus optional ServiceMonitor/PrometheusRule; OTLP remains a shared-library gap rather than copied Lumen code |
 | Backup & Restore | #1585 | implemented | passing | conformance | not_ready | exact journal snapshots ship through `libs/service-backup`; cold recovery only seeds a fresh PVC before Raft catch-up, never a live in-place restore |
 | Replica Sync & Bootstrap | #1327, #1585 | implemented | passing | conformance | not_ready | Raft owns live replica synchronization; an explicit `TAPE_BOOTSTRAP_SEED_URI` can seed only an empty replacement PVC before normal delta catch-up |
 | Primary Replicas | #1327 | implemented | planned | dogfood | not_ready | raft-host auto-mode leader/follower primary-replica topology over the whole journal; live 3-node kill-9 failover proven, peer-TLS is config-surface + fail-fast validation only (raft-host h2c has no TLS seam yet) |
@@ -350,6 +351,31 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | standard-service-route-inventory | epic | #768 | implemented | passing | smoke | apps/tape/src/spec.rs<br>apps/tape/tests/cli_contract.rs |
 | service-http-shell-h2c-serve-standard-endpoints | change | #1325 | implemented | passing | smoke | apps/tape/src/server.rs<br>apps/tape/src/metrics.rs<br>apps/tape/src/bin/tape.rs<br>apps/tape/tests/http_transport.rs |
+
+### Observability
+
+ID: observability
+Type: Devops
+Root WI: #1588
+Status: confirmed
+Surfaces: HTTP: `/metrics` from shared `service-metrics`; K8s: optional
+ServiceMonitor and PrometheusRule component; Logs: structured `tracing` output.
+EC Dimensions: behavior: `cargo test -p tape --test observability_assets` -
+offline manifest and metric-name conformance.
+Required Verification: conformance
+Promise:
+Tape exports bounded pull metrics and provides an optional Prometheus Operator
+bundle that preserves `app`/`role` labels and alerts on actual append/replay
+latency series and pod restart loops. It intentionally does not copy Lumen's
+private OTLP implementation: shared OTLP ownership remains a library gap.
+Gate Inventory:
+- apps/tape/src/metrics.rs
+- apps/tape/k8s/components/observability
+- apps/tape/tests/observability_assets.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| prometheus-operator-scrape-alert-component | change | #1588 | implemented | passing | conformance | apps/tape/k8s/components/observability<br>apps/tape/tests/observability_assets.rs |
 
 ### EC Gates Configured
 
