@@ -13,6 +13,7 @@ use pgpool::wire::{
     RowDescription, SaslInitialResponse, SaslResponse, SslRequest, StartupMessage, Sync, Terminate,
     TransactionStatus, WireCodecConfig, WireMessage,
 };
+use tokio::io::{duplex, AsyncWriteExt};
 
 /// Test-local helper: parses a fully-encoded tagged frame's bytes back into
 /// its raw `Frame` (tag + payload), mirroring what `FrameReader` does
@@ -64,6 +65,51 @@ fn relay_startup(reader: &mut FrameReader) {
             .kind,
         RelayFrameKind::Other
     );
+}
+
+#[tokio::test]
+async fn direct_reader_buffer_reads_preserve_split_backend_frame_bytes() {
+    let config = WireCodecConfig::default();
+    let message = BackendMessage::ReadyForQuery(ReadyForQuery {
+        status: TransactionStatus::Idle,
+    });
+    let encoded = encode_backend(&message);
+    let (mut writer, mut stream) = duplex(64);
+    let mut reader = FrameReader::new(Role::Backend, &config);
+
+    writer
+        .write_all(&encoded[..3])
+        .await
+        .expect("write first split");
+    assert_eq!(
+        reader
+            .read_from(&mut stream)
+            .await
+            .expect("read first split"),
+        3
+    );
+    assert!(reader
+        .next_frame_with_raw()
+        .expect("partial frame remains valid")
+        .is_none());
+
+    writer
+        .write_all(&encoded[3..])
+        .await
+        .expect("write final split");
+    assert_eq!(
+        reader
+            .read_from(&mut stream)
+            .await
+            .expect("read final split"),
+        encoded.len() - 3
+    );
+    let frame = reader
+        .next_frame_with_raw()
+        .expect("complete frame decodes")
+        .expect("complete frame present");
+    assert_eq!(frame.bytes.as_ref(), encoded.as_ref());
+    assert_eq!(frame.message, WireMessage::Backend(message));
 }
 
 /// Round-trips a frontend message through a fresh `FrameReader`, asserting

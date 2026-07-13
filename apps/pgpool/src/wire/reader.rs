@@ -11,6 +11,7 @@
 //! identical either way.
 
 use bytes::{Bytes, BytesMut};
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::wire::backend::{
     BackendMessage, ReadyForQuery, TransactionStatus, TAG_COMMAND_COMPLETE, TAG_DATA_ROW,
@@ -98,6 +99,16 @@ impl FrameReader {
     /// to simulate split/partial reads.
     pub fn feed(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
+    }
+
+    /// Appends directly from an async transport to the parser buffer. This
+    /// preserves `feed`'s append semantics while avoiding an intermediate
+    /// stack buffer and copy on the relay hot path.
+    pub async fn read_from(
+        &mut self,
+        stream: &mut (impl AsyncRead + Unpin),
+    ) -> std::io::Result<usize> {
+        stream.read_buf(&mut self.buf).await
     }
 
     /// The `TransactionStatus` last observed via a backend `ReadyForQuery`

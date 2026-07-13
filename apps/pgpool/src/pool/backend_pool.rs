@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::BytesMut;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 use tokio::time::Instant;
@@ -529,10 +529,10 @@ async fn bootstrap_no_challenge(
             | Err(_) => return Err(lease),
             Ok(Some(WireMessage::Backend(_))) => {}
             Ok(None) => {
-                let mut bytes = [0_u8; 4096];
-                match tokio::time::timeout(read_timeout, lease.stream.read(&mut bytes)).await {
+                match tokio::time::timeout(read_timeout, reader.read_from(&mut lease.stream)).await
+                {
                     Ok(Ok(0)) | Ok(Err(_)) | Err(_) => return Err(lease),
-                    Ok(Ok(count)) => reader.feed(&bytes[..count]),
+                    Ok(Ok(_)) => {}
                 }
             }
         }
@@ -567,10 +567,9 @@ async fn reset_connection(
                 if remaining.is_zero() {
                     return Err(stream);
                 }
-                let mut probe = [0_u8; 4096];
-                match tokio::time::timeout(remaining, stream.read(&mut probe)).await {
+                match tokio::time::timeout(remaining, reader.read_from(&mut stream)).await {
                     Ok(Ok(0)) => return Err(stream),
-                    Ok(Ok(n)) => reader.feed(&probe[..n]),
+                    Ok(Ok(_)) => {}
                     Ok(Err(_)) => return Err(stream),
                     Err(_) => return Err(stream),
                 }

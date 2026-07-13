@@ -9,7 +9,7 @@
 //! both pool modes share one lossless relay implementation.
 
 use bytes::BytesMut;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 use crate::proxy::error::ProxyError;
 use crate::wire::{
@@ -37,15 +37,13 @@ pub(crate) async fn read_frame(
         match reader.next_frame() {
             Ok(Some(message)) => return Ok(Some(message)),
             Ok(None) => {
-                let mut buf = [0_u8; 8192];
-                let n = stream
-                    .read(&mut buf)
+                let n = reader
+                    .read_from(stream)
                     .await
                     .map_err(|error| ProxyError::Io(error.to_string()))?;
                 if n == 0 {
                     return Ok(None);
                 }
-                reader.feed(&buf[..n]);
             }
             Err(error) => return Err(ProxyError::Wire(error)),
         }
@@ -65,15 +63,13 @@ pub(crate) async fn read_relay_frame_with_raw(
         match reader.next_relay_frame_with_raw() {
             Ok(Some(frame)) => return Ok(Some(frame)),
             Ok(None) => {
-                let mut buf = [0_u8; 8192];
-                let n = stream
-                    .read(&mut buf)
+                let n = reader
+                    .read_from(stream)
                     .await
                     .map_err(|error| ProxyError::Io(error.to_string()))?;
                 if n == 0 {
                     return Ok(None);
                 }
-                reader.feed(&buf[..n]);
             }
             Err(error) => return Err(ProxyError::Wire(error)),
         }
