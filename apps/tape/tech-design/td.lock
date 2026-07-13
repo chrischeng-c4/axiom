@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-13T08:14:35.144067+00:00"
-digest = "sha256:96737ad5c1fcaa4dd8aa5f2b8d0278eec5a1668da32e3cf846b8fb98ef08bc1e"
-source_digest = "sha256:96737ad5c1fcaa4dd8aa5f2b8d0278eec5a1668da32e3cf846b8fb98ef08bc1e"
-ir_digest = "sha256:c7bcb3eeb09ec3e92fa8d452def9f2fa0aefbe34f172df7644f87275910a05cb"
+generated_at = "2026-07-13T10:59:40.591833+00:00"
+digest = "sha256:43132e5cb582a4f88d731fc07e93deaf2d16fc935c0437db678f087ed43cb8fd"
+source_digest = "sha256:43132e5cb582a4f88d731fc07e93deaf2d16fc935c0437db678f087ed43cb8fd"
+ir_digest = "sha256:2d77d77e99e345ce3615011a792cdc2233814aac2533956da81e560d4eec1afc"
 
 [[files]]
 path = "README.md"
@@ -39,14 +39,14 @@ section_count = 3
 
 [[files]]
 path = "logic/tape-backup-service-tls-spec-gen-clients.md"
-digest = "sha256:e5e306fd402b26da5af549a2a4ab53e049241c25dfe002f55aa8e68ff41d4ad6"
-ir_digest = "sha256:cf15f79a5cd6a2e3533bbb1a727646dbc70358fdd303280f60265c44df60a6ef"
+digest = "sha256:7ea070320715478f8f67185c84f0f303cd765b1dc1e050725b8480edfb4fcea9"
+ir_digest = "sha256:601dcc9441fc7f19d8cc365ff98f4065383f2ca197e04ce6cb4cd2f0af6a853d"
 section_count = 3
 
 [[files]]
 path = "logic/tape-docs-scripts-traits-polish.md"
-digest = "sha256:52b51cd8cfea8502716763575e7fdf4d31a58bdb56896fcd25647b6834ba6526"
-ir_digest = "sha256:c7a5b5f18bea036f68c24f3b8f9d5b6b76c259f22e994add7abea737c59a7b86"
+digest = "sha256:48d882da92a5f90775134133eb220248b13b256a6c2065e262dad047e18fa027"
+ir_digest = "sha256:3bf94e584c861b8f600020ba863e9d365cbffc6ce6b47680835ceed7624af6f8"
 section_count = 3
 
 [[files]]
@@ -63,8 +63,8 @@ section_count = 3
 
 [[files]]
 path = "logic/tape-vat-meter-guard-ec-gates-observability.md"
-digest = "sha256:7c91920c00a15094d73136a5c04d501c9a91022d0343194be462d6098deec1e0"
-ir_digest = "sha256:36794e07a7da5e89aea35046c796a7d4fea5833646953f7084350860ad6c076d"
+digest = "sha256:1dcb1e1cb85c7fe023ea14bd1ffc770c3ecdbdd3a45a22d28b9cbeed51b46340"
+ir_digest = "sha256:26a59b2b75f242f36cc17154403f618e673bd4f8174da7a103c7993af2050136"
 section_count = 3
 
 [[files]]
@@ -93,8 +93,8 @@ section_count = 4
 
 [[files]]
 path = "semantic/source/apps-tape-src-lib-rs.md"
-digest = "sha256:d08ab6a66261ef5d3e1dc1eaf2acc9617e5cfa202cf534b70d6adcbaf328c146"
-ir_digest = "sha256:f6ec22202a82e7b92445dd661ce6bafe659fddfac304c7d8af232023e4c34fa3"
+digest = "sha256:8d5731ec1b63ea4bd3fc01d534a4c4d30d5def4317e5a7d74723c0a56e7a63bc"
+ir_digest = "sha256:3ccc03e8c8d9da31458fe64226a0ab1f1488390a1983c01f1c2c960aec41c854"
 section_count = 4
 
 [[files]]
