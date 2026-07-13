@@ -3,13 +3,13 @@ project = "tape"
 ir_kind = "ec"
 ec_path = "apps/tape/external-contracts"
 inventory_path = "apps/tape/aw.toml"
-generated_at = "2026-07-09T15:16:07.048191+00:00"
-ir_digest = "sha256:6f5164ce2f6bb4f9eb1d311862ca0d646dd994fed00d18daf2205ead814f03b6"
-source_digest = "sha256:a6fdf53c4312c3abe2970291958005e4b2636d9f5e6742b83069fd4193fa1ce6"
+generated_at = "2026-07-13T08:53:52.346150+00:00"
+ir_digest = "sha256:2b851f008c1fdfb09a758bfbe378aafb0beecfcc0c975a9e1afb212c9bb5830b"
+source_digest = "sha256:73fe3785c419f389fab8f9347e497be161f9287a368417c9f50e9b69425f12eb"
 
 [[sources]]
 path = "apps/tape/external-contracts/claim-closure/production-claims.md"
-digest = "sha256:93ea1b2c0fd9bc0b9c7534854a9e74a45f61e6b7745116f67f2a77928fc5a1c1"
+digest = "sha256:85f70afbe01a9c52aa0478ce6ab3735a0d5627d2acb867456a9c047af479225b"
 
 [[sources]]
 path = "apps/tape/external-contracts/competitor-feature-parity/behavior/topic-exchange-functional.md"
@@ -17,7 +17,7 @@ digest = "sha256:acf0ef8e87dfefa731d7c9a42a11f9875cf036ff22a39a4178030f48f2702f7
 
 [[sources]]
 path = "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md"
-digest = "sha256:24410664ddfa350036d4582529142a565dc8aa9eb26ddf9a10226c1b2f4b362f"
+digest = "sha256:6b7a575b7453ef73b219f4dde2e90171a5643ecaf0bf4de7d260aa1c58d0dc11"
 
 [[sources]]
 path = "apps/tape/external-contracts/competitor-performance/efficiency/meter-gate.md"
@@ -105,13 +105,32 @@ test_path = "apps/tape/tests/behavior_tape_claim_competitor_performance_claim_cl
 command = "cargo test -p tape --test tape_perf_gate -- --nocapture && cargo test -p tape --test tape_vs_nats_jetstream -- --nocapture"
 required_for_production = true
 assertions = [
-    "The local Tape performance regression gate passes for append, replay, and checkpoint operations.",
+    "The local Tape performance regression gate passes for bounded pull/replay and explicit checkpoint-ack operations.",
     "Tape's NATS JetStream local backlog replay win is backed by a real-service benchmark gate.",
     "Other replay-log peer performance wins remain unclaimed until calibrated real-service benchmark runs exist.",
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:b5f93b599848353b7f7e991d24c85ec4d762b3985202c5b46596043652a652ec"
+digest = "sha256:b5f635622a30b3edd31a8a12dc499af3368cc7fa60ebb85c5a264c1d3927db93"
+
+[[cases]]
+id = "tape-competitor-performance-kafka-replay-win"
+capability_id = "competitor-performance"
+claim_id = "topic-replay-competitor-performance-baseline"
+contract_id = "topic-replay-kafka-local-backlog-win"
+dimension = "efficiency"
+source_ref = "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-kafka-replay-win"
+test_path = "apps/tape/tests/tape_vs_kafka.rs"
+command = "cargo test -p tape --test tape_vs_kafka -- --nocapture"
+required_for_production = true
+assertions = [
+    "The test starts a real single-node apache/kafka:3.9.0 broker in KRaft mode (no ZooKeeper) via docker, skipping gracefully when Docker is unavailable.",
+    "Tape and Kafka replay the same 20,000-event, 128-byte-payload backlog workload from the beginning, using a real rskafka consumer for the Kafka side.",
+    "Tape's zero-copy full-replay latency is at least 20x faster than Kafka for the local backlog replay workload, calibrated from an actual measured run (~110-120x observed).",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:7411bbe5974e697982bc1398a69301e30a6d2900174957ef06282e3151755fb3"
 
 [[cases]]
 id = "tape-competitor-performance-local-regression-and-calibration-ledger"
@@ -124,13 +143,13 @@ test_path = "apps/tape/tests/behavior_tape_claim_competitor_performance.rs"
 command = "cargo test -p tape --test tape_perf_gate -- --nocapture"
 required_for_production = true
 assertions = [
-    "Tape's local append/replay/checkpoint benchmark stays inside conservative regression budgets.",
-    "Kafka, Redpanda, Pulsar, and RabbitMQ Streams performance wins are not claimed without calibrated real-service peer runs.",
+    "Tape's local bounded pull/replay and explicit checkpoint-ack benchmark stays inside conservative regression budgets.",
+    "Redpanda, Pulsar, and RabbitMQ Streams performance wins are not claimed without calibrated real-service peer runs.",
     "RabbitMQ topic exchange remains routing-only and is not treated as a replay performance baseline.",
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:f4cded925e1ac9dba33d00cbac0d35ff70d4a9169a50d03f1790ddf84a186114"
+digest = "sha256:c7d3c86a7624cec127cb8beabd310edbb14f139d0ebd641e8fda0a1a4e2f5ca8"
 
 [[cases]]
 id = "tape-competitor-performance-nats-jetstream-replay-win"
@@ -206,6 +225,25 @@ assertions = [
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:6af0c6c92f963355964a02165eb739f823f91c1c82cadd3826c54d1309cbf191"
+
+[[cases]]
+id = "tape-pull-subscription-cursor"
+capability_id = "subscription-delivery-resources"
+claim_id = "pull-subscription-cursor-contract"
+contract_id = "tape-bounded-pull-cursor-and-explicit-ack"
+dimension = "behavior"
+source_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-pull-subscription-cursor"
+test_path = "apps/tape/tests/behavior_tape_claim_pull_subscription.rs"
+command = "cargo test -p tape tests::pull_subscription_uses_checkpoint_cursor_and_never_implicitly_acks --lib -- --exact --nocapture && cargo test -p tape tests::pull_subscription_ack_reuses_checkpoint_guards --lib -- --exact --nocapture"
+required_for_production = true
+assertions = [
+    "Bounded pull reads start from the durable topic/name checkpoint and never implicitly advance it.",
+    "Explicit pull ack reuses stale and beyond-end checkpoint rejection.",
+    "No push delivery reliability claim is made by the pull cursor contract.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:be2af35004e41d6fbedbdd3f3f25d65a3bdf9670b93f55e87d45ed51366440fc"
 
 [[cases]]
 id = "tape-security-hardening-guard-scan"
