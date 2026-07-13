@@ -34,6 +34,12 @@ capability_refs:
     rationale: "The CLI semantic domain owns generic TD payload normalization, typed single-section merge boundaries, and pre-write applicability validation in src/cli/td.rs."
   - id: td-cb-lifecycle-automation
     role: primary
+    gap: default-td-target-plan-queue
+    claim: default-td-target-plan-queue
+    coverage: full
+    rationale: "Fresh applicability and contract authoring queues initialize and projection-lock an editable Changes target plan between Logic and Unit Test, preserving explicit custom queues and supplying aw td gen with authoritative targets."
+  - id: td-cb-lifecycle-automation
+    role: primary
     gap: terminal-ec-process-liveness
     claim: terminal-ec-process-liveness
     coverage: full
@@ -1779,6 +1785,30 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "next_none"
+            kind: "function"
+            public: false
+          - name: "is_active_td_authoring_section_type"
+            kind: "function"
+            public: false
+          - name: "suggested_td_authoring_section_types"
+            kind: "function"
+            public: false
+          - name: "td_section_queue"
+            kind: "function"
+            public: false
+          - name: "td_section_queue_for_content"
+            kind: "function"
+            public: false
+          - name: "td_section_queue_for_spec"
+            kind: "function"
+            public: false
+          - name: "td_section_payload_template"
+            kind: "function"
+            public: false
+          - name: "td_json_payload_schema_hint"
+            kind: "function"
+            public: false
+          - name: "complete_section_apply"
             kind: "function"
             public: false
           - name: "td_error"
@@ -3901,7 +3931,13 @@ changes:
       fresh default queue `logic`, `changes`, then `unit-test`: Changes is the
       explicit target plan required before codegen infers implementation paths,
       while an already non-empty custom queue keeps its declared membership and
-      order.
+      order. The initialized generic JSON payload carries an editable YAML
+      `changes[]` skeleton without narrowing legacy/custom Changes fields. Each
+      Changes transition is exposed through the issue projection lock in both
+      passes, including the first contract section after applicability unlock;
+      the real CLI regression applies both target plans, passes `aw td check`,
+      writes the fixture TD IR lock, and proves `aw td gen` creates the named
+      new target instead of falling back to impossible new-path inference.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/project.rs"
     action: modify

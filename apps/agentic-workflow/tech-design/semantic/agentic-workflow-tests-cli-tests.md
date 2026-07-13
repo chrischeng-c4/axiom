@@ -17,6 +17,12 @@ capability_refs:
     rationale: "The in-place real-CLI fixture proves body-only Logic normalization, malformed non-mutation, and sequential applicability Logic to structured Unit Test dispatch."
   - id: td-cb-lifecycle-automation
     role: primary
+    gap: default-td-target-plan-queue
+    claim: default-td-target-plan-queue
+    coverage: full
+    rationale: "The in-place real-CLI fixture applies fresh Logic, Changes, and Unit Test payloads in both passes, checks every projection lock, validates and locks the final TD, then proves aw td gen creates its explicit new target."
+  - id: td-cb-lifecycle-automation
+    role: primary
     gap: terminal-ec-process-liveness
     claim: terminal-ec-process-liveness
     coverage: full
@@ -385,6 +391,33 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "wi_validate_accepts_apply_dirty_issue_file_on_issue_branch"
+            kind: "function"
+            public: false
+          - name: "td_dispatch_envelope"
+            kind: "function"
+            public: false
+          - name: "run_td_section_apply"
+            kind: "function"
+            public: false
+          - name: "dispatched_payload_path"
+            kind: "function"
+            public: false
+          - name: "assert_td_projection"
+            kind: "function"
+            public: false
+          - name: "td_1598_logic_payload"
+            kind: "function"
+            public: false
+          - name: "td_1598_changes_payload"
+            kind: "function"
+            public: false
+          - name: "td_1598_unit_test_payload"
+            kind: "function"
+            public: false
+          - name: "td_1598_changes_skeleton_body"
+            kind: "function"
+            public: false
+          - name: "td_create_default_changes_queue_applies_both_passes_then_gen_uses_explicit_target"
             kind: "function"
             public: false
           - name: "td_create_apply_normalizes_body_only_logic_then_advances_structured_unit_test"
@@ -1128,6 +1161,14 @@ changes:
       malformed generic payloads leave the spec byte-identical, body-only
       Logic restores exactly one typed wrapper, and the initialized queue
       advances through applicability Unit Test before contract Logic.
+      Issue #1598 adds the fresh default Logic -> Changes -> Unit Test real CLI
+      lifecycle in both applicability and contract passes. It parses each
+      initialized Changes JSON body as an editable target-plan skeleton,
+      applies concrete Logic and Unit Test implementation edges, asserts every
+      current section and payload path in the issue projection (including the
+      first contract Logic lock), runs the final read-only checker, writes and
+      commits the fixture TD IR lock, and proves `aw td gen` creates a new
+      explicitly named target with source ownership and contract block refs.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/tests/cli/tests/cb_review_revise_test.rs"
     action: modify

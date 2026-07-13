@@ -47,10 +47,15 @@ numeric GitHub WI id such as `1487` remains validator-compatible when the first
 applicability section is applied. Existing skeletons remain byte-preserved on
 repeated initialization.
 
-Fresh skeletons persist the complete minimal section queue (`logic`, then
-`unit-test`) before applicability starts. Empty legacy skeleton queues expand to
-that same default on their first default-section merge, while non-empty custom
-queues remain authoritative and order-preserving from the brief dispatch onward.
+Fresh skeletons persist the complete minimal section queue (`logic`, `changes`,
+then `unit-test`) before applicability starts. Empty legacy skeleton queues
+expand to that same default on their first default-section merge, while
+non-empty custom queues remain authoritative and order-preserving in both
+applicability and contract. Changes keeps the generic JSON-body transport while
+its initialized body is an editable target-plan scaffold, and the applicability
+to contract boundary rebuilds the projection lock for the first contract
+section. Human-facing suggestions place Changes before Unit Test without
+changing the canonical global fill order.
 
 ### Symbols
 
@@ -2261,10 +2266,8 @@ fn is_deprecated_td_section_type(st: crate::models::spec_rules::SectionType) -> 
 }
 
 fn is_active_td_authoring_section_type(st: crate::models::spec_rules::SectionType) -> bool {
-    use crate::models::spec_rules::SectionType;
     !is_deprecated_td_section_type(st)
         && !crate::generate::generators::primitive_registry::is_prose_section(st)
-        && st != SectionType::Changes
 }
 
 fn is_supported_td_payload_section_type(st: crate::models::spec_rules::SectionType) -> bool {
@@ -2277,6 +2280,29 @@ fn active_td_section_types() -> Vec<crate::models::spec_rules::SectionType> {
         .into_iter()
         .filter(|st| is_active_td_authoring_section_type(*st))
         .collect()
+}
+
+/// Human-facing artifact order. `SectionType::fill_order()` remains the
+/// global registry order, but fresh TD authoring needs the target-owning
+/// Changes artifact before Unit Test so `aw td gen` never has to infer a
+/// brand-new path (#1598).
+fn suggested_td_authoring_section_types() -> Vec<crate::models::spec_rules::SectionType> {
+    use crate::models::spec_rules::SectionType;
+
+    let mut types = active_td_section_types();
+    let Some(changes_index) = types
+        .iter()
+        .position(|section| *section == SectionType::Changes)
+    else {
+        return types;
+    };
+    let changes = types.remove(changes_index);
+    let unit_test_index = types
+        .iter()
+        .position(|section| *section == SectionType::UnitTest)
+        .unwrap_or(types.len());
+    types.insert(unit_test_index, changes);
+    types
 }
 
 /// The `projects/<name>/...` → `apps/<name>/...` source-root move (#1211)
@@ -2475,7 +2501,11 @@ fn td_authoring_pass(raw: Option<&str>) -> &str {
 }
 
 fn td_section_queue(_pass: &str) -> Vec<String> {
-    vec!["logic".to_string(), "unit-test".to_string()]
+    vec![
+        "logic".to_string(),
+        "changes".to_string(),
+        "unit-test".to_string(),
+    ]
 }
 
 fn td_fill_sections_from_content(content: &str) -> Option<Vec<String>> {
@@ -2696,17 +2726,32 @@ fn td_section_payload_template(section: &str) -> Result<String> {
         anyhow::bail!("section '{}' is not supported for new TD payloads", section);
     }
     let lang = st.default_lang();
-    let body = match lang {
-        "markdown" => "(fill)\n".to_string(),
-        other => format!("```{}\n(fill)\n```\n", other),
+    let section_body = if st == crate::models::spec_rules::SectionType::Changes {
+        concat!(
+            "## Changes\n",
+            "<!-- type: changes lang: yaml -->\n\n",
+            "```yaml\n",
+            "changes:\n",
+            "  - path: \"(fill: repo-relative target path)\"\n",
+            "    action: \"(fill: create|modify)\"\n",
+            "    section: \"(fill: artifact-driving section id)\"\n",
+            "    impl_mode: \"(fill: codegen|hand-written)\"\n",
+            "```\n",
+        )
+        .to_string()
+    } else {
+        let body = match lang {
+            "markdown" => "(fill)\n".to_string(),
+            other => format!("```{}\n(fill)\n```\n", other),
+        };
+        format!(
+            "## {}\n<!-- type: {} lang: {} -->\n\n{}",
+            td_section_title(st.as_str()),
+            st.as_str(),
+            lang,
+            body
+        )
     };
-    let section_body = format!(
-        "## {}\n<!-- type: {} lang: {} -->\n\n{}",
-        td_section_title(st.as_str()),
-        st.as_str(),
-        lang,
-        body
-    );
     td_json_payload_template(section, section_body)
 }
 
@@ -2759,6 +2804,11 @@ pub(crate) struct TdBodySectionPayload {
 /// for JSON-payload sections — agents need the shape inline, not a pointer.
 fn td_json_payload_schema_hint(section: &str) -> Option<&'static str> {
     match section {
+        "changes" => Some(concat!(
+            r#"{"body":"```yaml\nchanges:\n  - path: <repo-relative target path>\n    action: create|modify\n    section: <artifact-driving section id>\n    impl_mode: codegen|hand-written\n```\n"}"#,
+            " — edit the initialized JSON payload and name every concrete target ",
+            "before applying it; `aw td gen` consumes this target plan directly."
+        )),
         "unit-test" => Some(concat!(
             r#"{"id":"<spec-id>-verification","requirements":{"#,
             r#""<requirement_key>":{"id":"R1","text":"<requirement text>","#,
@@ -3401,6 +3451,16 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
         } else {
             next_none("TD create has no remaining section payload")
         };
+        let invoke_args = attach_json_payload_schema_hint(
+            serde_json::json!({
+                "slug": slug,
+                "phase": pass,
+                "section": first_section,
+                "spec_path": spec_path,
+                "payload_path": payload_path,
+            }),
+            first_section.as_deref().unwrap_or_default(),
+        );
         let env = serde_json::json!({
             "action": "dispatch",
             "agent": null,
@@ -3415,13 +3475,7 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
             },
             "invoke": {
                 "command": "aw td create",
-                "args": {
-                    "slug": slug,
-                    "phase": pass,
-                    "section": first_section,
-                    "spec_path": spec_path,
-                    "payload_path": payload_path,
-                },
+                "args": invoke_args,
             },
         });
         print_json_value(&env, args.pretty)?;
@@ -3459,7 +3513,7 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     println!("---");
     println!("```");
     println!();
-    println!("Example: `fill_sections: [logic, unit-test]`.");
+    println!("Example: `fill_sections: [logic, changes, unit-test]`.");
     println!();
     println!("Each section uses an H2 heading with type annotation:");
     println!();
@@ -3489,17 +3543,28 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     println!();
     println!(
         "{}",
-        active_td_section_types()
+        suggested_td_authoring_section_types()
             .iter()
             .map(|t| t.as_str())
             .collect::<Vec<_>>()
             .join(" → "),
     );
     println!();
-    println!("Only sections listed in `fill_sections` are required. A fresh skeleton records `logic` then `unit-test` as the minimal default; an existing non-empty custom queue keeps its declared members and order.");
+    println!("Only sections listed in `fill_sections` are required. A fresh skeleton records `logic`, `changes`, then `unit-test` so codegen has an explicit target plan; an existing non-empty custom queue keeps its declared members and order.");
     println!();
     println!(
         "Use frontmatter `summary:` for overview text; requirements stay in the WI body. Do not add legacy prose sections such as `scenarios` unless migrating an older TD."
+    );
+    println!();
+    println!("## Changes (JSON payload with explicit target plan)");
+    println!();
+    println!(
+        "Section type `changes` uses the initialized JSON `body` skeleton below. Replace every `(fill: ...)` value with a concrete repo-relative target plan before applying it:"
+    );
+    println!();
+    println!(
+        "{}",
+        td_json_payload_schema_hint("changes").unwrap_or_default()
     );
     println!();
     println!("## Mermaid Plus (CODEGEN-READY — required for state-machine, logic, interaction)");
@@ -3886,16 +3951,29 @@ async fn complete_section_apply(
         maybe_push_remote(&worktree_abs, &issue_path, slug).await?;
         // Linear lifecycle (no review): start the contract pass at its first
         // section, or go straight to gen when there are no contract sections.
-        match td_section_queue_for_spec(&worktree_abs, spec_path, "contract")
-            .into_iter()
-            .next()
-        {
-            Some(first) => {
-                let expected_payload = section_payload_path(project_root, slug, "contract", &first);
+        let contract_queue = td_section_queue_for_spec(&worktree_abs, spec_path, "contract");
+        match contract_queue.split_first() {
+            Some((first, remaining_contract)) => {
+                let expected_payload = section_payload_path(project_root, slug, "contract", first);
                 initialize_td_payload_file(
                     &expected_payload,
-                    &td_section_payload_template(&first)?,
+                    &td_section_payload_template(first)?,
                 )?;
+                let expected_command = format!(
+                    "aw td create {} --apply --phase contract --section {} --spec-path {}",
+                    slug, first, spec_path
+                );
+                super::workflow_guard::create_issue_lock(
+                    &worktree_abs,
+                    &super::workflow_guard::TransitionLock::new(slug, "td", expected_command)
+                        .with_expected_payload(expected_payload.clone())
+                        .with_active_phase(lifecycle_pass_phase("contract"))
+                        .with_active_branch(active_branch)
+                        .with_current_section(first.clone())
+                        .with_remaining_sections(remaining_contract.iter().cloned())
+                        .with_dirty_paths([spec_path.to_string()]),
+                )
+                .await?;
                 Some((
                     "Td-Applicability-Complete",
                     active_phase,
@@ -3909,7 +3987,7 @@ async fn complete_section_apply(
                             "spec_path": spec_path,
                             "payload_path": expected_payload,
                         }),
-                        &first,
+                        first,
                     ),
                 ))
             }
@@ -5320,10 +5398,10 @@ label = "lib:pg"
 
         let merged = merge_spec_section(base, "logic", payload).unwrap();
 
-        assert!(merged.contains("fill_sections: [logic, unit-test]"));
+        assert!(merged.contains("fill_sections: [logic, changes, unit-test]"));
         assert_eq!(
             remaining_after_section_in_content(&merged, "applicability", "logic"),
-            vec!["unit-test".to_string()]
+            vec!["changes".to_string(), "unit-test".to_string()]
         );
     }
 
@@ -5338,6 +5416,11 @@ label = "lib:pg"
         assert_eq!(
             td_section_queue_for_content(&merged, "applicability"),
             vec!["unit-test".to_string(), "logic".to_string()]
+        );
+        assert_eq!(
+            td_section_queue_for_content(&merged, "contract"),
+            vec!["unit-test".to_string(), "logic".to_string()],
+            "a non-empty custom queue must remain authoritative in both passes"
         );
     }
 
@@ -5675,16 +5758,28 @@ label = "lib:pg"
     }
 
     #[test]
-    fn td_section_queue_excludes_deprecated_and_legacy_metadata_types() {
+    fn td_section_queue_includes_target_plan_and_excludes_deprecated_types() {
         let queue = td_section_queue("applicability");
-        assert_eq!(queue, vec!["logic".to_string(), "unit-test".to_string()]);
+        assert_eq!(
+            queue,
+            vec![
+                "logic".to_string(),
+                "changes".to_string(),
+                "unit-test".to_string(),
+            ]
+        );
         assert!(!queue.contains(&"overview".to_string()));
         assert!(!queue.contains(&"requirements".to_string()));
         assert!(!queue.contains(&"doc".to_string()));
         assert!(!queue.contains(&"scenarios".to_string()));
-        assert!(!queue.contains(&"changes".to_string()));
+        assert!(queue.contains(&"changes".to_string()));
         assert!(queue.contains(&"unit-test".to_string()));
         assert!(queue.contains(&"logic".to_string()));
+        assert_eq!(
+            td_section_queue("contract"),
+            queue,
+            "fresh applicability and contract passes must use the same target-owning queue"
+        );
         for section in &queue {
             let section_type = section
                 .parse::<crate::models::spec_rules::SectionType>()
@@ -5697,6 +5792,31 @@ label = "lib:pg"
     }
 
     #[test]
+    fn target_plan_active_td_authoring_types_include_changes_before_unit_test_in_suggested_order() {
+        use crate::models::spec_rules::SectionType;
+
+        let active = active_td_section_types();
+        assert!(active.contains(&SectionType::Changes));
+        assert!(!active.contains(&SectionType::Overview));
+        assert!(!active.contains(&SectionType::Requirements));
+        assert!(!active.contains(&SectionType::Doc));
+
+        let suggested = suggested_td_authoring_section_types();
+        let changes = suggested
+            .iter()
+            .position(|section| *section == SectionType::Changes)
+            .unwrap();
+        let unit_test = suggested
+            .iter()
+            .position(|section| *section == SectionType::UnitTest)
+            .unwrap();
+        assert!(
+            changes < unit_test,
+            "human guidance must place Changes before Unit Test: {suggested:?}"
+        );
+    }
+
+    #[test]
     fn td_section_payload_template_scaffolds_typed_section() {
         let template = td_section_payload_template("logic").unwrap();
         let value: TdBodySectionPayload =
@@ -5705,6 +5825,26 @@ label = "lib:pg"
         assert!(value.body.contains("<!-- type: logic lang: mermaid -->"));
         assert!(value.body.contains("```mermaid"));
         assert!(value.body.contains("(fill)"));
+    }
+
+    #[test]
+    fn td_section_payload_template_changes_scaffolds_editable_target_plan() {
+        let template = td_section_payload_template("changes").unwrap();
+        let value: TdBodySectionPayload =
+            serde_json::from_str(&template).expect("Changes payload template must be JSON");
+        assert!(value.body.contains("## Changes"));
+        assert!(value.body.contains("<!-- type: changes lang: yaml -->"));
+        assert!(value.body.contains("changes:\n"));
+        assert!(value
+            .body
+            .contains("path: \"(fill: repo-relative target path)\""));
+        assert!(value.body.contains("action: \"(fill: create|modify)\""));
+        assert!(value
+            .body
+            .contains("section: \"(fill: artifact-driving section id)\""));
+        assert!(value
+            .body
+            .contains("impl_mode: \"(fill: codegen|hand-written)\""));
     }
 
     #[test]
@@ -5897,6 +6037,37 @@ label = "lib:pg"
         let raw_json = serde_json::to_string(&payload).unwrap();
         let rendered = render_td_json_section_payload("unit-test", &raw_json).unwrap();
         assert_eq!(rendered, render_unit_test_section(&payload));
+    }
+
+    #[test]
+    fn target_plan_legacy_generic_changes_wrapper_stays_accepted() {
+        let body = concat!(
+            "## Target Plan\n",
+            "<!-- type: changes lang: yaml -->\n\n",
+            "```yaml\n",
+            "changes:\n",
+            "  - file: src/lib.rs\n",
+            "    action: modify\n",
+            "    section: logic\n",
+            "    replaces: [LegacySymbol]\n",
+            "    impl_mode: codegen\n",
+            "```\n",
+        );
+        let raw = serde_json::json!({ "body": body }).to_string();
+
+        let rendered = render_td_json_section_payload("changes", &raw).unwrap();
+        let normalized = normalize_generic_td_section_payload(
+            "changes",
+            &rendered,
+            std::path::Path::new("tech-design/logic/legacy-changes.md"),
+        )
+        .unwrap();
+
+        assert_eq!(normalized, body);
+        assert_eq!(
+            crate::generate::apply::extract_change_entries_count(&normalized),
+            1
+        );
     }
 
     // #1562: generic payloads may contain only the requested section body.
@@ -6139,7 +6310,7 @@ label = "lib:pg"
         assert!(content.starts_with("---\n"), "content: {content}");
         assert!(content.contains("id: some-slug"), "content: {content}");
         assert!(
-            content.contains("fill_sections: [logic, unit-test]"),
+            content.contains("fill_sections: [logic, changes, unit-test]"),
             "content: {content}"
         );
 
@@ -6191,8 +6362,8 @@ label = "lib:pg"
         );
         assert_eq!(
             remaining_after_section_in_content(&merged, "applicability", "logic"),
-            vec!["unit-test".to_string()],
-            "numeric TDs must preserve the default test section after logic"
+            vec!["changes".to_string(), "unit-test".to_string()],
+            "numeric TDs must preserve the target plan and test sections after logic"
         );
 
         let (frontmatter, _) = split_frontmatter(&skeleton).expect("skeleton frontmatter");
@@ -7301,4 +7472,15 @@ changes:
       multiple-wrapper payloads fail before any spec write. The existing
       candidate RequireThrough check and dirty-spec allowance remain intact;
       candidate-wide registry validation stays scoped to #1586.
+  - path: apps/agentic-workflow/src/cli/td.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1598 makes Changes part of every fresh default TD queue in both
+      applicability and contract. The CLI initializes a generic JSON-body
+      payload with an editable path/action/section/impl_mode target-plan
+      scaffold, preserves non-empty custom queues, rebuilds TransitionLock for
+      the first contract section, and keeps the human Changes suggestion ahead
+      of Unit Test without changing the global fill order.
 ```
