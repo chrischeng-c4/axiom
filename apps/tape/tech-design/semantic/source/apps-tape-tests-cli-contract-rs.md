@@ -32,6 +32,8 @@ fill_sections: [overview, unit-test, changes]
 the bootstrap Tape CLI and offline spec.
 It also verifies the topic subscription resource slice: pull checkpoint
 compatibility, push endpoint metadata only, and declared API inventory.
+Pull reads are bounded and do not advance their cursor until the matching
+explicit ack command succeeds.
 
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
@@ -46,6 +48,7 @@ flowchart TD
     test --> workflow["append/replay/checkpoint commands round-trip temp store"]
     test --> subscriptions["subscription pull/push create/list/show/delete round-trip temp store"]
     test --> subscription_spec["subscription routes/OpenAPI/JSON Schema are declared"]
+    test --> pullack["bounded pull then explicit ack continues at the next checkpoint offset"]
 ```
 
 ## Changes
@@ -63,4 +66,9 @@ changes:
     section: unit-test
     impl_mode: hand-written
     description: "Add subscription CLI, local lifecycle, and offline contract inventory tests (#1254)."
+  - path: apps/tape/tests/cli_contract.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Add bounded pull/ack round-trip and pull/ack inventory coverage (#1255)."
 ```

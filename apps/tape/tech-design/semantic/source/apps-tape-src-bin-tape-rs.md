@@ -60,6 +60,7 @@ flowchart TD
     cli --> subscription["subscription create|list|show|delete: persist topic delivery metadata"]
     subscription --> pull["--pull uses the subscription name as the existing checkpoint identity"]
     subscription --> push["--push stores endpoint metadata only; no delivery worker"]
+    subscription --> pull["pull --limit reads a bounded checkpoint window; ack advances it explicitly"]
     cli --> spec["spec: print routes/openapi/schema"]
     cli --> std["llm/upgrade/issue: delegate to cli-std"]
 ```
@@ -78,6 +79,7 @@ flowchart TD
     help --> surface["standard and Tape-specific commands visible"]
     roundtrip --> workflow["local file-backed workflow passes"]
     subscriptiontest --> subscriptionproof["pull/push resource forms and next markers are stable"]
+    test --> pullack["pull_subscription_cli_roundtrip proves pull then explicit ack"]
 ```
 
 ## Changes
@@ -100,4 +102,9 @@ changes:
     section: logic
     impl_mode: hand-written
     description: "Add subscription create/list/show/delete with mutually exclusive pull/push configuration and file-backed journal persistence (#1254)."
+  - path: apps/tape/src/bin/tape.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Add bounded pull and explicit ack subcommands over the existing file-backed cursor (#1255)."
 ```

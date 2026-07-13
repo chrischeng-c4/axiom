@@ -212,6 +212,132 @@ fn subscription_spec_inventory() {
 }
 
 #[test]
+fn pull_subscription_cli_roundtrip() {
+    let store = std::env::temp_dir().join(format!(
+        "tape-pull-subscription-contract-{}-{}.json",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let store_arg = store.to_str().unwrap();
+
+    for payload in [r#"{"id":"o1"}"#, r#"{"id":"o2"}"#] {
+        let append = Command::new(tape_bin())
+            .args([
+                "append",
+                "orders",
+                "--payload",
+                payload,
+                "--store",
+                store_arg,
+            ])
+            .output()
+            .expect("append pull fixture");
+        assert!(append.status.success());
+    }
+    let create = Command::new(tape_bin())
+        .args([
+            "subscription",
+            "create",
+            "orders",
+            "worker-a",
+            "--pull",
+            "--store",
+            store_arg,
+        ])
+        .output()
+        .expect("create pull subscription");
+    assert!(create.status.success());
+
+    let pull = Command::new(tape_bin())
+        .args([
+            "subscription",
+            "pull",
+            "orders",
+            "worker-a",
+            "--limit",
+            "1",
+            "--store",
+            store_arg,
+        ])
+        .output()
+        .expect("pull first window");
+    assert!(
+        pull.status.success(),
+        "{}",
+        String::from_utf8_lossy(&pull.stderr)
+    );
+    let pull_stdout = String::from_utf8_lossy(&pull.stdout);
+    assert!(pull_stdout.contains("\"cursor\": 0"));
+    assert!(pull_stdout.contains("\"next_offset\": 1"));
+    assert!(pull_stdout.contains("\"id\": \"o1\""));
+    assert!(pull_stdout.contains("next: tape subscription ack orders worker-a --offset 1"));
+
+    let ack = Command::new(tape_bin())
+        .args([
+            "subscription",
+            "ack",
+            "orders",
+            "worker-a",
+            "--offset",
+            "1",
+            "--store",
+            store_arg,
+        ])
+        .output()
+        .expect("ack first window");
+    assert!(
+        ack.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ack.stderr)
+    );
+
+    let next_pull = Command::new(tape_bin())
+        .args([
+            "subscription",
+            "pull",
+            "orders",
+            "worker-a",
+            "--limit",
+            "1",
+            "--store",
+            store_arg,
+        ])
+        .output()
+        .expect("pull second window");
+    assert!(next_pull.status.success());
+    let next_stdout = String::from_utf8_lossy(&next_pull.stdout);
+    assert!(next_stdout.contains("\"cursor\": 1"));
+    assert!(next_stdout.contains("\"id\": \"o2\""));
+
+    let _ = std::fs::remove_file(store);
+}
+
+#[test]
+fn pull_subscription_spec_inventory() {
+    let routes = Command::new(tape_bin())
+        .args(["spec", "--format", "routes"])
+        .output()
+        .expect("run tape spec routes");
+    assert!(routes.status.success());
+    let routes_stdout = String::from_utf8_lossy(&routes.stdout);
+    assert!(routes_stdout.contains("/topics/{topic}/subscriptions/{subscription}/pull"));
+    assert!(routes_stdout.contains("/topics/{topic}/subscriptions/{subscription}/ack"));
+
+    let openapi = Command::new(tape_bin())
+        .args(["spec", "--format", "openapi"])
+        .output()
+        .expect("run tape spec openapi");
+    assert!(openapi.status.success());
+    let stdout = String::from_utf8_lossy(&openapi.stdout);
+    assert!(stdout.contains("PullSubscriptionBatch"));
+    assert!(stdout.contains("PullSubscriptionAckRequest"));
+    assert!(stdout.contains("\"maximum\": 1000"));
+}
+
+#[test]
 fn append_replay_checkpoint_roundtrip() {
     let store = std::env::temp_dir().join(format!(
         "tape-cli-contract-{}-{}.json",
