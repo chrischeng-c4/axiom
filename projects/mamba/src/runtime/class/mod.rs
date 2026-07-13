@@ -1578,7 +1578,16 @@ fn mb_class_register_named_impl(
     // Must happen after insertion so lookup_method can find the class.
     let init_method = lookup_method(name, "__init__");
     if !init_method.is_none() {
-        let addr = extract_func_addr(init_method);
+        // R1594: __init__ bodies referencing zero-arg `super()`/`__class__`
+        // are compiled as closures (int-tagged handles), not raw TAG_FUNC
+        // values. extract_func_addr doesn't understand closures — it falls
+        // back to treating the closure handle's raw int as an "address",
+        // which is never in CALLABLE_REGISTRY. That made call_init_for_instance
+        // cache `is_registered = false` and silently skip __init__ entirely
+        // (no error, attributes never set). extract_registered_func_addr
+        // unwraps the closure to the real underlying function address first,
+        // matching how CALLABLE_REGISTRY itself is populated below.
+        let addr = extract_registered_func_addr(init_method);
         if addr != 0 {
             let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
             CLASS_REGISTRY.with(|reg| {
@@ -1951,7 +1960,9 @@ pub fn mb_class_update_bases(name: MbValue, bases_list: MbValue) {
 
     let init_method = lookup_method(&class_name, "__init__");
     if !init_method.is_none() {
-        let addr = extract_func_addr(init_method);
+        // R1594: see extract_registered_func_addr note above — closure-wrapped
+        // __init__ must be unwrapped before caching its dispatch address.
+        let addr = extract_registered_func_addr(init_method);
         if addr != 0 {
             let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
             CLASS_REGISTRY.with(|reg| {
@@ -2463,7 +2474,9 @@ fn sync_class_namespace_from_dict(class_name: &str, namespace: MbValue) {
 fn refresh_cached_init(class_name: &str) {
     let init_method = lookup_method(class_name, "__init__");
     let cached_init = if !init_method.is_none() {
-        let addr = extract_func_addr(init_method);
+        // R1594: see extract_registered_func_addr note above — closure-wrapped
+        // __init__ must be unwrapped before caching its dispatch address.
+        let addr = extract_registered_func_addr(init_method);
         if addr != 0 {
             let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
             Some((addr, is_registered))
@@ -3506,7 +3519,9 @@ fn call_init_for_instance(init_class: &str, instance: MbValue, args_list: MbValu
     if init_method.is_none() {
         return false;
     }
-    let addr = extract_func_addr(init_method);
+    // R1594: see extract_registered_func_addr note above — closure-wrapped
+    // __init__ must be unwrapped before dispatching.
+    let addr = extract_registered_func_addr(init_method);
     if addr != 0 {
         let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
         if is_registered {
@@ -3530,7 +3545,9 @@ fn call_init_for_instance_kwargs(
     if init_method.is_none() {
         return false;
     }
-    let addr = extract_func_addr(init_method);
+    // R1594: see extract_registered_func_addr note above — closure-wrapped
+    // __init__ must be unwrapped before dispatching.
+    let addr = extract_registered_func_addr(init_method);
     unsafe {
         super::rc::retain_if_ptr(instance);
     }
