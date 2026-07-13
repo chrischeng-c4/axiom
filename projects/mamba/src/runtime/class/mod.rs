@@ -3657,7 +3657,10 @@ pub(crate) fn object_new_unbound(items: &[MbValue]) -> MbValue {
         if !class_overrides_init(&class_name) {
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(format!("{}() takes no arguments", class_name))),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "{}() takes no arguments",
+                    class_display_name(&class_name)
+                ))),
             );
             return MbValue::none();
         }
@@ -11984,7 +11987,7 @@ fn compute_mro(name: &str, bases: &[String]) -> Vec<String> {
         if bases[..i].contains(base) {
             super::exception::set_current_exception(super::exception::MbException::new(
                 "TypeError",
-                &format!("duplicate base class {base}"),
+                &format!("duplicate base class {}", class_display_name(base)),
             ));
             mro.extend(bases.iter().cloned());
             if !mro.contains(&"object".to_string()) {
