@@ -4818,8 +4818,16 @@ async fn run_check_lifecycle_terminal(
                     .results
                     .iter()
                     .filter(|result| result.status != "passed")
-                    .map(|result| format!("{} (`{}`)", result.case_id, result.command))
+                    .map(|result| {
+                        let detail = result.stderr_tail.trim();
+                        if detail.is_empty() {
+                            format!("{} (`{}`)", result.case_id, result.command)
+                        } else {
+                            format!("{} (`{}`): {detail}", result.case_id, result.command)
+                        }
+                    })
                     .collect();
+                let remediation = format!("aw ec gen --project {} --verify", summary.project);
                 let env = serde_json::json!({
                     "action": "error",
                     "slug": slug,
@@ -4835,6 +4843,7 @@ async fn run_check_lifecycle_terminal(
                         summary.project,
                         slug,
                     ),
+                    "next": { "command": remediation },
                 });
                 println!("{}", serde_json::to_string(&env)?);
                 return Ok(true);

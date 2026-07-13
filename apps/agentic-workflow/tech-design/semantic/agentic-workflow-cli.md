@@ -3540,7 +3540,13 @@ changes:
       Tool-manifest commands have no `required_for_production` concept and
       always run regardless of the filter. See this file's `cb.rs` entry
       below for the terminal-gate envelope's `cases` list rendering of
-      skipped entries.
+      skipped entries. #1579 bounds every EC shell command with a configurable
+      `AW_EC_COMMAND_TIMEOUT_SECS` deadline (30 minutes by default), captures
+      output while polling, and terminates the command's whole process group
+      on timeout so a VAT wrapper cannot outlive its completed Cargo child.
+      The terminal path holds a per-project process/file single-flight lock;
+      a concurrent `aw td code-check` receives a failed lifecycle result with
+      retry guidance instead of launching a duplicate VAT/Cargo tree.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/tasks.rs"
     action: modify
@@ -3567,7 +3573,10 @@ changes:
       gate's `verify_ec_context(&ctx, true)` filter skipped stays auditable
       in the envelope; `ec_gate.commands_consulted` is unchanged
       (`summary.command_count`, which `ec.rs` already restricts to executed
-      cases). See `ec.rs`'s entry above for the filter implementation.
+      cases). #1579 includes each failed result's stderr tail in the refusal
+      and emits `next.command = aw ec gen --project <project> --verify`, so a
+      timeout or single-flight refusal is a structured, runnable remediation.
+      See `ec.rs`'s entry above for the runner implementation.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/chat_members.rs"
     action: modify
