@@ -43,6 +43,11 @@ flowchart TD
 
 ```yaml
 changes:
+  - path: apps/tape/Dockerfile
+    action: modify
+    section: runtime-image
+    impl_mode: hand-written
+    description: "Build the shared serving/operator image with Tape's operator feature so the checked-in operator Deployment can execute its declared controller command. generator gap: missing-generator:service-operator-image-profile (#1590)."
   - path: apps/tape/scripts/kind-e2e.sh
     action: create
     section: e2e-test
