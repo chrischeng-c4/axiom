@@ -1,7 +1,7 @@
 ---
 id: "1526"
-summary: (fill)
-fill_sections: [logic]
+summary: Fail closed when an Apple MicroVM guest is healthy but its published host endpoint is unusable, and expose evidence-backed detached compose startup states.
+fill_sections: [logic, unit-test, e2e-test, changes]
 ---
 
 ## Logic
@@ -54,4 +54,143 @@ edges:
   - { from: reconcile, to: compose_failed, label: "terminal failure" }
   - { from: compose_failed, to: compose_error }
 ---
+```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: vat-microvm-published-endpoint-verification
+requirements:
+  reset_is_not_ready:
+    id: R1
+    text: "A listener that accepts the TCP handshake then immediately closes or resets is not a usable MicroVM published endpoint."
+    kind: regression
+    risk: high
+    verify: vat_microvm_published_port
+  configured_http_is_end_to_end:
+    id: R2
+    text: "A configured ready_http contract reaches the allocated loopback published port and accepts only HTTP 2xx or 3xx success."
+    kind: functional
+    risk: high
+    verify: vat_microvm_published_port
+  failure_persists_evidence_and_cleans_up:
+    id: R3
+    text: "A MicroVM readiness failure persists terminal service evidence, reports an actionable endpoint diagnostic, and removes only the VAT-owned MicroVM name."
+    kind: regression
+    risk: high
+    verify: vat_microvm_published_port
+  detach_reconciles_real_service_state:
+    id: R4
+    text: "Detached compose reports starting while service evidence is pending, ready only after every service is Ready, and a nonzero terminal failure after cleanup."
+    kind: functional
+    risk: high
+    verify: vat_compose
+  non_microvm_regression:
+    id: R5
+    text: "Docker and native readiness retain their existing probe selection and lifecycle behavior."
+    kind: regression
+    risk: medium
+    verify: vat_compose
+---
+flowchart TD
+    r1[R1 reset is not ready] --> vat_microvm_published_port[vat_microvm_published_port]
+    r2[R2 configured http is end to end] --> vat_microvm_published_port
+    r3[R3 failure persists evidence and cleans up] --> vat_microvm_published_port
+    r4[R4 detach reconciles real service state] --> vat_compose[vat_compose]
+    r5[R5 non microvm regression] --> vat_compose
+```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: vat-microvm-published-port-real-host
+    name: "Apple container published endpoint either completes its host contract or fails closed"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: microvm-sandbox-service-lifecycle
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "VAT_MICROVM_E2E_REQUIRED=1 cargo test -p vat --test vat_microvm_published_port -- --ignored --nocapture"
+    assertions:
+      - "On an explicit opt-in host with Apple's container CLI, a VAT-owned nginx MicroVM has its guest and published host endpoint checked separately."
+      - "A host endpoint that resets or cannot complete the configured HTTP contract fails nonzero with service, endpoint, runtime, inspect, and logs remediation rather than Ready."
+      - "The test removes only its uniquely named VAT-owned MicroVM and records the observed Apple container evidence for tracker review."
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/vat/src/commands/run.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: readiness_ready
+    gap: vat-microvm-published-endpoint-readiness
+    tracker: "#1526"
+    reason: "Route MicroVM service probes through an endpoint-usability check that distinguishes an immediate EOF or reset from an idle but open protocol connection, while retaining explicit HTTP round trips."
+    refs:
+      - "apps/vat/tech-design/logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md#logic"
+  - path: apps/vat/src/commands/run.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: wait_for_services
+    gap: vat-microvm-published-endpoint-failure-evidence
+    tracker: "#1526"
+    reason: "Persist terminal MicroVM readiness evidence, collect best-effort runtime and inspect diagnostics, and leave no VAT-owned MicroVM after an unusable published endpoint."
+    refs:
+      - "apps/vat/tech-design/logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md#logic"
+  - path: apps/vat/src/commands/compose.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: up_cmd
+    gap: vat-compose-detached-readiness-reconciliation
+    tracker: "#1526"
+    reason: "Reconcile persisted VAT service records for detached compose so starting, ready, and terminal startup failure are truthful and diagnosable."
+    refs:
+      - "apps/vat/tech-design/logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md#logic"
+  - path: apps/vat/src/commands/compose.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: ps_cmd
+    gap: vat-compose-detached-readiness-projection
+    tracker: "#1526"
+    reason: "Project reconciled detached compose state instead of treating a discovered VAT id as a successful startup."
+    refs:
+      - "apps/vat/tech-design/logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md#logic"
+  - path: apps/vat/tests/vat_microvm_published_port.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    gap: vat-microvm-published-port-regression
+    tracker: "#1526"
+    reason: "Add deterministic TCP reset, HTTP round-trip, failure-evidence, cleanup, and opt-in real Apple-container published-endpoint coverage."
+    refs:
+      - "apps/vat/tech-design/logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md#unit-test"
+      - "apps/vat/tech-design/logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md#e2e-test"
+  - path: apps/vat/tests/vat_compose.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: test_compose_full_cycle_up_down
+    gap: vat-compose-detached-status-regression
+    tracker: "#1526"
+    reason: "Update full-cycle compose assertions for evidence-based starting and ready semantics without changing Docker runtime behavior."
+    refs:
+      - "apps/vat/tech-design/logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md#unit-test"
+  - path: apps/vat/tests/aw-ec.toml
+    action: modify
+    section: e2e-test
+    impl_mode: hand-written
+    tracker: "#1526"
+    reason: "Register the explicit opt-in real-host MicroVM published-endpoint contract gate."
+    refs:
+      - "apps/vat/tech-design/logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md#e2e-test"
 ```

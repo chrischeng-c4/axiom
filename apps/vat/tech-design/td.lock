@@ -2,10 +2,10 @@ version = 2
 project = "vat"
 ir_kind = "td"
 td_path = "apps/vat/tech-design"
-generated_at = "2026-07-13T09:11:20.673351+00:00"
-digest = "sha256:7dd95f58ffec25b57eec182ec1a186f39a9719b332e219210f4c15444520ae2f"
-source_digest = "sha256:7dd95f58ffec25b57eec182ec1a186f39a9719b332e219210f4c15444520ae2f"
-ir_digest = "sha256:28c39a6a3931ff974658d868b3c0e1990bf921c75593eeb52eb3e596bd03b830"
+generated_at = "2026-07-13T09:44:37.300040+00:00"
+digest = "sha256:587c1f986e9dbb29aaf4c9553907b10d12575e1903c1c1e50c79a6e60bae532d"
+source_digest = "sha256:587c1f986e9dbb29aaf4c9553907b10d12575e1903c1c1e50c79a6e60bae532d"
+ir_digest = "sha256:14601875996cefb0d60fcc19dfe9401e10e30973bae432f1ba49130935674500"
 
 [[files]]
 path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
@@ -135,9 +135,9 @@ section_count = 3
 
 [[files]]
 path = "logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md"
-digest = "sha256:718f279d0cce8d5ec39dd59fa60ad898033bb0001135345a8962ff7b1ba5ae14"
-ir_digest = "sha256:4759ac11c86d52c3078aa3761502cf97eda1a1cb7e4c79e5f56a5d738b09f05c"
-section_count = 1
+digest = "sha256:878218a307bcad9da573402cb66f2756f16adc8678f3cb9c6a9671618cf421bc"
+ir_digest = "sha256:1dc0730220cc235a0c5475076a6658c8a042a924af611ab8bd2c687c493aca9f"
+section_count = 4
 
 [[files]]
 path = "logic/vat-microvm-phase-1-isolation-microvm-sandbox-backend-for-vat-ru.md"
