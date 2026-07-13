@@ -1,3 +1,39 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:4449c2ec" tracker="pending-tracker" reason="Alert on real Tape append/replay average-latency series and Kubernetes restart loops without inventing domain lag metrics. generator gap: missing-generator:prometheus-rule (#1588)."
-// TODO: hand-write content for `apps/tape/k8s/components/observability/prometheusrule.yaml`.
-// HANDWRITE-END
+# HANDWRITE-BEGIN gap="missing-generator:logic:4449c2ec" tracker="#1588" reason="Alert on real Tape append/replay average-latency series and Kubernetes restart loops without inventing domain lag metrics. generator gap: missing-generator:prometheus-rule (#1588)."
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: tape-slo
+  namespace: tape
+  labels:
+    app: tape
+    role: server
+    release: prometheus
+spec:
+  groups:
+    - name: tape.slo
+      interval: 30s
+      rules:
+        - alert: TapeAppendLatencyHigh
+          expr: |
+            sum(rate(tape_append_latency_ms_sum{app="tape",role="server"}[5m]))
+            / clamp_min(sum(rate(tape_append_latency_ms_count{app="tape",role="server"}[5m])), 1) > 500
+          for: 10m
+          labels: { severity: warning, app: tape, role: server }
+          annotations:
+            summary: "tape append average latency above 500ms"
+        - alert: TapeReplayLatencyHigh
+          expr: |
+            sum(rate(tape_replay_latency_ms_sum{app="tape",role="server"}[5m]))
+            / clamp_min(sum(rate(tape_replay_latency_ms_count{app="tape",role="server"}[5m])), 1) > 2000
+          for: 10m
+          labels: { severity: warning, app: tape, role: server }
+          annotations:
+            summary: "tape replay average latency above 2s"
+        - alert: TapePodRestarting
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace="tape",container="tape"}[15m]) > 2
+          for: 5m
+          labels: { severity: warning, app: tape, role: server }
+          annotations:
+            summary: "tape pod restarting repeatedly"
+# HANDWRITE-END
