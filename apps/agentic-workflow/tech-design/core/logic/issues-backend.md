@@ -9,6 +9,12 @@ capability_refs:
     claim: client-boundary-model
     coverage: full
     rationale: "This logic TD supports AW Core client boundary behavior for issues or frontend clients."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: project-label-producer-td-routing
+    claim: project-label-producer-td-routing
+    coverage: partial
+    rationale: "The issue update contract makes explicit stale project-label removals authoritative across tracker backends."
 ---
 
 # Issues Cli Crud Spec
@@ -79,6 +85,11 @@ requirements:
       `update <slug> --title T2 --add-label L` rewrites frontmatter.
       `--body-file path` replaces body entirely.
       `--push` syncs to GitHub via `gh issue edit`.
+      Explicit `--remove-label` values are authoritative for GitHub and GitLab
+      updates; unrelated unmanaged labels remain preserved, and managed labels
+      continue to follow the encoded lifecycle state. GitHub distinguishes an
+      omitted labels field from an explicitly empty array so removing the final
+      label cannot silently become a no-op.
   R3:
     text: "aw wi close — close with reason"
     type: functional
@@ -262,6 +273,16 @@ scenarios:
     then: |
       - body fully replaced
       - frontmatter unchanged
+  S4b:
+    name: Explicit remote label removal is authoritative and bounded
+    verifies: [R2]
+    given: "A remote issue has project:service-backup, lib:service-backup, a user label, and managed lifecycle labels"
+    when: "`aw wi update <id> --remove-label project:service-backup --push`"
+    then: |
+      - project:service-backup is removed on GitHub or GitLab
+      - lib:service-backup and the unrelated user label remain
+      - stale managed labels are still reconciled from Issue lifecycle state
+      - removing the sole GitHub label emits an explicit empty labels array
   S5:
     name: Close with reason
     verifies: [R3]
@@ -474,13 +495,13 @@ changes:
     section: source
     action: modify
     impl_mode: hand-written
-    description: Implement create (gh issue create), update (gh issue edit), close (gh issue close), search (gh issue list --search). Mark is_writable=true.
+    description: Implement create (gh issue create), update (gh issue edit), close (gh issue close), search (gh issue list --search). Explicit update removals are authoritative while full writes preserve absent unmanaged labels. Mark is_writable=true.
 
   - file: apps/agentic-workflow/src/issues/backends/gitlab.rs
     section: source
     action: create
     impl_mode: hand-written
-    description: New GitLabBackend — shells out to glab CLI. Implements full IssueBackend trait. Pattern from fetch_issues.rs::fetch_issue_glab.
+    description: New GitLabBackend — shells out to glab CLI. Implements full IssueBackend trait, including authoritative explicit update removals with conservative ordinary writes. Pattern from fetch_issues.rs::fetch_issue_glab.
 
   - file: apps/agentic-workflow/src/issues/backends/mod.rs
     section: source
