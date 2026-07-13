@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-16T02:35:02.170896+00:00"
-digest = "sha256:e7b4fc52ec472a05e806b394d41322bdfd25e473919de127f649d88f5fc62430"
-source_digest = "sha256:e7b4fc52ec472a05e806b394d41322bdfd25e473919de127f649d88f5fc62430"
-ir_digest = "sha256:bc24610c14ffafbb8270062b49e1ab828270d9d6912546455ffd13e6b2819f20"
+generated_at = "2026-07-16T02:35:51.968754+00:00"
+digest = "sha256:318bc1ed6c64f4979199577a97eedb81343884315027f8659239b0d6fd4b4fd4"
+source_digest = "sha256:318bc1ed6c64f4979199577a97eedb81343884315027f8659239b0d6fd4b4fd4"
+ir_digest = "sha256:25766fea1a8afa6789efdad4939107e1661d53edbbee71f4b6bffcd85cf15487"
 
 [[files]]
 path = "README.md"
@@ -105,8 +105,8 @@ section_count = 4
 
 [[files]]
 path = "semantic/source/apps-tape-src-lib-rs.md"
-digest = "sha256:d08ab6a66261ef5d3e1dc1eaf2acc9617e5cfa202cf534b70d6adcbaf328c146"
-ir_digest = "sha256:f6ec22202a82e7b92445dd661ce6bafe659fddfac304c7d8af232023e4c34fa3"
+digest = "sha256:8d5731ec1b63ea4bd3fc01d534a4c4d30d5def4317e5a7d74723c0a56e7a63bc"
+ir_digest = "sha256:3ccc03e8c8d9da31458fe64226a0ab1f1488390a1983c01f1c2c960aec41c854"
 section_count = 4
 
 [[files]]
