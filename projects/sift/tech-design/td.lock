@@ -2,13 +2,13 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-13T12:19:08.976913+00:00"
-digest = "sha256:f24d5ed352ad1d498d7f48b11a51b1ff8d243bae37951efb68065a85ac061abb"
-source_digest = "sha256:f24d5ed352ad1d498d7f48b11a51b1ff8d243bae37951efb68065a85ac061abb"
-ir_digest = "sha256:cbc3f36211b23010169c4642e4d8e44ed4fec815ad8f9561804643b6c9eb5ab9"
+generated_at = "2026-07-13T12:36:11.661173+00:00"
+digest = "sha256:744a58d9f7250f155ce8f1945b725434385f43f2d58c2063ba8229a48c06c508"
+source_digest = "sha256:744a58d9f7250f155ce8f1945b725434385f43f2d58c2063ba8229a48c06c508"
+ir_digest = "sha256:f9fdfa26f9483e77f98345bafda59d4953196411d768818e8c6d08b71a0a7e0f"
 
 [[files]]
 path = "interfaces/rest/bootstrap-service-contract-and-durable-raw-event-vertical-slice.md"
-digest = "sha256:c1b4675bcfa9031f4d4d861694da1787d63d2b6ca7769a295c966d66b118e9f6"
-ir_digest = "sha256:2ca1cfef16a7658f1f8e4a5ce8b0e49ff97da44fc7c7f6c0fc55832234d40473"
+digest = "sha256:26b7cabcddbf6a656f8d457529d624f659075641641086aead0b92cce3961854"
+ir_digest = "sha256:d9f91d456bac85eb33411a3024e779b5938028d1fc05522080a815875363d304"
 section_count = 2
