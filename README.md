@@ -24,6 +24,7 @@ details.
 | [mamba](projects/mamba/README.md) | Force-typed Python compiler. |
 | [lumen](projects/lumen/README.md) | A K8s-native, log-replicated search specialist. |
 | [jet](apps/jet/README.md) | Jet is a Rust-native frontend toolchain. |
+| [pgpool](apps/pgpool/README.md) | Working-name Kubernetes-native PostgreSQL pooler built on the shared server substrate. |
 | [relay](apps/relay/README.md) | `relay` is the durable ordered-log and queue broker in the Axiom stack. |
 | [keep](apps/keep/README.md) | Cloud-native, multi-core key-value / claim-check store — the loom/relay data plane and a Redis / Dragonfly replacement. |
 | [cgdb](apps/cgdb/README.md) | Cgdb is a local graph database for agentic codebase understanding. |
@@ -85,6 +86,7 @@ an installer yet are marked _coming soon_.
 | [lumen](projects/lumen/README.md) | `lumen` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/lumen/install.sh \| sh` |
 | [mamba](projects/mamba/README.md) | `mamba` | _coming soon_ |
 | [meter](apps/meter/README.md) | `meter` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/meter/install.sh \| sh` |
+| [pgpool](apps/pgpool/README.md) | `pgpool` | _coming soon_ |
 | [preview](apps/preview/README.md) | `preview` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/preview/install.sh \| sh` |
 | [relay](apps/relay/README.md) | `relay` | _coming soon_ |
 | [rig](apps/rig/README.md) | `rig` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/rig/install.sh \| sh` |

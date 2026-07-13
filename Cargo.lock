@@ -9302,6 +9302,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "pgpool"
+version = "0.4.5"
+dependencies = [
+ "anyhow",
+ "axum 0.8.9",
+ "build-stamp",
+ "bytes",
+ "clap",
+ "cli-std",
+ "h2c",
+ "http-body-util",
+ "http-server",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "server-core",
+ "tcp-server",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-postgres",
+ "tower 0.5.3",
+ "tracing",
+]
+
+[[package]]
 name = "phf"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
