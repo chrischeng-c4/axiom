@@ -3,9 +3,9 @@ project = "tape"
 ir_kind = "ec"
 ec_path = "apps/tape/external-contracts"
 inventory_path = "apps/tape/aw.toml"
-generated_at = "2026-07-13T08:53:52.346150+00:00"
-ir_digest = "sha256:2b851f008c1fdfb09a758bfbe378aafb0beecfcc0c975a9e1afb212c9bb5830b"
-source_digest = "sha256:73fe3785c419f389fab8f9347e497be161f9287a368417c9f50e9b69425f12eb"
+generated_at = "2026-07-13T09:36:22.461343+00:00"
+ir_digest = "sha256:fe88b633eabdfdda5f88f8e9d160cff15d3aab4a9c9025868558ecaf6fb49541"
+source_digest = "sha256:8f424b66818370e8d1c55c958b156cd135173b0765f3997aed3a1d96098a781d"
 
 [[sources]]
 path = "apps/tape/external-contracts/claim-closure/production-claims.md"
@@ -17,7 +17,7 @@ digest = "sha256:acf0ef8e87dfefa731d7c9a42a11f9875cf036ff22a39a4178030f48f2702f7
 
 [[sources]]
 path = "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md"
-digest = "sha256:6b7a575b7453ef73b219f4dde2e90171a5643ecaf0bf4de7d260aa1c58d0dc11"
+digest = "sha256:948d29adcb6d506c4d28c029cd5f7b8036bb15d7e3e4c0d76c7f5db75158e4ab"
 
 [[sources]]
 path = "apps/tape/external-contracts/competitor-performance/efficiency/meter-gate.md"
@@ -120,7 +120,7 @@ claim_id = "topic-replay-competitor-performance-baseline"
 contract_id = "topic-replay-kafka-local-backlog-win"
 dimension = "efficiency"
 source_ref = "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-kafka-replay-win"
-test_path = "apps/tape/tests/tape_vs_kafka.rs"
+test_path = "apps/tape/tests/efficiency_tape_claim_competitor_performance_kafka_replay_win.rs"
 command = "cargo test -p tape --test tape_vs_kafka -- --nocapture"
 required_for_production = true
 assertions = [
@@ -130,7 +130,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:7411bbe5974e697982bc1398a69301e30a6d2900174957ef06282e3151755fb3"
+digest = "sha256:e29c35d6e832407174d0d2a68fa901a8001f4b59443a2a775a0aa41055676bee"
 
 [[cases]]
 id = "tape-competitor-performance-local-regression-and-calibration-ledger"

@@ -1,23 +1,23 @@
-// SPEC-MANAGED: apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-local-regression-and-calibration-ledger
+// SPEC-MANAGED: apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-kafka-replay-win
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec tape-competitor-performance-local-regression-and-calibration-ledger
+// @ec tape-competitor-performance-kafka-replay-win
 // @capability competitor-performance
 // @claim topic-replay-competitor-performance-baseline
-// @contract topic-replay-local-performance-and-peer-calibration
+// @contract topic-replay-kafka-local-backlog-win
 // @category efficiency
 // @required_for_production true
-// @command cargo test -p tape --test tape_perf_gate -- --nocapture
+// @command cargo test -p tape --test tape_vs_kafka -- --nocapture
 // AW-EC-END
 
-// Contract: Tape's local bounded pull/replay and explicit checkpoint-ack benchmark stays inside conservative regression budgets.
-// Contract: Redpanda, Pulsar, and RabbitMQ Streams performance wins are not claimed without calibrated real-service peer runs.
-// Contract: RabbitMQ topic exchange remains routing-only and is not treated as a replay performance baseline.
+// Contract: The test starts a real single-node apache/kafka:3.9.0 broker in KRaft mode (no ZooKeeper) via docker, skipping gracefully when Docker is unavailable.
+// Contract: Tape and Kafka replay the same 20,000-event, 128-byte-payload backlog workload from the beginning, using a real rskafka consumer for the Kafka side.
+// Contract: Tape's zero-copy full-replay latency is at least 20x faster than Kafka for the local backlog replay workload, calibrated from an actual measured run (~110-120x observed).
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn tape_competitor_performance_local_regression_and_calibration_ledger() {
-    let command = "cargo test -p tape --test tape_perf_gate -- --nocapture";
-    let id = "tape-competitor-performance-local-regression-and-calibration-ledger";
+fn tape_competitor_performance_kafka_replay_win() {
+    let command = "cargo test -p tape --test tape_vs_kafka -- --nocapture";
+    let id = "tape-competitor-performance-kafka-replay-win";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

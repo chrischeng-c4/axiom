@@ -1,23 +1,24 @@
-// SPEC-MANAGED: apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-local-regression-and-calibration-ledger
+// SPEC-MANAGED: apps/tape/external-contracts/claim-closure/production-claims.md#tape-pull-subscription-cursor
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec tape-competitor-performance-local-regression-and-calibration-ledger
-// @capability competitor-performance
-// @claim topic-replay-competitor-performance-baseline
-// @contract topic-replay-local-performance-and-peer-calibration
-// @category efficiency
+// @ec tape-pull-subscription-cursor
+// @capability subscription-delivery-resources
+// @claim pull-subscription-cursor-contract
+// @contract tape-bounded-pull-cursor-and-explicit-ack
+// @category behavior
 // @required_for_production true
-// @command cargo test -p tape --test tape_perf_gate -- --nocapture
+// @command cargo test -p tape tests::pull_subscription_uses_checkpoint_cursor_and_never_implicitly_acks --lib -- --exact --nocapture && cargo test -p tape tests::pull_subscription_ack_reuses_checkpoint_guards --lib -- --exact --nocapture
 // AW-EC-END
 
-// Contract: Tape's local bounded pull/replay and explicit checkpoint-ack benchmark stays inside conservative regression budgets.
-// Contract: Redpanda, Pulsar, and RabbitMQ Streams performance wins are not claimed without calibrated real-service peer runs.
-// Contract: RabbitMQ topic exchange remains routing-only and is not treated as a replay performance baseline.
+// Contract: Bounded pull reads start from the durable topic/name checkpoint and never implicitly advance it.
+// Contract: Explicit pull ack reuses stale and beyond-end checkpoint rejection.
+// Contract: No push delivery reliability claim is made by the pull cursor contract.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn tape_competitor_performance_local_regression_and_calibration_ledger() {
-    let command = "cargo test -p tape --test tape_perf_gate -- --nocapture";
-    let id = "tape-competitor-performance-local-regression-and-calibration-ledger";
+fn tape_pull_subscription_cursor() {
+    let command =
+        "cargo test -p tape tests::pull_subscription_uses_checkpoint_cursor_and_never_implicitly_acks --lib -- --exact --nocapture && cargo test -p tape tests::pull_subscription_ack_reuses_checkpoint_guards --lib -- --exact --nocapture";
+    let id = "tape-pull-subscription-cursor";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(
