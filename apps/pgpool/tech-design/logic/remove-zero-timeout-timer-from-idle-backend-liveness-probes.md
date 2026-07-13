@@ -48,7 +48,6 @@ changes:
     section: pgpool-immediate-idle-liveness-probe
     impl_mode: hand-written
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
