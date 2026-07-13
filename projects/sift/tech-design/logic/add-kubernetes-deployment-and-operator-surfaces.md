@@ -4,14 +4,14 @@ summary: Add reproducible Docker image, layered Kubernetes, and operator artifac
 capability_refs:
   - id: kubernetes-native-deployment
     role: primary
-    gap: sift-layered-kubernetes-artifacts
-    claim: sift-layered-kubernetes-artifacts
+    gap: crd-operator-instance-render
+    claim: crd-operator-instance-render
     coverage: partial
     rationale: Sift needs independently rendered image, CRD, operator, and instance layers.
   - id: developer-and-agent-experience
     role: contributes
-    gap: sift-deployment-cli-contract
-    claim: sift-deployment-cli-contract
+    gap: offline-contract
+    claim: offline-contract
     coverage: partial
     rationale: Deployment artifacts must be inspectable offline with runnable continuations.
 fill_sections: [logic, changes]

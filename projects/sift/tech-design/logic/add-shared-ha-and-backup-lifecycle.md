@@ -4,20 +4,20 @@ summary: Add shared durable journal, Raft-host replication, snapshots, and backu
 capability_refs:
   - id: replica-sync-and-bootstrap
     role: primary
-    gap: sift-raft-host-replication
-    claim: sift-raft-host-replication
+    gap: sift-raft-state-machine
+    claim: sift-raft-state-machine
     coverage: partial
     rationale: Sift must use the shared state-machine host when replica topology is configured.
   - id: backup-and-restore
     role: primary
-    gap: sift-shared-backup-restore
-    claim: sift-shared-backup-restore
+    gap: service-backup-policy-and-runner
+    claim: service-backup-policy-and-runner
     coverage: partial
     rationale: Sift snapshots must be reusable by the shared backup and bootstrap contracts.
   - id: durability-and-acknowledgment
     role: contributes
-    gap: sift-crc-framed-durability
-    claim: sift-crc-framed-durability
+    gap: fsync-before-success-response
+    claim: fsync-before-success-response
     coverage: partial
     rationale: The raw journal needs shared CRC-framed append and atomic snapshot mechanics.
 fill_sections: [logic, changes]

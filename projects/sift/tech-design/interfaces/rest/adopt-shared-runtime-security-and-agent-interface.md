@@ -4,20 +4,20 @@ summary: Adopt the shared runtime, bearer auth, OpenAPI client generation, and J
 capability_refs:
   - id: security-hardening
     role: primary
-    gap: sift-shared-bearer-auth
-    claim: sift-shared-bearer-auth
+    gap: shared-bearer-token-auth
+    claim: shared-bearer-token-auth
     coverage: partial
     rationale: Sift must protect data-plane operations without blocking operational probes.
   - id: cli-standard-surface
     role: primary
-    gap: sift-openapi-client-generation
-    claim: sift-openapi-client-generation
+    gap: offline-llm-topics
+    claim: offline-llm-topics
     coverage: partial
     rationale: The Sift CLI must provide offline typed-client generation and valid machine-readable output.
   - id: chainable-output-conformance
     role: contributes
-    gap: sift-json-terminal-envelope
-    claim: sift-json-terminal-envelope
+    gap: executable-next-command-validation
+    claim: executable-next-command-validation
     coverage: partial
     rationale: JSON output must remain parseable while naming an executable or terminal next step.
 fill_sections: [logic, changes]
