@@ -1,7 +1,11 @@
 ---
 id: "1554"
-summary: (fill)
-fill_sections: [logic]
+summary: >
+  WI #1554 adds the required stateful-service-workload baseline root to the
+  Tape capability map. The root composes existing journal, raft, backup,
+  security-boundary, and StatefulSet evidence without asserting that any
+  unfinished domain capability is complete or adding runtime behavior.
+fill_sections: [logic, changes]
 ---
 
 ## Logic
@@ -48,4 +52,16 @@ flowchart TD
     backup --> deploy[Link Kubernetes-Native Deployment: StatefulSet, probes, PDB, operator, and dockerfile render evidence]
     deploy --> security[Link Security Hardening as its own planned boundary; do not assert its unfinished authz/rotation behavior is complete]
     security --> check([aw capability check --project tape --skip-issue-inventory recognizes the stateful_storage trait baseline])
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/tape/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Add the stateful-service-workload capability index row and canonical root for WI #1554. The root links the existing Topic Replay Journal, Primary Replicas, HTTP/2 API List, Kubernetes-Native Deployment, and Security Hardening evidence; it must not claim unfinished retention, kind dogfood, peer-mTLS termination, or security hardening as implemented. generator gap: missing-generator:capability:stateful-service-workload (#1554)."
 ```
