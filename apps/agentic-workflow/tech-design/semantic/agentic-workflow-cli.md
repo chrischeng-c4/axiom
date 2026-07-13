@@ -40,6 +40,12 @@ capability_refs:
     rationale: "The CLI semantic domain owns generic TD payload normalization, typed single-section merge boundaries, and pre-write applicability validation in src/cli/td.rs."
   - id: td-cb-lifecycle-automation
     role: primary
+    gap: td-merged-candidate-in-memory-validation
+    claim: td-merged-candidate-in-memory-validation
+    coverage: full
+    rationale: "The CLI semantic domain explicitly selects candidate-backed full-registry validation before section writes and file-backed validation for completed on-disk specs."
+  - id: td-cb-lifecycle-automation
+    role: primary
     gap: default-td-target-plan-queue
     claim: default-td-target-plan-queue
     coverage: full
@@ -4006,9 +4012,13 @@ changes:
       wrappers, and multiple top-level H2 sections before any spec write. A
       complete matching wrapper, including a custom heading, is preserved; the
       existing RequireThrough(candidate) validation and dirty-spec allowance
-      remain unchanged. Candidate-wide registry validation over in-memory
-      content remains tracked separately by #1586. Issue #1598 makes the
-      fresh default queue `logic`, `changes`, then `unit-test`: Changes is the
+      remain unchanged. Issue #1586 sends the normalized merged candidate
+      through the full shared registry before the write boundary, while
+      completed specs keep the file-backed registry path. A valid signature /
+      loop LogicSpec can replace stale plain Mermaid without inheriting the
+      old file's finding; an invalid candidate leaves spec and payload intact.
+      Issue #1598 makes the fresh default queue `logic`, `changes`, then
+      `unit-test`: Changes is the
       explicit target plan required before codegen infers implementation paths,
       while an already non-empty custom queue keeps its declared membership and
       order. The initialized generic JSON payload carries an editable YAML

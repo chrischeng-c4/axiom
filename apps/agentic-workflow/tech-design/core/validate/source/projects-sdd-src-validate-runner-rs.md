@@ -8,6 +8,12 @@ capability_refs:
     claim: managed-and-semantic-production-gates
     coverage: full
     rationale: "Validation TDs implement managed and semantic production gates for standardization readiness."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: td-merged-candidate-in-memory-validation
+    claim: td-merged-candidate-in-memory-validation
+    coverage: full
+    rationale: "The shared rule runner exposes a candidate-content path that reuses the exact file-backed decode, mask, and full-registry pipeline without reading or mutating stale disk bytes."
 ---
 
 # Standardized apps/agentic-workflow/src/validate/runner.rs
@@ -21,6 +27,11 @@ The runner validates encoded source-partition controls against the original,
 unmasked TD before ordinary rules receive a Source-masked view. Corrupt bounds,
 ordering, base64 payloads, or digests therefore surface as the canonical
 `SectionFormat` finding instead of disappearing with embedded fixtures.
+
+Issue #1586 adds a crate-private candidate-content entrypoint. It shares the
+same partition decode, Source masking, and complete rule registry as file-backed
+validation while treating the supplied bytes as authoritative and leaving the
+path as finding identity only.
 
 ### Symbols
 
@@ -54,6 +65,17 @@ pub fn run_rules(spec_paths: &[PathBuf]) -> RuleReport {
     report
 }
 
+/// Run the full rule registry against one caller-owned candidate without
+/// reading `spec_path`. The path remains the finding identity, while the
+/// supplied bytes are the only content validated. This keeps pre-write TD
+/// section validation on the exact merged candidate instead of a stale file.
+pub(crate) fn run_rules_on_content(spec_path: &Path, content: &str) -> RuleReport {
+    let rules = all_rules();
+    let mut report = RuleReport::new();
+    run_rules_on_content_with_rules(spec_path, content, &rules, &mut report);
+    report
+}
+
 fn run_rules_on_file(
     path: &Path,
     rules: &[Box<dyn crate::validate::Rule>],
@@ -73,20 +95,29 @@ fn run_rules_on_file(
             return;
         }
     };
+    run_rules_on_content_with_rules(path, &content, rules, report);
+}
+
+fn run_rules_on_content_with_rules(
+    path: &Path,
+    content: &str,
+    rules: &[Box<dyn crate::validate::Rule>],
+    report: &mut RuleReport,
+) {
     // Source bodies are masked before the ordinary registry runs so embedded
     // fixtures do not trigger unrelated rules. Partition controls are the
     // exception: validate their complete, unmasked Source section first,
     // because masking the sentinel fence would otherwise hide corruption (or
     // make every valid partitioned artifact look corrupt). Tag the finding as
     // SectionFormat so `aw td check` exposes one canonical structural gate.
-    if let Err(error) = crate::generate::apply::decode_partitioned_source(&content) {
+    if let Err(error) = crate::generate::apply::decode_partitioned_source(content) {
         report.push(crate::validate::Finding::error(
             crate::validate::RuleId::SectionFormat,
             path,
             format!("invalid source partition manifest: {error}"),
         ));
     }
-    let checkable_content = mask_source_section_bodies(&content);
+    let checkable_content = mask_source_section_bodies(content);
     for rule in rules {
         rule.check(path, &checkable_content, report);
     }
@@ -210,6 +241,26 @@ rust_type: Option<Option<u16>>
     }
 
     #[test]
+    fn merged_td_candidate_validation_uses_in_memory_full_registry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("candidate.md");
+        let on_disk = "---\nid: candidate\n---\n\nrust_type: String\n";
+        std::fs::write(&file, on_disk).unwrap();
+        let candidate = "---\nid: candidate\n---\n\nrust_type: Option<Option<String>>\n";
+
+        let report = run_rules_on_content(&file, candidate);
+
+        assert!(report.findings.iter().any(|finding| {
+            finding.rule == crate::validate::RuleId::DoubleOption && finding.file == file
+        }));
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            on_disk,
+            "in-memory validation must not read or mutate the stale file"
+        );
+    }
+
+    #[test]
     fn missing_file_surfaces_finding_not_panic() {
         let report = run_rules(&[PathBuf::from("/nonexistent/spec.md")]);
         assert!(!report.is_empty());
@@ -322,5 +373,7 @@ changes:
       source section. Existing schema CODEGEN blocks, when present, remain
       owned by their semantic specs. Issue #1506 checks lossless source
       partition controls before Source masking and adds valid/corrupt manifest
-      regression coverage.
+      regression coverage. Issue #1586 reuses that exact pipeline for an
+      in-memory TD merge candidate and proves a full-registry DoubleOption
+      finding comes from candidate bytes without changing the stale file.
 ```

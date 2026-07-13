@@ -2488,4 +2488,289 @@ flowchart TD
     assert!(final_spec.contains("## Unit Test\n<!-- type: unit-test lang: mermaid -->"));
 }
 
+/// Issue #1586: section apply must run the complete validator registry against
+/// the merged in-memory candidate. A stale plain-Mermaid on-disk Logic section
+/// must not shadow a valid Mermaid Plus replacement, while an invalid candidate
+/// must preserve the spec, payload, phase, projection, and git history.
+#[test]
+fn td_create_apply_validates_merged_candidate_in_memory_before_write() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+
+    std::fs::write(
+        root.join("aw.toml"),
+        r#"
+[agentic_workflow.workspace]
+mode = "in_place"
+
+[[projects]]
+name = "agentic-workflow"
+path = "apps/agentic-workflow"
+"#,
+    )
+    .unwrap();
+
+    let project_root = root.join("apps/agentic-workflow");
+    std::fs::create_dir_all(project_root.join("tech-design/semantic")).unwrap();
+    std::fs::write(
+        project_root.join("README.md"),
+        r#"# Agentic Workflow Fixture
+
+## Brief
+
+Fixture for merged TD candidate validation.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| TD Candidate Validation | #1586 | implemented | verified | smoke | ready | pre-write full-registry validation |
+
+### TD Candidate Validation
+
+ID: td-candidate-validation
+Type: DeveloperTool
+Surfaces:
+- CLI: `aw td create --apply` - validates one merged section candidate before writing.
+Root WI: #1586
+Status: verified
+Required Verification: smoke
+Promise:
+Merged TD section candidates pass the same registry as completed files before mutation.
+Gate Inventory:
+- real CLI fixture
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| TD merged candidate in memory validation | change | #1586 | implemented | verified | smoke | real CLI fixture |
+"#,
+    )
+    .unwrap();
+
+    let slug = "1586";
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\n\
+             slug: '{slug}'\n\
+             title: validate merged TD candidates in memory\n\
+             state: open\n\
+             type: bug\n\
+             labels: [\"app:agentic-workflow\"]\n\
+             ---\n\n# Body\n"
+        ),
+    );
+
+    let spec_path = "apps/agentic-workflow/tech-design/semantic/td-merged-candidate-validation.md";
+    let spec_abs = root.join(spec_path);
+    let stale_spec = r#"---
+id: '1586'
+summary: Validate the merged TD section candidate before writing it.
+fill_sections: [logic, changes, unit-test]
+capability_refs:
+  - id: td-candidate-validation
+    role: primary
+    claim: td-merged-candidate-in-memory-validation
+    coverage: full
+    rationale: "The real CLI validates the merged candidate before mutation."
+---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+flowchart TD
+  stale --> disk
+```
+"#;
+    std::fs::write(&spec_abs, stale_spec).unwrap();
+
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "bootstrap #1586 fixture"])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", "app/fixture"])
+        .status()
+        .unwrap();
+
+    let brief = Command::new(&bin)
+        .args(["td", "create", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("initialize #1586 Logic payload");
+    let brief_envelope = td_dispatch_envelope(&brief, "#1586 TD create brief");
+    assert_eq!(brief_envelope["invoke"]["args"]["section"], "logic");
+    let logic_payload = dispatched_payload_path(&brief_envelope);
+    assert_td_projection(
+        root,
+        slug,
+        "applicability",
+        "logic",
+        "applicability/logic.json",
+        &["changes", "unit-test"],
+    );
+
+    let invalid_body = concat!(
+        "```mermaid\n",
+        "---\n",
+        "id: invalid-candidate\n",
+        "entry: start\n",
+        "nodes: not-a-node-map\n",
+        "edges: []\n",
+        "---\n",
+        "flowchart TD\n",
+        "  start --> done\n",
+        "```\n",
+    );
+    let invalid_payload = serde_json::json!({ "body": invalid_body }).to_string();
+    std::fs::write(&logic_payload, &invalid_payload).unwrap();
+    let spec_before_invalid = std::fs::read(&spec_abs).unwrap();
+    let issue_before_invalid = std::fs::read(issue_path(root, slug)).unwrap();
+    let head_before_invalid = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap()
+        .stdout;
+
+    let invalid = Command::new(&bin)
+        .args([
+            "td",
+            "create",
+            slug,
+            "--apply",
+            "--phase",
+            "applicability",
+            "--section",
+            "logic",
+            "--spec-path",
+            spec_path,
+        ])
+        .current_dir(root)
+        .output()
+        .expect("reject invalid #1586 candidate");
+    assert!(!invalid.status.success());
+    let invalid_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&invalid.stdout),
+        String::from_utf8_lossy(&invalid.stderr),
+    );
+    assert!(
+        invalid_output.contains("frontmatter invalid for LogicContent"),
+        "invalid candidate should fail the complete codegen-ready registry: {invalid_output}"
+    );
+    assert_eq!(std::fs::read(&spec_abs).unwrap(), spec_before_invalid);
+    assert_eq!(
+        std::fs::read_to_string(&logic_payload).unwrap(),
+        invalid_payload,
+        "failed validation must preserve the editable payload"
+    );
+    assert_eq!(
+        std::fs::read(issue_path(root, slug)).unwrap(),
+        issue_before_invalid,
+        "failed validation must preserve phase and projection bytes"
+    );
+    let head_after_invalid = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap()
+        .stdout;
+    assert_eq!(head_after_invalid, head_before_invalid);
+
+    let valid_logic_spec = concat!(
+        "```mermaid\n",
+        "---\n",
+        "id: td_merged_candidate_after\n",
+        "signature: \"pub fn merge_candidates(items: &[String]) -> Vec<String>\"\n",
+        "entry: init\n",
+        "nodes:\n",
+        "  init:\n",
+        "    kind: process\n",
+        "    code: \"let mut out = Vec::new();\"\n",
+        "  item_loop:\n",
+        "    kind: loop\n",
+        "    over: items\n",
+        "    as: item\n",
+        "  push_item:\n",
+        "    kind: process\n",
+        "    code: \"out.push(item.clone());\"\n",
+        "  done:\n",
+        "    kind: terminal\n",
+        "    value: out\n",
+        "edges:\n",
+        "  - { from: init, to: item_loop, kind: next }\n",
+        "  - { from: item_loop, to: push_item, kind: body }\n",
+        "  - { from: item_loop, to: done, kind: after }\n",
+        "---\n",
+        "flowchart TD\n",
+        "  init --> item_loop\n",
+        "  item_loop --> push_item\n",
+        "  item_loop --> done\n",
+        "```\n",
+    );
+    std::fs::write(
+        &logic_payload,
+        serde_json::json!({ "body": valid_logic_spec }).to_string(),
+    )
+    .unwrap();
+
+    let applied = Command::new(&bin)
+        .args([
+            "td",
+            "create",
+            slug,
+            "--apply",
+            "--phase",
+            "applicability",
+            "--section",
+            "logic",
+            "--spec-path",
+            spec_path,
+        ])
+        .current_dir(root)
+        .output()
+        .expect("apply valid #1586 candidate");
+    let applied_envelope = td_dispatch_envelope(&applied, "valid #1586 candidate apply");
+    assert_eq!(applied_envelope["invoke"]["args"]["section"], "changes");
+    assert_td_projection(
+        root,
+        slug,
+        "applicability",
+        "changes",
+        "applicability/changes.json",
+        &["unit-test"],
+    );
+    assert!(
+        !logic_payload.exists(),
+        "successful apply should consume the Logic payload"
+    );
+    let final_spec = std::fs::read_to_string(&spec_abs).unwrap();
+    assert!(final_spec.contains("id: td_merged_candidate_after"));
+    assert!(final_spec.contains("kind: loop"));
+    assert!(final_spec.contains("signature: \"pub fn merge_candidates"));
+    assert!(!final_spec.contains("stale --> disk"));
+}
+
 // CODEGEN-END

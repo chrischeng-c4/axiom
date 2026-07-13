@@ -17,6 +17,12 @@ capability_refs:
     rationale: "The in-place real-CLI fixture proves body-only Logic normalization, malformed non-mutation, and sequential applicability Logic to structured Unit Test dispatch."
   - id: td-cb-lifecycle-automation
     role: primary
+    gap: td-merged-candidate-in-memory-validation
+    claim: td-merged-candidate-in-memory-validation
+    coverage: full
+    rationale: "The in-place real-CLI fixture proves an invalid candidate preserves spec, payload, issue projection/body/phase, and HEAD, then a valid signature/loop LogicSpec replaces stale disk content and dispatches Changes."
+  - id: td-cb-lifecycle-automation
+    role: primary
     gap: default-td-target-plan-queue
     claim: default-td-target-plan-queue
     coverage: full
@@ -1223,6 +1229,12 @@ changes:
       phase, and history for authored, tracked, staged, untracked/tracked
       sibling-dirty, reachable `td_created`, post-gen, legacy post-gen, filled,
       and terminal states.
+      Issue #1586 starts with a stale plain-Mermaid Logic section. It proves an
+      invalid Mermaid Plus candidate fails the complete registry while spec,
+      payload, whole issue projection/body/phase, and HEAD remain byte-identical;
+      a valid LogicSpec containing `signature` and a loop replaces the stale
+      section, removes the consumed payload, and advances current_section to
+      applicability Changes.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/tests/cli/tests/cb_review_revise_test.rs"
     action: modify
