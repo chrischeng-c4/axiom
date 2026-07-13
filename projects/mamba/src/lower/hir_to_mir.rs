@@ -3202,8 +3202,13 @@ impl<'a> HirToMir<'a> {
             .collect();
         let generator_yield_local = self.first_yield_var_name(&func.body);
 
-        // Synthetic SymbolId for the body function
-        let body_sym = SymbolId(func.name.0.wrapping_add(3_000_000));
+        // Synthetic SymbolId for the body function. Generator function symbols
+        // begin in the 1_000_000 range and lambda/thunk bodies use 4_000_000+.
+        // Keep generator bodies in a disjoint range: otherwise a generator
+        // expression containing a lambda can emit two MIR bodies with the same
+        // SymbolId, and codegen will overwrite the lambda entry with the
+        // generator body (#1490).
+        let body_sym = SymbolId(func.name.0.wrapping_add(5_000_000));
 
         // ── Phase 1: Generate body function ──
         self.reset();

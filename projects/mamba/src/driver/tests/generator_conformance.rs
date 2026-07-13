@@ -158,6 +158,19 @@ fn test_t1_6_genexpr_as_min_arg() {
     assert_output(&output, "1\n");
 }
 
+/// T1.7: A lambda yielded by a generator expression must keep its own MIR
+/// entry point instead of colliding with the synthetic generator body.
+#[test]
+fn test_t1_7_genexpr_lambda_symbol_is_distinct_from_generator_body() {
+    let output = jit_capture(
+        r#"late = [lambda: i for i in range(5)]
+gen_funcs = list(lambda: j for j in range(3))
+print([fn() for fn in gen_funcs])
+"#,
+    );
+    assert_output(&output, "[2, 2, 2]\n");
+}
+
 // =============================================================================
 // T2: Generator Send Edge Cases (R2) — send_edge_cases.py
 // =============================================================================
