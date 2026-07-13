@@ -85,7 +85,6 @@ flowchart TD
 <!-- type: changes lang: yaml -->
 
 ```yaml
-coverage_kind: semantic
 changes:
   - path: Cargo.toml
     action: modify
