@@ -45,22 +45,22 @@ changes:
 
 ```mermaid
 ---
-id: pgpool-static-discard-all-frame-verification
+id: pgpool-static-discard-all-frame-contract-verification
 requirements:
-  isolation:
-    id: R2
-    text: "Reset failure closes the backend and transaction leases remain session-isolated."
-    kind: regression
-    risk: high
-    verify: cargo test -p pgpool --test pool --test pool_modes
-  wire_equivalence:
+  fixed_frame:
     id: R1
-    text: "The static reset bytes are exactly the PostgreSQL simple Query frame for DISCARD ALL."
+    text: "The outbound reset Query bytes remain byte-exact for DISCARD ALL without allocating a per-release message buffer."
     kind: regression
     risk: high
     verify: cargo test -p pgpool --test pool
+  safe_reuse:
+    id: R2
+    text: "A reset backend is reused only after ReadyForQuery and failure still closes it."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool --test pool --test pool_modes
 ---
 flowchart TD
-    r1[R1 wire equivalence] --> cargo_test_p_pgpool_test_pool[cargo test -p pgpool --test pool]
-    r2[R2 isolation] --> cargo_test_p_pgpool_test_pool_test_pool_modes[cargo test -p pgpool --test pool --test pool_modes]
+    r1[R1 fixed frame] --> cargo_test_p_pgpool_test_pool[cargo test -p pgpool --test pool]
+    r2[R2 safe reuse] --> cargo_test_p_pgpool_test_pool_test_pool_modes[cargo test -p pgpool --test pool --test pool_modes]
 ```
