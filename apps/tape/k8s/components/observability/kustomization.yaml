@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:c7a9fd07" tracker="pending-tracker" reason="Define an opt-in Prometheus Operator component containing the Tape ServiceMonitor and PrometheusRule; avoid base inclusion so vanilla clusters do not need monitoring CRDs. generator gap: missing-generator:k8s-observability-component (#1588)."
+// TODO: hand-write content for `apps/tape/k8s/components/observability/kustomization.yaml`.
+// HANDWRITE-END
