@@ -45,3 +45,31 @@ flowchart TD
 ```
 
 The generator runtime must preserve one pushed caller context from the wrapper's first resume until each yield or terminal completion switches back. It must not reset or pop that context while a previously materialized list-comprehension closure exists. The generator-expression wrapper owns the loop-variable capture cell; every yielded lambda references that same cell, so consuming the expression through `list()` produces three closures whose later calls return the final value `2`. This change is limited to generator-expression lowering and generator resume/yield context management; it must preserve existing list-comprehension late binding, default-argument early binding, class `__class__` cells, imports, and built-in-library behavior.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/mamba/src/runtime/generator.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-generator-expression-caller-context
+    tracker: "#1490"
+    reason: Generator resumption must retain its caller context across a closure-producing generator expression and terminal completion.
+  - path: projects/mamba/src/driver/tests/generator_conformance.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-generator-expression-caller-context-tests
+    tracker: "#1490"
+    reason: The JIT generator conformance suite needs a focused regression for a generator expression consumed after a list-comprehension closure.
+  - path: projects/mamba/tests/cpython/_regression/core/comprehension_scope/generator_expression_closure_context.py
+    action: create
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-generator-expression-closure-oracle
+    tracker: "#1490"
+    reason: A one-case CPython oracle fixture must pin closure late binding through generator expression iteration after a prior list-comprehension closure.
+```
