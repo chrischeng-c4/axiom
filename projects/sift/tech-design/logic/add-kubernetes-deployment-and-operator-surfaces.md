@@ -67,6 +67,13 @@ changes:
     gap: sift-layered-deployment-renderer
     tracker: "1606"
     description: Render Sift Dockerfile, CRD, operator, and instance artifacts from checked-in templates.
+  - path: projects/sift/src/operator.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    gap: sift-shared-operator-controller
+    tracker: "1606"
+    description: Define the Sift custom-resource type and compose the shared leader-elected operator reconcile loop.
   - path: projects/sift/src/bin/sift.rs
     action: modify
     section: logic

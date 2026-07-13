@@ -27,8 +27,12 @@ pub fn dockerfile(variant: DockerfileVariant, version: Option<&str>) -> Result<S
             if version.is_empty() {
                 bail!("release Dockerfile version must not be empty");
             }
-            Ok(strip_ownership_markers(include_str!("../Dockerfile.release"))
-                .replace("SIFT_VERSION=REPLACE_ME", &format!("SIFT_VERSION={version}")))
+            Ok(
+                strip_ownership_markers(include_str!("../Dockerfile.release")).replace(
+                    "SIFT_VERSION=REPLACE_ME",
+                    &format!("SIFT_VERSION={version}"),
+                ),
+            )
         }
     }
 }
@@ -41,8 +45,10 @@ pub fn operator_yaml(namespace: &str) -> Result<String> {
     if namespace.trim().is_empty() {
         bail!("operator namespace must not be empty");
     }
-    Ok(strip_ownership_markers(include_str!("../k8s/operator/operator.yaml"))
-        .replace("namespace: sift-system", &format!("namespace: {namespace}")))
+    Ok(
+        strip_ownership_markers(include_str!("../k8s/operator/operator.yaml"))
+            .replace("namespace: sift-system", &format!("namespace: {namespace}")),
+    )
 }
 
 pub fn instance_yaml(profile: InstanceProfile) -> String {
@@ -96,5 +102,4 @@ fn strip_ownership_markers(body: &str) -> String {
         + "\n"
 }
 
-<!-- marker: sift-layered-deployment-renderer path: projects/sift/src/deploy.rs reason: Render Sift Dockerfile, CRD, operator, and instance artifacts from checked-in templates. -->
 // HANDWRITE-END

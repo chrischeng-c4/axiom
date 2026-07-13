@@ -38,5 +38,4 @@ sift restore --data-dir /var/lib/sift --source file:///recovery/sift-backup.json
 The restore replaces the local snapshot atomically; replica nodes then recover
 their Raft state and catch up from the committed log.
 
-<!-- marker: sift-ha-operations-document path: projects/sift/HA.md reason: Document Sift single-node and Raft replica deployment, backup, restore, and failure recovery. -->
 <!-- HANDWRITE-END -->

@@ -29,5 +29,4 @@ fn layered_deployment_cli_renders_all_artifact_planes() {
     assert!(instance.contains("replicasPerShard: 1"));
 }
 
-<!-- marker: sift-deployment-cli-tests path: projects/sift/tests/deployment_cli.rs reason: Verify all Dockerfile and layered Kubernetes artifact commands render expected contracts. -->
 // HANDWRITE-END

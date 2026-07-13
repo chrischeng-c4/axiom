@@ -9,5 +9,3 @@ spec:
   voterCount: 1
   dataSize: 10Gi
   auth: off
-
-<!-- marker: sift-instance-artifact path: projects/sift/k8s/instances/dev.yaml reason: Define the development Sift custom resource with standard probes and single-node topology. -->

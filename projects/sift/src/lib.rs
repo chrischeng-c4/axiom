@@ -6,7 +6,9 @@
 
 pub mod auth;
 pub mod backup;
+pub mod deploy;
 pub mod durability;
+pub mod operator;
 
 use std::{
     collections::{BTreeMap, HashMap},

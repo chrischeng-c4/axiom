@@ -41,5 +41,3 @@ spec:
                 readyReplicas: { type: integer }
       subresources:
         status: {}
-
-<!-- marker: sift-crd-artifact path: projects/sift/k8s/crd/sift.yaml reason: Define the cluster-scoped Sift custom resource API. -->

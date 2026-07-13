@@ -14,5 +14,3 @@ EXPOSE 7380
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/sift"]
 CMD ["serve"]
-
-<!-- marker: sift-source-image-artifact path: projects/sift/Dockerfile reason: Provide the source-build Sift image contract. -->
