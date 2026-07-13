@@ -26,3 +26,14 @@ flowchart LR
   runtime --> relays[concurrent proxy relay tasks]
   relays --> invariant([unchanged wire and reset isolation])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/bin/pgpool.rs
+    action: modify
+    section: pgpool-multithread-runtime
+    impl_mode: hand-written
+```
