@@ -11,3 +11,50 @@ name = "sift"
 paths = ["**"]
 target = "rust"
 test_cmd = "cargo test -p sift"
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "sift"
+generated_from_td_digest = "sha256:25cca2d9b4c95d106172f717dab5addc0f4aa32e97c066a9b7cd5192ca570e0b"
+
+[[aw.ec.generated.cases]]
+id = "durable-ingest-http-contract"
+capability_id = "operational-event-ingest"
+claim_id = "h2c-openapi-event-write-route"
+contract_id = "sift.durable_ingest_http.v1"
+category = "behavior"
+td_ref = "projects/sift/external-contracts/behavior/durable-ingest-http-contract.md#durable-ingest-http-contract"
+test_path = "projects/sift/tests/behavior_durable_ingest_http_contract.rs"
+command = "cargo test -p sift --test ingest_api"
+required_for_production = true
+assertions = [
+    "The h2c /v1/events route accepts validated six-signal envelopes and acknowledges only after durable storage.",
+    "A repeated event id is idempotent across journal restart and replay returns the persisted envelope.",
+    "The service exposes its OpenAPI and standard operational endpoints alongside the ingest contract.",
+]
+
+[[aw.ec.generated.cases]]
+id = "one-port-health-readiness-metrics-contract"
+capability_id = "standard-operational-endpoints"
+claim_id = "one-port-health-readiness-metrics"
+contract_id = "sift.standard_operational_endpoints.v1"
+category = "behavior"
+td_ref = "projects/sift/external-contracts/behavior/standard-operational-endpoints-contract.md#one-port-health-readiness-metrics-contract"
+test_path = "projects/sift/tests/behavior_one_port_health_readiness_metrics_contract.rs"
+command = "cargo test -p sift --test ingest_api"
+required_for_production = true
+assertions = ["The service exposes /healthz, /readyz, and Prometheus /metrics on its data-plane port."]
+
+[[aw.ec.generated.cases]]
+id = "served-openapi-and-docs-contract"
+capability_id = "standard-operational-endpoints"
+claim_id = "served-openapi-and-docs"
+contract_id = "sift.standard_operational_endpoints.v1"
+category = "behavior"
+td_ref = "projects/sift/external-contracts/behavior/standard-operational-endpoints-contract.md#served-openapi-and-docs-contract"
+test_path = "projects/sift/tests/behavior_served_openapi_and_docs_contract.rs"
+command = "cargo test -p sift --test ingest_api"
+required_for_production = true
+assertions = ["The service exposes /openapi.json and /docs on that same port."]
+# AW-EC-END

@@ -68,7 +68,7 @@ first-class domain roots.
 | GKE Event Collection | 1157 | planned | planned | conformance | not_ready | later DaemonSet producer reads node-local CRI logs and emits structured operational events |
 | Security Audit And Governance | 1157 | planned | planned | conformance | not_ready | immutable audit/change projections, stricter retention, scoped access, and export controls |
 | HTTP2 API List | 1157 | planned | planned | conformance | not_ready | h2c/OpenAPI service routes and generated clients |
-| Standard Operational Endpoints | 1157 | planned | planned | conformance | not_ready | auth-exempt `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, and `/docs` on the service port |
+| Standard Operational Endpoints | 1157 | implemented | verified | conformance | ready | auth-exempt `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, and `/docs` on the service port |
 | Kubernetes-Native Deployment | 1157 | planned | planned | conformance | not_ready | service/operator/instance artifacts, durable StatefulSet, HPA, and later collector DaemonSet |
 | CLI Interface | 1157 | planned | planned | conformance | not_ready | service, domain, spec, deploy, and connect command surface |
 | CLI Standard Surface | 1157 | planned | planned | conformance | not_ready | shared `llm`, `upgrade`, and `issue` command contract |
@@ -436,25 +436,23 @@ Gate Inventory:
 ID: standard-operational-endpoints
 Type: Service
 Root WI: 1157
-Status: confirmed
+Status: verified
 Surfaces: HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, and
 `/docs` are auth-exempt, always-on routes on the same h2c/HTTP/1.1 service
 port.
-EC Dimensions: behavior: pending endpoint gate - liveness/readiness and
-OpenAPI/docs availability; stability: pending readiness transition and
-Prometheus scrape gate.
+EC Dimensions: behavior: `cargo test -p sift --test ingest_api http_ingest_and_standard_operational_routes_share_the_journal_contract -- --exact` - liveness, readiness, Prometheus, OpenAPI, and docs are available on the shared data-plane port.
 Required Verification: conformance
 Promise:
 Provide the full shared operational surface through `service-http` so a Sift
 deployment can be probed, scraped, and inspected without a separate admin
 listener or custom endpoint names.
 Gate Inventory:
-- pending: projects/sift/tests/standard_endpoints.rs
+- projects/sift/tests/ingest_api.rs (http_ingest_and_standard_operational_routes_share_the_journal_contract); projects/sift/external-contracts/behavior/standard-operational-endpoints-contract.md
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| one-port-health-readiness-metrics | epic | 1157 | planned | planned | conformance | pending service-http route gate |
-| served-openapi-and-docs | epic | 1157 | planned | planned | conformance | pending spec/docs parity gate |
+| one-port-health-readiness-metrics | epic | 1157 | implemented | passing | conformance | projects/sift/tests/ingest_api.rs |
+| served-openapi-and-docs | epic | 1157 | implemented | passing | conformance | projects/sift/tests/ingest_api.rs |
 
 ### Kubernetes-Native Deployment
 

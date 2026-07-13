@@ -8,6 +8,18 @@ capability_refs:
     claim: h2c-openapi-event-write-route
     coverage: partial
     rationale: The unified service source group implements the initial durable operational-event ingest vertical slice.
+  - id: standard-operational-endpoints
+    role: primary
+    gap: one-port-health-readiness-metrics
+    claim: one-port-health-readiness-metrics
+    coverage: full
+    rationale: The unified service composes the health, readiness, and Prometheus routes on its data-plane port.
+  - id: standard-operational-endpoints
+    role: primary
+    gap: served-openapi-and-docs
+    claim: served-openapi-and-docs
+    coverage: full
+    rationale: The unified service serves its OpenAPI document and docs UI on that same data-plane port.
 fill_sections: [schema, unit-test, changes]
 ---
 

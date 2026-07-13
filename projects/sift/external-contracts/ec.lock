@@ -3,9 +3,64 @@ project = "sift"
 ir_kind = "ec"
 ec_path = "projects/sift/external-contracts"
 inventory_path = "projects/sift/aw.toml"
-generated_at = "2026-07-13T12:38:56.647646+00:00"
-ir_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-source_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-sources = []
-cases = []
+generated_at = "2026-07-13T13:01:13.651499+00:00"
+ir_digest = "sha256:acac59ce47e5b9149dbaaa23b80d0c9b86dfe759eac8f7da578782bb9109dc04"
+source_digest = "sha256:380ae6b5a8789f7ef8550ffe1c6a663b1e7fcfed2c859770a4e9c2b35962a39d"
 tool_contracts = []
+
+[[sources]]
+path = "projects/sift/external-contracts/behavior/durable-ingest-http-contract.md"
+digest = "sha256:38f2e8e10aef81b7d617f1e6961686ba7c70334ba181270fabbf1f66d7e7b1c9"
+
+[[sources]]
+path = "projects/sift/external-contracts/behavior/standard-operational-endpoints-contract.md"
+digest = "sha256:a63e0a178b625a97042a2401aa50dac1454958086f4dfdee6b989dfe2c5c4720"
+
+[[cases]]
+id = "durable-ingest-http-contract"
+capability_id = "operational-event-ingest"
+claim_id = "h2c-openapi-event-write-route"
+contract_id = "sift.durable_ingest_http.v1"
+dimension = "behavior"
+source_ref = "projects/sift/external-contracts/behavior/durable-ingest-http-contract.md#durable-ingest-http-contract"
+test_path = "projects/sift/tests/behavior_durable_ingest_http_contract.rs"
+command = "cargo test -p sift --test ingest_api"
+required_for_production = true
+assertions = [
+    "The h2c /v1/events route accepts validated six-signal envelopes and acknowledges only after durable storage.",
+    "A repeated event id is idempotent across journal restart and replay returns the persisted envelope.",
+    "The service exposes its OpenAPI and standard operational endpoints alongside the ingest contract.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:d6f58804eb11acf460f0d53afc6454c8bd506987d2b7ec3ec604bb08eeadee18"
+
+[[cases]]
+id = "one-port-health-readiness-metrics-contract"
+capability_id = "standard-operational-endpoints"
+claim_id = "one-port-health-readiness-metrics"
+contract_id = "sift.standard_operational_endpoints.v1"
+dimension = "behavior"
+source_ref = "projects/sift/external-contracts/behavior/standard-operational-endpoints-contract.md#one-port-health-readiness-metrics-contract"
+test_path = "projects/sift/tests/behavior_one_port_health_readiness_metrics_contract.rs"
+command = "cargo test -p sift --test ingest_api"
+required_for_production = true
+assertions = ["The service exposes /healthz, /readyz, and Prometheus /metrics on its data-plane port."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:6b8736a7f2288d1cff0104e6164aaf6b559affb7f37153ae9d53bd96ebfab582"
+
+[[cases]]
+id = "served-openapi-and-docs-contract"
+capability_id = "standard-operational-endpoints"
+claim_id = "served-openapi-and-docs"
+contract_id = "sift.standard_operational_endpoints.v1"
+dimension = "behavior"
+source_ref = "projects/sift/external-contracts/behavior/standard-operational-endpoints-contract.md#served-openapi-and-docs-contract"
+test_path = "projects/sift/tests/behavior_served_openapi_and_docs_contract.rs"
+command = "cargo test -p sift --test ingest_api"
+required_for_production = true
+assertions = ["The service exposes /openapi.json and /docs on that same port."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:0e8c7630acb560093f220d36134bde99a5a988aa09c101a7545cc40ae9162d7e"
