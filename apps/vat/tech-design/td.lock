@@ -2,10 +2,10 @@ version = 2
 project = "vat"
 ir_kind = "td"
 td_path = "apps/vat/tech-design"
-generated_at = "2026-07-13T08:20:41.561638+00:00"
-digest = "sha256:f217570811526f3a7d121f20ee9d3b705b000b516ee2b02c4290aa4a6c430c38"
-source_digest = "sha256:f217570811526f3a7d121f20ee9d3b705b000b516ee2b02c4290aa4a6c430c38"
-ir_digest = "sha256:f7873ab9f3f5ffef69ed9970132e6e691280182b7a5bae5214b32dd8cd7a3284"
+generated_at = "2026-07-13T09:11:20.673351+00:00"
+digest = "sha256:7dd95f58ffec25b57eec182ec1a186f39a9719b332e219210f4c15444520ae2f"
+source_digest = "sha256:7dd95f58ffec25b57eec182ec1a186f39a9719b332e219210f4c15444520ae2f"
+ir_digest = "sha256:28c39a6a3931ff974658d868b3c0e1990bf921c75593eeb52eb3e596bd03b830"
 
 [[files]]
 path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
@@ -132,6 +132,12 @@ path = "logic/vat-local-k8s-phase-0-prove-k3s-on-apple-container-machine.md"
 digest = "sha256:d1f1301f918876e3eed8fe5e13bfe2e770661c49d2979de4684acfb4efe1b0a9"
 ir_digest = "sha256:a50186cf5d49330942362a0b12c8bcb2ba61fb1bdd92e1d379db2628a2d39509"
 section_count = 3
+
+[[files]]
+path = "logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md"
+digest = "sha256:718f279d0cce8d5ec39dd59fa60ad898033bb0001135345a8962ff7b1ba5ae14"
+ir_digest = "sha256:4759ac11c86d52c3078aa3761502cf97eda1a1cb7e4c79e5f56a5d738b09f05c"
+section_count = 1
 
 [[files]]
 path = "logic/vat-microvm-phase-1-isolation-microvm-sandbox-backend-for-vat-ru.md"
