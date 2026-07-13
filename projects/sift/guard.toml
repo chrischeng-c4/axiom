@@ -1,4 +1,3 @@
-// HANDWRITE-BEGIN gap="sift-guard-security-contract" tracker="1607" reason="Bind Sift bearer-auth and probe-exemption evidence to the security guard surface."
 # SPEC-MANAGED: projects/sift/external-contracts/security-hardening/sift-auth.md#sift-guard-auth-surface
 # CODEGEN-BEGIN
 # AW-EC-TOOL-BEGIN
@@ -8,4 +7,3 @@ target = "projects/sift"
 version = 1
 # AW-EC-TOOL-END
 # CODEGEN-END
-// HANDWRITE-END

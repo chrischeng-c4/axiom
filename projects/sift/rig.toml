@@ -1,4 +1,3 @@
-# HANDWRITE-BEGIN gap="sift-rig-stability-contract" tracker="1607" reason="Bind executable Sift resilience scenarios to the Rig stability surface."
 # SPEC-MANAGED: projects/sift/external-contracts/long-running-stability/sift-resilience.md#sift-rig-resilience
 # CODEGEN-BEGIN
 # AW-EC-TOOL-BEGIN
@@ -8,4 +7,3 @@ source_contract = "sift-long-running-stability-resilience"
 version = 1
 # AW-EC-TOOL-END
 # CODEGEN-END
-# HANDWRITE-END
