@@ -47,7 +47,7 @@ require_command() {
 find_free_port() {
     local port
     for port in $(seq 55432 55531); do
-        if [[ " ${USED_PORTS[*]} " == *" $port "* ]]; then
+        if [[ " ${USED_PORTS[*]-} " == *" $port "* ]]; then
             continue
         fi
         if ! lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
