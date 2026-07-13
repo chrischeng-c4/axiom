@@ -115,3 +115,26 @@ flowchart TD
     r1[R1 r1 dry run profile is exact and target symmetric] --> pgbouncer_benchmark_dry_run_profile_declares_equal_transaction_pooling_inputs[pgbouncer_benchmark::dry_run_profile_declares_equal_transaction_pooling_inputs]
     r2[R2 r2 runner is hermetic until explicitly enabled] --> pgbouncer_benchmark_runner_is_syntax_valid_and_dry_run_is_hermetic[pgbouncer_benchmark::runner_is_syntax_valid_and_dry_run_is_hermetic]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: Run an identical simple-protocol pgbench workload through PgBouncer and pgpool.
+  - path: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/README.md
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: Document the reproducible P0 benchmark profile and its prerequisites.
+  - path: apps/pgpool/tests/pgbouncer_benchmark.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    reason: Verify the hermetic benchmark profile and provide an opt-in live smoke test.
+```
