@@ -69,7 +69,7 @@ requirements:
     text: "Creating or deleting a pull subscription does not advance or remove the existing topic/name consumer checkpoint; checkpoint get/put remains the durable pull cursor interface."
     kind: regression
     risk: high
-    verify: cargo test -p tape pull_subscription_preserves_checkpoint_compatibility --lib -- --exact
+    verify: cargo test -p tape tests::pull_subscription_preserves_checkpoint_compatibility --lib -- --exact
   push_scope_boundary:
     id: R5
     text: "Push creation only stores its configured endpoint; this work item starts no delivery worker and makes no outbound HTTP request."
@@ -99,10 +99,9 @@ flowchart TD
     r1[R1 subscription cli surface] --> cargo_test_p_tape_test_cli_contract_subscription_cli_surface_exact[cargo test -p tape --test cli_contract subscription_cli_surface -- --exact]
     r2[R2 subscription local lifecycle] --> cargo_test_p_tape_test_cli_contract_subscription_resource_roundtrip_exact[cargo test -p tape --test cli_contract subscription_resource_roundtrip -- --exact]
     r5[R5 push scope boundary] --> cargo_test_p_tape_test_cli_contract_subscription_resource_roundtrip_exact
-    r3[R3 pull checkpoint compatibility] --> cargo_test_p_tape_pull_subscription_preserves_checkpoint_compatibility_lib_exact[cargo test -p tape pull_subscription_preserves_checkpoint_compatibility --lib -- --exact]
+    r3[R3 pull checkpoint compatibility] --> cargo_test_p_tape_tests_pull_subscription_preserves_checkpoint_compatibility_lib_exact[cargo test -p tape tests::pull_subscription_preserves_checkpoint_compatibility --lib -- --exact]
     r4[R4 spec inventory] --> cargo_test_p_tape_test_cli_contract_subscription_spec_inventory_exact[cargo test -p tape --test cli_contract subscription_spec_inventory -- --exact]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
