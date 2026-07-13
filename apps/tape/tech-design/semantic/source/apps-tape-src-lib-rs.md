@@ -21,7 +21,7 @@ capability_refs:
     coverage: partial
     rationale: "TapeJournal owns local topic subscription metadata and preserves pull checkpoint compatibility."
   - id: "subscription-delivery-resources"
-    role: supporting
+    role: contributes
     claim: "pull-subscription-cursor-contract"
     gap: "pull-subscription-cursor-contract"
     coverage: partial
