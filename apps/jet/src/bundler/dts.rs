@@ -652,23 +652,31 @@ fn split_once_top_level_arrow(text: &str) -> Option<(&str, &str)> {
     let mut depth = 0i32;
     let mut quote = None;
     let mut escaped = false;
+    let mut prev = '\0';
     for (idx, ch) in text.char_indices() {
         if let Some(q) = quote {
             if escaped {
                 escaped = false;
+                prev = ch;
                 continue;
             }
             if ch == '\\' {
                 escaped = true;
+                prev = ch;
                 continue;
             }
             if ch == q {
                 quote = None;
             }
+            prev = ch;
             continue;
         }
         match ch {
             '"' | '\'' | '`' => quote = Some(ch),
+            // The trailing `>` in a nested function type's `=>` is not a
+            // generic close. Keep the surrounding parameter depth intact so
+            // the outer arrow can still be found (#1533).
+            '>' if prev == '=' => {}
             '(' | '[' | '{' | '<' => depth += 1,
             ')' | ']' | '}' | '>' => depth -= 1,
             '=' if depth == 0 && text[idx..].starts_with("=>") => {
@@ -676,6 +684,7 @@ fn split_once_top_level_arrow(text: &str) -> Option<(&str, &str)> {
             }
             _ => {}
         }
+        prev = ch;
     }
     None
 }
@@ -1357,7 +1366,14 @@ fn split_once_top_level<'a>(text: &'a str, delimiter: char) -> Option<(&'a str, 
             '>' if prev == '=' => {}
             '(' | '[' | '{' | '<' => depth += 1,
             ')' | ']' | '}' | '>' => depth -= 1,
-            _ if ch == delimiter && depth == 0 => {
+            // An arrow token is not a default-value assignment. In particular,
+            // a parameter such as `callback?: (value: string) => Result`
+            // must keep its complete function type when this helper is
+            // splitting defaults on `=` (#1533).
+            _ if ch == delimiter
+                && depth == 0
+                && !(delimiter == '=' && text[idx..].starts_with("=>")) =>
+            {
                 return Some((&text[..idx], &text[idx + ch.len_utf8()..]));
             }
             _ => {}
@@ -2315,6 +2331,32 @@ export const SpAlert = Alert as AlertInterface;
                 && dts.contains("fromOutsource: (x: string) => Promise<string>;")
                 && dts.contains("toOutsource: (y?: string) => string;"),
             "arrow body single-return typed object literal should synthesize a return-object signature, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_const_arrow_body_typed_object_with_function_typed_parameter() {
+        // #1533: `srcHelper` returns an object whose first member accepts a
+        // callback function type. The inner `=>` must not hide the outer
+        // member arrow from the declaration emitter.
+        let src = r#"export const srcHelper = (
+    editorJson: SerializedEditorState<TSerializedLexicalNode>,
+    replaceTypes: string[] = ['image', 'video'],
+) => {
+    return {
+        fromOutsource: (
+            callback?: (value: string) => Promise<string | undefined> | string | undefined,
+        ): Promise<Record<string, unknown>> => Promise.resolve({}),
+        toOutsource: (parent?: TSerializedLexicalNode): any => parent,
+    };
+};
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare const srcHelper: (editorJson: SerializedEditorState<TSerializedLexicalNode>, replaceTypes?: string[]) => {")
+                && dts.contains("fromOutsource: (callback?: (value: string) => Promise<string | undefined> | string | undefined) => Promise<Record<string, unknown>>;")
+                && dts.contains("toOutsource: (parent?: TSerializedLexicalNode) => any;"),
+            "function-typed callback member should remain inferable, got:\n{dts}"
         );
     }
 

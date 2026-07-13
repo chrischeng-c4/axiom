@@ -735,6 +735,66 @@ fn build_rewrites_svg_reactcomponent_barrel_reexports() {
 }
 
 #[test]
+fn build_rewrites_svg_reactcomponent_workspace_barrel_reexports() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+
+    write(
+        root.join("packages/assets/package.json"),
+        r#"{
+  "name": "@tw-tech/shared-assets",
+  "version": "1.0.0",
+  "main": "./dist/index.js"
+}"#,
+    );
+    write(
+        root.join("packages/assets/src/lib/index.tsx"),
+        "export { ReactComponent as ErrorIcon } from './error.svg';\n",
+    );
+    write(
+        root.join("packages/assets/src/lib/error.svg"),
+        r#"<svg viewBox="0 0 16 16"><path d="M0 0h16v16H0z"/></svg>"#,
+    );
+    write(
+        root.join("src/components/IconBox.stories.tsx"),
+        "import { IconBox } from './IconBox';\nexport default { title: 'Components/IconBox', component: IconBox };\nexport const Primary = { args: {} };\n",
+    );
+    write(
+        root.join("src/components/IconBox.tsx"),
+        "import { ErrorIcon } from '@tw-tech/shared-assets';\nexport const IconBox = () => ErrorIcon;\n",
+    );
+
+    let out = root.join("dist-stories");
+    let result = build_stories_static(root, &out).expect("build");
+
+    let barrel = fs::read_to_string(out.join("modules/packages/assets/src/lib/index.js"))
+        .expect("read emitted workspace asset barrel");
+    assert!(
+        barrel.contains("React.forwardRef")
+            && barrel.contains("export { SvgErrorIcon as ErrorIcon };"),
+        "workspace SVG ReactComponent barrel must become an inline component export: {barrel}"
+    );
+    assert!(
+        !barrel.contains("from './error.svg'") && !barrel.contains("from \"./error.svg\""),
+        "workspace barrel must not keep a browser module export from raw SVG: {barrel}"
+    );
+    assert!(
+        result
+            .emitted
+            .iter()
+            .any(|path| path == Path::new("modules/packages/assets/src/lib/error.svg")),
+        "workspace barrel's SVG should be emitted for URL consumers"
+    );
+
+    let component = fs::read_to_string(out.join("modules/src/components/IconBox.js"))
+        .expect("read emitted component");
+    assert!(
+        !component.contains("@tw-tech/shared-assets"),
+        "workspace package import must be rewritten to the emitted barrel: {component}"
+    );
+}
+
+#[test]
 fn build_emits_react_is_as_browser_esm_shim() {
     let dir = TempDir::new().expect("temp dir");
     let root = dir.path();
