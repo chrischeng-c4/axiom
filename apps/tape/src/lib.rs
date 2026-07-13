@@ -32,6 +32,16 @@ pub enum TapeError {
     CheckpointBeyondEnd { offset: u64, end_offset: u64 },
 }
 
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum SubscriptionError {
+    #[error("subscription {name} already exists for topic {topic}")]
+    AlreadyExists { topic: String, name: String },
+    #[error("subscription {name} does not exist for topic {topic}")]
+    NotFound { topic: String, name: String },
+    #[error("push subscription endpoint must not be empty")]
+    EmptyPushEndpoint,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct TapeEvent {
     pub topic: String,
@@ -50,10 +60,32 @@ pub struct ConsumerCheckpoint {
     pub updated_at_ms: u64,
 }
 
+// @spec apps/tape/tech-design/logic/expose-subscriptions-as-topic-delivery-resources.md#changes
+/// Delivery configuration for one topic subscription.
+///
+/// A `Push` endpoint is declarative in this local journal slice: it is stored
+/// and surfaced, but no worker sends requests or implements retries.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum SubscriptionDelivery {
+    Pull,
+    Push { endpoint: String },
+}
+
+/// A named delivery resource owned by a topic.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Subscription {
+    pub topic: String,
+    pub name: String,
+    pub delivery: SubscriptionDelivery,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TapeJournal {
     topics: BTreeMap<String, Vec<TapeEvent>>,
     checkpoints: BTreeMap<String, ConsumerCheckpoint>,
+    #[serde(default)]
+    subscriptions: BTreeMap<String, Subscription>,
 }
 
 impl TapeJournal {
@@ -163,6 +195,60 @@ impl TapeJournal {
         self.checkpoints.get(&checkpoint_key(topic, consumer))
     }
 
+    // @spec apps/tape/tech-design/logic/expose-subscriptions-as-topic-delivery-resources.md#changes
+    /// Create a topic-scoped subscription without moving a pull checkpoint.
+    pub fn create_subscription(
+        &mut self,
+        topic: impl Into<String>,
+        name: impl Into<String>,
+        delivery: SubscriptionDelivery,
+    ) -> Result<Subscription, SubscriptionError> {
+        let topic = topic.into();
+        let name = name.into();
+        if matches!(&delivery, SubscriptionDelivery::Push { endpoint } if endpoint.trim().is_empty())
+        {
+            return Err(SubscriptionError::EmptyPushEndpoint);
+        }
+        let key = subscription_key(&topic, &name);
+        if self.subscriptions.contains_key(&key) {
+            return Err(SubscriptionError::AlreadyExists { topic, name });
+        }
+        let subscription = Subscription {
+            topic,
+            name,
+            delivery,
+        };
+        self.subscriptions.insert(key, subscription.clone());
+        Ok(subscription)
+    }
+
+    pub fn subscriptions(&self, topic: &str) -> Vec<Subscription> {
+        self.subscriptions
+            .values()
+            .filter(|subscription| subscription.topic == topic)
+            .cloned()
+            .collect()
+    }
+
+    pub fn subscription(&self, topic: &str, name: &str) -> Option<&Subscription> {
+        self.subscriptions.get(&subscription_key(topic, name))
+    }
+
+    /// Delete subscription metadata only; a matching pull checkpoint remains
+    /// available through the existing checkpoint interface.
+    pub fn delete_subscription(
+        &mut self,
+        topic: &str,
+        name: &str,
+    ) -> Result<Subscription, SubscriptionError> {
+        self.subscriptions
+            .remove(&subscription_key(topic, name))
+            .ok_or_else(|| SubscriptionError::NotFound {
+                topic: topic.to_string(),
+                name: name.to_string(),
+            })
+    }
+
     pub fn end_offset(&self, topic: &str) -> u64 {
         self.topics.get(topic).map(Vec::len).unwrap_or_default() as u64
     }
@@ -171,6 +257,10 @@ impl TapeJournal {
 
 fn checkpoint_key(topic: &str, consumer: &str) -> String {
     format!("{topic}\u{1f}{consumer}")
+}
+
+fn subscription_key(topic: &str, name: &str) -> String {
+    format!("{topic}\u{1f}{name}")
 }
 
 pub(crate) fn now_ms() -> u64 {
@@ -226,5 +316,22 @@ mod tests {
             journal.put_checkpoint("orders", "worker-a", 3),
             Err(TapeError::CheckpointBeyondEnd { .. })
         ));
+    }
+
+    #[test]
+    fn pull_subscription_preserves_checkpoint_compatibility() {
+        let mut journal = TapeJournal::default();
+        journal.append("orders", None, serde_json::json!({"n": 1}), Some(100));
+        let checkpoint = journal.put_checkpoint("orders", "worker-a", 1).unwrap();
+
+        let subscription = journal
+            .create_subscription("orders", "worker-a", SubscriptionDelivery::Pull)
+            .unwrap();
+        assert_eq!(subscription.delivery, SubscriptionDelivery::Pull);
+        assert_eq!(journal.checkpoint("orders", "worker-a"), Some(&checkpoint));
+
+        let deleted = journal.delete_subscription("orders", "worker-a").unwrap();
+        assert_eq!(deleted.name, "worker-a");
+        assert_eq!(journal.checkpoint("orders", "worker-a"), Some(&checkpoint));
     }
 }

@@ -48,6 +48,170 @@ fn spec_routes_list_topic_contract() {
 }
 
 #[test]
+fn subscription_cli_surface() {
+    let help = Command::new(tape_bin())
+        .arg("--help")
+        .output()
+        .expect("run tape --help");
+    assert!(help.status.success());
+    assert!(String::from_utf8_lossy(&help.stdout).contains("subscription"));
+
+    let create_help = Command::new(tape_bin())
+        .args(["subscription", "create", "--help"])
+        .output()
+        .expect("run tape subscription create --help");
+    assert!(create_help.status.success());
+    let stdout = String::from_utf8_lossy(&create_help.stdout);
+    assert!(stdout.contains("--pull"));
+    assert!(stdout.contains("--push <ENDPOINT>"));
+
+    let invalid = Command::new(tape_bin())
+        .args([
+            "subscription",
+            "create",
+            "orders",
+            "worker-a",
+            "--pull",
+            "--push",
+            "https://hooks.example.invalid/events",
+        ])
+        .output()
+        .expect("run invalid subscription create");
+    assert!(!invalid.status.success());
+}
+
+#[test]
+fn subscription_resource_roundtrip() {
+    let store = std::env::temp_dir().join(format!(
+        "tape-subscription-contract-{}-{}.json",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let store_arg = store.to_str().unwrap();
+
+    let pull = Command::new(tape_bin())
+        .args([
+            "subscription",
+            "create",
+            "orders",
+            "worker-a",
+            "--pull",
+            "--store",
+            store_arg,
+        ])
+        .output()
+        .expect("create pull subscription");
+    assert!(
+        pull.status.success(),
+        "{}",
+        String::from_utf8_lossy(&pull.stderr)
+    );
+    assert!(String::from_utf8_lossy(&pull.stdout).contains("\"mode\": \"pull\""));
+
+    let push = Command::new(tape_bin())
+        .args([
+            "subscription",
+            "create",
+            "orders",
+            "webhook",
+            "--push",
+            "https://hooks.example.invalid/tape",
+            "--store",
+            store_arg,
+        ])
+        .output()
+        .expect("create push subscription");
+    assert!(
+        push.status.success(),
+        "{}",
+        String::from_utf8_lossy(&push.stderr)
+    );
+    let push_stdout = String::from_utf8_lossy(&push.stdout);
+    assert!(push_stdout.contains("\"mode\": \"push\""));
+    assert!(push_stdout.contains("hooks.example.invalid/tape"));
+
+    let list = Command::new(tape_bin())
+        .args(["subscription", "list", "orders", "--store", store_arg])
+        .output()
+        .expect("list subscriptions");
+    assert!(list.status.success());
+    let list_stdout = String::from_utf8_lossy(&list.stdout);
+    assert!(list_stdout.contains("worker-a"));
+    assert!(list_stdout.contains("webhook"));
+
+    let show = Command::new(tape_bin())
+        .args([
+            "subscription",
+            "show",
+            "orders",
+            "worker-a",
+            "--store",
+            store_arg,
+        ])
+        .output()
+        .expect("show pull subscription");
+    assert!(show.status.success());
+    assert!(String::from_utf8_lossy(&show.stdout).contains("\"checkpoint\": null"));
+
+    let delete = Command::new(tape_bin())
+        .args([
+            "subscription",
+            "delete",
+            "orders",
+            "worker-a",
+            "--store",
+            store_arg,
+        ])
+        .output()
+        .expect("delete pull subscription");
+    assert!(delete.status.success());
+
+    let remaining = Command::new(tape_bin())
+        .args(["subscription", "list", "orders", "--store", store_arg])
+        .output()
+        .expect("list remaining subscriptions");
+    assert!(remaining.status.success());
+    let remaining_stdout = String::from_utf8_lossy(&remaining.stdout);
+    assert!(!remaining_stdout.contains("worker-a"));
+    assert!(remaining_stdout.contains("webhook"));
+
+    let _ = std::fs::remove_file(store);
+}
+
+#[test]
+fn subscription_spec_inventory() {
+    let routes = Command::new(tape_bin())
+        .args(["spec", "--format", "routes"])
+        .output()
+        .expect("run tape spec routes");
+    assert!(routes.status.success());
+    let routes_stdout = String::from_utf8_lossy(&routes.stdout);
+    assert!(routes_stdout.contains("/topics/{topic}/subscriptions"));
+    assert!(routes_stdout.contains("/topics/{topic}/subscriptions/{subscription}"));
+
+    let openapi = Command::new(tape_bin())
+        .args(["spec", "--format", "openapi"])
+        .output()
+        .expect("run tape spec openapi");
+    assert!(openapi.status.success());
+    let openapi_stdout = String::from_utf8_lossy(&openapi.stdout);
+    assert!(openapi_stdout.contains("SubscriptionCreateRequest"));
+    assert!(openapi_stdout.contains("DeliveryConfig"));
+
+    let schema = Command::new(tape_bin())
+        .args(["spec", "--format", "json-schema"])
+        .output()
+        .expect("run tape spec json-schema");
+    assert!(schema.status.success());
+    let schema_stdout = String::from_utf8_lossy(&schema.stdout);
+    assert!(schema_stdout.contains("SubscriptionListResponse"));
+    assert!(schema_stdout.contains("\"mode\""));
+}
+
+#[test]
 fn append_replay_checkpoint_roundtrip() {
     let store = std::env::temp_dir().join(format!(
         "tape-cli-contract-{}-{}.json",
