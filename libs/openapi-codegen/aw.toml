@@ -2,7 +2,7 @@
 name = "openapi-codegen"
 aliases = ["cclab-openapi-codegen"]
 cap_path = "README.md"
-label = "project:openapi-codegen"
+label = "lib:openapi-codegen"
 
 [[workspaces]]
 name = "openapi-codegen"

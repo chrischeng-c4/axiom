@@ -1,7 +1,7 @@
 [project]
 name = "operator"
 cap_path = "README.md"
-label = "project:operator"
+label = "lib:operator"
 
 [[workspaces]]
 name = "operator"

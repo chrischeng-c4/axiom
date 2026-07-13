@@ -116,14 +116,20 @@ impl ProjectConfigRow {
     }
 
     pub fn label_or_default(&self) -> String {
-        self.label.clone().unwrap_or_else(|| {
-            let prefix = if self.path.starts_with("libs/") || self.path.contains("/mambalibs/") {
-                "lib"
-            } else {
-                "app"
-            };
-            format!("{prefix}:{}", self.name)
-        })
+        let prefix = if self.path.starts_with("libs/") || self.path.contains("/mambalibs/") {
+            "lib"
+        } else {
+            "app"
+        };
+        match self.label.as_deref() {
+            Some(label) => {
+                if !label.starts_with("project:") {
+                    return label.to_string();
+                }
+                format!("{prefix}:{}", self.name)
+            }
+            None => format!("{prefix}:{}", self.name),
+        }
     }
 }
 
@@ -1188,6 +1194,57 @@ mod resolver_tests {
 
     fn repo() -> TempDir {
         TempDir::new().unwrap()
+    }
+
+    fn project_row(path: &str, label: Option<&str>) -> ProjectConfigRow {
+        ProjectConfigRow {
+            name: "demo".to_string(),
+            aliases: Vec::new(),
+            path: path.to_string(),
+            td_path: None,
+            cap_path: None,
+            label: label.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn project_label_canonicalization_uses_path_only_for_retired_prefixes() {
+        assert_eq!(
+            project_row("libs/demo", Some("project:demo")).label_or_default(),
+            "lib:demo"
+        );
+        assert_eq!(
+            project_row("libs/demo", Some("project:wrong-name")).label_or_default(),
+            "lib:demo"
+        );
+        assert_eq!(
+            project_row("projects/mamba/mambalibs/demo", Some("project:demo")).label_or_default(),
+            "lib:demo"
+        );
+        assert_eq!(
+            project_row("apps/demo", Some("project:demo")).label_or_default(),
+            "app:demo"
+        );
+        assert_eq!(
+            project_row("libs/demo", Some("project:")).label_or_default(),
+            "lib:demo"
+        );
+        assert_eq!(
+            project_row("libs/demo", None).label_or_default(),
+            "lib:demo"
+        );
+        assert_eq!(
+            project_row("apps/demo", Some("app:custom-demo")).label_or_default(),
+            "app:custom-demo"
+        );
+        assert_eq!(
+            project_row("libs/demo", Some("lib:custom-demo")).label_or_default(),
+            "lib:custom-demo"
+        );
+        assert_eq!(
+            project_row("crates/demo", Some("crate:legacy-demo")).label_or_default(),
+            "crate:legacy-demo"
+        );
     }
 
     #[test]

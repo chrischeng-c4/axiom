@@ -16,6 +16,12 @@ capability_refs:
     rationale: "The TD root resolver defines the project-local TD root convention used by AW-managed projects."
   - id: project-local-td-and-ec-gates
     role: primary
+    gap: project-label-producer-td-routing
+    claim: project-label-producer-td-routing
+    coverage: full
+    rationale: "Registered-row labels are canonicalized before the strict TD label parser selects the project whose path or td_path supplies the default root."
+  - id: project-local-td-and-ec-gates
+    role: primary
     gap: td-lock-and-external-contract-target-resolution
     claim: td-lock-and-external-contract-target-resolution
     coverage: full
@@ -38,7 +44,7 @@ definitions:
     type: object
     description: |
       Project descriptor consumed by `ProjectRegistry::resolve_td_root`.
-      Materialised from `[[projects]]` table rows in `.aw/config.toml`.
+      Materialised from `[[projects]]` table rows in the repo-root `aw.toml`.
     properties:
       name:
         type: string
@@ -150,27 +156,27 @@ tests:
   T1:
     type: test
     name: resolve_td_root_uses_td_path_when_present
-    file: apps/agentic-workflow/src/project_registry.rs
+    file: apps/agentic-workflow/src/services/project_registry.rs
     verifies: [R1, R2]
   T2:
     type: test
     name: resolve_td_root_explicit_td_path_outside_project_root_succeeds
-    file: apps/agentic-workflow/src/project_registry.rs
+    file: apps/agentic-workflow/src/services/project_registry.rs
     verifies: [R2, R7]
   T3:
     type: test
     name: resolve_td_root_falls_back_to_project_tech_design
-    file: apps/agentic-workflow/src/project_registry.rs
+    file: apps/agentic-workflow/src/services/project_registry.rs
     verifies: [R1]
   T4:
     type: test
     name: resolve_td_root_unknown_project_errors
-    file: apps/agentic-workflow/src/project_registry.rs
+    file: apps/agentic-workflow/src/services/project_registry.rs
     verifies: [R1, R2]
   T5:
     type: test
     name: resolve_td_root_td_path_escape_rejected
-    file: apps/agentic-workflow/src/project_registry.rs
+    file: apps/agentic-workflow/src/services/project_registry.rs
     verifies: [R2]
   T6:
     type: test
@@ -207,6 +213,11 @@ tests:
     name: workspace_tech_design_path_returns_resolved_base
     file: apps/agentic-workflow/src/workspace.rs
     verifies: [R1, R5]
+  T13:
+    type: test
+    name: project_label_canonicalization_bridges_producer_to_default_td_resolver
+    file: apps/agentic-workflow/src/cli/td.rs
+    verifies: [R1, R2]
 ---
 requirementDiagram
     element T1 { type: test }
@@ -221,6 +232,7 @@ requirementDiagram
     element T10 { type: test }
     element T11 { type: test }
     element T12 { type: test }
+    element T13 { type: test }
 
     T1 - verifies -> R1
     T1 - verifies -> R2
@@ -242,6 +254,8 @@ requirementDiagram
     T11 - verifies -> R4
     T12 - verifies -> R1
     T12 - verifies -> R5
+    T13 - verifies -> R1
+    T13 - verifies -> R2
 ```
 
 ## Changes
@@ -263,6 +277,18 @@ changes:
       path canonicalisation + error mapping does not have a deterministic
       generator yet — wrap in HANDWRITE markers with a gap reference back to
       this spec.
+  - path: apps/agentic-workflow/src/services/project_registry.rs
+    symbol: ProjectConfigRow::label_or_default
+    action: modify
+    section: logic
+    impl_mode: codegen
+    description: |
+      Issue #1519 prevents the registered-row producer from emitting the
+      retired `project:` family. Preserve supported explicit app/lib/crate
+      labels; otherwise derive app versus lib from the registered path and use
+      the registered name before the strict TD resolver receives the issue
+      identity. Cover project-local stale-label override of a label-free root
+      row.
   - path: apps/agentic-workflow/src/services/project_registry.rs
     symbol: TdRootInput, TdRootResult, TdResolveError
     action: modify
@@ -300,7 +326,7 @@ changes:
       `resolve_td_root(project)` and test
       `spec_path.starts_with(resolved_root)`; the longest match identifies
       the project. Adjust the module docs to describe the new lookup, not
-      the old needle. Hook routing in `.aw/config.toml` (longest-prefix
+      the old needle. Hook routing in the repo-root `aw.toml` (longest-prefix
       on `td_path`) is unchanged. Wrap in HANDWRITE markers.
   - path: apps/agentic-workflow/src/ui/viewer/api.rs
     symbol: list_tech_designs, get_tech_design_metadata, get_tech_design
