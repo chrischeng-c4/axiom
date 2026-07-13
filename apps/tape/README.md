@@ -38,6 +38,7 @@ real-service external peer calibration remain separate work roots.
 | HTTP/2 API List | #768 | implemented | verified | smoke | ready | offline `tape spec` route/OpenAPI inventory plus a real h2c + HTTP/1.1 server (#1325) serving `/topics` append/replay/checkpoint; `GET /admin/backup` + `tape backup`/`tape spec gen` client codegen (#1329) |
 | Standard Operational Endpoints | #768 | implemented | verified | smoke | ready | `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` served for real via `libs/service-http` (#1325), with drain-aware readiness and `tape serve` |
 | Kubernetes-Native Deployment | #768 | implemented | verified | smoke | ready | CRD/operator/instance render + dockerfile CLI (#1328); StatefulSet topology, offline render tests; no live kind cluster proof yet |
+| Stateful Service Workload | #1554 | implemented | verified | smoke | ready | shared stateful-storage baseline composed from Tape's journal, raft, snapshot/backup, security boundary, and StatefulSet evidence; no duplicated runtime contract |
 | Primary Replicas | #1327 | implemented | planned | dogfood | not_ready | raft-host auto-mode leader/follower primary-replica topology over the whole journal; live 3-node kill-9 failover proven, peer-TLS is config-surface + fail-fast validation only (raft-host h2c has no TLS seam yet) |
 | CLI Interface | #768 | implemented | verified | smoke | ready | `tape` CLI for local replay/admin, spec, and agent docs |
 | CLI Standard Surface | #768 | implemented | verified | smoke | ready | shared `llm`, `upgrade`, and `issue` command groups |
@@ -396,6 +397,37 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | dedicated-statefulset-operator-topology | epic | #768 | implemented | verified | smoke | apps/tape/tests/{deploy_cli,operator}.rs; #1328 |
+
+### Stateful Service Workload
+
+ID: stateful-service-workload
+Type: Service
+Root WI: #1554
+Status: verified
+Surfaces: Durable journal state plus stateful deployment: `apps/tape/src/lib.rs`,
+`libs/raft-core`, `libs/raft-host`, `apps/tape/src/backup.rs`, and the dedicated
+StatefulSet/operator rendering surface under `apps/tape/k8s/`.
+EC Dimensions: behavior: `aw capability check --project tape --skip-issue-inventory` -
+the `stateful_storage` profile resolves its shared baseline; stability: existing
+raft failover/restart and backup snapshot gates remain authoritative, while live
+kind dogfood, peer-mTLS termination, and the broader security boundary remain
+explicitly unfinished in their own capability roots.
+Required Verification: smoke
+Promise:
+Tape projects the shared stateful-service workload baseline without a duplicate
+service implementation. Its durable append log, stable identity/PVC lifecycle,
+raft primary-replica recovery, snapshot/backup path, deployment artifacts, and
+security boundary are owned by the linked capability roots below; this baseline
+does not turn their remaining planned work into a completed claim.
+Gate Inventory:
+- `aw capability check --project tape --skip-issue-inventory`
+- apps/tape/tests/{raft_cluster,raft_failover,raft_persistence}.rs
+- apps/tape/tests/{backup,deploy_cli,operator}.rs
+- apps/tape/k8s/operator/{crd,rbac,deployment}.yaml
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| stateful-service-workload-projection | change | #1554 | implemented | passing | smoke | `aw capability check --project tape --skip-issue-inventory`; composes Topic Replay Journal, Primary Replicas, HTTP/2 API List, Kubernetes-Native Deployment, and Security Hardening without duplicating their claims |
 
 ### Primary Replicas
 
