@@ -1,0 +1,13 @@
+[project]
+name = "sift"
+cap_path = "README.md"
+label = "app:sift"
+
+[capability.profile]
+traits = ["service", "long_running", "cli_facing", "competitive_replacement", "network_exposed", "http2_api", "kubernetes_native", "stateful_storage"]
+
+[[workspaces]]
+name = "sift"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p sift"

@@ -296,6 +296,22 @@ test_cmd = "cargo test -p mamba"
 
 
 [[projects]]
+name = "sift"
+path = "projects/sift"
+td_path = "projects/sift/tech-design"
+cap_path = "projects/sift/README.md"
+label = "app:sift"
+
+[[projects.workspaces]]
+name = "sift"
+paths = ["projects/sift/**"]
+target = "rust"
+test_cmd = "cargo test -p sift --lib --bins"
+verify_cold = true
+codegen.profile = "rust/score-crate"
+
+
+[[projects]]
 name = "lumen"
 path = "apps/lumen"
 td_path = "apps/lumen/tech-design"
