@@ -1,7 +1,7 @@
 ---
 id: "1576"
 summary: (fill)
-fill_sections: [logic]
+fill_sections: [logic, changes]
 ---
 
 ## Logic
@@ -37,4 +37,39 @@ flowchart TD
     dedupe -->|no| append[append canonical raw event]
     append --> fsync[fsync journal]
     fsync --> accepted([201 event_id and durable cursor])
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/sift/Cargo.toml
+    action: create
+    section: changes
+    impl_mode: hand-written
+    handwrite_gap: sift-service-manifest
+    handwrite_tracker: "1576"
+    description: Define the standalone Sift Rust service package and its runtime dependencies.
+  - path: projects/sift/src/lib.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    handwrite_gap: sift-service-core
+    handwrite_tracker: "1576"
+    description: Implement the versioned operational-event envelope, durable raw journal, idempotency, query, and replay core.
+  - path: projects/sift/src/bin/sift.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    handwrite_gap: sift-service-cli
+    handwrite_tracker: "1576"
+    description: Implement serve, event, query, replay, spec, llm, upgrade, and issue CLI surfaces.
+  - path: projects/sift/tests/ingest_api.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    handwrite_gap: sift-ingest-contract-tests
+    handwrite_tracker: "1576"
+    description: Verify ingest acknowledgement, duplicate idempotency, direct metric preservation, query, and replay.
 ```
