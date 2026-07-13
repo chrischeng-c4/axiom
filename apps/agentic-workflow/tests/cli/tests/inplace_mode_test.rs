@@ -846,20 +846,20 @@ path = "."
         "the default queue must finish applicability before contract authoring: {apply_envelope}"
     );
     assert_eq!(
-        apply_envelope["invoke"]["args"]["section"], "unit-test",
-        "logic applicability must dispatch the default unit-test section next: {apply_envelope}"
+        apply_envelope["invoke"]["args"]["section"], "changes",
+        "logic applicability must dispatch the target-owning Changes section next: {apply_envelope}"
     );
     assert!(
         apply_envelope["invoke"]["args"]["payload_path"]
             .as_str()
-            .is_some_and(|path| path.ends_with("/applicability/unit-test.json")),
+            .is_some_and(|path| path.ends_with("/applicability/changes.json")),
         "the next payload must remain in the applicability pass: {apply_envelope}"
     );
 
     let spec_abs = root.join(spec_path);
     let spec_after_authoring = std::fs::read_to_string(&spec_abs).unwrap();
     assert!(
-        spec_after_authoring.contains("fill_sections: [logic, unit-test]"),
+        spec_after_authoring.contains("fill_sections: [logic, changes, unit-test]"),
         "the first merge must retain the complete default queue:\n{spec_after_authoring}"
     );
     assert!(

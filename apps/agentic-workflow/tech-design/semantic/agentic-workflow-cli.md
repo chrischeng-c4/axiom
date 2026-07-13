@@ -3760,7 +3760,11 @@ changes:
       complete matching wrapper, including a custom heading, is preserved; the
       existing RequireThrough(candidate) validation and dirty-spec allowance
       remain unchanged. Candidate-wide registry validation over in-memory
-      content remains tracked separately by #1586.
+      content remains tracked separately by #1586. Issue #1598 makes the
+      fresh default queue `logic`, `changes`, then `unit-test`: Changes is the
+      explicit target plan required before codegen infers implementation paths,
+      while an already non-empty custom queue keeps its declared membership and
+      order.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/project.rs"
     action: modify
