@@ -50,7 +50,65 @@ requirements:
     kind: functional
     risk: high
     verify: cargo test -p pgpool
+  pod_contract:
+    id: R2
+    text: "The Pgpool Deployment carries probes, preStop drain, termination grace, resources, security, topology spread, and no-surge rollout settings."
+    kind: functional
+    risk: high
+    verify: cargo test -p pgpool k8s::instance
+  negative_boundary:
+    id: R3
+    text: "Rendered YAML contains no StatefulSet, PVC, stable identity, Raft topology environment, or ClientIP affinity contract."
+    kind: negative
+    risk: high
+    verify: cargo test -p pgpool k8s::instance
+  cli_artifact:
+    id: R4
+    text: "pgpool k8s instance render emits deterministic stateless instance YAML for every supported profile."
+    kind: regression
+    risk: medium
+    verify: cargo test -p pgpool --test cli_contract k8s_instance_render_is_a_stateless_deployment
 ---
 flowchart TD
   r1[R1 stateless instance] --> cargo_test[cargo test -p pgpool]
+  r2[R2 Pod and rollout contract] --> k8s_test[cargo test -p pgpool k8s::instance]
+  r3[R3 negative stateful boundary] --> k8s_test
+  r4[R4 CLI artifact] --> cli_test[cargo test -p pgpool --test cli_contract k8s_instance_render_is_a_stateless_deployment]
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/Cargo.toml
+    action: modify
+    impl_mode: hand-written
+    section: logic
+    description: Depend on the shared operator renderer crate.
+  - path: apps/pgpool/src/lib.rs
+    action: modify
+    impl_mode: hand-written
+    section: logic
+    description: Export the Pgpool Kubernetes composition module.
+  - path: apps/pgpool/src/k8s/mod.rs
+    action: create
+    impl_mode: hand-written
+    section: logic
+    description: Publish typed Pgpool Kubernetes instance rendering.
+  - path: apps/pgpool/src/k8s/instance.rs
+    action: create
+    impl_mode: hand-written
+    section: logic
+    description: Compose common Service and Deployment primitives with the stateless Pgpool Pod contract.
+  - path: apps/pgpool/src/bin/pgpool.rs
+    action: modify
+    impl_mode: hand-written
+    section: logic
+    description: Add pgpool k8s instance render profile and output handling.
+  - path: apps/pgpool/tests/cli_contract.rs
+    action: modify
+    impl_mode: hand-written
+    section: unit-test
+    description: Verify the CLI emits Deployment artifacts without stateful or sticky-session fields.
 ```

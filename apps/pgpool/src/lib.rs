@@ -9,6 +9,11 @@ use server_tcp::TcpSocketOptions;
 
 pub mod spec;
 
+// SPEC-MANAGED: apps/pgpool/tech-design/semantic/pgpool-stateless-deployment-instance.md#logic
+// <HANDWRITE gap="missing-generator:logic:pgpool-k8s-instance" tracker="#1561" reason="Typed shared-renderer composition needs a Rust manifest generator primitive.">
+pub mod k8s;
+// </HANDWRITE>
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PoolMode {
     Session,

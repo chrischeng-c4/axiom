@@ -30,6 +30,8 @@ enum Command {
     /// Run the session-mode PostgreSQL proxy: bind the frontend, dial the
     /// configured backend per client, and relay until drain/shutdown.
     Serve(ServeArgs),
+    /// Render layered Kubernetes artifacts.
+    K8s(K8sArgs),
 }
 
 #[derive(clap::Args)]
@@ -117,6 +119,58 @@ struct ServeArgs {
     /// starts, in milliseconds.
     #[arg(long, env = "PGPOOL_ADMIN_DRAIN_TIMEOUT_MS", default_value_t = 30000)]
     admin_drain_timeout_ms: u64,
+}
+
+#[derive(clap::Args)]
+struct K8sArgs {
+    #[command(subcommand)]
+    command: K8sCommand,
+}
+
+#[derive(Subcommand)]
+enum K8sCommand {
+    /// Render app-namespace Pgpool instance artifacts.
+    Instance(K8sInstanceArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sInstanceArgs {
+    #[command(subcommand)]
+    command: K8sInstanceCommand,
+}
+
+#[derive(Subcommand)]
+enum K8sInstanceCommand {
+    /// Render the stateless Deployment, ClusterIP Service, ServiceAccount, and PDB.
+    Render(K8sInstanceRenderArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sInstanceRenderArgs {
+    #[arg(long, value_enum, default_value_t = K8sProfile::Dev)]
+    profile: K8sProfile,
+    /// Write YAML to a path instead of stdout.
+    #[arg(long)]
+    out: Option<std::path::PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum K8sProfile {
+    Dev,
+    Staging,
+    Prod,
+    Template,
+}
+
+impl From<K8sProfile> for pgpool::k8s::InstanceProfile {
+    fn from(value: K8sProfile) -> Self {
+        match value {
+            K8sProfile::Dev => Self::Dev,
+            K8sProfile::Staging => Self::Staging,
+            K8sProfile::Prod => Self::Prod,
+            K8sProfile::Template => Self::Template,
+        }
+    }
 }
 
 #[derive(clap::Args)]
@@ -231,6 +285,25 @@ async fn main() -> Result<()> {
         }
         Command::Issue(args) => issue(args).await,
         Command::Serve(args) => serve(args).await,
+        Command::K8s(args) => k8s(args),
+    }
+}
+
+fn k8s(args: K8sArgs) -> Result<()> {
+    match args.command {
+        K8sCommand::Instance(args) => match args.command {
+            K8sInstanceCommand::Render(args) => {
+                let spec = pgpool::k8s::spec_for_profile(args.profile.into());
+                let yaml = pgpool::k8s::render_instance_yaml(&spec);
+                if let Some(path) = args.out {
+                    std::fs::write(&path, yaml)?;
+                    println!("wrote {}", path.display());
+                } else {
+                    print!("{yaml}");
+                }
+                Ok(())
+            }
+        },
     }
 }
 

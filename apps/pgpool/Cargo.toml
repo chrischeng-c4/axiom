@@ -24,6 +24,7 @@ clap = { workspace = true, features = ["env"] }
 cli-std = { path = "../../libs/cli-std", default-features = false }
 metrics-prometheus = { path = "../../libs/metrics-prometheus" }
 server-http = { path = "../../libs/server-http" }
+service-k8s = { path = "../../libs/service-k8s" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }

@@ -14,6 +14,23 @@ fn help_ships_standard_commands_and_runtime_plan() {
     assert!(stdout.contains("llm"));
     assert!(stdout.contains("upgrade"));
     assert!(stdout.contains("issue"));
+    assert!(stdout.contains("k8s"));
+}
+
+#[test]
+fn k8s_instance_render_is_a_stateless_deployment() {
+    let output = pgpool()
+        .args(["k8s", "instance", "render", "--profile", "prod"])
+        .output()
+        .expect("render pgpool instance");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert!(stdout.contains("kind: Deployment"));
+    assert!(stdout.contains("kind: Service"));
+    assert!(stdout.contains("maxSurge: 0"));
+    assert!(!stdout.contains("StatefulSet"));
+    assert!(!stdout.contains("volumeClaimTemplates"));
+    assert!(!stdout.contains("sessionAffinity: ClientIP"));
 }
 
 #[test]
