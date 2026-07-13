@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:e2e-test:afed504d" tracker="pending-tracker" reason="R1-R9/AC1-AC4: add the opt-in, Apple-container-gated Phase 0 probe harness. It owns a unique temporary root and machine/network names, records a structured evidence matrix, creates a persistent systemd-capable machine, verifies k3s prerequisites and host kubeconfig lifecycle, runs the single-node workload/image/storage journey, records a best-effort two-node result, and removes all owned resources in a Drop/cleanup path. The real test is #[ignore] and requires VAT_LOCAL_K8S_E2E=1, so normal cargo test and unsupported hosts never mutate the container runtime."
+// TODO: hand-write content for `apps/vat/tests/vat_local_k8s_phase0.rs`.
+// HANDWRITE-END
