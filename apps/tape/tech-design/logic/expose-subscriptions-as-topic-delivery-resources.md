@@ -1,7 +1,7 @@
 ---
 id: "1254"
 summary: (fill)
-fill_sections: [logic, unit-test]
+fill_sections: [logic, unit-test, changes]
 ---
 
 ## Logic
@@ -101,4 +101,56 @@ flowchart TD
     r5[R5 push scope boundary] --> cargo_test_p_tape_test_cli_contract_subscription_resource_roundtrip_exact
     r3[R3 pull checkpoint compatibility] --> cargo_test_p_tape_pull_subscription_preserves_checkpoint_compatibility_lib_exact[cargo test -p tape pull_subscription_preserves_checkpoint_compatibility --lib -- --exact]
     r4[R4 spec inventory] --> cargo_test_p_tape_test_cli_contract_subscription_spec_inventory_exact[cargo test -p tape --test cli_contract subscription_spec_inventory -- --exact]
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/tape/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Add the file-backed Subscription model, pull/push delivery enum, keyed CRUD on TapeJournal, duplicate/not-found errors, and a regression test proving pull resource lifecycle leaves the existing topic/name checkpoint untouched. Keep this within the existing journal ownership boundary; generator gap: missing-generator:logic:tape-subscription-resource (#1254)."
+  - path: apps/tape/src/bin/tape.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Add `tape subscription create|list|show|delete`. Create requires exactly one of `--pull` or `--push <endpoint>`; commands load/save the existing `--store` journal and emit JSON plus a runnable `next:` marker. generator gap: missing-generator:cli:tape-subscription-resource (#1254)."
+  - path: apps/tape/src/spec.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Declare the topic-scoped subscription collection and item routes in routes_json/OpenAPI, define Subscription and delivery configuration schemas, and update agent API wording. This is offline API inventory only: do not add server.rs h2c handlers or claim runtime delivery. generator gap: missing-generator:openapi:tape-subscription-resource (#1254)."
+  - path: apps/tape/tests/cli_contract.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Add CLI-level deterministic coverage for help, pull/push create/list/show/delete round-trip, invalid mode rejection, and routes/OpenAPI/schema inventory. Assert push is stored as metadata without exercising an HTTP delivery path. generator gap: missing-generator:test:tape-subscription-resource (#1254)."
+  - path: apps/tape/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Document subscription resources as a Tape core capability with pull checkpoint compatibility and push contract-only scope; do not claim a push worker, retry/redelivery, live h2c subscription handler, or raft-backed subscription state."
+  - path: apps/tape/tech-design/semantic/source/apps-tape-src-lib-rs.md
+    action: modify
+    section: source
+    impl_mode: hand-written
+    description: "Refresh the source snapshot from apps/tape/src/lib.rs after the subscription journal model changes."
+  - path: apps/tape/tech-design/semantic/source/apps-tape-src-bin-tape-rs.md
+    action: modify
+    section: source
+    impl_mode: hand-written
+    description: "Refresh the source snapshot from apps/tape/src/bin/tape.rs after CLI changes."
+  - path: apps/tape/tech-design/semantic/source/apps-tape-src-spec-rs.md
+    action: modify
+    section: source
+    impl_mode: hand-written
+    description: "Refresh the source snapshot from apps/tape/src/spec.rs after contract inventory changes."
+  - path: apps/tape/tech-design/semantic/source/apps-tape-tests-cli-contract-rs.md
+    action: modify
+    section: source
+    impl_mode: hand-written
+    description: "Refresh the source snapshot from apps/tape/tests/cli_contract.rs after subscription contract tests."
 ```
