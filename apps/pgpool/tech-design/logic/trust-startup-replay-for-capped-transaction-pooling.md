@@ -10,6 +10,7 @@ fill_sections: [logic, changes, unit-test]
 ```mermaid
 ---
 id: pgpool-trust-startup-replay
+entry: frontend_startup
 nodes:
   frontend_startup:
     kind: process
@@ -70,3 +71,36 @@ flowchart TD
 A cache key is the complete ordered `StartupMessage`, not merely user or database. A cached reply is publishable only when the backend handshake reaches `ReadyForQuery` without any client-response authentication challenge. Cleartext-password, MD5, and SASL paths stay on the existing pass-through flow and never populate or consume this cache.
 
 A replay hit sends the cached protocol-ready frames to the matching client and starts the ordinary transaction loop with no retained backend lease. The first successful trust/no-challenge handshake returns its backend through the existing `DISCARD ALL` reset path before any later transaction is acquired.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: apps/pgpool/src/pool/backend_pool.rs
+    action: update
+    section: logic
+    impl_mode: hand-written
+    reason: Store and select exact safe startup replies while waiters re-check the cache before consuming backend capacity.
+  - path: apps/pgpool/src/pool/transaction.rs
+    action: update
+    section: logic
+    impl_mode: hand-written
+    reason: Read startup before admission and branch between cached reply replay and the fresh handshake path.
+  - path: apps/pgpool/src/proxy/relay.rs
+    action: update
+    section: logic
+    impl_mode: hand-written
+    reason: Capture only complete no-challenge backend startup replies for safe replay.
+  - path: apps/pgpool/tests/trust_startup_replay.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    reason: Exercise exact-match replay, challenge exclusion, and capped concurrent trust startup behavior.
+  - path: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh
+    action: update
+    section: unit-test
+    impl_mode: hand-written
+    reason: Assert the fixed 64-client capped benchmark detects startup-cap rejection instead of silently reporting a partial run.
+```
