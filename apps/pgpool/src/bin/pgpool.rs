@@ -314,7 +314,7 @@ const LLM_TOPICS: &[cli_std::llm::Topic] = &[
     },
 ];
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
