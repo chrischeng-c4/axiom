@@ -9303,7 +9303,7 @@ dependencies = [
 
 [[package]]
 name = "pgpool"
-version = "0.4.3"
+version = "0.4.5"
 dependencies = [
  "anyhow",
  "axum 0.8.9",

@@ -234,21 +234,28 @@ async fn run_transaction_client(
 
     // `await_client_activity` loop: each non-Terminate frontend frame
     // acquires a per-transaction lease and relays until that transaction's
-    // `ReadyForQuery(Idle)` or the leg ends.
+    // `ReadyForQuery(Idle)` or the leg ends. `pending_first_frame` carries
+    // a frame the client had already pipelined ahead of the previous leg's
+    // `ReadyForQuery` (captured by `relay_one_transaction`, never lost),
+    // standing in for a fresh frontend read on this iteration.
+    let mut pending_first_frame: Option<FrontendMessage> = None;
     loop {
-        let first_frame = match read_frame(&mut client_read, &mut frontend_reader).await {
-            Ok(Some(WireMessage::Frontend(FrontendMessage::Terminate(_)))) | Ok(None) => {
-                drop(permit);
-                return;
-            }
-            Ok(Some(WireMessage::Frontend(msg))) => msg,
-            Ok(Some(WireMessage::Backend(_))) => {
-                unreachable!("frontend-role reader only emits Frontend frames")
-            }
-            Err(_) => {
-                drop(permit);
-                return;
-            }
+        let first_frame = match pending_first_frame.take() {
+            Some(msg) => msg,
+            None => match read_frame(&mut client_read, &mut frontend_reader).await {
+                Ok(Some(WireMessage::Frontend(FrontendMessage::Terminate(_)))) | Ok(None) => {
+                    drop(permit);
+                    return;
+                }
+                Ok(Some(WireMessage::Frontend(msg))) => msg,
+                Ok(Some(WireMessage::Backend(_))) => {
+                    unreachable!("frontend-role reader only emits Frontend frames")
+                }
+                Err(_) => {
+                    drop(permit);
+                    return;
+                }
+            },
         };
 
         // Per the Pool Lease State Machine, `acquiring_transaction` has
@@ -286,7 +293,7 @@ async fn run_transaction_client(
         .await;
 
         match outcome {
-            TxnLegOutcome::ReadyIdle => {
+            TxnLegOutcome::ReadyIdle(pending) => {
                 release_backend(
                     config,
                     txn_id,
@@ -295,6 +302,7 @@ async fn run_transaction_client(
                     LeaseDisposition::ReturnToIdle,
                 )
                 .await;
+                pending_first_frame = pending;
                 // Loop back to `await_client_activity`.
             }
             TxnLegOutcome::Ended => {
@@ -315,8 +323,12 @@ async fn run_transaction_client(
 
 enum TxnLegOutcome {
     /// Backend reported `ReadyForQuery(Idle)`: reset + return to idle, loop
-    /// back to `await_client_activity`.
-    ReadyIdle,
+    /// back to `await_client_activity`. Carries a frontend message if the
+    /// client had already pipelined its next request ahead of observing
+    /// this leg's `ReadyForQuery` -- captured (never forwarded to this
+    /// now-being-reset backend) so it becomes the next lease's
+    /// `first_frame` without a redundant socket read.
+    ReadyIdle(Option<FrontendMessage>),
     /// `Terminate`/EOF/`FrameError` on either leg: release `Close`, close
     /// the client.
     Ended,
@@ -342,64 +354,116 @@ async fn relay_one_transaction(
         return TxnLegOutcome::Ended;
     }
 
-    let client_to_backend = async {
-        loop {
-            match read_frame(client_read, frontend_reader).await {
-                Ok(Some(WireMessage::Frontend(FrontendMessage::Terminate(terminate)))) => {
-                    let _ = forward_frontend(backend_write, &FrontendMessage::Terminate(terminate))
-                        .await;
-                    return;
+    // A client is free to pipeline its next simple-query message
+    // immediately behind this one without waiting to observe
+    // `ReadyForQuery` (tokio-postgres and other async clients do this).
+    // Forwarding that next message onto this (about-to-be-reset) backend
+    // before this leg's `ReadyForQuery` is confirmed would let
+    // `reset_connection`'s wait-for-`ReadyForQuery` logic mistake it for
+    // `DISCARD ALL`'s own response -- silently discarding the pipelined
+    // query's real response and permanently desyncing the connection. So
+    // a decoded-but-not-yet-actionable frontend frame is only ever
+    // stashed in `pending_frontend`, never forwarded, until this leg's
+    // outcome is known.
+    //
+    // Frontend EOF/error/`Terminate` carry no such hazard -- there is
+    // nothing to misattribute -- so they are still watched for
+    // concurrently with the backend read below, letting an abrupt client
+    // disconnect end (and free/close) this leg promptly even while the
+    // backend is still mid-response, instead of only being noticed after
+    // the backend eventually replies.
+    let mut pending_frontend: Option<FrontendMessage> = None;
+
+    loop {
+        let is_idle = loop {
+            if pending_frontend.is_some() {
+                // Already have a pending frame; only await the backend now.
+                match read_frame(backend_read, backend_reader).await {
+                    Ok(Some(WireMessage::Backend(BackendMessage::ReadyForQuery(ready)))) => {
+                        let idle = matches!(&ready.status, TransactionStatus::Idle);
+                        if forward_backend(client_write, &BackendMessage::ReadyForQuery(ready))
+                            .await
+                            .is_err()
+                        {
+                            return TxnLegOutcome::Ended;
+                        }
+                        break idle;
+                    }
+                    Ok(Some(WireMessage::Backend(msg))) => {
+                        if forward_backend(client_write, &msg).await.is_err() {
+                            return TxnLegOutcome::Ended;
+                        }
+                    }
+                    Ok(Some(WireMessage::Frontend(_))) => {
+                        unreachable!("backend-role reader only emits Backend frames")
+                    }
+                    Ok(None) | Err(_) => return TxnLegOutcome::Ended,
                 }
-                Ok(Some(WireMessage::Frontend(msg))) => {
-                    if forward_frontend(backend_write, &msg).await.is_err() {
-                        return;
+            } else {
+                tokio::select! {
+                    backend_result = read_frame(backend_read, backend_reader) => {
+                        match backend_result {
+                            Ok(Some(WireMessage::Backend(BackendMessage::ReadyForQuery(ready)))) => {
+                                let idle = matches!(&ready.status, TransactionStatus::Idle);
+                                if forward_backend(client_write, &BackendMessage::ReadyForQuery(ready))
+                                    .await
+                                    .is_err()
+                                {
+                                    return TxnLegOutcome::Ended;
+                                }
+                                break idle;
+                            }
+                            Ok(Some(WireMessage::Backend(msg))) => {
+                                if forward_backend(client_write, &msg).await.is_err() {
+                                    return TxnLegOutcome::Ended;
+                                }
+                            }
+                            Ok(Some(WireMessage::Frontend(_))) => {
+                                unreachable!("backend-role reader only emits Backend frames")
+                            }
+                            Ok(None) | Err(_) => return TxnLegOutcome::Ended,
+                        }
+                    }
+                    frontend_result = read_frame(client_read, frontend_reader) => {
+                        match frontend_result {
+                            Ok(Some(WireMessage::Frontend(FrontendMessage::Terminate(_))))
+                            | Ok(None)
+                            | Err(_) => return TxnLegOutcome::Ended,
+                            Ok(Some(WireMessage::Frontend(msg))) => {
+                                pending_frontend = Some(msg);
+                            }
+                            Ok(Some(WireMessage::Backend(_))) => {
+                                unreachable!("frontend-role reader only emits Frontend frames")
+                            }
+                        }
                     }
                 }
+            }
+        };
+
+        if is_idle {
+            return TxnLegOutcome::ReadyIdle(pending_frontend);
+        }
+
+        // Backend reported still-in-transaction: the next frame (already
+        // pipelined, or read fresh now) belongs to this same lease (e.g.
+        // the next statement in an explicit BEGIN...COMMIT).
+        let msg = match pending_frontend.take() {
+            Some(msg) => msg,
+            None => match read_frame(client_read, frontend_reader).await {
+                Ok(Some(WireMessage::Frontend(msg))) => msg,
                 Ok(Some(WireMessage::Backend(_))) => {
                     unreachable!("frontend-role reader only emits Frontend frames")
                 }
-                Ok(None) | Err(_) => return,
-            }
+                Ok(None) | Err(_) => return TxnLegOutcome::Ended,
+            },
+        };
+        if let FrontendMessage::Terminate(terminate) = msg {
+            let _ = forward_frontend(backend_write, &FrontendMessage::Terminate(terminate)).await;
+            return TxnLegOutcome::Ended;
         }
-    };
-
-    let backend_to_client = async {
-        loop {
-            match read_frame(backend_read, backend_reader).await {
-                Ok(Some(WireMessage::Backend(BackendMessage::ReadyForQuery(ready)))) => {
-                    let is_idle = matches!(&ready.status, TransactionStatus::Idle);
-                    if forward_backend(client_write, &BackendMessage::ReadyForQuery(ready))
-                        .await
-                        .is_err()
-                    {
-                        return false;
-                    }
-                    if is_idle {
-                        return true;
-                    }
-                    // Still `InTransaction`/`Failed`: keep relaying.
-                }
-                Ok(Some(WireMessage::Backend(msg))) => {
-                    if forward_backend(client_write, &msg).await.is_err() {
-                        return false;
-                    }
-                }
-                Ok(Some(WireMessage::Frontend(_))) => {
-                    unreachable!("backend-role reader only emits Backend frames")
-                }
-                Ok(None) | Err(_) => return false,
-            }
-        }
-    };
-
-    tokio::select! {
-        _ = client_to_backend => TxnLegOutcome::Ended,
-        ready_idle = backend_to_client => {
-            if ready_idle {
-                TxnLegOutcome::ReadyIdle
-            } else {
-                TxnLegOutcome::Ended
-            }
+        if forward_frontend(backend_write, &msg).await.is_err() {
+            return TxnLegOutcome::Ended;
         }
     }
 }
