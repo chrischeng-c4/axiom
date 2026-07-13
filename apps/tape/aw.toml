@@ -17,7 +17,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "tape"
-generated_from_td_digest = "sha256:e4e8b2aba25467aea65a072d26097616cc6b1aebab89922378a54a297fc40e28"
+generated_from_td_digest = "sha256:c8276274f519c94d90fae5f23c45534f1b2c9181d79b59c5673aa26f6866a000"
 
 [[aw.ec.generated.cases]]
 id = "tape-chainable-output-conformance"
@@ -97,7 +97,7 @@ claim_id = "topic-replay-competitor-performance-baseline"
 contract_id = "topic-replay-kafka-local-backlog-win"
 category = "efficiency"
 td_ref = "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-kafka-replay-win"
-test_path = "apps/tape/tests/tape_vs_kafka.rs"
+test_path = "apps/tape/tests/efficiency_tape_claim_competitor_performance_kafka_replay_win.rs"
 command = "cargo test -p tape --test tape_vs_kafka -- --nocapture"
 required_for_production = true
 assertions = [
