@@ -873,6 +873,9 @@ semantic_domain:
           - name: "test_cb_claim_non_interactive_writes_spec"
             kind: "function"
             public: false
+          - name: "test_gen_source_projects_legacy_snapshot_and_runs_generated_test"
+            kind: "function"
+            public: false
           - name: "count_md_recursive"
             kind: "function"
             public: false
@@ -1141,6 +1144,9 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      Issue #1548 adds a real-CLI projection fixture that changes source bytes,
+      runs exactly one uniquely named generated test, proves idempotence and
+      sibling isolation, and rejects an unmatched existing target.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/tests/cli/tests/wi_close_remote_test.rs"
     action: create
