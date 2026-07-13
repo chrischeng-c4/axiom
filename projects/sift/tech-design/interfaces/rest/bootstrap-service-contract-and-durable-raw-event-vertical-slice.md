@@ -1,6 +1,48 @@
 ---
 id: "1576"
 summary: (fill)
+capability_refs:
+  - id: operational-event-ingest
+    role: primary
+    gap: h2c-openapi-event-write-route
+    claim: h2c-openapi-event-write-route
+    coverage: partial
+    rationale: The bootstrap vertical slice owns the versioned event-write route and its durable acknowledgement boundary.
+  - id: raw-event-journal-and-archive
+    role: contributes
+    gap: append-only-operational-event-journal
+    coverage: partial
+    rationale: The service writes canonical raw events before any derived store is introduced.
+  - id: durability-and-acknowledgment
+    role: contributes
+    gap: fsync-before-success-response
+    coverage: partial
+    rationale: The initial journal fsync is the single-node foundation for the later replicated acknowledgement contract.
+  - id: materialized-observability-stores
+    role: contributes
+    gap: metric-store-direct-points-and-exemplars
+    coverage: enabling
+    rationale: The envelope preserves direct metric points, temporality, and exemplars for the later metric store.
+  - id: query-tail-and-replay
+    role: contributes
+    gap: replay-cursor-and-view-rebuild
+    coverage: partial
+    rationale: Query and replay read the same durable raw journal with stable cursors.
+  - id: standard-operational-endpoints
+    role: contributes
+    gap: one-port-health-readiness-metrics
+    coverage: partial
+    rationale: The service composes the shared probe, metrics, OpenAPI, and docs routes on its serving port.
+  - id: cli-standard-surface
+    role: contributes
+    gap: offline-llm-topics
+    coverage: partial
+    rationale: The bootstrap CLI exposes the shared offline agent-facing commands.
+  - id: developer-and-agent-experience
+    role: contributes
+    gap: offline-contract
+    coverage: partial
+    rationale: The CLI and OpenAPI document are usable before a cluster exists.
 fill_sections: [logic, changes]
 ---
 
@@ -43,6 +85,7 @@ flowchart TD
 <!-- type: changes lang: yaml -->
 
 ```yaml
+coverage_kind: semantic
 changes:
   - path: Cargo.toml
     action: modify

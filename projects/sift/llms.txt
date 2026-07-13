@@ -1,3 +1,4 @@
+<!-- HANDWRITE-BEGIN gap="sift-agent-context" tracker="1576" reason="Sift publishes a compact TD-first agent contract for the unified service." -->
 # Sift Agent Context
 
 Sift is the unified GCP/GKE operational-event service. Its raw journal is the
@@ -26,3 +27,4 @@ with exemplars, audit events, and change events.
 been fsynced. Reuse an `event_id` to retry idempotently. HTTP/1.1 and h2c use
 one port; standard routes are `/healthz`, `/readyz`, `/metrics`,
 `/openapi.json`, and `/docs`.
+<!-- HANDWRITE-END -->
