@@ -382,12 +382,12 @@ fn td_branch_name(slug: &str) -> String {
     format!("td-{}", slug)
 }
 
-/// A remote active phase is resumable only when its lifecycle baseline is
-/// still reachable from the current checkout. Persistent project branches can
-/// be rebased without changing the issue's phase, which otherwise skips the
-/// provisioning path that writes the required exact `Td-Init` trailer.
-fn can_resume_active_td(phase: Option<&str>, has_reachable_td_init: bool) -> bool {
-    phase.is_some_and(|phase| phase.starts_with("td_")) && has_reachable_td_init
+fn is_recoverable_td_authoring_phase(phase: &str) -> bool {
+    use crate::issues::types::td_phase;
+
+    phase.starts_with("td_")
+        && !td_phase::is_post_gen(phase)
+        && !td_phase::is_terminal_code_check_retry(phase)
 }
 
 fn activate_td_workspace_for_lifecycle(
@@ -611,9 +611,9 @@ fn normalize_checkout_rel_path(path: &str) -> String {
 /// trailer. A fresh `aw td create <slug>` does this itself.
 ///
 /// Auto-heals stale frontmatter: if the issue says it has an active `td_*`
-/// phase but its branch does not exist or its exact `Td-Init` is no longer
-/// reachable, scrub it (commit a `Td-Reset` trailer on the current checkout)
-/// and continue with fresh branch activation.
+/// phase but the branch does not exist, the frontmatter is a leftover from a
+/// prior aborted run — scrub it (commit a `Td-Reset` trailer on the current
+/// checkout) and continue with fresh branch activation.
 async fn provision_td_workspace(
     project_root: &std::path::Path,
     issue_ref: &str,
@@ -644,17 +644,20 @@ async fn provision_td_workspace(
     }
 
     // Guard: no active td_ phase. Auto-heal stale frontmatter when the
-    // issue claims an active phase but neither workspace nor branch exists,
-    // or when a rebase dropped the exact Td-Init baseline code-check needs.
+    // issue claims an active phase but neither workspace nor branch exist.
     if let Some(phase) = issue.phase.clone() {
         if phase.starts_with("td_") {
+            if !is_recoverable_td_authoring_phase(&phase) {
+                anyhow::bail!(
+                    "issue '{}' already has active tech-design (phase: {})",
+                    issue_ref,
+                    phase
+                );
+            }
             let worktree_abs = td_workspace_path(project_root, workflow_slug);
             let branch_present =
                 crate::branch_switch::branch_exists_local(project_root, branch).unwrap_or(false);
-            let (_, init_commit) =
-                super::cb::reachable_td_init_commit(project_root, workflow_slug)?;
-            let missing_reachable_td_init = init_commit.is_none();
-            let stale = (!worktree_abs.exists() && !branch_present) || missing_reachable_td_init;
+            let stale = !worktree_abs.exists() && !branch_present;
             if stale {
                 issue.phase = None;
                 issue.branch = None;
@@ -669,14 +672,7 @@ async fn provision_td_workspace(
                     "Td-Reset",
                     &[issue_path_s.as_str()],
                     &[
-                        (
-                            "Reset-Reason",
-                            if missing_reachable_td_init {
-                                "missing-reachable-td-init"
-                            } else {
-                                "stale-frontmatter"
-                            },
-                        ),
+                        ("Reset-Reason", "stale-frontmatter"),
                         ("Reset-From-Phase", phase.as_str()),
                     ],
                 )?;
@@ -716,6 +712,59 @@ async fn provision_td_workspace(
         &[issue_path_s.as_str()],
     )?;
 
+    Ok(())
+}
+
+/// Clear an active tracker phase whose exact `Td-Init` baseline is no longer
+/// reachable, then record the recovery before normal provisioning starts.
+/// The stale workflow projection and lock labels must be cleared with the
+/// phase/branch; otherwise the fresh authoring queue can inherit a lock that
+/// still points at the rewritten lifecycle.
+async fn reset_unreachable_td_init(
+    project_root: &std::path::Path,
+    issue_ref: &str,
+    workflow_slug: &str,
+    history_state: &str,
+) -> Result<()> {
+    use crate::issues::IssueBackend;
+
+    crate::branch_switch::ensure_branch_clean(project_root)
+        .map_err(|e| anyhow::anyhow!("TD lifecycle recovery requires a clean tree: {e}"))?;
+    let backend = LocalBackend::from_project_root(project_root);
+    let mut issue = backend
+        .get(issue_ref)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("issue '{}' not found in workspace", issue_ref))?;
+    let from_phase = issue.phase.clone().unwrap_or_default();
+    issue.phase = None;
+    issue.branch = None;
+    issue.labels.retain(|label| {
+        label != super::workflow_guard::LOCK_LABEL
+            && label != super::workflow_guard::TD_LOCK_LABEL
+            && label != super::workflow_guard::CB_LOCK_LABEL
+    });
+    if let Some(body) =
+        super::workflow_guard::unlock_projection_for_closed_issue(&issue.body, workflow_slug)?
+    {
+        issue.body = body;
+    }
+    backend.write(&issue).await?;
+
+    let issue_path = backend.issue_path(&issue);
+    let issue_path_s = issue_path.to_string_lossy().into_owned();
+    maybe_push_remote(project_root, &issue_path, workflow_slug).await?;
+    commit_lifecycle_with_extra(
+        project_root,
+        workflow_slug,
+        &issue.title,
+        "Td-Reset",
+        &[issue_path_s.as_str()],
+        &[
+            ("Reset-Reason", "unreachable-td-init"),
+            ("Reset-History-State", history_state),
+            ("Reset-From-Phase", from_phase.as_str()),
+        ],
+    )?;
     Ok(())
 }
 
@@ -3256,8 +3305,44 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     let bootstrap_issue = bootstrap_td_issue(&project_root, issue_ref).await?;
     let slug = workflow_slug_for_issue(&bootstrap_issue, issue_ref);
     let branch = td_branch_name(&slug);
-    let (_, init_commit) = super::cb::reachable_td_init_commit(&project_root, &slug)?;
-    if can_resume_active_td(bootstrap_issue.phase.as_deref(), init_commit.is_some()) {
+    let bootstrap_phase = bootstrap_issue.phase.as_deref().unwrap_or_default();
+    if is_recoverable_td_authoring_phase(bootstrap_phase) {
+        // A valid lifecycle may live on td-<slug> while create is invoked
+        // from main. Activate that existing branch before inspecting HEAD or
+        // its reachable Td-Init would be misclassified as stale after rebase.
+        let current = crate::branch_switch::current_branch(&project_root)?;
+        let resume_workspace_present = !should_use_td_branch(&current)
+            || crate::branch_switch::branch_exists_local(&project_root, &branch).unwrap_or(false);
+        if resume_workspace_present {
+            td_activate_inplace_if_present(&project_root, &slug)?;
+        }
+
+        match super::cb::reachable_td_init_from_head(&project_root, &slug)? {
+            super::cb::TdInitReachability::Found(_) => {
+                if !resume_workspace_present {
+                    td_activate_inplace_if_present(&project_root, &slug)?;
+                }
+            }
+            super::cb::TdInitReachability::NoSlugHistory => {
+                reset_unreachable_td_init(&project_root, issue_ref, &slug, "no-slug-history")
+                    .await?;
+                provision_td_workspace(&project_root, issue_ref, &slug, &branch).await?;
+            }
+            super::cb::TdInitReachability::SlugHistoryWithoutInit => {
+                reset_unreachable_td_init(
+                    &project_root,
+                    issue_ref,
+                    &slug,
+                    "slug-history-without-init",
+                )
+                .await?;
+                provision_td_workspace(&project_root, issue_ref, &slug, &branch).await?;
+            }
+        }
+    } else if bootstrap_phase.starts_with("td_") || bootstrap_phase.starts_with("cb_") {
+        // Post-gen and terminal retry phases are never stale-authoring reset
+        // candidates. Activate their existing workspace and let the phase
+        // guard below route/reject without rewriting lifecycle history.
         td_activate_inplace_if_present(&project_root, &slug)?;
     } else {
         provision_td_workspace(&project_root, issue_ref, &slug, &branch).await?;
@@ -4963,19 +5048,24 @@ mod tests {
     }
 
     #[test]
-    fn active_td_phase_requires_a_reachable_init_to_resume() {
-        assert!(can_resume_active_td(Some("td_created"), true));
-        assert!(!can_resume_active_td(Some("td_created"), false));
-        assert!(!can_resume_active_td(None, true));
-        assert!(!can_resume_active_td(Some("created"), true));
-    }
-
-    #[test]
     fn td_branch_activation_only_uses_main() {
         assert!(should_use_td_branch("main"));
         assert!(!should_use_td_branch("project-score"));
         assert!(!should_use_td_branch("feature/sdd"));
         assert!(!should_use_td_branch("td-existing"));
+    }
+
+    #[test]
+    fn rebased_td_lifecycle_recovery_excludes_post_gen_and_terminal_phases() {
+        use crate::issues::types::td_phase;
+
+        assert!(is_recoverable_td_authoring_phase(td_phase::TD_INITED));
+        assert!(is_recoverable_td_authoring_phase(td_phase::TD_CREATED));
+        assert!(!is_recoverable_td_authoring_phase(
+            td_phase::LEGACY_TD_GEN_CODED
+        ));
+        assert!(!is_recoverable_td_authoring_phase(td_phase::TD_MERGED));
+        assert!(!is_recoverable_td_authoring_phase("created"));
     }
 
     fn issue_with_title(title: &str) -> Issue {
