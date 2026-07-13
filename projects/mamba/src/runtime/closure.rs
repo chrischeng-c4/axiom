@@ -514,6 +514,34 @@ pub fn closure_capture_cells(closure_handle: MbValue) -> Vec<MbValue> {
     }
 }
 
+/// Read a captured variable's live value directly from a closure's own
+/// `capture_ids`/`capture_cells`, keyed by SymbolId. Returns `None` if the
+/// handle isn't a closure, the id isn't one of its captures, or the cell is
+/// unset.
+///
+/// Introspection (`inspect.getclosurevars`) must use this instead of the
+/// module-scoped active-cell lookup (`mb_global_get_id_raw`): that lookup is
+/// keyed to whichever module is currently "active" per `with_callable_module`,
+/// which during the introspection call itself is the *introspecting*
+/// dispatcher's own module (e.g. "inspect", since native dispatchers are
+/// tagged with `__module__` like any other registered function) rather than
+/// the module the inspected closure was defined in — so it misses the real
+/// cell entirely and reads back as unset.
+pub fn closure_capture_value_for_id(closure_handle: MbValue, id: i64) -> Option<MbValue> {
+    let handle = closure_handle.as_int()?;
+    let cell = CLOSURES.with(|closures| {
+        let vec = closures.borrow();
+        let idx = closure_slot_index(handle)?;
+        let c = vec.get(idx).and_then(|slot| slot.as_ref())?;
+        let pos = c.capture_ids.iter().position(|&cid| cid == id)?;
+        c.capture_cells.get(pos).copied()
+    })?;
+    match mb_cell_contents_read(cell) {
+        CellContentsRead::Value(v) => Some(v),
+        CellContentsRead::Empty | CellContentsRead::NotACell => None,
+    }
+}
+
 /// Run a closure body with its captured cells installed as the active cell map.
 pub fn with_closure_cells<R>(closure_handle: MbValue, call: impl FnOnce() -> R) -> R {
     let pairs: Vec<(ScopedSymbolKey, MbValue)> = if let Some(id) = closure_handle.as_int() {
@@ -1130,8 +1158,20 @@ pub fn mb_func_set_qualname(func: MbValue, qualname: MbValue) {
     FUNC_QUALNAMES.with(|m| m.borrow_mut().insert(key, qualname));
 }
 
-/// Register both a function's simple name and the lexical qualname visible at
-/// its definition site.
+/// Register a function's simple name, its lexical qualname, and its defining
+/// module — all visible at its definition site.
+///
+/// The module must be captured HERE, at define time, rather than derived
+/// later at call time: `callable_module_name` (used by `with_callable_module`
+/// to scope global-variable reads/writes for a dynamically-invoked callable)
+/// falls back to "whatever module is currently active" when a function has
+/// no registered `__module__`. That fallback is only correct when a function
+/// is invoked from within its own defining module's activation; it silently
+/// resolves to the WRONG module when a user-defined function/closure is
+/// invoked as a callback from a different native module's own dispatch code
+/// (e.g. a handler passed to `signal.signal` and delivered through
+/// `os.kill`, or a reducer passed to `functools.reduce`), corrupting every
+/// global read/write the callback performs (#239).
 pub fn mb_func_prime_name(func: MbValue, name: MbValue) {
     let simple_name = extract_str(name).unwrap_or_default();
     mb_func_set_name(
@@ -1140,6 +1180,10 @@ pub fn mb_func_prime_name(func: MbValue, name: MbValue) {
     );
     let qualname = derive_qualname(&simple_name);
     mb_func_set_qualname(func, MbValue::from_ptr(MbObject::new_str(qualname)));
+    mb_func_set_module(
+        func,
+        MbValue::from_ptr(MbObject::new_str(current_active_module_name())),
+    );
 }
 
 /// Get a function's registered name. Returns None-MbValue if not registered.
@@ -1740,6 +1784,31 @@ fn raise_missing_global_name_error(name: &str) {
     );
 }
 
+fn lookup_named_runtime_global(name: &str) -> Option<MbValue> {
+    if let Some(value) = GLOBAL_NAMESPACE.with(|ns| ns.borrow().get(name).copied()) {
+        return Some(value);
+    }
+
+    let current_module = current_active_module_name();
+    if let Some(value) = GLOBAL_ID_NAMESPACE.with(|ns| {
+        let ns = ns.borrow();
+        MODULE_SYM_INFO.with(|info| {
+            let info = info.borrow();
+            ns.iter().find_map(|(key, value)| {
+                if key.module != current_module {
+                    return None;
+                }
+                let (symbol_name, _) = info.get(&key.symbol)?;
+                (symbol_name == name).then_some(*value)
+            })
+        })
+    }) {
+        return Some(value);
+    }
+
+    MODULE_FUNC_INFO.with(|funcs| funcs.borrow().get(name).copied())
+}
+
 /// Get a global variable by name.
 pub fn mb_global_get(name: MbValue) -> MbValue {
     let var_name = extract_str(name).unwrap_or_default();
@@ -1779,7 +1848,7 @@ pub fn mb_global_get(name: MbValue) -> MbValue {
 /// exception-check/try-except machinery picks it up unchanged.
 pub fn mb_deferred_name_read(name: MbValue) -> MbValue {
     let var_name = extract_str(name).unwrap_or_default();
-    let val = GLOBAL_NAMESPACE.with(|ns| ns.borrow().get(&var_name).copied());
+    let val = lookup_named_runtime_global(&var_name);
     if let Some(v) = val {
         unsafe {
             super::rc::retain_if_ptr(v);
@@ -2607,6 +2676,24 @@ mod tests {
     fn test_global_id_missing_returns_none() {
         let id = MbValue::from_bits(99999);
         assert!(mb_global_get_id(id).is_none());
+    }
+
+    #[test]
+    fn test_deferred_name_read_falls_back_to_symbol_id_globals() {
+        cleanup_all_closures();
+
+        let mut sym_info = HashMap::new();
+        sym_info.insert(4242, ("X".to_string(), SymTy::Boxed));
+        set_module_sym_info(sym_info);
+
+        let class_value = MbValue::from_ptr(MbObject::new_str("class-object".into()));
+        mb_global_set_id(MbValue::from_bits(4242), class_value);
+
+        let name = MbValue::from_ptr(MbObject::new_str("X".into()));
+        let loaded = mb_deferred_name_read(name);
+        assert_eq!(extract_str(loaded).as_deref(), Some("class-object"));
+
+        cleanup_all_closures();
     }
 
     #[test]

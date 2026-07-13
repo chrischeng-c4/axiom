@@ -749,6 +749,32 @@ impl TypeChecker {
                                 }
                             }
                         }
+                        // #220: `list.index/count/remove` (and `set.remove`)
+                        // compare their `value` argument with `==`, which
+                        // never raises for a shape mismatch in real CPython —
+                        // it just fails to match (ValueError/False). The
+                        // element-typed signature `resolve_attr` synthesizes
+                        // for these methods exists to catch genuinely
+                        // wrong-typed *scalar* substitutions (the dedicated
+                        // `list__index__value_as__T_wrong` wall), not a
+                        // container-shaped value such as a self-referential
+                        // `host.index(host)`. Relax only when the receiver is
+                        // provably a builtin List/Set (re-checking `object`'s
+                        // type here is the same additive-recompute idiom
+                        // `check_dict_operator_call` already uses) and the
+                        // argument itself is a bare container — a genuinely
+                        // wrong scalar/class argument still walls off.
+                        let container_receiver_relaxed_call =
+                            if let Expr::Attr { object, attr } = &func.node {
+                                if matches!(attr.as_str(), "index" | "count" | "remove") {
+                                    let object_ty = self.check_expr(object);
+                                    matches!(self.tcx.get(object_ty), Ty::List(_) | Ty::Set(_))
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            };
                         let mut param_idx = 0;
                         for arg in args {
                             match arg {
@@ -786,7 +812,17 @@ impl TypeChecker {
                                             (self.tcx.get(expected), &a.node),
                                             (Ty::Str, Expr::BytesLit(_))
                                         );
+                                        let container_value_arg = container_receiver_relaxed_call
+                                            && param_idx == 0
+                                            && matches!(
+                                                self.tcx.get(at),
+                                                Ty::List(_)
+                                                    | Ty::Set(_)
+                                                    | Ty::Dict(_, _)
+                                                    | Ty::Tuple(_)
+                                            );
                                         if !structured_stdlib_authoritative
+                                            && !container_value_arg
                                             && (bytes_literal_str_mismatch
                                                 || !self.types_compatible(expected, at))
                                         {
@@ -4311,10 +4347,21 @@ impl TypeChecker {
                                     }
                                 });
                             if let Some(sig) = class_sig {
+                                // `__init__` is never a classmethod/staticmethod in
+                                // Python, so `ClassName.__init__(recv, ...)` always
+                                // passes the instance explicitly as `recv` — no need
+                                // to match the narrower re-construction placeholder
+                                // shape (`Class(...)` / `object.__new__(Class)`) that
+                                // `stdlib_call_has_explicit_unbound_receiver` looks
+                                // for. This covers the common manual base-class-init
+                                // idiom `Base.__init__(self, ...)` where `recv` is a
+                                // plain `self` identifier.
                                 explicit_unbound_receiver =
                                     matches!(sig.kind, super::stdlib_sigs::SigKind::Method)
-                                        && self
-                                            .stdlib_call_has_explicit_unbound_receiver(base, args);
+                                        && (attr == "__init__"
+                                            || self.stdlib_call_has_explicit_unbound_receiver(
+                                                base, args,
+                                            ));
                             }
                             class_sig
                         }
@@ -4346,7 +4393,21 @@ impl TypeChecker {
                             // `x = Cls(...)` provenance through an import) but
                             // inference already knows `base`'s class — fall
                             // back to it. See `stdlib_method_sig_by_class_name`.
-                            self.stdlib_method_sig_by_class_name(&name, attr)
+                            let sig = self.stdlib_method_sig_by_class_name(&name, attr);
+                            if let Some(sig) = sig {
+                                // Same unbound-`__init__`-receiver reasoning as the
+                                // `class_sig` branch above — this fallback path is
+                                // reached for builtin exception classes (e.g.
+                                // `UnicodeEncodeError`) resolved as plain class
+                                // symbols rather than through `import_origins`.
+                                explicit_unbound_receiver =
+                                    matches!(sig.kind, super::stdlib_sigs::SigKind::Method)
+                                        && (attr == "__init__"
+                                            || self.stdlib_call_has_explicit_unbound_receiver(
+                                                &name, args,
+                                            ));
+                            }
+                            sig
                         } else {
                             None
                         }

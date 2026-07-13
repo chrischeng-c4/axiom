@@ -805,10 +805,10 @@ pub fn mb_socket_ntohl(value: MbValue) -> MbValue {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::exception::{
         get_exception_message_pub, get_exception_type_pub, mb_catch_exception, mb_clear_exception,
     };
+    use super::*;
 
     fn dict_get_bool(val: MbValue, key: &str) -> Option<bool> {
         val.as_ptr().and_then(|ptr| unsafe {
@@ -1022,10 +1022,7 @@ mod tests {
         let result = socket_makefile_mode(Some(MbValue::from_int(1)));
         assert!(result.is_none());
         let exc = mb_catch_exception();
-        assert_eq!(
-            get_exception_type_pub(exc).as_deref(),
-            Some("TypeError")
-        );
+        assert_eq!(get_exception_type_pub(exc).as_deref(), Some("TypeError"));
         assert_eq!(
             get_exception_message_pub(exc).as_deref(),
             Some("socket.makefile() argument 'mode' must be str")
@@ -1039,10 +1036,7 @@ mod tests {
             socket_makefile_mode(Some(MbValue::from_ptr(MbObject::new_str("a".to_string()))));
         assert!(result.is_none());
         let exc = mb_catch_exception();
-        assert_eq!(
-            get_exception_type_pub(exc).as_deref(),
-            Some("ValueError")
-        );
+        assert_eq!(get_exception_type_pub(exc).as_deref(), Some("ValueError"));
         assert_eq!(
             get_exception_message_pub(exc).as_deref(),
             Some("invalid mode 'a' (only r, w, b allowed)")
@@ -1246,7 +1240,12 @@ fn kwarg_get(kwargs: Option<MbValue>, name: &str) -> Option<MbValue> {
     let ptr = kwargs?.as_ptr()?;
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            return lock.read().unwrap().get(name).copied();
+            // `IndexMap::get(&str)` hashes the query with Rust's default
+            // `str` hasher, which no longer matches `DictKey::Str`'s
+            // Python-semantic hash domain (#1028) — that always misses.
+            // `dict_get_exact_str` hashes with the same domain the dict's
+            // keys were inserted under.
+            return super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), name);
         }
     }
     None

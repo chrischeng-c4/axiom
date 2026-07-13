@@ -403,7 +403,10 @@ pub fn mb_exception_init_instance(instance: MbValue, args_list: MbValue) -> MbVa
 fn dict_get_str(dict: MbValue, key: &str) -> Option<MbValue> {
     dict.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            lock.read().unwrap().get(key).copied()
+            // `DictKey::Str` does not share Rust's `str` hashing (see
+            // `dict_get_exact_str`'s doc comment), so a raw `.get(key)` with a
+            // `&str` query silently misses even when the key is present.
+            super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), key)
         } else {
             None
         }
