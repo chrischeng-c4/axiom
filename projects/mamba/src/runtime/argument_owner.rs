@@ -1,7 +1,10 @@
 // HANDWRITE-BEGIN gap="missing-generator:mamba-argument-owner-frame" tracker="#1451" reason="Thread-local frame identity, matching, and nested cleanup require a runtime transaction primitive."
 use crate::runtime::value::MbValue;
-use std::cell::RefCell;
+use smallvec::SmallVec;
+use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+type OwnerSlots = SmallVec<[ArgumentOwnerSlot; 4]>;
 
 /// Explicit provenance for one physical call argument. `owner` originates in
 /// a caller companion slot; this frame deliberately never derives it from
@@ -24,12 +27,15 @@ impl ArgumentOwnerSlot {
 #[derive(Debug)]
 struct ArgumentOwnerFrame {
     id: u64,
-    slots: Vec<ArgumentOwnerSlot>,
+    slots: OwnerSlots,
     expected_slots: usize,
 }
 
 thread_local! {
     static ARGUMENT_OWNER_FRAMES: RefCell<Vec<ArgumentOwnerFrame>> = const { RefCell::new(Vec::new()) };
+    /// An ownerless dynamic call must not accidentally consume an outer
+    /// generated frame whose raw data happens to match its argument.
+    static OWNER_LOOKUP_SUPPRESSIONS: Cell<usize> = const { Cell::new(0) };
 }
 
 static NEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
@@ -52,12 +58,40 @@ impl Drop for ArgumentOwnerFrameGuard {
     }
 }
 
+#[must_use]
+pub(crate) struct OwnerLookupSuppressionGuard;
+
+impl OwnerLookupSuppressionGuard {
+    fn enter() -> Self {
+        OWNER_LOOKUP_SUPPRESSIONS.with(|depth| depth.set(depth.get() + 1));
+        Self
+    }
+}
+
+/// Isolate an ownerless dynamic invocation from any generated caller frame.
+/// The guard leaves that caller frame intact for its normal post-call cleanup.
+pub(crate) fn suppress_argument_owner_lookup() -> OwnerLookupSuppressionGuard {
+    OwnerLookupSuppressionGuard::enter()
+}
+
+impl Drop for OwnerLookupSuppressionGuard {
+    fn drop(&mut self) {
+        OWNER_LOOKUP_SUPPRESSIONS.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+#[must_use]
+pub(crate) enum DynamicArgumentOwnerFrameGuard {
+    Prepared(ArgumentOwnerFrameGuard),
+    Ownerless(OwnerLookupSuppressionGuard),
+}
+
 /// Push one caller-owned frame. Frame slots borrow existing companions, so
 /// this action never changes reference counts.
 pub(crate) fn prepare_argument_owner_frame(
     slots: impl IntoIterator<Item = ArgumentOwnerSlot>,
 ) -> ArgumentOwnerFrameGuard {
-    let slots: Vec<_> = slots.into_iter().collect();
+    let slots: OwnerSlots = slots.into_iter().collect();
     let id = NEXT_FRAME_ID.fetch_add(1, Ordering::Relaxed);
     ARGUMENT_OWNER_FRAMES.with(|frames| {
         frames.borrow_mut().push(ArgumentOwnerFrame {
@@ -75,13 +109,24 @@ pub(crate) fn prepare_argument_owner_frame(
 /// slots directly.
 pub(crate) fn prepare_dynamic_argument_owner_frame(
     values: &[MbValue],
-) -> ArgumentOwnerFrameGuard {
-    prepare_argument_owner_frame(values.iter().copied().map(|value| {
-        ArgumentOwnerSlot::new(
-            value,
-            crate::runtime::symbols::mb_typed_int_owner_or_none(value),
-        )
-    }))
+) -> DynamicArgumentOwnerFrameGuard {
+    // The explicit sidecar contract has exactly one owned dynamic input kind:
+    // a heap BigInt. Small tagged ints and every other runtime value carry no
+    // owner, so bypass the Vec/RefCell frame transaction for the common path.
+    if values
+        .iter()
+        .all(|value| !crate::runtime::builtins::is_bigint_value(*value))
+    {
+        return DynamicArgumentOwnerFrameGuard::Ownerless(suppress_argument_owner_lookup());
+    }
+    DynamicArgumentOwnerFrameGuard::Prepared(prepare_argument_owner_frame(
+        values.iter().copied().map(|value| {
+            ArgumentOwnerSlot::new(
+                value,
+                crate::runtime::symbols::mb_typed_int_owner_or_none(value),
+            )
+        }),
+    ))
 }
 
 /// Consume exactly the top frame when all physical values match. A missing,
@@ -114,7 +159,7 @@ pub(crate) fn begin_argument_owner_frame(expected_slots: usize) {
     ARGUMENT_OWNER_FRAMES.with(|frames| {
         frames.borrow_mut().push(ArgumentOwnerFrame {
             id,
-            slots: Vec::with_capacity(expected_slots),
+            slots: OwnerSlots::with_capacity(expected_slots),
             expected_slots,
         });
     });
@@ -140,6 +185,9 @@ pub(crate) fn push_argument_owner_slot(value: MbValue, owner: MbValue) {
 /// frame. The caller's post-call discard handles uninstrumented targets while
 /// a nested invocation always works on its own top-of-stack frame.
 pub(crate) fn matching_argument_owner_slot(index: usize, value: MbValue) -> MbValue {
+    if OWNER_LOOKUP_SUPPRESSIONS.with(|depth| depth.get() != 0) {
+        return MbValue::none();
+    }
     ARGUMENT_OWNER_FRAMES.with(|frames| {
         let frames = frames.borrow();
         let Some(frame) = frames.last() else {
@@ -252,6 +300,22 @@ mod tests {
         assert!(matching_argument_owner_slot(1, raw).is_none());
         discard_argument_owner_frame();
         assert_eq!(argument_owner_frame_depth(), 0);
+        unsafe { crate::runtime::rc::release_if_ptr(bigint) };
+    }
+
+    #[test]
+    fn ownerless_dynamic_frame_cannot_consume_an_outer_matching_slot() {
+        clear_argument_owner_frames_for_test();
+        let bigint = crate::runtime::bigint_ops::bigint_from_i128(1i128 << 70);
+        let small = MbValue::from_int(7);
+        let outer = prepare_argument_owner_frame([ArgumentOwnerSlot::new(small, bigint)]);
+
+        let ownerless = prepare_dynamic_argument_owner_frame(&[small]);
+        assert!(matching_argument_owner_slot(0, small).is_none());
+        drop(ownerless);
+
+        assert_eq!(matching_argument_owner_slot(0, small), bigint);
+        drop(outer);
         unsafe { crate::runtime::rc::release_if_ptr(bigint) };
     }
 }

@@ -965,6 +965,42 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_unknown_sym!(
+            "mb_call1_bitand_ixor",
+            class::mb_call1_bitand_ixor
+                as fn(super::MbValue, super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64, I64, I64],
+            I64
+        ),
+        rt_unknown_sym!(
+            "mb_list_mod_call1_bitand_ixor",
+            class::mb_list_mod_call1_bitand_ixor
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ) -> super::MbValue,
+            [I64, I64, I64, I64, I64, I64],
+            I64
+        ),
+        rt_unknown_sym!(
+            "mb_static_int_add_list_mod_bitand_ixor",
+            class::mb_static_int_add_list_mod_bitand_ixor
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ) -> super::MbValue,
+            [I64, I64, I64, I64, I64, I64, I64],
+            I64
+        ),
+        rt_unknown_sym!(
             "mb_ipow",
             class::mb_ipow as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],
@@ -2540,6 +2576,18 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             "mb_closure_set_arity",
             closure::mb_closure_set_arity as fn(super::MbValue, super::MbValue),
             [I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_closure_set_context_free_leaf",
+            closure::mb_closure_set_context_free_leaf as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_closure_mark_fast_call1_leaf",
+            closure::mb_closure_mark_fast_call1_leaf as fn(super::MbValue),
+            [I64],
             Void
         ),
         rt_sym!(

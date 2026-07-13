@@ -28,5 +28,6 @@ acc = 0
 for i in range(ITERS):
     acc ^= _add100(_inputs[i % _n]) & 0xFFFF
 
-# Stdout sink — byte-equal across runtimes.
+# Stdout sinks make the accumulator observable and preserve every loop iteration.
 print(f"closure_call: {ITERS}")
+print(f"closure_acc: {acc}")

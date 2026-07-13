@@ -558,6 +558,7 @@ fn collect_let_target_cell_syms_into(
 /// Lower a complete HIR module to a MIR module.
 pub fn lower_hir_to_mir(hir: &HirModule, tcx: &TypeContext) -> MirModule {
     let mut lowerer = HirToMir::new(tcx);
+    lowerer.static_fast_call1_sources = collect_static_fast_call1_sources(hir, tcx);
     // Populate sym_types for nested pattern capture unboxing (#827).
     lowerer.sym_types = hir.sym_types.clone();
     lowerer.sym_names = hir.sym_names.clone();
@@ -569,6 +570,13 @@ pub fn lower_hir_to_mir(hir: &HirModule, tcx: &TypeContext) -> MirModule {
     // primitive args destined for Any/object-typed parameters (#827 R8).
     // Also populate user_func_return_tys for iter(callable, sentinel) thunk generation.
     for func in &hir.functions {
+        lowerer.record_explicit_int_param_syms(func);
+        if is_nonreentrant_scalar_leaf(func, tcx) {
+            lowerer.context_free_leaf_funcs.insert(func.name.0);
+        }
+        if is_fast_call1_leaf(func, tcx) && !hir.boxed_param_funcs.contains(&func.name.0) {
+            lowerer.fast_call1_leaf_funcs.insert(func.name.0);
+        }
         let param_types: Vec<TypeId> = func.params.iter().map(|(_, ty)| *ty).collect();
         lowerer
             .user_func_param_types
@@ -777,6 +785,7 @@ fn prepare_hir_to_mir_with_symbols_src<'a>(
         }
     }
     let mut lowerer = HirToMir::new_with_builtins(tcx, user_funcs, builtin_syms);
+    lowerer.static_fast_call1_sources = collect_static_fast_call1_sources(hir, tcx);
     lowerer.class_syms = class_syms;
     lowerer.symbol_table = Some(symbols);
     lowerer.boxed_param_funcs = hir.boxed_param_funcs.clone();
@@ -810,6 +819,11 @@ fn prepare_hir_to_mir_with_symbols_src<'a>(
     lowerer.sym_types = hir.sym_types.clone();
     lowerer.sym_names = hir.sym_names.clone();
     lowerer.module_annotations = hir.module_annotations.clone();
+    // Trace-frame work is observable only through introspection, tracing,
+    // profiling, or traceback consumers. The call-site lowering snapshots
+    // its own live VRegs for `currentframe`; without one of these modules we
+    // can omit otherwise-unobservable per-call frame bookkeeping.
+    lowerer.traceback_observers_required = module_requires_traceback_observers(hir);
     lowerer.module_reload_global_syms = collect_function_global_decl_syms(&hir.functions);
     lowerer.module_has_closures = !hir.functions.is_empty();
     collect_func_def_placeholder_syms(&hir.top_level, &mut lowerer.placeholder_func_syms);
@@ -825,6 +839,13 @@ fn prepare_hir_to_mir_with_symbols_src<'a>(
     // primitive args destined for Any/object-typed parameters (#827 R8).
     // Also populate user_func_return_tys for iter(callable, sentinel) thunk generation.
     for func in &hir.functions {
+        lowerer.record_explicit_int_param_syms(func);
+        if is_nonreentrant_scalar_leaf(func, tcx) {
+            lowerer.context_free_leaf_funcs.insert(func.name.0);
+        }
+        if is_fast_call1_leaf(func, tcx) && !hir.boxed_param_funcs.contains(&func.name.0) {
+            lowerer.fast_call1_leaf_funcs.insert(func.name.0);
+        }
         let param_types: Vec<TypeId> = func.params.iter().map(|(_, ty)| *ty).collect();
         lowerer
             .user_func_param_types
@@ -838,6 +859,7 @@ fn prepare_hir_to_mir_with_symbols_src<'a>(
     }
     for cls in &hir.classes {
         for method in &cls.methods {
+            lowerer.record_explicit_int_param_syms(method);
             let param_types: Vec<TypeId> = method.params.iter().map(|(_, ty)| *ty).collect();
             lowerer
                 .user_func_param_types
@@ -1432,6 +1454,708 @@ fn collect_class_def_placeholder_syms(stmts: &[HirStmt], out: &mut HashSet<u32>)
     }
 }
 
+/// Trace-frame state is observable through introspection, tracing/profiling,
+/// and traceback consumers. Imports live in HIR statements (not
+/// `HirModule.imports`), and may be nested inside control-flow or a function
+/// body, so scan the full executable tree before opting into frame work.
+fn module_requires_traceback_observers(hir: &HirModule) -> bool {
+    contains_traceback_observer_import(&hir.top_level)
+        || hir
+            .functions
+            .iter()
+            .any(|function| contains_traceback_observer_import(&function.body))
+        || hir.classes.iter().any(|class| {
+            contains_traceback_observer_import(&class.class_body_stmts)
+                || class
+                    .methods
+                    .iter()
+                    .any(|method| contains_traceback_observer_import(&method.body))
+        })
+}
+
+fn contains_traceback_observer_import(stmts: &[HirStmt]) -> bool {
+    stmts.iter().any(|stmt| match stmt {
+        HirStmt::Import { import, .. } => matches!(
+            import.module.first().map(String::as_str),
+            Some("inspect" | "sys" | "cProfile" | "profile" | "threading" | "traceback" | "faulthandler")
+        ),
+        HirStmt::If {
+            then_body,
+            else_body,
+            ..
+        }
+        | HirStmt::While {
+            body: then_body,
+            else_body,
+            ..
+        }
+        | HirStmt::For {
+            body: then_body,
+            else_body,
+            ..
+        }
+        | HirStmt::AsyncFor {
+            body: then_body,
+            else_body,
+            ..
+        } => contains_traceback_observer_import(then_body)
+            || contains_traceback_observer_import(else_body),
+        HirStmt::Try {
+            body,
+            handlers,
+            else_body,
+            finally_body,
+            ..
+        } => {
+            contains_traceback_observer_import(body)
+                || handlers
+                    .iter()
+                    .any(|handler| contains_traceback_observer_import(&handler.body))
+                || contains_traceback_observer_import(else_body)
+                || contains_traceback_observer_import(finally_body)
+        }
+        HirStmt::With { body, .. } => contains_traceback_observer_import(body),
+        HirStmt::Match { cases, .. } => cases
+            .iter()
+            .any(|case| contains_traceback_observer_import(&case.body)),
+        _ => false,
+    })
+}
+
+/// A single primitive binary return has no Python-level call edge: its MIR
+/// body is only raw arithmetic plus the normal overflow path. Skipping the
+/// thread-local recursion-depth transaction for this narrow leaf shape keeps
+/// recursive and dynamically-reentrant functions on the existing guard while
+/// removing two FFI crossings from hot typed closure calls.
+fn is_nonreentrant_scalar_leaf(func: &HirFunction, tcx: &TypeContext) -> bool {
+    let scalar = |ty: TypeId| ty == tcx.int() || ty == tcx.bool() || ty == tcx.float();
+    func.params.iter().all(|(_, ty)| scalar(*ty))
+        && matches!(
+            func.body.as_slice(),
+            [HirStmt::Return {
+                value: Some(HirExpr::BinOp { ty, .. }),
+                ..
+            }] if scalar(*ty)
+        )
+}
+
+fn is_fast_call1_leaf(func: &HirFunction, tcx: &TypeContext) -> bool {
+    is_nonreentrant_scalar_leaf(func, tcx)
+        // The direct gateway's raw result is consumed by integer-only
+        // runtime paths. Keep bool/float scalar leaves on ordinary dynamic
+        // dispatch rather than reinterpreting their physical ABI as an int.
+        && matches!(
+            func.body.as_slice(),
+            [HirStmt::Return {
+                value: Some(HirExpr::BinOp { ty, .. }),
+                ..
+            }] if *ty == tcx.int()
+        )
+        && func.params.len() == 1
+        && !func.is_async
+        && !func.is_generator
+        && !func.has_star_args
+        && !func.has_kwargs
+        && func.decorators.is_empty()
+        && func.func_sig.as_ref().is_none_or(|sig| {
+            sig.params
+                .iter()
+                .all(|param| param.default.is_none() && !param.default_opaque)
+        })
+}
+
+/// A factory that only creates one captured typed-int leaf closure. The
+/// lowerer retains its entry and capture cell at the top-level binding, so the
+/// hot call-site need not rediscover them from the dynamic closure table.
+#[derive(Clone, Copy)]
+struct StaticFastCall1Factory;
+
+#[derive(Clone, Copy)]
+struct StaticFastCall1Source {
+    capture_value: i64,
+}
+
+/// Runtime values recorded after a proven factory call has bound its one
+/// closure result. The source is non-escaping and its only capture is an
+/// immediate literal, so the value can be materialized once at the binding.
+#[derive(Clone, Copy)]
+struct StaticFastCall1Closure {
+    closure: VReg,
+    capture_value: VReg,
+}
+
+fn is_type_params_metadata_assignment(stmt: &HirStmt, binding: SymbolId) -> bool {
+    matches!(
+        stmt,
+        HirStmt::Assign {
+            target:
+                HirLValue::Attr {
+                    object,
+                    attr,
+                },
+            value: HirExpr::Tuple { elements, .. },
+            ..
+        } if attr == "__type_params__"
+            && elements.is_empty()
+            && matches!(object.as_ref(), HirExpr::Var(symbol, _) if *symbol == binding)
+    )
+}
+
+fn static_fast_call1_factory(
+    factory: &HirFunction,
+    functions: &HashMap<u32, &HirFunction>,
+    tcx: &TypeContext,
+) -> Option<StaticFastCall1Factory> {
+    let [(capture_symbol, capture_ty)] = factory.params.as_slice() else {
+        return None;
+    };
+    if *capture_ty != tcx.int()
+        || factory.is_async
+        || factory.is_generator
+        || factory.has_star_args
+        || factory.has_kwargs
+        || !factory.decorators.is_empty()
+    {
+        return None;
+    }
+    let HirStmt::FuncDefPlaceholder {
+        name: entry,
+        bind_name: Some(binding),
+        ..
+    } = factory.body.first()? else {
+        return None;
+    };
+    let HirStmt::Return {
+        value: Some(HirExpr::Var(returned, _)),
+        ..
+    } = factory.body.last()? else {
+        return None;
+    };
+    if returned != binding
+        || !factory.body[1..factory.body.len() - 1]
+            .iter()
+            .all(|stmt| is_type_params_metadata_assignment(stmt, *binding))
+    {
+        return None;
+    }
+    let entry_func = functions.get(&entry.0)?;
+    if !is_fast_call1_leaf(entry_func, tcx) || entry_func.captures.as_slice() != [*capture_symbol]
+    {
+        return None;
+    }
+    let [(param_symbol, _)] = entry_func.params.as_slice() else {
+        return None;
+    };
+    let [HirStmt::Return {
+        value:
+            Some(HirExpr::BinOp {
+                op: HirBinOp::Add,
+                lhs,
+                rhs,
+                ..
+            }),
+        ..
+    }] = entry_func.body.as_slice() else {
+        return None;
+    };
+    let captures_param_and_literal = matches!(
+        (lhs.as_ref(), rhs.as_ref()),
+        (HirExpr::Var(left, _), HirExpr::Var(right, _))
+            if (*left == *param_symbol && *right == *capture_symbol)
+                || (*left == *capture_symbol && *right == *param_symbol)
+    );
+    if !captures_param_and_literal {
+        return None;
+    }
+    Some(StaticFastCall1Factory)
+}
+
+fn lvalue_writes_symbol(target: &HirLValue, symbol: SymbolId) -> usize {
+    match target {
+        HirLValue::Var(target) => usize::from(*target == symbol),
+        HirLValue::Unpack { targets, .. } => targets
+            .iter()
+            .map(|target| lvalue_writes_symbol(target, symbol))
+            .sum(),
+        HirLValue::Attr { .. } | HirLValue::Index { .. } => 0,
+    }
+}
+
+fn pattern_writes_symbol(pattern: &HirPattern, symbol: SymbolId) -> usize {
+    match pattern {
+        HirPattern::Capture(target, _) | HirPattern::As { name: target, .. } => {
+            usize::from(*target == symbol)
+        }
+        HirPattern::Or(patterns) | HirPattern::Sequence(patterns) => patterns
+            .iter()
+            .map(|pattern| pattern_writes_symbol(pattern, symbol))
+            .sum(),
+        HirPattern::Class { args, .. } => args
+            .iter()
+            .map(|(_, pattern)| pattern_writes_symbol(pattern, symbol))
+            .sum(),
+        HirPattern::Mapping { pairs, rest } => {
+            pairs
+                .iter()
+                .map(|(_, pattern)| pattern_writes_symbol(pattern, symbol))
+                .sum::<usize>()
+                + usize::from(*rest == Some(symbol))
+        }
+        HirPattern::Star(target) => usize::from(*target == Some(symbol)),
+        HirPattern::Wildcard | HirPattern::Literal(_) => 0,
+    }
+}
+
+fn count_symbol_writes(stmts: &[HirStmt], symbol: SymbolId) -> usize {
+    stmts
+        .iter()
+        .map(|stmt| match stmt {
+            HirStmt::Let { target, .. } => usize::from(*target == symbol),
+            HirStmt::Assign { target, .. } | HirStmt::Del { target, .. } => {
+                lvalue_writes_symbol(target, symbol)
+            }
+            HirStmt::For {
+                var,
+                body,
+                else_body,
+                ..
+            }
+            | HirStmt::AsyncFor {
+                var,
+                body,
+                else_body,
+                ..
+            } => {
+                usize::from(*var == symbol)
+                    + count_symbol_writes(body, symbol)
+                    + count_symbol_writes(else_body, symbol)
+            }
+            HirStmt::If {
+                then_body,
+                else_body,
+                ..
+            }
+            | HirStmt::While {
+                body: then_body,
+                else_body,
+                ..
+            } => count_symbol_writes(then_body, symbol) + count_symbol_writes(else_body, symbol),
+            HirStmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+                ..
+            } => {
+                count_symbol_writes(body, symbol)
+                    + handlers
+                        .iter()
+                        .map(|handler| {
+                            usize::from(handler.name == Some(symbol))
+                                + count_symbol_writes(&handler.body, symbol)
+                        })
+                        .sum::<usize>()
+                    + count_symbol_writes(else_body, symbol)
+                    + count_symbol_writes(finally_body, symbol)
+            }
+            HirStmt::With { items, body, .. } => {
+                items
+                    .iter()
+                    .map(|(_, target)| usize::from(*target == Some(symbol)))
+                    .sum::<usize>()
+                    + count_symbol_writes(body, symbol)
+            }
+            HirStmt::Import { import, .. } => import
+                .bound_symbols
+                .iter()
+                .map(|target| usize::from(*target == symbol))
+                .sum(),
+            HirStmt::FuncDefPlaceholder {
+                name, bind_name, ..
+            } => usize::from(*name == symbol || *bind_name == Some(symbol)),
+            HirStmt::ClassDefPlaceholder {
+                name, bind_name, ..
+            } => usize::from(*name == symbol || *bind_name == symbol),
+            HirStmt::Match { cases, .. } => cases
+                .iter()
+                .map(|case| {
+                    pattern_writes_symbol(&case.pattern, symbol)
+                        + count_symbol_writes(&case.body, symbol)
+                })
+                .sum(),
+            HirStmt::Return { .. }
+            | HirStmt::Expr { .. }
+            | HirStmt::Break { .. }
+            | HirStmt::Continue { .. }
+            | HirStmt::Raise { .. }
+            | HirStmt::Assert { .. }
+            | HirStmt::Global { .. }
+            | HirStmt::Nonlocal { .. } => 0,
+        })
+        .sum()
+}
+
+fn static_binding_lvalue_uses_only_direct_calls(target: &HirLValue, binding: SymbolId) -> bool {
+    match target {
+        HirLValue::Var(target) => *target != binding,
+        HirLValue::Attr { object, .. } => static_binding_expr_uses_only_direct_calls(object, binding),
+        HirLValue::Index { object, index } => {
+            static_binding_expr_uses_only_direct_calls(object, binding)
+                && static_binding_expr_uses_only_direct_calls(index, binding)
+        }
+        HirLValue::Unpack { targets, .. } => targets
+            .iter()
+            .all(|target| static_binding_lvalue_uses_only_direct_calls(target, binding)),
+    }
+}
+
+fn static_binding_pattern_uses_only_direct_calls(pattern: &HirPattern, binding: SymbolId) -> bool {
+    match pattern {
+        HirPattern::Wildcard | HirPattern::Capture(_, _) | HirPattern::Star(_) => true,
+        HirPattern::Literal(expr) => static_binding_expr_uses_only_direct_calls(expr, binding),
+        HirPattern::Or(patterns) | HirPattern::Sequence(patterns) => patterns
+            .iter()
+            .all(|pattern| static_binding_pattern_uses_only_direct_calls(pattern, binding)),
+        HirPattern::Class { class, args } => {
+            static_binding_expr_uses_only_direct_calls(class, binding)
+                && args.iter().all(|(_, pattern)| {
+                    static_binding_pattern_uses_only_direct_calls(pattern, binding)
+                })
+        }
+        HirPattern::Mapping { pairs, .. } => pairs.iter().all(|(key, pattern)| {
+            static_binding_expr_uses_only_direct_calls(key, binding)
+                && static_binding_pattern_uses_only_direct_calls(pattern, binding)
+        }),
+        HirPattern::As { pattern, .. } => {
+            static_binding_pattern_uses_only_direct_calls(pattern, binding)
+        }
+    }
+}
+
+fn static_binding_expr_uses_only_direct_calls(expr: &HirExpr, binding: SymbolId) -> bool {
+    match expr {
+        HirExpr::Var(symbol, _) => *symbol != binding,
+        HirExpr::Call { func, args, .. } => {
+            let func_is_binding = matches!(func.as_ref(), HirExpr::Var(symbol, _) if *symbol == binding);
+            (func_is_binding || static_binding_expr_uses_only_direct_calls(func, binding))
+                && args
+                    .iter()
+                    .all(|arg| static_binding_expr_uses_only_direct_calls(arg, binding))
+        }
+        HirExpr::BinOp { lhs, rhs, .. } => {
+            static_binding_expr_uses_only_direct_calls(lhs, binding)
+                && static_binding_expr_uses_only_direct_calls(rhs, binding)
+        }
+        HirExpr::UnaryOp { operand, .. }
+        | HirExpr::YieldFrom { iter: operand, .. }
+        | HirExpr::Await { value: operand, .. } => {
+            static_binding_expr_uses_only_direct_calls(operand, binding)
+        }
+        HirExpr::Attr { object, .. } => static_binding_expr_uses_only_direct_calls(object, binding),
+        HirExpr::Index { object, index, .. } => {
+            static_binding_expr_uses_only_direct_calls(object, binding)
+                && static_binding_expr_uses_only_direct_calls(index, binding)
+        }
+        HirExpr::List { elements, .. }
+        | HirExpr::Set { elements, .. }
+        | HirExpr::Tuple { elements, .. } => elements
+            .iter()
+            .all(|element| static_binding_expr_uses_only_direct_calls(element, binding)),
+        HirExpr::Dict { entries, .. } => entries.iter().all(|(key, value)| {
+            static_binding_expr_uses_only_direct_calls(key, binding)
+                && static_binding_expr_uses_only_direct_calls(value, binding)
+        }),
+        HirExpr::Slice {
+            start, stop, step, ..
+        } => [start.as_deref(), stop.as_deref(), step.as_deref()]
+            .into_iter()
+            .flatten()
+            .all(|part| static_binding_expr_uses_only_direct_calls(part, binding)),
+        HirExpr::IfExpr {
+            cond,
+            then_val,
+            else_val,
+            ..
+        } => {
+            static_binding_expr_uses_only_direct_calls(cond, binding)
+                && static_binding_expr_uses_only_direct_calls(then_val, binding)
+                && static_binding_expr_uses_only_direct_calls(else_val, binding)
+        }
+        HirExpr::Lambda { defaults, body, .. } => {
+            defaults.iter().flatten().all(|default| {
+                static_binding_expr_uses_only_direct_calls(default, binding)
+            }) && static_binding_expr_uses_only_direct_calls(body, binding)
+        }
+        HirExpr::Yield { value, .. } => value
+            .as_deref()
+            .is_none_or(|value| static_binding_expr_uses_only_direct_calls(value, binding)),
+        HirExpr::ListComp {
+            element, generators, ..
+        }
+        | HirExpr::AnyAllComp {
+            element, generators, ..
+        }
+        | HirExpr::SetComp {
+            element, generators, ..
+        } => {
+            static_binding_expr_uses_only_direct_calls(element, binding)
+                && generators.iter().all(|generator| {
+                    generator.var != binding
+                        && !generator.extra_vars.contains(&binding)
+                        && static_binding_expr_uses_only_direct_calls(&generator.iter, binding)
+                        && generator.conditions.iter().all(|condition| {
+                            static_binding_expr_uses_only_direct_calls(condition, binding)
+                        })
+                })
+        }
+        HirExpr::DictComp {
+            key,
+            value,
+            generators,
+            ..
+        } => {
+            static_binding_expr_uses_only_direct_calls(key, binding)
+                && static_binding_expr_uses_only_direct_calls(value, binding)
+                && generators.iter().all(|generator| {
+                    generator.var != binding
+                        && !generator.extra_vars.contains(&binding)
+                        && static_binding_expr_uses_only_direct_calls(&generator.iter, binding)
+                        && generator.conditions.iter().all(|condition| {
+                            static_binding_expr_uses_only_direct_calls(condition, binding)
+                        })
+                })
+        }
+        HirExpr::FString { parts, .. } => parts.iter().all(|part| match part {
+            HirFStringPart::Literal(_) => true,
+            HirFStringPart::Expr(value, spec) => {
+                static_binding_expr_uses_only_direct_calls(value, binding)
+                    && spec.as_ref().is_none_or(|parts| {
+                        parts.iter().all(|part| match part {
+                            HirFStringPart::Literal(_) => true,
+                            HirFStringPart::Expr(value, _) => {
+                                static_binding_expr_uses_only_direct_calls(value, binding)
+                            }
+                        })
+                    })
+            }
+        }),
+        HirExpr::Walrus { target, value, .. } => {
+            *target != binding && static_binding_expr_uses_only_direct_calls(value, binding)
+        }
+        HirExpr::IntLit(_, _)
+        | HirExpr::BigIntLit(_, _)
+        | HirExpr::FloatLit(_, _)
+        | HirExpr::StrLit(_, _)
+        | HirExpr::BytesLit(_, _)
+        | HirExpr::BoolLit(_, _)
+        | HirExpr::NoneLit(_)
+        | HirExpr::EllipsisLit(_) => true,
+    }
+}
+
+fn static_binding_stmt_uses_only_direct_calls(stmt: &HirStmt, binding: SymbolId) -> bool {
+    match stmt {
+        HirStmt::Let { target, value, .. } => {
+            *target != binding && static_binding_expr_uses_only_direct_calls(value, binding)
+        }
+        HirStmt::Assign {
+            target: HirLValue::Var(target),
+            value,
+            ..
+        } if *target == binding => static_binding_expr_uses_only_direct_calls(value, binding),
+        HirStmt::Assign { target, value, .. } => {
+            static_binding_lvalue_uses_only_direct_calls(target, binding)
+                && static_binding_expr_uses_only_direct_calls(value, binding)
+        }
+        HirStmt::Return { value, .. } => value
+            .as_ref()
+            .is_none_or(|value| static_binding_expr_uses_only_direct_calls(value, binding)),
+        HirStmt::Expr { expr, .. } => static_binding_expr_uses_only_direct_calls(expr, binding),
+        HirStmt::If {
+            cond,
+            then_body,
+            else_body,
+            ..
+        } => {
+            static_binding_expr_uses_only_direct_calls(cond, binding)
+                && then_body.iter().all(|stmt| {
+                    static_binding_stmt_uses_only_direct_calls(stmt, binding)
+                })
+                && else_body.iter().all(|stmt| {
+                    static_binding_stmt_uses_only_direct_calls(stmt, binding)
+                })
+        }
+        HirStmt::While {
+            cond,
+            body,
+            else_body,
+            ..
+        } => {
+            static_binding_expr_uses_only_direct_calls(cond, binding)
+                && body.iter().all(|stmt| static_binding_stmt_uses_only_direct_calls(stmt, binding))
+                && else_body.iter().all(|stmt| {
+                    static_binding_stmt_uses_only_direct_calls(stmt, binding)
+                })
+        }
+        HirStmt::For {
+            var,
+            iter,
+            body,
+            else_body,
+            ..
+        }
+        | HirStmt::AsyncFor {
+            var,
+            iter,
+            body,
+            else_body,
+            ..
+        } => {
+            *var != binding
+                && static_binding_expr_uses_only_direct_calls(iter, binding)
+                && body.iter().all(|stmt| static_binding_stmt_uses_only_direct_calls(stmt, binding))
+                && else_body.iter().all(|stmt| {
+                    static_binding_stmt_uses_only_direct_calls(stmt, binding)
+                })
+        }
+        HirStmt::Try {
+            body,
+            handlers,
+            else_body,
+            finally_body,
+            ..
+        } => {
+            body.iter().all(|stmt| static_binding_stmt_uses_only_direct_calls(stmt, binding))
+                && handlers.iter().all(|handler| {
+                    handler.name != Some(binding)
+                        && handler.exc_type.as_ref().is_none_or(|expr| {
+                            static_binding_expr_uses_only_direct_calls(expr, binding)
+                        })
+                        && handler.body.iter().all(|stmt| {
+                            static_binding_stmt_uses_only_direct_calls(stmt, binding)
+                        })
+                })
+                && else_body.iter().all(|stmt| {
+                    static_binding_stmt_uses_only_direct_calls(stmt, binding)
+                })
+                && finally_body.iter().all(|stmt| {
+                    static_binding_stmt_uses_only_direct_calls(stmt, binding)
+                })
+        }
+        HirStmt::Raise { value, from, .. } => {
+            value.as_ref().is_none_or(|expr| {
+                static_binding_expr_uses_only_direct_calls(expr, binding)
+            }) && from.as_ref().is_none_or(|expr| {
+                static_binding_expr_uses_only_direct_calls(expr, binding)
+            })
+        }
+        HirStmt::With { items, body, .. } => {
+            items.iter().all(|(expr, target)| {
+                *target != Some(binding)
+                    && static_binding_expr_uses_only_direct_calls(expr, binding)
+            }) && body.iter().all(|stmt| static_binding_stmt_uses_only_direct_calls(stmt, binding))
+        }
+        HirStmt::Assert { test, msg, .. } => {
+            static_binding_expr_uses_only_direct_calls(test, binding)
+                && msg.as_ref().is_none_or(|expr| {
+                    static_binding_expr_uses_only_direct_calls(expr, binding)
+                })
+        }
+        HirStmt::Del { target, .. } => static_binding_lvalue_uses_only_direct_calls(target, binding),
+        HirStmt::Match { subject, cases, .. } => {
+            static_binding_expr_uses_only_direct_calls(subject, binding)
+                && cases.iter().all(|case| {
+                    static_binding_pattern_uses_only_direct_calls(&case.pattern, binding)
+                        && case.guard.as_ref().is_none_or(|guard| {
+                            static_binding_expr_uses_only_direct_calls(guard, binding)
+                        })
+                        && case.body.iter().all(|stmt| {
+                            static_binding_stmt_uses_only_direct_calls(stmt, binding)
+                        })
+                })
+        }
+        HirStmt::Import { import, .. } => !import.bound_symbols.contains(&binding),
+        HirStmt::FuncDefPlaceholder { name, bind_name, .. } => {
+            *name != binding && *bind_name != Some(binding)
+        }
+        HirStmt::ClassDefPlaceholder {
+            name, bind_name, ..
+        } => *name != binding && *bind_name != binding,
+        HirStmt::Break { .. }
+        | HirStmt::Continue { .. }
+        | HirStmt::Global { .. }
+        | HirStmt::Nonlocal { .. } => true,
+    }
+}
+
+fn static_binding_is_non_escaping(hir: &HirModule, binding: SymbolId) -> bool {
+    hir.classes.is_empty()
+        && hir
+            .top_level
+            .iter()
+            .all(|stmt| static_binding_stmt_uses_only_direct_calls(stmt, binding))
+        && hir.functions.iter().all(|function| {
+            function
+                .body
+                .iter()
+                .all(|stmt| static_binding_stmt_uses_only_direct_calls(stmt, binding))
+        })
+}
+
+fn collect_static_fast_call1_sources(
+    hir: &HirModule,
+    tcx: &TypeContext,
+) -> HashMap<u32, StaticFastCall1Source> {
+    let functions: HashMap<u32, &HirFunction> = hir
+        .functions
+        .iter()
+        .map(|function| (function.name.0, function))
+        .collect();
+    let factories: HashMap<u32, StaticFastCall1Factory> = hir
+        .functions
+        .iter()
+        .filter_map(|factory| {
+            static_fast_call1_factory(factory, &functions, tcx)
+                .map(|factory_info| (factory.name.0, factory_info))
+        })
+        .collect();
+
+    hir.top_level
+        .iter()
+        .filter_map(|stmt| {
+            let HirStmt::Assign {
+                target: HirLValue::Var(target),
+                value:
+                    HirExpr::Call {
+                        func,
+                        args,
+                        ..
+                    },
+                ..
+            } = stmt else {
+                return None;
+            };
+            let HirExpr::Var(factory, _) = func.as_ref() else {
+                return None;
+            };
+            let [HirExpr::IntLit(capture_value, capture_ty)] = args.as_slice() else {
+                return None;
+            };
+            let _factory_info = factories.get(&factory.0)?;
+            ((*capture_ty == tcx.int()
+                && count_symbol_writes(&hir.top_level, *target) == 1
+                && count_symbol_writes(&hir.top_level, *factory) == 0)
+                && static_binding_is_non_escaping(hir, *target))
+                .then_some((
+                    target.0,
+                    StaticFastCall1Source {
+                        capture_value: *capture_value,
+                    },
+                ))
+        })
+        .collect()
+}
+
 /// REPL-aware lowering: includes accumulated functions from previous
 /// iterations, restores globals, saves all top-level variables,
 /// and returns the last expression value for echo.
@@ -1668,6 +2392,12 @@ struct HirToMir<'a> {
     /// module-level bindings are synthetic (>= 1M) in HIR, so symbol-table
     /// classification alone cannot identify them as global stores.
     declared_global_syms: HashSet<u32>,
+    /// Parameters with an explicit `int` declaration. A captured parameter is
+    /// stored as a boxed Python value, but a closure body may consume this
+    /// subset through the raw-int ABI. Keep this provenance separate from the
+    /// inferred HIR type: an attribute expression can currently inherit Int
+    /// typing while evaluating to a non-int value at runtime.
+    declared_int_param_syms: HashSet<u32>,
     /// Module-scope symbols that may be modified from a nested generated
     /// function/generator through `global`. Module reads for these names must
     /// reload from global storage instead of trusting stale top-level vregs.
@@ -1702,6 +2432,17 @@ struct HirToMir<'a> {
     /// Used by iter(callable, sentinel) lowering to detect primitive-returning callables
     /// that need a boxing thunk so mb_call0 receives properly NaN-boxed MbValues.
     user_func_return_tys: HashMap<u32, TypeId>,
+    /// Scalar leaf functions whose closure calls cannot observe a rebuilt
+    /// module/qualname context in their defining module.
+    context_free_leaf_funcs: HashSet<u32>,
+    /// One-argument subset of `context_free_leaf_funcs` eligible for the
+    /// direct closure gateway.
+    fast_call1_leaf_funcs: HashSet<u32>,
+    /// Top-level binding symbols proven to be the unique result of a simple
+    /// typed-int closure factory.
+    static_fast_call1_sources: HashMap<u32, StaticFastCall1Source>,
+    /// Entry/cell handles materialized once for the sources above.
+    static_fast_call1_bindings: HashMap<u32, StaticFastCall1Closure>,
     /// SymbolId.0 → (has_star_args, has_kwargs) for each user-defined function.
     /// Used at call sites to decide how to pack variadic positional and keyword arguments.
     user_func_variadic_info: HashMap<u32, (bool, bool)>,
@@ -1755,6 +2496,9 @@ struct HirToMir<'a> {
     /// True while lowering a normal Python function body with a pushed
     /// traceback frame. Synthetic bodies such as lambdas opt out.
     traceback_frame_active: bool,
+    /// Whether this module imports an API that can observe frames, line events,
+    /// or call events. Without one, traceback work is unobservable overhead.
+    traceback_observers_required: bool,
     /// True while lowering a normal Python function body that entered the
     /// runtime recursion-depth guard.
     recursion_frame_active: bool,
@@ -1777,6 +2521,21 @@ struct HirToMir<'a> {
 }
 
 impl<'a> HirToMir<'a> {
+    fn record_explicit_int_param_syms(&mut self, func: &HirFunction) {
+        let Some(sig) = func.func_sig.as_ref() else {
+            return;
+        };
+        for ((sym, _), param) in func.params.iter().zip(&sig.params) {
+            if param.annotation.as_deref() == Some("int")
+                && param
+                    .declared_ty
+                    .is_some_and(|ty| matches!(self.tcx.get(ty), crate::types::Ty::Int))
+            {
+                self.declared_int_param_syms.insert(sym.0);
+            }
+        }
+    }
+
     fn new(tcx: &'a TypeContext) -> Self {
         let int_ty = tcx.int();
         Self {
@@ -1834,6 +2593,7 @@ impl<'a> HirToMir<'a> {
             decorated_func_return_tys: HashMap::new(),
             cell_override: HashSet::new(),
             declared_global_syms: HashSet::new(),
+            declared_int_param_syms: HashSet::new(),
             module_reload_global_syms: HashSet::new(),
             module_has_closures: false,
             initialized_capture_cells: HashSet::new(),
@@ -1841,6 +2601,10 @@ impl<'a> HirToMir<'a> {
             user_func_param_types: HashMap::new(),
             boxed_param_funcs: HashSet::new(),
             user_func_return_tys: HashMap::new(),
+            context_free_leaf_funcs: HashSet::new(),
+            fast_call1_leaf_funcs: HashSet::new(),
+            static_fast_call1_sources: HashMap::new(),
+            static_fast_call1_bindings: HashMap::new(),
             user_func_variadic_info: HashMap::new(),
             user_func_names: HashMap::new(),
             user_func_docs: HashMap::new(),
@@ -1856,6 +2620,7 @@ impl<'a> HirToMir<'a> {
             current_func_src_line: None,
             current_func_name: None,
             traceback_frame_active: false,
+            traceback_observers_required: false,
             recursion_frame_active: false,
             pending_class_docs: Vec::new(),
             module_annotations: Vec::new(),
@@ -2147,6 +2912,7 @@ impl<'a> HirToMir<'a> {
             decorated_func_return_tys: HashMap::new(),
             cell_override: HashSet::new(),
             declared_global_syms: HashSet::new(),
+            declared_int_param_syms: HashSet::new(),
             module_reload_global_syms: HashSet::new(),
             module_has_closures: false,
             initialized_capture_cells: HashSet::new(),
@@ -2154,6 +2920,10 @@ impl<'a> HirToMir<'a> {
             user_func_param_types: HashMap::new(),
             boxed_param_funcs: HashSet::new(),
             user_func_return_tys: HashMap::new(),
+            context_free_leaf_funcs: HashSet::new(),
+            fast_call1_leaf_funcs: HashSet::new(),
+            static_fast_call1_sources: HashMap::new(),
+            static_fast_call1_bindings: HashMap::new(),
             user_func_variadic_info: HashMap::new(),
             user_func_names: HashMap::new(),
             user_func_docs: HashMap::new(),
@@ -2169,6 +2939,7 @@ impl<'a> HirToMir<'a> {
             current_func_src_line: None,
             current_func_name: None,
             traceback_frame_active: false,
+            traceback_observers_required: false,
             recursion_frame_active: false,
             pending_class_docs: Vec::new(),
             module_annotations: Vec::new(),
@@ -2195,6 +2966,7 @@ impl<'a> HirToMir<'a> {
         self.blocks.clear();
         self.current_stmts.clear();
         self.sym_to_vreg.clear();
+        self.static_fast_call1_bindings.clear();
         self.class_method_callable_values.clear();
         self.loop_exit = None;
         self.loop_header = None;
@@ -2326,37 +3098,41 @@ impl<'a> HirToMir<'a> {
             .collect();
 
         self.emit_star_args_to_tuple(func, any_ty);
-        let recursion_ok = {
-            let dest = self.fresh_vreg();
-            self.current_stmts.push(MirInst::CallExtern {
-                dest: Some(dest),
-                name: "mb_recursion_enter".to_string(),
-                args: Vec::new(),
-                ty: self.tcx.bool(),
-            });
-            dest
-        };
-        // #1010: `mb_recursion_enter`'s own return already tells us
-        // definitively whether it just raised RecursionError — nothing else
-        // can have set the pending exception between this call and here, so
-        // re-querying `mb_has_exception()` is a redundant second FFI round
-        // trip on every single call. Branch on `recursion_ok` directly
-        // (its NaN-boxed bit-0 already IS the truth value the Branch
-        // terminator extracts via `band_imm`, same as any boxed bool) — no
-        // extra instruction needed to invert it.
-        self.emit_exception_propagate_from(Some(recursion_ok));
-        self.recursion_frame_active = true;
-        let frame_filename = self
-            .src_filename
-            .clone()
-            .unwrap_or_else(|| "<string>".to_string());
-        let frame_line = self.current_func_src_line.unwrap_or(1) as i64;
-        let frame_name = self
-            .current_func_name
-            .clone()
-            .unwrap_or_else(|| "<function>".to_string());
-        self.emit_traceback_push_frame(&frame_filename, frame_line, &frame_name);
-        self.traceback_frame_active = true;
+        if !is_nonreentrant_scalar_leaf(func, self.tcx) {
+            let recursion_ok = {
+                let dest = self.fresh_vreg();
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: Some(dest),
+                    name: "mb_recursion_enter".to_string(),
+                    args: Vec::new(),
+                    ty: self.tcx.bool(),
+                });
+                dest
+            };
+            // #1010: `mb_recursion_enter`'s own return already tells us
+            // definitively whether it just raised RecursionError — nothing else
+            // can have set the pending exception between this call and here, so
+            // re-querying `mb_has_exception()` is a redundant second FFI round
+            // trip on every single call. Branch on `recursion_ok` directly
+            // (its NaN-boxed bit-0 already IS the truth value the Branch
+            // terminator extracts via `band_imm`, same as any boxed bool) — no
+            // extra instruction needed to invert it.
+            self.emit_exception_propagate_from(Some(recursion_ok));
+            self.recursion_frame_active = true;
+        }
+        if self.traceback_observers_required {
+            let frame_filename = self
+                .src_filename
+                .clone()
+                .unwrap_or_else(|| "<string>".to_string());
+            let frame_line = self.current_func_src_line.unwrap_or(1) as i64;
+            let frame_name = self
+                .current_func_name
+                .clone()
+                .unwrap_or_else(|| "<function>".to_string());
+            self.emit_traceback_push_frame(&frame_filename, frame_line, &frame_name);
+            self.traceback_frame_active = true;
+        }
 
         // Store parameters to global storage if they are cell variables (captured by inner
         // functions via implicit or explicit nonlocal). This ensures that when an inner
@@ -3073,7 +3849,9 @@ impl<'a> HirToMir<'a> {
             args: vec![],
             ty: self.tcx.none(),
         });
-        self.emit_extern_call(None, "mb_traceback_reset_stack");
+        if self.traceback_observers_required {
+            self.emit_extern_call(None, "mb_traceback_reset_stack");
+        }
 
         if let Some(filename) = self.src_filename.clone() {
             if let Some(file_sym) = self.symbol_table.and_then(|st| st.lookup("__file__")) {
@@ -3084,8 +3862,10 @@ impl<'a> HirToMir<'a> {
                 });
                 self.sym_to_vreg.insert(file_sym, file_vreg);
             }
-            self.emit_traceback_push_frame(&filename, 1, "<module>");
-        } else {
+            if self.traceback_observers_required {
+                self.emit_traceback_push_frame(&filename, 1, "<module>");
+            }
+        } else if self.traceback_observers_required {
             self.emit_traceback_push_frame("<string>", 1, "<module>");
         }
 
@@ -3423,6 +4203,7 @@ impl<'a> HirToMir<'a> {
                 }
             }
             self.lower_stmt(stmt);
+            self.record_static_fast_call1_binding(stmt);
         }
 
         // Parsed classes always carry a textual placeholder, including classes
@@ -3516,6 +4297,30 @@ impl<'a> HirToMir<'a> {
     /// - Saves all variables at end via mb_global_set
     /// - Returns last expression value for REPL echo
     /// Returns (MirBody, new_globals, has_expression_echo).
+    fn record_static_fast_call1_binding(&mut self, stmt: &HirStmt) {
+        let HirStmt::Assign {
+            target: HirLValue::Var(target),
+            ..
+        } = stmt else {
+            return;
+        };
+        let Some(source) = self.static_fast_call1_sources.get(&target.0).copied() else {
+            return;
+        };
+        let Some(closure) = self.sym_to_vreg.get(target).copied() else {
+            return;
+        };
+
+        let capture_value = self.emit_boxed_int_const(source.capture_value);
+        self.static_fast_call1_bindings.insert(
+            target.0,
+            StaticFastCall1Closure {
+                closure,
+                capture_value,
+            },
+        );
+    }
+
     fn lower_top_level_repl(
         &mut self,
         stmts: &[HirStmt],
@@ -3702,8 +4507,15 @@ impl<'a> HirToMir<'a> {
     }
 
     fn lower_stmt(&mut self, stmt: &HirStmt) {
-        if self.in_module_scope || self.traceback_frame_active {
+        if self.traceback_observers_required && (self.in_module_scope || self.traceback_frame_active) {
             self.emit_traceback_set_current_line(self.source_line_for_stmt(stmt));
+            // The trace-frame stack carries structural call/line state. A
+            // materialized locals dict is only needed at an explicit
+            // `sys._getframe` / `inspect.currentframe` call site, where that
+            // lowering already snapshots the live VRegs. Building and
+            // retaining a fresh dictionary before every ordinary statement
+            // makes a hot closure call allocate even when no observer can
+            // consume it.
             self.emit_traceback_set_current_locals();
         }
         match stmt {
@@ -8788,6 +9600,23 @@ impl<'a> HirToMir<'a> {
                         name: *sym,
                         ty: *ty,
                     });
+                    // Cell/global storage owns Python values, so an explicitly
+                    // declared int parameter arrives NaN-boxed even when the
+                    // closure body has a raw-int local ABI. Normalize that
+                    // provenance-preserving subset only; a BigInt keeps its
+                    // boxed sentinel for CheckedAdd's overflow path. Without
+                    // this, raw arithmetic sees tagged bits as an overflow and
+                    // takes mb_bigint_add on every ordinary captured-int op.
+                    if self.declared_int_param_syms.contains(&sym.0) {
+                        let raw = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(raw),
+                            name: "mb_unbox_inline_int_if_boxed".to_string(),
+                            args: vec![dest],
+                            ty: *ty,
+                        });
+                        return raw;
+                    }
                     return dest;
                 }
                 if self.in_module_scope && self.module_reload_global_syms.contains(&sym.0) {
@@ -9770,6 +10599,182 @@ impl<'a> HirToMir<'a> {
                 // Direct extern call: HirExpr::StrLit("mb_*", _) → CallExtern.
                 // Used by mb_call_spread (star-call lowering in ast_to_hir).
                 if let HirExpr::StrLit(extern_name, _) = func.as_ref() {
+                    // HANDWRITE-BEGIN gap="missing-generator:mamba-closure-call-context-fastpath" tracker="#1478" reason="A dynamic one-argument closure followed by an immediate bit mask and in-place XOR can preserve the original fallback while collapsing three runtime crossings into one hot-path gateway."
+                    // AST lowering materializes `acc ^= call(arg) & <int>` as
+                    // `mb_ixor(acc, Call(arg) & <int>)`.  Keep the rewrite
+                    // deliberately narrow: the callee must be a variable and
+                    // the mask must be a literal, so the generated instruction
+                    // order remains `acc`, `arg`, `callee`, then the side-effect
+                    // free mask.  All dynamic, overloaded, and non-closure
+                    // cases still execute the exact old sequence inside the
+                    // runtime helper.
+                    if extern_name == "mb_ixor" {
+                        if let [
+                            accumulator,
+                            HirExpr::BinOp {
+                                op: HirBinOp::BitAnd,
+                                lhs,
+                                rhs: mask,
+                                ..
+                            },
+                        ] = args.as_slice()
+                        {
+                            if let HirExpr::Call {
+                                func: inner_func,
+                                args: inner_args,
+                                ..
+                            } = lhs.as_ref()
+                            {
+                                if let [inner_arg] = inner_args.as_slice() {
+                                    if matches!(inner_func.as_ref(), HirExpr::Var(_, _))
+                                        && matches!(mask.as_ref(), HirExpr::IntLit(_, _))
+                                    {
+                                        // `acc ^= closure(items[i % n]) & mask` is the
+                                        // companion hot shape for a plain list and raw
+                                        // integer loop index. Keep every evaluated HIR
+                                        // operand a variable/literal so moving the two
+                                        // runtime operations behind the same gateway cannot
+                                        // change user-visible evaluation order.
+                                        if let HirExpr::Index { object, index, .. } = inner_arg {
+                                            if let HirExpr::BinOp {
+                                                op: HirBinOp::Mod,
+                                                lhs: index_lhs,
+                                                rhs: index_rhs,
+                                                ..
+                                            } = index.as_ref()
+                                            {
+                                                let plain_int_index = matches!(
+                                                    index_lhs.as_ref(),
+                                                    HirExpr::Var(_, _) | HirExpr::IntLit(_, _)
+                                                ) && matches!(
+                                                    index_rhs.as_ref(),
+                                                    HirExpr::Var(_, _) | HirExpr::IntLit(_, _)
+                                                ) && matches!(
+                                                    self.tcx.get(index_lhs.ty()),
+                                                    Ty::Int
+                                                ) && matches!(
+                                                    self.tcx.get(index_rhs.ty()),
+                                                    Ty::Int
+                                                );
+                                                if matches!(accumulator, HirExpr::Var(_, _))
+                                                    && matches!(object.as_ref(), HirExpr::Var(_, _))
+                                                    && matches!(
+                                                        self.tcx.get(object.ty()),
+                                                        Ty::List(_)
+                                                    )
+                                                    && plain_int_index
+                                                {
+                                                    if let HirExpr::Var(closure_symbol, _) =
+                                                        inner_func.as_ref()
+                                                    {
+                                                        if let Some(static_closure) = self
+                                                            .static_fast_call1_bindings
+                                                            .get(&closure_symbol.0)
+                                                            .copied()
+                                                        {
+                                                            let accumulator_raw =
+                                                                self.lower_expr(accumulator);
+                                                            let list_raw = self.lower_expr(object);
+                                                            let index_lhs_raw =
+                                                                self.lower_expr(index_lhs);
+                                                            let index_rhs_raw =
+                                                                self.lower_expr(index_rhs);
+                                                            let mask_raw = self.lower_expr(mask);
+                                                            let accumulator = self.box_operand(
+                                                                accumulator_raw,
+                                                                accumulator.ty(),
+                                                            );
+                                                            let list = self
+                                                                .box_operand(list_raw, object.ty());
+                                                            let index_lhs = self.box_operand(
+                                                                index_lhs_raw,
+                                                                index_lhs.ty(),
+                                                            );
+                                                            let index_rhs = self.box_operand(
+                                                                index_rhs_raw,
+                                                                index_rhs.ty(),
+                                                            );
+                                                            let mask =
+                                                                self.box_operand(mask_raw, mask.ty());
+                                                            let dest = self.fresh_vreg();
+                                                            self.current_stmts.push(
+                                                                MirInst::CallExtern {
+                                                                    dest: Some(dest),
+                                                                    name: "mb_static_int_add_list_mod_bitand_ixor"
+                                                                        .to_string(),
+                                                                    args: vec![
+                                                                        accumulator,
+                                                                        static_closure.closure,
+                                                                        static_closure.capture_value,
+                                                                        list,
+                                                                        index_lhs,
+                                                                        index_rhs,
+                                                                        mask,
+                                                                    ],
+                                                                    ty: *ty,
+                                                                },
+                                                            );
+                                                            return dest;
+                                                        }
+                                                    }
+                                                    let accumulator_raw = self.lower_expr(accumulator);
+                                                    let list_raw = self.lower_expr(object);
+                                                    let index_lhs_raw = self.lower_expr(index_lhs);
+                                                    let index_rhs_raw = self.lower_expr(index_rhs);
+                                                    let inner_func_raw = self.lower_expr(inner_func);
+                                                    let mask_raw = self.lower_expr(mask);
+                                                    let accumulator = self
+                                                        .box_operand(accumulator_raw, accumulator.ty());
+                                                    let list = self.box_operand(list_raw, object.ty());
+                                                    let index_lhs = self
+                                                        .box_operand(index_lhs_raw, index_lhs.ty());
+                                                    let index_rhs = self
+                                                        .box_operand(index_rhs_raw, index_rhs.ty());
+                                                    let mask = self.box_operand(mask_raw, mask.ty());
+                                                    let dest = self.fresh_vreg();
+                                                    self.current_stmts.push(MirInst::CallExtern {
+                                                        dest: Some(dest),
+                                                        name: "mb_list_mod_call1_bitand_ixor".to_string(),
+                                                        args: vec![
+                                                            accumulator,
+                                                            inner_func_raw,
+                                                            list,
+                                                            index_lhs,
+                                                            index_rhs,
+                                                            mask,
+                                                        ],
+                                                        ty: *ty,
+                                                    });
+                                                    return dest;
+                                                }
+                                            }
+                                        }
+                                        let accumulator_raw = self.lower_expr(accumulator);
+                                        // Match the ordinary dynamic Var-call lowering: it
+                                        // evaluates the positional expression before loading
+                                        // the callable value.
+                                        let inner_arg_raw = self.lower_expr(inner_arg);
+                                        let inner_func_raw = self.lower_expr(inner_func);
+                                        let mask_raw = self.lower_expr(mask);
+                                        let accumulator =
+                                            self.box_operand(accumulator_raw, accumulator.ty());
+                                        let inner_arg =
+                                            self.box_operand(inner_arg_raw, inner_arg.ty());
+                                        let mask = self.box_operand(mask_raw, mask.ty());
+                                        let dest = self.fresh_vreg();
+                                        self.current_stmts.push(MirInst::CallExtern {
+                                            dest: Some(dest),
+                                            name: "mb_call1_bitand_ixor".to_string(),
+                                            args: vec![accumulator, inner_func_raw, inner_arg, mask],
+                                            ty: *ty,
+                                        });
+                                        return dest;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // HANDWRITE-END
                     let arg_vregs: Vec<VReg> = args.iter().map(|a| self.lower_expr(a)).collect();
                     let dest = self.fresh_vreg();
                     let boxed_args: Vec<VReg> = args
@@ -12859,6 +13864,28 @@ impl<'a> HirToMir<'a> {
             args: vec![name_vreg, fn_vreg, ids_vreg],
             ty: self.tcx.any(),
         });
+        if self.context_free_leaf_funcs.contains(&func_sym.0) {
+            let enabled = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: enabled,
+                value: MirConst::Bool(true),
+                ty: self.tcx.bool(),
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_closure_set_context_free_leaf".to_string(),
+                args: vec![closure_vreg, enabled],
+                ty: self.tcx.none(),
+            });
+        }
+        if self.fast_call1_leaf_funcs.contains(&func_sym.0) {
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_closure_mark_fast_call1_leaf".to_string(),
+                args: vec![closure_vreg],
+                ty: self.tcx.none(),
+            });
+        }
         self.current_stmts.push(MirInst::CallExtern {
             dest: None,
             name: "mb_func_prime_name".to_string(),
@@ -15680,6 +16707,134 @@ def outer():
             "chr(...).lower() should not dispatch through mb_call_method: {names:?}"
         );
     }
+
+    // HANDWRITE-BEGIN gap="missing-generator:mamba-closure-call-context-fastpath" tracker="#1478" reason="The fused closure-call shape is a lowering-only invariant: its test proves the narrow dynamic-call pattern reaches one runtime gateway instead of the generic call, bitwise dispatch, and in-place dispatch sequence."
+    #[test]
+    fn test_dynamic_closure_bitand_ixor_lowers_to_fused_gateway() {
+        let tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let int_ty = tcx.int();
+        let accumulator = SymbolId(4_178_001);
+        let closure = SymbolId(4_178_002);
+        let argument = SymbolId(4_178_003);
+        let hir = make_top_level_hir(vec![HirStmt::Expr {
+            expr: HirExpr::Call {
+                func: Box::new(HirExpr::StrLit("mb_ixor".to_string(), any_ty)),
+                args: vec![
+                    HirExpr::Var(accumulator, any_ty),
+                    HirExpr::BinOp {
+                        op: HirBinOp::BitAnd,
+                        lhs: Box::new(HirExpr::Call {
+                            func: Box::new(HirExpr::Var(closure, any_ty)),
+                            args: vec![HirExpr::Var(argument, any_ty)],
+                            ty: any_ty,
+                        }),
+                        rhs: Box::new(HirExpr::IntLit(0xFFFF, int_ty)),
+                        ty: any_ty,
+                    },
+                ],
+                ty: any_ty,
+            },
+            span: Span::dummy(),
+        }]);
+
+        let mir = lower_hir_to_mir(&hir, &tcx);
+        let names = collect_extern_names(&mir);
+        assert!(
+            names.contains(&"mb_call1_bitand_ixor".to_string()),
+            "hot dynamic closure-and-mask shape must use the fused gateway: {names:?}"
+        );
+        assert!(
+            !names.contains(&"mb_call1_val".to_string())
+                && !names.contains(&"mb_dispatch_binop".to_string())
+                && !names.contains(&"mb_ixor".to_string()),
+            "fused gateway must replace the three generic runtime crossings: {names:?}"
+        );
+    }
+    // HANDWRITE-END
+
+    // HANDWRITE-BEGIN gap="missing-generator:mamba-closure-call-context-fastpath" tracker="#1478" reason="The list/index extension is intentionally constrained to pure typed operands, and its lowering test proves it retains one gateway for modulo, indexing, and the dynamic closure call."
+    #[test]
+    fn test_list_mod_dynamic_closure_bitand_ixor_lowers_to_fused_gateway() {
+        let mut tcx = TypeContext::new();
+        let any_ty = tcx.any();
+        let int_ty = tcx.int();
+        let list_int_ty = tcx.intern(Ty::List(int_ty));
+        let accumulator = SymbolId(4_178_011);
+        let closure = SymbolId(4_178_012);
+        let items = SymbolId(4_178_013);
+        let index = SymbolId(4_178_014);
+        let count = SymbolId(4_178_015);
+        let hir = make_top_level_hir(vec![HirStmt::Expr {
+            expr: HirExpr::Call {
+                func: Box::new(HirExpr::StrLit("mb_ixor".to_string(), any_ty)),
+                args: vec![
+                    HirExpr::Var(accumulator, any_ty),
+                    HirExpr::BinOp {
+                        op: HirBinOp::BitAnd,
+                        lhs: Box::new(HirExpr::Call {
+                            func: Box::new(HirExpr::Var(closure, any_ty)),
+                            args: vec![HirExpr::Index {
+                                object: Box::new(HirExpr::Var(items, list_int_ty)),
+                                index: Box::new(HirExpr::BinOp {
+                                    op: HirBinOp::Mod,
+                                    lhs: Box::new(HirExpr::Var(index, int_ty)),
+                                    rhs: Box::new(HirExpr::Var(count, int_ty)),
+                                    ty: int_ty,
+                                }),
+                                ty: any_ty,
+                            }],
+                            ty: any_ty,
+                        }),
+                        rhs: Box::new(HirExpr::IntLit(0xFFFF, int_ty)),
+                        ty: any_ty,
+                    },
+                ],
+                ty: any_ty,
+            },
+            span: Span::dummy(),
+        }]);
+
+        let mir = lower_hir_to_mir(&hir, &tcx);
+        let names = collect_extern_names(&mir);
+        assert!(
+            names.contains(&"mb_list_mod_call1_bitand_ixor".to_string()),
+            "typed list modulo closure shape must use the fused gateway: {names:?}"
+        );
+        assert!(
+            !names.contains(&"mb_call1_bitand_ixor".to_string())
+                && !names.contains(&"mb_list_getitem".to_string()),
+            "list modulo gateway must subsume inner list access: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_literal_factory_leaf_lowers_to_static_list_gateway() {
+        let src = r#"
+def make_adder(n: int):
+    def add(x: int) -> int:
+        return x + n
+    return add
+
+add = make_adder(100)
+items = list(range(1))
+count = len(items)
+acc = 0
+for i in range(1):
+    acc ^= add(items[i % count]) & 0xFFFF
+"#;
+        let module = crate::parser::parse(src, FileId(0)).expect("parse failed");
+        let mut checker = TypeChecker::new();
+        let _ = checker.check_module(&module);
+        let hir = lower_module(&module, &checker).expect("HIR lowering failed");
+        let mir = lower_hir_to_mir_with_symbols(&hir, &checker.tcx, &checker.symbols);
+        let names = collect_extern_names(&mir);
+        assert!(
+            names.contains(&"mb_static_int_add_list_mod_bitand_ixor".to_string()),
+            "literal non-escaping leaf factory must use the static gateway: {names:?}"
+        );
+    }
+    // HANDWRITE-END
 
     // REQ: tick-241 test-coverage — __name__ dunder init (#1133) emits StoreGlobal
     // when symbol_table contains "__name__" and top-level code references it.

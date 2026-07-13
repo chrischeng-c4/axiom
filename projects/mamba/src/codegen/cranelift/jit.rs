@@ -2684,7 +2684,7 @@ impl CraneliftJitBackend {
                             builder
                                 .ins()
                                 .iconst(cl_types::I64, MbValue::none().to_bits() as i64)
-                    });
+                        });
                     builder.ins().call(push_ref, &[data, owner]);
                 }
                 Some(discard_ref)
@@ -3127,8 +3127,45 @@ impl CraneliftJitBackend {
             }
         }
         let ext = externs.iter().find(|e| e.name == name);
+        // Augmented assignment of an unannotated variable lowers through an
+        // `mb_i*` helper so Python can honor an instance's `__iop__` before
+        // falling back to the ordinary binary operation. Its HIR type is Any,
+        // though the VReg can still hold a raw primitive from an earlier
+        // literal/loop assignment. `box_operand` cannot see that physical
+        // representation once the semantic type is Any, so passing the raw
+        // bits directly made `x = 0; x ^= 1` reach `mb_ixor(0, 1)` as two
+        // non-MbValues and bind `x` to None. Marshal raw primitives here,
+        // where VarAlloc has the physical representation, before entering the
+        // dynamic in-place ABI.
+        let is_inplace_dispatch = matches!(
+            name,
+            "mb_iadd"
+                | "mb_isub"
+                | "mb_imul"
+                | "mb_ifloordiv"
+                | "mb_imatmul"
+                | "mb_ipow"
+                | "mb_iand"
+                | "mb_ior"
+                | "mb_ixor"
+        );
+        // The #1478 fused closure gateway keeps the accumulator as its first
+        // argument. Like a normal `mb_i*` call, HIR may describe that binding
+        // as Any while its VReg still carries a raw literal integer. Marshal
+        // only that operand here; the closure, argument, and literal mask
+        // already follow their normal dynamic-call ABI.
+        let is_fused_closure_mask_xor = matches!(
+            name,
+            "mb_call1_bitand_ixor"
+                | "mb_list_mod_call1_bitand_ixor"
+                | "mb_static_int_add_list_mod_bitand_ixor"
+        );
         if let Some(&func_id) = self.extern_funcs.get(name) {
             let func_ref = self.module().declare_func_in_func(func_id, builder.func);
+            // Values created by mb_box_int for an already-boxed BigInt carry
+            // an owned retain. Release them after the in-place helper has
+            // consumed the argument; inline primitives make this a no-op.
+            let mut owned_inplace_boxes = Vec::new();
             let mut arg_vals: Vec<_> = args
                 .iter()
                 .enumerate()
@@ -3139,6 +3176,33 @@ impl CraneliftJitBackend {
                     let actual_type = vars.declared_type(*a).unwrap_or(cl_types::I64);
                     let v = vars.get(*a, builder, actual_type);
                     let val = builder.use_var(v);
+                    if (is_inplace_dispatch && i < 2)
+                        || (is_fused_closure_mask_xor && i == 0)
+                    {
+                        if vars.native_bools.contains(a) {
+                            let raw = vars.use_as_i64(*a, builder);
+                            return Self::emit_inline_box_bool(builder, raw);
+                        }
+                        if vars.raw_ints.contains(a) {
+                            if let Some(&box_id) = self.extern_funcs.get("mb_box_int") {
+                                let raw = vars.use_as_i64(*a, builder);
+                                let box_ref =
+                                    self.module().declare_func_in_func(box_id, builder.func);
+                                let boxed = builder.ins().call(box_ref, &[raw]);
+                                let boxed_val = builder.inst_results(boxed)[0];
+                                owned_inplace_boxes.push(boxed_val);
+                                return boxed_val;
+                            }
+                        }
+                        if actual_type == cl_types::F64 {
+                            if let Some(&box_id) = self.extern_funcs.get("mb_box_float") {
+                                let box_ref =
+                                    self.module().declare_func_in_func(box_id, builder.func);
+                                let boxed = builder.ins().call(box_ref, &[val]);
+                                return builder.inst_results(boxed)[0];
+                            }
+                        }
+                    }
                     if let Some(ext) = ext {
                         if i < ext.params.len() {
                             return marshal::marshal_arg(builder, val, actual_type, &ext.params[i]);
@@ -3187,6 +3251,12 @@ impl CraneliftJitBackend {
                 }
             }
             let call = builder.ins().call(func_ref, &arg_vals);
+            if let Some(&release_id) = self.extern_funcs.get("mb_release_value") {
+                let release_ref = self.module().declare_func_in_func(release_id, builder.func);
+                for boxed in owned_inplace_boxes {
+                    builder.ins().call(release_ref, &[boxed]);
+                }
+            }
             if let Some(dest_vreg) = dest {
                 vars.raw_ints.remove(dest_vreg);
                 vars.native_bools.remove(dest_vreg);

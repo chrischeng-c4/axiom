@@ -11893,6 +11893,11 @@ fn mb_inplace(
     op_code: i64,
     fallback: fn(MbValue, MbValue) -> MbValue,
 ) -> MbValue {
+    // Immediates cannot carry a weakref proxy or an in-place dunder. Avoid
+    // the generic object probes in tight numeric augmented-assignment loops.
+    if a.as_ptr().is_none() && b.as_ptr().is_none() {
+        return fallback(a, b);
+    }
     if let Some(target) = super::stdlib::weakref_mod::proxy_target_or_raise(a) {
         if target.is_none() {
             return MbValue::none();
@@ -12042,6 +12047,86 @@ pub fn mb_ior(a: MbValue, b: MbValue) -> MbValue {
 pub fn mb_ixor(a: MbValue, b: MbValue) -> MbValue {
     mb_inplace(a, b, "__ixor__", 17, super::builtins::mb_bitxor)
 }
+
+// HANDWRITE-BEGIN gap="missing-generator:mamba-closure-call-context-fastpath" tracker="#1478" reason="The fast closure gateway combines dynamic callable eligibility, primitive result handling, and exact Python operator fallback in one runtime boundary."
+/// Fused lowering for `acc ^= closure(arg) & immediate_mask`.
+///
+/// The direct closure route is valid only when the surrounding operands and
+/// returned value are immediate integers.  Every other result continues
+/// through the same `mb_call1_val` → binary `&` dispatch → in-place `^=`
+/// sequence that the unfused HIR emitted.
+pub fn mb_call1_bitand_ixor(
+    accumulator: MbValue,
+    func: MbValue,
+    arg: MbValue,
+    mask: MbValue,
+) -> MbValue {
+    if let (Some(accumulator), Some(mask)) = (accumulator.as_int(), mask.as_int()) {
+        if let Some(result) =
+            super::closure::try_fast_call1_leaf_bitand_ixor(func, arg, accumulator, mask)
+        {
+            return match result {
+                super::closure::FastCall1BitAndXorResult::Fused(value) => value,
+                super::closure::FastCall1BitAndXorResult::Called(value) => mb_ixor(
+                    MbValue::from_int(accumulator),
+                    mb_dispatch_binop(15, value, MbValue::from_int(mask)),
+                ),
+            };
+        }
+    }
+    mb_ixor(
+        accumulator,
+        mb_dispatch_binop(15, mb_call1_val(func, arg), mask),
+    )
+}
+
+/// Fused lowering for `acc ^= closure(items[index % count]) & immediate_mask`
+/// when lowering has already proved a plain list and integer index operands.
+/// The Python modulo and list access helpers still own their exception and
+/// negative-index semantics; the fusion removes only FFI boundary crossings.
+pub fn mb_list_mod_call1_bitand_ixor(
+    accumulator: MbValue,
+    func: MbValue,
+    list: MbValue,
+    index: MbValue,
+    count: MbValue,
+    mask: MbValue,
+) -> MbValue {
+    let index = super::builtins::mb_mod(index, count);
+    let arg = super::list_ops::mb_list_getitem(list, index);
+    mb_call1_bitand_ixor(accumulator, func, arg, mask)
+}
+
+/// Static non-escaping `lambda x: x + literal` variant of
+/// [`mb_list_mod_call1_bitand_ixor`]. The closure handle remains available for
+/// the exact fallback, while the typed leaf is computed inline for its proven
+/// immediate-integer domain.
+pub fn mb_static_int_add_list_mod_bitand_ixor(
+    accumulator: MbValue,
+    func: MbValue,
+    capture_value: MbValue,
+    list: MbValue,
+    index: MbValue,
+    count: MbValue,
+    mask: MbValue,
+) -> MbValue {
+    let index = super::builtins::mb_mod(index, count);
+    let arg = super::list_ops::mb_list_getitem(list, index);
+    if let (Some(accumulator), Some(arg), Some(capture), Some(mask)) = (
+        accumulator.as_int(),
+        arg.as_int(),
+        capture_value.as_int(),
+        mask.as_int(),
+    ) {
+        if let Some(sum) = arg.checked_add(capture) {
+            if (-(1i64 << 47)..(1i64 << 47)).contains(&sum) {
+                return MbValue::from_int(accumulator ^ (sum & mask));
+            }
+        }
+    }
+    mb_call1_bitand_ixor(accumulator, func, arg, mask)
+}
+// HANDWRITE-END
 
 /// Invoke a 2-arg method value with (self, arg). Handles both TAG_FUNC direct
 /// addresses (JIT-compiled methods) and CALLABLE_REGISTRY heap pointers.
@@ -15590,6 +15675,22 @@ fn mb_call0_impl(func: MbValue) -> MbValue {
 /// Native extern functions (`extern "C" fn(*const MbValue, usize) -> MbValue`)
 /// are detected via `is_native_func` and dispatched with the correct ABI (#1132).
 pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
+    if let Some(raw) = super::closure::try_fast_call1_leaf_direct(func, arg) {
+        return raw;
+    }
+    if let Some(context) = super::closure::fast_call1_leaf_context(func) {
+        if let Some(addr) = context.entry.as_func().filter(|addr| *addr > 4096) {
+            let is_boxed = super::module::is_boxed_return_func(addr as u64);
+            let raw = super::closure::with_fast_call1_leaf_context(&context, || {
+                super::builtins::dispatch_jit_frame(addr, &[arg], is_boxed)
+            });
+            return if is_boxed {
+                raw
+            } else {
+                super::builtins::mb_box_int(raw.to_bits() as i64)
+            };
+        }
+    }
     super::closure::with_callable_module(func, || mb_call1_val_impl(func, arg))
 }
 
@@ -15612,8 +15713,9 @@ fn mb_call1_val_impl(func: MbValue, arg: MbValue) -> MbValue {
             super::stdlib::types_mod::mark_coroutine_result(func, result)
         }
     }
-    // This must precede both TAG_FUNC and integer closure-handle dispatch.
-    if super::closure::func_params(func).is_some() {
+    // HANDWRITE-BEGIN gap="missing-generator:mamba-closure-call-context-fastpath" tracker="#1478" reason="A closure handle with one positional argument can use the fixed-arity JIT path without allocating a transient argument list and invoking the generic signature binder."
+    if func.as_int().is_none() && super::closure::func_params(func).is_some() {
+    // HANDWRITE-END
         let args_list = MbValue::from_ptr(super::rc::MbObject::new_list(vec![arg]));
         return super::builtins::mb_call_spread(func, args_list);
     }

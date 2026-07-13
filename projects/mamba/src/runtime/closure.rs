@@ -16,8 +16,30 @@ const CELL_ID_BASE: i64 = 1i64 << 38;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ScopedSymbolKey {
-    module: String,
+    module: Arc<str>,
     symbol: i64,
+}
+
+#[derive(Clone)]
+struct ActiveSingleCell {
+    key: ScopedSymbolKey,
+    cell: MbValue,
+    module_agnostic: bool,
+    fast_value: Option<MbValue>,
+}
+
+/// Immutable closure metadata for the direct one-argument leaf route. The
+/// captured cell is deliberately not a value cache: every invocation still
+/// reads it so `nonlocal` mutation remains observable.
+#[derive(Clone, Copy)]
+struct FastCall1Cache {
+    handle_bits: u64,
+    entry: usize,
+    capture_symbol: i64,
+    capture_cell: MbValue,
+    capture_value: Option<MbValue>,
+    is_boxed_return: bool,
+    module_epoch: u64,
 }
 
 /// A closure object — a function paired with its captured environment.
@@ -25,13 +47,13 @@ pub struct MbClosure {
     /// Lightweight handle refcount for runtime-owned closure values.
     pub refs: u32,
     /// Name of the function
-    pub name: String,
+    pub name: Arc<str>,
     /// Qualified name of the function, when known.
-    pub qualname: Option<String>,
+    pub qualname: Option<Arc<str>>,
     /// Docstring metadata copied onto this closure handle, when present.
     pub doc: Option<String>,
     /// Defining module metadata copied onto this closure handle, when present.
-    pub module: Option<String>,
+    pub module: Option<Arc<str>>,
     /// `__wrapped__` back-reference for functools.wraps/update_wrapper.
     pub wrapped: Option<MbValue>,
     /// Captured variables: name → MbValue
@@ -41,6 +63,10 @@ pub struct MbClosure {
     /// Cell handles backing captured variables. Multiple closures created in
     /// the same factory call can share these handles.
     pub capture_cells: Vec<MbValue>,
+    /// Module-scoped capture keys paired with their cells.  These are fixed at
+    /// closure creation and shared by every invocation so the dynamic-call
+    /// path does not rebuild strings and vectors for the same environment.
+    capture_context: Arc<Vec<(ScopedSymbolKey, MbValue)>>,
     /// The function pointer (compiled code entry point).
     /// In practice, this is a MbValue pointing to a Function object.
     pub func: MbValue,
@@ -54,6 +80,13 @@ pub struct MbClosure {
     /// dispatch (`mb_call1_val` etc.) can decide how many defaults to consume
     /// to fill missing trailing params. 0 means "unset / not relevant".
     pub arity: usize,
+    /// A scalar leaf has no nested definition, import, trace observation, or
+    /// Python-level call. When it runs in its defining module, rebuilding the
+    /// module/qualname context cannot be observed and is pure call overhead.
+    pub context_free_leaf: bool,
+    /// One-argument subset of `context_free_leaf` with no defaults or
+    /// variadics. It may bypass the generic closure invocation gateway.
+    pub fast_call1_leaf: bool,
 }
 
 // Thread-local closure storage — Vec-indexed by closure ID for O(1) lookup (#1199).
@@ -63,15 +96,29 @@ thread_local! {
         std::cell::RefCell::new(Vec::new());
     static ACTIVE_CELLS: std::cell::RefCell<HashMap<ScopedSymbolKey, MbValue>> =
         std::cell::RefCell::new(HashMap::new());
-    static ACTIVE_MODULE_NAMES: std::cell::RefCell<Vec<String>> =
+    // A captured immediate integer is the common monomorphic closure case.
+    // Keep only that representation in the one-slot fast path: object-backed
+    // captures continue through the general map, whose semantics cover class
+    // method and descriptor-created closures.
+    static ACTIVE_SINGLE_CELL: std::cell::RefCell<Option<ActiveSingleCell>> =
+        std::cell::RefCell::new(None);
+    // One-argument scalar-leaf closures can read their sole immediate capture
+    // directly. Unlike ACTIVE_SINGLE_CELL this is Copy-only and therefore
+    // avoids Arc/refcount work on every dynamic closure invocation.
+    static ACTIVE_FAST_INT_CAPTURE: std::cell::Cell<Option<(i64, MbValue)>> =
+        const { std::cell::Cell::new(None) };
+    static FAST_CALL1_CACHE: std::cell::Cell<Option<FastCall1Cache>> =
+        const { std::cell::Cell::new(None) };
+    static ACTIVE_MODULE_NAMES: std::cell::RefCell<Vec<Arc<str>>> =
         std::cell::RefCell::new(Vec::new());
+    static ACTIVE_MODULE_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static ACTIVE_QUALNAME_CONTEXTS: std::cell::RefCell<Vec<QualnameContext>> =
         std::cell::RefCell::new(Vec::new());
 }
 
 #[derive(Clone)]
 struct QualnameContext {
-    prefix: String,
+    prefix: Arc<str>,
     uses_locals: bool,
 }
 
@@ -96,7 +143,7 @@ pub(crate) fn current_definition_qualname(name: &str) -> String {
     derive_qualname(name)
 }
 
-fn push_qualname_context(prefix: String, uses_locals: bool) {
+fn push_qualname_context(prefix: Arc<str>, uses_locals: bool) {
     if prefix.is_empty() {
         return;
     }
@@ -119,7 +166,7 @@ pub fn mb_push_class_qualname(name: MbValue) {
     if class_name.is_empty() {
         return;
     }
-    push_qualname_context(derive_qualname(&class_name), false);
+    push_qualname_context(Arc::from(derive_qualname(&class_name)), false);
 }
 
 fn closure_slot_index(raw: i64) -> Option<usize> {
@@ -151,7 +198,7 @@ fn with_live_closure_mut<R>(
 }
 
 fn allocate_closure_slot(closure: MbClosure) -> MbValue {
-    CLOSURES.with(|closures| {
+    let handle = CLOSURES.with(|closures| {
         let mut vec = closures.borrow_mut();
         if let Some((idx, slot)) = vec.iter_mut().enumerate().find(|(_, slot)| slot.is_none()) {
             *slot = Some(closure);
@@ -160,7 +207,32 @@ fn allocate_closure_slot(closure: MbClosure) -> MbValue {
         let id = CLOSURE_HANDLE_BASE + vec.len() as i64;
         vec.push(Some(closure));
         MbValue::from_int(id)
-    })
+    });
+    invalidate_fast_call1_cache(handle);
+    handle
+}
+
+fn invalidate_fast_call1_cache(closure_handle: MbValue) {
+    FAST_CALL1_CACHE.with(|cache| {
+        if cache
+            .get()
+            .is_some_and(|cached| cached.handle_bits == closure_handle.to_bits())
+        {
+            cache.set(None);
+        }
+    });
+}
+
+fn refresh_fast_call1_capture_value(cell_handle: MbValue, value: Option<MbValue>) {
+    FAST_CALL1_CACHE.with(|cache| {
+        let Some(mut cached) = cache.get() else {
+            return;
+        };
+        if cached.capture_cell == cell_handle {
+            cached.capture_value = value;
+            cache.set(Some(cached));
+        }
+    });
 }
 
 fn teardown_closure(closure: MbClosure) {
@@ -184,20 +256,24 @@ fn teardown_closure(closure: MbClosure) {
 fn force_take_live_closure(closure_handle: MbValue) -> Option<MbClosure> {
     let id = closure_handle.as_int()?;
     let idx = closure_slot_index(id)?;
-    CLOSURES.with(|closures| {
+    let result = CLOSURES.with(|closures| {
         let mut vec = closures.borrow_mut();
         if idx < vec.len() {
             vec[idx].take()
         } else {
             None
         }
-    })
+    });
+    if result.is_some() {
+        invalidate_fast_call1_cache(closure_handle);
+    }
+    result
 }
 
 fn dec_ref_or_take_live_closure(closure_handle: MbValue) -> Option<Option<MbClosure>> {
     let id = closure_handle.as_int()?;
     let idx = closure_slot_index(id)?;
-    CLOSURES.with(|closures| {
+    let result = CLOSURES.with(|closures| {
         let mut vec = closures.borrow_mut();
         let slot = vec.get_mut(idx)?;
         let closure = slot.as_mut()?;
@@ -207,17 +283,30 @@ fn dec_ref_or_take_live_closure(closure_handle: MbValue) -> Option<Option<MbClos
         } else {
             Some(slot.take())
         }
-    })
+    });
+    if matches!(result, Some(Some(_))) {
+        invalidate_fast_call1_cache(closure_handle);
+    }
+    result
+}
+
+fn current_active_module() -> Arc<str> {
+    ACTIVE_MODULE_NAMES
+        .with(|names| names.borrow().last().cloned())
+        .unwrap_or_else(|| Arc::from("__main__"))
 }
 
 pub(crate) fn current_active_module_name() -> String {
-    ACTIVE_MODULE_NAMES
-        .with(|names| names.borrow().last().cloned())
-        .unwrap_or_else(|| "__main__".to_string())
+    current_active_module().to_string()
 }
 
 pub(crate) fn active_module_matches(name: &str) -> bool {
-    ACTIVE_MODULE_NAMES.with(|names| names.borrow().last().is_some_and(|current| current == name))
+    ACTIVE_MODULE_NAMES.with(|names| {
+        names
+            .borrow()
+            .last()
+            .is_some_and(|current| current.as_ref() == name)
+    })
         || (name == "__main__" && ACTIVE_MODULE_NAMES.with(|names| names.borrow().last().is_none()))
 }
 
@@ -226,29 +315,92 @@ pub(crate) fn caller_active_module_name() -> String {
         let names = names.borrow();
         match names.len() {
             0 | 1 => "__main__".to_string(),
-            len => names[len - 2].clone(),
+            len => names[len - 2].to_string(),
         }
     })
 }
 
 fn scoped_symbol_key(symbol: i64) -> ScopedSymbolKey {
     ScopedSymbolKey {
-        module: current_active_module_name(),
+        module: current_active_module(),
         symbol,
     }
 }
 
-pub fn push_active_module_name(name: String) {
-    ACTIVE_MODULE_NAMES.with(|names| names.borrow_mut().push(name));
+fn active_single_cell_get(symbol: i64) -> Option<MbValue> {
+    ACTIVE_SINGLE_CELL.with(|active| {
+        active.borrow().as_ref().and_then(|entry| {
+            (entry.key.symbol == symbol
+                && (entry.module_agnostic || active_module_matches(entry.key.module.as_ref())))
+            .then_some(entry.cell)
+        })
+    })
+}
+
+fn active_single_cell_fast_value(symbol: i64) -> Option<MbValue> {
+    ACTIVE_SINGLE_CELL.with(|active| {
+        active.borrow().as_ref().and_then(|entry| {
+            (entry.module_agnostic && entry.key.symbol == symbol)
+                .then_some(entry.fast_value)
+                .flatten()
+        })
+    })
+}
+
+fn active_fast_int_capture_value(symbol: i64) -> Option<MbValue> {
+    ACTIVE_FAST_INT_CAPTURE.with(|active| {
+        active
+            .get()
+            .and_then(|(active_symbol, value)| (active_symbol == symbol).then_some(value))
+    })
+}
+
+pub fn push_active_module_name(name: impl Into<Arc<str>>) {
+    ACTIVE_MODULE_NAMES.with(|names| names.borrow_mut().push(name.into()));
+    ACTIVE_MODULE_EPOCH.with(|epoch| epoch.set(epoch.get().wrapping_add(1)));
 }
 
 pub fn pop_active_module_name() {
     ACTIVE_MODULE_NAMES.with(|names| {
         names.borrow_mut().pop();
     });
+    ACTIVE_MODULE_EPOCH.with(|epoch| epoch.set(epoch.get().wrapping_add(1)));
 }
 
-fn callable_module_name(func: MbValue) -> Option<String> {
+fn active_module_epoch() -> u64 {
+    ACTIVE_MODULE_EPOCH.with(std::cell::Cell::get)
+}
+
+// HANDWRITE-BEGIN gap="missing-generator:mamba-closure-call-context-fastpath" tracker="#1478" reason="Closure calls must reuse metadata already stored in the closure registry instead of allocating temporary MbValue strings for every dynamic invocation."
+fn closure_callable_context(func: MbValue) -> Option<(Arc<str>, Option<Arc<str>>)> {
+    with_live_closure(func, |closure| {
+        let module = closure.module.clone().filter(|name| !name.is_empty())?;
+        let qualname = closure
+            .qualname
+            .clone()
+            .or_else(|| Some(closure.name.clone()));
+        Some((module, qualname))
+    })
+    .flatten()
+}
+
+fn closure_context_free_in_active_module(func: MbValue) -> bool {
+    with_live_closure(func, |closure| {
+        closure.context_free_leaf
+            && closure
+                .module
+                .as_deref()
+                .is_some_and(active_module_matches)
+    })
+    .unwrap_or(false)
+}
+
+fn callable_context(func: MbValue) -> Option<(Arc<str>, Option<Arc<str>>)> {
+    if func.as_int().is_some() {
+        if let Some(context) = closure_callable_context(func) {
+            return Some(context);
+        }
+    }
     let target = if func.as_int().is_some() {
         let inner = mb_closure_get_func(func);
         if !inner.is_none() {
@@ -260,17 +412,19 @@ fn callable_module_name(func: MbValue) -> Option<String> {
         func
     };
     let module = extract_str(mb_func_get_module(target)).filter(|name| !name.is_empty());
-    if module.is_some() {
-        return module;
-    }
-    if !mb_func_get_name(target).is_none() {
-        return Some(current_active_module_name());
-    }
-    None
+    let module = module.or_else(|| (!mb_func_get_name(target).is_none()).then(current_active_module_name))?;
+    let qualname =
+        extract_str(mb_func_get_qualname(func)).or_else(|| extract_str(mb_func_get_name(func)));
+    let module: Arc<str> = Arc::from(module);
+    let qualname = qualname.map(Arc::from);
+    Some((module, qualname))
 }
 
 pub fn with_callable_module<R>(func: MbValue, call: impl FnOnce() -> R) -> R {
-    let Some(module_name) = callable_module_name(func) else {
+    if closure_context_free_in_active_module(func) {
+        return call();
+    }
+    let Some((module_name, qualname)) = callable_context(func) else {
         return call();
     };
     struct CallContextGuard {
@@ -284,8 +438,6 @@ pub fn with_callable_module<R>(func: MbValue, call: impl FnOnce() -> R) -> R {
             pop_active_module_name();
         }
     }
-    let qualname =
-        extract_str(mb_func_get_qualname(func)).or_else(|| extract_str(mb_func_get_name(func)));
     let pop_qualname = qualname.is_some();
     push_active_module_name(module_name);
     if let Some(qualname) = qualname {
@@ -294,6 +446,7 @@ pub fn with_callable_module<R>(func: MbValue, call: impl FnOnce() -> R) -> R {
     let _guard = CallContextGuard { pop_qualname };
     call()
 }
+// HANDWRITE-END
 
 // ── Closure Creation ──
 
@@ -304,17 +457,20 @@ pub fn mb_closure_new(name: MbValue, func: MbValue, captures: MbValue) -> MbValu
 
     let closure = MbClosure {
         refs: 1,
-        name: closure_name,
+        name: Arc::from(closure_name),
         qualname: None,
         doc: None,
-        module: None,
+        module: Some(current_active_module()),
         wrapped: None,
         captures: captured_vars,
         capture_ids: Vec::new(),
         capture_cells: Vec::new(),
+        capture_context: Arc::new(Vec::new()),
         func,
         defaults: Vec::new(),
         arity: 0,
+        context_free_leaf: false,
+        fast_call1_leaf: false,
     };
     allocate_closure_slot(closure)
 }
@@ -332,20 +488,30 @@ pub fn mb_closure_new_with_cells(name: MbValue, func: MbValue, capture_ids: MbVa
         .collect();
     let cells: Vec<MbValue> = ids.iter().map(|&id| active_cell_for_id(id)).collect();
     let captures: Vec<MbValue> = cells.iter().map(|&cell| mb_cell_get(cell)).collect();
+    let capture_context = Arc::new(
+        ids.iter()
+            .copied()
+            .zip(cells.iter().copied())
+            .map(|(id, cell)| (scoped_symbol_key(id), cell))
+            .collect(),
+    );
 
     let closure = MbClosure {
         refs: 1,
-        name: closure_name,
+        name: Arc::from(closure_name),
         qualname: None,
         doc: None,
-        module: None,
+        module: Some(current_active_module()),
         wrapped: None,
         captures,
         capture_ids: ids,
         capture_cells: cells,
+        capture_context,
         func,
         defaults: Vec::new(),
         arity: 0,
+        context_free_leaf: false,
+        fast_call1_leaf: false,
     };
     allocate_closure_slot(closure)
 }
@@ -399,6 +565,37 @@ pub fn mb_closure_set_arity(closure_handle: MbValue, arity: MbValue) {
             };
             if let Some(Some(c)) = vec.get_mut(idx) {
                 c.arity = n.max(0) as usize;
+            }
+        });
+    }
+}
+
+/// Mark a closure whose entire body is a non-observable scalar leaf. The
+/// lowerer emits this only for a one-expression primitive return shape.
+pub fn mb_closure_set_context_free_leaf(closure_handle: MbValue, enabled: MbValue) {
+    if let Some(id) = closure_handle.as_int() {
+        CLOSURES.with(|closures| {
+            let mut vec = closures.borrow_mut();
+            let Some(idx) = closure_slot_index(id) else {
+                return;
+            };
+            if let Some(Some(closure)) = vec.get_mut(idx) {
+                closure.context_free_leaf = enabled.as_bool().unwrap_or(false);
+            }
+        });
+    }
+}
+
+/// Mark the statically proven one-argument scalar-leaf closure call path.
+pub fn mb_closure_mark_fast_call1_leaf(closure_handle: MbValue) {
+    if let Some(id) = closure_handle.as_int() {
+        CLOSURES.with(|closures| {
+            let mut vec = closures.borrow_mut();
+            let Some(idx) = closure_slot_index(id) else {
+                return;
+            };
+            if let Some(Some(closure)) = vec.get_mut(idx) {
+                closure.fast_call1_leaf = true;
             }
         });
     }
@@ -552,46 +749,57 @@ pub fn closure_capture_cells(closure_handle: MbValue) -> Vec<MbValue> {
 
 /// Run a closure body with its captured cells installed as the active cell map.
 pub fn with_closure_cells<R>(closure_handle: MbValue, call: impl FnOnce() -> R) -> R {
-    let pairs: Vec<(ScopedSymbolKey, MbValue)> = if let Some(id) = closure_handle.as_int() {
-        CLOSURES.with(|closures| {
-            let vec = closures.borrow();
-            let Some(idx) = closure_slot_index(id) else {
-                return Vec::new();
-            };
-            vec.get(idx)
-                .and_then(|slot| slot.as_ref())
-                .map(|c| {
-                    c.capture_ids
-                        .iter()
-                        .copied()
-                        .zip(c.capture_cells.iter().copied())
-                        .map(|(id, cell)| (scoped_symbol_key(id), cell))
-                        .collect()
-                })
-                .unwrap_or_default()
-        })
-    } else {
-        Vec::new()
-    };
+    let pairs = with_live_closure(closure_handle, |closure| closure.capture_context.clone())
+        .unwrap_or_default();
+    with_cell_context_pairs(&pairs, false, call)
+}
+
+fn with_cell_context_pairs<R>(
+    pairs: &[(ScopedSymbolKey, MbValue)],
+    module_agnostic: bool,
+    call: impl FnOnce() -> R,
+) -> R {
     if pairs.is_empty() {
         return call();
+    }
+
+    if let [(id, cell)] = pairs {
+        let fast_value = match mb_cell_compare_value(*cell) {
+            CellCompareValue::Value(value) if value.is_int() => Some(value),
+            _ => None,
+        };
+        if let Some(value) = fast_value {
+            let saved = ACTIVE_SINGLE_CELL.with(|active| {
+                active.borrow_mut().replace(ActiveSingleCell {
+                    key: id.clone(),
+                    cell: *cell,
+                    module_agnostic,
+                    fast_value: module_agnostic.then_some(value),
+                })
+            });
+            let result = call();
+            ACTIVE_SINGLE_CELL.with(|active| {
+                *active.borrow_mut() = saved;
+            });
+            return result;
+        }
     }
 
     let saved = ACTIVE_CELLS.with(|cells| {
         let mut cells = cells.borrow_mut();
         pairs
             .iter()
-            .map(|(id, cell)| (id.clone(), cells.insert(id.clone(), *cell)))
+            .map(|(id, cell)| cells.insert(id.clone(), *cell))
             .collect::<Vec<_>>()
     });
     let result = call();
     ACTIVE_CELLS.with(|cells| {
         let mut cells = cells.borrow_mut();
-        for (id, old) in saved {
+        for ((id, _), old) in pairs.iter().zip(saved) {
             if let Some(old_cell) = old {
-                cells.insert(id, old_cell);
+                cells.insert(id.clone(), old_cell);
             } else {
-                cells.remove(&id);
+                cells.remove(id);
             }
         }
     });
@@ -604,6 +812,210 @@ pub fn with_closure_cells<R>(closure_handle: MbValue, call: impl FnOnce() -> R) 
 #[derive(Clone)]
 pub(crate) struct CapturedCellContext {
     pairs: Arc<Vec<(ScopedSymbolKey, MbValue)>>,
+}
+
+/// Return the entry point and capture context for a closure whose source shape
+/// proves that a one-argument dynamic call needs neither binding nor Python
+/// call-context setup. This only applies while the caller already executes in
+/// the closure's defining module; cross-module calls retain the general path.
+pub(crate) struct FastCall1LeafContext {
+    pub entry: MbValue,
+    module: Arc<str>,
+    captures: CapturedCellContext,
+}
+
+pub(crate) fn fast_call1_leaf_context(
+    closure_handle: MbValue,
+) -> Option<FastCall1LeafContext> {
+    with_live_closure(closure_handle, |closure| {
+        (closure.fast_call1_leaf).then(|| FastCall1LeafContext {
+            entry: closure.func,
+            module: closure
+                .module
+                .clone()
+                .unwrap_or_else(|| Arc::from("__main__")),
+            captures: CapturedCellContext {
+                pairs: closure.capture_context.clone(),
+            },
+        })
+    })
+    .flatten()
+}
+
+/// Invoke the raw ABI of the sole statically-proven scalar leaf shape without
+/// materializing a call-context snapshot.  The marker is emitted only for a
+/// one-argument primitive binary expression, so its generated body cannot
+/// re-enter the closure registry while `with_live_closure` holds its immutable
+/// borrow.  When a caller is in a different module, reproduce the normal
+/// module-only context transaction without allocating the full call snapshot.
+fn invoke_fast_call1_leaf_raw(
+    entry: usize,
+    capture_symbol: i64,
+    capture_value: Option<MbValue>,
+    arg: MbValue,
+) -> Option<MbValue> {
+    let value = capture_value?;
+    if !value.is_int() {
+        return None;
+    }
+    let saved = ACTIVE_FAST_INT_CAPTURE.with(|active| {
+        active.replace(Some((capture_symbol, value)))
+    });
+    let _owner_lookup = super::argument_owner::suppress_argument_owner_lookup();
+    let entry: extern "C" fn(MbValue) -> MbValue = unsafe { std::mem::transmute(entry) };
+    let result = entry(arg);
+    ACTIVE_FAST_INT_CAPTURE.with(|active| active.set(saved));
+    Some(result)
+}
+
+fn finalize_fast_call1_leaf_result(raw: MbValue, is_boxed_return: bool) -> MbValue {
+    super::builtins::finalize_jit_return(raw, is_boxed_return)
+}
+
+#[derive(Clone, Copy)]
+struct FastCall1LeafRawResult {
+    raw: MbValue,
+    is_boxed_return: bool,
+}
+
+/// Resolve and invoke the direct closure leaf once, retaining the exact raw
+/// return ABI until the caller decides whether it needs a boxed Python value.
+/// A non-inline return must still be finalized to consume its owner token.
+fn try_fast_call1_leaf_raw(
+    closure_handle: MbValue,
+    arg: MbValue,
+) -> Option<FastCall1LeafRawResult> {
+    if !arg.is_int() {
+        return None;
+    }
+    let cached_result = FAST_CALL1_CACHE.with(|cache| {
+        let cached = cache.get()?;
+        if cached.handle_bits != closure_handle.to_bits()
+            || cached.module_epoch != active_module_epoch()
+        {
+            return None;
+        }
+        invoke_fast_call1_leaf_raw(
+            cached.entry,
+            cached.capture_symbol,
+            cached.capture_value,
+            arg,
+        )
+        .map(|raw| FastCall1LeafRawResult {
+            raw,
+            is_boxed_return: cached.is_boxed_return,
+        })
+    });
+    if cached_result.is_some() {
+        return cached_result;
+    }
+    let result = with_live_closure(closure_handle, |closure| {
+        if !closure.fast_call1_leaf {
+            return None;
+        }
+        let [(key, cell)] = closure.capture_context.as_slice() else {
+            return None;
+        };
+        let Some(addr) = closure.func.as_func().filter(|addr| *addr > 4096) else {
+            return None;
+        };
+        let CellCompareValue::Value(capture_value) = mb_cell_compare_value(*cell) else {
+            return None;
+        };
+        if !capture_value.is_int() {
+            return None;
+        }
+        let is_boxed_return = super::module::is_boxed_return_func(addr as u64);
+        let module = closure
+            .module
+            .clone()
+            .unwrap_or_else(|| Arc::from("__main__"));
+        let active_module = active_module_matches(module.as_ref());
+        FAST_CALL1_CACHE.with(|cache| {
+            if active_module {
+                cache.set(Some(FastCall1Cache {
+                    handle_bits: closure_handle.to_bits(),
+                    entry: addr,
+                    capture_symbol: key.symbol,
+                    capture_cell: *cell,
+                    capture_value: Some(capture_value),
+                    is_boxed_return,
+                    module_epoch: active_module_epoch(),
+                }));
+            }
+        });
+        let pushed_module = !active_module;
+        if pushed_module {
+            push_active_module_name(module);
+        }
+        let result = invoke_fast_call1_leaf_raw(addr, key.symbol, Some(capture_value), arg).map(
+            |raw| FastCall1LeafRawResult {
+                raw,
+                is_boxed_return,
+            },
+        );
+        if pushed_module {
+            pop_active_module_name();
+        }
+        result
+    });
+    result.flatten()
+}
+
+pub(crate) fn try_fast_call1_leaf_direct(
+    closure_handle: MbValue,
+    arg: MbValue,
+) -> Option<MbValue> {
+    try_fast_call1_leaf_raw(closure_handle, arg)
+        .map(|result| finalize_fast_call1_leaf_result(result.raw, result.is_boxed_return))
+}
+
+/// Result of the fused `call(arg) & mask` fast path. `Called` means the
+/// closure was already invoked but returned a non-inline value, so the caller
+/// must apply its normal Python operators without calling it a second time.
+pub(crate) enum FastCall1BitAndXorResult {
+    Fused(MbValue),
+    Called(MbValue),
+}
+
+/// Invoke the direct scalar closure and fuse a following immediate `&` / `^=`
+/// only when its physical return is a raw inline integer. BigInt returns keep
+/// their existing owner-finalization path and are handed back for the generic
+/// runtime operators.
+pub(crate) fn try_fast_call1_leaf_bitand_ixor(
+    closure_handle: MbValue,
+    arg: MbValue,
+    accumulator: i64,
+    mask: i64,
+) -> Option<FastCall1BitAndXorResult> {
+    let result = try_fast_call1_leaf_raw(closure_handle, arg)?;
+    if !result.is_boxed_return && !super::builtins::is_bigint_value(result.raw) {
+        let value = result.raw.to_bits() as i64;
+        return Some(FastCall1BitAndXorResult::Fused(MbValue::from_int(
+            accumulator ^ (value & mask),
+        )));
+    }
+    Some(FastCall1BitAndXorResult::Called(
+        finalize_fast_call1_leaf_result(result.raw, result.is_boxed_return),
+    ))
+}
+
+pub(crate) fn with_fast_call1_leaf_context<R>(
+    context: &FastCall1LeafContext,
+    call: impl FnOnce() -> R,
+) -> R {
+    if active_module_matches(context.module.as_ref()) {
+        return with_fast_captured_cell_context(&context.captures, call);
+    }
+    push_active_module_name(context.module.clone());
+    struct ModuleGuard;
+    impl Drop for ModuleGuard {
+        fn drop(&mut self) {
+            pop_active_module_name();
+        }
+    }
+    let _guard = ModuleGuard;
+    with_fast_captured_cell_context(&context.captures, call)
 }
 
 impl Default for CapturedCellContext {
@@ -629,29 +1041,26 @@ pub(crate) fn with_captured_cell_context<R>(
     context: &CapturedCellContext,
     call: impl FnOnce() -> R,
 ) -> R {
-    if context.pairs.is_empty() {
-        return call();
-    }
-    let saved = ACTIVE_CELLS.with(|cells| {
-        let mut cells = cells.borrow_mut();
-        context
-            .pairs
-            .iter()
-            .map(|(id, cell)| (id.clone(), cells.insert(id.clone(), *cell)))
-            .collect::<Vec<_>>()
-    });
-    let result = call();
-    ACTIVE_CELLS.with(|cells| {
-        let mut cells = cells.borrow_mut();
-        for (id, old) in saved {
-            if let Some(old_cell) = old {
-                cells.insert(id, old_cell);
-            } else {
-                cells.remove(&id);
+    with_cell_context_pairs(&context.pairs, false, call)
+}
+
+fn with_fast_captured_cell_context<R>(
+    context: &CapturedCellContext,
+    call: impl FnOnce() -> R,
+) -> R {
+    if let [(key, cell)] = context.pairs.as_slice() {
+        if let CellCompareValue::Value(value) = mb_cell_compare_value(*cell) {
+            if value.is_int() {
+                let saved = ACTIVE_FAST_INT_CAPTURE.with(|active| {
+                    active.replace(Some((key.symbol, value)))
+                });
+                let result = call();
+                ACTIVE_FAST_INT_CAPTURE.with(|active| active.set(saved));
+                return result;
             }
         }
-    });
-    result
+    }
+    with_cell_context_pairs(&context.pairs, false, call)
 }
 
 /// Get the underlying function of a closure.
@@ -1143,7 +1552,7 @@ pub fn mb_func_get_annotations(func: MbValue) -> MbValue {
 /// Register a function's name (called at definition time so `f.__name__` works).
 pub fn mb_func_set_name(func: MbValue, name: MbValue) {
     let fname = extract_str(name).unwrap_or_default();
-    if with_live_closure_mut(func, |closure| closure.name = fname.clone()).is_some() {
+    if with_live_closure_mut(func, |closure| closure.name = Arc::from(fname.clone())).is_some() {
         return;
     }
     if func.as_func().is_none() {
@@ -1156,7 +1565,7 @@ pub fn mb_func_set_name(func: MbValue, name: MbValue) {
 /// Register a function's qualified name.
 pub fn mb_func_set_qualname(func: MbValue, qualname: MbValue) {
     let qualname = extract_str(qualname).unwrap_or_default();
-    if with_live_closure_mut(func, |closure| closure.qualname = Some(qualname.clone())).is_some() {
+    if with_live_closure_mut(func, |closure| closure.qualname = Some(Arc::from(qualname.clone()))).is_some() {
         return;
     }
     if func.as_func().is_none() {
@@ -1181,7 +1590,7 @@ pub fn mb_func_prime_name(func: MbValue, name: MbValue) {
 /// Get a function's registered name. Returns None-MbValue if not registered.
 pub fn mb_func_get_name(func: MbValue) -> MbValue {
     if let Some(name) = with_live_closure(func, |closure| closure.name.clone()) {
-        return MbValue::from_ptr(MbObject::new_str(name));
+        return MbValue::from_ptr(MbObject::new_str(name.to_string()));
     }
     let key = func.to_bits();
     FUNC_NAMES.with(|m| {
@@ -1196,7 +1605,7 @@ pub fn mb_func_get_name(func: MbValue) -> MbValue {
 pub fn mb_func_get_qualname(func: MbValue) -> MbValue {
     if let Some(qualname) = with_live_closure(func, |closure| closure.qualname.clone()) {
         return qualname
-            .map(|s| MbValue::from_ptr(MbObject::new_str(s)))
+            .map(|s| MbValue::from_ptr(MbObject::new_str(s.to_string())))
             .unwrap_or_else(MbValue::none);
     }
     let key = func.to_bits();
@@ -1241,7 +1650,7 @@ pub fn mb_func_get_doc(func: MbValue) -> MbValue {
 /// Register a function's module name (for `f.__module__`).
 pub fn mb_func_set_module(func: MbValue, module: MbValue) {
     let module_name = extract_str(module).unwrap_or_default();
-    if with_live_closure_mut(func, |closure| closure.module = Some(module_name.clone())).is_some() {
+    if with_live_closure_mut(func, |closure| closure.module = Some(Arc::from(module_name.clone()))).is_some() {
         return;
     }
     if func.as_func().is_none() {
@@ -1255,7 +1664,7 @@ pub fn mb_func_set_module(func: MbValue, module: MbValue) {
 pub fn mb_func_get_module(func: MbValue) -> MbValue {
     if let Some(module) = with_live_closure(func, |closure| closure.module.clone()) {
         return module
-            .map(|s| MbValue::from_ptr(MbObject::new_str(s)))
+            .map(|s| MbValue::from_ptr(MbObject::new_str(s.to_string())))
             .unwrap_or_else(MbValue::none);
     }
     let key = func.to_bits();
@@ -1653,6 +2062,7 @@ pub(crate) fn mb_cell_set_typed_int_owner(
                     }
                     owners[idx] = owner;
                 });
+                refresh_fast_call1_capture_value(cell_handle, Some(value));
             }
         });
     }
@@ -1693,6 +2103,7 @@ pub fn mb_cell_clear(cell_handle: MbValue) {
                         *owner = None;
                     }
                 });
+                refresh_fast_call1_capture_value(cell_handle, None);
             }
         });
     }
@@ -1723,6 +2134,9 @@ pub(crate) fn mb_cell_get_typed_int_owner(cell_handle: MbValue) -> TypedIntStora
 }
 
 fn active_cell_for_id(key: i64) -> MbValue {
+    if let Some(cell) = active_single_cell_get(key) {
+        return cell;
+    }
     let scoped = scoped_symbol_key(key);
     ACTIVE_CELLS.with(|cells| {
         let mut cells = cells.borrow_mut();
@@ -1799,8 +2213,16 @@ pub fn mb_capture_cell_reset_empty_id(id: MbValue) {
 }
 
 fn active_cell_get_id_raw(key: i64) -> Option<MbValue> {
-    let scoped = scoped_symbol_key(key);
-    let cell = ACTIVE_CELLS.with(|cells| cells.borrow().get(&scoped).copied())?;
+    if let Some(value) = active_fast_int_capture_value(key) {
+        return Some(value);
+    }
+    if let Some(value) = active_single_cell_fast_value(key) {
+        return Some(value);
+    }
+    let cell = active_single_cell_get(key).or_else(|| {
+        let scoped = scoped_symbol_key(key);
+        ACTIVE_CELLS.with(|cells| cells.borrow().get(&scoped).copied())
+    })?;
     // #1053: an empty cell (see `mb_capture_cell_reset_empty_id`) is a state
     // ONLY EVER produced by that function — it means a nested closure
     // captured this enclosing-scope local before the enclosing function's
@@ -1827,8 +2249,10 @@ fn active_cell_get_id_raw(key: i64) -> Option<MbValue> {
 }
 
 fn active_cell_get_typed_int_owner_id_raw(key: i64) -> Option<TypedIntStorageRead> {
-    let scoped = scoped_symbol_key(key);
-    let cell = ACTIVE_CELLS.with(|cells| cells.borrow().get(&scoped).copied())?;
+    let cell = active_single_cell_get(key).or_else(|| {
+        let scoped = scoped_symbol_key(key);
+        ACTIVE_CELLS.with(|cells| cells.borrow().get(&scoped).copied())
+    })?;
     match mb_cell_contents_read(cell) {
         CellContentsRead::Value(_) => Some(mb_cell_get_typed_int_owner(cell)),
         CellContentsRead::Empty => {
@@ -1846,6 +2270,10 @@ fn active_cell_get_typed_int_owner_id_raw(key: i64) -> Option<TypedIntStorageRea
 }
 
 fn active_cell_set_id_raw(key: i64, value: MbValue) -> bool {
+    if let Some(cell) = active_single_cell_get(key) {
+        mb_cell_set(cell, value);
+        return true;
+    }
     let scoped = scoped_symbol_key(key);
     let cell = ACTIVE_CELLS.with(|cells| cells.borrow().get(&scoped).copied());
     if let Some(cell) = cell {
@@ -1861,6 +2289,10 @@ fn active_cell_set_typed_int_owner_id_raw(
     value: MbValue,
     owner: Option<MbValue>,
 ) -> bool {
+    if let Some(cell) = active_single_cell_get(key) {
+        mb_cell_set_typed_int_owner(cell, value, owner);
+        return true;
+    }
     let scoped = scoped_symbol_key(key);
     let cell = ACTIVE_CELLS.with(|cells| cells.borrow().get(&scoped).copied());
     if let Some(cell) = cell {
@@ -2153,14 +2585,14 @@ fn extract_list(val: MbValue) -> Vec<MbValue> {
 fn current_module_symbol_entries(ns: &HashMap<ScopedSymbolKey, MbValue>) -> HashMap<i64, MbValue> {
     let current_module = current_active_module_name();
     ns.iter()
-        .filter(|(key, _)| key.module == current_module)
+        .filter(|(key, _)| key.module.as_ref() == current_module)
         .map(|(key, value)| (key.symbol, *value))
         .collect()
 }
 
 fn remove_current_module_symbol_entries(ns: &mut HashMap<ScopedSymbolKey, MbValue>) {
     let current_module = current_active_module_name();
-    ns.retain(|key, _| key.module != current_module);
+    ns.retain(|key, _| key.module.as_ref() != current_module);
 }
 
 /// Save and clear the current module's GLOBAL_ID_NAMESPACE slice, returning the
@@ -2183,7 +2615,7 @@ pub(crate) fn restore_global_id_namespace(saved: HashMap<i64, MbValue>) {
         for (symbol, value) in saved {
             ns.insert(
                 ScopedSymbolKey {
-                    module: current_module.clone(),
+                    module: Arc::from(current_module.clone()),
                     symbol,
                 },
                 value,
@@ -2446,7 +2878,11 @@ pub(crate) fn cleanup_all_closures() {
     let _ = CELLS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = CELL_INT_OWNERS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = ACTIVE_CELLS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = ACTIVE_SINGLE_CELL.with(|c| c.try_borrow_mut().map(|mut cell| *cell = None));
+    let _ = ACTIVE_FAST_INT_CAPTURE.with(|capture| capture.set(None));
+    FAST_CALL1_CACHE.with(|cache| cache.set(None));
     let _ = ACTIVE_MODULE_NAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    ACTIVE_MODULE_EPOCH.with(|epoch| epoch.set(0));
     let _ = ACTIVE_QUALNAME_CONTEXTS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = GLOBAL_NAMESPACE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = GLOBAL_NAMESPACE_INT_OWNERS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
@@ -2504,6 +2940,86 @@ mod tests {
 
         mb_closure_release(closure);
     }
+
+    // HANDWRITE-BEGIN gap="missing-generator:mamba-closure-call-context-fastpath" tracker="#1478" reason="The fast path must consume closure-owned module and qualified-name metadata without querying function metadata maps."
+    #[test]
+    fn closure_callable_context_uses_cached_metadata() {
+        cleanup_all_closures();
+        let closure = mb_closure_new(
+            MbValue::from_ptr(MbObject::new_str("inner".to_string())),
+            MbValue::from_int(100),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        mb_func_set_module(
+            closure,
+            MbValue::from_ptr(MbObject::new_str("example.module".to_string())),
+        );
+        mb_func_set_qualname(
+            closure,
+            MbValue::from_ptr(MbObject::new_str("outer.<locals>.inner".to_string())),
+        );
+
+        assert_eq!(
+            closure_callable_context(closure),
+            Some((
+                Arc::from("example.module"),
+                Some(Arc::from("outer.<locals>.inner"))
+            ))
+        );
+        mb_closure_release(closure);
+    }
+
+    #[test]
+    fn closure_creation_caches_defining_module() {
+        cleanup_all_closures();
+        push_active_module_name("bench.closure".to_string());
+        let closure = mb_closure_new(
+            MbValue::from_ptr(MbObject::new_str("inner".to_string())),
+            MbValue::from_int(100),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+
+        assert_eq!(
+            closure_callable_context(closure),
+            Some((Arc::from("bench.closure"), Some(Arc::from("inner"))))
+        );
+
+        mb_closure_release(closure);
+        pop_active_module_name();
+        cleanup_all_closures();
+    }
+
+    #[test]
+    fn closure_capture_context_restores_outer_cell() {
+        cleanup_all_closures();
+        let capture_id: i64 = 4_242;
+        mb_capture_cell_reset_id(MbValue::from_bits(capture_id as u64), MbValue::from_int(10));
+        let closure_name = MbValue::from_ptr(MbObject::new_str("capture".to_string()));
+        let capture_ids = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(capture_id)]));
+        let closure = mb_closure_new_with_cells(closure_name, MbValue::from_int(100), capture_ids);
+
+        mb_capture_cell_reset_id(MbValue::from_bits(capture_id as u64), MbValue::from_int(20));
+        with_closure_cells(closure, || {
+            assert_eq!(
+                mb_cell_get(active_cell_for_id(capture_id)).as_int(),
+                Some(10),
+                "closure call must install its cached captured cell",
+            );
+        });
+        assert_eq!(
+            mb_cell_get(active_cell_for_id(capture_id)).as_int(),
+            Some(20),
+            "closure call must restore the caller's cell",
+        );
+
+        mb_closure_release(closure);
+        unsafe {
+            super::super::rc::release_if_ptr(closure_name);
+            super::super::rc::release_if_ptr(capture_ids);
+        }
+        cleanup_all_closures();
+    }
+    // HANDWRITE-END
 
     #[test]
     fn test_global_namespace() {

@@ -82,6 +82,10 @@ fn active_profiler_id() -> Option<u64> {
     ACTIVE_STACK.with(|s| s.borrow().last().copied())
 }
 
+pub(crate) fn is_active() -> bool {
+    active_profiler_id().is_some()
+}
+
 fn enable_profiler(id: u64) {
     ACTIVE_STACK.with(|s| s.borrow_mut().push(id));
 }

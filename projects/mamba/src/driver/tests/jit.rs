@@ -7,6 +7,7 @@ use crate::lower::{lower_hir_to_mir, lower_hir_to_mir_with_symbols, lower_module
 /// JIT execution integration tests (#296).
 /// Tests the full pipeline: parse → typecheck → lower → JIT compile → execute.
 use crate::parser;
+use crate::runtime::output::{begin_capture, end_capture};
 use crate::source::span::FileId;
 use crate::types::TypeChecker;
 
@@ -71,6 +72,18 @@ fn test_jit_dict_literal() {
 fn test_jit_bitwise_ops() {
     let result = jit_run("x: int = 5 & 3\ny: int = x | 8\n");
     assert_eq!(result, none_bits());
+}
+
+#[test]
+fn test_jit_unannotated_module_augassign_boxes_raw_int_operands() {
+    // An unannotated module binding is semantically Any, but its initial literal is
+    // physically a raw i64. Dynamic augmented-assignment dispatch must box
+    // that value before it calls mb_ixor, or `x ^= 1` rebinds x to None.
+    let previous = begin_capture();
+    let result = jit_run("x = 0\nx ^= 1\nprint(x)\n");
+    let output = end_capture(previous);
+    assert_eq!(result, none_bits());
+    assert_eq!(output, "1\n");
 }
 
 #[test]

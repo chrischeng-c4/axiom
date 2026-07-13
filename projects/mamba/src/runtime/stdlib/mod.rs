@@ -217,15 +217,46 @@ pub mod xmlrpc_mod;
 
 use super::module::mb_module_register;
 use super::value::MbValue;
+use std::cell::Cell;
 use std::collections::HashMap;
+
+thread_local! {
+    /// The module registry is thread-local, so the lazy full-registration
+    /// marker must be too. Startup still installs the import-critical `sys`
+    /// surface; native module shells arrive when an import needs them.
+    static FULL_STDLIB_REGISTERED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Register the runtime surface needed before the first ordinary import.
+pub(crate) fn register_stdlib_bootstrap() {
+    // Vendored sources must precede user search paths even when no native
+    // module has yet forced full registration.
+    vendor_lib::register();
+    let sys_registered = super::module::MODULES.with(|mods| mods.borrow().contains_key("sys"));
+    if !sys_registered {
+        sys_mod::register();
+    }
+}
+
+/// Materialize native stdlib shells at the first import that cannot be served
+/// by the bootstrap registry.
+pub(crate) fn ensure_full_stdlib_registered() {
+    if !FULL_STDLIB_REGISTERED.with(Cell::get) {
+        register_stdlib();
+    }
+}
+
+/// Keep the marker aligned with `cleanup_all_modules` in test workers.
+pub(crate) fn reset_stdlib_registration() {
+    FULL_STDLIB_REGISTERED.with(|registered| registered.set(false));
+}
 
 /// Register all standard library modules.
 pub fn register_stdlib() {
-    // Vendored CPython 3.12 Lib/ subtree (#867): register first so the
-    // shared search-path directory lands ahead of any per-module native
-    // registration order concerns. See vendor_lib.rs for precedence.
-    vendor_lib::register();
-    sys_mod::register();
+    if FULL_STDLIB_REGISTERED.with(Cell::get) {
+        return;
+    }
+    register_stdlib_bootstrap();
     os_mod::register();
     math_mod::register();
     json_mod::register();
@@ -448,6 +479,8 @@ pub fn register_stdlib() {
     long_tail4_mod::register();
     thirdparty_shells_mod::register();
     ctypes_mod::register();
+
+    FULL_STDLIB_REGISTERED.with(|registered| registered.set(true));
 }
 
 /// Helper: create a module with given attributes.

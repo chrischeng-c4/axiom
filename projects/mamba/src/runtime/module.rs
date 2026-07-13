@@ -292,6 +292,24 @@ pub fn mb_import(module_name: MbValue) -> MbValue {
         }
     }
 
+    // The bootstrap registry covers `builtins`/`sys`; defer the large native
+    // stdlib shell set until a program actually requests an import. Re-check
+    // because the requested shell may now be present in the cache.
+    super::stdlib::ensure_full_stdlib_registered();
+    let in_cache = MODULES.with(|mods| mods.borrow().contains_key(&name));
+    if in_cache {
+        let val = MODULES.with(|mods| {
+            let mut map = mods.borrow_mut();
+            map.get_mut(&name)
+                .map(module_to_value_and_cache)
+                .unwrap_or_else(MbValue::none)
+        });
+        if !val.is_none() {
+            update_sys_modules(&name, val);
+        }
+        return val;
+    }
+
     if !ensure_parent_packages(&name) {
         return MbValue::none();
     }
@@ -1315,8 +1333,9 @@ pub fn mb_register_builtins() {
     builtins.insert("None".into(), MbValue::none());
     mb_module_register("builtins", builtins);
 
-    // Register full stdlib modules (sys, os, math, json)
-    super::stdlib::register_stdlib();
+    // Keep import-free programs on the bootstrap surface; `mb_import`
+    // performs the full native registration on demand.
+    super::stdlib::register_stdlib_bootstrap();
 
     // Populate sys.argv from process arguments
     let args: Vec<String> = std::env::args().collect();
@@ -2012,6 +2031,7 @@ pub(crate) fn cleanup_all_modules() {
     let _ = SCRIPT_DIR.with(|c| c.try_borrow_mut().map(|mut s| *s = None));
     // Reset current module package (#1190 R3).
     let _ = CURRENT_MODULE_PACKAGE.with(|c| c.try_borrow_mut().map(|mut s| *s = None));
+    super::stdlib::reset_stdlib_registration();
 }
 
 /// Drop all JIT backends for imported file-based modules (#1190).

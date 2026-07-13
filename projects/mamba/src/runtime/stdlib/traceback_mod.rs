@@ -51,9 +51,9 @@ use std::sync::atomic::AtomicU32;
 
 #[derive(Clone)]
 struct TraceFrame {
-    filename: String,
+    filename: MbValue,
     lineno: u32,
-    name: String,
+    name: MbValue,
     locals: Option<MbValue>,
     local_trace_hook: Option<MbValue>,
     trace_line_events_enabled: bool,
@@ -74,6 +74,10 @@ pub(crate) struct TraceFrameSnapshot {
 }
 
 fn release_trace_frame(frame: TraceFrame) {
+    unsafe {
+        super::super::rc::release_if_ptr(frame.filename);
+        super::super::rc::release_if_ptr(frame.name);
+    }
     if let Some(locals) = frame.locals {
         unsafe {
             super::super::rc::release_if_ptr(locals);
@@ -968,7 +972,13 @@ pub(crate) fn trace_stack_snapshot() -> Vec<(String, u32, String)> {
         stack
             .borrow()
             .iter()
-            .map(|f| (f.filename.clone(), f.lineno, f.name.clone()))
+            .map(|f| {
+                (
+                    extract_str(f.filename).unwrap_or_else(|| "<string>".to_string()),
+                    f.lineno,
+                    extract_str(f.name).unwrap_or_else(|| "<module>".to_string()),
+                )
+            })
             .collect()
     })
 }
@@ -979,9 +989,9 @@ pub(crate) fn trace_stack_snapshot_with_locals() -> Vec<TraceFrameSnapshot> {
             .borrow()
             .iter()
             .map(|f| TraceFrameSnapshot {
-                filename: f.filename.clone(),
+                filename: extract_str(f.filename).unwrap_or_else(|| "<string>".to_string()),
                 lineno: f.lineno,
-                name: f.name.clone(),
+                name: extract_str(f.name).unwrap_or_else(|| "<module>".to_string()),
                 locals: f.locals,
                 local_trace_hook: f.local_trace_hook,
             })
@@ -1001,13 +1011,19 @@ pub(crate) fn mb_traceback_make_current_frame_for_hook() -> MbValue {
 }
 
 pub fn mb_traceback_push_frame(filename: MbValue, lineno: MbValue, name: MbValue) {
-    let filename = extract_str(filename).unwrap_or_else(|| "<string>".to_string());
-    let name = extract_str(name).unwrap_or_else(|| "<module>".to_string());
     let lineno = trace_lineno(lineno);
     // #878: deterministic cProfile/profile backend hook — every compiled
     // function call reaches here at entry, giving an exact (not sampled)
     // per-function call count including for recursion.
-    super::cprofile_mod::on_call_enter(&filename, lineno, &name);
+    if super::cprofile_mod::is_active() {
+        let filename_text = extract_str(filename).unwrap_or_else(|| "<string>".to_string());
+        let name_text = extract_str(name).unwrap_or_else(|| "<module>".to_string());
+        super::cprofile_mod::on_call_enter(&filename_text, lineno, &name_text);
+    }
+    unsafe {
+        super::super::rc::retain_if_ptr(filename);
+        super::super::rc::retain_if_ptr(name);
+    }
     TRACE_FRAME_STACK.with(|stack| {
         stack.borrow_mut().push(TraceFrame {
             filename,
@@ -1116,9 +1132,9 @@ pub fn mb_traceback_capture_raise(lineno: MbValue) {
         let mut frames = stack.clone();
         if frames.is_empty() {
             frames.push(TraceFrame {
-                filename: "<string>".to_string(),
+                filename: MbValue::none(),
                 lineno: raise_lineno,
-                name: "<module>".to_string(),
+                name: MbValue::none(),
                 locals: None,
                 local_trace_hook: None,
                 trace_line_events_enabled: false,
@@ -1129,7 +1145,13 @@ pub fn mb_traceback_capture_raise(lineno: MbValue) {
         }
         frames
             .into_iter()
-            .map(|frame| (frame.filename, frame.lineno, frame.name))
+            .map(|frame| {
+                (
+                    extract_str(frame.filename).unwrap_or_else(|| "<string>".to_string()),
+                    frame.lineno,
+                    extract_str(frame.name).unwrap_or_else(|| "<module>".to_string()),
+                )
+            })
             .collect()
     });
 
@@ -1151,9 +1173,11 @@ pub fn mb_traceback_note_propagation(lineno: MbValue) {
     let propagate_lineno = trace_lineno(lineno);
     let current = TRACE_FRAME_STACK.with(|stack| stack.borrow().last().cloned());
     if let Some(frame) = current {
+        let filename = extract_str(frame.filename).unwrap_or_else(|| "<string>".to_string());
+        let name = extract_str(frame.name).unwrap_or_else(|| "<module>".to_string());
         super::super::exception::update_current_traceback_frame_line(
-            &frame.filename,
-            &frame.name,
+            &filename,
+            &name,
             propagate_lineno,
         );
     }
@@ -1166,8 +1190,11 @@ pub(crate) fn trim_traceback_to_current_handler(
     let Some(current) = current else {
         return entries.to_vec();
     };
+    let current_filename =
+        extract_str(current.filename).unwrap_or_else(|| "<string>".to_string());
+    let current_name = extract_str(current.name).unwrap_or_else(|| "<module>".to_string());
     match entries.iter().rposition(|(filename, _lineno, name)| {
-        filename == &current.filename && name == &current.name
+        filename == &current_filename && name == &current_name
     }) {
         Some(idx) => entries[idx..].to_vec(),
         None => entries.to_vec(),

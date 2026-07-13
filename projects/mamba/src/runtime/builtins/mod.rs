@@ -2048,6 +2048,15 @@ pub fn mb_bitor(a: MbValue, b: MbValue) -> MbValue {
 
 /// Bitwise AND — also handles set intersection.
 pub fn mb_bitand(a: MbValue, b: MbValue) -> MbValue {
+    // Plain immediates dominate compiled numeric loops. They cannot be enum
+    // members, dict views, sets, subclasses, or BigInts, so bypass those
+    // dynamic probes before the general Python operator ladder.
+    if let (Some(ab), Some(bb)) = (a.as_bool(), b.as_bool()) {
+        return MbValue::from_bool(ab & bb);
+    }
+    if let (Some(ai), Some(bi)) = (a.as_int(), b.as_int()) {
+        return MbValue::from_int(ai & bi);
+    }
     // Flag member composition: Color.RED & composite → cached member.
     if let Some(r) =
         super::stdlib::enum_class::flag_binop(a, b, super::stdlib::enum_class::FlagOp::And)
@@ -2125,6 +2134,13 @@ pub fn mb_bitand(a: MbValue, b: MbValue) -> MbValue {
 
 /// Bitwise XOR — also handles set symmetric difference.
 pub fn mb_bitxor(a: MbValue, b: MbValue) -> MbValue {
+    // See mb_bitand: exact immediates need no dynamic-protocol checks.
+    if let (Some(ab), Some(bb)) = (a.as_bool(), b.as_bool()) {
+        return MbValue::from_bool(ab ^ bb);
+    }
+    if let (Some(ai), Some(bi)) = (a.as_int(), b.as_int()) {
+        return MbValue::from_int(ai ^ bi);
+    }
     // Flag member composition: Color.RED ^ Color.BLUE → cached composite.
     if let Some(r) =
         super::stdlib::enum_class::flag_binop(a, b, super::stdlib::enum_class::FlagOp::Xor)
@@ -2448,6 +2464,20 @@ pub fn mb_div(a: MbValue, b: MbValue) -> MbValue {
 }
 
 pub fn mb_mod(a: MbValue, b: MbValue) -> MbValue {
+    // The exact integer case is independent of enum/subclass/handle
+    // dispatch. Run it before those probes, including the required zero
+    // divisor diagnostic.
+    if let (Some(ai), Some(bi)) = (a.as_int(), b.as_int()) {
+        if bi != 0 {
+            let r = ai % bi;
+            return MbValue::from_int(if r != 0 && (r ^ bi) < 0 { r + bi } else { r });
+        }
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ZeroDivisionError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("integer modulo by zero".to_string())),
+        );
+        return MbValue::none();
+    }
     let a = int_enum_like_value(a).unwrap_or(a);
     let b = int_enum_like_value(b).unwrap_or(b);
     // int/float-SUBCLASS operand unwrap (#1030).

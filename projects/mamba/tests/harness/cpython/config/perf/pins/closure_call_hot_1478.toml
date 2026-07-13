@@ -5,5 +5,3 @@ floor = 1.0
 mem_floor = 1.0
 samples = 9
 prereq_imports = []
-
-<!-- marker: missing-generator:mamba-closure-perf-pin path: projects/mamba/tests/harness/cpython/config/perf/pins/closure_call_hot_1478.toml reason: The closure hot path needs an executable CPU and RSS perf gate. -->
