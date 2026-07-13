@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/mamba"
-generated_at = "2026-07-12T15:32:43.081064+00:00"
-digest = "sha256:7141b192a1db92345976124d86788028348fc5e4a111c05147d6931549780748"
-source_digest = "sha256:7141b192a1db92345976124d86788028348fc5e4a111c05147d6931549780748"
-ir_digest = "sha256:c443c97174d3a1613336fe62d0845384637281da5a1a8331a4b5708e528346fc"
+generated_at = "2026-07-13T02:42:26.454714+00:00"
+digest = "sha256:b941935ba677635655e5d0b899349f57924d741ac378b8cb7fcc467bda7f0b6d"
+source_digest = "sha256:b941935ba677635655e5d0b899349f57924d741ac378b8cb7fcc467bda7f0b6d"
+ir_digest = "sha256:d0564f0ed6a2f9527d3ac9a171e21591d60981f574df351f2dc43727492beba9"
 
 [[files]]
 path = "README.md"
@@ -81,8 +81,8 @@ section_count = 3
 
 [[files]]
 path = "logic/mamba-language-core-gate-closure-call-hot-with-perf-pin.md"
-digest = "sha256:66b05a68d5df24f733e0ea3ff817f87bbbd8d239cbc147c9853d314f558e84f3"
-ir_digest = "sha256:54416d72f8dcf9c2fd9982672cc3eb902aadf65bd9e315941e48e6347c8d8826"
+digest = "sha256:a64d4cdfe58347f6f7e0a390d1fe97cfca122eff1667855e5eece6659d2ddb5e"
+ir_digest = "sha256:66bf981c6d329262bb564bfeea05c211f9ff65475870bd862b5f22eccbd5cf76"
 section_count = 3
 
 [[files]]
@@ -90,6 +90,12 @@ path = "logic/mamba-language-core-match-pinned-unboundlocalerror-diagnostics.md"
 digest = "sha256:75f317ffbb526fc2ac07085f3ae90eb1087e649b8ef4b61da66e842d1b7fb608"
 ir_digest = "sha256:6c27e4e10521f7638f4ec32a12ba404c60260e7c7f1414d4474b27d0671fc407"
 section_count = 3
+
+[[files]]
+path = "logic/mamba-language-core-restore-class-comprehension-cells.md"
+digest = "sha256:0ade0d2e9d1f49cfcaac06690bb1296944d4a1021cf3672e39a4373cc5f5127c"
+ir_digest = "sha256:b05234b4c622404f7209f77918c5b93ef320d0f715429ee6cd87a803395e7d0d"
+section_count = 1
 
 [[files]]
 path = "logic/mamba-language-core-restore-nested-sibling-mutual-recursion.md"
