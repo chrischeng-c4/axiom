@@ -1,0 +1,11 @@
+[project]
+name = "mamba"
+td_path = ".aw/tech-design/projects/mamba"
+cap_path = "README.md"
+label = "project:mamba"
+
+[[workspaces]]
+name = "mamba"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p mamba"
