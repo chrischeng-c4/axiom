@@ -301,7 +301,7 @@ Gate Inventory:
 
 ID: kubernetes-native-deployment
 Type: Devops
-Surfaces: CLI: `pgpool k8s crd render`, `pgpool k8s operator render|run`, and `pgpool k8s instance render` - layered deployment artifact verbs per the service CLI convention.; K8s: namespaced Pgpool CRD, leader-elected operator, instance profiles, and shared stateless Deployment/ClusterIP/PDB composition.
+Surfaces: CLI: `pgpool k8s crd render`, `pgpool k8s operator render|run`, and `pgpool k8s instance render` - layered deployment artifact verbs per the service CLI convention.; K8s: namespaced Pgpool CRD, leader-elected operator, live endpoint discovery plus pre-apply quota admission, instance profiles, and shared stateless Deployment/ClusterIP/PDB composition.
 EC Dimensions: behavior: `cargo test -p pgpool --test operator --test cli_contract` - CRD/operator/instance artifacts and shared Deployment children render deterministically from the binary and typed CR
 Root WI: 1284
 Status: auditing

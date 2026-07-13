@@ -36,6 +36,12 @@ pub struct PgpoolEndpointBudgetSpec {
     pub host: String,
     #[serde(default = "default_postgres_port")]
     pub port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_secret_ref: Option<PgpoolSecretKeyRef>,
     #[serde(default)]
     pub reserve: u32,
     #[serde(default)]
@@ -46,6 +52,14 @@ pub struct PgpoolEndpointBudgetSpec {
     pub per_pod_quota: u32,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PgpoolSecretKeyRef {
+    pub name: String,
+    #[serde(default = "default_password_key")]
+    pub key: String,
+}
+
 impl Default for PgpoolEndpointBudgetSpec {
     fn default() -> Self {
         Self {
@@ -54,6 +68,9 @@ impl Default for PgpoolEndpointBudgetSpec {
             role: PgpoolEndpointRole::Primary,
             host: "postgres.default.svc".into(),
             port: default_postgres_port(),
+            database: None,
+            user: None,
+            password_secret_ref: None,
             reserve: 10,
             safety_headroom: 10,
             configured_ceiling: None,
@@ -252,6 +269,9 @@ fn default_postgres_port() -> u16 {
 }
 fn default_per_pod_quota() -> u32 {
     32
+}
+fn default_password_key() -> String {
+    "password".into()
 }
 fn default_primary_endpoint() -> String {
     "primary".into()

@@ -105,7 +105,7 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: "Define the namespaced Pgpool custom resource, provider/role endpoint budgets, and readiness plus connection-budget status schema."
+    description: "Define the namespaced Pgpool custom resource, provider/role endpoint budgets, optional database/user/password Secret discovery credentials, and readiness plus connection-budget status schema."
   - path: apps/pgpool/src/operator/render.rs
     action: create
     section: logic
@@ -115,7 +115,7 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: "Implement ManagedService readiness and status projection for Deployment replicas and expose the shared operator run loop."
+    description: "Implement the async ManagedService plan: inspect current Deployment/Pods, query every live endpoint, reserve desired quotas before scale-out, retain quota for terminating Pods on scale-in, render only admitted replicas, and project contextual status; expose the shared operator run loop."
   - path: apps/pgpool/src/bin/pgpool.rs
     action: modify
     section: logic

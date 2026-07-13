@@ -6,7 +6,8 @@ pub mod render;
 
 pub use crd::{
     Pgpool, PgpoolEndpointBudgetSpec, PgpoolEndpointBudgetStatus, PgpoolEndpointProvider,
-    PgpoolEndpointRole, PgpoolPodBudgetStatus, PgpoolResources, PgpoolSpec, PgpoolStatus,
+    PgpoolEndpointRole, PgpoolPodBudgetStatus, PgpoolResources, PgpoolSecretKeyRef, PgpoolSpec,
+    PgpoolStatus,
 };
 pub use reconcile::run;
 
@@ -42,6 +43,9 @@ pub fn instance_yaml(profile: InstanceProfile) -> String {
                 role: PgpoolEndpointRole::Primary,
                 host: deployment.backend_host,
                 port: deployment.backend_port,
+                database: None,
+                user: None,
+                password_secret_ref: None,
                 reserve: deployment.max_backend_connections,
                 safety_headroom: deployment.max_backend_connections / 2,
                 configured_ceiling: None,
@@ -85,6 +89,7 @@ pub fn operator_manifests(namespace: &str) -> Vec<Value> {
                 { "apiGroups": ["pgpool.axiom.dev"], "resources": ["pgpools", "pgpools/status"], "verbs": ["get", "list", "watch", "patch", "update"] },
                 { "apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["get", "list", "watch", "create", "patch", "update"] },
                 { "apiGroups": [""], "resources": ["services", "serviceaccounts"], "verbs": ["get", "list", "watch", "create", "patch", "update"] },
+                { "apiGroups": [""], "resources": ["pods", "secrets"], "verbs": ["get", "list", "watch"] },
                 { "apiGroups": ["policy"], "resources": ["poddisruptionbudgets"], "verbs": ["get", "list", "watch", "create", "patch", "update"] },
                 { "apiGroups": ["coordination.k8s.io"], "resources": ["leases"], "verbs": ["get", "create", "update", "patch"] },
             ],
