@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-13T11:29:15.813825+00:00"
-digest = "sha256:24b90a7d82ea328815a6aa450b6586217189efa8931b706a8f4db98ed1a28520"
-source_digest = "sha256:24b90a7d82ea328815a6aa450b6586217189efa8931b706a8f4db98ed1a28520"
-ir_digest = "sha256:fbefa0ae27cc547ffc8dd8d001ac091eb880fde650829f461e82c470be904911"
+generated_at = "2026-07-13T11:31:21.164302+00:00"
+digest = "sha256:2861643d5f9b12c014b0de5b24695936aa3364910f8be71ac6bd8949acb904d3"
+source_digest = "sha256:2861643d5f9b12c014b0de5b24695936aa3364910f8be71ac6bd8949acb904d3"
+ir_digest = "sha256:114bcf1db9c8428c5047bf0424d155f07a8a21dfdfbe463b5925c4fc694a5524"
 
 [[files]]
 path = "README.md"
@@ -39,9 +39,9 @@ section_count = 3
 
 [[files]]
 path = "logic/project-the-stateful-service-workload-baseline.md"
-digest = "sha256:7262a8a2df58875b30337cd3b2dd24a37daf9b147c1800dde40dcf7b56b27d07"
-ir_digest = "sha256:16e3ef655ba06e9e326d18a3833a6c4a233ac95c45cd0f46779552566df28ad6"
-section_count = 1
+digest = "sha256:c88626a74a8a7949466b7bbf8f5918d99ac1bc451a640da4caa1efccbdd37102"
+ir_digest = "sha256:5c0efc23ddf3ed8dfd05b5aa9b4cf610d21483c85662c87fc4aeabe1267eb580"
+section_count = 2
 
 [[files]]
 path = "logic/tape-backup-service-tls-spec-gen-clients.md"
