@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/mamba"
-generated_at = "2026-07-13T02:59:38.756877+00:00"
-digest = "sha256:32b492ff527bf2cfef9257d53b2cb1975acafdaaac4ed570464da920dca048ec"
-source_digest = "sha256:32b492ff527bf2cfef9257d53b2cb1975acafdaaac4ed570464da920dca048ec"
-ir_digest = "sha256:72b7f3ae796df68e46c7d6dbbe3a2b2ed595d8d5dfca4f340c261c47ca1f7a55"
+generated_at = "2026-07-13T03:10:02.200184+00:00"
+digest = "sha256:ce64fd143d0988b2bb72c25cd1108d2d14f7717d19f81cd71e9df7e249e26c25"
+source_digest = "sha256:ce64fd143d0988b2bb72c25cd1108d2d14f7717d19f81cd71e9df7e249e26c25"
+ir_digest = "sha256:07f18a862d93b4c6473cd40ba56a7057bd181ec6a15b73e8913fcedc7cb3aa55"
 
 [[files]]
 path = "README.md"
@@ -78,6 +78,12 @@ path = "interfaces/rest/mamba-strict-type-wire-object-aot-local-producer-provena
 digest = "sha256:80bca5e456bf2dd07d37c6d65e9404981dd3b169adab69551143f7d35d65a65f"
 ir_digest = "sha256:c68493fb2e2b480773a32b2a74a3cc7eea6036f57f846adc2d144d7b116c0f67"
 section_count = 3
+
+[[files]]
+path = "logic/mamba-language-core-bind-instance-method-keywords.md"
+digest = "sha256:657883ee97feaf7502e8ea02229a34b445e1bed8231fe72f8e9a255cd8bf43bc"
+ir_digest = "sha256:6119c3a33fc3ab1d56722350aa2e98735ad50358d1e0b533fd916b30750478ae"
+section_count = 2
 
 [[files]]
 path = "logic/mamba-language-core-gate-closure-call-hot-with-perf-pin.md"
