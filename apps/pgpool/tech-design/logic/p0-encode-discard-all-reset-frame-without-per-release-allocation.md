@@ -9,24 +9,23 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: pgpool-static-discard-all-frame
-entry: release
+id: pgpool-static-discard-all-frame-contract
+entry: reset
 nodes:
-  release: { kind: start, label: "Backend release to idle" }
-  frame: { kind: process, label: "Write byte-exact static DISCARD ALL Query frame" }
-  reader: { kind: process, label: "Use existing FrameReader until ReadyForQuery" }
-  idle: { kind: terminal, label: "Reset backend eligible for reuse" }
+  reset: { kind: start, label: "Reset required before idle reuse" }
+  bytes: { kind: process, label: "Static byte-exact Query frame" }
+  response: { kind: process, label: "Existing reader validates ReadyForQuery" }
+  reuse: { kind: terminal, label: "Reuse only after successful reset" }
 edges:
-  - { from: release, to: frame }
-  - { from: frame, to: reader }
-  - { from: reader, to: idle }
+  - { from: reset, to: bytes }
+  - { from: bytes, to: response }
+  - { from: response, to: reuse }
 ---
 flowchart LR
-  release([release backend]) --> frame[static DISCARD ALL frame]
-  frame --> reader[existing FrameReader to ReadyForQuery]
-  reader --> idle([safe idle backend])
+  reset([reset required]) --> bytes[static Query bytes]
+  bytes --> response[existing response validation]
+  response --> reuse([safe reuse])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
