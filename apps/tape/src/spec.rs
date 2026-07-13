@@ -34,6 +34,8 @@ pub fn routes_json() -> String {
             {"method": "GET", "path": "/topics/{topic}/subscriptions", "purpose": "list topic delivery resources"},
             {"method": "GET", "path": "/topics/{topic}/subscriptions/{subscription}", "purpose": "inspect one topic delivery resource"},
             {"method": "DELETE", "path": "/topics/{topic}/subscriptions/{subscription}", "purpose": "delete topic delivery resource metadata"},
+            {"method": "POST", "path": "/topics/{topic}/subscriptions/{subscription}/pull", "purpose": "read a bounded pull subscription window"},
+            {"method": "POST", "path": "/topics/{topic}/subscriptions/{subscription}/ack", "purpose": "advance a pull subscription cursor"},
             {"method": "PUT", "path": "/topics/{topic}/consumers/{consumer}/checkpoint", "purpose": "advance a durable consumer cursor"},
             {"method": "GET", "path": "/topics/{topic}/consumers/{consumer}/checkpoint", "purpose": "read a durable consumer cursor"},
             {"method": "PUT", "path": "/topics/{topic}/retention", "purpose": "configure retention windows"}
@@ -72,6 +74,8 @@ The initial service contract is intentionally compact:
 - `GET /topics/{topic}/replay?from_offset=N&from_timestamp_ms=T&limit=L` replays history.
 - `POST`/`GET /topics/{topic}/subscriptions` declare topic delivery resources.
 - `GET`/`DELETE /topics/{topic}/subscriptions/{subscription}` declare one resource.
+- `POST /topics/{topic}/subscriptions/{subscription}/pull` declares bounded pull reads.
+- `POST /topics/{topic}/subscriptions/{subscription}/ack` declares explicit cursor advance.
 - `PUT /topics/{topic}/consumers/{consumer}/checkpoint` advances a replay cursor.
 - `GET /topics/{topic}/consumers/{consumer}/checkpoint` reads the replay cursor.
 - `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, and `/docs` are the standard service endpoints.
@@ -148,6 +152,22 @@ fn openapi() -> Value {
                     "summary": "Delete topic delivery resource metadata",
                     "parameters": [topic_param(), subscription_param()],
                     "responses": ok_schema("Subscription")
+                }
+            },
+            "/topics/{topic}/subscriptions/{subscription}/pull": {
+                "post": {
+                    "summary": "Read a bounded pull subscription window",
+                    "parameters": [topic_param(), subscription_param()],
+                    "requestBody": json_body("PullSubscriptionRequest"),
+                    "responses": ok_schema("PullSubscriptionBatch")
+                }
+            },
+            "/topics/{topic}/subscriptions/{subscription}/ack": {
+                "post": {
+                    "summary": "Advance a pull subscription cursor",
+                    "parameters": [topic_param(), subscription_param()],
+                    "requestBody": json_body("PullSubscriptionAckRequest"),
+                    "responses": ok_schema("ConsumerCheckpoint")
                 }
             },
             "/topics/{topic}/consumers/{consumer}/checkpoint": {
@@ -246,6 +266,31 @@ fn schemas() -> Value {
             "required": ["subscriptions"],
             "properties": {
                 "subscriptions": {"type": "array", "items": {"$ref": "#/components/schemas/Subscription"}}
+            }
+        },
+        "PullSubscriptionRequest": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "minimum": 0, "maximum": 1000, "default": 100}
+            }
+        },
+        "PullSubscriptionBatch": {
+            "type": "object",
+            "required": ["topic", "subscription", "cursor", "limit", "next_offset", "events"],
+            "properties": {
+                "topic": {"type": "string"},
+                "subscription": {"type": "string"},
+                "cursor": {"type": "integer", "minimum": 0},
+                "limit": {"type": "integer", "minimum": 0, "maximum": 1000},
+                "next_offset": {"type": "integer", "minimum": 0},
+                "events": {"type": "array", "items": {"$ref": "#/components/schemas/TapeEvent"}}
+            }
+        },
+        "PullSubscriptionAckRequest": {
+            "type": "object",
+            "required": ["offset"],
+            "properties": {
+                "offset": {"type": "integer", "minimum": 0}
             }
         },
         "CheckpointRequest": {

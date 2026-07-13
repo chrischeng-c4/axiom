@@ -33,7 +33,7 @@ real-service external peer calibration remain separate work roots.
 |---|---:|---|---|---|---|---|
 | Topic Replay Journal | #768 | implemented | verified | smoke | ready | local file-backed append and offset/time replay; raft/h2c deferred |
 | Consumer Checkpoints | #768 | implemented | verified | smoke | ready | local durable consumer cursor and stale-write rejection |
-| Subscription Delivery Resources | #1254 | implemented | verified | smoke | ready | file-backed topic subscription resources; pull reuses checkpoint cursors, push stores endpoint contract only |
+| Subscription Delivery Resources | #1254, #1255 | implemented | verified | smoke | ready | bounded pull/replay uses checkpoint cursors plus explicit ack; push stores endpoint contract only |
 | Retention And Backfill | #768 | planned | planned | none | not_ready | retention windows, compaction policy, and batch backfill |
 | HTTP/2 API List | #768 | implemented | verified | smoke | ready | offline `tape spec` route/OpenAPI inventory plus a real h2c + HTTP/1.1 server (#1325) serving `/topics` append/replay/checkpoint; `GET /admin/backup` + `tape backup`/`tape spec gen` client codegen (#1329) |
 | Standard Operational Endpoints | #768 | implemented | verified | smoke | ready | `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` served for real via `libs/service-http` (#1325), with drain-aware readiness and `tape serve` |
@@ -247,17 +247,19 @@ Gate Inventory:
 
 ID: subscription-delivery-resources
 Type: RuntimeTool
-Root WI: #1254
+Root WI: #1254, #1255
 Status: verified
-Surfaces: CLI: `tape subscription create|list|show|delete`; API inventory: `/topics/{topic}/subscriptions` and `/topics/{topic}/subscriptions/{subscription}`.
+Surfaces: CLI: `tape subscription create|list|show|pull|ack|delete`; API inventory: `/topics/{topic}/subscriptions`, `/topics/{topic}/subscriptions/{subscription}/pull`, and `/topics/{topic}/subscriptions/{subscription}/ack`.
 EC Dimensions: behavior: `cargo test -p tape --test cli_contract` - local pull/push resource and spec inventory contract
 Required Verification: smoke, conformance
 Promise:
-Tape exposes named topic delivery resources without becoming Relay: pull
-subscriptions reuse the existing durable `topic/name` checkpoint cursor, while
-push subscriptions persist an endpoint declaration only. This slice does not
-start a push worker, send outbound requests, add live h2c subscription routes,
-or replicate subscription state through raft.
+Tape exposes named topic delivery resources without becoming Relay: bounded
+pull reads use the durable `topic/name` checkpoint as their next-offset cursor,
+return at most the caller's requested (maximum 1000) window, and require an
+explicit ack to advance it. This is Tape's high-QPS pull/replay comparison
+path. Push subscriptions persist an endpoint declaration only. This slice does
+not start a push worker, send outbound requests, add live h2c subscription
+routes, lease scheduling, or replicate subscription cursor state through raft.
 Gate Inventory:
 - apps/tape/src/lib.rs
 - apps/tape/src/bin/tape.rs
@@ -267,6 +269,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | topic-subscription-resource-contract | change | #1254 | implemented | passing | smoke | apps/tape/tests/cli_contract.rs |
+| pull-subscription-cursor-contract | change | #1255 | implemented | passing | smoke | apps/tape/src/lib.rs<br>apps/tape/tests/cli_contract.rs |
 
 ### Retention And Backfill
 

@@ -58,6 +58,14 @@ schemas:
   - title: SubscriptionListResponse
     type: object
     required: [subscriptions]
+  - title: PullSubscriptionRequest
+    type: object
+  - title: PullSubscriptionBatch
+    type: object
+    required: [topic, subscription, cursor, limit, next_offset, events]
+  - title: PullSubscriptionAckRequest
+    type: object
+    required: [offset]
   - title: CheckpointRequest
     type: object
     required: [offset]
@@ -79,6 +87,7 @@ flowchart TD
     test["cargo test -p tape --test cli_contract spec_routes_list_topic_contract -- --exact --nocapture"] --> routes["tape spec --format routes"]
     routes --> topic["append/replay/checkpoint routes present"]
     routes --> subscriptions["subscription collection and item routes present"]
+    routes --> pullack["bounded pull and explicit ack routes present"]
     routes --> ops["/healthz /readyz /metrics /openapi.json /docs present"]
 ```
 
@@ -102,4 +111,9 @@ changes:
     section: schema
     impl_mode: hand-written
     description: "Declare subscription routes and pull/push delivery schemas in offline routes, OpenAPI, JSON Schema, and LLM API wording (#1254); live h2c handlers remain out of scope."
+  - path: apps/tape/src/spec.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Declare bounded pull and explicit ack inventory schemas without adding live h2c delivery handlers (#1255)."
 ```

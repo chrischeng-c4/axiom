@@ -20,6 +20,12 @@ capability_refs:
     gap: "topic-subscription-resource-contract"
     coverage: partial
     rationale: "TapeJournal owns local topic subscription metadata and preserves pull checkpoint compatibility."
+  - id: "subscription-delivery-resources"
+    role: supporting
+    claim: "pull-subscription-cursor-contract"
+    gap: "pull-subscription-cursor-contract"
+    coverage: partial
+    rationale: "TapeJournal reads bounded pull windows from checkpoints and advances them only through explicit ack."
 fill_sections: [overview, logic, unit-test, changes]
 ---
 
@@ -33,6 +39,8 @@ fill_sections: [overview, logic, unit-test, changes]
 and file-serializable, deliberately below the future h2c/raft/operator layers.
 The core exposes owned replay for CLI/API callers and zero-copy `replay_refs`
 for local backlog scan performance gates.
+Pull subscriptions make the checkpoint an explicit next-offset cursor with a
+bounded caller-driven read and explicit durable ack.
 
 ## Logic
 <!-- type: logic lang: mermaid -->
@@ -59,6 +67,8 @@ flowchart TD
     unique -->|no| suberror["SubscriptionError"]
     substore --> pull["pull name remains the existing checkpoint consumer identity"]
     substore --> push["push endpoint is stored only; no worker sends requests"]
+    pull --> batch["pull_subscription reads <= MAX_PULL_BATCH events without moving cursor"]
+    batch --> ack["ack_subscription reuses put_checkpoint stale/beyond-end guards"]
 ```
 
 ## Unit Test
@@ -75,6 +85,7 @@ flowchart TD
     replaytest --> replayproof["offset and timestamp replay pass"]
     checkpointtest --> checkpointproof["advance, stale rejection, and beyond-end rejection pass"]
     subscriptiontest --> subscriptionproof["create/delete leaves topic/name checkpoint unchanged"]
+    libtest --> pulltest["pull cursor, ack guards, and oversized-window rejection"]
 ```
 
 ## Changes
@@ -102,4 +113,9 @@ changes:
     section: logic
     impl_mode: hand-written
     description: "Add local Subscription delivery metadata and CRUD; pull resources preserve existing checkpoints and push endpoints remain declarative (#1254)."
+  - path: apps/tape/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Add bounded pull windows and explicit checkpoint-backed ack for pull subscriptions (#1255)."
 ```

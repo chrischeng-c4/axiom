@@ -8,6 +8,9 @@ use serde_json::Value;
 use thiserror::Error;
 use utoipa::ToSchema;
 
+pub const DEFAULT_PULL_BATCH: usize = 100;
+pub const MAX_PULL_BATCH: usize = 1_000;
+
 pub mod auth;
 #[cfg(feature = "backup")]
 pub mod backup;
@@ -40,6 +43,18 @@ pub enum SubscriptionError {
     NotFound { topic: String, name: String },
     #[error("push subscription endpoint must not be empty")]
     EmptyPushEndpoint,
+    #[error("subscription {name} on topic {topic} is not a pull subscription")]
+    NotPull { topic: String, name: String },
+    #[error("pull batch limit {limit} exceeds maximum {max}")]
+    PullBatchTooLarge { limit: usize, max: usize },
+}
+
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum SubscriptionAckError {
+    #[error(transparent)]
+    Subscription(#[from] SubscriptionError),
+    #[error(transparent)]
+    Checkpoint(#[from] TapeError),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -78,6 +93,18 @@ pub struct Subscription {
     pub topic: String,
     pub name: String,
     pub delivery: SubscriptionDelivery,
+}
+
+/// One caller-driven pull window. `cursor` is the checkpoint used to read;
+/// `next_offset` is advisory until an explicit [`TapeJournal::ack_subscription`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct PullSubscriptionBatch {
+    pub topic: String,
+    pub subscription: String,
+    pub cursor: u64,
+    pub limit: usize,
+    pub next_offset: u64,
+    pub events: Vec<TapeEvent>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -249,6 +276,76 @@ impl TapeJournal {
             })
     }
 
+    // @spec apps/tape/tech-design/logic/normalize-replay-checkpoints-into-pull-subscriptions.md#changes
+    /// Read a bounded, caller-driven window from a pull subscription cursor.
+    /// Pulling is deliberately side-effect free: a caller must explicitly ack
+    /// after processing to advance the durable checkpoint.
+    pub fn pull_subscription(
+        &self,
+        topic: &str,
+        name: &str,
+        limit: Option<usize>,
+    ) -> Result<PullSubscriptionBatch, SubscriptionError> {
+        self.require_pull_subscription(topic, name)?;
+        let limit = limit.unwrap_or(DEFAULT_PULL_BATCH);
+        if limit > MAX_PULL_BATCH {
+            return Err(SubscriptionError::PullBatchTooLarge {
+                limit,
+                max: MAX_PULL_BATCH,
+            });
+        }
+        let cursor = self
+            .checkpoint(topic, name)
+            .map(|checkpoint| checkpoint.offset)
+            .unwrap_or(0);
+        let events = self.replay(topic, Some(cursor), None, Some(limit));
+        let next_offset = events
+            .last()
+            .map(|event| event.offset + 1)
+            .unwrap_or(cursor);
+        Ok(PullSubscriptionBatch {
+            topic: topic.to_string(),
+            subscription: name.to_string(),
+            cursor,
+            limit,
+            next_offset,
+            events,
+        })
+    }
+
+    /// Acknowledge a completed pull window by advancing its existing durable
+    /// topic/name checkpoint. The checkpoint's stale and beyond-end guards are
+    /// intentionally reused without introducing leases or in-flight state.
+    pub fn ack_subscription(
+        &mut self,
+        topic: &str,
+        name: &str,
+        offset: u64,
+    ) -> Result<ConsumerCheckpoint, SubscriptionAckError> {
+        self.require_pull_subscription(topic, name)?;
+        Ok(self.put_checkpoint(topic, name, offset)?)
+    }
+
+    fn require_pull_subscription(
+        &self,
+        topic: &str,
+        name: &str,
+    ) -> Result<&Subscription, SubscriptionError> {
+        let subscription =
+            self.subscription(topic, name)
+                .ok_or_else(|| SubscriptionError::NotFound {
+                    topic: topic.to_string(),
+                    name: name.to_string(),
+                })?;
+        if !matches!(subscription.delivery, SubscriptionDelivery::Pull) {
+            return Err(SubscriptionError::NotPull {
+                topic: topic.to_string(),
+                name: name.to_string(),
+            });
+        }
+        Ok(subscription)
+    }
+
     pub fn end_offset(&self, topic: &str) -> u64 {
         self.topics.get(topic).map(Vec::len).unwrap_or_default() as u64
     }
@@ -333,5 +430,90 @@ mod tests {
         let deleted = journal.delete_subscription("orders", "worker-a").unwrap();
         assert_eq!(deleted.name, "worker-a");
         assert_eq!(journal.checkpoint("orders", "worker-a"), Some(&checkpoint));
+    }
+
+    #[test]
+    fn pull_subscription_uses_checkpoint_cursor_and_never_implicitly_acks() {
+        let mut journal = TapeJournal::default();
+        for offset in 0..3 {
+            journal.append(
+                "orders",
+                None,
+                serde_json::json!({"offset": offset}),
+                Some(100),
+            );
+        }
+        journal
+            .create_subscription("orders", "worker-a", SubscriptionDelivery::Pull)
+            .unwrap();
+        journal.put_checkpoint("orders", "worker-a", 1).unwrap();
+
+        let batch = journal
+            .pull_subscription("orders", "worker-a", Some(2))
+            .unwrap();
+        assert_eq!(batch.cursor, 1);
+        assert_eq!(
+            batch
+                .events
+                .iter()
+                .map(|event| event.offset)
+                .collect::<Vec<_>>(),
+            [1, 2]
+        );
+        assert_eq!(batch.next_offset, 3);
+        assert_eq!(journal.checkpoint("orders", "worker-a").unwrap().offset, 1);
+    }
+
+    #[test]
+    fn pull_subscription_ack_reuses_checkpoint_guards() {
+        let mut journal = TapeJournal::default();
+        journal.append("orders", None, serde_json::json!({"n": 1}), Some(100));
+        journal
+            .create_subscription("orders", "worker-a", SubscriptionDelivery::Pull)
+            .unwrap();
+        journal
+            .create_subscription(
+                "orders",
+                "webhook",
+                SubscriptionDelivery::Push {
+                    endpoint: "https://hooks.example.invalid/tape".to_string(),
+                },
+            )
+            .unwrap();
+
+        assert!(matches!(
+            journal.ack_subscription("orders", "webhook", 0),
+            Err(SubscriptionAckError::Subscription(
+                SubscriptionError::NotPull { .. }
+            ))
+        ));
+        assert!(matches!(
+            journal.ack_subscription("orders", "worker-a", 2),
+            Err(SubscriptionAckError::Checkpoint(
+                TapeError::CheckpointBeyondEnd { .. }
+            ))
+        ));
+        journal.ack_subscription("orders", "worker-a", 1).unwrap();
+        assert!(matches!(
+            journal.ack_subscription("orders", "worker-a", 0),
+            Err(SubscriptionAckError::Checkpoint(
+                TapeError::StaleCheckpoint { .. }
+            ))
+        ));
+    }
+
+    #[test]
+    fn pull_subscription_rejects_oversized_window() {
+        let mut journal = TapeJournal::default();
+        journal.append("orders", None, serde_json::json!({"n": 1}), Some(100));
+        journal
+            .create_subscription("orders", "worker-a", SubscriptionDelivery::Pull)
+            .unwrap();
+
+        assert!(matches!(
+            journal.pull_subscription("orders", "worker-a", Some(MAX_PULL_BATCH + 1)),
+            Err(SubscriptionError::PullBatchTooLarge { .. })
+        ));
+        assert!(journal.checkpoint("orders", "worker-a").is_none());
     }
 }

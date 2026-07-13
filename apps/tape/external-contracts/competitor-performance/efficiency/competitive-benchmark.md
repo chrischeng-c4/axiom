@@ -8,15 +8,15 @@ fill_sections: [e2e-test]
 
 Tape's competitive-performance gate mirrors Lumen's split between a fast local
 regression gate and explicit peer calibration. The default local gate runs
-Tape's append/replay/checkpoint path and verifies that it does not regress
+Tape's bounded pull/replay and explicit checkpoint-ack path and verifies that it does not regress
 against conservative local budgets. The NATS win gate starts a real
 `nats-server -js`, publishes a 20,000-event, 128-byte-payload backlog into
 JetStream, replays the backlog, and requires Tape's zero-copy `replay_refs`
-path to replay the same local backlog at least 1.5x faster. The Kafka win gate
+path to replay the same bounded pull/replay backlog at least 1.5x faster. The Kafka win gate
 starts a real single-node Kafka broker in KRaft mode (`docker run
 apache/kafka:3.9.0`, no ZooKeeper), publishes the same 20,000-event,
 128-byte-payload backlog, replays it with a real `rskafka` consumer, and
-requires Tape's zero-copy `replay_refs` path to replay the same backlog at
+requires Tape's zero-copy `replay_refs` path to replay the same bounded pull/replay backlog at
 least 20x faster — calibrated from an actual measured run (~110-120x
 observed) — skipping gracefully when Docker is unavailable. Redpanda, Pulsar,
 and RabbitMQ Streams remain unclaimed until their own real-service calibration
@@ -36,7 +36,7 @@ e2e_tests:
     test_path: tests/behavior_tape_claim_competitor_performance.rs
     command: "cargo test -p tape --test tape_perf_gate -- --nocapture"
     assertions:
-      - "Tape's local append/replay/checkpoint benchmark stays inside conservative regression budgets."
+      - "Tape's local bounded pull/replay and explicit checkpoint-ack benchmark stays inside conservative regression budgets."
       - "Redpanda, Pulsar, and RabbitMQ Streams performance wins are not claimed without calibrated real-service peer runs."
       - "RabbitMQ topic exchange remains routing-only and is not treated as a replay performance baseline."
 

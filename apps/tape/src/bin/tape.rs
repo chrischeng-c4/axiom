@@ -134,6 +134,10 @@ enum SubscriptionCommand {
     List(SubscriptionListArgs),
     /// Show one topic delivery resource and its pull checkpoint, if any.
     Show(SubscriptionShowArgs),
+    /// Read one bounded event window from a pull subscription cursor.
+    Pull(SubscriptionPullArgs),
+    /// Advance a pull subscription cursor after the caller processes a window.
+    Ack(SubscriptionAckArgs),
     /// Delete resource metadata while preserving a matching pull checkpoint.
     Delete(SubscriptionDeleteArgs),
 }
@@ -166,6 +170,28 @@ struct SubscriptionListArgs {
 struct SubscriptionShowArgs {
     topic: String,
     name: String,
+    #[arg(long, default_value = ".tape/journal.json")]
+    store: PathBuf,
+}
+
+#[derive(clap::Args)]
+struct SubscriptionPullArgs {
+    topic: String,
+    name: String,
+    /// Maximum events to return; defaults to the bounded pull window.
+    #[arg(long)]
+    limit: Option<usize>,
+    #[arg(long, default_value = ".tape/journal.json")]
+    store: PathBuf,
+}
+
+#[derive(clap::Args)]
+struct SubscriptionAckArgs {
+    topic: String,
+    name: String,
+    /// Next unread offset after the events this caller processed.
+    #[arg(long)]
+    offset: u64,
     #[arg(long, default_value = ".tape/journal.json")]
     store: PathBuf,
 }
@@ -718,6 +744,37 @@ fn subscription(args: SubscriptionArgs) -> Result<()> {
                 )?
             );
             println!("next: done");
+            Ok(())
+        }
+        SubscriptionCommand::Pull(args) => {
+            let journal = load_journal(&args.store)?;
+            let batch = journal.pull_subscription(&args.topic, &args.name, args.limit)?;
+            let next = if batch.events.is_empty() {
+                "done".to_string()
+            } else {
+                format!(
+                    "tape subscription ack {} {} --offset {} --store {}",
+                    batch.topic,
+                    batch.subscription,
+                    batch.next_offset,
+                    args.store.display()
+                )
+            };
+            println!("{}", serde_json::to_string_pretty(&batch)?);
+            println!("next: {next}");
+            Ok(())
+        }
+        SubscriptionCommand::Ack(args) => {
+            let mut journal = load_journal(&args.store)?;
+            let checkpoint = journal.ack_subscription(&args.topic, &args.name, args.offset)?;
+            save_journal(&args.store, &journal)?;
+            println!("{}", serde_json::to_string_pretty(&checkpoint)?);
+            println!(
+                "next: tape subscription pull {} {} --store {}",
+                args.topic,
+                args.name,
+                args.store.display()
+            );
             Ok(())
         }
         SubscriptionCommand::Delete(args) => {
