@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/mamba"
-generated_at = "2026-07-13T03:35:05.228626+00:00"
-digest = "sha256:569aa1987ac22ab48df4397d9bf99651d6d570e8004264927a34761326934d4d"
-source_digest = "sha256:569aa1987ac22ab48df4397d9bf99651d6d570e8004264927a34761326934d4d"
-ir_digest = "sha256:e83d1d5d56c465c6778a73a0fe7f3d514fff519ee3cfaf62379c1d4bc6d52278"
+generated_at = "2026-07-13T03:47:38.051997+00:00"
+digest = "sha256:734c864620a231c8456935e62cbeb828049cd017fb0f1d4e6d644d6eef937f0a"
+source_digest = "sha256:734c864620a231c8456935e62cbeb828049cd017fb0f1d4e6d644d6eef937f0a"
+ir_digest = "sha256:1a9a8e30a0d66eba364fe62f492adc79e3a228244b70f016cb0ddf5e138e4efb"
 
 [[files]]
 path = "README.md"
@@ -105,8 +105,8 @@ section_count = 2
 
 [[files]]
 path = "logic/mamba-language-core-resolve-bases-before-inheriting-slots.md"
-digest = "sha256:cc497ae891d60bc7c88699473f263713ce9f56f6c1be17c5080b7db7948f28d1"
-ir_digest = "sha256:fd8fb44e8d3cb43d2e8802e9f96b8c203b932dc247f2f2ef9be5c995ac2d77e0"
+digest = "sha256:3b86159521086cbca884a4ddfd04601ea293b46f3762285d70afa830346d53b0"
+ir_digest = "sha256:18e3c0d1c7760862bcfdf285b2955b5aa842b5516b0b227f55cccc0f4617ac9a"
 section_count = 2
 
 [[files]]

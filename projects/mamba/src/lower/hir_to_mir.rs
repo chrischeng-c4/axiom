@@ -2276,6 +2276,11 @@ struct HirToMir<'a> {
     /// Materialized runtime base-list expressions for starred class bases,
     /// e.g. `class Derived[T](*bases): ...`.
     pending_runtime_class_base_lists: Vec<(String, SymbolId, HirExpr, Vec<(String, HirExpr)>)>,
+    /// Declared `__slots__` names, held until deferred base expressions have
+    /// populated the class MRO. `mb_register_slots` derives inherited slots
+    /// from that MRO, so emitting it during provisional class registration
+    /// loses parent slots for runtime-resolved bases.
+    pending_class_slots: Vec<(String, SymbolId, Vec<String>)>,
     /// P2-R3: Class-level attribute assignments to emit after class registration.
     /// (class_name, class_symbol_id, attr_name, class_body_local_symbol, value_expr)
     /// Emitted at the class's ClassDefPlaceholder position (textual order) so
@@ -2566,6 +2571,7 @@ impl<'a> HirToMir<'a> {
             classes_needing_textual_registration: HashSet::new(),
             pending_runtime_class_bases: Vec::new(),
             pending_runtime_class_base_lists: Vec::new(),
+            pending_class_slots: Vec::new(),
             pending_class_attrs: Vec::new(),
             pending_class_body_stmts: Vec::new(),
             pending_class_finalizers: Vec::new(),
@@ -2885,6 +2891,7 @@ impl<'a> HirToMir<'a> {
             classes_needing_textual_registration: HashSet::new(),
             pending_runtime_class_bases: Vec::new(),
             pending_runtime_class_base_lists: Vec::new(),
+            pending_class_slots: Vec::new(),
             pending_class_attrs: Vec::new(),
             pending_class_body_stmts: Vec::new(),
             pending_class_finalizers: Vec::new(),
@@ -4221,6 +4228,7 @@ impl<'a> HirToMir<'a> {
         {
             self.emit_pending_class_registrations(Some(class_sym));
             self.emit_runtime_class_bases_for(Some(class_sym));
+            self.emit_class_slots_for(Some(class_sym));
             self.emit_class_body_stmts_for(Some(class_sym));
             self.emit_class_attrs_for(Some(class_sym));
             self.emit_class_finalizers_for(Some(class_sym));
@@ -6443,6 +6451,7 @@ impl<'a> HirToMir<'a> {
             } => {
                 self.emit_pending_class_registrations(Some(*cls_sym));
                 self.emit_runtime_class_bases_for(Some(*cls_sym));
+                self.emit_class_slots_for(Some(*cls_sym));
                 self.emit_class_body_stmts_for(Some(*cls_sym));
                 // P2-R3: emit class-level attribute assignments at the class's
                 // textual position so initializer expressions resolve imports
@@ -6566,6 +6575,13 @@ impl<'a> HirToMir<'a> {
                 let (class_obj, runtime_key) = self.emit_class_registration(&registration);
                 self.pending_class_runtime_key_values
                     .insert(registration.class_sym.0, runtime_key);
+                if let Some(slot_names) = registration.slots.clone() {
+                    self.pending_class_slots.push((
+                        registration.runtime_key.clone(),
+                        registration.class_sym,
+                        slot_names,
+                    ));
+                }
                 if cls_sym.is_some() {
                     self.pending_class_values
                         .insert(registration.class_sym.0, class_obj);
@@ -7036,25 +7052,6 @@ impl<'a> HirToMir<'a> {
                 ty: self.tcx.none(),
             });
         }
-        // R14: Emit mb_register_slots if __slots__ declared in class body.
-        if let Some(ref slot_names) = registration.slots {
-            let mut slot_vregs = Vec::new();
-            for slot_name in slot_names {
-                slot_vregs.push(self.emit_str_const(slot_name));
-            }
-            let slots_list = self.fresh_vreg();
-            self.current_stmts.push(MirInst::MakeList {
-                dest: slots_list,
-                elements: slot_vregs,
-                ty: self.tcx.any(),
-            });
-            self.current_stmts.push(MirInst::CallExtern {
-                dest: None,
-                name: "mb_register_slots".to_string(),
-                args: vec![name_vreg, slots_list],
-                ty: self.tcx.none(),
-            });
-        }
         (class_obj_vreg, name_vreg)
     }
 
@@ -7176,6 +7173,37 @@ impl<'a> HirToMir<'a> {
                 dest: None,
                 name: "mb_class_update_bases".to_string(),
                 args: vec![cls_vreg, bases_list],
+                ty: self.tcx.none(),
+            });
+        }
+    }
+
+    /// Emit slot registration only after any runtime base expressions have
+    /// updated the class MRO. Static-base classes also pass through here, so
+    /// their ordering remains registration → slots before class finalization.
+    fn emit_class_slots_for(&mut self, cls_sym: Option<SymbolId>) {
+        let mut i = 0;
+        while i < self.pending_class_slots.len() {
+            if !cls_sym.map_or(true, |sym| self.pending_class_slots[i].1 == sym) {
+                i += 1;
+                continue;
+            }
+            let (class_name, class_sym, slot_names) = self.pending_class_slots.remove(i);
+            let class_vreg = self.class_runtime_key_value(class_sym, &class_name);
+            let mut slot_vregs = Vec::with_capacity(slot_names.len());
+            for slot_name in &slot_names {
+                slot_vregs.push(self.emit_str_const(slot_name));
+            }
+            let slots_list = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeList {
+                dest: slots_list,
+                elements: slot_vregs,
+                ty: self.tcx.any(),
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_register_slots".to_string(),
+                args: vec![class_vreg, slots_list],
                 ty: self.tcx.none(),
             });
         }
@@ -16203,6 +16231,53 @@ mod tests {
             stmt,
             MirInst::CallExtern { name, .. } if name == "mb_capture_cell_set_id"
         )));
+    }
+
+    #[test]
+    fn test_runtime_base_slots_register_after_base_update() {
+        let tcx = TypeContext::new();
+        let child_sym = SymbolId(9_991);
+        let mut lowerer = HirToMir::new(&tcx);
+        let child_key = lowerer.emit_str_const("Child");
+        lowerer
+            .pending_class_runtime_key_values
+            .insert(child_sym.0, child_key);
+        lowerer.pending_runtime_class_bases.push((
+            "Child".to_string(),
+            child_sym,
+            vec![HirExpr::StrLit("Base".to_string(), tcx.any())],
+            Vec::new(),
+        ));
+        lowerer.pending_class_slots.push((
+            "Child".to_string(),
+            child_sym,
+            vec!["own_slot".to_string()],
+        ));
+
+        lowerer.emit_runtime_class_bases_for(Some(child_sym));
+        lowerer.emit_class_slots_for(Some(child_sym));
+
+        let update_index = lowerer
+            .current_stmts
+            .iter()
+            .position(|stmt| matches!(
+                stmt,
+                MirInst::CallExtern { name, .. } if name == "mb_class_update_bases"
+            ))
+            .expect("runtime base expression must update the class MRO");
+        let slots_index = lowerer
+            .current_stmts
+            .iter()
+            .position(|stmt| matches!(
+                stmt,
+                MirInst::CallExtern { name, .. } if name == "mb_register_slots"
+            ))
+            .expect("declared slots must be registered");
+
+        assert!(
+            update_index < slots_index,
+            "slot registration must observe the runtime-resolved parent MRO"
+        );
     }
 
     // ── P0-R4: CallExtern return propagation tests ──────────────────────

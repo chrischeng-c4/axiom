@@ -47,4 +47,11 @@ changes:
     gap: missing-generator:mamba-slot-registration-after-runtime-bases
     tracker: "#1492"
     reason: Queue declared slot names until runtime bases are installed, then assert MIR orders mb_class_update_bases before mb_register_slots for a slotted child using zero-argument super.
+  - path: projects/mamba/src/driver/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-slot-registration-after-runtime-bases-e2e
+    tracker: "#1492"
+    reason: Execute a runtime-base slotted-child source probe that verifies inherited and own slots after the deferred MRO update.
 ```
