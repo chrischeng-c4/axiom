@@ -29,3 +29,30 @@ flowchart LR
   lease --> reset[same reader validates reset]
   reset --> idle([return clean stream and reader])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/pool/backend_pool.rs
+    action: modify
+    section: pgpool-physical-backend-reader-lifecycle
+    impl_mode: hand-written
+  - path: apps/pgpool/src/pool/transaction.rs
+    action: modify
+    section: pgpool-physical-backend-reader-lifecycle
+    impl_mode: hand-written
+  - path: apps/pgpool/src/proxy/session.rs
+    action: modify
+    section: pgpool-physical-backend-reader-lifecycle
+    impl_mode: hand-written
+  - path: apps/pgpool/tests/pool.rs
+    action: modify
+    section: pgpool-physical-backend-reader-lifecycle
+    impl_mode: hand-written
+  - path: apps/pgpool/tests/pool_modes.rs
+    action: modify
+    section: pgpool-physical-backend-reader-lifecycle
+    impl_mode: hand-written
+```
