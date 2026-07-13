@@ -2,10 +2,10 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-13T18:04:46.527963+00:00"
-digest = "sha256:fa6dc7aff8450d0faff79ed58bc48fa364b2188a4289e8651c5764169e1e215b"
-source_digest = "sha256:fa6dc7aff8450d0faff79ed58bc48fa364b2188a4289e8651c5764169e1e215b"
-ir_digest = "sha256:0ae4d83bcf1b40e5441aef361ea998c0eb6b9662d7e53aa0aee7b5bf6a34bab5"
+generated_at = "2026-07-13T18:14:56.010078+00:00"
+digest = "sha256:9b8f86ef67bc778f54f54ac1f830f83f1d586ea2e78aca84e1261ee20110097b"
+source_digest = "sha256:9b8f86ef67bc778f54f54ac1f830f83f1d586ea2e78aca84e1261ee20110097b"
+ir_digest = "sha256:d95dfacbcf3d273f3741bafb3a17ad5e48343d57faa0ade6805b61c0aeae42af"
 
 [[files]]
 path = "interfaces/rest/adopt-shared-runtime-security-and-agent-interface.md"
@@ -35,6 +35,12 @@ section_count = 2
 path = "logic/add-shared-ha-and-backup-lifecycle.md"
 digest = "sha256:d0adc50ad77a0494a3f6bc644903260efef1519c0e0598b6fea53e0935219b8c"
 ir_digest = "sha256:43109e85d0b32ebc28dff78cd9b636189c556c79a91dc448023079ccd8702b76"
+section_count = 2
+
+[[files]]
+path = "logic/remediate-deployment-guard-hardening-findings.md"
+digest = "sha256:f027f1c1b8c5245ae709b1acf128c61fecbbc32228475740b26b38b41abd9b8a"
+ir_digest = "sha256:7d6539a077ba8e319c3f9e35832c1a9ea7eb5dae7a69edd4cff921da182d944f"
 section_count = 2
 
 [[files]]
