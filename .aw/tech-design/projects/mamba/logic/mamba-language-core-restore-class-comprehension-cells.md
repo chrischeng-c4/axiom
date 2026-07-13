@@ -8,16 +8,40 @@ fill_sections: [logic]
 <!-- type: logic lang: mermaid -->
 
 ```mermaid
+---
+id: mamba-generator-expression-closure-context
+entry: generator expression after a list-comprehension closure
+nodes:
+  list_closure: { kind: start, label: prior list-comprehension closure remains usable }
+  construct: { kind: process, label: create generator wrapper with capture context }
+  drain: { kind: process, label: list drains generator through iterator protocol }
+  bind: { kind: process, label: bind j for each range item }
+  closure: { kind: process, label: create lambda over shared j cell }
+  yield: { kind: process, label: yield through pushed caller context }
+  complete: { kind: process, label: complete through the same caller context }
+  result: { kind: terminal, label: three closures observe final j equals 2 }
+  boundary: { kind: terminal, label: list comprehension, default args, and class cells remain unchanged }
+edges:
+  - { from: list_closure, to: construct }
+  - { from: construct, to: drain }
+  - { from: drain, to: bind }
+  - { from: bind, to: closure }
+  - { from: closure, to: yield }
+  - { from: yield, to: drain }
+  - { from: drain, to: complete }
+  - { from: complete, to: result }
+  - { from: construct, to: boundary }
+---
 flowchart TD
-    A[Class body] --> B[Class namespace lowering]
-    B --> C[Comprehension function scope]
-    B --> D[Method with zero-argument super]
-    C --> E[Late-bound comprehension cell]
-    D --> F[Synthetic __class__ cell]
-    E --> G[Class items and y evaluate]
-    F --> H[Method returns enclosing class]
-    G --> I[CPython-oracle fixture passes]
-    H --> I
+    list_closure([prior list-comprehension closure remains usable]) --> construct[create generator wrapper with capture context]
+    construct --> drain[list drains generator through iterator protocol]
+    drain --> bind[bind j for each range item]
+    bind --> closure[create lambda over shared j cell]
+    closure --> yield[yield through pushed caller context]
+    yield --> drain
+    drain --> complete[complete through the same caller context]
+    complete --> result([three closures observe final j equals 2])
+    construct --> boundary([list comprehension, default args, and class cells remain unchanged])
 ```
 
-The fix is a language-core lowering/runtime change: a class-body comprehension owns its loop-variable closure scope, while a method that uses zero-argument `super()` must retain the enclosing class's synthetic `__class__` cell. The two cell paths must coexist without aliasing or consuming one another.
+The generator runtime must preserve one pushed caller context from the wrapper's first resume until each yield or terminal completion switches back. It must not reset or pop that context while a previously materialized list-comprehension closure exists. The generator-expression wrapper owns the loop-variable capture cell; every yielded lambda references that same cell, so consuming the expression through `list()` produces three closures whose later calls return the final value `2`. This change is limited to generator-expression lowering and generator resume/yield context management; it must preserve existing list-comprehension late binding, default-argument early binding, class `__class__` cells, imports, and built-in-library behavior.
