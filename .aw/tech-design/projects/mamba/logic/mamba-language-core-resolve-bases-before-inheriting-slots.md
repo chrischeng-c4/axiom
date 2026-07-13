@@ -33,4 +33,18 @@ flowchart TD
     define -- base list already resolved --> static([pre-resolved bases retain their existing class path])
 ```
 
-`mb_register_slots` merges names from the class MRO, so it is correct only after `mb_class_update_bases` has materialized deferred base expressions. The lowering path must queue each declared slot list and emit registration after runtime bases, before class finalization. A child that declares `y` and inherits a parent slot `x` then records both names; the parent initializer can assign `self.x` to the child instance. Classes with statically known bases retain the same effective order and observable behavior.
+`mb_register_slots` derives a class effective slot set from its registered MRO. `emit_pending_class_registrations` currently emits it before `emit_runtime_class_bases_for`, so a child with a deferred base receives only its own names. Add a pending slot-registration queue keyed by the class symbol. Populate it during class registration and drain it immediately after deferred bases are emitted, before class body attributes and definition finalization. For classes with no deferred base, the same drain point runs after normal registration and keeps their prior semantics.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/mamba/src/lower/hir_to_mir.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: missing-generator:mamba-slot-registration-after-runtime-bases
+    tracker: "#1492"
+    reason: Queue declared slot names until runtime bases are installed, then assert MIR orders mb_class_update_bases before mb_register_slots for a slotted child using zero-argument super.
+```
