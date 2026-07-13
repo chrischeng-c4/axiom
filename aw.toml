@@ -522,6 +522,7 @@ path = "crates/cclab-aurora"
 paths = ["crates/cclab-aurora/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-aurora"
+verify_cold = false
 
 [[projects]]
 name = "cclab-cli-registry"
@@ -531,6 +532,7 @@ path = "crates/cclab-cli-registry"
 paths = ["crates/cclab-cli-registry/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-cli-registry"
+verify_cold = false
 
 [[projects]]
 name = "cclab-core"
@@ -540,6 +542,7 @@ path = "crates/cclab-core"
 paths = ["crates/cclab-core/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-core"
+verify_cold = false
 
 [[projects]]
 name = "cclab-ctx-inf-db"
@@ -549,6 +552,7 @@ path = "crates/cclab-ctx-inf-db"
 paths = ["crates/cclab-ctx-inf-db/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-ctx-inf-db"
+verify_cold = false
 
 [[projects]]
 name = "cclab-frame"
@@ -558,6 +562,7 @@ path = "crates/cclab-frame"
 paths = ["crates/cclab-frame/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-frame"
+verify_cold = false
 
 [[projects]]
 name = "cclab-grid"
@@ -567,6 +572,7 @@ path = "crates/cclab-grid"
 paths = ["crates/cclab-grid/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-grid"
+verify_cold = false
 
 [[projects]]
 name = "cclab-grid-render-webgpu"
@@ -576,6 +582,7 @@ path = "crates/cclab-grid-render-webgpu"
 paths = ["crates/cclab-grid-render-webgpu/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-grid-render-webgpu"
+verify_cold = false
 
 [[projects]]
 name = "cclab-grid-wasm"
@@ -585,6 +592,7 @@ path = "crates/cclab-grid-wasm"
 paths = ["crates/cclab-grid-wasm/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-grid-wasm"
+verify_cold = false
 
 [[projects]]
 name = "cclab-learn"
@@ -594,6 +602,7 @@ path = "crates/cclab-learn"
 paths = ["crates/cclab-learn/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-learn"
+verify_cold = false
 
 [[projects]]
 name = "cclab-log"
@@ -603,6 +612,7 @@ path = "crates/cclab-log"
 paths = ["crates/cclab-log/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-log"
+verify_cold = false
 
 [[projects]]
 name = "cclab-log-mamba"
@@ -612,6 +622,7 @@ path = "crates/cclab-log-mamba"
 paths = ["crates/cclab-log-mamba/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-log-mamba"
+verify_cold = false
 
 [[projects]]
 name = "cclab-mamba-registry"
@@ -621,6 +632,7 @@ path = "crates/cclab-mamba-registry"
 paths = ["crates/cclab-mamba-registry/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-mamba-registry"
+verify_cold = false
 
 [[projects]]
 name = "cclab-mcp-mamba"
@@ -630,6 +642,7 @@ path = "crates/cclab-mcp-mamba"
 paths = ["crates/cclab-mcp-mamba/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-mcp-mamba"
+verify_cold = false
 
 [[projects]]
 name = "cclab-qc-mamba"
@@ -639,6 +652,7 @@ path = "crates/cclab-qc-mamba"
 paths = ["crates/cclab-qc-mamba/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-qc-mamba"
+verify_cold = false
 
 [[projects]]
 name = "cclab-runtime-mamba"
@@ -648,6 +662,7 @@ path = "crates/cclab-runtime-mamba"
 paths = ["crates/cclab-runtime-mamba/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-runtime-mamba"
+verify_cold = false
 
 [[projects]]
 name = "cclab-schema"
@@ -657,6 +672,7 @@ path = "crates/cclab-schema"
 paths = ["crates/cclab-schema/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-schema"
+verify_cold = false
 
 [[projects]]
 name = "cclab-schema-mamba"
@@ -666,6 +682,7 @@ path = "crates/cclab-schema-mamba"
 paths = ["crates/cclab-schema-mamba/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-schema-mamba"
+verify_cold = false
 
 [[projects]]
 name = "cclab-server"
@@ -675,6 +692,7 @@ path = "crates/cclab-server"
 paths = ["crates/cclab-server/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-server"
+verify_cold = false
 
 [[projects]]
 name = "cclab-text"
@@ -684,6 +702,7 @@ path = "crates/cclab-text"
 paths = ["crates/cclab-text/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-text"
+verify_cold = false
 
 [[projects]]
 name = "cclab-tqdm"
@@ -693,6 +712,7 @@ path = "crates/cclab-tqdm"
 paths = ["crates/cclab-tqdm/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-tqdm"
+verify_cold = false
 
 [[projects]]
 name = "cclab-util"
@@ -702,6 +722,7 @@ path = "crates/cclab-util"
 paths = ["crates/cclab-util/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-util"
+verify_cold = false
 
 [[projects]]
 name = "cclab-wal"
@@ -711,6 +732,29 @@ path = "crates/cclab-wal"
 paths = ["crates/cclab-wal/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-wal"
+verify_cold = false
+
+[[projects]]
+name = "cue"
+path = "projects/cue"
+
+[[projects.workspaces]]
+name = "cue"
+paths = ["projects/cue/**"]
+target = "schemas"
+test_cmd = "true"
+verify_cold = false
+
+[[projects]]
+name = "jet"
+path = "projects/jet"
+
+[[projects.workspaces]]
+name = "jet"
+paths = ["projects/jet/**"]
+target = "schemas"
+test_cmd = "true"
+verify_cold = false
 
 [[projects]]
 name = "lumen"
@@ -720,6 +764,7 @@ path = "projects/lumen"
 paths = ["projects/lumen/**"]
 target = "rust"
 test_cmd = "cargo test -p lumen"
+verify_cold = false
 
 [[projects]]
 name = "mamba"
@@ -729,6 +774,7 @@ path = "projects/mamba"
 paths = ["projects/mamba/**"]
 target = "rust"
 test_cmd = "cargo test -p mamba"
+verify_cold = false
 
 [[projects]]
 name = "build-stamp"
@@ -738,6 +784,7 @@ path = "libs/build-stamp"
 paths = ["libs/build-stamp/**"]
 target = "rust"
 test_cmd = "cargo test -p build-stamp"
+verify_cold = false
 
 [[projects]]
 name = "claimtoken"
@@ -747,6 +794,7 @@ path = "libs/claimtoken"
 paths = ["libs/claimtoken/**"]
 target = "rust"
 test_cmd = "cargo test -p claimtoken"
+verify_cold = false
 
 [[projects]]
 name = "cli-std"
@@ -756,6 +804,7 @@ path = "libs/cli-std"
 paths = ["libs/cli-std/**"]
 target = "rust"
 test_cmd = "cargo test -p cli-std"
+verify_cold = false
 
 [[projects]]
 name = "compass"
@@ -765,6 +814,7 @@ path = "libs/compass"
 paths = ["libs/compass/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-compass"
+verify_cold = false
 
 [[projects]]
 name = "h2c"
@@ -774,6 +824,7 @@ path = "libs/h2c"
 paths = ["libs/h2c/**"]
 target = "rust"
 test_cmd = "cargo test -p h2c"
+verify_cold = false
 
 [[projects]]
 name = "http-server"
@@ -783,6 +834,7 @@ path = "libs/http-server"
 paths = ["libs/http-server/**"]
 target = "rust"
 test_cmd = "cargo test -p http-server"
+verify_cold = false
 
 [[projects]]
 name = "openapi-codegen"
@@ -792,6 +844,7 @@ path = "libs/openapi-codegen"
 paths = ["libs/openapi-codegen/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-openapi-codegen"
+verify_cold = false
 
 [[projects]]
 name = "operator"
@@ -801,6 +854,7 @@ path = "libs/operator"
 paths = ["libs/operator/**"]
 target = "rust"
 test_cmd = "cargo test -p operator"
+verify_cold = false
 
 [[projects]]
 name = "raft-core"
@@ -810,6 +864,7 @@ path = "libs/raft-core"
 paths = ["libs/raft-core/**"]
 target = "rust"
 test_cmd = "cargo test -p raft-core"
+verify_cold = false
 
 [[projects]]
 name = "raft-host"
@@ -819,6 +874,7 @@ path = "libs/raft-host"
 paths = ["libs/raft-host/**"]
 target = "rust"
 test_cmd = "cargo test -p raft-host"
+verify_cold = false
 
 [[projects]]
 name = "server-core"
@@ -828,6 +884,7 @@ path = "libs/server-core"
 paths = ["libs/server-core/**"]
 target = "rust"
 test_cmd = "cargo test -p server-core"
+verify_cold = false
 
 [[projects]]
 name = "service-auth"
@@ -837,6 +894,7 @@ path = "libs/service-auth"
 paths = ["libs/service-auth/**"]
 target = "rust"
 test_cmd = "cargo test -p service-auth"
+verify_cold = false
 
 [[projects]]
 name = "service-backup"
@@ -846,6 +904,7 @@ path = "libs/service-backup"
 paths = ["libs/service-backup/**"]
 target = "rust"
 test_cmd = "cargo test -p service-backup"
+verify_cold = false
 
 [[projects]]
 name = "service-durability"
@@ -855,6 +914,7 @@ path = "libs/service-durability"
 paths = ["libs/service-durability/**"]
 target = "rust"
 test_cmd = "cargo test -p service-durability"
+verify_cold = false
 
 [[projects]]
 name = "service-http"
@@ -864,6 +924,7 @@ path = "libs/service-http"
 paths = ["libs/service-http/**"]
 target = "rust"
 test_cmd = "cargo test -p service-http"
+verify_cold = false
 
 [[projects]]
 name = "service-metrics"
@@ -873,6 +934,7 @@ path = "libs/service-metrics"
 paths = ["libs/service-metrics/**"]
 target = "rust"
 test_cmd = "cargo test -p service-metrics"
+verify_cold = false
 
 [[projects]]
 name = "service-tls"
@@ -882,6 +944,7 @@ path = "libs/service-tls"
 paths = ["libs/service-tls/**"]
 target = "rust"
 test_cmd = "cargo test -p service-tls"
+verify_cold = false
 
 [[projects]]
 name = "surface"
@@ -891,6 +954,7 @@ path = "libs/surface"
 paths = ["libs/surface/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-surface"
+verify_cold = false
 
 [[projects]]
 name = "tcp-server"
@@ -900,6 +964,7 @@ path = "libs/tcp-server"
 paths = ["libs/tcp-server/**"]
 target = "rust"
 test_cmd = "cargo test -p tcp-server"
+verify_cold = false
 
 [[projects]]
 name = "ui-runtime"
@@ -909,5 +974,6 @@ path = "libs/ui-runtime"
 paths = ["libs/ui-runtime/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-ui-runtime"
+verify_cold = false
 
 # END AW SYNC

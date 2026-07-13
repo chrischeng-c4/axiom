@@ -36,7 +36,12 @@ pub fn task_to_job_spec(task: &TaskMessage, image: &str, relay: &str, keep: &str
     let name = format!("loom-{}-{}-{}", task.run_id, task.node_id, task.attempt)
         .to_lowercase()
         .replace('_', "-");
-    let input_refs = task.input_refs.iter().map(|r| r.0.clone()).collect::<Vec<_>>().join(",");
+    let input_refs = task
+        .input_refs
+        .iter()
+        .map(|r| r.0.clone())
+        .collect::<Vec<_>>()
+        .join(",");
     JobSpec {
         name,
         image: image.to_string(),
@@ -63,8 +68,12 @@ impl JobSpec {
             .map(|(k, v)| format!("        - name: {k}\n          value: \"{v}\""))
             .collect::<Vec<_>>()
             .join("\n");
-        let args_yaml =
-            self.args.iter().map(|a| format!("        - \"{a}\"")).collect::<Vec<_>>().join("\n");
+        let args_yaml = self
+            .args
+            .iter()
+            .map(|a| format!("        - \"{a}\""))
+            .collect::<Vec<_>>()
+            .join("\n");
         format!(
             "apiVersion: batch/v1\n\
              kind: Job\n\
@@ -107,7 +116,10 @@ impl KubeApi for KubectlApi {
         let mut child = cmd.spawn()?;
         {
             use tokio::io::AsyncWriteExt;
-            let mut stdin = child.stdin.take().ok_or_else(|| anyhow::anyhow!("no stdin"))?;
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| anyhow::anyhow!("no stdin"))?;
             stdin.write_all(manifest.as_bytes()).await?;
         }
         let out = child.wait_with_output().await?;
@@ -196,8 +208,12 @@ mod tests {
         assert_eq!(s.image, "myimg:1");
         assert_eq!(s.backoff_limit, 0); // loom owns retries via lease expiry
         assert!(s.env.contains(&("LOOM_TASK_NAME".into(), "crunch".into())));
-        assert!(s.env.contains(&("LOOM_TASK_INPUT_REFS".into(), "in:1,in:2".into())));
-        assert!(s.env.contains(&("LOOM_RELAY".into(), "http://relay".into())));
+        assert!(s
+            .env
+            .contains(&("LOOM_TASK_INPUT_REFS".into(), "in:1,in:2".into())));
+        assert!(s
+            .env
+            .contains(&("LOOM_RELAY".into(), "http://relay".into())));
         // manifest is valid-looking k8s Job YAML
         let m = s.to_manifest();
         assert!(m.contains("kind: Job"));
@@ -218,7 +234,11 @@ mod tests {
                 return Ok(None);
             }
             *l = true;
-            Ok(Some(LeasedTask { lease_id: "L1".into(), epoch: 7, message: task() }))
+            Ok(Some(LeasedTask {
+                lease_id: "L1".into(),
+                epoch: 7,
+                message: task(),
+            }))
         }
         async fn ack(&self, lease_id: &str, _epoch: u64) -> anyhow::Result<()> {
             self.acked.lock().unwrap().push(lease_id.to_string());
@@ -239,8 +259,13 @@ mod tests {
 
     #[tokio::test]
     async fn leases_a_task_creates_a_job_and_acks() {
-        let consumer = FakeConsumer { leased: Mutex::new(false), acked: Mutex::new(vec![]) };
-        let kube = FakeKube { created: Mutex::new(vec![]) };
+        let consumer = FakeConsumer {
+            leased: Mutex::new(false),
+            acked: Mutex::new(vec![]),
+        };
+        let kube = FakeKube {
+            created: Mutex::new(vec![]),
+        };
 
         let handled = run_once_job(&consumer, &kube, "img", "http://relay", "http://keep")
             .await
@@ -248,7 +273,10 @@ mod tests {
         assert!(handled);
         assert_eq!(kube.created.lock().unwrap().len(), 1);
         assert_eq!(kube.created.lock().unwrap()[0].name, "loom-run1-nodea-2");
-        assert_eq!(consumer.acked.lock().unwrap().as_slice(), &["L1".to_string()]);
+        assert_eq!(
+            consumer.acked.lock().unwrap().as_slice(),
+            &["L1".to_string()]
+        );
 
         // second lease is empty → no-op
         let again = run_once_job(&consumer, &kube, "img", "http://relay", "http://keep")
@@ -283,7 +311,12 @@ mod tests {
         // THE gated code path: our manifest → kubectl create → real k8s API.
         kube_create_or_skip(&spec).await;
         let out = Command::new("kubectl")
-            .args(["wait", "--for=condition=complete", "job/loom-live-verify", "--timeout=90s"])
+            .args([
+                "wait",
+                "--for=condition=complete",
+                "job/loom-live-verify",
+                "--timeout=90s",
+            ])
             .output()
             .await
             .expect("kubectl wait");

@@ -41,8 +41,10 @@ pub fn sweep_run(
         .filter(|n| matches!(n.state, NodeState::Dispatched | NodeState::Running))
         .map(|n| (n.id.clone(), n.attempt))
         .collect();
-    let live: BTreeSet<Key> =
-        inflight.iter().map(|(id, a)| (rid.clone(), id.0.clone(), *a)).collect();
+    let live: BTreeSet<Key> = inflight
+        .iter()
+        .map(|(id, a)| (rid.clone(), id.0.clone(), *a))
+        .collect();
     // forget keys for this run that are no longer in flight (completed/retried)
     seen.retain(|k, _| k.0 != rid || live.contains(k));
 
@@ -69,16 +71,25 @@ pub async fn deadline_loop(
 ) {
     let interval = Duration::from_secs((deadline_secs / 4).clamp(5, 300));
     let mut seen: BTreeMap<Key, u64> = BTreeMap::new();
-    eprintln!("loom: dispatch deadline on ({deadline_secs}s, sweep {}s)", interval.as_secs());
+    eprintln!(
+        "loom: dispatch deadline on ({deadline_secs}s, sweep {}s)",
+        interval.as_secs()
+    );
     loop {
         tokio::time::sleep(interval).await;
         let now = now_secs();
         let ids = store.list().await.unwrap_or_default();
         for id in ids {
-            let Ok(Some(mut run)) = store.get(&id).await else { continue };
+            let Ok(Some(mut run)) = store.get(&id).await else {
+                continue;
+            };
             let overdue = sweep_run(&mut run, &mut seen, now, deadline_secs);
             if !overdue.is_empty() {
-                eprintln!("loom: re-dispatching {} overdue node(s) in {}", overdue.len(), id.0);
+                eprintln!(
+                    "loom: re-dispatching {} overdue node(s) in {}",
+                    overdue.len(),
+                    id.0
+                );
                 let _ = dispatch_ready(&mut run, dispatcher.as_ref()).await;
                 let _ = store.put(run).await;
             }
@@ -94,7 +105,12 @@ mod tests {
 
     fn dispatched_run() -> WorkflowRun {
         let mut run = WorkflowRun::new(crate::model::WorkflowRunId::new("r"));
-        run.add_node(Node::new(NodeId::new("a"), StageId::new("a"), TaskSpec::new("t"), Set::new()));
+        run.add_node(Node::new(
+            NodeId::new("a"),
+            StageId::new("a"),
+            TaskSpec::new("t"),
+            Set::new(),
+        ));
         run.mark_dispatched(&NodeId::new("a")); // Dispatched, attempt = 1
         run
     }
@@ -109,9 +125,15 @@ mod tests {
         // still under the deadline
         assert!(sweep_run(&mut run, &mut seen, 150, 60).is_empty());
         // past the deadline (first seen 100, now 161) → overdue → marked failed→ready (retry)
-        assert_eq!(sweep_run(&mut run, &mut seen, 161, 60), vec![NodeId::new("a")]);
+        assert_eq!(
+            sweep_run(&mut run, &mut seen, 161, 60),
+            vec![NodeId::new("a")]
+        );
         assert_eq!(run.nodes[&NodeId::new("a")].state, NodeState::Ready);
-        assert!(seen.is_empty(), "the overdue attempt is forgotten so the retry gets a fresh window");
+        assert!(
+            seen.is_empty(),
+            "the overdue attempt is forgotten so the retry gets a fresh window"
+        );
     }
 
     #[test]

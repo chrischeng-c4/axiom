@@ -1,5 +1,3 @@
-// SPEC-MANAGED: libs/claimtoken/tech-design/semantic/source/libs-claimtoken-src-lib-rs.md#rust-source-unit
-// CODEGEN-BEGIN
 //! Scoped claim-check access tokens (#445).
 //!
 //! loom's schema layer **signs** a token scoped to one task's keep keys; keep
@@ -13,7 +11,6 @@ use serde::{Deserialize, Serialize};
 
 /// What a token authorizes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-/// @spec libs/claimtoken/tech-design/semantic/source/libs-claimtoken-src-lib-rs.md#source
 pub struct Scope {
     /// Readable input key (claim-check GET /v1/inputs/{r}).
     pub r: String,
@@ -50,7 +47,6 @@ fn ct_eq(a: &str, b: &str) -> bool {
 }
 
 /// Sign a scope into a token: `b64url(json) "." hex(hmac)`.
-/// @spec libs/claimtoken/tech-design/semantic/source/libs-claimtoken-src-lib-rs.md#source
 pub fn sign(secret: &[u8], scope: &Scope) -> String {
     let payload = B64.encode(serde_json::to_vec(scope).expect("encode scope"));
     let sig = hmac_sha256(secret, payload.as_bytes());
@@ -59,7 +55,6 @@ pub fn sign(secret: &[u8], scope: &Scope) -> String {
 
 /// Verify a token's signature (constant-time) and expiry (`now`, unix secs);
 /// return its [`Scope`] if valid.
-/// @spec libs/claimtoken/tech-design/semantic/source/libs-claimtoken-src-lib-rs.md#source
 pub fn verify(secret: &[u8], token: &str, now: u64) -> Option<Scope> {
     let (payload, sig) = token.split_once('.')?;
     if !ct_eq(&hex(&hmac_sha256(secret, payload.as_bytes())), sig) {
@@ -74,7 +69,11 @@ mod tests {
     use super::*;
 
     fn scope() -> Scope {
-        Scope { r: "run:a:in".into(), w: "run:a:result".into(), exp: 1000 }
+        Scope {
+            r: "run:a:in".into(),
+            w: "run:a:result".into(),
+            exp: 1000,
+        }
     }
 
     #[test]
@@ -87,10 +86,15 @@ mod tests {
     fn rejects_tamper_wrong_key_and_expiry() {
         let t = sign(b"secret", &scope());
         assert!(verify(b"WRONG", &t, 999).is_none(), "wrong secret");
-        assert!(verify(b"secret", &t, 1001).is_none(), "expired (exp=1000, now=1001)");
+        assert!(
+            verify(b"secret", &t, 1001).is_none(),
+            "expired (exp=1000, now=1001)"
+        );
         let tampered = format!("{}.deadbeef", t.split_once('.').unwrap().0);
-        assert!(verify(b"secret", &tampered, 999).is_none(), "tampered signature");
+        assert!(
+            verify(b"secret", &tampered, 999).is_none(),
+            "tampered signature"
+        );
         assert!(verify(b"secret", "no-dot", 999).is_none(), "malformed");
     }
 }
-// CODEGEN-END

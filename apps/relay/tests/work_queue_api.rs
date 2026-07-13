@@ -114,7 +114,10 @@ fn release_redelivers_immediately() {
     // release at `now` (well within the ttl) re-leases at once at `now`.
     assert!(r.release("q", &l0.lease_id).unwrap());
     let l1 = r.lease("q", "c2", now).unwrap().unwrap();
-    assert_eq!(l1.seq, 0, "released seq is redelivered without waiting for ttl");
+    assert_eq!(
+        l1.seq, 0,
+        "released seq is redelivered without waiting for ttl"
+    );
     assert_eq!(l1.epoch, 2, "epoch bumped on re-lease");
 
     // releasing an unknown / already-released lease is a no-op.

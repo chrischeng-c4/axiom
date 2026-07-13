@@ -383,7 +383,10 @@ mod tests {
 
         // Without a waiver the SQL-INJ finding is present and fails the scan.
         let strict = scan_path(dir.path());
-        assert!(strict.findings.iter().any(|finding| finding.rule == "SQL-INJ"));
+        assert!(strict
+            .findings
+            .iter()
+            .any(|finding| finding.rule == "SQL-INJ"));
 
         // A documented waiver for the rule clears it; nothing else is touched.
         std::fs::create_dir_all(dir.path().join(".guard")).expect("mkdir .guard");
@@ -393,7 +396,10 @@ mod tests {
         )
         .expect("write waivers");
         let waived = scan_path(dir.path());
-        assert!(!waived.findings.iter().any(|finding| finding.rule == "SQL-INJ"));
+        assert!(!waived
+            .findings
+            .iter()
+            .any(|finding| finding.rule == "SQL-INJ"));
     }
 }
 // CODEGEN-END

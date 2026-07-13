@@ -74,8 +74,13 @@ impl Dispatcher for MemDispatcher {
 /// A worker completion observed via a relay ack.
 #[derive(Debug, Clone)]
 pub enum Completion {
-    Ok { node: NodeId, result: Option<KeepRef> },
-    Failed { node: NodeId },
+    Ok {
+        node: NodeId,
+        result: Option<KeepRef>,
+    },
+    Failed {
+        node: NodeId,
+    },
 }
 
 /// A runtime-discovered fan-out child (#116): a task a completing node splices
@@ -152,7 +157,9 @@ pub async fn dispatch_ready(
             input_inline,
             runner: node.task.runner,
         };
-        dispatcher.dispatch(node.task.runner.relay_route(), msg).await?;
+        dispatcher
+            .dispatch(node.task.runner.relay_route(), msg)
+            .await?;
         run.mark_dispatched(id);
     }
     Ok(ready.len())
@@ -207,7 +214,9 @@ mod tests {
             NodeId::new(id),
             StageId::new(stage),
             TaskSpec::new(format!("task-{id}")),
-            deps.iter().map(|d| NodeId::new(*d)).collect::<BTreeSet<_>>(),
+            deps.iter()
+                .map(|d| NodeId::new(*d))
+                .collect::<BTreeSet<_>>(),
         )
     }
 
@@ -225,12 +234,45 @@ mod tests {
         let mut sched = Scheduler::new(diamond(), MemDispatcher::new());
         assert_eq!(sched.tick().await.unwrap(), 1);
         assert_eq!(
-            sched.on_completion(Completion::Ok { node: NodeId::new("A"), result: Some(KeepRef("k/A".into())) }).await.unwrap(),
+            sched
+                .on_completion(Completion::Ok {
+                    node: NodeId::new("A"),
+                    result: Some(KeepRef("k/A".into()))
+                })
+                .await
+                .unwrap(),
             2
         );
-        assert_eq!(sched.on_completion(Completion::Ok { node: NodeId::new("B"), result: None }).await.unwrap(), 0);
-        assert_eq!(sched.on_completion(Completion::Ok { node: NodeId::new("C"), result: None }).await.unwrap(), 1);
-        assert_eq!(sched.on_completion(Completion::Ok { node: NodeId::new("D"), result: None }).await.unwrap(), 0);
+        assert_eq!(
+            sched
+                .on_completion(Completion::Ok {
+                    node: NodeId::new("B"),
+                    result: None
+                })
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sched
+                .on_completion(Completion::Ok {
+                    node: NodeId::new("C"),
+                    result: None
+                })
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sched
+                .on_completion(Completion::Ok {
+                    node: NodeId::new("D"),
+                    result: None
+                })
+                .await
+                .unwrap(),
+            0
+        );
         assert_eq!(sched.status(), RunStatus::Succeeded);
         assert!(sched.is_complete());
     }
@@ -252,7 +294,15 @@ mod tests {
     async fn failed_node_is_redispatched_within_attempts() {
         let mut sched = Scheduler::new(diamond(), MemDispatcher::new());
         sched.tick().await.unwrap();
-        assert_eq!(sched.on_completion(Completion::Failed { node: NodeId::new("A") }).await.unwrap(), 1);
+        assert_eq!(
+            sched
+                .on_completion(Completion::Failed {
+                    node: NodeId::new("A")
+                })
+                .await
+                .unwrap(),
+            1
+        );
         assert_eq!(sched.status(), RunStatus::Running);
         assert_eq!(sched.dispatcher.sent().last().unwrap().1.attempt, 2);
     }
