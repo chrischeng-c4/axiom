@@ -228,6 +228,35 @@ fn frontend_query_round_trip() {
     round_trip_frontend(query, &config);
 }
 
+/// Raw relay reads keep the original validated bytes, so the transaction
+/// proxy can avoid encoding a second DataRow envelope on its hot path.
+#[test]
+fn validated_frame_retains_exact_wire_bytes_for_relay() {
+    let config = WireCodecConfig::default();
+    let original = encode_backend(&BackendMessage::DataRow(DataRow {
+        columns: vec![Some(Bytes::from_static(b"42")), None],
+    }));
+    let mut reader = FrameReader::new(Role::Backend, &config);
+    reader.feed(&original);
+
+    let frame = reader
+        .next_frame_with_raw()
+        .expect("raw frame validation succeeds")
+        .expect("raw frame is fully buffered");
+    assert_eq!(frame.bytes.as_ref(), original.as_ref());
+    assert!(matches!(
+        frame.message,
+        WireMessage::Backend(BackendMessage::DataRow(_))
+    ));
+
+    let mut malformed_reader = FrameReader::new(Role::Backend, &config);
+    malformed_reader.feed(&[b'Z', 0, 0, 0, 5, b'Q']);
+    assert!(matches!(
+        malformed_reader.next_frame_with_raw(),
+        Err(FrameError::Malformed { .. })
+    ));
+}
+
 // R4: Parse/Bind/Describe/Execute/Sync extended-query round trip.
 #[test]
 fn frontend_extended_query_round_trip() {

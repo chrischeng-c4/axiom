@@ -12,7 +12,9 @@ use bytes::BytesMut;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::proxy::error::ProxyError;
-use crate::wire::{BackendKeyData, BackendMessage, FrameReader, FrontendMessage, WireMessage};
+use crate::wire::{
+    BackendKeyData, BackendMessage, FrameReader, FrontendMessage, WireFrame, WireMessage,
+};
 
 /// Which side of a pre-established handshake ended: forward progress to
 /// `ReadyForQuery`, or a backend `ErrorResponse` before it.
@@ -49,6 +51,32 @@ pub(crate) async fn read_frame(
     }
 }
 
+/// Reads a fully validated frame while retaining the exact source bytes for
+/// a relay write. Transaction pooling uses this in its steady-state hot path
+/// so it can inspect ownership boundaries without model re-encoding.
+pub(crate) async fn read_frame_with_raw(
+    stream: &mut (impl AsyncRead + Unpin),
+    reader: &mut FrameReader,
+) -> Result<Option<WireFrame>, ProxyError> {
+    loop {
+        match reader.next_frame_with_raw() {
+            Ok(Some(frame)) => return Ok(Some(frame)),
+            Ok(None) => {
+                let mut buf = [0_u8; 8192];
+                let n = stream
+                    .read(&mut buf)
+                    .await
+                    .map_err(|error| ProxyError::Io(error.to_string()))?;
+                if n == 0 {
+                    return Ok(None);
+                }
+                reader.feed(&buf[..n]);
+            }
+            Err(error) => return Err(ProxyError::Wire(error)),
+        }
+    }
+}
+
 pub(crate) async fn forward_frontend(
     write: &mut (impl AsyncWrite + Unpin),
     msg: &FrontendMessage,
@@ -69,6 +97,19 @@ pub(crate) async fn forward_backend(
     msg.encode(&mut buf);
     write
         .write_all(&buf)
+        .await
+        .map_err(|error| ProxyError::Io(error.to_string()))
+}
+
+/// Writes a frame exactly as it was validated from the opposite transport.
+/// This intentionally does not bypass decoding: callers receive these bytes
+/// only from [`read_frame_with_raw`].
+pub(crate) async fn forward_raw(
+    write: &mut (impl AsyncWrite + Unpin),
+    bytes: &[u8],
+) -> Result<(), ProxyError> {
+    write
+        .write_all(bytes)
         .await
         .map_err(|error| ProxyError::Io(error.to_string()))
 }

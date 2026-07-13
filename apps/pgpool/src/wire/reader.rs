@@ -10,7 +10,7 @@
 //! logic here (header/length parsing, bounds, split-read reassembly) is
 //! identical either way.
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 
 use crate::wire::backend::{BackendMessage, TransactionStatus};
 use crate::wire::config::WireCodecConfig;
@@ -34,6 +34,16 @@ pub enum Role {
 pub enum WireMessage {
     Frontend(FrontendMessage),
     Backend(BackendMessage),
+}
+
+/// A fully validated decoded message together with the exact bytes read from
+/// the transport. Relay paths can inspect `message` for control flow while
+/// writing `bytes` unchanged, avoiding an allocation and re-encode for every
+/// steady-state frame.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WireFrame {
+    pub message: WireMessage,
+    pub bytes: Bytes,
 }
 
 /// Incremental, bounded, non-panicking frame reader over a byte stream fed
@@ -83,6 +93,15 @@ impl FrameReader {
     /// the configured bound is known, without waiting for (or buffering)
     /// the oversized body.
     pub fn next_frame(&mut self) -> Result<Option<WireMessage>, FrameError> {
+        self.next_frame_with_raw()
+            .map(|frame| frame.map(|frame| frame.message))
+    }
+
+    /// Attempts to read and fully validate the next frame while preserving
+    /// the exact wire bytes that carried it. This has identical framing and
+    /// typed-decoding guarantees to [`Self::next_frame`]; the additional raw
+    /// bytes are for a trusted relay write, not an unchecked bypass.
+    pub fn next_frame_with_raw(&mut self) -> Result<Option<WireFrame>, FrameError> {
         let untagged = self.role == Role::Frontend && self.awaiting_untagged_startup;
         let header_len = if untagged { 4 } else { 5 };
 
@@ -150,14 +169,20 @@ impl FrameReader {
                     // SSLRequest leaves awaiting_untagged_startup set: the
                     // client still owes an untagged StartupMessage next.
                 }
-                Ok(Some(WireMessage::Frontend(message)))
+                Ok(Some(WireFrame {
+                    message: WireMessage::Frontend(message),
+                    bytes: frame_bytes,
+                }))
             }
             Role::Backend => {
                 let message = BackendMessage::decode(&frame, &self.config)?;
                 if let BackendMessage::ReadyForQuery(ready) = &message {
                     self.tx_status = ready.status;
                 }
-                Ok(Some(WireMessage::Backend(message)))
+                Ok(Some(WireFrame {
+                    message: WireMessage::Backend(message),
+                    bytes: frame_bytes,
+                }))
             }
         }
     }
