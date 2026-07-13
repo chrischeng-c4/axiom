@@ -49,7 +49,27 @@ impl LiteralEscapeAnalysis {
 
 pub fn analyze_literal_escapes(body: &MirBody) -> LiteralEscapeAnalysis {
     let literal_kinds = collect_literal_kinds(body);
-    let literal_aliases = propagate_copy_aliases(body, &literal_kinds);
+    // Alias map, updated in program order as we walk (see below) rather
+    // than precomputed once to a whole-function fixed point. VRegs here
+    // are reused as the "current value of this variable" slot across
+    // reassignments (not true SSA), so the same Copy-destination VReg can
+    // legitimately alias a *different* literal root at different points
+    // in the same function (e.g. `x = [1]; x = [2]` both lower through
+    // the same scratch Copy destination before each StoreGlobal). A
+    // precomputed static map can only remember the last root a
+    // destination ever aliased to, which silently steals the escaping
+    // mark from an earlier literal that shared the same destination and
+    // wrongly leaves it classified NonEscaping — the JIT then elides its
+    // GC tracking even though it truly escapes, corrupting runtime state
+    // once the object outlives the local scope (#1610). Interleaving the
+    // alias update with the escape check for each instruction, in a
+    // single forward pass, keys the classification off the alias that
+    // was actually live at the point of use.
+    let mut current_aliases: HashMap<VReg, VReg> = literal_kinds
+        .keys()
+        .copied()
+        .map(|vreg| (vreg, vreg))
+        .collect();
     let mut analysis = LiteralEscapeAnalysis {
         literals: literal_kinds
             .into_iter()
@@ -67,9 +87,22 @@ pub fn analyze_literal_escapes(body: &MirBody) -> LiteralEscapeAnalysis {
 
     for block in &body.blocks {
         for inst in &block.stmts {
-            classify_inst_uses(inst, &literal_aliases, &mut analysis);
+            if let MirInst::Copy { dest, source } = inst {
+                if !analysis.literals.contains_key(dest) {
+                    match current_aliases.get(source).copied() {
+                        Some(root) => {
+                            current_aliases.insert(*dest, root);
+                        }
+                        None => {
+                            current_aliases.remove(dest);
+                        }
+                    }
+                }
+                continue;
+            }
+            classify_inst_uses(inst, &current_aliases, &mut analysis);
         }
-        classify_terminator_uses(&block.terminator, &literal_aliases, &mut analysis);
+        classify_terminator_uses(&block.terminator, &current_aliases, &mut analysis);
     }
 
     analysis
@@ -200,38 +233,6 @@ fn collect_literal_kinds(body: &MirBody) -> HashMap<VReg, LiteralEscapeKind> {
         }
     }
     literal_kinds
-}
-
-fn propagate_copy_aliases(
-    body: &MirBody,
-    literal_kinds: &HashMap<VReg, LiteralEscapeKind>,
-) -> HashMap<VReg, VReg> {
-    let mut literal_aliases: HashMap<VReg, VReg> = literal_kinds
-        .keys()
-        .copied()
-        .map(|vreg| (vreg, vreg))
-        .collect();
-
-    loop {
-        let mut changed = false;
-        for block in &body.blocks {
-            for inst in &block.stmts {
-                if let MirInst::Copy { dest, source } = inst {
-                    if literal_kinds.contains_key(dest) {
-                        continue;
-                    }
-                    if let Some(&root) = literal_aliases.get(source) {
-                        if literal_aliases.insert(*dest, root) != Some(root) {
-                            changed = true;
-                        }
-                    }
-                }
-            }
-        }
-        if !changed {
-            return literal_aliases;
-        }
-    }
 }
 
 fn classify_inst_uses(
