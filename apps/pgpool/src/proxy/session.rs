@@ -114,7 +114,7 @@ async fn drive_session(
         .await
         {
             Ok(HandshakeOutcome::Rejected) => break 'pipeline SessionOutcome::RejectedAuthFailed,
-            Ok(HandshakeOutcome::Ready) => {}
+            Ok(HandshakeOutcome::Ready { .. }) => {}
             Err(_) => break 'pipeline SessionOutcome::EstablishedClosedError,
         }
 

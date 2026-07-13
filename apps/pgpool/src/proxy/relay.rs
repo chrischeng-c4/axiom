@@ -12,12 +12,14 @@ use bytes::BytesMut;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::proxy::error::ProxyError;
-use crate::wire::{BackendMessage, FrameReader, FrontendMessage, WireMessage};
+use crate::wire::{BackendKeyData, BackendMessage, FrameReader, FrontendMessage, WireMessage};
 
 /// Which side of a pre-established handshake ended: forward progress to
 /// `ReadyForQuery`, or a backend `ErrorResponse` before it.
 pub(crate) enum HandshakeOutcome {
-    Ready,
+    Ready {
+        startup_replay: Option<Vec<BackendMessage>>,
+    },
     Rejected,
 }
 
@@ -121,6 +123,17 @@ pub(crate) async fn relay_until_ready(
     frontend_reader: &mut FrameReader,
     backend_reader: &mut FrameReader,
 ) -> Result<HandshakeOutcome, ProxyError> {
+    // @spec apps/pgpool/tech-design/logic/trust-startup-replay-for-capped-transaction-pooling.md#logic
+    // The replay is deliberately opt-in: any authentication frame requiring
+    // a frontend response makes the whole handshake non-replayable. The
+    // actual client receives its genuine protocol-ready frame sequence. The
+    // cached copy replaces BackendKeyData with a synthetic zero key: pgpool
+    // does not route CancelRequest and must never hand a later frontend a
+    // key for another physical backend.
+    let mut startup_replay = Vec::new();
+    let mut saw_authentication_ok = false;
+    let mut replayable = true;
+
     loop {
         let backend_msg = match read_frame(backend_read, backend_reader).await? {
             Some(WireMessage::Backend(msg)) => msg,
@@ -132,9 +145,37 @@ pub(crate) async fn relay_until_ready(
 
         forward_backend(client_write, &backend_msg).await?;
 
+        match &backend_msg {
+            BackendMessage::AuthenticationOk(_) => {
+                saw_authentication_ok = true;
+                if replayable {
+                    startup_replay.push(backend_msg.clone());
+                }
+            }
+            BackendMessage::AuthenticationCleartextPassword(_)
+            | BackendMessage::AuthenticationMd5Password(_)
+            | BackendMessage::AuthenticationSasl(_)
+            | BackendMessage::AuthenticationSaslContinue(_) => {
+                replayable = false;
+                startup_replay.clear();
+            }
+            BackendMessage::BackendKeyData(_) if replayable => {
+                startup_replay.push(BackendMessage::BackendKeyData(BackendKeyData {
+                    process_id: 0,
+                    secret_key: 0,
+                }));
+            }
+            _ if replayable => startup_replay.push(backend_msg.clone()),
+            _ => {}
+        }
+
         match backend_msg {
             BackendMessage::ErrorResponse(_) => return Ok(HandshakeOutcome::Rejected),
-            BackendMessage::ReadyForQuery(_) => return Ok(HandshakeOutcome::Ready),
+            BackendMessage::ReadyForQuery(_) => {
+                return Ok(HandshakeOutcome::Ready {
+                    startup_replay: (replayable && saw_authentication_ok).then_some(startup_replay),
+                });
+            }
             BackendMessage::AuthenticationCleartextPassword(_)
             | BackendMessage::AuthenticationMd5Password(_)
             | BackendMessage::AuthenticationSasl(_)

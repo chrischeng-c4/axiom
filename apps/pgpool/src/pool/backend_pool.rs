@@ -23,8 +23,11 @@ use crate::pool::types::{
     BackendConnectionId, BackendPoolStats, LeaseDisposition, PoolConfig, PoolError,
 };
 use crate::wire::{
-    BackendMessage, FrameReader, FrontendMessage, Query, Role, WireCodecConfig, WireMessage,
+    BackendMessage, FrameReader, FrontendMessage, Query, Role, StartupMessage, WireCodecConfig,
+    WireMessage,
 };
+
+const MAX_STARTUP_REPLAYS: usize = 64;
 
 /// One leased physical backend connection, handed out by
 /// [`BackendPool::acquire`]/[`BackendPool::acquire_fresh`].
@@ -43,6 +46,21 @@ pub struct BackendLease {
     /// guard returns the permit so capacity can never leak.
     #[allow(dead_code)]
     capacity_guard: CapacityGuard,
+}
+
+/// Startup admission result for transaction pooling. A replay admission has
+/// already authenticated the frontend at the protocol layer and therefore
+/// intentionally holds no physical backend lease.
+#[derive(Debug)]
+pub enum StartupAdmission {
+    Replay(Vec<BackendMessage>),
+    Fresh(BackendLease),
+}
+
+#[derive(Debug, Clone)]
+struct StartupReplay {
+    startup: StartupMessage,
+    messages: Vec<BackendMessage>,
 }
 
 struct CapacityGuard {
@@ -79,6 +97,7 @@ impl Drop for CapacityGuard {
 struct PoolState {
     idle: Vec<(BackendConnectionId, TcpStream, OwnedSemaphorePermit)>,
     outstanding: HashMap<BackendConnectionId, OwnedSemaphorePermit>,
+    startup_replays: Vec<StartupReplay>,
     next_id: u64,
 }
 
@@ -110,6 +129,7 @@ impl BackendPool {
                 state: Mutex::new(PoolState {
                     idle: Vec::new(),
                     outstanding: HashMap::new(),
+                    startup_replays: Vec::new(),
                     next_id: 0,
                 }),
                 notify: Notify::new(),
@@ -133,6 +153,123 @@ impl BackendPool {
     /// but never reuses an idle connection.
     pub async fn acquire_fresh(&self) -> Result<BackendLease, PoolError> {
         self.acquire_internal(false).await
+    }
+
+    /// @spec apps/pgpool/tech-design/logic/trust-startup-replay-for-capped-transaction-pooling.md#logic
+    /// Admits a transaction client after its startup packet is known. Exact
+    /// trust/no-challenge replies bypass a physical backend lease; otherwise
+    /// this waits for a fresh connection while rechecking the cache after
+    /// every pool notification so capped waiters can observe a just-published
+    /// reply instead of timing out behind idle connections.
+    pub async fn acquire_for_startup(
+        &self,
+        startup: &StartupMessage,
+    ) -> Result<StartupAdmission, PoolError> {
+        let deadline = Instant::now() + self.config.acquire_timeout;
+        loop {
+            if let Some(reply) = self.startup_replay(startup) {
+                return Ok(StartupAdmission::Replay(reply));
+            }
+
+            if let Ok(permit) = Arc::clone(&self.inner.permits).try_acquire_owned() {
+                return self
+                    .connect_fresh(permit)
+                    .await
+                    .map(StartupAdmission::Fresh);
+            }
+
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(self.saturated());
+            }
+
+            let notified = self.inner.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if tokio::time::timeout(remaining, notified).await.is_err() {
+                return Err(self.saturated());
+            }
+        }
+    }
+
+    /// Acquires a backend for a frontend that was established from a safe
+    /// startup replay. Idle backends are already authenticated. If concurrency
+    /// needs another physical connection, bootstrap it with the same startup
+    /// locally before returning it so query traffic never reaches an
+    /// unauthenticated PostgreSQL socket.
+    pub async fn acquire_for_replayed_startup(
+        &self,
+        startup: &StartupMessage,
+    ) -> Result<BackendLease, PoolError> {
+        let deadline = Instant::now() + self.config.acquire_timeout;
+        loop {
+            if let Some(lease) = self.try_take_idle().await {
+                return Ok(lease);
+            }
+
+            if let Ok(permit) = Arc::clone(&self.inner.permits).try_acquire_owned() {
+                let lease = self.connect_fresh(permit).await?;
+                return match bootstrap_no_challenge(
+                    lease,
+                    startup,
+                    &self.config.wire,
+                    self.config.backend_connect_timeout,
+                )
+                .await
+                {
+                    Ok(lease) => Ok(lease),
+                    Err(lease) => {
+                        drop(lease);
+                        self.inner.notify.notify_waiters();
+                        Err(PoolError::BackendUnreachable(
+                            "backend did not accept replayed trust startup".to_string(),
+                        ))
+                    }
+                };
+            }
+
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(self.saturated());
+            }
+            let notified = self.inner.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if tokio::time::timeout(remaining, notified).await.is_err() {
+                return Err(self.saturated());
+            }
+        }
+    }
+
+    /// @spec apps/pgpool/tech-design/logic/trust-startup-replay-for-capped-transaction-pooling.md#logic
+    /// Publishes one complete, challenge-free startup response. Existing
+    /// entries are never overwritten, and the bounded cache only accepts
+    /// exact startup identities.
+    pub fn publish_startup_replay(&self, startup: StartupMessage, messages: Vec<BackendMessage>) {
+        if messages.is_empty() {
+            return;
+        }
+
+        let inserted = {
+            let mut state = self.inner.state.lock().expect("pool state lock");
+            if state
+                .startup_replays
+                .iter()
+                .any(|entry| entry.startup == startup)
+            {
+                false
+            } else if state.startup_replays.len() < MAX_STARTUP_REPLAYS {
+                state
+                    .startup_replays
+                    .push(StartupReplay { startup, messages });
+                true
+            } else {
+                false
+            }
+        };
+        if inserted {
+            self.inner.notify.notify_waiters();
+        }
     }
 
     async fn acquire_internal(&self, allow_idle_reuse: bool) -> Result<BackendLease, PoolError> {
@@ -169,6 +306,15 @@ impl BackendPool {
             max: self.config.max_backend_connections,
             waited: self.config.acquire_timeout,
         }
+    }
+
+    fn startup_replay(&self, startup: &StartupMessage) -> Option<Vec<BackendMessage>> {
+        let state = self.inner.state.lock().expect("pool state lock");
+        state
+            .startup_replays
+            .iter()
+            .find(|entry| &entry.startup == startup)
+            .map(|entry| entry.messages.clone())
     }
 
     /// Returns a leased connection per `disposition`:
@@ -234,6 +380,14 @@ impl BackendPool {
             backend_active: state.outstanding.len(),
             backend_idle: state.idle.len(),
         }
+    }
+
+    /// Number of bounded, exact trust/no-challenge startup replies currently
+    /// available for transaction admission. This is intentionally read-only;
+    /// cache entries are created only by a completed backend handshake.
+    pub fn startup_replay_count(&self) -> usize {
+        let state = self.inner.state.lock().expect("pool state lock");
+        state.startup_replays.len()
     }
 
     async fn try_take_idle(&self) -> Option<BackendLease> {
@@ -308,21 +462,66 @@ impl BackendPool {
     }
 }
 
-/// Non-blocking liveness peek (R1): an idle connection with no pending read
+/// Non-consuming liveness peek (R1): an idle connection with no pending read
 /// readiness is presumed alive (the expected steady state for an idle,
 /// already-authenticated backend); a clean EOF or read error marks it dead
-/// so `acquire()` drops and retries (R1a/R1b).
+/// so `acquire()` drops and retries (R1a/R1b). A readable protocol frame is
+/// deliberately left queued for the normal relay -- consuming even one byte
+/// here would desynchronize the PostgreSQL frame stream.
 async fn liveness_check(stream: &TcpStream) -> bool {
-    match tokio::time::timeout(Duration::from_millis(0), stream.readable()).await {
+    let mut probe = [0_u8; 1];
+    match tokio::time::timeout(Duration::from_millis(0), stream.peek(&mut probe)).await {
         Err(_) => true,
         Ok(Err(_)) => false,
-        Ok(Ok(())) => {
-            let mut probe = [0_u8; 1];
-            match stream.try_read(&mut probe) {
-                Ok(0) => false,
-                Ok(_) => true,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => true,
-                Err(_) => false,
+        Ok(Ok(0)) => false,
+        Ok(Ok(_)) => true,
+    }
+}
+
+/// Completes a backend-only startup for a frontend already admitted by a
+/// cached no-challenge reply. No client frame is available here, so every
+/// password/MD5/SASL challenge is a hard failure and the socket is discarded.
+async fn bootstrap_no_challenge(
+    mut lease: BackendLease,
+    startup: &StartupMessage,
+    wire: &WireCodecConfig,
+    read_timeout: Duration,
+) -> Result<BackendLease, BackendLease> {
+    let mut outbound = BytesMut::new();
+    FrontendMessage::Startup(startup.clone()).encode(&mut outbound);
+    if lease.stream.write_all(&outbound).await.is_err() {
+        return Err(lease);
+    }
+
+    let mut reader = FrameReader::new(Role::Backend, wire);
+    let mut saw_authentication_ok = false;
+    loop {
+        match reader.next_frame() {
+            Ok(Some(WireMessage::Backend(BackendMessage::AuthenticationOk(_)))) => {
+                saw_authentication_ok = true;
+            }
+            Ok(Some(WireMessage::Backend(BackendMessage::ReadyForQuery(_))))
+                if saw_authentication_ok =>
+            {
+                return Ok(lease);
+            }
+            Ok(Some(WireMessage::Backend(
+                BackendMessage::AuthenticationCleartextPassword(_)
+                | BackendMessage::AuthenticationMd5Password(_)
+                | BackendMessage::AuthenticationSasl(_)
+                | BackendMessage::AuthenticationSaslContinue(_)
+                | BackendMessage::AuthenticationSaslFinal(_)
+                | BackendMessage::ErrorResponse(_),
+            )))
+            | Ok(Some(WireMessage::Frontend(_)))
+            | Err(_) => return Err(lease),
+            Ok(Some(WireMessage::Backend(_))) => {}
+            Ok(None) => {
+                let mut bytes = [0_u8; 4096];
+                match tokio::time::timeout(read_timeout, lease.stream.read(&mut bytes)).await {
+                    Ok(Ok(0)) | Ok(Err(_)) | Err(_) => return Err(lease),
+                    Ok(Ok(count)) => reader.feed(&bytes[..count]),
+                }
             }
         }
     }

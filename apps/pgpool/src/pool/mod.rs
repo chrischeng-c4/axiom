@@ -10,7 +10,7 @@ mod handler;
 mod transaction;
 mod types;
 
-pub use backend_pool::{BackendLease, BackendPool};
+pub use backend_pool::{BackendLease, BackendPool, StartupAdmission};
 pub use handler::PoolHandler;
 pub use transaction::{TransactionHandler, TransactionProxyConfig};
 pub use types::{

@@ -24,7 +24,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
 
-use crate::pool::backend_pool::{BackendLease, BackendPool};
+use crate::pool::backend_pool::{BackendLease, BackendPool, StartupAdmission};
 use crate::pool::types::{BackendConnectionId, LeaseDisposition, PoolRejectionReason};
 use crate::proxy::{
     forward_backend, forward_frontend, read_frame, read_startup, relay_until_ready,
@@ -108,52 +108,49 @@ async fn run_transaction_client(
         }
     };
 
-    // Admission handshake: acquire_fresh() always dials brand-new (Pool
-    // Lease State Machine's `admitting` state); its own `PoolError` maps to
-    // `rejected_saturated` (pool momentarily full even for admission) or
-    // `rejected_backend_unreachable` per the Lease FSM's two admission
-    // rejection edges.
-    let lease = match config.backend_pool.acquire_fresh().await {
-        Ok(lease) => lease,
-        Err(crate::pool::types::PoolError::Saturated { .. }) => {
-            let mut client = client;
-            write_pool_rejection(&mut client, PoolRejectionReason::BackendPoolSaturated).await;
-            drop(permit);
-            tracing::info!(
-                peer = %peer_addr,
-                outcome = "rejected_pool_saturated_admission",
-                "pgpool transaction admission rejected"
-            );
-            return;
-        }
-        Err(crate::pool::types::PoolError::BackendUnreachable(_)) => {
-            let mut client = client;
-            write_rejection(&mut client, RejectionReason::BackendUnreachable).await;
-            drop(permit);
-            tracing::info!(
-                peer = %peer_addr,
-                outcome = "rejected_backend_unreachable",
-                "pgpool transaction admission rejected"
-            );
-            return;
-        }
-    };
-
     let (mut client_read, mut client_write) = client.into_split();
     let mut frontend_reader = FrameReader::new(Role::Frontend, &config.wire);
 
-    let BackendLease {
-        id: handshake_id,
-        stream: handshake_backend,
-        ..
-    } = lease;
-    let (mut backend_read, mut backend_write) = handshake_backend.into_split();
-    let mut backend_reader = FrameReader::new(Role::Backend, &config.wire);
-
+    // @spec apps/pgpool/tech-design/logic/trust-startup-replay-for-capped-transaction-pooling.md#logic
+    // Decode startup before asking the pool for capacity. A matching,
+    // challenge-free reply can therefore establish a frontend without taking
+    // a physical backend from the capped pool.
     let startup =
         match read_startup(&mut client_read, &mut client_write, &mut frontend_reader).await {
             Ok(startup) => startup,
             Err(_) => {
+                drop(permit);
+                return;
+            }
+        };
+
+    let mut replay_safe_startup = false;
+    match config.backend_pool.acquire_for_startup(&startup).await {
+        Ok(StartupAdmission::Replay(messages)) => {
+            replay_safe_startup = true;
+            for message in messages {
+                if forward_backend(&mut client_write, &message).await.is_err() {
+                    drop(permit);
+                    return;
+                }
+            }
+        }
+        Ok(StartupAdmission::Fresh(lease)) => {
+            let BackendLease {
+                id: handshake_id,
+                stream: handshake_backend,
+                ..
+            } = lease;
+            let (mut backend_read, mut backend_write) = handshake_backend.into_split();
+            let mut backend_reader = FrameReader::new(Role::Backend, &config.wire);
+
+            if forward_frontend(
+                &mut backend_write,
+                &FrontendMessage::Startup(startup.clone()),
+            )
+            .await
+            .is_err()
+            {
                 release_backend(
                     config,
                     handshake_id,
@@ -165,72 +162,74 @@ async fn run_transaction_client(
                 drop(permit);
                 return;
             }
-        };
-    if forward_frontend(&mut backend_write, &FrontendMessage::Startup(startup))
-        .await
-        .is_err()
-    {
-        release_backend(
-            config,
-            handshake_id,
-            backend_read,
-            backend_write,
-            LeaseDisposition::Close,
-        )
-        .await;
-        drop(permit);
-        return;
-    }
 
-    match relay_until_ready(
-        &mut client_read,
-        &mut client_write,
-        &mut backend_read,
-        &mut backend_write,
-        &mut frontend_reader,
-        &mut backend_reader,
-    )
-    .await
-    {
-        Ok(HandshakeOutcome::Rejected) => {
-            // The backend's own `ErrorResponse` was already forwarded
-            // verbatim by `relay_until_ready`.
+            match relay_until_ready(
+                &mut client_read,
+                &mut client_write,
+                &mut backend_read,
+                &mut backend_write,
+                &mut frontend_reader,
+                &mut backend_reader,
+            )
+            .await
+            {
+                Ok(HandshakeOutcome::Ready { startup_replay }) => {
+                    if let Some(messages) = startup_replay {
+                        replay_safe_startup = true;
+                        config
+                            .backend_pool
+                            .publish_startup_replay(startup.clone(), messages);
+                    }
+                }
+                Ok(HandshakeOutcome::Rejected) | Err(_) => {
+                    // The backend's ErrorResponse, when present, was already
+                    // forwarded verbatim by relay_until_ready.
+                    release_backend(
+                        config,
+                        handshake_id,
+                        backend_read,
+                        backend_write,
+                        LeaseDisposition::Close,
+                    )
+                    .await;
+                    drop(permit);
+                    return;
+                }
+            }
+
+            // The fresh handshake backend must be reset before later
+            // transaction leases can reuse it; replay clients hold none.
             release_backend(
                 config,
                 handshake_id,
                 backend_read,
                 backend_write,
-                LeaseDisposition::Close,
+                LeaseDisposition::ReturnToIdle,
             )
             .await;
+        }
+        Err(crate::pool::types::PoolError::Saturated { .. }) => {
+            write_pool_rejection(&mut client_write, PoolRejectionReason::BackendPoolSaturated)
+                .await;
             drop(permit);
+            tracing::info!(
+                peer = %peer_addr,
+                outcome = "rejected_pool_saturated_admission",
+                "pgpool transaction admission rejected"
+            );
             return;
         }
-        Ok(HandshakeOutcome::Ready) => {}
-        Err(_) => {
-            release_backend(
-                config,
-                handshake_id,
-                backend_read,
-                backend_write,
-                LeaseDisposition::Close,
-            )
-            .await;
+        Err(crate::pool::types::PoolError::BackendUnreachable(_)) => {
+            write_rejection(&mut client_write, RejectionReason::BackendUnreachable).await;
             drop(permit);
+            tracing::info!(
+                peer = %peer_addr,
+                outcome = "rejected_backend_unreachable",
+                "pgpool transaction admission rejected"
+            );
             return;
         }
     }
-
-    // Handshake succeeded: reset immediately and return to idle. The client
-    // holds NO backend lease at this point (Lease FSM's `idle_no_lease`).
-    release_backend(
-        config,
-        handshake_id,
-        backend_read,
-        backend_write,
-        LeaseDisposition::ReturnToIdle,
-    )
-    .await;
 
     // `await_client_activity` loop: each non-Terminate frontend frame
     // acquires a per-transaction lease and relays until that transaction's
@@ -263,7 +262,14 @@ async fn run_transaction_client(
         // `PoolError` here (saturation timeout, or a fresh-connect failure
         // inside `acquire()`) is reported to this client as the synthesized
         // pool-saturated rejection.
-        let lease = match config.backend_pool.acquire().await {
+        let lease = match if replay_safe_startup {
+            config
+                .backend_pool
+                .acquire_for_replayed_startup(&startup)
+                .await
+        } else {
+            config.backend_pool.acquire().await
+        } {
             Ok(lease) => lease,
             Err(_) => {
                 write_pool_rejection(&mut client_write, PoolRejectionReason::BackendPoolSaturated)
@@ -427,8 +433,8 @@ async fn relay_one_transaction(
                     frontend_result = read_frame(client_read, frontend_reader) => {
                         match frontend_result {
                             Ok(Some(WireMessage::Frontend(FrontendMessage::Terminate(_))))
-                            | Ok(None)
-                            | Err(_) => return TxnLegOutcome::Ended,
+                            | Ok(None) => return TxnLegOutcome::Ended,
+                            Err(_) => return TxnLegOutcome::Ended,
                             Ok(Some(WireMessage::Frontend(msg))) => {
                                 pending_frontend = Some(msg);
                             }
