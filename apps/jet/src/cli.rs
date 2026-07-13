@@ -3761,9 +3761,9 @@ fn browser_production_resolve_options(
     if let Some(conds) = build_config.resolve_conditions() {
         resolve_options.conditions = conds.to_vec();
     }
-    resolve_options.alias =
-        crate::resolver::alias::AliasResolver::load(root_dir, &build_config.alias)
-            .to_resolve_aliases();
+    let aliases = crate::resolver::alias::AliasResolver::load(root_dir, &build_config.alias);
+    resolve_options.alias = aliases.to_resolve_aliases();
+    resolve_options.base_url = aliases.base_url().map(Path::to_path_buf);
     resolve_options
 }
 
@@ -6706,6 +6706,7 @@ mod gh1258_nx_resolve_options_tests {
         let options = browser_production_resolve_options(dir.path(), &JetConfig::default());
 
         assert_eq!(options.base_dirs, vec![dir.path().to_path_buf()]);
+        assert_eq!(options.base_url, Some(dir.path().to_path_buf()));
         assert!(
             options.alias.iter().any(|(prefix, path)| {
                 prefix == "@operations/tech-platform-lib"

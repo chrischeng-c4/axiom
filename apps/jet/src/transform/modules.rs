@@ -28,6 +28,9 @@ pub struct ModuleResolutionIndex {
     /// already used during graph-walk resolution. Empty for any caller that
     /// builds this index via `from_module_map` (unchanged prior behavior).
     alias_entries: Vec<(String, PathBuf)>,
+    /// Explicit tsconfig `baseUrl`, threaded from the bundler's resolver so
+    /// codegen resolves local bare specifiers the same way graph discovery did.
+    base_url: Option<PathBuf>,
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-transform.md#schema
@@ -43,6 +46,16 @@ impl ModuleResolutionIndex {
     pub fn from_module_map_and_aliases(
         module_map: &HashMap<PathBuf, usize>,
         alias_entries: &[(String, PathBuf)],
+    ) -> Self {
+        Self::from_module_map_and_aliases_and_base_url(module_map, alias_entries, None)
+    }
+
+    /// As [`Self::from_module_map_and_aliases`], also retaining an explicit
+    /// tsconfig `baseUrl` for local non-relative module lookups.
+    pub fn from_module_map_and_aliases_and_base_url(
+        module_map: &HashMap<PathBuf, usize>,
+        alias_entries: &[(String, PathBuf)],
+        base_url: Option<PathBuf>,
     ) -> Self {
         let mut seen = HashSet::new();
         let mut module_ids = HashMap::new();
@@ -65,6 +78,7 @@ impl ModuleResolutionIndex {
             module_ids,
             package_roots,
             alias_entries: alias_entries.to_vec(),
+            base_url,
         }
     }
 }
@@ -1115,6 +1129,40 @@ fn resolve_module_path(
 
     // Bare specifier resolution (e.g. "react", "react/jsx-runtime", "scheduler")
     if !path.starts_with('.') && !path.starts_with('/') {
+        // Nx/tsconfig path aliases take precedence over baseUrl and package
+        // lookup, matching `resolver/mod.rs::detect_kind`. Re-derive the
+        // graph resolver's prefix-strip-and-join arithmetic so emitted code
+        // points at the same module ID selected during graph discovery.
+        if let Some(index) = resolution_index {
+            for (prefix, target) in &index.alias_entries {
+                if let Some(rest) = path.strip_prefix(prefix.as_str()) {
+                    let candidate = if rest.is_empty() {
+                        target.clone()
+                    } else {
+                        target.join(rest.trim_start_matches('/'))
+                    };
+                    if let Some(id) =
+                        lookup_file_or_directory_module_id(module_map, resolution_index, &candidate)
+                    {
+                        return format!("require({})", id);
+                    }
+                }
+            }
+        }
+
+        // TypeScript resolves an explicit baseUrl before node_modules. The
+        // graph resolver already registered this same local module; consult
+        // the module map here so codegen emits a numeric require rather than
+        // leaving the original bare-looking source specifier in the bundle.
+        if let Some(base_url) = resolution_index.and_then(|index| index.base_url.as_deref()) {
+            let candidate = base_url.join(path);
+            if let Some(id) =
+                lookup_file_or_directory_module_id(module_map, resolution_index, &candidate)
+            {
+                return format!("require({})", id);
+            }
+        }
+
         if let Some(dir) = current_dir {
             let mut search_dir = Some(dir);
             while let Some(d) = search_dir {
@@ -1176,34 +1224,6 @@ fn resolve_module_path(
                         }
                     }
                     search_dir = d.parent();
-                }
-            }
-        }
-
-        // Nx/tsconfig path alias fallback (WI #1305): every strategy above
-        // only knows how to resolve real `node_modules/<pkg>` directories
-        // and `.jet-store`/package-root-indexed packages, so an internal Nx
-        // workspace library imported via its declared tsconfig path alias
-        // (e.g. `@operations/tech-platform-lib`) falls through all of them,
-        // since no such `node_modules` directory exists for it.
-        // `resolver/mod.rs::resolve_alias` already resolved and registered
-        // this same specifier's real module during `build_graph` — mirror
-        // its prefix-strip-and-join arithmetic 1:1 here and re-derive the
-        // same candidate path, then look it up via the existing
-        // `lookup_file_or_directory_module_id` helper.
-        if let Some(index) = resolution_index {
-            for (prefix, target) in &index.alias_entries {
-                if let Some(rest) = path.strip_prefix(prefix.as_str()) {
-                    let candidate = if rest.is_empty() {
-                        target.clone()
-                    } else {
-                        target.join(rest.trim_start_matches('/'))
-                    };
-                    if let Some(id) =
-                        lookup_file_or_directory_module_id(module_map, resolution_index, &candidate)
-                    {
-                        return format!("require({})", id);
-                    }
                 }
             }
         }
@@ -2502,11 +2522,12 @@ genCalc
     ) -> crate::bundler::BundleOptions {
         let mut resolve_options = crate::resolver::ResolveOptions::for_browser_production();
         resolve_options.base_dirs = vec![fixture_root.to_path_buf()];
-        resolve_options.alias = crate::resolver::alias::AliasResolver::load(
+        let aliases = crate::resolver::alias::AliasResolver::load(
             fixture_root,
             &std::collections::HashMap::new(),
-        )
-        .to_resolve_aliases();
+        );
+        resolve_options.alias = aliases.to_resolve_aliases();
+        resolve_options.base_url = aliases.base_url().map(Path::to_path_buf);
         crate::bundler::BundleOptions {
             entry,
             output_dir: fixture_root.join("dist"),
@@ -2574,13 +2595,92 @@ genCalc
         );
     }
 
+    #[tokio::test]
+    async fn bundle_resolves_tsconfig_base_url_before_node_modules_full_pipeline() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        std::fs::write(
+            root.join("tsconfig.base.json"),
+            r#"{"compilerOptions":{"baseUrl":"."}}"#,
+        )
+        .unwrap();
+        let entry = write_node_builtin_fixture(
+            &root,
+            &[
+                (
+                    "entry.ts",
+                    "import { locale } from 'third-party/firebase-ui/esm__zh_tw';\nexport const currentLocale = locale;\n",
+                ),
+                (
+                    "third-party/firebase-ui/esm__zh_tw.ts",
+                    "export const locale = 'BASE_URL_LOCAL_MARKER';\n",
+                ),
+                (
+                    "node_modules/third-party/firebase-ui/esm__zh_tw.js",
+                    "export const locale = 'NODE_MODULES_MARKER';\n",
+                ),
+            ],
+        );
+
+        let opts = nx_alias_bundle_options(&root, entry.clone());
+        let bundler = crate::bundler::Bundler::new(opts).unwrap();
+        let output = bundler
+            .bundle(entry)
+            .await
+            .expect("tsconfig baseUrl local import must resolve through the full bundle pipeline");
+
+        assert!(
+            output.code.contains("BASE_URL_LOCAL_MARKER"),
+            "baseUrl module body must be present in the bundle: {}",
+            output.code
+        );
+        assert!(
+            !output.code.contains("NODE_MODULES_MARKER"),
+            "baseUrl must take precedence over the same node_modules path: {}",
+            output.code
+        );
+        assert!(
+            !output
+                .code
+                .contains("require('third-party/firebase-ui/esm__zh_tw')")
+                && !output
+                    .code
+                    .contains("require(\"third-party/firebase-ui/esm__zh_tw\")"),
+            "baseUrl import must be rewritten to an internal require: {}",
+            output.code
+        );
+    }
+
+    #[test]
+    fn resolve_module_path_alias_precedes_base_url_when_both_targets_are_in_graph() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base_url = tmp.path().to_path_buf();
+        let alias_target = base_url.join("workspace-alias").join("module.ts");
+        let base_url_target = base_url.join("third-party").join("module.ts");
+        let mut module_map = HashMap::new();
+        module_map.insert(alias_target.clone(), 11);
+        module_map.insert(base_url_target, 22);
+        let alias_entries = vec![("third-party/".to_string(), base_url.join("workspace-alias"))];
+        let index = ModuleResolutionIndex::from_module_map_and_aliases_and_base_url(
+            &module_map,
+            &alias_entries,
+            Some(base_url),
+        );
+
+        let resolved = resolve_module_path("third-party/module", &module_map, Some(&index), None);
+
+        assert_eq!(
+            resolved, "require(11)",
+            "paths/alias must precede baseUrl exactly as graph resolution does"
+        );
+    }
+
     // WI #1305 R2/AC3: no-regression control -- with resolve_options.alias
     // populated (as it always is for `jet build --nx`), an ordinary bare
     // node_modules package import must continue to resolve exactly as
-    // before this fix, proving the new alias-consultation branch is reached
-    // only after (and does not interfere with) the pre-existing
-    // node_modules ancestor walk-up / package-root-index bare-specifier
-    // resolution strategies.
+    // before this fix, proving an unmatched alias branch does not interfere
+    // with the pre-existing node_modules ancestor walk-up / package-root-index
+    // bare-specifier resolution strategies.
     #[tokio::test]
     async fn bundle_resolves_ordinary_bare_package_import_unaffected_by_alias_branch() {
         let tmp = tempfile::tempdir().unwrap();
