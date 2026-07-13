@@ -87,6 +87,8 @@ reqwest = { workspace = true }
 h2c = { path = "../../libs/h2c" }
 http-body-util = "0.1"
 tower = { workspace = true, features = ["util"] }
+rskafka = "0.6.0"
+chrono = { workspace = true }
 
 [build-dependencies]
 build-stamp = { path = "../../libs/build-stamp" }
