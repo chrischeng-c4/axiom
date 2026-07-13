@@ -318,6 +318,7 @@ Gate Inventory:
 | crd-operator-instance-render | epic | 1284 | planned | planned | none | pending: render conformance gates |
 | kind-drain-readiness-smoke | epic | 1284 | planned | planned | none | pending: kind smoke script |
 | stateless-deployment-instance | change | 1561 | planned | planned | none | pending: shared Deployment/ClusterIP render and negative stateful-boundary tests |
+| global-endpoint-quota-allocation | change | 1571 | planned | planned | none | pending: atomic scale admission and held-quota invariant tests |
 
 ### Long-Running Stability
 
