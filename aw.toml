@@ -1,4 +1,624 @@
 version = "1"
 
+[agentic_workflow.issue_platform]
+type = "github"
+repo = "chrischeng-c4/axiom"
+auth_method = "cli"
+
+[agentic_workflow.repo_platform]
+type = "github"
+repo = "chrischeng-c4/axiom"
+default_branch = "main"
+
 [agentic_workflow.projects]
 discover = ["projects/*/aw.toml", "libs/*/aw.toml"]
+
+# BEGIN AW SYNC — auto-generated, do not edit by hand
+
+[[projects]]
+name = "cclab-aurora"
+path = "crates/cclab-aurora"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-aurora/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-aurora"
+verify_cold = false
+
+[[projects]]
+name = "cclab-cli-registry"
+path = "crates/cclab-cli-registry"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-cli-registry/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-cli-registry"
+verify_cold = false
+
+[[projects]]
+name = "cclab-core"
+path = "crates/cclab-core"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-core/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-core"
+verify_cold = false
+
+[[projects]]
+name = "cclab-ctx-inf-db"
+path = "crates/cclab-ctx-inf-db"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-ctx-inf-db/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-ctx-inf-db"
+verify_cold = false
+
+[[projects]]
+name = "cclab-frame"
+path = "crates/cclab-frame"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-frame/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-frame"
+verify_cold = false
+
+[[projects]]
+name = "cclab-grid"
+path = "crates/cclab-grid"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-grid/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-grid"
+verify_cold = false
+
+[[projects]]
+name = "cclab-grid-render-webgpu"
+path = "crates/cclab-grid-render-webgpu"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-grid-render-webgpu/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-grid-render-webgpu"
+verify_cold = false
+
+[[projects]]
+name = "cclab-grid-wasm"
+path = "crates/cclab-grid-wasm"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-grid-wasm/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-grid-wasm"
+verify_cold = false
+
+[[projects]]
+name = "cclab-learn"
+path = "crates/cclab-learn"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-learn/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-learn"
+verify_cold = false
+
+[[projects]]
+name = "cclab-log"
+path = "crates/cclab-log"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-log/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-log"
+verify_cold = false
+
+[[projects]]
+name = "cclab-log-mamba"
+path = "crates/cclab-log-mamba"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-log-mamba/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-log-mamba"
+verify_cold = false
+
+[[projects]]
+name = "cclab-mamba-registry"
+path = "crates/cclab-mamba-registry"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-mamba-registry/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-mamba-registry"
+verify_cold = false
+
+[[projects]]
+name = "cclab-mcp-mamba"
+path = "crates/cclab-mcp-mamba"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-mcp-mamba/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-mcp-mamba"
+verify_cold = false
+
+[[projects]]
+name = "cclab-qc-mamba"
+path = "crates/cclab-qc-mamba"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-qc-mamba/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-qc-mamba"
+verify_cold = false
+
+[[projects]]
+name = "cclab-runtime-mamba"
+path = "crates/cclab-runtime-mamba"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-runtime-mamba/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-runtime-mamba"
+verify_cold = false
+
+[[projects]]
+name = "cclab-schema"
+path = "crates/cclab-schema"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-schema/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-schema"
+verify_cold = false
+
+[[projects]]
+name = "cclab-schema-mamba"
+path = "crates/cclab-schema-mamba"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-schema-mamba/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-schema-mamba"
+verify_cold = false
+
+[[projects]]
+name = "cclab-server"
+path = "crates/cclab-server"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-server/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-server"
+verify_cold = false
+
+[[projects]]
+name = "cclab-text"
+path = "crates/cclab-text"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-text/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-text"
+verify_cold = false
+
+[[projects]]
+name = "cclab-tqdm"
+path = "crates/cclab-tqdm"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-tqdm/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-tqdm"
+verify_cold = false
+
+[[projects]]
+name = "cclab-util"
+path = "crates/cclab-util"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-util/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-util"
+verify_cold = false
+
+[[projects]]
+name = "cclab-wal"
+path = "crates/cclab-wal"
+
+[[projects.workspaces]]
+paths = ["crates/cclab-wal/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-wal"
+verify_cold = false
+
+[[projects]]
+name = "agentic-workflow"
+path = "projects/agentic-workflow"
+
+[[projects.workspaces]]
+paths = ["projects/agentic-workflow/**"]
+target = "rust"
+test_cmd = "cargo test -p agentic-workflow"
+verify_cold = false
+
+[[projects]]
+name = "arena"
+path = "projects/arena"
+
+[[projects.workspaces]]
+paths = ["projects/arena/**"]
+target = "rust"
+test_cmd = "cargo test -p arena"
+verify_cold = false
+
+[[projects]]
+name = "beam"
+path = "projects/beam"
+
+[[projects.workspaces]]
+name = "beam"
+paths = ["projects/beam/**"]
+target = "schemas"
+test_cmd = "true"
+verify_cold = false
+
+[[projects]]
+name = "cap"
+path = "projects/cap"
+
+[[projects.workspaces]]
+paths = ["projects/cap/**"]
+target = "rust"
+test_cmd = "cargo test -p cap"
+verify_cold = false
+
+[[projects]]
+name = "cgdb"
+path = "projects/cgdb"
+
+[[projects.workspaces]]
+paths = ["projects/cgdb/**"]
+target = "rust"
+test_cmd = "cargo test -p cgdb-smoke"
+verify_cold = false
+
+[[projects]]
+name = "cube"
+path = "projects/cube"
+
+[[projects.workspaces]]
+name = "cube"
+paths = ["projects/cube/**"]
+target = "schemas"
+test_cmd = "true"
+verify_cold = false
+
+[[projects]]
+name = "defer"
+path = "projects/defer"
+
+[[projects.workspaces]]
+name = "defer"
+paths = ["projects/defer/**"]
+target = "schemas"
+test_cmd = "true"
+verify_cold = false
+
+[[projects]]
+name = "guard"
+path = "projects/guard"
+
+[[projects.workspaces]]
+paths = ["projects/guard/**"]
+target = "rust"
+test_cmd = "cargo test -p guard"
+verify_cold = false
+
+[[projects]]
+name = "httpkit-demo"
+path = "projects/httpkit-demo"
+
+[[projects.workspaces]]
+paths = ["projects/httpkit-demo/**"]
+target = "rust"
+test_cmd = "cargo test -p httpkit-demo"
+verify_cold = false
+
+[[projects]]
+name = "jet"
+path = "projects/jet"
+
+[[projects.workspaces]]
+paths = ["projects/jet/**"]
+target = "rust"
+test_cmd = "cargo test -p jet"
+verify_cold = false
+
+[[projects]]
+name = "keep"
+path = "projects/keep"
+
+[[projects.workspaces]]
+paths = ["projects/keep/**"]
+target = "rust"
+test_cmd = "cargo test -p keep"
+verify_cold = false
+
+[[projects]]
+name = "loom"
+path = "projects/loom"
+
+[[projects.workspaces]]
+paths = ["projects/loom/**"]
+target = "rust"
+test_cmd = "cargo test -p loom"
+verify_cold = false
+
+[[projects]]
+name = "lumen"
+path = "projects/lumen"
+
+[[projects.workspaces]]
+paths = ["projects/lumen/**"]
+target = "rust"
+test_cmd = "cargo test -p lumen"
+verify_cold = false
+
+[[projects]]
+name = "mamba"
+path = "projects/mamba"
+
+[[projects.workspaces]]
+paths = ["projects/mamba/**"]
+target = "rust"
+test_cmd = "cargo test -p mamba"
+verify_cold = false
+
+[[projects]]
+name = "meter"
+path = "projects/meter"
+
+[[projects.workspaces]]
+paths = ["projects/meter/**"]
+target = "rust"
+test_cmd = "cargo test -p meter"
+verify_cold = false
+
+[[projects]]
+name = "preview"
+path = "projects/preview"
+
+[[projects.workspaces]]
+paths = ["projects/preview/**"]
+target = "rust"
+test_cmd = "cargo test -p preview"
+verify_cold = false
+
+[[projects]]
+name = "qc"
+path = "projects/qc"
+
+[[projects.workspaces]]
+name = "qc"
+paths = ["projects/qc/**"]
+target = "schemas"
+test_cmd = "true"
+verify_cold = false
+
+[[projects]]
+name = "queue"
+path = "projects/queue"
+
+[[projects.workspaces]]
+name = "cclab-queue"
+paths = ["projects/queue/queue/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-queue"
+verify_cold = false
+
+[[projects]]
+name = "relay"
+path = "projects/relay"
+
+[[projects.workspaces]]
+paths = ["projects/relay/**"]
+target = "rust"
+test_cmd = "cargo test -p relay"
+verify_cold = false
+
+[[projects]]
+name = "rig"
+path = "projects/rig"
+
+[[projects.workspaces]]
+paths = ["projects/rig/**"]
+target = "rust"
+test_cmd = "cargo test -p rig"
+verify_cold = false
+
+[[projects]]
+name = "tape"
+path = "projects/tape"
+
+[[projects.workspaces]]
+name = "tape"
+paths = ["projects/tape/**"]
+target = "schemas"
+test_cmd = "true"
+verify_cold = false
+
+[[projects]]
+name = "vat"
+path = "projects/vat"
+
+[[projects.workspaces]]
+paths = ["projects/vat/**"]
+target = "rust"
+test_cmd = "cargo test -p vat"
+verify_cold = false
+
+[[projects]]
+name = "build-stamp"
+path = "libs/build-stamp"
+
+[[projects.workspaces]]
+paths = ["libs/build-stamp/**"]
+target = "rust"
+test_cmd = "cargo test -p build-stamp"
+verify_cold = false
+
+[[projects]]
+name = "claimtoken"
+path = "libs/claimtoken"
+
+[[projects.workspaces]]
+paths = ["libs/claimtoken/**"]
+target = "rust"
+test_cmd = "cargo test -p claimtoken"
+verify_cold = false
+
+[[projects]]
+name = "cli-std"
+path = "libs/cli-std"
+
+[[projects.workspaces]]
+paths = ["libs/cli-std/**"]
+target = "rust"
+test_cmd = "cargo test -p cli-std"
+verify_cold = false
+
+[[projects]]
+name = "compass"
+path = "libs/compass"
+
+[[projects.workspaces]]
+paths = ["libs/compass/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-compass"
+verify_cold = false
+
+[[projects]]
+name = "h2c"
+path = "libs/h2c"
+
+[[projects.workspaces]]
+paths = ["libs/h2c/**"]
+target = "rust"
+test_cmd = "cargo test -p h2c"
+verify_cold = false
+
+[[projects]]
+name = "openapi-codegen"
+path = "libs/openapi-codegen"
+
+[[projects.workspaces]]
+paths = ["libs/openapi-codegen/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-openapi-codegen"
+verify_cold = false
+
+[[projects]]
+name = "operator"
+path = "libs/operator"
+
+[[projects.workspaces]]
+paths = ["libs/operator/**"]
+target = "rust"
+test_cmd = "cargo test -p operator"
+verify_cold = false
+
+[[projects]]
+name = "raft-core"
+path = "libs/raft-core"
+
+[[projects.workspaces]]
+paths = ["libs/raft-core/**"]
+target = "rust"
+test_cmd = "cargo test -p raft-core"
+verify_cold = false
+
+[[projects]]
+name = "raft-host"
+path = "libs/raft-host"
+
+[[projects.workspaces]]
+paths = ["libs/raft-host/**"]
+target = "rust"
+test_cmd = "cargo test -p raft-host"
+verify_cold = false
+
+[[projects]]
+name = "service-auth"
+path = "libs/service-auth"
+
+[[projects.workspaces]]
+paths = ["libs/service-auth/**"]
+target = "rust"
+test_cmd = "cargo test -p service-auth"
+verify_cold = false
+
+[[projects]]
+name = "service-backup"
+path = "libs/service-backup"
+
+[[projects.workspaces]]
+paths = ["libs/service-backup/**"]
+target = "rust"
+test_cmd = "cargo test -p service-backup"
+verify_cold = false
+
+[[projects]]
+name = "service-http"
+path = "libs/service-http"
+
+[[projects.workspaces]]
+paths = ["libs/service-http/**"]
+target = "rust"
+test_cmd = "cargo test -p service-http"
+verify_cold = false
+
+[[projects]]
+name = "service-metrics"
+path = "libs/service-metrics"
+
+[[projects.workspaces]]
+paths = ["libs/service-metrics/**"]
+target = "rust"
+test_cmd = "cargo test -p service-metrics"
+verify_cold = false
+
+[[projects]]
+name = "service-tls"
+path = "libs/service-tls"
+
+[[projects.workspaces]]
+paths = ["libs/service-tls/**"]
+target = "rust"
+test_cmd = "cargo test -p service-tls"
+verify_cold = false
+
+[[projects]]
+name = "surface"
+path = "libs/surface"
+
+[[projects.workspaces]]
+paths = ["libs/surface/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-surface"
+verify_cold = false
+
+[[projects]]
+name = "ui-runtime"
+path = "libs/ui-runtime"
+
+[[projects.workspaces]]
+paths = ["libs/ui-runtime/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-ui-runtime"
+verify_cold = false
+
+# END AW SYNC
