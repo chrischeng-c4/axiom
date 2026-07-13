@@ -19,6 +19,11 @@ pub mod platform;
 pub mod k8s;
 // </HANDWRITE>
 
+// SPEC-MANAGED: apps/pgpool/tech-design/semantic/pgpool-crd-operator-control-plane.md#logic
+// <HANDWRITE gap="missing-generator:logic:pgpool-operator" tracker="#1575" reason="Typed kube CustomResource and ManagedService composition require hand-written Rust integration.">
+pub mod operator;
+// </HANDWRITE>
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PoolMode {
     Session,

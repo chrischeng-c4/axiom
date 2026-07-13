@@ -14,11 +14,12 @@ connectors stay explicit adapters above this core rather than being baked into
 the pooler runtime.
 
 Current implementation slice: `apps/pgpool` is a Rust workspace crate and
-binary with an offline runtime plan, OpenAPI-shaped admin route inventory,
-agent docs, and shared server substrate dependencies wired through
-`server-lifecycle`, `server-tcp`, and `server-http`. PostgreSQL wire handling,
-auth/backend adapters, k8s operator artifacts, and real database integration
-gates are separate work roots.
+binary with PostgreSQL wire handling, bounded session/transaction pooling, a
+served admin plane, live remote-PostgreSQL capacity discovery, global endpoint
+quota/drain models, and layered Pgpool CRD/operator/instance artifacts. Shared
+runtime dependencies remain wired through `server-lifecycle`, `server-tcp`,
+`server-http`, `metrics-prometheus`, and `service-k8s`; provider authentication
+and broader external EC gates remain separate work roots.
 
 ## Boundaries
 
@@ -46,7 +47,7 @@ and the platform adapter boundary remain first-class domain roots.
 | Working-Name App Scaffold | - | implemented | passing | smoke | partial | crate/bin/README/AW metadata and route inventory are present under `apps/pgpool` |
 | Shared Server Substrate Adoption | - | implemented | passing | smoke | partial | runtime plan composes `server-lifecycle`, `server-tcp`, and `server-http` types |
 | PostgreSQL Pooler Core | 1282 | planned | planned | none | not_ready | domain: frontend pg wire parser, backend pool, transaction/session modes |
-| Platform Adapter Boundary | 1283 | planned | planned | none | not_ready | domain: Cloud SQL/AlloyDB discovery/auth adapters remain outside core runtime |
+| Platform Adapter Boundary | 1283 | implemented | passing | conformance | partial | live PostgreSQL capacity discovery is provider/role typed; provider auth remains outside core runtime |
 | CLI Interface | 1282 | implemented | passing | smoke | partial | mandatory baseline: single `pgpool` bin with runtime-plan/spec verbs; serve entrypoint remains open |
 | CLI Standard Surface | - | implemented | passing | smoke | partial | mandatory baseline: shared `cli-std` llm/upgrade/issue surface with build-stamp provenance |
 | Chainable Output Conformance | - | implemented | passing | smoke | partial | mandatory baseline: `runtime-plan` emits `next:`; raw spec streams stay unwrapped |
@@ -54,7 +55,7 @@ and the platform adapter boundary remain first-class domain roots.
 | Competitor Performance | 1285 | planned | planned | none | not_ready | mandatory baseline: vat-isolated meter throughput/latency ratchet vs PgBouncer-class poolers |
 | EC Gates Configured | 1285 | planned | planned | none | not_ready | mandatory baseline: aw.toml EC inventory, vat meter/guard runners, external-contracts evidence |
 | HTTP/2 API List | 1282 | implemented | passing | smoke | partial | mandatory baseline: offline `pgpool spec` admin route inventory; served contract remains open |
-| Kubernetes-Native Deployment | 1284 | planned | planned | none | not_ready | mandatory baseline: PgpoolSpec CRD/operator/instance render and pod drain behavior |
+| Kubernetes-Native Deployment | 1284 | implemented | passing | conformance | partial | PgpoolSpec CRD/operator/instance render, shared Deployment composition, quota admission, and drain behavior are covered; image artifact work remains |
 | Long-Running Stability | 1282 | planned | planned | none | not_ready | mandatory baseline: backend reuse without leaks, graceful drain, restart safety |
 | Security Hardening | 1286 | planned | planned | none | not_ready | mandatory baseline: frontend auth passthrough, TLS posture, admin-plane exposure gates |
 | Standard Operational Endpoints | 1282 | planned | planned | smoke | not_ready | mandatory baseline: one-port `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`; offline twin exists |
@@ -140,13 +141,13 @@ connectors as explicit adapters above the pooler core: the core runtime never
 embeds platform SDKs, and adapters only supply backend endpoints and auth
 material through a stable seam.
 Gate Inventory:
-- pending: adapter seam contract tests
-- pending: plain-Postgres backend integration gate
+- apps/pgpool/tests/connection_discovery.rs - live PostgreSQL runtime discovery integration gate
+- apps/pgpool/src/platform/discovery.rs - provider/role typed adapter seam and runtime-lower-bound logic
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | backend-adapter-seam | epic | 1283 | planned | planned | none | pending: adapter seam contract tests |
-| runtime-connection-limit-discovery | change | 1570 | planned | planned | none | pending: live pg_settings/pg_stat_activity discovery and provider-role tests |
+| runtime-connection-limit-discovery | change | 1570 | implemented | passing | conformance | apps/pgpool/tests/connection_discovery.rs; apps/pgpool/src/platform/discovery.rs; apps/pgpool/tech-design/semantic/pgpool-runtime-connection-limit-discovery.md |
 
 ### CLI Interface
 
@@ -300,26 +301,29 @@ Gate Inventory:
 
 ID: kubernetes-native-deployment
 Type: Devops
-Surfaces: CLI: pending `pgpool k8s crd|operator|instance render` and `pgpool dockerfile render` - layered deployment artifact verbs per the service CLI convention.; K8s: pending PgpoolSpec CRD, operator, and instance profiles.
-EC Dimensions: behavior: pending k8s render conformance gates - CRD/operator/instance artifacts render deterministically from the binary
+Surfaces: CLI: `pgpool k8s crd render`, `pgpool k8s operator render|run`, and `pgpool k8s instance render` - layered deployment artifact verbs per the service CLI convention.; K8s: namespaced Pgpool CRD, leader-elected operator, instance profiles, and shared stateless Deployment/ClusterIP/PDB composition.
+EC Dimensions: behavior: `cargo test -p pgpool --test operator --test cli_contract` - CRD/operator/instance artifacts and shared Deployment children render deterministically from the binary and typed CR
 Root WI: 1284
-Status: candidate
+Status: auditing
 Required Verification: conformance, dogfood
 Promise:
 Ship pgpool as a Kubernetes-native pooler: CRD/operator/instance render verbs,
 image fixtures rendered from the binary, and pod lifecycle behavior (readiness
 flip plus graceful drain) proven in a kind smoke path.
 Gate Inventory:
-- pending: k8s render conformance gates
-- pending: kind drain/readiness smoke
+- apps/pgpool/tests/operator.rs - CRD structural schema, owned stateless render, readiness, budget-status, and operator asset gates
+- apps/pgpool/tests/cli_contract.rs - layered k8s CLI render contract
+- apps/pgpool/src/k8s/control.rs - deterministic quota admission and drain-before-release reconciliation model
+- real kind API-server smoke - generated CRD, Pgpool CR, RBAC, and operator Deployment admitted successfully
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| crd-operator-instance-render | epic | 1284 | planned | planned | none | pending: render conformance gates |
+| crd-operator-instance-render | epic | 1284 | implemented | passing | conformance | apps/pgpool/tests/operator.rs; apps/pgpool/tests/cli_contract.rs; apps/pgpool/tech-design/semantic/pgpool-crd-operator-control-plane.md |
 | kind-drain-readiness-smoke | epic | 1284 | planned | planned | none | pending: kind smoke script |
-| stateless-deployment-instance | change | 1561 | planned | planned | none | pending: shared Deployment/ClusterIP render and negative stateful-boundary tests |
-| global-endpoint-quota-allocation | change | 1571 | planned | planned | none | pending: atomic scale admission and held-quota invariant tests |
-| drain-safe-control-plane-status | change | 1573 | planned | planned | none | pending: readiness/drain replay, status, and Prometheus invariant tests |
+| stateless-deployment-instance | change | 1561 | implemented | passing | conformance | apps/pgpool/src/k8s/instance.rs; negative stateful-boundary tests in the same source unit |
+| global-endpoint-quota-allocation | change | 1571 | implemented | passing | conformance | apps/pgpool/src/k8s/budget.rs; apps/pgpool/tech-design/semantic/pgpool-global-endpoint-quota-allocation.md |
+| drain-safe-control-plane-status | change | 1573 | implemented | passing | conformance | apps/pgpool/src/k8s/control.rs; apps/pgpool/tech-design/semantic/pgpool-drain-safe-control-plane-status.md |
+| crd-operator-control-plane | change | 1575 | implemented | passing | conformance | apps/pgpool/src/operator; apps/pgpool/tests/operator.rs; apps/pgpool/tech-design/semantic/pgpool-crd-operator-control-plane.md |
 
 ### Long-Running Stability
 

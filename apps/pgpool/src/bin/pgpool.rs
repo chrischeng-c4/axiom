@@ -132,8 +132,55 @@ struct K8sArgs {
 
 #[derive(Subcommand)]
 enum K8sCommand {
+    /// Render the cluster-scoped Pgpool CustomResourceDefinition.
+    Crd(K8sCrdArgs),
+    /// Render or run the Pgpool operator control plane.
+    Operator(K8sOperatorArgs),
     /// Render app-namespace Pgpool instance artifacts.
     Instance(K8sInstanceArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sCrdArgs {
+    #[command(subcommand)]
+    command: K8sCrdCommand,
+}
+
+#[derive(Subcommand)]
+enum K8sCrdCommand {
+    /// Render the Pgpool CustomResourceDefinition YAML.
+    Render(K8sOutputArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sOperatorArgs {
+    #[command(subcommand)]
+    command: K8sOperatorCommand,
+}
+
+#[derive(Subcommand)]
+enum K8sOperatorCommand {
+    /// Render operator namespace, RBAC, and Deployment YAML.
+    Render(K8sOperatorRenderArgs),
+    /// Run the shared leader-elected reconcile controller.
+    Run,
+}
+
+#[derive(clap::Args)]
+struct K8sOutputArgs {
+    /// Write YAML to a path instead of stdout.
+    #[arg(long)]
+    out: Option<std::path::PathBuf>,
+}
+
+#[derive(clap::Args)]
+struct K8sOperatorRenderArgs {
+    /// Namespace containing the operator control plane.
+    #[arg(long, default_value = "pgpool-system")]
+    namespace: String,
+    /// Write YAML to a path instead of stdout.
+    #[arg(long)]
+    out: Option<std::path::PathBuf>,
 }
 
 #[derive(clap::Args)]
@@ -288,26 +335,38 @@ async fn main() -> Result<()> {
         }
         Command::Issue(args) => issue(args).await,
         Command::Serve(args) => serve(args).await,
-        Command::K8s(args) => k8s(args),
+        Command::K8s(args) => k8s(args).await,
     }
 }
 
-fn k8s(args: K8sArgs) -> Result<()> {
+async fn k8s(args: K8sArgs) -> Result<()> {
     match args.command {
-        K8sCommand::Instance(args) => match args.command {
-            K8sInstanceCommand::Render(args) => {
-                let spec = pgpool::k8s::spec_for_profile(args.profile.into());
-                let yaml = pgpool::k8s::render_instance_yaml(&spec);
-                if let Some(path) = args.out {
-                    std::fs::write(&path, yaml)?;
-                    println!("wrote {}", path.display());
-                } else {
-                    print!("{yaml}");
-                }
-                Ok(())
+        K8sCommand::Crd(args) => match args.command {
+            K8sCrdCommand::Render(args) => write_or_print(args.out, pgpool::operator::crd_yaml()),
+        },
+        K8sCommand::Operator(args) => match args.command {
+            K8sOperatorCommand::Render(args) => {
+                write_or_print(args.out, pgpool::operator::operator_yaml(&args.namespace))
             }
+            K8sOperatorCommand::Run => pgpool::operator::run().await,
+        },
+        K8sCommand::Instance(args) => match args.command {
+            K8sInstanceCommand::Render(args) => write_or_print(
+                args.out,
+                pgpool::operator::instance_yaml(args.profile.into()),
+            ),
         },
     }
+}
+
+fn write_or_print(path: Option<std::path::PathBuf>, yaml: String) -> Result<()> {
+    if let Some(path) = path {
+        std::fs::write(&path, yaml)?;
+        println!("wrote {}", path.display());
+    } else {
+        print!("{yaml}");
+    }
+    Ok(())
 }
 
 fn runtime_plan() -> Result<()> {
