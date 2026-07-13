@@ -24,8 +24,12 @@ cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
 serde.workspace = true
 serde_json.workspace = true
 service-auth = { path = "../../libs/service-auth" }
+service-backup = { path = "../../libs/service-backup" }
+service-durability = { path = "../../libs/service-durability" }
 service-http = { path = "../../libs/service-http" }
 service-metrics = { path = "../../libs/service-metrics" }
+raft-core = { path = "../../libs/raft-core" }
+raft-host = { path = "../../libs/raft-host" }
 tokio.workspace = true
 tower.workspace = true
 tracing.workspace = true

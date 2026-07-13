@@ -31,6 +31,12 @@ enum Command {
     Query(QueryArgs),
     /// Replay durable raw events after a cursor without starting a server.
     Replay(ReplayArgs),
+    /// Write a consistent Sift journal snapshot to stdout or a local file.
+    Snapshot(SnapshotArgs),
+    /// Restore a journal snapshot from a shared backup object URI.
+    Restore(RestoreArgs),
+    /// Ship a consistent journal snapshot through the shared backup contract.
+    Backup(BackupArgs),
     /// Print Sift's API contract or generate a typed client from it.
     Spec(SpecArgs),
     /// Print offline agent-facing operational documentation.
@@ -95,6 +101,36 @@ struct ReplayArgs {
     after: u64,
     #[arg(long, default_value_t = 100)]
     limit: usize,
+}
+
+#[derive(Args)]
+struct SnapshotArgs {
+    #[arg(long, env = "SIFT_DATA_DIR", default_value = "sift-data")]
+    data_dir: PathBuf,
+    /// Write the raw snapshot bytes here; omit to emit them in a JSON terminal envelope.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct RestoreArgs {
+    #[arg(long, env = "SIFT_DATA_DIR", default_value = "sift-data")]
+    data_dir: PathBuf,
+    /// Source URI accepted by service-backup, for example file:///backup/sift.json.
+    #[arg(long)]
+    source: String,
+}
+
+#[derive(Args)]
+struct BackupArgs {
+    #[arg(long, env = "SIFT_DATA_DIR", default_value = "sift-data")]
+    data_dir: PathBuf,
+    /// Shared backup destination URI: file://, s3://, or gs://.
+    #[arg(long)]
+    dest: String,
+    /// Remove backup objects older than this many seconds after a successful write.
+    #[arg(long)]
+    retention_secs: Option<u64>,
 }
 
 #[derive(Args)]
@@ -233,6 +269,9 @@ async fn main() -> Result<()> {
         Command::Event(args) => append_event(args),
         Command::Query(args) => query(args),
         Command::Replay(args) => replay(args),
+        Command::Snapshot(args) => snapshot(args),
+        Command::Restore(args) => restore(args),
+        Command::Backup(args) => backup(args),
         Command::Spec(args) => match args.command {
             Some(SpecCommand::Gen(args)) => spec_gen(args),
             None => {
@@ -292,12 +331,15 @@ async fn serve(args: ServeArgs) -> Result<()> {
 
     let state = Arc::new(ServiceState::open(&args.data_dir)?);
     let verifier = Arc::new(SiftVerifier::from_env()?);
+    let data_plane = sift::protected_router(state.clone(), verifier);
+    let data_plane = match state.raft_router() {
+        Some(raft_routes) => data_plane.merge(raft_routes),
+        None => data_plane,
+    }
+    .layer(DefaultBodyLimit::max(config.body_limit_bytes));
     let app =
         service_http::standard_probe_routes(state.clone(), Some(state.clone()), sift::openapi)
-            .merge(
-                sift::protected_router(state.clone(), verifier)
-                    .layer(DefaultBodyLimit::max(config.body_limit_bytes)),
-            )
+            .merge(data_plane)
             .layer(service_http::trace_layer());
     let listener = tokio::net::TcpListener::bind(config.bind_addr())
         .await
@@ -333,6 +375,42 @@ fn query(args: QueryArgs) -> Result<()> {
 fn replay(args: ReplayArgs) -> Result<()> {
     let rows = DurableJournal::open(&args.data_dir)?.replay(args.after, args.limit)?;
     print_json_terminal(rows)
+}
+
+fn snapshot(args: SnapshotArgs) -> Result<()> {
+    let bytes = DurableJournal::open(&args.data_dir)?.snapshot_bytes()?;
+    if let Some(path) = args.out {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("create snapshot output directory {}", parent.display())
+            })?;
+        }
+        std::fs::write(&path, &bytes)
+            .with_context(|| format!("write Sift snapshot {}", path.display()))?;
+        return print_json_terminal(serde_json::json!({
+            "path": path,
+            "bytes": bytes.len(),
+        }));
+    }
+    print_json_terminal(serde_json::from_slice::<Value>(&bytes)?)
+}
+
+fn restore(args: RestoreArgs) -> Result<()> {
+    let journal = DurableJournal::open(&args.data_dir)?;
+    sift::backup::restore_journal(&journal, &args.source)?;
+    print_json_terminal(serde_json::json!({
+        "status": "restored",
+        "source": args.source,
+    }))
+}
+
+fn backup(args: BackupArgs) -> Result<()> {
+    let journal = DurableJournal::open(&args.data_dir)?;
+    let result = sift::backup::backup_journal(&journal, &args.dest, args.retention_secs)?;
+    print_json_terminal(result)
 }
 
 fn spec_gen(args: GenArgs) -> Result<()> {

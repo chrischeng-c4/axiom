@@ -5,8 +5,8 @@ use std::time::SystemTime;
 
 use anyhow::Result;
 use service_backup::{
-    fetch_backup_object, run_backup_once, sink_from_destination, BackupDestination, BackupRunResult,
-    RetentionPolicy,
+    fetch_backup_object, run_backup_once, sink_from_destination, BackupDestination,
+    BackupRunResult, RetentionPolicy,
 };
 
 use crate::DurableJournal;
@@ -36,5 +36,4 @@ pub fn restore_journal(journal: &DurableJournal, source_uri: &str) -> Result<()>
     journal.restore_snapshot_bytes(&bytes)
 }
 
-<!-- marker: sift-shared-backup-runner path: projects/sift/src/backup.rs reason: Implement Sift snapshot backup/restore composition through service-backup destinations and retention. -->
 // HANDWRITE-END

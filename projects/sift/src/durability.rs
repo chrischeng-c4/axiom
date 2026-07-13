@@ -1,11 +1,9 @@
 // HANDWRITE-BEGIN gap="sift-framed-journal-state-machine" tracker="1605" reason="Implement CRC-framed event journal snapshot/restore and the RaftStateMachine adapter."
 //! Shared durability and Raft state-machine adapter for Sift's raw journal.
 
-use std::{
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
 };
 
 use anyhow::Result;
@@ -57,8 +55,10 @@ impl RaftStateMachine for SiftStateMachine {
     }
 
     fn snapshot(&self) -> Result<Vec<u8>> {
-        serde_json::to_vec(&JournalSnapshot::from_events(self.journal.snapshot_events()))
-            .map_err(Into::into)
+        serde_json::to_vec(&JournalSnapshot::from_events(
+            self.journal.snapshot_events(),
+        ))
+        .map_err(Into::into)
     }
 
     fn restore(&self, snapshot: &[u8]) -> Result<()> {
@@ -74,5 +74,4 @@ impl RaftStateMachine for SiftStateMachine {
     }
 }
 
-<!-- marker: sift-framed-journal-state-machine path: projects/sift/src/durability.rs reason: Implement CRC-framed event journal snapshot/restore and the RaftStateMachine adapter. -->
 // HANDWRITE-END

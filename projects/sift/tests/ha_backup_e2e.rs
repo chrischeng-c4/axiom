@@ -3,14 +3,15 @@ use std::{collections::HashMap, sync::Arc};
 
 use raft_host::{FsyncPolicy, HostConfig, Membership, RaftHost, RaftStateMachine, RaftStore};
 use sift::{
-    backup::backup_journal,
-    durability::SiftStateMachine,
-    DurableJournal, EventEnvelope, EventQuery, SignalKind,
+    backup::backup_journal, durability::SiftStateMachine, DurableJournal, EventEnvelope,
+    EventQuery, SignalKind,
 };
 
 fn event(id: &str) -> EventEnvelope {
     let mut event = EventEnvelope::new(id, SignalKind::Log, serde_json::json!({"message":"ha"}));
-    event.resource.insert("service.name".to_string(), "sift-ha-test".to_string());
+    event
+        .resource
+        .insert("service.name".to_string(), "sift-ha-test".to_string());
     event
 }
 
@@ -21,7 +22,10 @@ async fn raft_state_machine_recovers_and_backup_restores_a_durable_snapshot() {
     let state_machine = Arc::new(SiftStateMachine::new(journal.clone()));
     let host = RaftHost::spawn(
         0,
-        Membership { voters: vec![0], learners: vec![] },
+        Membership {
+            voters: vec![0],
+            learners: vec![],
+        },
         HashMap::new(),
         RaftStore::open(data_dir.path().to_str().unwrap(), 0, FsyncPolicy::Always)
             .expect("open raft store"),
@@ -53,8 +57,12 @@ async fn raft_state_machine_recovers_and_backup_restores_a_durable_snapshot() {
     restored
         .restore_snapshot_bytes(&std::fs::read(backup_path).expect("read backup bytes"))
         .expect("restore snapshot");
-    assert_eq!(restored.query(EventQuery::default()).unwrap()[0].event.event_id, "raft-event");
+    assert_eq!(
+        restored.query(EventQuery::default()).unwrap()[0]
+            .event
+            .event_id,
+        "raft-event"
+    );
 }
 
-<!-- marker: sift-ha-backup-contract-tests path: projects/sift/tests/ha_backup_e2e.rs reason: Verify durable recovery, Raft single-node state-machine ordering, snapshot restore, and shared backup output. -->
 // HANDWRITE-END
