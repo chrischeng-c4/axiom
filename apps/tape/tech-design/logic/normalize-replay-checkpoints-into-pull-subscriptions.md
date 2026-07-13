@@ -1,7 +1,7 @@
 ---
 id: "1255"
 summary: (fill)
-fill_sections: [logic]
+fill_sections: [logic, unit-test]
 ---
 
 ## Logic
@@ -63,4 +63,57 @@ flowchart TD
     pull_result --> ack_request["ack validates pull then delegates to put_checkpoint"]
     ack_request --> ack_result(["durable ack or stale/beyond-end rejection"])
     ack_result --> inventory(["offline pull/ack schema only; no h2c/lease/push/raft implementation"])
+```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: tape-pull-subscription-verification
+requirements:
+  backpressure_limit:
+    id: R3
+    text: "A pull request above MAX_PULL_BATCH is rejected without returning events or changing durable state."
+    kind: negative
+    risk: medium
+    verify: cargo test -p tape tests::pull_subscription_rejects_oversized_window --lib -- --exact
+  bounded_pull_cursor:
+    id: R1
+    text: "A pull subscription reads from its durable checkpoint (or offset zero), returns no more than its requested bounded window, and leaves the checkpoint unchanged until ack."
+    kind: functional
+    risk: high
+    verify: cargo test -p tape tests::pull_subscription_uses_checkpoint_cursor_and_never_implicitly_acks --lib -- --exact
+  cli_surface:
+    id: R4
+    text: "The Tape CLI exposes subscription pull and ack forms and their local file-backed round-trip follows explicit pull then ack semantics."
+    kind: functional
+    risk: medium
+    verify: cargo test -p tape --test cli_contract pull_subscription_cli_roundtrip -- --exact
+  inventory_scope:
+    id: R5
+    text: "Offline routes/OpenAPI/JSON Schema declare pull and ack contracts while live h2c delivery, push workers, and raft cursor consensus remain unclaimed."
+    kind: contract
+    risk: medium
+    verify: cargo test -p tape --test cli_contract pull_subscription_spec_inventory -- --exact
+  performance_scope:
+    id: R6
+    text: "The local performance gate remains the bounded pull/replay path and does not claim push delivery reliability or uncalibrated peer wins."
+    kind: regression
+    risk: medium
+    verify: cargo test -p tape --test tape_perf_gate -- --nocapture
+  pull_ack_safety:
+    id: R2
+    text: "Subscription ack only accepts pull resources and preserves stale and beyond-end checkpoint rejection semantics."
+    kind: regression
+    risk: high
+    verify: cargo test -p tape tests::pull_subscription_ack_reuses_checkpoint_guards --lib -- --exact
+---
+flowchart TD
+    r1[R1 bounded pull cursor] --> cargo_test_p_tape_tests_pull_subscription_uses_checkpoint_cursor_and_never_implicitly_acks_lib_exact[cargo test -p tape tests::pull_subscription_uses_checkpoint_cursor_and_never_implicitly_acks --lib -- --exact]
+    r2[R2 pull ack safety] --> cargo_test_p_tape_tests_pull_subscription_ack_reuses_checkpoint_guards_lib_exact[cargo test -p tape tests::pull_subscription_ack_reuses_checkpoint_guards --lib -- --exact]
+    r3[R3 backpressure limit] --> cargo_test_p_tape_tests_pull_subscription_rejects_oversized_window_lib_exact[cargo test -p tape tests::pull_subscription_rejects_oversized_window --lib -- --exact]
+    r4[R4 cli surface] --> cargo_test_p_tape_test_cli_contract_pull_subscription_cli_roundtrip_exact[cargo test -p tape --test cli_contract pull_subscription_cli_roundtrip -- --exact]
+    r5[R5 inventory scope] --> cargo_test_p_tape_test_cli_contract_pull_subscription_spec_inventory_exact[cargo test -p tape --test cli_contract pull_subscription_spec_inventory -- --exact]
+    r6[R6 performance scope] --> cargo_test_p_tape_test_tape_perf_gate_nocapture[cargo test -p tape --test tape_perf_gate -- --nocapture]
 ```
