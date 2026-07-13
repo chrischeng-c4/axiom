@@ -2535,8 +2535,8 @@ pub fn mb_singledispatchmethod_call(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::closure;
     use crate::runtime::class;
+    use crate::runtime::closure;
     use crate::runtime::module::NATIVE_FUNC_ADDRS;
 
     fn s(val: &str) -> MbValue {
@@ -2739,11 +2739,8 @@ mod tests {
         closure::mb_func_set_doc(wrapped, s("base doc"));
         closure::mb_func_set_module(wrapped, s("base.mod"));
 
-        let wrapper = closure::mb_closure_new(
-            s("wrapper"),
-            MbValue::from_int(99),
-            make_list(vec![]),
-        );
+        let wrapper =
+            closure::mb_closure_new(s("wrapper"), MbValue::from_int(99), make_list(vec![]));
         let result = mb_functools_wraps_apply(wrapper, wrapped);
 
         assert_eq!(result, wrapper);

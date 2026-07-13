@@ -8764,6 +8764,19 @@ def f():
     }
 
     #[test]
+    fn test_eval_with_globals_falls_back_to_builtins() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        let expr = make_str("dict");
+        let value = mb_eval_with_globals(expr, globals);
+        assert_eq!(
+            crate::runtime::class::resolve_class_name(value).as_deref(),
+            Some("dict")
+        );
+    }
+
+    #[test]
     fn test_exec_with_globals_locals_stores_in_locals() {
         crate::runtime::exception::mb_clear_exception();
         let globals = crate::runtime::dict_ops::mb_dict_new();
@@ -8773,6 +8786,20 @@ def f():
         let q = crate::runtime::dict_ops::mb_dict_get(locals, make_str("q"), MbValue::none());
         assert_eq!(p.as_int(), Some(10));
         assert_eq!(q.as_int(), Some(20));
+    }
+
+    #[test]
+    fn test_exec_with_globals_falls_back_to_builtins() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(make_str("value = dict"), globals);
+        let value =
+            crate::runtime::dict_ops::mb_dict_get(globals, make_str("value"), MbValue::none());
+        assert_eq!(
+            crate::runtime::class::resolve_class_name(value).as_deref(),
+            Some("dict")
+        );
     }
 
     #[test]
@@ -8902,22 +8929,15 @@ def f():
         mb_exec_with_globals(code, globals);
         let value =
             crate::runtime::dict_ops::mb_dict_get(globals, make_str("value"), MbValue::none());
-        let value_type = crate::runtime::dict_ops::mb_dict_get(
-            globals,
-            make_str("value_type"),
-            MbValue::none(),
-        );
+        let value_type =
+            crate::runtime::dict_ops::mb_dict_get(globals, make_str("value_type"), MbValue::none());
         let class_c =
             crate::runtime::dict_ops::mb_dict_get(globals, make_str("C"), MbValue::none());
 
         assert_eq!(eval_str_value(value).as_deref(), Some("class"));
         assert_eq!(eval_str_value(value_type).as_deref(), Some("str"));
         assert_eq!(
-            eval_str_value(crate::runtime::class::mb_getattr(
-                class_c,
-                make_str("T"),
-            ))
-            .as_deref(),
+            eval_str_value(crate::runtime::class::mb_getattr(class_c, make_str("T"),)).as_deref(),
             Some("class")
         );
         crate::runtime::exception::mb_clear_exception();

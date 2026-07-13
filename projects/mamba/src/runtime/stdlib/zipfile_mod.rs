@@ -1248,10 +1248,7 @@ unsafe extern "C" fn d_zipfile_badzipfile(_args_ptr: *const MbValue, _nargs: usi
     make_instance("zipfile.BadZipFile", vec![])
 }
 
-unsafe extern "C" fn d_zip_path_glob_translator(
-    args_ptr: *const MbValue,
-    nargs: usize,
-) -> MbValue {
+unsafe extern "C" fn d_zip_path_glob_translator(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     crate::icf_guard!();
     let a = unsafe { arg_slice(args_ptr, nargs) };
     if let Some(seps) = a.first().copied() {
@@ -1340,7 +1337,10 @@ pub fn register() {
             "translate_core",
             d_zip_path_glob_empty_str as *const () as usize,
         ),
-        ("match_dirs", d_zip_path_glob_empty_str as *const () as usize),
+        (
+            "match_dirs",
+            d_zip_path_glob_empty_str as *const () as usize,
+        ),
         ("replace", d_zip_path_glob_empty_str as *const () as usize),
         ("separate", d_zip_path_glob_empty_str as *const () as usize),
     ];

@@ -2176,9 +2176,7 @@ mod tests {
                 "(~T,)",
             ),
             (
-                unsafe {
-                    d_typevartuple_ctor(typevartuple_args.as_ptr(), typevartuple_args.len())
-                },
+                unsafe { d_typevartuple_ctor(typevartuple_args.as_ptr(), typevartuple_args.len()) },
                 "Ts",
                 "(Ts,)",
             ),
@@ -2217,10 +2215,7 @@ mod tests {
     fn test_type_alias_type_ctor_preserves_direct_typevar_display_in_value_and_type_params() {
         let typevar_args = [MbValue::from_ptr(MbObject::new_str("T".to_string()))];
         let tv = unsafe { d_typevar_ctor(typevar_args.as_ptr(), typevar_args.len()) };
-        let value = pep585_subscript(
-            super::super::super::builtins::make_type_object("list"),
-            tv,
-        );
+        let value = pep585_subscript(super::super::super::builtins::make_type_object("list"), tv);
 
         super::super::super::closure::push_active_module_name("__main__".to_string());
         super::super::super::closure::push_active_module_name("typing".to_string());

@@ -1082,8 +1082,8 @@ pub fn mb_shutil_empty_list() -> MbValue {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::exception::{current_exception_type, mb_clear_exception};
+    use super::*;
     use crate::runtime::dict_ops::DictKey;
 
     fn s(val: &str) -> MbValue {

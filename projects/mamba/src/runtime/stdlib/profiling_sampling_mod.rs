@@ -86,7 +86,9 @@ fn require_sequence(items: &[MbValue], idx: usize, name: &str) -> Option<MbValue
 fn require_path(items: &[MbValue], idx: usize, name: &str) -> Option<MbValue> {
     if let Some(value) = items.get(idx) {
         if !is_path(*value) {
-            return Some(raise_type_error(&format!("{name} must be str, bytes, or path-like")));
+            return Some(raise_type_error(&format!(
+                "{name} must be str, bytes, or path-like"
+            )));
         }
     }
     None
@@ -234,7 +236,10 @@ pub fn register() {
         "profiling.sampling.collector",
         &["Collector"],
         &[
-            ("normalize_location", normalize_location as *const () as usize),
+            (
+                "normalize_location",
+                normalize_location as *const () as usize,
+            ),
             ("extract_lineno", extract_lineno as *const () as usize),
             (
                 "filter_internal_frames",
@@ -292,9 +297,15 @@ pub fn register() {
         ("JsonlCollector", "profiling.sampling.jsonl_collector"),
         ("PstatsCollector", "profiling.sampling.pstats_collector"),
         ("StackTraceCollector", "profiling.sampling.stack_collector"),
-        ("CollapsedStackCollector", "profiling.sampling.stack_collector"),
+        (
+            "CollapsedStackCollector",
+            "profiling.sampling.stack_collector",
+        ),
         ("FlamegraphCollector", "profiling.sampling.stack_collector"),
-        ("DiffFlamegraphCollector", "profiling.sampling.stack_collector"),
+        (
+            "DiffFlamegraphCollector",
+            "profiling.sampling.stack_collector",
+        ),
     ] {
         sampling_attrs.insert(class.to_string(), make_type_obj(class, module));
     }
@@ -304,7 +315,10 @@ pub fn register() {
         "Collector",
         &[
             ("collect", collect_sequence as *const () as usize),
-            ("collect_failed_sample", collect_failed_sample as *const () as usize),
+            (
+                "collect_failed_sample",
+                collect_failed_sample as *const () as usize,
+            ),
             ("export", export_path as *const () as usize),
         ],
     );
@@ -325,7 +339,10 @@ pub fn register() {
                 ("__init__", init_sample_interval as *const () as usize),
                 ("collect", collect_sequence as *const () as usize),
                 ("export", export_path as *const () as usize),
-                ("process_frames", process_frames_sequence as *const () as usize),
+                (
+                    "process_frames",
+                    process_frames_sequence as *const () as usize,
+                ),
                 ("set_stats", set_stats as *const () as usize),
                 ("print_stats", print_stats as *const () as usize),
                 ("create_stats", create_stats as *const () as usize),

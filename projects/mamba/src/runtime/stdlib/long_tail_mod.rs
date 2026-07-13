@@ -175,7 +175,8 @@ fn is_str_value(v: MbValue) -> bool {
 }
 
 fn is_mapping_like_value(v: MbValue) -> bool {
-    v.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+    v.as_ptr()
+        .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
         || super::super::class::unwrap_dictlike_data(v).is_some()
 }
 
@@ -188,16 +189,12 @@ fn shelve_kw_filename(v: MbValue) -> Option<Option<MbValue>> {
                 if map.keys().all(|key| {
                     matches!(
                         key.as_str(),
-                        Some("filename")
-                            | Some("flag")
-                            | Some("protocol")
-                            | Some("writeback")
+                        Some("filename") | Some("flag") | Some("protocol") | Some("writeback")
                     )
                 }) {
-                    Some(
-                        map.iter()
-                            .find_map(|(key, value)| (key.as_str() == Some("filename")).then_some(*value)),
-                    )
+                    Some(map.iter().find_map(|(key, value)| {
+                        (key.as_str() == Some("filename")).then_some(*value)
+                    }))
                 } else {
                     None
                 }

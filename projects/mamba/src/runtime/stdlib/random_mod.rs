@@ -516,7 +516,9 @@ pub fn mb_random_method_shuffle(receiver: MbValue, lst: MbValue) -> MbValue {
     // sequence (e.g. str/tuple) raises TypeError on item assignment.
     if !is_list_value(lst) {
         let type_name = super::super::builtins::value_type_name(lst);
-        return raise_type_error(&format!("'{type_name}' object does not support item assignment"));
+        return raise_type_error(&format!(
+            "'{type_name}' object does not support item assignment"
+        ));
     }
     if let Some(ptr) = lst.as_ptr() {
         unsafe {
@@ -1979,7 +1981,10 @@ mod tests {
         super::super::super::exception::mb_clear_exception();
         let not_sequence = MbValue::from_ptr(MbObject::new_instance("_W".to_string()));
         let r = mb_random_method_sample(MbValue::none(), not_sequence, MbValue::from_int(0));
-        assert!(r.is_none(), "wrong-typed sample population must not return a value");
+        assert!(
+            r.is_none(),
+            "wrong-typed sample population must not return a value"
+        );
         assert_eq!(
             super::super::super::exception::current_exception_type().as_deref(),
             Some("TypeError"),
@@ -1990,10 +1995,8 @@ mod tests {
     #[test]
     fn test_sample_accepts_range_handle_population() {
         seed_default(17);
-        let range = super::super::super::builtins::mb_range_2(
-            MbValue::from_int(0),
-            MbValue::from_int(5),
-        );
+        let range =
+            super::super::super::builtins::mb_range_2(MbValue::from_int(0), MbValue::from_int(5));
         let s = mb_random_method_sample(MbValue::none(), range, MbValue::from_int(2));
         unsafe {
             if let ObjData::List(ref lk) = (*s.as_ptr().unwrap()).data {
@@ -2031,7 +2034,10 @@ mod tests {
         super::super::super::exception::mb_clear_exception();
         let not_mutable_sequence = MbValue::from_ptr(MbObject::new_instance("_W".to_string()));
         let r = mb_random_method_shuffle(MbValue::none(), not_mutable_sequence);
-        assert!(r.is_none(), "wrong-typed shuffle input must not return a value");
+        assert!(
+            r.is_none(),
+            "wrong-typed shuffle input must not return a value"
+        );
         assert_eq!(
             super::super::super::exception::current_exception_type().as_deref(),
             Some("TypeError"),

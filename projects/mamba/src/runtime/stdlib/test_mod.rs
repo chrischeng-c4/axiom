@@ -158,7 +158,8 @@ extern "C" fn type_params_invalid_test_name_collisions(_self_v: MbValue) -> MbVa
     ];
 
     for source in CASES {
-        if let Err(message) = expect_type_params_syntax_error(source, "duplicate type parameter 'A'")
+        if let Err(message) =
+            expect_type_params_syntax_error(source, "duplicate type parameter 'A'")
         {
             return raise_assertion_error(&message);
         }
@@ -874,7 +875,11 @@ fn run_script_helper_python(a: &[MbValue], expected_success: bool) -> MbValue {
         a.len()
     };
 
-    let mut cmd_line = vec![script_helper_python_cmd(), "-X".to_string(), "faulthandler".to_string()];
+    let mut cmd_line = vec![
+        script_helper_python_cmd(),
+        "-X".to_string(),
+        "faulthandler".to_string(),
+    ];
     let kwargs_v = kwargs.unwrap_or_else(MbValue::none);
     let isolated = script_helper_dict_get(kwargs_v, "__isolated")
         .and_then(|v| v.as_bool())
@@ -902,9 +907,8 @@ fn run_script_helper_python(a: &[MbValue], expected_success: bool) -> MbValue {
     let mut cmd = std::process::Command::new(&cmd_line[0]);
     cmd.args(&cmd_line[1..]);
 
-    let cleanenv = script_helper_dict_get(kwargs_v, "__cleanenv")
-        .and_then(|v| v.as_bool())
-        == Some(true);
+    let cleanenv =
+        script_helper_dict_get(kwargs_v, "__cleanenv").and_then(|v| v.as_bool()) == Some(true);
     if cleanenv {
         cmd.env_clear();
         #[cfg(target_os = "windows")]
@@ -946,16 +950,16 @@ fn run_script_helper_python(a: &[MbValue], expected_success: bool) -> MbValue {
     let output = match cmd.output() {
         Ok(output) => output,
         Err(err) => {
-            return raise_str(
-                "OSError",
-                format!("failed to spawn {}: {err}", cmd_line[0]),
-            );
+            return raise_str("OSError", format!("failed to spawn {}: {err}", cmd_line[0]));
         }
     };
     #[cfg(unix)]
     let rc = {
         use std::os::unix::process::ExitStatusExt;
-        output.status.code().unwrap_or_else(|| -output.status.signal().unwrap_or(1))
+        output
+            .status
+            .code()
+            .unwrap_or_else(|| -output.status.signal().unwrap_or(1))
     };
     #[cfg(not(unix))]
     let rc = output.status.code().unwrap_or(-1);
@@ -1115,9 +1119,7 @@ fn instance_field_str(value: MbValue, field: &str) -> Option<String> {
 }
 
 unsafe extern "C" fn traceback_teststack_extract_stack_limit(_self_v: MbValue) -> MbValue {
-    let filename = MbValue::from_ptr(MbObject::new_str(
-        "<test.test_traceback shim>".to_string(),
-    ));
+    let filename = MbValue::from_ptr(MbObject::new_str("<test.test_traceback shim>".to_string()));
     let mut pushed = 0usize;
     super::traceback_mod::mb_traceback_reset_stack();
     for depth in 0..6 {
@@ -1952,10 +1954,16 @@ mod tests {
                 .expect("test.support.ALWAYS_EQ")
         });
 
-        assert_eq!(builtins::mb_eq(always_eq, MbValue::from_int(1)).as_bool(), Some(true));
         assert_eq!(
-            builtins::mb_ne(always_eq, MbValue::from_ptr(MbObject::new_str("x".to_string())))
-                .as_bool(),
+            builtins::mb_eq(always_eq, MbValue::from_int(1)).as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            builtins::mb_ne(
+                always_eq,
+                MbValue::from_ptr(MbObject::new_str("x".to_string()))
+            )
+            .as_bool(),
             Some(false)
         );
     }
@@ -1968,7 +1976,10 @@ mod tests {
                 .get("test.test_traceback")
                 .and_then(|m| m.attrs.get("TestStack").copied())
         });
-        assert_eq!(test_stack.and_then(extract_str), Some("TestStack".to_string()));
+        assert_eq!(
+            test_stack.and_then(extract_str),
+            Some("TestStack".to_string())
+        );
     }
 
     #[test]

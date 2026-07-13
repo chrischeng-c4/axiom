@@ -310,9 +310,8 @@ mod tests {
         crate::runtime::stdlib::uu_mod::register();
 
         for name in ["colorsys", "getopt", "getpass", "quopri", "uu"] {
-            let registered = crate::runtime::module::MODULES.with(|modules| {
-                modules.borrow().contains_key(name)
-            });
+            let registered =
+                crate::runtime::module::MODULES.with(|modules| modules.borrow().contains_key(name));
             assert!(
                 !registered,
                 "{name} must not be pre-seeded in MODULES; a native shell would shadow py_src/{name}.py"

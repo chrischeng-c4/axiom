@@ -129,8 +129,8 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::exception::{current_exception_type, mb_clear_exception};
+    use super::*;
 
     #[test]
     fn addsitepackages_rejects_none() {

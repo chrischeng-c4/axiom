@@ -680,9 +680,8 @@ pub fn mb_traceback_format_exception_only(args: &[MbValue]) -> MbValue {
                                                 .trim_end_matches('\n')
                                                 .trim_end_matches('\r')
                                                 .to_string();
-                                            let mut caret_start = offset
-                                                .filter(|n| *n > 0)
-                                                .map(|offset| offset + 3);
+                                            let mut caret_start =
+                                                offset.filter(|n| *n > 0).map(|offset| offset + 3);
                                             let mut caret_width = offset
                                                 .zip(l.get(5).and_then(|v| v.as_int()))
                                                 .filter(|(start, end)| *end > *start)
@@ -692,13 +691,17 @@ pub fn mb_traceback_format_exception_only(args: &[MbValue]) -> MbValue {
                                                     rendered_text
                                                         .as_bytes()
                                                         .get(start_idx..end_idx)
-                                                        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                                                        .and_then(|bytes| {
+                                                            std::str::from_utf8(bytes).ok()
+                                                        })
                                                         .map(|s| s.chars().count().max(1))
                                                         .unwrap_or((end - start).max(1) as usize)
                                                 })
                                                 .unwrap_or(1);
                                             if msg.contains("expected ), got ,") {
-                                                if let Some(idx) = rendered_text.find("y for y in range(30)") {
+                                                if let Some(idx) =
+                                                    rendered_text.find("y for y in range(30)")
+                                                {
                                                     caret_start = Some((idx + 4) as i64);
                                                     caret_width = "y for y in range(30)".len();
                                                 }
@@ -719,7 +722,10 @@ pub fn mb_traceback_format_exception_only(args: &[MbValue]) -> MbValue {
                                             if let Some(start) = caret_start {
                                                 let prefix = " ".repeat(start.max(0) as usize);
                                                 lines.push(MbValue::from_ptr(MbObject::new_str(
-                                                    format!("{prefix}{}\n", "^".repeat(caret_width)),
+                                                    format!(
+                                                        "{prefix}{}\n",
+                                                        "^".repeat(caret_width)
+                                                    ),
                                                 )));
                                             }
                                             lines.push(MbValue::from_ptr(MbObject::new_str(
@@ -1246,10 +1252,7 @@ pub fn mb_traceback_frame_summary_new(args: &[MbValue]) -> MbValue {
     if !line.is_none() {
         fields.push(("line", line));
     }
-    make_instance(
-        "FrameSummary",
-        fields,
-    )
+    make_instance("FrameSummary", fields)
 }
 
 // ── FrameSummary / StackSummary / TracebackException methods ──
@@ -1258,7 +1261,11 @@ fn frame_summary_line_from_linecache(filename: MbValue, lineno: MbValue) -> MbVa
     let Some(line_no) = lineno.as_int() else {
         return MbValue::none();
     };
-    let raw = super::linecache_mod::mb_linecache_getline(filename, MbValue::from_int(line_no), MbValue::none());
+    let raw = super::linecache_mod::mb_linecache_getline(
+        filename,
+        MbValue::from_int(line_no),
+        MbValue::none(),
+    );
     let Some(mut line) = extract_str(raw) else {
         return MbValue::none();
     };
@@ -1281,7 +1288,12 @@ fn frame_summary_tuple_items(value: MbValue) -> Option<Vec<MbValue>> {
         }
         let f = fields.read().ok()?;
         let get = |k: &str| f.get(k).copied().unwrap_or_else(MbValue::none);
-        Some(vec![get("filename"), get("lineno"), get("name"), get("line")])
+        Some(vec![
+            get("filename"),
+            get("lineno"),
+            get("name"),
+            get("line"),
+        ])
     }
 }
 
@@ -2284,8 +2296,7 @@ fn traceback_frame_lines(tb: MbValue, limit: Option<i64>) -> Vec<MbValue> {
     traceback_frame_summaries(tb, limit)
         .into_iter()
         .filter_map(|entry| {
-            format_frame_entry(entry)
-                .map(|line| MbValue::from_ptr(MbObject::new_str(line)))
+            format_frame_entry(entry).map(|line| MbValue::from_ptr(MbObject::new_str(line)))
         })
         .collect()
 }
@@ -2325,7 +2336,8 @@ fn trace_stack_pairs(frame: MbValue) -> Vec<MbValue> {
     let mut guard = 0usize;
     while !cursor.is_none() && guard < 1024 {
         guard += 1;
-        let lineno = instance_attr_or_field(cursor, "f_lineno").unwrap_or_else(|| MbValue::from_int(1));
+        let lineno =
+            instance_attr_or_field(cursor, "f_lineno").unwrap_or_else(|| MbValue::from_int(1));
         let filename = frame_filename(cursor).unwrap_or_else(|| "<unknown>".to_string());
         let name = frame_name(cursor).unwrap_or_else(|| "<module>".to_string());
         pairs.push(make_trace_stack_pair(filename, trace_lineno(lineno), name));
@@ -2937,7 +2949,8 @@ mod tests {
     }
 
     fn list_str_entries(value: MbValue) -> Vec<String> {
-        value.as_ptr()
+        value
+            .as_ptr()
             .and_then(|ptr| unsafe {
                 if let ObjData::List(ref lock) = (*ptr).data {
                     lock.read().ok().map(|items| {
@@ -3358,7 +3371,8 @@ mod tests {
 
         let tb = make_tb_instance_with_depth(6);
 
-        let explicit = mb_traceback_extract_tb(&[tb, make_kwargs(&[("limit", MbValue::from_int(-2))])]);
+        let explicit =
+            mb_traceback_extract_tb(&[tb, make_kwargs(&[("limit", MbValue::from_int(-2))])]);
         assert_eq!(list_len(explicit), 2);
 
         dict_ops::mb_dict_setitem(
@@ -3399,10 +3413,8 @@ mod tests {
         assert_eq!(all_lines[1], "  File \"a.py\", line 1, in a\n");
         assert_eq!(all_lines[3], "  File \"c.py\", line 3, in c\n");
 
-        let limited = mb_traceback_format_exception(&[
-            exc,
-            make_kwargs(&[("limit", MbValue::from_int(-2))]),
-        ]);
+        let limited =
+            mb_traceback_format_exception(&[exc, make_kwargs(&[("limit", MbValue::from_int(-2))])]);
         let limited_lines = list_str_entries(limited);
         assert_eq!(limited_lines.len(), 4);
         assert_eq!(limited_lines[1], "  File \"b.py\", line 2, in b\n");
@@ -3413,18 +3425,41 @@ mod tests {
     #[test]
     fn test_extract_stack_returns_live_stack_entries() {
         mb_traceback_reset_stack();
-        mb_traceback_push_frame(test_str("outer.py"), MbValue::from_int(10), test_str("outer"));
-        mb_traceback_push_frame(test_str("inner.py"), MbValue::from_int(20), test_str("inner"));
+        mb_traceback_push_frame(
+            test_str("outer.py"),
+            MbValue::from_int(10),
+            test_str("outer"),
+        );
+        mb_traceback_push_frame(
+            test_str("inner.py"),
+            MbValue::from_int(20),
+            test_str("inner"),
+        );
 
         let r = mb_traceback_extract_stack(&[]);
         assert_eq!(list_len(r), 2);
         let first = list_first(r);
-        let second = list_items_of(r).get(1).copied().unwrap_or_else(MbValue::none);
-        assert_eq!(extract_str(get_field(first, "filename")).as_deref(), Some("outer.py"));
-        assert_eq!(extract_str(get_field(first, "name")).as_deref(), Some("outer"));
+        let second = list_items_of(r)
+            .get(1)
+            .copied()
+            .unwrap_or_else(MbValue::none);
+        assert_eq!(
+            extract_str(get_field(first, "filename")).as_deref(),
+            Some("outer.py")
+        );
+        assert_eq!(
+            extract_str(get_field(first, "name")).as_deref(),
+            Some("outer")
+        );
         assert_eq!(get_field(first, "lineno").as_int(), Some(10));
-        assert_eq!(extract_str(get_field(second, "filename")).as_deref(), Some("inner.py"));
-        assert_eq!(extract_str(get_field(second, "name")).as_deref(), Some("inner"));
+        assert_eq!(
+            extract_str(get_field(second, "filename")).as_deref(),
+            Some("inner.py")
+        );
+        assert_eq!(
+            extract_str(get_field(second, "name")).as_deref(),
+            Some("inner")
+        );
         assert_eq!(get_field(second, "lineno").as_int(), Some(20));
 
         mb_traceback_reset_stack();
@@ -3445,7 +3480,10 @@ mod tests {
         );
         assert_eq!(
             extract_str(get_field(
-                list_items_of(positive).get(1).copied().unwrap_or_else(MbValue::none),
+                list_items_of(positive)
+                    .get(1)
+                    .copied()
+                    .unwrap_or_else(MbValue::none),
                 "name"
             ))
             .as_deref(),
@@ -3463,7 +3501,10 @@ mod tests {
         );
         assert_eq!(
             extract_str(get_field(
-                list_items_of(negative).get(1).copied().unwrap_or_else(MbValue::none),
+                list_items_of(negative)
+                    .get(1)
+                    .copied()
+                    .unwrap_or_else(MbValue::none),
                 "name"
             ))
             .as_deref(),
@@ -3928,8 +3969,16 @@ mod tests {
     #[test]
     fn test_walk_stack_none_returns_current_snapshot() {
         mb_traceback_reset_stack();
-        mb_traceback_push_frame(test_str("outer.py"), MbValue::from_int(10), test_str("outer"));
-        mb_traceback_push_frame(test_str("inner.py"), MbValue::from_int(20), test_str("inner"));
+        mb_traceback_push_frame(
+            test_str("outer.py"),
+            MbValue::from_int(10),
+            test_str("outer"),
+        );
+        mb_traceback_push_frame(
+            test_str("inner.py"),
+            MbValue::from_int(20),
+            test_str("inner"),
+        );
 
         let r = mb_traceback_walk_stack(&[]);
         assert_eq!(list_len(r), 2);
@@ -3937,7 +3986,10 @@ mod tests {
         let first = list_items_of(list_first(r));
         let first_frame = first.first().copied().unwrap_or_else(MbValue::none);
         let first_lineno = first.get(1).copied().unwrap_or_else(MbValue::none);
-        assert_eq!(extract_str(get_field(first_frame, "f_name")).as_deref(), Some("inner"));
+        assert_eq!(
+            extract_str(get_field(first_frame, "f_name")).as_deref(),
+            Some("inner")
+        );
         assert_eq!(
             extract_str(get_field(first_frame, "f_filename")).as_deref(),
             Some("inner.py")
