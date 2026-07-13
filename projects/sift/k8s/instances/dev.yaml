@@ -1,3 +1,13 @@
-// HANDWRITE-BEGIN gap="sift-instance-artifact" tracker="1606" reason="Define the development Sift custom resource with standard probes and single-node topology."
-// TODO: hand-write content for `projects/sift/k8s/instances/dev.yaml`.
-// HANDWRITE-END
+apiVersion: sift.axiom.dev/v1alpha1
+kind: Sift
+metadata:
+  name: sift
+  namespace: default
+spec:
+  image: sift:latest
+  replicasPerShard: 1
+  voterCount: 1
+  dataSize: 10Gi
+  auth: off
+
+<!-- marker: sift-instance-artifact path: projects/sift/k8s/instances/dev.yaml reason: Define the development Sift custom resource with standard probes and single-node topology. -->
