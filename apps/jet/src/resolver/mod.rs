@@ -36,6 +36,11 @@ pub struct ResolveOptions {
     /// Alias mappings (e.g., "@" -> "src")
     pub alias: Vec<(String, PathBuf)>,
 
+    /// Explicit `compilerOptions.baseUrl` from tsconfig. Bare specifiers that
+    /// resolve beneath this directory take precedence over node_modules,
+    /// matching TypeScript and webpack's tsconfig-aware resolution.
+    pub base_url: Option<PathBuf>,
+
     /// External modules that should not be bundled
     pub externals: HashSet<String>,
 
@@ -232,19 +237,11 @@ impl ModuleResolver {
     }
 
     fn resolve_uncached(&self, specifier: &str, from: &Path) -> Result<ResolvedModule> {
-        if self.is_external(specifier) {
+        if self.is_explicit_external(specifier) {
             return Ok(ResolvedModule {
                 path: PathBuf::from(specifier),
                 kind: ResolveKind::Package,
                 is_external: true,
-            });
-        }
-
-        if let Some(path) = self.resolve_browser_builtin(specifier)? {
-            return Ok(ResolvedModule {
-                path,
-                kind: ResolveKind::Package,
-                is_external: false,
             });
         }
 
@@ -253,7 +250,21 @@ impl ModuleResolver {
         let path = match kind {
             ResolveKind::Relative => self.resolve_relative(specifier, from)?,
             ResolveKind::Absolute => self.resolve_absolute(specifier)?,
-            ResolveKind::Package => self.resolve_package(specifier, from)?,
+            ResolveKind::Package => {
+                if let Some(path) = self.resolve_base_url(specifier) {
+                    path
+                } else if self.options.externalize_all_packages {
+                    return Ok(ResolvedModule {
+                        path: PathBuf::from(specifier),
+                        kind: ResolveKind::Package,
+                        is_external: true,
+                    });
+                } else if let Some(path) = self.resolve_browser_builtin(specifier)? {
+                    path
+                } else {
+                    self.resolve_package(specifier, from)?
+                }
+            }
             ResolveKind::Alias => self.resolve_alias(specifier, from)?,
         };
 
@@ -287,22 +298,26 @@ impl ModuleResolver {
             .any(|(prefix, _)| specifier.starts_with(prefix))
     }
 
+    #[cfg(test)]
     fn is_external(&self, specifier: &str) -> bool {
-        // When externalize_all_packages is set, treat all bare specifiers as external.
-        // Bare specifiers don't start with './', '../', or '/'.
-        if self.options.externalize_all_packages
-            && !specifier.starts_with('.')
-            && !specifier.starts_with('/')
-        {
-            return true;
-        }
+        self.is_explicit_external(specifier)
+            || (self.options.externalize_all_packages
+                && !specifier.starts_with('.')
+                && !specifier.starts_with('/'))
+    }
 
+    fn is_explicit_external(&self, specifier: &str) -> bool {
         self.options.externals.contains(specifier)
             || self
                 .options
                 .externals
                 .iter()
                 .any(|ext| specifier.starts_with(&format!("{}/", ext)))
+    }
+
+    fn resolve_base_url(&self, specifier: &str) -> Option<PathBuf> {
+        let base_url = self.options.base_url.as_ref()?;
+        self.try_extensions(&base_url.join(specifier)).ok()
     }
 
     fn resolve_relative(&self, specifier: &str, from: &Path) -> Result<PathBuf> {
@@ -605,6 +620,7 @@ impl Default for ResolveOptions {
             ],
             resolve_index: true,
             alias: Vec::new(),
+            base_url: None,
             externals: HashSet::new(),
             externalize_all_packages: false,
             conditions: vec![
@@ -807,6 +823,31 @@ mod tests {
     }
 
     #[test]
+    fn package_unexported_runtime_subpath_falls_back_to_existing_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let package_dir = tmp.path().join("node_modules").join("compat-package");
+        let deep_module = package_dir.join("dist").join("legacy-entry.js");
+        let importer = tmp.path().join("src").join("main.ts");
+        std::fs::create_dir_all(deep_module.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(importer.parent().unwrap()).unwrap();
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{"exports":{".":"./index.js"}}"#,
+        )
+        .unwrap();
+        std::fs::write(package_dir.join("index.js"), "export const root = true;").unwrap();
+        std::fs::write(&deep_module, "export const legacy = true;").unwrap();
+        std::fs::write(&importer, "import 'compat-package/dist/legacy-entry';").unwrap();
+
+        let resolver = ModuleResolver::new(ResolveOptions::default()).unwrap();
+        let resolved = resolver
+            .resolve("compat-package/dist/legacy-entry", &importer)
+            .unwrap();
+
+        assert_eq!(resolved.path, deep_module);
+    }
+
+    #[test]
     fn test_is_external() {
         let mut options = ResolveOptions::default();
         options.externals.insert("react".to_string());
@@ -818,6 +859,90 @@ mod tests {
         assert!(resolver.is_external("react-dom"));
         assert!(resolver.is_external("react-dom/client"));
         assert!(!resolver.is_external("./foo"));
+    }
+
+    #[test]
+    fn base_url_resolves_local_bare_specifier_before_node_modules() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let base_url_module = tmp
+            .path()
+            .join("third-party")
+            .join("firebase-ui")
+            .join("esm__zh_tw.ts");
+        let package_module = tmp
+            .path()
+            .join("node_modules")
+            .join("third-party")
+            .join("firebase-ui")
+            .join("esm__zh_tw.js");
+        let importer = tmp.path().join("src").join("main.ts");
+
+        std::fs::create_dir_all(base_url_module.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(package_module.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(importer.parent().unwrap()).unwrap();
+        std::fs::write(&base_url_module, "export const locale = 'local';").unwrap();
+        std::fs::write(&package_module, "export const locale = 'package';").unwrap();
+        std::fs::write(&importer, "import 'third-party/firebase-ui/esm__zh_tw';").unwrap();
+
+        let mut options = ResolveOptions::default();
+        options.base_url = Some(tmp.path().to_path_buf());
+        let resolver = ModuleResolver::new(options).unwrap();
+
+        let resolved = resolver
+            .resolve("third-party/firebase-ui/esm__zh_tw", &importer)
+            .unwrap();
+
+        assert_eq!(resolved.path, base_url_module);
+    }
+
+    #[test]
+    fn base_url_local_import_is_not_externalized_in_library_mode() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let target = tmp.path().join("third-party").join("locale.ts");
+        let importer = tmp.path().join("src").join("main.ts");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(importer.parent().unwrap()).unwrap();
+        std::fs::write(&target, "export const locale = 'local';").unwrap();
+        std::fs::write(&importer, "import 'third-party/locale';").unwrap();
+
+        let mut options = ResolveOptions::default();
+        options.base_url = Some(tmp.path().to_path_buf());
+        options.externalize_all_packages = true;
+        let resolver = ModuleResolver::new(options).unwrap();
+
+        let resolved = resolver.resolve("third-party/locale", &importer).unwrap();
+
+        assert!(!resolved.is_external);
+        assert_eq!(resolved.path, target);
+    }
+
+    #[test]
+    fn base_url_resolves_explicit_css_path() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let target = tmp
+            .path()
+            .join("third-party")
+            .join("firebase-ui")
+            .join("firebaseui.css");
+        let importer = tmp.path().join("src").join("main.tsx");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(importer.parent().unwrap()).unwrap();
+        std::fs::write(&target, ".firebaseui { color: black; }").unwrap();
+        std::fs::write(
+            &importer,
+            "import 'third-party/firebase-ui/firebaseui.css';",
+        )
+        .unwrap();
+
+        let mut options = ResolveOptions::default();
+        options.base_url = Some(tmp.path().to_path_buf());
+        let resolver = ModuleResolver::new(options).unwrap();
+
+        let resolved = resolver
+            .resolve("third-party/firebase-ui/firebaseui.css", &importer)
+            .unwrap();
+
+        assert_eq!(resolved.path, target);
     }
 
     #[test]
