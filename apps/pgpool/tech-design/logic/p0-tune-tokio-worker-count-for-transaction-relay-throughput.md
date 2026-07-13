@@ -33,10 +33,9 @@ flowchart LR
 changes:
   - path: apps/pgpool/src/bin/pgpool.rs
     action: modify
-    section: pgpool-worker-count-tuning
+    section: pgpool-worker-count-contract
     impl_mode: hand-written
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
