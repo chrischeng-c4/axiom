@@ -29,6 +29,12 @@ capability_refs:
     rationale: "Real CLI fixtures prove stale rewritten TD history is re-provisioned with a fresh projection, reachable exact Td-Init resumes without reset, and ordinary phase created still provisions."
   - id: td-cb-lifecycle-automation
     role: primary
+    gap: committed-td-skeleton-lifecycle
+    claim: committed-td-skeleton-lifecycle
+    coverage: full
+    rationale: "Real CLI fixtures prove fresh, reachable-locked, and rebased skeleton ownership plus fail-closed authored/status/post-gen boundaries and repeat idempotence."
+  - id: td-cb-lifecycle-automation
+    role: primary
     gap: terminal-ec-process-liveness
     claim: terminal-ec-process-liveness
     coverage: full
@@ -394,6 +400,21 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "td_create_rebased_lifecycle_preserves_reachable_exact_td_init"
+            kind: "function"
+            public: false
+          - name: "td_create_commits_fresh_numeric_skeleton_once"
+            kind: "function"
+            public: false
+          - name: "td_create_recovers_reachable_locked_legacy_skeleton_once"
+            kind: "function"
+            public: false
+          - name: "td_create_rebased_lifecycle_reprovisions_untracked_legacy_skeleton"
+            kind: "function"
+            public: false
+          - name: "td_create_rejects_authored_tracked_staged_and_sibling_skeleton_states"
+            kind: "function"
+            public: false
+          - name: "td_create_post_gen_and_terminal_phases_reject_untracked_skeleton"
             kind: "function"
             public: false
           - name: "td_create_numeric_id_uses_tracker_id_branch_with_legacy_cache_file"
@@ -1194,6 +1215,14 @@ changes:
       payload, and preserves existing spec/source bytes. Its negative fixture
       proves a reachable exact init emits neither reset nor second init; the
       project-branch fixture explicitly covers fresh WI phase `created`.
+      Issue #1580 proves a fresh numeric skeleton is owned by the first
+      queue-start commit and repeat brief calls do not change HEAD. A reachable
+      locked legacy skeleton receives exactly one spec-only recovery commit;
+      an unreachable #1602 lifecycle carries the candidate across Reset and
+      fresh Init before queue start owns it. Real CLI negatives preserve bytes,
+      phase, and history for authored, tracked, staged, untracked/tracked
+      sibling-dirty, reachable `td_created`, post-gen, legacy post-gen, filled,
+      and terminal states.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/tests/cli/tests/cb_review_revise_test.rs"
     action: modify
