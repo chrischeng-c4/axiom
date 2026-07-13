@@ -9,24 +9,23 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: pgpool-multithread-runtime
-entry: pgpool_cli
+id: pgpool-multithread-runtime-contract
+entry: runtime
 nodes:
-  pgpool_cli: { kind: start, label: "pgpool CLI process" }
-  runtime: { kind: process, label: "Tokio multi-thread runtime" }
-  relays: { kind: process, label: "Concurrent frontend and backend relay tasks" }
-  invariant: { kind: terminal, label: "Unchanged wire and reset isolation semantics" }
+  runtime: { kind: start, label: "Tokio runtime selection" }
+  workers: { kind: process, label: "Multiple executor workers run independent relay tasks" }
+  semantics: { kind: process, label: "Existing wire protocol and pool state machine" }
+  result: { kind: terminal, label: "Same isolation with higher CPU concurrency" }
 edges:
-  - { from: pgpool_cli, to: runtime }
-  - { from: runtime, to: relays }
-  - { from: relays, to: invariant }
+  - { from: runtime, to: workers }
+  - { from: workers, to: semantics }
+  - { from: semantics, to: result }
 ---
 flowchart LR
-  pgpool_cli([pgpool CLI]) --> runtime[Tokio multi-thread runtime]
-  runtime --> relays[concurrent proxy relay tasks]
-  relays --> invariant([unchanged wire and reset isolation])
+  runtime([Tokio runtime]) --> workers[multiple relay workers]
+  workers --> semantics[existing protocol and pool state machine]
+  semantics --> result([same isolation higher concurrency])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
