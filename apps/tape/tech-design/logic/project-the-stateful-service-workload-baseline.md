@@ -9,43 +9,43 @@ fill_sections: [logic]
 
 ```mermaid
 ---
-id: tape-stateful-service-workload-projection
-entry: capability_root
+id: tape-stateful-service-workload-contract
+entry: root
 nodes:
-  capability_root:
+  root:
     kind: start
-    label: "README stateful-service-workload root: compose existing durable-service evidence; do not create a second runtime contract"
-  storage:
+    label: "Add one README capability root, stateful-service-workload, with WI #1554; it is a shared baseline projection only"
+  journal:
     kind: process
-    label: "Stateful storage: journal durability, PVC, and stable identity remain owned by topic-replay-journal and the StatefulSet topology"
+    label: "Link Topic Replay Journal: durable append log and protected replay state"
   replicas:
     kind: process
-    label: "Primary replicas: raft-host topology, failover, and snapshot recovery remain owned by primary-replicas"
+    label: "Link Primary Replicas: raft leader/follower, stable identity, PVC-backed recovery, and failover evidence"
   backup:
     kind: process
-    label: "Backup/restore: service-backup snapshot transport remains owned by HTTP/2 API List"
+    label: "Link HTTP/2 API List: admin-gated snapshot and service-backup destination path"
+  deploy:
+    kind: process
+    label: "Link Kubernetes-Native Deployment: StatefulSet, probes, PDB, operator, and dockerfile render evidence"
   security:
     kind: process
-    label: "Security boundary: auth, topic isolation, audit, and secret rotation remain owned by Security Hardening"
-  deployment:
-    kind: process
-    label: "Lifecycle: StatefulSet, probes, PDB, operator, and offline render evidence remain owned by Kubernetes-Native Deployment"
-  validation:
+    label: "Link Security Hardening as its own planned boundary; do not assert its unfinished authz/rotation behavior is complete"
+  check:
     kind: terminal
-    label: "AW capability check resolves the stateful_storage baseline without duplicating domain claims"
+    label: "aw capability check --project tape --skip-issue-inventory recognizes the stateful_storage trait baseline"
 edges:
-  - { from: capability_root, to: storage }
-  - { from: storage, to: replicas }
+  - { from: root, to: journal }
+  - { from: journal, to: replicas }
   - { from: replicas, to: backup }
-  - { from: backup, to: security }
-  - { from: security, to: deployment }
-  - { from: deployment, to: validation }
+  - { from: backup, to: deploy }
+  - { from: deploy, to: security }
+  - { from: security, to: check }
 ---
 flowchart TD
-    capability_root[README stateful-service-workload root: compose existing durable-service evidence; do not create a second runtime contract] --> storage[Stateful storage: journal durability, PVC, and stable identity remain owned by topic-replay-journal and the StatefulSet topology]
-    storage --> replicas[Primary replicas: raft-host topology, failover, and snapshot recovery remain owned by primary-replicas]
-    replicas --> backup[Backup/restore: service-backup snapshot transport remains owned by HTTP/2 API List]
-    backup --> security[Security boundary: auth, topic isolation, audit, and secret rotation remain owned by Security Hardening]
-    security --> deployment[Lifecycle: StatefulSet, probes, PDB, operator, and offline render evidence remain owned by Kubernetes-Native Deployment]
-    deployment --> validation([AW capability check resolves the stateful_storage baseline without duplicating domain claims])
+    root[Add one README capability root, stateful-service-workload, with WI #1554; it is a shared baseline projection only] --> journal[Link Topic Replay Journal: durable append log and protected replay state]
+    journal --> replicas[Link Primary Replicas: raft leader/follower, stable identity, PVC-backed recovery, and failover evidence]
+    replicas --> backup[Link HTTP/2 API List: admin-gated snapshot and service-backup destination path]
+    backup --> deploy[Link Kubernetes-Native Deployment: StatefulSet, probes, PDB, operator, and dockerfile render evidence]
+    deploy --> security[Link Security Hardening as its own planned boundary; do not assert its unfinished authz/rotation behavior is complete]
+    security --> check([aw capability check --project tape --skip-issue-inventory recognizes the stateful_storage trait baseline])
 ```
