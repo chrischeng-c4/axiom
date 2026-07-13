@@ -131,19 +131,19 @@ id: pgpool-trust-startup-replay-verification
 requirements:
   ac1_capped_trust_clients_complete_without_startup_rejection:
     id: AC1
-    text: "With a local trust-auth PostgreSQL backend, 64 same-startup simple-protocol clients complete transactions through a 16-backend transaction pool without the startup-cap saturation failure that #1597 established."
+    text: "With a local trust-auth PostgreSQL backend, 64 same-startup simple-protocol clients complete transactions through a 16-backend transaction pool without startup-cap rejection, and the benchmark rejects a partial-client result."
     kind: integration
     risk: high
     verify: trust_startup_replay::capped_trust_clients_complete_without_startup_rejection
   r1_exact_no_challenge_startup_replays_without_a_backend_lease:
     id: R1
-    text: "A complete no-challenge AuthenticationOk-to-ReadyForQuery reply is replayed only to a client whose ordered StartupMessage exactly matches the captured startup, and the replay client can issue a simple query without increasing active backend leases."
+    text: "A complete no-challenge AuthenticationOk-to-ReadyForQuery reply is replayed only to a client whose ordered StartupMessage exactly matches the captured startup, has a synthetic zero BackendKeyData, and can issue a simple query without increasing active backend leases."
     kind: functional
     risk: high
     verify: trust_startup_replay::exact_no_challenge_startup_replays_without_a_backend_lease
   r2_startup_mismatch_and_auth_challenges_never_replay:
     id: R2
-    text: "A startup parameter mismatch, cleartext-password challenge, MD5 challenge, or SASL challenge never consumes or publishes a cached reply and remains on the fresh passthrough path."
+    text: "A startup parameter mismatch, cleartext-password challenge, MD5 challenge, or SASL challenge cannot consume or publish a cached reply and instead remains on fresh authentication passthrough."
     kind: security
     risk: high
     verify: trust_startup_replay::startup_mismatch_and_auth_challenges_never_replay
