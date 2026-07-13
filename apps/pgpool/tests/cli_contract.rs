@@ -34,6 +34,18 @@ fn k8s_instance_render_is_a_stateless_deployment() {
 }
 
 #[test]
+fn serve_accepts_control_plane_backend_quota() {
+    let output = pgpool()
+        .args(["serve", "--help"])
+        .output()
+        .expect("run serve help");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert!(stdout.contains("--max-backend-connections"));
+    assert!(stdout.contains("PGPOOL_MAX_BACKEND_CONNECTIONS"));
+}
+
+#[test]
 fn runtime_plan_is_chainable_and_names_shared_libs() {
     let output = pgpool()
         .arg("runtime-plan")

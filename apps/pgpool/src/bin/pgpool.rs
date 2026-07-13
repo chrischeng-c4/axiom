@@ -105,6 +105,9 @@ struct ServeArgs {
     /// milliseconds.
     #[arg(long, env = "PGPOOL_POOL_ACQUIRE_TIMEOUT_MS", default_value_t = 5000)]
     pool_acquire_timeout_ms: u64,
+    /// Per-Pod backend connection quota admitted by the control plane.
+    #[arg(long, env = "PGPOOL_MAX_BACKEND_CONNECTIONS", default_value_t = 512)]
+    max_backend_connections: usize,
     /// Override the admin plane bind address (`host:port`); defaults to the
     /// `RuntimePlan`'s admin bind (`0.0.0.0:9080`) unchanged.
     #[arg(long, env = "PGPOOL_ADMIN_BIND")]
@@ -404,6 +407,7 @@ async fn issue(args: IssueArgs) -> Result<()> {
 /// drain and exit (R1-R7, AC1-AC4).
 async fn serve(args: ServeArgs) -> Result<()> {
     let mut plan = pgpool::default_runtime_plan();
+    plan.max_backend_connections = args.max_backend_connections;
 
     let frontend_bind = match &args.bind {
         Some(addr) => {

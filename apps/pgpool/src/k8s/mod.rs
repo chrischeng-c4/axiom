@@ -3,11 +3,16 @@
 //! Kubernetes control-plane models and deterministic manifest rendering.
 
 mod budget;
+mod control;
 mod instance;
 
 pub use budget::{
     AllocationError, AllocationState, EndpointAllocator, EndpointCapacity, GlobalConnectionBudget,
     PodAllocation,
+};
+pub use control::{
+    BackendPoolObservation, ControlPlaneError, ControlPlaneStatus, DrainProgress,
+    EndpointControlStatus, PgpoolControlPlane, PodControlPhase, PodControlStatus,
 };
 pub use instance::{
     render_instance_yaml, render_manifests, spec_for_profile, InstanceProfile, PgpoolInstanceSpec,

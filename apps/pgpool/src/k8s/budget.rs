@@ -206,6 +206,12 @@ impl GlobalConnectionBudget {
     pub fn endpoint_mut(&mut self, name: &str) -> Option<&mut EndpointAllocator> {
         self.endpoints.get_mut(name)
     }
+
+    pub fn endpoints(&self) -> impl Iterator<Item = (&str, &EndpointAllocator)> {
+        self.endpoints
+            .iter()
+            .map(|(name, allocator)| (name.as_str(), allocator))
+    }
 }
 
 #[cfg(test)]
