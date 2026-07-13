@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-16T02:37:53.376070+00:00"
-digest = "sha256:cf1e61ced9bb9ffaa5e7b0f824f3b0ac75d5a04bf814e9074aa6eee6ac8eb5b1"
-source_digest = "sha256:cf1e61ced9bb9ffaa5e7b0f824f3b0ac75d5a04bf814e9074aa6eee6ac8eb5b1"
-ir_digest = "sha256:3c9276edc633657db791aa408036304337fc2dbec2f46de4e252e52aa44c4849"
+generated_at = "2026-07-16T02:38:44.000622+00:00"
+digest = "sha256:9c021a627b164161c9638a775bd6ae830d6fe5a35c5ffd11b9660bf575b3ac23"
+source_digest = "sha256:9c021a627b164161c9638a775bd6ae830d6fe5a35c5ffd11b9660bf575b3ac23"
+ir_digest = "sha256:afc4ae88f81e47a18da88831c27fb665709b81ed4a4c965f535ce4d383461d64"
 
 [[files]]
 path = "README.md"
@@ -51,8 +51,8 @@ section_count = 3
 
 [[files]]
 path = "logic/project-the-stateful-service-workload-baseline.md"
-digest = "sha256:c88626a74a8a7949466b7bbf8f5918d99ac1bc451a640da4caa1efccbdd37102"
-ir_digest = "sha256:5c0efc23ddf3ed8dfd05b5aa9b4cf610d21483c85662c87fc4aeabe1267eb580"
+digest = "sha256:70580f5793c3ae5def3fed1a90c3ee9ed3b0d9680e8d739a79aca7810c1f7e7f"
+ir_digest = "sha256:95a97cc2d19a8b7bf8a1883623a517ce5b90b4d4078f84727aed959f5457abaa"
 section_count = 2
 
 [[files]]
