@@ -55,8 +55,8 @@
 //! ## Scope
 //!
 //! Auth and backup are deliberately out of scope (separate follow-ups); a
-//! service keeps owning those on its data plane. OTLP trace export is a stubbed
-//! `// TODO(otlp)` in [`logging`] — the dep tree is deferred.
+//! service keeps owning those on its data plane. OTLP trace export is optional
+//! behind the `otlp` feature; a service supplies its own stable identity.
 //!
 //! [`error::ErrorEnvelope`]'s derived `utoipa::ToSchema` is named
 //! `ErrorEnvelope` in a service's generated OpenAPI document. A service that
@@ -82,12 +82,16 @@ pub mod readiness;
 pub mod signal;
 pub mod transport;
 
-pub use config::{HttpConfig, LogFormat};
+pub use config::{HttpConfig, LogFormat, ServiceIdentity};
 pub use error::{ApiErr, ErrorEnvelope};
-pub use logging::init_tracing;
+#[cfg(feature = "otlp")]
+pub use logging::extract_trace_context;
+pub use logging::{
+    init_tracing, init_tracing_with_identity, tracing_mode, OtelFallback, TracingMode,
+};
 pub use metrics::MetricsProvider;
 pub use probes::standard_probe_routes;
 pub use readiness::ReadinessHook;
 pub use signal::{shutdown_with_drain, wait_shutdown_signal};
-pub use transport::{serve, trace_layer};
+pub use transport::{serve, trace_layer, PropagatingMakeSpan};
 // CODEGEN-END
