@@ -320,6 +320,20 @@ async fn simple_query(stream: &mut TcpStream) {
     }
 }
 
+async fn write_pipelined_queries(stream: &mut TcpStream, sql: &[&str]) {
+    let mut bytes = BytesMut::new();
+    for statement in sql {
+        FrontendMessage::Query(Query {
+            sql: (*statement).to_string(),
+        })
+        .encode(&mut bytes);
+    }
+    stream
+        .write_all(&bytes)
+        .await
+        .expect("write pipelined query frames");
+}
+
 async fn close_client(mut stream: TcpStream) {
     write_frontend(&mut stream, &FrontendMessage::Terminate(Terminate)).await;
     stream.shutdown().await.expect("shutdown client");
@@ -345,6 +359,201 @@ async fn stop_proxy(
 ) {
     let _ = shutdown.send(());
     server.await.expect("proxy server joins");
+}
+
+/// A pipelined implicit next query remains in the client socket while the
+/// first query's backend lease is released and reset. The old backend must
+/// therefore observe `DISCARD ALL` before it can receive the second query.
+///
+/// verify: trust_startup_replay::backend_first_relay_keeps_pipelined_query_out_of_resetting_backend (P0 #1709)
+#[tokio::test]
+async fn backend_first_relay_keeps_pipelined_query_out_of_resetting_backend() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake backend");
+    let backend_port = listener.local_addr().expect("fake backend address").port();
+    let backend_server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept fake backend");
+        let mut reader = FrameReader::new(Role::Frontend, &wire());
+
+        assert!(matches!(
+            read_frontend(&mut stream, &mut reader).await,
+            Some(FrontendMessage::Startup(_))
+        ));
+        write_backend(
+            &mut stream,
+            &BackendMessage::AuthenticationOk(AuthenticationOk),
+        )
+        .await;
+        write_backend(
+            &mut stream,
+            &BackendMessage::ParameterStatus(ParameterStatus {
+                name: "client_encoding".to_string(),
+                value: "UTF8".to_string(),
+            }),
+        )
+        .await;
+        write_backend(
+            &mut stream,
+            &BackendMessage::BackendKeyData(BackendKeyData {
+                process_id: 100,
+                secret_key: 200,
+            }),
+        )
+        .await;
+        write_backend(
+            &mut stream,
+            &BackendMessage::ReadyForQuery(ReadyForQuery {
+                status: TransactionStatus::Idle,
+            }),
+        )
+        .await;
+
+        // Fresh startup is reset before the backend becomes idle.
+        assert!(matches!(
+            read_frontend(&mut stream, &mut reader).await,
+            Some(FrontendMessage::Query(Query { sql })) if sql == "DISCARD ALL"
+        ));
+        write_backend(
+            &mut stream,
+            &BackendMessage::CommandComplete(CommandComplete {
+                tag: "DISCARD ALL".to_string(),
+            }),
+        )
+        .await;
+        write_backend(
+            &mut stream,
+            &BackendMessage::ReadyForQuery(ReadyForQuery {
+                status: TransactionStatus::Idle,
+            }),
+        )
+        .await;
+
+        assert!(matches!(
+            read_frontend(&mut stream, &mut reader).await,
+            Some(FrontendMessage::Query(Query { sql })) if sql == "SELECT first"
+        ));
+
+        // The second query was pipelined from the client, but cannot become
+        // input to this backend before the first ReadyForQuery(Idle).
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(100),
+                read_frontend(&mut stream, &mut reader),
+            )
+            .await
+            .is_err(),
+            "pipelined implicit query reached the active backend before its response"
+        );
+
+        write_backend(
+            &mut stream,
+            &BackendMessage::CommandComplete(CommandComplete {
+                tag: "first".to_string(),
+            }),
+        )
+        .await;
+        write_backend(
+            &mut stream,
+            &BackendMessage::ReadyForQuery(ReadyForQuery {
+                status: TransactionStatus::Idle,
+            }),
+        )
+        .await;
+
+        // The previous lease is reset before the outer loop reads and
+        // acquires for the pipelined second implicit query.
+        assert!(matches!(
+            read_frontend(&mut stream, &mut reader).await,
+            Some(FrontendMessage::Query(Query { sql })) if sql == "DISCARD ALL"
+        ));
+        write_backend(
+            &mut stream,
+            &BackendMessage::CommandComplete(CommandComplete {
+                tag: "DISCARD ALL".to_string(),
+            }),
+        )
+        .await;
+        write_backend(
+            &mut stream,
+            &BackendMessage::ReadyForQuery(ReadyForQuery {
+                status: TransactionStatus::Idle,
+            }),
+        )
+        .await;
+
+        assert!(matches!(
+            read_frontend(&mut stream, &mut reader).await,
+            Some(FrontendMessage::Query(Query { sql })) if sql == "SELECT second"
+        ));
+        write_backend(
+            &mut stream,
+            &BackendMessage::CommandComplete(CommandComplete {
+                tag: "second".to_string(),
+            }),
+        )
+        .await;
+        write_backend(
+            &mut stream,
+            &BackendMessage::ReadyForQuery(ReadyForQuery {
+                status: TransactionStatus::Idle,
+            }),
+        )
+        .await;
+
+        assert!(matches!(
+            read_frontend(&mut stream, &mut reader).await,
+            Some(FrontendMessage::Query(Query { sql })) if sql == "DISCARD ALL"
+        ));
+        write_backend(
+            &mut stream,
+            &BackendMessage::CommandComplete(CommandComplete {
+                tag: "DISCARD ALL".to_string(),
+            }),
+        )
+        .await;
+        write_backend(
+            &mut stream,
+            &BackendMessage::ReadyForQuery(ReadyForQuery {
+                status: TransactionStatus::Idle,
+            }),
+        )
+        .await;
+
+        assert!(
+            read_frontend(&mut stream, &mut reader).await.is_none(),
+            "client terminate is handled after the lease returns idle"
+        );
+    });
+
+    let pool = BackendPool::new(pool_config(backend_port, 1));
+    let (proxy, proxy_server, shutdown) = spawn_proxy(pool.clone()).await;
+    let (mut client, _) = admit(proxy, startup("pipeline"), false)
+        .await
+        .expect("trust startup admits");
+    wait_for_idle(&pool).await;
+
+    write_pipelined_queries(&mut client, &["SELECT first", "SELECT second"]).await;
+    let mut reader = FrameReader::new(Role::Backend, &wire());
+    let mut completions = Vec::new();
+    let mut ready_count = 0;
+    while completions.len() < 2 || ready_count < 2 {
+        match read_backend(&mut client, &mut reader)
+            .await
+            .expect("pipelined response before proxy EOF")
+        {
+            BackendMessage::CommandComplete(command) => completions.push(command.tag),
+            BackendMessage::ReadyForQuery(_) => ready_count += 1,
+            other => panic!("unexpected response to pipelined queries: {other:?}"),
+        }
+    }
+    assert_eq!(completions, ["first", "second"]);
+    wait_for_idle(&pool).await;
+
+    close_client(client).await;
+    stop_proxy(proxy_server, shutdown).await;
+    drop(pool);
+    backend_server.await.expect("backend script joins");
 }
 
 fn backend_key(messages: &[BackendMessage]) -> BackendKeyData {
