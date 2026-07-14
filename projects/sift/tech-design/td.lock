@@ -2,10 +2,10 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-14T04:35:06.292860+00:00"
-digest = "sha256:7327de843a36ee076f08682a9b0a4dbc5be29a795a79e999190db5a8dff2ca99"
-source_digest = "sha256:7327de843a36ee076f08682a9b0a4dbc5be29a795a79e999190db5a8dff2ca99"
-ir_digest = "sha256:9154300fcfccedbddfff8dbaf1fc26d1c0f2b791d8c707bdb28ed7cb8555d658"
+generated_at = "2026-07-14T05:10:03.250129+00:00"
+digest = "sha256:fb13aa6dc67ac72fb6a47b30f372ca49b217a6aa9d226437f7f635617718ce06"
+source_digest = "sha256:fb13aa6dc67ac72fb6a47b30f372ca49b217a6aa9d226437f7f635617718ce06"
+ir_digest = "sha256:be8f2e019745231c9e3a5600126add32176004314755bcd8959e6e6cf304a5ea"
 
 [[files]]
 path = "interfaces/rest/adopt-shared-runtime-security-and-agent-interface.md"
@@ -24,6 +24,12 @@ path = "interfaces/rest/bootstrap-service-contract-and-durable-raw-event-vertica
 digest = "sha256:35ee36a2411335a53e3a1b1407c08f82a87d94773dd0cc26b1fc1c2ee646d59e"
 ir_digest = "sha256:0b88419781dd0923c1510b53ddd146a17787c0596fb2b34a803f22f42f1675f2"
 section_count = 2
+
+[[files]]
+path = "logic/add-epoch-sharded-journal-blobs-and-gcs-archive.md"
+digest = "sha256:1167edcf48aada55eb5a4335e28a7acaf8dab51ffdfc46910e9daa71a88c7a33"
+ir_digest = "sha256:3433d993bb2167154eda88b3a5b35eadf0650ac7694f95ef84bdde04249ee035"
+section_count = 4
 
 [[files]]
 path = "logic/add-kubernetes-deployment-and-operator-surfaces.md"
