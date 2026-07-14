@@ -131,7 +131,7 @@ pub struct InstrumentationScope {
     pub schema_url: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricTemporality {
     Delta,

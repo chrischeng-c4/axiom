@@ -433,7 +433,7 @@ fn decode_metrics_json(
                         name: name.to_string(),
                         value,
                         unit: unit.clone(),
-                        temporality: temporality.clone(),
+                        temporality,
                         exemplars: json_exemplars(point.get("exemplars")),
                     });
                     output.push(Ok(event));
@@ -507,7 +507,7 @@ fn decode_metrics_proto(
                         &name,
                         unit.clone(),
                         value,
-                        temporality.clone(),
+                        temporality,
                         point.time_unix_nano,
                         proto_attributes(&point.attributes),
                         proto_exemplars(&point.exemplars),

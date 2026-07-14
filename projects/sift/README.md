@@ -71,8 +71,8 @@ first-class domain roots.
 | Replica Sync And Bootstrap | 1676 | implemented | partial | conformance | not_ready | existing Raft state machine plus pending three-node/domain recovery proof |
 | Backup And Restore | 1659 | implemented | partial | conformance | not_ready | snapshot plus real Vat-backed GCS archive/cold restore pass; scheduled off-node and three-node proof remain #1676 |
 | Schema Governance | 1657 | implemented | partial | conformance | not_ready | OperationalEventV2/upcast/privacy and fixed projection-index allowlist are verified; metric cardinality remains |
-| Materialized Observability Stores | 1660 | implemented | partial | conformance | not_ready | projection runtime plus logging, trace topology/critical-path, and error grouping/lifecycle stores pass; metric, audit/change, profile, and GenAI stores remain #1667-#1670 |
-| Query Tail And Replay | 1671 | implemented | partial | conformance | not_ready | durable replay, logging query/tail, trace retrieval, and authorized error group query/detail pass; unified cross-signal query and streaming tail remain #1671 |
+| Materialized Observability Stores | 1660 | implemented | partial | conformance | not_ready | logging, trace, error, and Sift-owned metric series/rollup stores pass; audit/change, profile, and GenAI stores remain #1668-#1670 |
+| Query Tail And Replay | 1671 | implemented | partial | conformance | not_ready | durable replay plus authorized logging, trace, error, and typed metric reads pass; unified cross-signal query and streaming tail remain #1671 |
 | GKE Event Collection | 1675 | planned | planned | conformance | not_ready | later DaemonSet producer reads CRI logs and emits deduplicated structured events |
 | Security Audit And Governance | 1668 | planned | planned | conformance | not_ready | immutable audit/change projections, legal hold, scoped access, and export controls |
 | Profile Observability | 1669 | planned | planned | conformance | not_ready | OTel profiles, blob durability, flamegraphs, top functions, diffs, and trace correlation |
@@ -305,7 +305,7 @@ Gate Inventory:
 | signal-taxonomy-and-versioning | change | 1657 | implemented | passing | conformance | eight-signal schema and compatibility tests |
 | typed-attribute-policy | change | 1657 | implemented | passing | conformance | allow/deny and recursive typed-value validation tests |
 | projection-index-allowlist | change | #1660 | implemented | passing | conformance | arbitrary payload/attribute fields are rejected by the embedded index adapter |
-| metric-cardinality-policy | change | 1667 | planned | planned | conformance | time-series overflow and budget gate |
+| metric-cardinality-policy | change | 1667 | implemented | passing | conformance | deterministic project budget, overflow series, and diagnostic gate |
 | pii-and-genai-content-policy | change | 1657 | implemented | passing | negative | raw-byte absence, allow/deny, truncation, and project-policy tests |
 
 ### Materialized Observability Stores
@@ -320,9 +320,10 @@ indexes, retention, and rebuild checkpoints; HTTP/CLI: store-specific query
 and correlation routes.
 EC Dimensions: behavior: logging search/query/tail, trace topology,
 links/events, partial diagnostics, critical path, error fingerprint/group
-lifecycle, project authorization, and raw rebuild equality pass; direct metric
-time-series and exemplar ingest, audit/change timeline, profile analysis, and
-GenAI views remain pending.
+lifecycle, direct metric time-series/chunks/rollups, OTel temporality,
+histograms, exemplars, cardinality overflow, project authorization, and raw
+rebuild equality pass; audit/change timeline, profile analysis, and GenAI views
+remain pending.
 Required Verification: conformance, dogfood
 Promise:
 Expose logging, tracing, error reporting, metrics, audit/change, profiles, and
@@ -336,7 +337,7 @@ Gate Inventory:
 - implemented logging projection/query: projects/sift/tests/logging_store.rs and projects/sift/tests/logging_api.rs
 - implemented trace topology/query: projects/sift/tests/trace_store.rs and projects/sift/tests/trace_api.rs
 - implemented error grouping/lifecycle: projects/sift/tests/error_report_store.rs and projects/sift/tests/error_report_api.rs
-- pending: projects/sift/tests/metric_store.rs
+- implemented metric projection/query: projects/sift/tests/metric_store.rs and projects/sift/tests/metric_api.rs
 - pending: projects/sift/tests/audit_change_store.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
@@ -345,7 +346,7 @@ Gate Inventory:
 | logging-store-over-events | change | 1664 | implemented | passing | conformance | projects/sift/tests/logging_store.rs and projects/sift/tests/logging_api.rs |
 | trace-store-topology-and-correlation | change | 1665 | implemented | passing | conformance | projects/sift/tests/trace_store.rs and projects/sift/tests/trace_api.rs |
 | error-report-store-grouping-lifecycle | change | 1666 | implemented | passing | conformance | versioned fingerprints, ordered occurrences, durable authorized lifecycle, deterministic reopen/mute expiry, audit/change evidence, restart, and raw rebuild equality |
-| metric-store-direct-points-and-exemplars | change | 1667 | planned | planned | conformance | temporality, histogram, cardinality, exemplar, and rollup gate |
+| metric-store-direct-points-and-exemplars | change | 1667 | implemented | passing | conformance | gauge/delta/cumulative reset semantics, explicit/exponential histograms, exemplars, late points, chunks, 60s/1h rollups, overflow diagnostics, auth, pagination, lag, snapshot, and raw rebuild equality |
 | audit-and-change-store-timeline | change | 1668 | planned | planned | conformance | immutable timeline, legal hold, and export gate |
 | profile-store-and-analysis | change | 1669 | planned | planned | conformance | flamegraph, top-functions, diff, and trace-correlation gate |
 | genai-session-cost-evaluation-views | change | 1670 | planned | planned | conformance | observation, session, token/cost, and evaluation gate |

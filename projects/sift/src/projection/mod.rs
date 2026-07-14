@@ -2,6 +2,7 @@
 mod error_report;
 mod logging;
 mod lumen;
+mod metric;
 mod model;
 mod runtime;
 mod trace;
@@ -11,6 +12,12 @@ pub use logging::{
     LOGGING_SCHEMA_VERSION, MAX_LOG_QUERY_LIMIT, PROJECTION_LOGGING_STORE,
 };
 pub use lumen::EmbeddedLumenProjection;
+pub use metric::{
+    HistogramKind, MetricAggregation, MetricChunkV1, MetricHistogramV1, MetricPage, MetricPointV1,
+    MetricProjection, MetricQuery, MetricRollupV1, MetricSeriesResultV1,
+    DEFAULT_METRIC_CARDINALITY_LIMIT, DEFAULT_RETAINED_POINTS_PER_SERIES, MAX_METRIC_QUERY_LIMIT,
+    METRIC_CHUNK_POINTS, METRIC_SCHEMA_VERSION, PROJECTION_METRIC_STORE, ROLLUP_WINDOWS_SECONDS,
+};
 pub use model::{
     error_lifecycle_key, ErrorLifecycleState, ErrorLifecycleV1, ProjectionCheckpoint,
     ProjectionDescriptor, ProjectionLag, ProjectionStateEnvelope, RebuildComparison, ReplayJob,

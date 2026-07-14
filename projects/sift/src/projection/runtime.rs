@@ -22,6 +22,7 @@ use super::{
     },
     logging::{LogPage, LogQuery, LoggingProjection, PROJECTION_LOGGING_STORE},
     lumen::EmbeddedLumenProjection,
+    metric::{MetricPage, MetricProjection, MetricQuery, PROJECTION_METRIC_STORE},
     model::{
         ProjectionCheckpoint, ProjectionDescriptor, ProjectionLag, ProjectionStateEnvelope,
         RebuildComparison, PROJECTION_STATE_FORMAT_VERSION,
@@ -80,6 +81,8 @@ impl ProjectionRuntime {
             Arc::new(|| Ok(Arc::new(TraceProjection::new()) as Arc<dyn Projection>))
                 as ProjectionFactory,
             Arc::new(|| Ok(Arc::new(ErrorReportProjection::new()) as Arc<dyn Projection>))
+                as ProjectionFactory,
+            Arc::new(|| Ok(Arc::new(MetricProjection::new()) as Arc<dyn Projection>))
                 as ProjectionFactory,
         ] {
             let (name, slot) = open_slot(&projection_root, factory)?;
@@ -164,6 +167,17 @@ impl ProjectionRuntime {
             .downcast_ref::<ErrorReportProjection>()
             .context("error-report-store projection registration has the wrong implementation")?;
         errors.get_group(project, fingerprint)
+    }
+
+    pub fn query_metrics(&self, query: &MetricQuery) -> Result<MetricPage> {
+        let slot = self.slot(PROJECTION_METRIC_STORE)?;
+        let live = slot.live.lock().expect("projection state lock poisoned");
+        let metrics = live
+            .implementation
+            .as_any()
+            .downcast_ref::<MetricProjection>()
+            .context("metric-store projection registration has the wrong implementation")?;
+        metrics.query(query)
     }
 
     pub fn catch_up(&self, name: &str) -> Result<u64> {

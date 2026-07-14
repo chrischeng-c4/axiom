@@ -830,6 +830,7 @@ pub fn router(state: Arc<ServiceState>) -> Router {
         .route("/v1/logs:tail", get(tail_logs))
         .route("/v1/traces/{id}", get(get_trace))
         .route("/v1/errors:query", post(query_errors))
+        .route("/v1/metrics:query", post(query_metrics))
         .route("/v1/errors/{fingerprint}", get(get_error_group))
         .route(
             "/v1/errors/{fingerprint}/state",
@@ -1354,6 +1355,46 @@ async fn query_errors(
     Ok(Json(page))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/metrics:query",
+    request_body = projection::MetricQuery,
+    responses(
+        (status = 200, description = "stable typed metric series page", body = projection::MetricPage),
+        (status = 400, description = "invalid metric query", body = ErrorEnvelope),
+        (status = 403, description = "project read denied", body = ErrorEnvelope),
+        (status = 503, description = "projection has not reached min_cursor", body = ErrorEnvelope)
+    )
+)]
+async fn query_metrics(
+    State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+    payload: Result<Json<projection::MetricQuery>, JsonRejection>,
+) -> Result<Json<projection::MetricPage>, ApiError> {
+    let Json(query) =
+        payload.map_err(|error| ApiError::bad_request("invalid_json", error.body_text()))?;
+    authorize_project_read(principal.as_ref().map(|value| &value.0), &query.project)?;
+    state
+        .projections
+        .catch_up(projection::PROJECTION_METRIC_STORE)
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    let projection_cursor = state
+        .projections
+        .wait_for_min_cursor(
+            projection::PROJECTION_METRIC_STORE,
+            query.min_cursor.unwrap_or(0),
+            LOG_QUERY_PROJECTION_WAIT,
+        )
+        .await
+        .map_err(ApiError::projection_lag)?;
+    let mut page = state
+        .projections
+        .query_metrics(&query)
+        .map_err(|error| ApiError::bad_request("invalid_metric_query", error.to_string()))?;
+    page.projection_cursor = projection_cursor;
+    Ok(Json(page))
+}
+
 #[derive(Debug, Deserialize)]
 struct HttpErrorGroupQuery {
     project: String,
@@ -1698,6 +1739,7 @@ async fn get_replay(
         tail_logs,
         get_trace,
         query_errors,
+        query_metrics,
         get_error_group,
         transition_error_group,
         query_events,
@@ -1735,6 +1777,15 @@ async fn get_replay(
         projection::ErrorLifecycleState,
         projection::ErrorLifecycleV1,
         ErrorLifecycleRequest,
+        projection::HistogramKind,
+        projection::MetricHistogramV1,
+        projection::MetricPointV1,
+        projection::MetricChunkV1,
+        projection::MetricRollupV1,
+        projection::MetricAggregation,
+        projection::MetricQuery,
+        projection::MetricSeriesResultV1,
+        projection::MetricPage,
         projection::ReplayJob,
         projection::ReplayState,
         StartReplayRequest,
