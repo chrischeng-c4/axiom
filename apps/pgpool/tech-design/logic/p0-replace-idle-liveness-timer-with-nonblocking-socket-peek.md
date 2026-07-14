@@ -49,3 +49,26 @@ flowchart LR
 ### Error handling
 
 A closed peer returns zero bytes and is discarded. A non-`WouldBlock` read error is likewise treated as unsafe for reuse. If no idle tuple remains after a discard, acquisition follows the existing fresh-connect or saturated-capacity path; the new probe creates no timer, wakeup, or alternate scheduling path.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: apps/pgpool/Cargo.toml
+    action: modify
+    section: pgpool-nonblocking-idle-liveness-peek
+    impl_mode: hand-written
+    reason: Declare the direct socket abstraction used to issue a safe non-consuming nonblocking peek.
+  - path: apps/pgpool/src/pool/backend_pool.rs
+    action: modify
+    section: pgpool-nonblocking-idle-liveness-peek
+    impl_mode: hand-written
+    reason: Replace zero-timeout async liveness probing with socket-level MSG_PEEK classification while retaining idle ownership and retry semantics.
+  - path: apps/pgpool/tests/pool.rs
+    action: modify
+    section: pgpool-nonblocking-idle-liveness-peek
+    impl_mode: hand-written
+    reason: Prove no-byte idle reuse, EOF discard-and-retry, and preservation of readable bytes across the liveness probe.
+```
