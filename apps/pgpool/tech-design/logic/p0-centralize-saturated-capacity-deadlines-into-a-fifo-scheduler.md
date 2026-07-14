@@ -65,19 +65,18 @@ changes:
     action: modify
     section: pgpool-capacity-deadline-scheduler
     impl_mode: hand-written
-    reason: Replace per-waiter timeout and Notify capacity waits with pool-owned FIFO deadline scheduling and exact one-slot handoff.
+    reason: Own FIFO waiters, one earliest-deadline timer, exact cancellation, and one-slot capacity grants beside physical pool state.
   - path: apps/pgpool/tests/pool.rs
     action: modify
     section: pgpool-capacity-deadline-scheduler
     impl_mode: hand-written
-    reason: Prove FIFO capacity handoff, deadline expiry, cancellation cleanup, and permit conservation.
+    reason: Verify FIFO grants, expiry, cancellation, and physical permit conservation.
   - path: apps/pgpool/tests/pool_modes.rs
     action: modify
     section: pgpool-capacity-deadline-scheduler
     impl_mode: hand-written
-    reason: Preserve transaction reuse, capped replay admission, reset isolation, and no session-state leak under queued acquisition.
+    reason: Verify capped transaction reuse, replay, reset isolation, and concurrent client behavior remain unchanged.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
