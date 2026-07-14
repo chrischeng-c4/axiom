@@ -9,33 +9,33 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: tape-operator-image-pin
-entry: render_operator
+id: tape-operator-image-pin-contract
+entry: operator_fixture
 nodes:
-  render_operator:
+  operator_fixture:
     kind: start
-    label: "tape k8s operator render"
-  fixture:
+    label: "apps/tape/k8s/operator/deployment.yaml"
+  pinned_release:
     kind: process
-    label: "checked-in control-plane Deployment fixture"
-  pinned:
+    label: "image: tape:0.4.5"
+  namespace_render:
     kind: terminal
-    label: "operator image uses a concrete Tape release tag"
-  development:
+    label: "namespace substitution preserves the pinned image"
+  guard:
     kind: terminal
-    label: "instance dev profile remains an explicit local override"
+    label: "K8003 sees no latest or untagged production image"
 edges:
-  - { from: render_operator, to: fixture }
-  - { from: fixture, to: pinned, label: "render preserves release-pinned image" }
+  - { from: operator_fixture, to: pinned_release }
+  - { from: pinned_release, to: namespace_render }
+  - { from: pinned_release, to: guard }
 ---
 flowchart TD
-    render_operator([k8s operator render]) --> fixture[operator deployment fixture]
-    fixture --> pinned([tape:0.4.5 release tag])
-    development([instance dev image override])
+    fixture[operator Deployment fixture] --> release[tape:0.4.5]
+    release --> render[operator render keeps image]
+    release --> guard[K8003 clear]
 ```
 
-The operator control-plane fixture is the renderer-owned production artifact. Its image must use the current concrete Tape release tag rather than `latest`, so the checked-in manifest and rendered output are reproducible and pass K8003. Namespace replacement remains image-neutral. The explicit image argument for instance rendering, including the dev profile's local image default, is a separate data-plane contract and remains unchanged.
-
+`apps/tape/k8s/operator/deployment.yaml` is the exact Deployment fragment consumed by `render_operator_yaml`. Its operator image is pinned to the workspace's concrete Tape release tag (`tape:0.4.5`). Rendering may replace only `tape-system` namespace fields and therefore cannot downgrade that image reference. The data-plane instance renderer remains separately configurable through its existing `--image` option; this change does not turn a local dev override into a production operator default.
 ## Changes
 <!-- type: changes lang: yaml -->
 
