@@ -147,3 +147,42 @@ changes:
     impl_mode: hand-written
     description: Add semantic source coverage for OTLP contract tests.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: service-http-shared-otlp-tracing-verification
+requirements:
+  fallback:
+    id: R3
+    text: "Malformed or unreachable exporter setup does not abort service startup and falls back to structured logging without leaking endpoint secrets."
+    kind: negative
+    risk: high
+    verify: cargo test -p service-http --features otlp --test otlp_tracing exporter_setup_failure_keeps_logging_available -- --exact
+  identity_contract:
+    id: R2
+    text: "An OTLP-enabled service supplies stable non-empty service name and version resource attributes through the shared configuration API."
+    kind: functional
+    risk: high
+    verify: cargo test -p service-http --features otlp --test otlp_tracing otlp_identity_contract_is_stable -- --exact
+  logging_only_default:
+    id: R1
+    text: "Without an OTLP endpoint or OTLP feature, shared service tracing remains logging-only and preserves the existing initialization contract."
+    kind: regression
+    risk: high
+    verify: cargo test -p service-http --test otlp_tracing logging_only_default_requires_no_exporter -- --exact
+  trace_context:
+    id: R4
+    text: "The shared HTTP trace layer accepts a valid W3C traceparent and makes the resulting request span a child of that propagated context."
+    kind: contract
+    risk: medium
+    verify: cargo test -p service-http --features otlp --test otlp_tracing trace_layer_propagates_w3c_parent_context -- --exact
+---
+flowchart TD
+    r1[R1 logging only default] --> cargo_test_p_service_http_test_otlp_tracing_logging_only_default_requires_no_exporter_exact[cargo test -p service-http --test otlp_tracing logging_only_default_requires_no_exporter -- --exact]
+    r2[R2 identity contract] --> cargo_test_p_service_http_features_otlp_test_otlp_tracing_otlp_identity_contract_is_stable_exact[cargo test -p service-http --features otlp --test otlp_tracing otlp_identity_contract_is_stable -- --exact]
+    r3[R3 fallback] --> cargo_test_p_service_http_features_otlp_test_otlp_tracing_exporter_setup_failure_keeps_logging_available_exact[cargo test -p service-http --features otlp --test otlp_tracing exporter_setup_failure_keeps_logging_available -- --exact]
+    r4[R4 trace context] --> cargo_test_p_service_http_features_otlp_test_otlp_tracing_trace_layer_propagates_w3c_parent_context_exact[cargo test -p service-http --features otlp --test otlp_tracing trace_layer_propagates_w3c_parent_context -- --exact]
+```
