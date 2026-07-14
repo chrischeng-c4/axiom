@@ -70,6 +70,10 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
+  - path: libs/raft-host/tests/peer_tls.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->

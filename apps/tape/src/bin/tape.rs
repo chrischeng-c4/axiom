@@ -646,20 +646,20 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         // failing at dial time. Termination on the peer port is NOT yet
         // applied — raft-host's h2c transport has no TLS seam (the filed gap
         // in the TD); this proves the mounted material is usable today.
-        match tape::peer_tls::PeerTlsConfig::from_env()? {
+        match tape::peer_tls::from_env()? {
             Some(tls) => {
                 tls.rustls_server_config()?;
                 tls.rustls_client_config()?;
-                if tls.required {
+                if tls.mtls_required() {
                     tracing::warn!(
-                        cert = %tls.cert.display(),
+                        cert = %tls.cert().display(),
                         "peer TLS material validated; TAPE_PEER_MTLS=on requested but mTLS \
                          termination on the raft peer port is not yet applied (raft-host/h2c \
                          TLS seam gap) — peer RPCs stay h2c"
                     );
                 } else {
                     tracing::info!(
-                        cert = %tls.cert.display(),
+                        cert = %tls.cert().display(),
                         "peer TLS material validated (not required); peer RPCs stay h2c until \
                          the raft-host TLS seam lands"
                     );
