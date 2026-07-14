@@ -2679,10 +2679,10 @@ print(Child.__slots__)
         crate::runtime::cleanup_all_runtime_state();
 
         result.expect("runtime-base slot inheritance should run from source");
-        assert_eq!(
-            captured.lines().collect::<Vec<_>>(),
-            ["1", "2", "('y', 'x')"]
-        );
+        // #1523: `Child.__slots__` reports the declared-own tuple ('y',), not
+        // the merged instance layout ('y', 'x') — instance field access
+        // (x=1, y=2, both inherited and own) must still work correctly.
+        assert_eq!(captured.lines().collect::<Vec<_>>(), ["1", "2", "('y',)"]);
     }
 
     // ── CompilerSession::new ──────────────────────────────────────────────────
