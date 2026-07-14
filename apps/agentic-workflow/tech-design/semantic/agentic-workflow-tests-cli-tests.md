@@ -47,6 +47,12 @@ capability_refs:
     rationale: "The real default-target lifecycle proves aw td lock adds one exact-path commit with stable trailers, leaves the checkout clean, keeps check/show read-only, and hands directly to aw td gen."
   - id: td-cb-lifecycle-automation
     role: primary
+    gap: ambiguous-multi-target-generation-preflight
+    claim: ambiguous-multi-target-generation-preflight
+    coverage: full
+    rationale: "Real CLI fixtures prove an ambiguous Schema plan is rejected on main before TD branch activation or mutation, while one existing inferred Schema target remains fully generatable on a project branch."
+  - id: td-cb-lifecycle-automation
+    role: primary
     gap: terminal-ec-process-liveness
     claim: terminal-ec-process-liveness
     coverage: full
@@ -393,6 +399,9 @@ semantic_domain:
           - name: "commit_all_with_message"
             kind: "function"
             public: false
+          - name: "git_stdout_bytes"
+            kind: "function"
+            public: false
           - name: "git_log_messages"
             kind: "function"
             public: false
@@ -472,6 +481,12 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "td_create_apply_normalizes_body_only_logic_then_advances_structured_unit_test"
+            kind: "function"
+            public: false
+          - name: "td_gen_ambiguous_schema_plan_fails_before_any_lifecycle_mutation"
+            kind: "function"
+            public: false
+          - name: "td_gen_no_changes_single_inferred_schema_target_remains_compatible"
             kind: "function"
             public: false
         source_evidence_node:
@@ -1244,6 +1259,16 @@ changes:
       a valid LogicSpec containing `signature` and a loop replaces the stale
       section, removes the consumed payload, and advances current_section to
       applicability Changes.
+      Issue #1633 invokes `aw td gen` from main while an existing TD branch
+      contains one earlier Logic target followed by two Schema CODEGEN targets.
+      It asserts one stable JSON ambiguity envelope and no stderr duplicate,
+      then compares exact HEAD, symbolic branch, index tree, porcelain-z
+      status, issue bytes, TD ref, spec bytes, and target blobs to prove the
+      complete-plan gate precedes every lifecycle and repository mutation.
+      Its AC4 companion locks and generates a no-Changes Schema TD on a
+      persistent project branch, proving the caller and executor share exact
+      read-only spec-ref inference for one managed target and advance the
+      lifecycle to `cb_genned` after replacing the stale symbol.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/tests/cli/tests/cb_review_revise_test.rs"
     action: modify

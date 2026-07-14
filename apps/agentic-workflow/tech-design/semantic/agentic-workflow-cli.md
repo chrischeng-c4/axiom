@@ -70,6 +70,12 @@ capability_refs:
     rationale: "TD lock preflights lexical and canonical repository containment before any write, then fresh writes and legacy uncommitted-lock recovery create one lock-path-only lifecycle commit while preserving unrelated index and worktree state; read-only lock modes never commit."
   - id: td-cb-lifecycle-automation
     role: primary
+    gap: ambiguous-multi-target-generation-preflight
+    claim: ambiguous-multi-target-generation-preflight
+    coverage: full
+    rationale: "The CLI semantic domain owns read-only exact-spec preparation before TD lifecycle mutation, stable plan-error envelopes, and prepared-byte revalidation in src/cli/td.rs."
+  - id: td-cb-lifecycle-automation
+    role: primary
     gap: terminal-ec-process-liveness
     claim: terminal-ec-process-liveness
     coverage: full
@@ -1863,6 +1869,18 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "td_error"
+            kind: "function"
+            public: false
+          - name: "PreparedTdGeneration"
+            kind: "struct"
+            public: false
+          - name: "shell_quote_td_arg"
+            kind: "function"
+            public: false
+          - name: "print_generation_plan_error"
+            kind: "function"
+            public: false
+          - name: "prepare_td_generation_before_lifecycle"
             kind: "function"
             public: false
           - name: "td_workspace_path"
@@ -4055,6 +4073,16 @@ changes:
       the real CLI regression applies both target plans, passes `aw td check`,
       writes the fixture TD IR lock, and proves `aw td gen` creates the named
       new target instead of falling back to impossible new-path inference.
+      Issue #1633 makes the complete generation plan a caller-side admission
+      gate. The CLI reads exact spec bytes without issue hydration or checkout,
+      including an existing TD branch through Git objects, invokes the shared
+      read-only exact spec-ref inference and Schema/CLI ownership predicate,
+      and emits one structured stdout error carrying stable kind, section,
+      sorted targets, remediation, shell-safe next command, and incomplete
+      completion. One inferred existing target remains compatible; none is
+      unavailable and multiple are ambiguous. Only an admitted plan may enter
+      lifecycle mutation, and its bytes are compared exactly again after
+      activation before execution.
       Issue #1602 activates an existing TD branch before inspecting reachable
       history. An exact slug plus Td-Init resumes normally; missing or
       same-slug-without-init history clears the stale authoring phase, branch,

@@ -121,6 +121,23 @@ pub enum GenerateError {
     MissingField(String),
     #[error("Invalid value: {0}")]
     InvalidValue(String),
+    #[error(
+        "ambiguous multi-target generation plan for section `{section}`: eligible CODEGEN targets {targets:?}; {remediation}"
+    )]
+    AmbiguousGenerationPlan {
+        section: String,
+        targets: Vec<String>,
+        remediation: String,
+        next_command: String,
+    },
+    #[error(
+        "generation plan unavailable for `{spec_path}` before lifecycle mutation; {remediation}"
+    )]
+    GenerationPlanUnavailable {
+        spec_path: String,
+        remediation: String,
+        next_command: String,
+    },
     #[error("Serialization error: {0}")]
     Serialization(String),
     #[error("IO error: {0}")]

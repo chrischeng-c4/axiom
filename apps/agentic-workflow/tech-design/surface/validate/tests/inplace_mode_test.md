@@ -26,6 +26,12 @@ capability_refs:
     claim: generated-td-lock-commit-handoff
     coverage: full
     rationale: "The default-target real CLI proves generated TD locks receive one exact-path lifecycle commit, check/show stay read-only, and generation runs without a dirty-lock handoff."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: ambiguous-multi-target-generation-preflight
+    claim: ambiguous-multi-target-generation-preflight
+    coverage: full
+    rationale: "The real CLI snapshots HEAD, branch, index, status, issue, TD ref, spec, and target blobs to prove ambiguous Schema ownership fails before lifecycle mutation."
 ---
 
 # Standardized apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs
@@ -39,6 +45,18 @@ The #1586 fixture starts from stale plain Mermaid on disk. It proves a malformed
 Mermaid Plus candidate fails the complete registry without changing spec,
 payload, phase, projection, or HEAD, then proves a valid LogicSpec with a
 signature and loop is written, consumes its payload, and advances to Changes.
+
+The #1633 fixture invokes the public binary from `main` while an existing TD
+branch contains a valid earlier Logic target followed by two Schema CODEGEN
+targets. One structured ambiguity envelope names sorted targets and an
+executable next command; exact snapshots prove that branch activation, issue
+hydration, index/HEAD mutation, lifecycle commits, and target writes never
+occur.
+
+Its AC4 companion runs on a persistent project branch with a no-Changes Schema
+TD and one existing managed exact spec ref. A real TD lock and `aw td gen`
+prove caller admission and executor inference choose the same target, replace
+the stale symbol with generated `Widget`, and advance the issue to `cb_genned`.
 
 ### Symbols
 
@@ -176,6 +194,22 @@ fn commit_all_with_message(git: &std::path::Path, root: &std::path::Path, messag
         .status()
         .unwrap()
         .success());
+}
+
+fn git_stdout_bytes(git: &std::path::Path, root: &std::path::Path, args: &[&str]) -> Vec<u8> {
+    let output = Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .unwrap_or_else(|error| panic!("git {args:?}: {error}"));
+    assert!(
+        output.status.success(),
+        "git {args:?} should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    output.stdout
 }
 
 fn git_log_messages(git: &std::path::Path, root: &std::path::Path) -> String {
@@ -2913,6 +2947,345 @@ flowchart TD
     assert!(!final_spec.contains("stale --> disk"));
 }
 
+/// Issue #1633: `aw td gen` must prepare the complete shared-section target
+/// plan before activating an existing `td-<slug>` branch. A valid earlier
+/// Logic target followed by two Schema CODEGEN targets returns one structured,
+/// actionable envelope while preserving every lifecycle and repository byte.
+#[test]
+fn td_gen_ambiguous_schema_plan_fails_before_any_lifecycle_mutation() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+
+    std::fs::write(
+        root.join("aw.toml"),
+        r#"
+[agentic_workflow.workspace]
+mode = "in_place"
+
+[[projects]]
+name = "agentic-workflow"
+path = "."
+"#,
+    )
+    .unwrap();
+    commit_all_with_message(&git, root, "bootstrap #1633 fixture");
+
+    let slug = "1633-plan-preflight";
+    let td_branch = format!("td-{slug}");
+    let spec_path = "tech-design/semantic/1633-plan-preflight.md";
+    let target_paths = ["src/earlier.rs", "src/schema_z.rs", "src/schema_a.rs"];
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", &td_branch])
+        .status()
+        .unwrap()
+        .success());
+    std::fs::create_dir_all(root.join("tech-design/semantic")).unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join(spec_path),
+        r#"---
+id: 1633-plan-preflight
+fill_sections: [logic, schema, changes]
+---
+
+# Ambiguous generation plan fixture
+
+## Logic
+<!-- type: logic lang: mermaid-plus -->
+
+```mermaid
+---
+kind: LogicSpec
+id: earlier_logic
+functions:
+  earlier:
+    signature: "pub fn earlier()"
+    returns: "()"
+    entry: done
+    nodes:
+      done: { kind: terminal, value: "()" }
+---
+flowchart TD
+  done
+```
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+entities:
+  Widget:
+    fields:
+      id: String
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/earlier.rs
+    action: modify
+    section: logic
+    impl_mode: codegen
+  - path: src/schema_z.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+  - path: src/schema_a.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+```
+"#,
+    )
+    .unwrap();
+    for (path, sentinel) in [
+        (target_paths[0], "// earlier sentinel\n"),
+        (target_paths[1], "// schema z sentinel\n"),
+        (target_paths[2], "// schema a sentinel\n"),
+    ] {
+        std::fs::write(root.join(path), sentinel).unwrap();
+    }
+    commit_all_with_message(&git, root, "add ambiguous #1633 TD plan");
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "main"])
+        .status()
+        .unwrap()
+        .success());
+
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\n\
+             slug: {slug}\n\
+             title: fail closed before ambiguous generation\n\
+             state: open\n\
+             type: bug\n\
+             labels: [\"app:agentic-workflow\"]\n\
+             phase: td_created\n\
+             branch: {td_branch}\n\
+             ---\n\n# Body\n"
+        ),
+    );
+
+    let td_ref = format!("refs/heads/{td_branch}");
+    let spec_object = format!("{td_ref}:{spec_path}");
+    let target_objects: Vec<(String, Vec<u8>)> = target_paths
+        .iter()
+        .map(|path| {
+            let object = format!("{td_ref}:{path}");
+            (
+                (*path).to_string(),
+                git_stdout_bytes(&git, root, &["cat-file", "blob", &object]),
+            )
+        })
+        .collect();
+    let head_before = git_stdout_bytes(&git, root, &["rev-parse", "HEAD"]);
+    let branch_before =
+        git_stdout_bytes(&git, root, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    let index_before = git_stdout_bytes(&git, root, &["write-tree"]);
+    let status_before = git_stdout_bytes(
+        &git,
+        root,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    );
+    let issue_before = std::fs::read(issue_path(root, slug)).unwrap();
+    let td_ref_before = git_stdout_bytes(&git, root, &["rev-parse", &td_ref]);
+    let spec_before = git_stdout_bytes(&git, root, &["cat-file", "blob", &spec_object]);
+
+    let gen = Command::new(&bin)
+        .args(["td", "gen", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("run ambiguous-plan aw td gen");
+    let envelope = td_dispatch_envelope(&gen, "ambiguous-plan td gen");
+    assert_eq!(envelope["action"], "error");
+    assert_eq!(envelope["error_kind"], "ambiguous_generation_plan");
+    assert_eq!(envelope["section"], "schema");
+    assert_eq!(
+        envelope["targets"],
+        serde_json::json!(["src/schema_a.rs", "src/schema_z.rs"]),
+    );
+    assert_eq!(
+        envelope["next"]["command"],
+        format!("aw td gen {slug} --spec-path {spec_path}"),
+    );
+    assert_eq!(envelope["completion"]["workflow_complete"], false);
+    assert!(
+        String::from_utf8_lossy(&gen.stderr).trim().is_empty(),
+        "plan rejection must not emit a second stderr error: {}",
+        String::from_utf8_lossy(&gen.stderr),
+    );
+
+    assert_eq!(
+        git_stdout_bytes(&git, root, &["rev-parse", "HEAD"]),
+        head_before,
+        "HEAD must not move or gain a lifecycle commit",
+    );
+    assert_eq!(
+        git_stdout_bytes(&git, root, &["symbolic-ref", "--quiet", "--short", "HEAD"]),
+        branch_before,
+        "preflight must not activate the TD branch",
+    );
+    assert_eq!(git_stdout_bytes(&git, root, &["write-tree"]), index_before);
+    assert_eq!(
+        git_stdout_bytes(
+            &git,
+            root,
+            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        ),
+        status_before,
+    );
+    assert_eq!(std::fs::read(issue_path(root, slug)).unwrap(), issue_before);
+    assert_eq!(
+        git_stdout_bytes(&git, root, &["rev-parse", &td_ref]),
+        td_ref_before,
+    );
+    assert_eq!(
+        git_stdout_bytes(&git, root, &["cat-file", "blob", &spec_object]),
+        spec_before,
+    );
+    for (path, before) in target_objects {
+        let object = format!("{td_ref}:{path}");
+        assert_eq!(
+            git_stdout_bytes(&git, root, &["cat-file", "blob", &object]),
+            before,
+            "target blob `{path}` must remain byte-identical",
+        );
+    }
+}
+
+/// AC4 regression for #1633: a no-Changes Schema TD with one existing exact
+/// managed target must pass caller admission, use executor inference, and
+/// complete generation on a persistent project branch.
+#[test]
+fn td_gen_no_changes_single_inferred_schema_target_remains_compatible() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+
+    std::fs::write(
+        root.join("aw.toml"),
+        r#"
+[agentic_workflow.workspace]
+mode = "in_place"
+
+[[projects]]
+name = "agentic-workflow"
+path = "."
+"#,
+    )
+    .unwrap();
+    commit_all_with_message(&git, root, "bootstrap inferred #1633 fixture");
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", "app/fixture"])
+        .status()
+        .unwrap()
+        .success());
+
+    let slug = "1633-inferred-single";
+    let spec_path = "tech-design/schema/inferred-single.md";
+    let spec_ref = format!("{spec_path}#schema");
+    std::fs::create_dir_all(root.join("tech-design/schema")).unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join(spec_path),
+        r#"---
+id: 1633-inferred-single
+fill_sections: [schema]
+capability_refs:
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: ambiguous-multi-target-generation-preflight
+    claim: ambiguous-multi-target-generation-preflight
+    coverage: full
+    rationale: "Compatibility fixture for one inferred Schema target."
+---
+
+# Inferred single Schema target
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+definitions:
+  Widget:
+    type: object
+    properties:
+      name: { type: string }
+```
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/inferred_schema.rs"),
+        format!(
+            "// SPEC-MANAGED: {spec_ref}\n// CODEGEN-BEGIN\n// SPEC-REF: {spec_ref}\npub struct StaleWidget;\n// CODEGEN-END\n"
+        ),
+    )
+    .unwrap();
+    commit_all_with_message(&git, root, "add inferred Schema fixture");
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\n\
+             slug: {slug}\n\
+             title: preserve inferred Schema target\n\
+             state: open\n\
+             type: bug\n\
+             labels: [\"app:agentic-workflow\"]\n\
+             phase: td_created\n\
+             branch: app/fixture\n\
+             ---\n\n# Body\n"
+        ),
+    );
+
+    let lock = Command::new(&bin)
+        .args(["td", "lock", "--project", "agentic-workflow"])
+        .current_dir(root)
+        .output()
+        .expect("lock inferred Schema TD");
+    assert!(
+        lock.status.success(),
+        "TD lock should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&lock.stdout),
+        String::from_utf8_lossy(&lock.stderr),
+    );
+
+    let gen = Command::new(&bin)
+        .args(["td", "gen", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("generate one inferred Schema target");
+    let envelope = td_dispatch_envelope(&gen, "single inferred Schema td gen");
+    assert_ne!(envelope["action"], "error", "{envelope:#}");
+    let generated = std::fs::read_to_string(root.join("src/inferred_schema.rs")).unwrap();
+    assert!(generated.contains("pub struct Widget"), "{generated}");
+    assert!(!generated.contains("StaleWidget"), "{generated}");
+    assert!(
+        read_issue_fixture(root, slug).contains("phase: cb_genned"),
+        "successful inferred generation must advance lifecycle",
+    );
+}
+
 // CODEGEN-END
 ````
 
@@ -2961,4 +3334,14 @@ changes:
       initialized payload, entire issue projection/body/phase, and HEAD
       byte-identical; a valid signature/loop LogicSpec replaces the stale
       section, consumes the payload, and dispatches applicability Changes.
+      Issue #1633 starts from main with an existing TD branch whose complete
+      plan contains an earlier valid Logic target and two later Schema CODEGEN
+      targets. The real binary emits exactly one typed stdout error with sorted
+      targets and an executable next command while HEAD, symbolic branch,
+      index tree, porcelain-z status, issue bytes, TD ref, spec blob, and every
+      target blob remain exact.
+      The AC4 companion locks a no-Changes Schema TD on a persistent project
+      branch, infers its sole existing exact managed target in both caller and
+      executor, generates `Widget`, removes the stale symbol, and advances the
+      lifecycle to `cb_genned`.
 ```

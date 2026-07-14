@@ -420,6 +420,20 @@ fn run_apply_inner(
             .collect();
     }
 
+    // Build and validate the complete selected Changes plan before walking
+    // even its first entry. In particular, a valid earlier target must not be
+    // written before a later Schema/CLI group reveals that whole-section
+    // output has more than one CODEGEN destination (#1633).
+    validate_ambiguous_generation_plan(
+        &spec_content,
+        root,
+        &change_entries,
+        allowed_target_roots,
+        allowed_sections,
+        exact_target,
+        None,
+    )?;
+
     // Neither legacy Changes metadata nor codebase refs produced a target.
     // Inference (`infer_change_entries_from_existing_spec_refs`) can only
     // discover files that ALREADY carry a matching `@spec`/CODEGEN
@@ -2160,6 +2174,137 @@ pub fn is_all_hand_written(spec_content: &str) -> bool {
         && entries
             .iter()
             .all(|e| matches!(e.impl_mode, ImplMode::HandWritten))
+}
+
+/// Read-only generation-plan validation shared by the public TD lifecycle
+/// caller and the apply executor. The caller uses it before issue hydration or
+/// branch activation; the executor repeats it over its final inferred/scoped
+/// entry set immediately before writes. Keeping one predicate prevents the
+/// lifecycle and executor safety boundaries from drifting.
+///
+/// Until canonical per-unit `generates:` ownership lands (#1634), more than
+/// one selected CODEGEN target for a Schema or CLI section is ambiguous. A
+/// HANDWRITE sibling is not a generated destination and therefore remains a
+/// valid mixed plan.
+/// @spec apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md#logic
+pub(crate) fn preflight_generation_plan(
+    spec_content: &str,
+    spec_path: &Path,
+    root: &Path,
+    rerun_command: &str,
+) -> crate::generate::Result<()> {
+    let mut change_entries = extract_change_entries(spec_content);
+    if change_entries.is_empty() {
+        // Target inference is read-only: it scans existing managed source for
+        // exact `<spec>#<section>` ownership refs without creating paths or
+        // following symlinks. Use the same inference primitive as the executor
+        // so an established single-target Schema/CLI TD remains admissible.
+        let td_ast = crate::td_ast::parse::parse_td_str(spec_content).ok();
+        change_entries = infer_change_entries_from_existing_spec_refs(
+            root,
+            spec_path,
+            td_ast.as_ref(),
+            spec_content,
+            None,
+        );
+    }
+    let has_shared_section = ["schema", "cli"].iter().any(|section| {
+        section_ids_from_type_annotations(spec_content)
+            .iter()
+            .any(|id| id == section)
+            || extract_section_yaml(
+                spec_content,
+                if *section == "schema" {
+                    "Schema"
+                } else {
+                    "CLI"
+                },
+            )
+            .is_some()
+    });
+    if change_entries.is_empty() && has_shared_section {
+        return Err(crate::generate::GenerateError::GenerationPlanUnavailable {
+            spec_path: spec_path.display().to_string(),
+            remediation: format!(
+                "no existing managed target with an exact spec/section reference was inferred; add a typed `## Changes` section with explicit target paths, then rerun `{rerun_command}`"
+            ),
+            next_command: rerun_command.to_string(),
+        });
+    }
+    validate_ambiguous_generation_plan(
+        spec_content,
+        root,
+        &change_entries,
+        None,
+        None,
+        None,
+        Some(rerun_command),
+    )
+}
+
+fn validate_ambiguous_generation_plan(
+    spec_content: &str,
+    root: &Path,
+    entries: &[ChangeEntry],
+    allowed_target_roots: Option<&[PathBuf]>,
+    allowed_sections: Option<&[&str]>,
+    exact_target: Option<&Path>,
+    rerun_command: Option<&str>,
+) -> crate::generate::Result<()> {
+    for section in ["schema", "cli"] {
+        let section_present = entries
+            .iter()
+            .any(|entry| entry.section_id.as_deref() == Some(section))
+            || section_ids_from_type_annotations(spec_content)
+                .iter()
+                .any(|id| id == section)
+            || extract_section_yaml(
+                spec_content,
+                if section == "schema" { "Schema" } else { "CLI" },
+            )
+            .is_some();
+        if !section_present {
+            continue;
+        }
+
+        let targets: std::collections::BTreeSet<String> = entries
+            .iter()
+            .filter(|entry| {
+                matches!(entry.action.as_str(), "create" | "modify")
+                    && entry.impl_mode == ImplMode::Codegen
+                    // `rust_source` is an entry-local whole-file generator; it
+                    // never consumes the shared Schema/CLI section IR.
+                    && entry.rust_source.is_none()
+                    && entry
+                        .section_id
+                        .as_deref()
+                        .is_none_or(|id| id == section)
+                    && allowed_sections.is_none_or(|allowed| allowed.contains(&section))
+                    && exact_target.is_none_or(|exact| root.join(&entry.path) == exact)
+                    && allowed_target_roots.is_none_or(|roots| {
+                        roots
+                            .iter()
+                            .any(|allowed_root| root.join(&entry.path).starts_with(allowed_root))
+                    })
+            })
+            .map(|entry| entry.path.clone())
+            .collect();
+
+        if targets.len() > 1 {
+            return Err(crate::generate::GenerateError::AmbiguousGenerationPlan {
+                section: section.to_string(),
+                targets: targets.into_iter().collect(),
+                remediation: format!(
+                    "edit `## Changes` so exactly one `{section}` target uses `impl_mode: codegen` and mark every other `{section}` target `impl_mode: hand-written`, then rerun {}; multiple generated targets require canonical `generates:` unit ownership from WI #1634",
+                    rerun_command
+                        .map(|command| format!("`{command}`"))
+                        .unwrap_or_else(|| "the same `aw td gen` command".to_string())
+                ),
+                next_command: rerun_command.unwrap_or("aw td gen").to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -7610,6 +7755,457 @@ id: mix
     #[test]
     fn is_all_hand_written_false_when_no_changes() {
         assert!(!is_all_hand_written("---\nid: empty\n---\n\n## Overview\n"));
+    }
+
+    fn write_plan_spec(root: &Path, name: &str, content: &str) -> PathBuf {
+        let spec = root.join(format!("tech-design/{name}.md"));
+        std::fs::create_dir_all(spec.parent().unwrap()).unwrap();
+        std::fs::write(&spec, content).unwrap();
+        spec
+    }
+
+    fn schema_section() -> &'static str {
+        r#"## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+definitions:
+  Widget:
+    type: object
+    properties:
+      name: { type: string }
+```
+"#
+    }
+
+    /// #1633: two whole-section Schema destinations are rejected as one
+    /// typed, sorted plan error before either existing target changes.
+    #[test]
+    fn ambiguous_generation_plan_rejects_two_schema_targets_before_any_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/z_schema.rs"), "// z sentinel\n").unwrap();
+        std::fs::write(root.join("src/a_schema.rs"), "// a sentinel\n").unwrap();
+        let spec = write_plan_spec(
+            root,
+            "ambiguous-schema",
+            &format!(
+                "{}\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: src/z_schema.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n  - path: src/a_schema.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n```\n",
+                schema_section()
+            ),
+        );
+
+        let error = run_apply(&spec, root, false).unwrap_err();
+        match error {
+            crate::generate::GenerateError::AmbiguousGenerationPlan {
+                section,
+                targets,
+                remediation,
+                ..
+            } => {
+                assert_eq!(section, "schema");
+                assert_eq!(targets, vec!["src/a_schema.rs", "src/z_schema.rs"]);
+                assert!(remediation.contains("impl_mode: hand-written"));
+                assert!(remediation.contains("WI #1634"));
+            }
+            other => panic!("expected typed ambiguous plan error, got {other}"),
+        }
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/a_schema.rs")).unwrap(),
+            "// a sentinel\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/z_schema.rs")).unwrap(),
+            "// z sentinel\n"
+        );
+    }
+
+    /// A sequence-form CLI payload has no mapping anchors, but two CLI
+    /// CODEGEN destinations are still a complete-plan ambiguity.
+    #[test]
+    fn ambiguous_generation_plan_rejects_sequence_cli_targets_before_any_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        for path in ["src/alpha.rs", "src/beta.rs"] {
+            std::fs::write(root.join(path), format!("// {path} sentinel\n")).unwrap();
+        }
+        let spec = write_plan_spec(
+            root,
+            "ambiguous-cli",
+            r#"## CLI
+<!-- type: cli lang: yaml -->
+
+```yaml
+- name: alpha
+  about: first command
+- name: beta
+  about: second command
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/alpha.rs
+    action: modify
+    section: cli
+    impl_mode: codegen
+  - path: src/beta.rs
+    action: modify
+    section: cli
+    impl_mode: codegen
+```
+"#,
+        );
+
+        let error = run_apply(&spec, root, false).unwrap_err();
+        assert!(matches!(
+            error,
+            crate::generate::GenerateError::AmbiguousGenerationPlan {
+                ref section,
+                ref targets,
+                ..
+            } if section == "cli" && targets == &["src/alpha.rs", "src/beta.rs"]
+        ));
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/alpha.rs")).unwrap(),
+            "// src/alpha.rs sentinel\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/beta.rs")).unwrap(),
+            "// src/beta.rs sentinel\n"
+        );
+    }
+
+    /// The plan scan covers every Changes row before execution: a valid Logic
+    /// row ordered first cannot be partially applied before a later ambiguous
+    /// Schema group is discovered.
+    #[test]
+    fn ambiguous_generation_plan_rejects_later_schema_before_earlier_logic_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/earlier.rs"), "// earlier sentinel\n").unwrap();
+        std::fs::write(root.join("src/schema_a.rs"), "// schema a\n").unwrap();
+        std::fs::write(root.join("src/schema_b.rs"), "// schema b\n").unwrap();
+        let spec = write_plan_spec(
+            root,
+            "later-ambiguity",
+            &format!(
+                r#"## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+---
+id: earlier-valid
+signature: "pub fn earlier_valid() -> bool"
+entry: start
+nodes:
+  start: {{ kind: terminal, value: true }}
+edges: []
+---
+flowchart TD
+  start
+```
+
+{}
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/earlier.rs
+    action: modify
+    section: logic
+    impl_mode: codegen
+  - path: src/schema_a.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+  - path: src/schema_b.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+```
+"#,
+                schema_section()
+            ),
+        );
+
+        assert!(matches!(
+            run_apply(&spec, root, false),
+            Err(crate::generate::GenerateError::AmbiguousGenerationPlan { .. })
+        ));
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/earlier.rs")).unwrap(),
+            "// earlier sentinel\n"
+        );
+    }
+
+    /// Exactly one Schema CODEGEN destination remains valid when another
+    /// touched target is HANDWRITE; regeneration is byte-idempotent and never
+    /// changes the HANDWRITE sibling.
+    #[test]
+    fn generation_plan_preserves_single_codegen_plus_handwrite_idempotently() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"plan-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("src/generated.rs"), "// generated seed\n").unwrap();
+        std::fs::write(root.join("src/manual.rs"), "// manual sentinel\n").unwrap();
+        let spec = write_plan_spec(
+            root,
+            "mixed-plan",
+            &format!(
+                "{}\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: src/generated.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n  - path: src/manual.rs\n    action: modify\n    section: schema\n    impl_mode: hand-written\n```\n",
+                schema_section()
+            ),
+        );
+
+        run_apply(&spec, root, false).unwrap();
+        let first = std::fs::read(root.join("src/generated.rs")).unwrap();
+        assert!(String::from_utf8_lossy(&first).contains("pub struct Widget"));
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/manual.rs")).unwrap(),
+            "// manual sentinel\n"
+        );
+        run_apply(&spec, root, false).unwrap();
+        assert_eq!(std::fs::read(root.join("src/generated.rs")).unwrap(), first);
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/manual.rs")).unwrap(),
+            "// manual sentinel\n"
+        );
+    }
+
+    /// Target paths are plan data only. Ambiguity must be detected without
+    /// following a target symlink or touching bytes outside the repository.
+    #[cfg(unix)]
+    #[test]
+    fn ambiguous_generation_plan_does_not_follow_external_target_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let external_target = external.path().join("external.rs");
+        std::fs::write(&external_target, "// external sentinel\n").unwrap();
+        symlink(&external_target, root.join("src/external_link.rs")).unwrap();
+        std::fs::write(root.join("src/local.rs"), "// local sentinel\n").unwrap();
+        let spec = write_plan_spec(
+            root,
+            "symlink-ambiguity",
+            &format!(
+                "{}\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: src/external_link.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n  - path: src/local.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n```\n",
+                schema_section()
+            ),
+        );
+
+        assert!(matches!(
+            run_apply(&spec, root, false),
+            Err(crate::generate::GenerateError::AmbiguousGenerationPlan { .. })
+        ));
+        assert_eq!(
+            std::fs::read_to_string(&external_target).unwrap(),
+            "// external sentinel\n"
+        );
+        assert!(std::fs::symlink_metadata(root.join("src/external_link.rs"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/local.rs")).unwrap(),
+            "// local sentinel\n"
+        );
+    }
+
+    /// #1633 remains scoped to shared Schema/CLI sections. A no-Changes
+    /// legacy Logic TD can still pass admission and infer its existing managed
+    /// target in the executor.
+    #[test]
+    fn generation_plan_preserves_legacy_no_changes_logic_inference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"legacy-plan\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        let spec = write_plan_spec(
+            root,
+            "legacy-logic",
+            r#"## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+---
+id: legacy-logic
+signature: "pub fn inferred() -> bool"
+entry: start
+nodes:
+  start: { kind: terminal, value: true }
+edges: []
+---
+flowchart TD
+  start
+```
+"#,
+        );
+        let spec_ref = "tech-design/legacy-logic.md#logic";
+        std::fs::write(
+            root.join("src/inferred.rs"),
+            format!(
+                "// SPEC-MANAGED: {spec_ref}\n// CODEGEN-BEGIN\n// SPEC-REF: {spec_ref}\npub fn stale() -> bool {{ false }}\n// CODEGEN-END\n"
+            ),
+        )
+        .unwrap();
+
+        preflight_generation_plan(
+            &std::fs::read_to_string(&spec).unwrap(),
+            Path::new("tech-design/legacy-logic.md"),
+            root,
+            "aw td gen legacy --spec-path tech-design/legacy-logic.md",
+        )
+        .unwrap();
+        let report = run_apply(&spec, root, false).unwrap();
+        assert_eq!(report.files.len(), 1);
+        assert!(report.files[0].processed);
+        assert!(std::fs::read_to_string(root.join("src/inferred.rs"))
+            .unwrap()
+            .contains("pub fn inferred"));
+    }
+
+    /// AC4: an established no-Changes Schema TD with exactly one managed
+    /// target is fully knowable through read-only spec-ref inference. Caller
+    /// admission and executor inference must select the same target.
+    #[test]
+    fn generation_plan_preserves_single_inferred_schema_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"inferred-schema\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        let spec = write_plan_spec(root, "inferred-schema", schema_section());
+        let spec_ref = "tech-design/inferred-schema.md#schema";
+        std::fs::write(
+            root.join("src/inferred_schema.rs"),
+            format!(
+                "// SPEC-MANAGED: {spec_ref}\n// CODEGEN-BEGIN\n// SPEC-REF: {spec_ref}\npub struct StaleWidget;\n// CODEGEN-END\n"
+            ),
+        )
+        .unwrap();
+
+        preflight_generation_plan(
+            &std::fs::read_to_string(&spec).unwrap(),
+            Path::new("tech-design/inferred-schema.md"),
+            root,
+            "aw td gen inferred --spec-path tech-design/inferred-schema.md",
+        )
+        .unwrap();
+        let report = run_apply(&spec, root, false).unwrap();
+        assert_eq!(report.files.len(), 1);
+        assert!(report.files[0].processed);
+        assert!(std::fs::read_to_string(root.join("src/inferred_schema.rs"))
+            .unwrap()
+            .contains("pub struct Widget"));
+    }
+
+    /// Read-only inference is still a complete-plan gate: two existing files
+    /// claiming the same no-Changes Schema section are rejected in sorted
+    /// order before caller lifecycle mutation or executor target writes.
+    #[test]
+    fn ambiguous_generation_plan_rejects_multiple_inferred_schema_targets() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let spec = write_plan_spec(root, "inferred-ambiguous", schema_section());
+        let spec_ref = "tech-design/inferred-ambiguous.md#schema";
+        for (path, body) in [
+            ("src/z_inferred.rs", "pub struct ZSentinel;"),
+            ("src/a_inferred.rs", "pub struct ASentinel;"),
+        ] {
+            std::fs::write(
+                root.join(path),
+                format!(
+                    "// SPEC-MANAGED: {spec_ref}\n// CODEGEN-BEGIN\n// SPEC-REF: {spec_ref}\n{body}\n// CODEGEN-END\n"
+                ),
+            )
+            .unwrap();
+        }
+        let a_before = std::fs::read(root.join("src/a_inferred.rs")).unwrap();
+        let z_before = std::fs::read(root.join("src/z_inferred.rs")).unwrap();
+        let command = "aw td gen inferred --spec-path tech-design/inferred-ambiguous.md";
+
+        let error = preflight_generation_plan(
+            &std::fs::read_to_string(&spec).unwrap(),
+            Path::new("tech-design/inferred-ambiguous.md"),
+            root,
+            command,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            crate::generate::GenerateError::AmbiguousGenerationPlan {
+                ref section,
+                ref targets,
+                ref next_command,
+                ..
+            } if section == "schema"
+                && targets == &["src/a_inferred.rs", "src/z_inferred.rs"]
+                && next_command == command
+        ));
+        assert!(matches!(
+            run_apply(&spec, root, false),
+            Err(crate::generate::GenerateError::AmbiguousGenerationPlan { .. })
+        ));
+        assert_eq!(
+            std::fs::read(root.join("src/a_inferred.rs")).unwrap(),
+            a_before
+        );
+        assert_eq!(
+            std::fs::read(root.join("src/z_inferred.rs")).unwrap(),
+            z_before
+        );
+    }
+
+    /// A shared whole-section generator with neither explicit Changes nor an
+    /// existing exact managed ref remains unknowable before lifecycle
+    /// mutation. Require explicit Changes and return typed remediation.
+    #[test]
+    fn generation_plan_unavailable_for_no_changes_schema_before_lifecycle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let command = "aw td gen 1633 --spec-path tech-design/schema.md";
+        let error = preflight_generation_plan(
+            schema_section(),
+            Path::new("tech-design/schema.md"),
+            tmp.path(),
+            command,
+        )
+        .unwrap_err();
+        match error {
+            crate::generate::GenerateError::GenerationPlanUnavailable {
+                spec_path,
+                remediation,
+                next_command,
+            } => {
+                assert_eq!(spec_path, "tech-design/schema.md");
+                assert_eq!(next_command, command);
+                assert!(remediation.contains("typed `## Changes`"));
+                assert!(remediation.contains(command));
+            }
+            other => panic!("expected typed unavailable-plan error, got {other}"),
+        }
     }
 
     // -------------------------------------------------------------------
