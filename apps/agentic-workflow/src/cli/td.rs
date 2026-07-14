@@ -4443,6 +4443,174 @@ fn run_validate_readonly(shape: crate::validate::PathShape, json: bool) -> Resul
 
 // ── td gen ─────────────────────────────────────────────────────────
 
+struct PreparedTdGeneration {
+    spec_path: String,
+    spec_content: String,
+}
+
+fn shell_quote_td_arg(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-'))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
+fn print_generation_plan_error(slug: &str, error: &crate::generate::GenerateError) -> Result<()> {
+    let (error_kind, section, targets, spec_path, remediation, next_command) = match error {
+        crate::generate::GenerateError::AmbiguousGenerationPlan {
+            section,
+            targets,
+            remediation,
+            next_command,
+        } => (
+            "ambiguous_generation_plan",
+            Some(section.as_str()),
+            targets.as_slice(),
+            None,
+            remediation.as_str(),
+            next_command.as_str(),
+        ),
+        crate::generate::GenerateError::GenerationPlanUnavailable {
+            spec_path,
+            remediation,
+            next_command,
+        } => (
+            "generation_plan_unavailable",
+            None,
+            &[][..],
+            Some(spec_path.as_str()),
+            remediation.as_str(),
+            next_command.as_str(),
+        ),
+        _ => return Ok(()),
+    };
+    print_json_value(
+        &serde_json::json!({
+            "action": "error",
+            "slug": slug,
+            "error_kind": error_kind,
+            "section": section,
+            "targets": targets,
+            "spec_path": spec_path,
+            "message": error.to_string(),
+            "remediation": remediation,
+            "next": {
+                "kind": "remediation",
+                "command": next_command,
+                "reason": remediation,
+                "requires_hitl": false,
+                "payload_path": null,
+            },
+            "completion": {
+                "root_complete": false,
+                "workflow_complete": false,
+                "requires_hitl": false,
+                "criteria": [],
+                "missing": ["unambiguous complete TD generation plan"],
+            },
+        }),
+        true,
+    )
+}
+
+/// Resolve and validate the TD generation input without hydrating an issue,
+/// switching branches, touching the index, or writing lifecycle state. When
+/// invoked from `main`, read the already-existing `td-<slug>` branch through
+/// Git's object database instead of checking it out.
+/// @spec apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md#logic
+async fn prepare_td_generation_before_lifecycle(
+    project_root: &std::path::Path,
+    requested_slug: &str,
+    explicit_spec_path: Option<&str>,
+) -> Result<PreparedTdGeneration> {
+    let local = LocalBackend::from_project_root(project_root);
+    let local_issue = local.get(requested_slug).await?;
+    let workflow_slug = local_issue
+        .as_ref()
+        .map(|issue| workflow_slug_for_issue(issue, requested_slug))
+        .unwrap_or_else(|| requested_slug.to_string());
+
+    let spec_path = if let Some(explicit) = explicit_spec_path {
+        explicit.to_string()
+    } else if let Some(discovered) = discover_worktree_spec(project_root) {
+        discovered
+    } else if let Some(issue) = local_issue.as_ref() {
+        default_spec_path_for_issue_in_project(project_root, issue, &workflow_slug).map_err(
+            |error| {
+                anyhow::anyhow!(
+                    "td gen must resolve its spec before lifecycle mutation: {error}; rerun `aw td gen {requested_slug} --spec-path <repo-relative-spec.md>`"
+                )
+            },
+        )?
+    } else {
+        anyhow::bail!(
+            "td gen cannot discover a unique spec before issue hydration or branch activation; rerun `aw td gen {requested_slug} --spec-path <repo-relative-spec.md>`"
+        );
+    };
+
+    let spec_rel = std::path::Path::new(&spec_path);
+    if spec_rel.is_absolute()
+        || spec_rel.as_os_str().is_empty()
+        || spec_rel
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        anyhow::bail!(
+            "td gen --spec-path must be a normalized repository-relative path before lifecycle mutation: `{spec_path}`"
+        );
+    }
+
+    let current_branch = crate::branch_switch::current_branch(project_root)?;
+    let target_branch = td_branch_name(&workflow_slug);
+    let spec_content = if should_use_td_branch(&current_branch)
+        && crate::branch_switch::branch_exists_local(project_root, &target_branch).unwrap_or(false)
+    {
+        let git = crate::git::find_git_bin().context("git binary not found on PATH")?;
+        let object = format!("refs/heads/{target_branch}:{spec_path}");
+        let output = std::process::Command::new(git)
+            .arg("-C")
+            .arg(project_root)
+            .args(["cat-file", "blob", &object])
+            .output()
+            .with_context(|| format!("reading TD spec `{spec_path}` from `{target_branch}`"))?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "td gen could not read `{spec_path}` from existing branch `{target_branch}` before activation: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        String::from_utf8(output.stdout)
+            .with_context(|| format!("TD spec `{spec_path}` on `{target_branch}` is not UTF-8"))?
+    } else {
+        std::fs::read_to_string(project_root.join(&spec_path)).with_context(|| {
+            format!(
+                "td gen could not read `{spec_path}` before issue hydration or branch activation; rerun with an existing `--spec-path`"
+            )
+        })?
+    };
+
+    let rerun_command = format!(
+        "aw td gen {} --spec-path {}",
+        shell_quote_td_arg(requested_slug),
+        shell_quote_td_arg(&spec_path),
+    );
+    crate::generate::apply::preflight_generation_plan(
+        &spec_content,
+        std::path::Path::new(&spec_path),
+        project_root,
+        &rerun_command,
+    )?;
+    Ok(PreparedTdGeneration {
+        spec_path,
+        spec_content,
+    })
+}
+
 /// Implementation of `aw td gen` — generates code from an approved TD spec.
 /// Writes canonical phase `cb_genned` and trailer `Cb-Gen`.
 ///
@@ -4450,6 +4618,25 @@ fn run_validate_readonly(shape: crate::validate::PathShape, json: bool) -> Resul
 pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let requested_slug = &args.slug;
+
+    // The generation plan is an admission gate. Resolve/read it before the
+    // helpers below can hydrate a remote issue or activate `td-<slug>`.
+    let prepared = match prepare_td_generation_before_lifecycle(
+        &project_root,
+        requested_slug,
+        args.spec_path.as_deref(),
+    )
+    .await
+    {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            if let Some(plan_error) = error.downcast_ref::<crate::generate::GenerateError>() {
+                print_generation_plan_error(requested_slug, plan_error)?;
+                return Ok(());
+            }
+            return Err(error);
+        }
+    };
 
     let bootstrapped_issue = bootstrap_td_issue(&project_root, requested_slug).await?;
     let slug = workflow_slug_for_issue(&bootstrapped_issue, requested_slug);
@@ -4485,18 +4672,7 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
         return Ok(());
     }
 
-    let spec_path_owned: String = match args.spec_path.as_deref() {
-        Some(p) => p.to_string(),
-        None => match discover_worktree_spec(&worktree_abs) {
-            Some(p) => p,
-            None => {
-                anyhow::bail!(
-                    "--spec-path is required for td gen (auto-discovery found no \
-                     unique spec under .aw/tech-design/ in the current checkout)"
-                );
-            }
-        },
-    };
+    let spec_path_owned = prepared.spec_path;
     let spec_path = spec_path_owned.as_str();
     let spec_abs = worktree_abs.join(spec_path);
     if !spec_abs.exists() {
@@ -4506,6 +4682,13 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
             message: &msg,
         })?;
         return Ok(());
+    }
+    let execution_spec_content = std::fs::read_to_string(&spec_abs)
+        .with_context(|| format!("re-reading prepared TD spec {}", spec_abs.display()))?;
+    if execution_spec_content != prepared.spec_content {
+        anyhow::bail!(
+            "td gen spec `{spec_path}` changed after read-only plan preparation; rerun the same `aw td gen` command"
+        );
     }
     let td_lock =
         match super::td_lock::check_project_td_lock_for_spec_at_root(&worktree_abs, &spec_abs) {

@@ -8,6 +8,12 @@ capability_refs:
     claim: cb-lifecycle-dispatch
     coverage: full
     rationale: "Generator primitives are part of TD/CB lifecycle automation because they produce reviewable code artifacts from TD sections."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: ambiguous-multi-target-generation-preflight
+    claim: ambiguous-multi-target-generation-preflight
+    coverage: full
+    rationale: "GenerateError carries stable typed ambiguity and unavailable-plan details from pre-lifecycle admission to the public TD error envelope."
 ---
 
 # GenerateError
@@ -16,6 +22,11 @@ capability_refs:
 <!-- type: overview lang: markdown -->
 
 Public API manifest for `apps/agentic-workflow/src/generate/mod.rs` generated from AST during Score force-regeneration standardization.
+
+Issue #1633 adds typed generation-plan admission errors. Ambiguity reports the
+shared section, sorted eligible targets, remediation, and exact next command;
+unavailable ownership reports the spec path and the command that can be rerun
+after authoring a typed Changes plan.
 
 ### Symbols
 
@@ -38,6 +49,7 @@ Public API manifest for `apps/agentic-workflow/src/generate/mod.rs` generated fr
 | `mcp` | apps/agentic-workflow/src/generate/mod.rs | module | pub | 15 |  |
 | `patterns` | apps/agentic-workflow/src/generate/mod.rs | module | pub | 16 |  |
 | `render` | apps/agentic-workflow/src/generate/mod.rs | module | pub | 29 |  |
+| `rust_source_unit` | apps/agentic-workflow/src/generate/mod.rs | module | pub | 42 |  |
 | `schema` | apps/agentic-workflow/src/generate/mod.rs | module | pub | 17 |  |
 | `spec_ir` | apps/agentic-workflow/src/generate/mod.rs | module | pub | 18 |  |
 | `specs` | apps/agentic-workflow/src/generate/mod.rs | module | pub | 19 |  |
@@ -62,6 +74,21 @@ definitions:
           kind: tuple
           error: "Invalid value: {0}"
           fields: [{ rust_type: String }]
+        - name: AmbiguousGenerationPlan
+          kind: struct
+          error: "ambiguous multi-target generation plan for section `{section}`: eligible CODEGEN targets {targets:?}; {remediation}"
+          fields:
+            - { name: section, rust_type: String }
+            - { name: targets, rust_type: "Vec<String>" }
+            - { name: remediation, rust_type: String }
+            - { name: next_command, rust_type: String }
+        - name: GenerationPlanUnavailable
+          kind: struct
+          error: "generation plan unavailable for `{spec_path}` before lifecycle mutation; {remediation}"
+          fields:
+            - { name: spec_path, rust_type: String }
+            - { name: remediation, rust_type: String }
+            - { name: next_command, rust_type: String }
         - name: Serialization
           kind: tuple
           error: "Serialization error: {0}"
@@ -118,6 +145,10 @@ pub mod from_td_ast;
 // @spec apps/agentic-workflow/tech-design/core/generate/handwrite-marker.md#schema
 pub mod handwrite;
 pub mod handwrite_scaffold;
+// rust-source-unit: lossless-CST parse to a structured item-tree with
+// byte-identical emit — the td_ast codegen primitive for arbitrary Rust units.
+// @spec apps/agentic-workflow/tech-design/validate/rust-source-unit-ir-lossless-cst-parse-to-structured-item-tree-b.md#logic
+pub mod rust_source_unit;
 
 #[cfg(test)]
 #[path = "tests/handwrite_scaffold_test.rs"]
@@ -127,7 +158,6 @@ pub use diagrams::*;
 pub use engine::{TemplateEngine, TemplateError};
 pub use generators::{
     AxumGenerator,
-    CclabApiGenerator,
     CoverageIssue,
     DeployGenerator,
     ExpressGenerator,
@@ -200,6 +230,23 @@ pub enum GenerateError {
     MissingField(String),
     #[error("Invalid value: {0}")]
     InvalidValue(String),
+    #[error(
+        "ambiguous multi-target generation plan for section `{section}`: eligible CODEGEN targets {targets:?}; {remediation}"
+    )]
+    AmbiguousGenerationPlan {
+        section: String,
+        targets: Vec<String>,
+        remediation: String,
+        next_command: String,
+    },
+    #[error(
+        "generation plan unavailable for `{spec_path}` before lifecycle mutation; {remediation}"
+    )]
+    GenerationPlanUnavailable {
+        spec_path: String,
+        remediation: String,
+        next_command: String,
+    },
     #[error("Serialization error: {0}")]
     Serialization(String),
     #[error("IO error: {0}")]
@@ -221,6 +268,7 @@ impl From<serde_yaml::Error> for GenerateError {
         GenerateError::Serialization(e.to_string())
     }
 }
+
 ```
 
 ## Changes
