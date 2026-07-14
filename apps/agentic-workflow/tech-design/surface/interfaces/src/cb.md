@@ -5220,13 +5220,14 @@ async fn run_check_lifecycle_terminal(
 }
 
 /// Resolve the completing slug's own TD spec file(s) (issue #854): every
-/// `.md` ref in `Issue.implements`; else the worktree's uniquely
-/// branch-diff-discovered TD spec (`td::discover_worktree_spec`); else the
-/// deterministic default path `aw td create` would have used for this issue
-/// (`td::default_spec_path_for_issue_in_project`) as a last resort, for
-/// issues created before `aw td create`/`aw td claim` started populating
-/// `Issue.implements` (#939) or when a worktree already on its base branch
-/// has no branch diff to discover from. Both terminal gates below scope to exactly this
+/// `.md` ref in `Issue.implements`; else the deterministic project-qualified
+/// path `aw td create` would have used for this issue
+/// (`td::default_spec_path_for_issue_in_project`); else the worktree's unique
+/// legacy branch-diff TD (`td::discover_worktree_spec`) as a last resort.
+/// The project default must precede legacy discovery because the local issue
+/// cache is ephemeral: a cache-loss retry with an `app:<name>` label must not
+/// inherit a foreign legacy TD merely because it is the sole `.aw` diff.
+/// Both terminal gates below scope to exactly this
 /// set instead of the whole `tech_design_path` tree / whole worktree, so an
 /// unrelated stale spec or inherited HANDWRITE marker elsewhere in a
 /// monorepo checkout can no longer block this WI's own completion.
@@ -5249,21 +5250,19 @@ fn resolve_slug_spec_paths(
         .cloned()
         .collect();
     if rels.is_empty() {
-        if let Some(discovered) = crate::cli::td::discover_worktree_spec(project_root) {
-            rels.push(discovered);
-        }
-    }
-    if rels.is_empty() {
-        // #1403: the tier-3 default derivation now hard-errors on an
+        // #1403: project-qualified derivation hard-errors on an
         // unrecognized/unresolvable project label instead of falling back to
-        // a legacy `.aw/tech-design` path. That failure is not this gate's
-        // to raise — per the doc comment above, an empty result here is
-        // itself a legitimate "nothing to scope against" outcome, so an
-        // unresolvable default is just another way to arrive at empty.
+        // an invented legacy path. That failure is not this gate's to raise:
+        // a real, branch-diff-discovered legacy TD remains a final fallback.
         if let Ok(derived) =
             crate::cli::td::default_spec_path_for_issue_in_project(project_root, issue, &issue.slug)
         {
             rels.push(derived);
+        }
+    }
+    if rels.is_empty() {
+        if let Some(discovered) = crate::cli::td::discover_worktree_spec(project_root) {
+            rels.push(discovered);
         }
     }
     rels.into_iter().map(|r| project_root.join(r)).collect()
