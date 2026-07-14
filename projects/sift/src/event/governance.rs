@@ -174,7 +174,15 @@ fn govern_json(value: &mut Value, policy: &GovernancePolicy, is_genai: bool, key
         return;
     }
     match value {
-        Value::String(value) => truncate_utf8(value, policy.max_string_bytes),
+        Value::String(value) => {
+            // Binary/profile payloads are externalized by the raw-storage
+            // boundary immediately after governance. Preserve valid base64
+            // long enough to hash it, while GenAI content keys above remain
+            // default-off and are redacted before any blob is written.
+            if !key.is_some_and(is_base64_key) {
+                truncate_utf8(value, policy.max_string_bytes);
+            }
+        }
         Value::Array(values) => {
             for value in values {
                 govern_json(value, policy, is_genai, key);
@@ -191,8 +199,14 @@ fn govern_json(value: &mut Value, policy: &GovernancePolicy, is_genai: bool, key
 
 fn is_content_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
+    let without_base64 = key.strip_suffix("base64").unwrap_or(&key);
+    let without_bytes = without_base64
+        .trim_end_matches(['_', '.'])
+        .strip_suffix("bytes")
+        .unwrap_or(without_base64)
+        .trim_end_matches(['_', '.']);
     matches!(
-        key.as_str(),
+        without_bytes,
         "prompt"
             | "prompts"
             | "completion"
@@ -212,10 +226,14 @@ fn is_content_key(key: &str) -> bool {
             | "gen_ai.system_instructions"
             | "llm.input_messages"
             | "llm.output_messages"
-    ) || key.ends_with(".prompt")
-        || key.ends_with(".completion")
-        || key.ends_with(".response")
-        || key.ends_with(".messages")
+    ) || without_bytes.ends_with(".prompt")
+        || without_bytes.ends_with(".completion")
+        || without_bytes.ends_with(".response")
+        || without_bytes.ends_with(".messages")
+}
+
+fn is_base64_key(key: &str) -> bool {
+    key.to_ascii_lowercase().ends_with("base64")
 }
 
 fn truncate_utf8(value: &mut String, max_bytes: usize) {

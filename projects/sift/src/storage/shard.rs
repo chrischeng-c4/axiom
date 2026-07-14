@@ -1,5 +1,8 @@
 // HANDWRITE-BEGIN gap="sift-epoch-bucket-router" tracker="1659" reason="Persist and validate 4096-bucket epoch maps and route future cursors without changing historical ownership."
-use std::{path::{Path, PathBuf}, sync::RwLock};
+use std::{
+    path::{Path, PathBuf},
+    sync::RwLock,
+};
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};

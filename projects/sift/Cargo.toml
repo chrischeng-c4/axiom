@@ -47,6 +47,7 @@ utoipa = { workspace = true, features = ["axum_extras"] }
 
 [dev-dependencies]
 tempfile = "3"
+vat = { path = "../../apps/vat", default-features = false, features = ["emulator"] }
 
 [build-dependencies]
 build-stamp = { path = "../../libs/build-stamp" }

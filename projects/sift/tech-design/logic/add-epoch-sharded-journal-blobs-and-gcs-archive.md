@@ -16,8 +16,8 @@ capability_refs:
     rationale: Versioned epoch maps route future writes and sealed manifests preserve historical ownership without rewrite.
   - id: backup-and-restore
     role: contributes
-    gap: gcs-object-storage-adapter
-    claim: gcs-object-storage-adapter
+    gap: real-service-backup-gcs-sink
+    claim: real-service-backup-gcs-sink
     coverage: full
     rationale: service-backup gains a workload-identity/emulator compatible GCS sink and exact-object source.
   - id: durability-and-acknowledgment
@@ -196,24 +196,49 @@ changes:
   - path: libs/service-backup/src/lib.rs
     action: modify
     section: logic
-    impl_mode: hand-written
-    gap: service-backup-gcs-exports
-    tracker: "1659"
+    impl_mode: codegen
     description: Export the real GCS sink and source contract and remove obsolete unsupported documentation.
+  - path: libs/service-backup/src/destination.rs
+    action: modify
+    section: logic
+    impl_mode: codegen
+    description: Document gs destinations as always-linked workload-identity or Vat-emulator backed storage.
+  - path: libs/service-backup/src/llm.rs
+    action: modify
+    section: logic
+    impl_mode: codegen
+    description: Teach agents that gs sink and exact-object restore are available.
   - path: libs/service-backup/src/sink.rs
     action: modify
     section: logic
-    impl_mode: hand-written
-    gap: service-backup-gcs-sink-routing
-    tracker: "1659"
+    impl_mode: codegen
     description: Construct GcsSink for gs destinations and retain UnsupportedCloudSink only for optional unlinked S3.
   - path: libs/service-backup/src/source.rs
     action: modify
     section: logic
-    impl_mode: hand-written
-    gap: service-backup-gcs-source-routing
-    tracker: "1659"
+    impl_mode: codegen
     description: Fetch exact gs object URIs through the shared GCS client.
+  - path: projects/sift/Cargo.toml
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    gap: sift-vat-gcs-test-dependency
+    tracker: "1659"
+    description: Link Vat's Cloud Storage emulator into Sift integration tests.
+  - path: projects/sift/src/event/governance.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    gap: sift-pre-journal-governance
+    tracker: "1657"
+    description: Preserve governed non-GenAI base64 binary fields until blob externalization while redacting GenAI content first.
+  - path: projects/sift/src/event/mod.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    gap: sift-event-module
+    tracker: "1657"
+    description: Export the content-addressed blob reference from the event boundary.
   - path: projects/sift/src/event/model.rs
     action: modify
     section: schema
@@ -221,6 +246,13 @@ changes:
     gap: sift-content-blob-reference
     tracker: "1659"
     description: Add optional hash, size, and encoding blob references to OperationalEventV2 without breaking v1 upcast.
+  - path: projects/sift/tests/event_v2_governance.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    gap: sift-v2-governance-tests
+    tracker: "1657"
+    description: Prove default-off GenAI base64 content is redacted before any blob reference is created.
   - path: projects/sift/src/storage/mod.rs
     action: create
     section: logic

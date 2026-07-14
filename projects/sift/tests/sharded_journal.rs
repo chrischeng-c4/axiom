@@ -87,8 +87,13 @@ fn torn_active_tail_is_truncated_and_sealed_segments_move_without_rewrite() {
         },
     )
     .unwrap();
+    let first_route = storage.route("one", 1);
+    let second_id = (0..10_000)
+        .map(|candidate| format!("two-{candidate}"))
+        .find(|candidate| storage.route(candidate, 2).shard == first_route.shard)
+        .unwrap();
     storage.append(&stored(1, "one")).unwrap();
-    storage.append(&stored(2, "two")).unwrap();
+    storage.append(&stored(2, &second_id)).unwrap();
     let active = storage.active_segment_paths();
     assert_eq!(active.len(), 1);
     drop(storage);

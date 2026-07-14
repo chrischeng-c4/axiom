@@ -96,7 +96,12 @@ impl SegmentStore {
             let manifest: SegmentManifest = serde_json::from_slice(&fs::read(&path)?)
                 .with_context(|| format!("decode segment manifest {}", path.display()))?;
             verify_segment(&manifest)?;
-            self.index_file(&mut state, &manifest.local_path, manifest.epoch, manifest.shard)?;
+            self.index_file(
+                &mut state,
+                &manifest.local_path,
+                manifest.epoch,
+                manifest.shard,
+            )?;
             state.sealed.insert(manifest.segment_id.clone(), manifest);
         }
         let sealed_paths = state
@@ -160,6 +165,16 @@ impl SegmentStore {
                     bucket_max,
                 },
             );
+        }
+        let full_segments = state
+            .active
+            .iter()
+            .filter_map(|(key, active)| {
+                (active.event_count as usize >= self.max_segment_events).then_some(*key)
+            })
+            .collect::<Vec<_>>();
+        for key in full_segments {
+            self.seal_locked(&mut state, key)?;
         }
         Ok(())
     }
@@ -233,7 +248,7 @@ impl SegmentStore {
             return Ok(location.clone());
         }
         let key = (route.epoch, route.shard);
-        if !state.active.contains_key(&key) {
+        if let std::collections::hash_map::Entry::Vacant(entry) = state.active.entry(key) {
             let segment_id = format!(
                 "segment-e{:020}-s{:04}-c{:020}",
                 route.epoch, route.shard, stored.cursor
@@ -247,20 +262,17 @@ impl SegmentStore {
                 &path,
                 service_durability::FsyncPolicy::Always,
             )?;
-            state.active.insert(
-                key,
-                ActiveSegment {
-                    route,
-                    segment_id,
-                    path,
-                    writer,
-                    first_cursor: stored.cursor,
-                    last_cursor: stored.cursor,
-                    event_count: 0,
-                    bucket_min: route.bucket,
-                    bucket_max: route.bucket,
-                },
-            );
+            entry.insert(ActiveSegment {
+                route,
+                segment_id,
+                path,
+                writer,
+                first_cursor: stored.cursor,
+                last_cursor: stored.cursor,
+                event_count: 0,
+                bucket_min: route.bucket,
+                bucket_max: route.bucket,
+            });
         }
         let encoded = serde_json::to_vec(stored)?;
         let (location, should_seal) = {
@@ -416,7 +428,23 @@ impl SegmentStore {
                 .file_name()
                 .context("segment path has no file name")?,
         );
-        fs::rename(&manifest.local_path, &target)?;
+        match fs::rename(&manifest.local_path, &target) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::CrossesDevices => {
+                let bytes = fs::read(&manifest.local_path)?;
+                service_durability::atomic_write(
+                    &target,
+                    &bytes,
+                    service_durability::FsyncPolicy::Always,
+                )?;
+                let mut copied = manifest.clone();
+                copied.local_path = target.clone();
+                verify_segment(&copied)?;
+                fs::remove_file(&manifest.local_path)?;
+                service_durability::sync_parent_dir(&manifest.local_path)?;
+            }
+            Err(error) => return Err(error.into()),
+        }
         service_durability::sync_parent_dir(&target)?;
         manifest.local_path = target.clone();
         manifest.state = SegmentState::Moved;
@@ -461,7 +489,10 @@ fn verify_segment(manifest: &SegmentManifest) -> Result<()> {
         .with_context(|| format!("stat segment {}", manifest.local_path.display()))?
         .len();
     if bytes != manifest.bytes || sha256_file(&manifest.local_path)? != manifest.sha256 {
-        bail!("sealed segment {} failed size/hash verification", manifest.segment_id);
+        bail!(
+            "sealed segment {} failed size/hash verification",
+            manifest.segment_id
+        );
     }
     Ok(())
 }

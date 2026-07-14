@@ -56,12 +56,12 @@ s3://bucket/prefix
 gs://bucket/prefix
 ```
 
-`file://` is always available. `s3://` requires this crate's `s3` feature.
-`gs://` parses and round-trips as schema-compatible input, but fails loudly
-until a real GCS sink is implemented.
+`file://` and `gs://` are always available. `s3://` requires this crate's `s3`
+feature. GCS uses workload identity in production and
+`STORAGE_EMULATOR_HOST` for Vat-backed local integration.
 
 ## Restore and bootstrap
-`fetch_backup_object` reads an exact `file://` or `s3://` object URI for
+`fetch_backup_object` reads an exact `file://`, `s3://`, or `gs://` object URI for
 restore or empty-PVC bootstrap. It is a cold seed path, not live replica
 synchronization.
 "#,

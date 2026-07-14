@@ -1,5 +1,9 @@
 // HANDWRITE-BEGIN gap="sift-content-addressed-blob-store" tracker="1659" reason="Atomically fsync SHA-256-addressed blobs and externalize large base64 payload fields before raw append."
-use std::{collections::BTreeSet, fs, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -36,12 +40,8 @@ impl BlobStore {
                 bail!("content-addressed blob collision for {hash}");
             }
         } else {
-            service_durability::atomic_write(
-                &path,
-                bytes,
-                service_durability::FsyncPolicy::Always,
-            )
-            .with_context(|| format!("durably write blob {}", path.display()))?;
+            service_durability::atomic_write(&path, bytes, service_durability::FsyncPolicy::Always)
+                .with_context(|| format!("durably write blob {}", path.display()))?;
         }
         Ok(ContentBlobRef {
             hash,
@@ -76,11 +76,7 @@ impl BlobStore {
         Ok(())
     }
 
-    fn externalize_value(
-        &self,
-        value: &mut Value,
-        refs: &mut Vec<ContentBlobRef>,
-    ) -> Result<()> {
+    fn externalize_value(&self, value: &mut Value, refs: &mut Vec<ContentBlobRef>) -> Result<()> {
         match value {
             Value::Array(values) => {
                 for value in values {

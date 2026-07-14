@@ -4,9 +4,9 @@ mod model;
 
 pub use governance::{GovernancePolicy, GovernancePolicySet};
 pub use model::{
-    decode_event_json, AttributeValue, EventEnvelopeV1, IncomingEvent, InstrumentationScope,
-    MetricExemplar, MetricPoint, MetricTemporality, OperationalEventV2, SignalKind,
-    EVENT_SCHEMA_URL, EVENT_SCHEMA_VERSION, EVENT_SCHEMA_VERSION_V1,
+    decode_event_json, AttributeValue, ContentBlobRef, EventEnvelopeV1, IncomingEvent,
+    InstrumentationScope, MetricExemplar, MetricPoint, MetricTemporality, OperationalEventV2,
+    SignalKind, EVENT_SCHEMA_URL, EVENT_SCHEMA_VERSION, EVENT_SCHEMA_VERSION_V1,
 };
 
 /// Compatibility name for callers of the bootstrap Sift API. New code should

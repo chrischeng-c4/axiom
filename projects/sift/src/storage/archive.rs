@@ -1,5 +1,8 @@
 // HANDWRITE-BEGIN gap="sift-gcs-archive-manifest" tracker="1659" reason="Upload sealed segments and blobs before the archive manifest and restore only hash-verified objects."
-use std::{collections::BTreeMap, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
@@ -96,10 +99,13 @@ pub fn restore_gcs(manifest_uri: &str, target: impl AsRef<Path>) -> Result<Archi
     let target = target.as_ref();
     std::fs::create_dir_all(target)?;
     let manifest_bytes = service_backup::fetch_backup_object(manifest_uri)?;
-    let mut manifest: ArchiveManifest = serde_json::from_slice(&manifest_bytes)
-        .context("decode Sift archive manifest")?;
+    let mut manifest: ArchiveManifest =
+        serde_json::from_slice(&manifest_bytes).context("decode Sift archive manifest")?;
     if manifest.format_version != 1 {
-        bail!("unsupported Sift archive manifest version {}", manifest.format_version);
+        bail!(
+            "unsupported Sift archive manifest version {}",
+            manifest.format_version
+        );
     }
     let manifests_root = target.join("segments").join("manifests");
     std::fs::create_dir_all(&manifests_root)?;
@@ -132,7 +138,10 @@ pub fn restore_gcs(manifest_uri: &str, target: impl AsRef<Path>) -> Result<Archi
         let bytes = service_backup::fetch_backup_object(&blob.object_uri)?;
         let restored = blob_store.put(&bytes, blob.reference.encoding.clone())?;
         if restored.hash != blob.reference.hash || restored.size != blob.reference.size {
-            bail!("restored blob {} failed hash/size verification", blob.reference.hash);
+            bail!(
+                "restored blob {} failed hash/size verification",
+                blob.reference.hash
+            );
         }
     }
     shard::write_epoch_maps(target, &manifest.epochs)?;

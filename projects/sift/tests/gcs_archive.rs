@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, time::Duration};
 
 use sift::{
     storage::{archive, RawStorage, StorageConfig},
-    EventEnvelope, StoredEvent,
+    DurableJournal, EventEnvelope, EventQuery, StoredEvent,
 };
 
 fn stored(cursor: u64) -> StoredEvent {
@@ -39,32 +39,42 @@ async fn vat_gcs_archive_manifest_is_written_last_and_cold_restore_is_equal() {
     }
     std::env::set_var("STORAGE_EMULATOR_HOST", format!("http://{address}"));
 
-    let source_dir = tempfile::tempdir().unwrap();
-    let storage = RawStorage::open_with_config(
-        source_dir.path(),
-        StorageConfig {
-            max_segment_events: 2,
-            ..StorageConfig::default()
-        },
-    )
+    tokio::task::spawn_blocking(|| {
+        let source_dir = tempfile::tempdir().unwrap();
+        let storage = RawStorage::open_with_config(
+            source_dir.path(),
+            StorageConfig {
+                initial_logical_shards: 1,
+                max_segment_events: 2,
+                ..StorageConfig::default()
+            },
+        )
+        .unwrap();
+        for cursor in 1..=5 {
+            storage.append(&stored(cursor)).unwrap();
+        }
+        storage.seal_all().unwrap();
+
+        let receipt = archive::archive_gcs(&storage, "gs://sift-test/domain-v1").unwrap();
+        assert!(receipt.manifest_uri.ends_with("manifest.json"));
+        assert_eq!(receipt.manifest.segments.len(), 3);
+
+        let restore_dir = tempfile::tempdir().unwrap();
+        let restored = archive::restore_gcs(&receipt.manifest_uri, restore_dir.path()).unwrap();
+        assert_eq!(restored.segments.len(), receipt.manifest.segments.len());
+        let reopened = DurableJournal::open(restore_dir.path()).unwrap();
+        let events = reopened.query(EventQuery::default()).unwrap();
+        assert_eq!(events.len(), 5);
+        assert_eq!(events[0].event.event_id, "archive-1");
+        assert_eq!(events[4].event.event_id, "archive-5");
+
+        let destination =
+            service_backup::BackupDestination::from_uri("gs://sift-test/domain-v1").unwrap();
+        let sink = service_backup::GcsSink::from_destination(&destination).unwrap();
+        assert!(service_backup::BackupSink::prune(&sink, 0).unwrap() >= 4);
+    })
+    .await
     .unwrap();
-    for cursor in 1..=5 {
-        storage.append(&stored(cursor)).unwrap();
-    }
-    storage.seal_all().unwrap();
-
-    let receipt = archive::archive_gcs(&storage, "gs://sift-test/domain-v1").unwrap();
-    assert!(receipt.manifest_uri.ends_with("manifest.json"));
-    assert_eq!(receipt.manifest.segments.len(), 3);
-
-    let restore_dir = tempfile::tempdir().unwrap();
-    let restored = archive::restore_gcs(&receipt.manifest_uri, restore_dir.path()).unwrap();
-    assert_eq!(restored.segments.len(), receipt.manifest.segments.len());
-    let reopened = RawStorage::open(restore_dir.path()).unwrap();
-    let events = reopened.recovered_events().unwrap();
-    assert_eq!(events.len(), 5);
-    assert_eq!(events[0].event.event_id, "archive-1");
-    assert_eq!(events[4].event.event_id, "archive-5");
 
     std::env::remove_var("STORAGE_EMULATOR_HOST");
     emulator.abort();

@@ -11,16 +11,17 @@ pub mod durability;
 pub mod event;
 pub mod ingest;
 pub mod operator;
+pub mod storage;
 
 pub use event::{
-    decode_event_json, AttributeValue, EventEnvelope, EventEnvelopeV1, GovernancePolicy,
-    GovernancePolicySet, IncomingEvent, InstrumentationScope, MetricExemplar, MetricPoint,
-    MetricTemporality, OperationalEventV2, SignalKind, EVENT_SCHEMA_URL, EVENT_SCHEMA_VERSION,
-    EVENT_SCHEMA_VERSION_V1,
+    decode_event_json, AttributeValue, ContentBlobRef, EventEnvelope, EventEnvelopeV1,
+    GovernancePolicy, GovernancePolicySet, IncomingEvent, InstrumentationScope, MetricExemplar,
+    MetricPoint, MetricTemporality, OperationalEventV2, SignalKind, EVENT_SCHEMA_URL,
+    EVENT_SCHEMA_VERSION, EVENT_SCHEMA_VERSION_V1,
 };
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -46,6 +47,31 @@ use utoipa::{OpenApi, ToSchema};
 
 const JOURNAL_FILE: &str = "raw-events.framed";
 const SNAPSHOT_FILE: &str = "raw-events.snapshot.json";
+
+fn rewrite_compatibility_journal(path: &Path, events: &[StoredEvent]) -> Result<()> {
+    let temporary = path.with_extension(format!("rebuild-{}", std::process::id()));
+    if temporary.exists() {
+        fs::remove_file(&temporary)
+            .with_context(|| format!("remove stale journal rebuild {}", temporary.display()))?;
+    }
+    let mut writer = service_durability::FramedLogWriter::open(
+        &temporary,
+        service_durability::FsyncPolicy::Always,
+    )?;
+    for event in events {
+        writer.append(event.cursor, &serde_json::to_vec(event)?)?;
+    }
+    writer.sync()?;
+    drop(writer);
+    fs::rename(&temporary, path).with_context(|| {
+        format!(
+            "replace compatibility journal {} from canonical raw storage",
+            path.display()
+        )
+    })?;
+    service_durability::sync_parent_dir(path)?;
+    Ok(())
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, ToSchema)]
 pub struct StoredEvent {
@@ -99,6 +125,7 @@ struct JournalState {
 /// making a successful [`append`](Self::append) acknowledgement durable.
 pub struct DurableJournal {
     snapshot_path: PathBuf,
+    storage: storage::RawStorage,
     writer: Mutex<service_durability::FramedLogWriter>,
     state: RwLock<JournalState>,
     governance: GovernancePolicySet,
@@ -122,6 +149,7 @@ impl DurableJournal {
             .with_context(|| format!("create Sift data directory {}", data_dir.display()))?;
         let journal_path = data_dir.join(JOURNAL_FILE);
         let snapshot_path = data_dir.join(SNAPSHOT_FILE);
+        let storage = storage::RawStorage::open(data_dir)?;
         let mut state = JournalState::default();
 
         if snapshot_path.exists() {
@@ -133,6 +161,7 @@ impl DurableJournal {
             Self::replace_state(&mut state, snapshot.events)?;
         }
 
+        let mut compatibility_rows = Vec::new();
         for frame in service_durability::FramedLogReader::read_frames(&journal_path, 0)? {
             let stored: StoredEvent = serde_json::from_slice(&frame.payload)
                 .with_context(|| format!("decode journal frame {}", frame.seq))?;
@@ -143,6 +172,7 @@ impl DurableJournal {
                     stored.cursor
                 );
             }
+            compatibility_rows.push(stored.clone());
             if state
                 .cursors_by_event_id
                 .contains_key(&stored.event.event_id)
@@ -152,9 +182,47 @@ impl DurableJournal {
             Self::insert_recovered(&mut state, stored)?;
         }
 
+        for stored in storage.recovered_events()? {
+            if let Some(cursor) = state
+                .cursors_by_event_id
+                .get(&stored.event.event_id)
+                .copied()
+            {
+                if cursor != stored.cursor {
+                    bail!(
+                        "raw storage event {} has cursor {}, but compatibility state has {cursor}",
+                        stored.event.event_id,
+                        stored.cursor
+                    );
+                }
+                continue;
+            }
+            Self::insert_recovered(&mut state, stored)?;
+        }
+
+        // Adopt retained v1/snapshot data into the canonical sharded plane.
+        // Segment append is cursor-idempotent, so this is safe on every open.
+        for stored in &state.events {
+            storage.append(stored)?;
+        }
+
+        let compatibility_identity = compatibility_rows
+            .iter()
+            .map(|stored| (stored.cursor, stored.event.event_id.as_str()))
+            .collect::<HashSet<_>>();
+        let canonical_identity = state
+            .events
+            .iter()
+            .map(|stored| (stored.cursor, stored.event.event_id.as_str()))
+            .collect::<HashSet<_>>();
+        if compatibility_identity != canonical_identity {
+            rewrite_compatibility_journal(&journal_path, &state.events)?;
+        }
+
         let accepted = state.events.len() as u64;
         let journal = Self {
             snapshot_path,
+            storage,
             writer: Mutex::new(service_durability::FramedLogWriter::open(
                 data_dir.join(JOURNAL_FILE),
                 service_durability::FsyncPolicy::Always,
@@ -182,7 +250,7 @@ impl DurableJournal {
         expected_cursor: Option<u64>,
         event: EventEnvelope,
     ) -> Result<AppendResult> {
-        let event = self.govern_event(event)?;
+        let mut event = self.govern_event(event)?;
         let mut state = self.state.write().expect("journal state lock poisoned");
         if let Some(cursor) = state.cursors_by_event_id.get(&event.event_id).copied() {
             self.duplicates.incr();
@@ -206,12 +274,19 @@ impl DurableJournal {
                 );
             }
         }
+        self.storage
+            .externalize_event(&mut event)
+            .context("durably externalize raw event payload")?;
+        event.validate()?;
         let stored = StoredEvent {
             cursor,
             acknowledged_at: now_rfc3339(),
             event,
         };
         let encoded = serde_json::to_vec(&stored).context("encode raw event")?;
+        self.storage
+            .append(&stored)
+            .context("CRC-frame and fsync sharded raw event before acknowledgement")?;
         self.writer
             .lock()
             .expect("journal writer lock poisoned")
@@ -233,6 +308,10 @@ impl DurableJournal {
 
     pub fn govern_event(&self, event: EventEnvelope) -> Result<EventEnvelope> {
         self.governance.govern(event)
+    }
+
+    pub fn storage(&self) -> &storage::RawStorage {
+        &self.storage
     }
 
     fn insert_recovered(state: &mut JournalState, stored: StoredEvent) -> Result<()> {
@@ -302,6 +381,11 @@ impl DurableJournal {
     }
 
     pub(crate) fn restore_snapshot(&self, events: Vec<StoredEvent>) -> Result<()> {
+        for event in &events {
+            self.storage
+                .append(event)
+                .context("restore snapshot event into canonical raw storage")?;
+        }
         let snapshot = durability::JournalSnapshot::from_events(events.clone());
         service_durability::atomic_write(
             &self.snapshot_path,

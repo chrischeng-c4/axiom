@@ -2,6 +2,7 @@
 // CODEGEN-BEGIN
 use anyhow::{bail, ensure, Context, Result};
 
+use crate::gcs;
 #[cfg(feature = "s3")]
 use crate::s3;
 
@@ -34,9 +35,7 @@ pub fn fetch_backup_object(raw_uri: &str) -> Result<Vec<u8>> {
         }
     }
     if uri.starts_with("gs://") {
-        bail!(
-            "backup object {uri} parses as GCS, but service-backup does not yet ship a GCS source; use file:// or s3://"
-        );
+        return gcs::get_exact_object(uri);
     }
     bail!("unsupported backup object URI `{uri}`; use file://, s3://, or gs://")
 }

@@ -1,5 +1,6 @@
 // HANDWRITE-BEGIN gap="sift-operational-event-v2-model" tracker="1657" reason="Define OperationalEventV2, typed attributes, eight signals, v1 wire shape, incoming compatibility decode, and deterministic upcast."
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
@@ -156,6 +157,15 @@ pub struct MetricPoint {
     pub exemplars: Vec<MetricExemplar>,
 }
 
+/// Durable content-addressed reference for a payload externalized before the
+/// canonical raw event is acknowledged.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
+pub struct ContentBlobRef {
+    pub hash: String,
+    pub size: u64,
+    pub encoding: String,
+}
+
 /// The only event shape serialized by new journal writers.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct OperationalEventV2 {
@@ -187,6 +197,8 @@ pub struct OperationalEventV2 {
     pub severity: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metric: Option<MetricPoint>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blob_refs: Vec<ContentBlobRef>,
     #[schema(value_type = Object)]
     pub payload: Value,
 }
@@ -224,6 +236,7 @@ impl OperationalEventV2 {
             session_id: None,
             severity: None,
             metric: None,
+            blob_refs: Vec::new(),
             payload,
         }
     }
@@ -275,6 +288,25 @@ impl OperationalEventV2 {
             (SignalKind::Metric, None) => bail!("metric signals require a direct metric point"),
             (_, Some(_)) => bail!("only metric signals may contain a metric point"),
             (_, None) => {}
+        }
+        let mut blob_hashes = HashSet::new();
+        for blob in &self.blob_refs {
+            let digest = blob
+                .hash
+                .strip_prefix("sha256:")
+                .context("blob hash must use the sha256:<hex> form")?;
+            if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                bail!("blob hash must contain a 64-character SHA-256 digest");
+            }
+            if blob.size == 0 {
+                bail!("blob size must be greater than zero");
+            }
+            if blob.encoding.trim().is_empty() {
+                bail!("blob encoding must not be empty");
+            }
+            if !blob_hashes.insert(blob.hash.as_str()) {
+                bail!("blob references must not contain duplicate hashes");
+            }
         }
         Ok(())
     }
@@ -371,6 +403,7 @@ impl TryFrom<EventEnvelopeV1> for OperationalEventV2 {
             session_id: None,
             severity: event.severity,
             metric: event.metric,
+            blob_refs: Vec::new(),
             payload: event.payload,
         };
         canonical.validate()?;

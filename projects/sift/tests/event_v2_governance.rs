@@ -1,6 +1,7 @@
 // HANDWRITE-BEGIN gap="sift-v2-governance-tests" tracker="1657" reason="Golden-test eight-signal typed round trips, v1 journal/snapshot upcast, project policy isolation, and absence of sensitive raw bytes."
 use std::{collections::BTreeMap, fs};
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::json;
 use sift::{
     decode_event_json, AttributeValue, DurableJournal, EventEnvelope, EventEnvelopeV1,
@@ -186,8 +187,10 @@ fn governance_redacts_and_truncates_before_raw_bytes_and_is_project_scoped() {
         "long".to_string(),
         AttributeValue::String("1234567890".to_string()),
     );
+    let encoded_prompt = BASE64.encode(vec![0x53; 80_000]);
     redacted.payload = json!({
         "prompt": "payload-secret-prompt",
+        "promptBytesBase64": encoded_prompt,
         "response": "payload-secret-response",
         "safe": "visible",
     });
@@ -237,6 +240,8 @@ fn governance_redacts_and_truncates_before_raw_bytes_and_is_project_scoped() {
         AttributeValue::String("12345678".into())
     );
     assert_eq!(rows[0].event.payload["prompt"], "[X]");
+    assert_eq!(rows[0].event.payload["promptBytesBase64"], "[X]");
+    assert!(rows[0].event.blob_refs.is_empty());
     assert_eq!(rows[0].event.payload["response"], "[X]");
     assert_eq!(rows[1].event.payload["prompt"], "kept");
     assert_eq!(

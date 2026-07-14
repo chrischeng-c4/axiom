@@ -65,11 +65,11 @@ first-class domain roots.
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
 | Operational Event Ingest | 1658 | implemented | verified | conformance | ready | bounded JSON and OTLP JSON/protobuf/gzip ingest with ordered outcomes, project admission, and normalized resource/context |
-| Raw Event Journal And Archive | 1659 | planned | planned | conformance | not_ready | canonical append-only journal, replay, and GCS archive manifest |
-| Durability And Acknowledgment | 1659 | planned | planned | conformance | not_ready | an accepted mutation is durable before its success response |
-| Shard-Aware Hot Storage | 1659 | planned | planned | conformance | not_ready | 4096 virtual buckets, epochs, sealed segments, and movable history |
+| Raw Event Journal And Archive | 1659 | implemented | partial | conformance | not_ready | sharded source-of-truth journal, durable blobs, and GCS archive/restore are passing; projection replay remains #1660 |
+| Durability And Acknowledgment | 1659 | implemented | partial | conformance | not_ready | blob and sharded raw fsync-before-ack plus single-node Raft apply pass; three-node proof remains #1676 |
+| Shard-Aware Hot Storage | 1659 | implemented | partial | conformance | not_ready | 4096 buckets, future-only epochs, sealed segments, movement, and recovery pass; rebuild index/retention remain |
 | Replica Sync And Bootstrap | 1676 | implemented | partial | conformance | not_ready | existing Raft state machine plus pending three-node/domain recovery proof |
-| Backup And Restore | 1659 | implemented | partial | conformance | not_ready | existing snapshot lifecycle plus pending real GCS archive and cold restore |
+| Backup And Restore | 1659 | implemented | partial | conformance | not_ready | snapshot plus real Vat-backed GCS archive/cold restore pass; scheduled off-node and three-node proof remain #1676 |
 | Schema Governance | 1657 | implemented | partial | conformance | not_ready | OperationalEventV2/upcast/privacy are verified; index/cardinality controls remain |
 | Materialized Observability Stores | 1660 | planned | planned | conformance | not_ready | independent logging, trace, error, metric, audit/change, profile, and GenAI views |
 | Query Tail And Replay | 1671 | planned | planned | conformance | not_ready | typed cross-signal query, tail resume, correlation, cursoring, and replay jobs |
@@ -135,23 +135,25 @@ Status: confirmed
 Surfaces: Storage: append-only raw operational event journal, GCS archive
 writer, archive manifest, replay cursor, and rebuild checkpoints; HTTP/CLI:
 replay and archive inspection.
-EC Dimensions: behavior: pending journal/archive gate - append/read, archive
-manifest integrity, replay cursor correctness, and rebuild idempotency;
-stability: pending archive/replay soak.
+EC Dimensions: behavior: `cargo test -p sift --test sharded_journal` and
+`cargo test -p sift --test gcs_archive` - append/read, torn-tail recovery,
+blob-before-reference durability, manifest integrity, and cold restore;
+stability: projection rebuild and archive/replay soak remain #1660/#1676.
 Required Verification: conformance, dogfood
 Promise:
 Treat raw operational events as Sift's source of truth so every materialized
 view can be rebuilt from the journal or GCS archive instead of becoming the only
 copy of the facts.
 Gate Inventory:
-- pending: projects/sift/tests/raw_event_journal.rs
-- pending: projects/sift/tests/gcs_archive_replay.rs
+- implemented raw/shard/blob recovery: projects/sift/tests/sharded_journal.rs
+- implemented Vat GCS archive/restore: projects/sift/tests/gcs_archive.rs
+- pending projection equality/replay jobs: 1660
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| append-only-operational-event-journal | change | 1659 | planned | planned | conformance | sharded segment append/read and torn-tail gate |
-| durable-content-addressed-blobs | change | 1659 | planned | planned | conformance | blob-before-journal-ack gate |
-| gcs-raw-archive-manifest | change | 1659 | planned | planned | dogfood | real GCS sink, archive manifest, and cold-restore gate |
+| append-only-operational-event-journal | change | 1659 | implemented | passing | conformance | projects/sift/tests/sharded_journal.rs |
+| durable-content-addressed-blobs | change | 1659 | implemented | passing | conformance | projects/sift/tests/sharded_journal.rs |
+| gcs-raw-archive-manifest | change | 1659 | implemented | passing | dogfood | projects/sift/tests/gcs_archive.rs |
 | replayable-view-rebuild | change | 1660 | planned | planned | dogfood | durable replay job and projection equality gate |
 
 ### Durability And Acknowledgment
@@ -163,9 +165,9 @@ Status: confirmed
 Surfaces: Storage: service-owned durable journal/state store and projection
 checkpoints; HTTP: accepted event responses carry the durable cursor and commit
 index.
-EC Dimensions: behavior: pending durable-ack gate - acknowledge only after
-fsync and replicated state-machine commit; stability: pending crash/restart
-gate - no acknowledged event is lost or duplicated after recovery.
+EC Dimensions: behavior: raw blob/segment fsync and ordered single-node
+`RaftStateMachine` apply pass before acknowledgement; stability: torn-tail and
+restart recovery pass locally, while three-node failover remains #1676.
 Required Verification: conformance, dogfood
 Promise:
 Never report a successful state-changing ingest, replay, retention, or admin
@@ -174,13 +176,14 @@ is the durable raw-journal append plus committed `raft-host` state-machine
 application; a restart must recover every acknowledged event exactly once by
 event id.
 Gate Inventory:
-- pending: projects/sift/tests/durable_ack_boundary.rs
-- pending: projects/sift/tests/crash_restart_recovery.rs
+- implemented raw fsync/recovery: projects/sift/tests/sharded_journal.rs
+- implemented ordered Raft apply/snapshot: projects/sift/tests/ha_backup_e2e.rs
+- pending three-node failover/power-loss proof: 1676
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| fsync-before-success-response | change | 1659 | planned | planned | conformance | durable raw cursor acknowledgement gate |
-| committed-raft-apply-before-success | change | 1659 | planned | planned | conformance | primary/quorum commit-before-raw-append gate |
+| fsync-before-success-response | change | 1659 | implemented | passing | conformance | projects/sift/tests/sharded_journal.rs |
+| committed-raft-apply-before-success | change | 1659 | implemented | passing | conformance | projects/sift/tests/ha_backup_e2e.rs; multi-node proof remains #1676 |
 | crash-restart-acknowledged-event-recovery | change | 1676 | planned | planned | dogfood | three-node failover and power-loss recovery gate |
 
 ### Shard-Aware Hot Storage
@@ -192,10 +195,10 @@ Status: confirmed
 Surfaces: Storage: bucket-scoped logical shards, epoch shard maps, sealed
 segments, hot indexes, placement metadata, retention workers, and
 snapshot/restore paths.
-EC Dimensions: behavior: pending storage conformance gate - shard routing,
-append/read, epoch split, sealed segment movement, retention delete, cursor
-pagination, and rebuildable index behavior; stability: pending retention and
-capacity soak.
+EC Dimensions: behavior: `cargo test -p sift --test sharded_journal` verifies
+shard routing, append/read, future-only epoch split, torn-tail recovery, and
+sealed segment movement; retention delete and rebuildable index behavior remain
+#1660/#1676. Stability: pending retention and capacity soak.
 Required Verification: conformance, dogfood
 Promise:
 Store hot operational events with logical sharding from day one, even when all
@@ -203,15 +206,15 @@ shards initially live on one local placement, so future capacity growth can
 split new writes by epoch and move sealed segments without rewriting the entire
 history.
 Gate Inventory:
-- pending: projects/sift/tests/shard_hot_storage.rs
-- pending: projects/sift/tests/shard_epoch_split.rs
-- pending: projects/sift/tests/retention.rs
+- implemented routing/epoch/segment recovery: projects/sift/tests/sharded_journal.rs
+- pending projection-index equality: 1660
+- pending retention/capacity soak: 1676
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| 4096-virtual-bucket-routing | change | 1659 | planned | planned | conformance | deterministic bucket and logical-shard routing gate |
-| epoch-based-future-write-split | change | 1659 | planned | planned | conformance | versioned future-write-only epoch transition gate |
-| sealed-segment-retention-and-move | change | 1659 | planned | planned | dogfood | historical ownership, retention, and segment-move gate |
+| 4096-virtual-bucket-routing | change | 1659 | implemented | passing | conformance | projects/sift/tests/sharded_journal.rs |
+| epoch-based-future-write-split | change | 1659 | implemented | passing | conformance | projects/sift/tests/sharded_journal.rs |
+| sealed-segment-retention-and-move | change | 1659 | implemented | passing | dogfood | byte-preserving move passes; retention worker remains #1676 |
 | rebuildable-hot-index | change | 1660 | planned | planned | dogfood | embedded-Lumen rebuild equality gate |
 
 ### Replica Sync And Bootstrap
@@ -251,9 +254,9 @@ Status: confirmed
 Surfaces: CLI: `sift backup export|restore`; Storage: consistent raw-journal
 and state-machine snapshots, archive manifests, and object-storage destination
 policy; K8s: scheduled backup job and restore status.
-EC Dimensions: behavior: pending snapshot/restore gate - a consistent snapshot
-recreates raw journal, shard map, and projection checkpoint; stability: pending
-scheduled object-storage backup and cold-restore gate.
+EC Dimensions: behavior: snapshot restore plus Vat-backed GCS segment/blob/
+epoch-map cold restore pass; projection checkpoints remain #1660. Stability:
+scheduled off-node backup and three-node restore remain #1676.
 Required Verification: conformance, dogfood
 Promise:
 Expose consistent snapshot and restore through the Sift state machine and the
@@ -262,14 +265,15 @@ scheduled off-node object-storage backup; GCS is the required GCP destination
 when the shared adapter is available, and no local-only backup is called
 production-ready.
 Gate Inventory:
-- pending: projects/sift/tests/backup_restore_e2e.rs
-- pending: projects/sift/tests/backup_schedule_render.rs
+- implemented state snapshot restore: projects/sift/tests/ha_backup_e2e.rs
+- implemented Vat GCS archive/cold restore: projects/sift/tests/gcs_archive.rs
+- pending scheduled off-node/three-node restore: 1676
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | consistent-state-machine-snapshot | change | 1605 | implemented | passing | conformance | projects/sift/tests/ha_backup_e2e.rs |
 | service-backup-policy-and-runner | change | 1605 | implemented | passing | conformance | projects/sift/tests/ha_backup_e2e.rs |
-| real-service-backup-gcs-sink | change | 1659 | planned | planned | conformance | Vat GCS emulator sink contract gate |
+| real-service-backup-gcs-sink | change | 1659 | implemented | passing | conformance | projects/sift/tests/gcs_archive.rs |
 | scheduled-gcs-object-backup | change | 1676 | planned | planned | dogfood | CronJob, object snapshot, and cold-restore gate |
 
 ### Schema Governance
