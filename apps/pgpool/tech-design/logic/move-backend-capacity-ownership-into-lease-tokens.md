@@ -37,7 +37,6 @@ flowchart LR
   relay -->|close| close
   lease -->|unreleased drop| dropped([free once + notify])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
