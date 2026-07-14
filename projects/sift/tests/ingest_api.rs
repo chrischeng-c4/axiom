@@ -35,7 +35,7 @@ fn event(id: &str, signal: SignalKind) -> EventEnvelope {
 }
 
 #[test]
-fn all_six_signal_envelopes_validate_and_metric_context_is_required() {
+fn all_eight_signal_envelopes_validate_and_metric_context_is_required() {
     for signal in SignalKind::ALL {
         event(&format!("event-{signal}"), signal)
             .validate()

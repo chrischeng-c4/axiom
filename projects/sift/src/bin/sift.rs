@@ -8,8 +8,9 @@ use serde::Serialize;
 use serde_json::Value;
 use sift::{
     auth::SiftVerifier,
+    decode_event_json,
     deploy::{DockerfileVariant, InstanceProfile},
-    DurableJournal, EventEnvelope, EventQuery, ServiceState, SignalKind,
+    DurableJournal, EventQuery, ServiceState, SignalKind,
 };
 
 #[derive(Parser)]
@@ -536,7 +537,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
 fn append_event(args: EventArgs) -> Result<()> {
     let source = std::fs::read_to_string(&args.file)
         .with_context(|| format!("read event file {}", args.file.display()))?;
-    let event: EventEnvelope = serde_json::from_str(&source).context("parse EventEnvelope JSON")?;
+    let event = decode_event_json(source.as_bytes()).context("parse operational event JSON")?;
     let result = DurableJournal::open(&args.data_dir)?.append(event)?;
     print_json_terminal(result)
 }

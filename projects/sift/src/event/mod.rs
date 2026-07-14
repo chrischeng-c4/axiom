@@ -13,5 +13,4 @@ pub use model::{
 /// prefer [`OperationalEventV2`] when the schema generation is relevant.
 pub use model::OperationalEventV2 as EventEnvelope;
 
-<!-- marker: sift-event-module path: projects/sift/src/event/mod.rs reason: Export the versioned event model and governance policy as one semantic event boundary. -->
 // HANDWRITE-END

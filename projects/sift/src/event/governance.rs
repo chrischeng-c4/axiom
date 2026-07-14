@@ -105,7 +105,9 @@ impl GovernancePolicySet {
     }
 
     pub fn govern(&self, mut event: OperationalEventV2) -> Result<OperationalEventV2> {
-        event.validate().context("validate event before governance")?;
+        event
+            .validate()
+            .context("validate event before governance")?;
         let policy = self.projects.get(&event.project).unwrap_or(&self.default);
         policy.validate()?;
 
@@ -123,7 +125,9 @@ impl GovernancePolicySet {
         }
         govern_json(&mut event.payload, policy, is_genai, None);
 
-        event.validate().context("validate event after governance")?;
+        event
+            .validate()
+            .context("validate event after governance")?;
         Ok(event)
     }
 }
@@ -164,16 +168,8 @@ fn govern_attribute_value(value: &mut AttributeValue, max_string_bytes: usize) {
     }
 }
 
-fn govern_json(
-    value: &mut Value,
-    policy: &GovernancePolicy,
-    is_genai: bool,
-    key: Option<&str>,
-) {
-    if is_genai
-        && !policy.capture_genai_content
-        && key.is_some_and(is_content_key)
-    {
+fn govern_json(value: &mut Value, policy: &GovernancePolicy, is_genai: bool, key: Option<&str>) {
+    if is_genai && !policy.capture_genai_content && key.is_some_and(is_content_key) {
         *value = Value::String(policy.redaction_text.clone());
         return;
     }
@@ -233,5 +229,4 @@ fn truncate_utf8(value: &mut String, max_bytes: usize) {
     value.truncate(boundary);
 }
 
-<!-- marker: sift-pre-journal-governance path: projects/sift/src/event/governance.rs reason: Load default/project policies and apply denied-key, truncation, and default-off GenAI content redaction idempotently. -->
 // HANDWRITE-END

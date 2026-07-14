@@ -4,28 +4,20 @@ use std::{collections::BTreeMap, fs};
 use serde_json::json;
 use sift::{
     decode_event_json, AttributeValue, DurableJournal, EventEnvelope, EventEnvelopeV1,
-    GovernancePolicy, GovernancePolicySet, InstrumentationScope, MetricPoint,
-    MetricTemporality, SignalKind, EVENT_SCHEMA_URL, EVENT_SCHEMA_VERSION,
+    GovernancePolicy, GovernancePolicySet, InstrumentationScope, MetricPoint, MetricTemporality,
+    SignalKind, EVENT_SCHEMA_URL, EVENT_SCHEMA_VERSION,
 };
 
 fn v2_event(project: &str, id: &str, signal: SignalKind) -> EventEnvelope {
-    let mut event = EventEnvelope::for_project(
-        project,
-        "prod",
-        id,
-        signal,
-        json!({"message": "accepted"}),
-    );
+    let mut event =
+        EventEnvelope::for_project(project, "prod", id, signal, json!({"message": "accepted"}));
     event
         .resource
         .insert("service.name".to_string(), "checkout".to_string());
     event.instrumentation_scope = Some(InstrumentationScope {
         name: "checkout-sdk".to_string(),
         version: Some("1.2.3".to_string()),
-        attributes: BTreeMap::from([(
-            "scope.enabled".to_string(),
-            AttributeValue::Bool(true),
-        )]),
+        attributes: BTreeMap::from([("scope.enabled".to_string(), AttributeValue::Bool(true))]),
         schema_url: Some("https://opentelemetry.io/schemas/1.30.0".to_string()),
     });
     event.trace_id = Some("0af7651916cd43dd8448eb211c80319c".to_string());
@@ -40,7 +32,10 @@ fn operational_event_v2_round_trips_all_signals_and_typed_attributes() {
     for signal in SignalKind::ALL {
         let mut event = v2_event("project-a", &format!("event-{signal}"), signal);
         event.attributes = BTreeMap::from([
-            ("string".to_string(), AttributeValue::String("value".to_string())),
+            (
+                "string".to_string(),
+                AttributeValue::String("value".to_string()),
+            ),
             ("bool".to_string(), AttributeValue::Bool(true)),
             ("int".to_string(), AttributeValue::Int(42)),
             ("double".to_string(), AttributeValue::Double(4.25)),
@@ -88,7 +83,10 @@ fn v1_event_and_legacy_journal_frame_upcast_without_field_loss() {
         signal: SignalKind::Log,
         resource: BTreeMap::from([
             ("gcp.project_id".to_string(), "legacy-project".to_string()),
-            ("deployment.environment.name".to_string(), "staging".to_string()),
+            (
+                "deployment.environment.name".to_string(),
+                "staging".to_string(),
+            ),
             ("service.name".to_string(), "legacy-api".to_string()),
         ]),
         attributes: BTreeMap::from([("legacy.key".to_string(), "value".to_string())]),
@@ -102,9 +100,17 @@ fn v1_event_and_legacy_journal_frame_upcast_without_field_loss() {
     assert_eq!(upcast.project, "legacy-project");
     assert_eq!(upcast.environment, "staging");
     assert_eq!(upcast.observed_at, v1.occurred_at);
-    assert_eq!(upcast.attributes["legacy.key"], AttributeValue::String("value".into()));
+    assert_eq!(
+        upcast.attributes["legacy.key"],
+        AttributeValue::String("value".into())
+    );
     assert_eq!(upcast.payload, v1.payload);
 
+    let stored_v1 = json!({
+        "cursor": 1,
+        "acknowledged_at": "2026-07-14T00:00:01Z",
+        "event": v1,
+    });
     let temp = tempfile::tempdir().unwrap();
     let mut writer = service_durability::FramedLogWriter::open(
         temp.path().join("raw-events.framed"),
@@ -112,15 +118,7 @@ fn v1_event_and_legacy_journal_frame_upcast_without_field_loss() {
     )
     .unwrap();
     writer
-        .append(
-            1,
-            &serde_json::to_vec(&json!({
-                "cursor": 1,
-                "acknowledged_at": "2026-07-14T00:00:01Z",
-                "event": v1,
-            }))
-            .unwrap(),
-        )
+        .append(1, &serde_json::to_vec(&stored_v1).unwrap())
         .unwrap();
     drop(writer);
 
@@ -130,6 +128,18 @@ fn v1_event_and_legacy_journal_frame_upcast_without_field_loss() {
     assert_eq!(recovered[0].event.schema_version, 2);
     assert_eq!(recovered[0].event.project, "legacy-project");
     assert_eq!(recovered[0].event.payload, json!({"message": "legacy"}));
+
+    let snapshot_temp = tempfile::tempdir().unwrap();
+    fs::write(
+        snapshot_temp.path().join("raw-events.snapshot.json"),
+        serde_json::to_vec(&json!({"applied_index": 1, "events": [stored_v1]})).unwrap(),
+    )
+    .unwrap();
+    let snapshot_journal = DurableJournal::open(snapshot_temp.path()).unwrap();
+    let snapshot_rows = snapshot_journal.replay(0, 10).unwrap();
+    assert_eq!(snapshot_rows.len(), 1);
+    assert_eq!(snapshot_rows[0].event.schema_version, 2);
+    assert_eq!(snapshot_rows[0].event.event_id, "legacy-1");
 }
 
 #[test]
@@ -137,6 +147,7 @@ fn governance_redacts_and_truncates_before_raw_bytes_and_is_project_scoped() {
     let default = GovernancePolicy {
         capture_genai_content: false,
         max_string_bytes: 8,
+        allowed_attribute_keys: None,
         denied_attribute_keys: ["secret".to_string()].into_iter().collect(),
         redaction_text: "[X]".to_string(),
     };
@@ -144,9 +155,16 @@ fn governance_redacts_and_truncates_before_raw_bytes_and_is_project_scoped() {
         capture_genai_content: true,
         ..default.clone()
     };
+    let allowlist = GovernancePolicy {
+        allowed_attribute_keys: Some(["kept".to_string()].into_iter().collect()),
+        ..default.clone()
+    };
     let policies = GovernancePolicySet {
         default,
-        projects: BTreeMap::from([("capture-project".to_string(), capture)]),
+        projects: BTreeMap::from([
+            ("capture-project".to_string(), capture),
+            ("allowlist-project".to_string(), allowlist),
+        ]),
     };
     let temp = tempfile::tempdir().unwrap();
     let journal = DurableJournal::open_with_governance(temp.path(), policies).unwrap();
@@ -183,6 +201,16 @@ fn governance_redacts_and_truncates_before_raw_bytes_and_is_project_scoped() {
     captured.payload = json!({"prompt": "kept"});
     journal.append(captured).unwrap();
 
+    let mut allowlisted = v2_event("allowlist-project", "allowlist-1", SignalKind::Log);
+    allowlisted
+        .attributes
+        .insert("kept".to_string(), AttributeValue::String("visible".into()));
+    allowlisted.attributes.insert(
+        "dropped".to_string(),
+        AttributeValue::String("must-redact".into()),
+    );
+    journal.append(allowlisted).unwrap();
+
     let raw = fs::read(temp.path().join("raw-events.framed")).unwrap();
     let raw_text = String::from_utf8_lossy(&raw);
     for forbidden in [
@@ -191,17 +219,34 @@ fn governance_redacts_and_truncates_before_raw_bytes_and_is_project_scoped() {
         "payload-secret-prompt",
         "payload-secret-response",
         "1234567890",
+        "must-redact",
     ] {
-        assert!(!raw_text.contains(forbidden), "raw journal leaked {forbidden}");
+        assert!(
+            !raw_text.contains(forbidden),
+            "raw journal leaked {forbidden}"
+        );
     }
 
     let rows = journal.replay(0, 10).unwrap();
-    assert_eq!(rows[0].event.attributes["secret"], AttributeValue::String("[X]".into()));
-    assert_eq!(rows[0].event.attributes["long"], AttributeValue::String("12345678".into()));
+    assert_eq!(
+        rows[0].event.attributes["secret"],
+        AttributeValue::String("[X]".into())
+    );
+    assert_eq!(
+        rows[0].event.attributes["long"],
+        AttributeValue::String("12345678".into())
+    );
     assert_eq!(rows[0].event.payload["prompt"], "[X]");
     assert_eq!(rows[0].event.payload["response"], "[X]");
     assert_eq!(rows[1].event.payload["prompt"], "kept");
+    assert_eq!(
+        rows[2].event.attributes["kept"],
+        AttributeValue::String("visible".into())
+    );
+    assert_eq!(
+        rows[2].event.attributes["dropped"],
+        AttributeValue::String("[X]".into())
+    );
 }
 
-<!-- marker: sift-v2-governance-tests path: projects/sift/tests/event_v2_governance.rs reason: Golden-test eight-signal typed round trips, v1 journal/snapshot upcast, project policy isolation, and absence of sensitive raw bytes. -->
 // HANDWRITE-END

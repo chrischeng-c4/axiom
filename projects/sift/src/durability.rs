@@ -10,7 +10,7 @@ use anyhow::Result;
 use raft_host::{Index, RaftStateMachine};
 use serde::{Deserialize, Serialize};
 
-use crate::{DurableJournal, EventEnvelope, StoredEvent};
+use crate::{DurableJournal, IncomingEvent, StoredEvent};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct JournalSnapshot {
@@ -48,8 +48,8 @@ impl SiftStateMachine {
 
 impl RaftStateMachine for SiftStateMachine {
     fn apply(&self, index: Index, command: &[u8]) -> Result<()> {
-        let event: EventEnvelope = serde_json::from_slice(command)?;
-        self.journal.append_at(index, event)?;
+        let event: IncomingEvent = serde_json::from_slice(command)?;
+        self.journal.append_at(index, event.into_inner())?;
         self.applied_index.store(index, Ordering::Release);
         Ok(())
     }

@@ -70,7 +70,7 @@ first-class domain roots.
 | Shard-Aware Hot Storage | 1659 | planned | planned | conformance | not_ready | 4096 virtual buckets, epochs, sealed segments, and movable history |
 | Replica Sync And Bootstrap | 1676 | implemented | partial | conformance | not_ready | existing Raft state machine plus pending three-node/domain recovery proof |
 | Backup And Restore | 1659 | implemented | partial | conformance | not_ready | existing snapshot lifecycle plus pending real GCS archive and cold restore |
-| Schema Governance | 1657 | planned | planned | conformance | not_ready | OperationalEventV2, v1 upcast, typed attributes, privacy, and cardinality controls |
+| Schema Governance | 1657 | implemented | partial | conformance | not_ready | OperationalEventV2/upcast/privacy are verified; index/cardinality controls remain |
 | Materialized Observability Stores | 1660 | planned | planned | conformance | not_ready | independent logging, trace, error, metric, audit/change, profile, and GenAI views |
 | Query Tail And Replay | 1671 | planned | planned | conformance | not_ready | typed cross-signal query, tail resume, correlation, cursoring, and replay jobs |
 | GKE Event Collection | 1675 | planned | planned | conformance | not_ready | later DaemonSet producer reads CRI logs and emits deduplicated structured events |
@@ -113,12 +113,13 @@ events, including direct `metric` points with temporality and exemplars.
 Validate their envelope and signal schema, normalize resource and trace context,
 and make write pressure explicit before the storage path is overrun.
 Gate Inventory:
-- pending: projects/sift/tests/operational_event_ingest.rs
-- pending: projects/sift/tests/event_schema_validation.rs
+- implemented V2/upcast/privacy: projects/sift/tests/event_v2_governance.rs
+- implemented eight-signal validation: projects/sift/tests/ingest_api.rs
+- pending OTLP/GCP transport: 1658
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| operational-event-v2-and-policy | change | 1657 | planned | planned | conformance | v1 upcast, typed attributes, content policy, and redaction gate |
+| operational-event-v2-and-policy | change | 1657 | implemented | passing | conformance | projects/sift/tests/event_v2_governance.rs |
 | h2c-openapi-event-write-route | change | 1658 | planned | planned | conformance | bounded JSON batch and OpenAPI contract gate |
 | gcp-gke-event-envelope-validation | change | 1658 | planned | planned | conformance | structured GCP/GKE normalization gate |
 | otlp-log-span-metric-profile-normalization | change | 1658 | planned | planned | conformance | OTLP JSON/protobuf/gzip partial-success gate |
@@ -288,16 +289,18 @@ Keep operational events structured and governable by requiring schema versions,
 known signals, bounded indexed fields, controlled high-cardinality attributes,
 and explicit redaction/access policies.
 Gate Inventory:
-- pending: projects/sift/tests/schema_registry.rs
+- implemented: projects/sift/tests/event_v2_governance.rs
 - pending: projects/sift/tests/index_policy.rs
-- pending: projects/sift/tests/redaction_policy.rs
+- implemented: projects/sift/tests/event_v2_governance.rs (pre-journal privacy policy)
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| operational-event-v2-envelope | change | 1657 | planned | planned | conformance | V2 round-trip and v1 journal upcast gate |
-| signal-taxonomy-and-versioning | change | 1657 | planned | planned | conformance | eight-signal schema and compatibility gate |
-| indexed-field-and-cardinality-policy | change | 1657 | planned | planned | conformance | typed attribute/index allowlist gate |
-| pii-and-genai-content-policy | change | 1657 | planned | planned | negative | pre-journal truncate/redact/default-off content gate |
+| operational-event-v2-envelope | change | 1657 | implemented | passing | conformance | V2 typed round-trip and legacy journal/snapshot upcast tests |
+| signal-taxonomy-and-versioning | change | 1657 | implemented | passing | conformance | eight-signal schema and compatibility tests |
+| typed-attribute-policy | change | 1657 | implemented | passing | conformance | allow/deny and recursive typed-value validation tests |
+| projection-index-allowlist | change | 1660 | planned | planned | conformance | rebuildable index field allowlist gate |
+| metric-cardinality-policy | change | 1667 | planned | planned | conformance | time-series overflow and budget gate |
+| pii-and-genai-content-policy | change | 1657 | implemented | passing | negative | raw-byte absence, allow/deny, truncation, and project-policy tests |
 
 ### Materialized Observability Stores
 
@@ -881,7 +884,7 @@ Gate Inventory:
 | deployment-guard-hardening | change | 1616 | implemented | passing | negative | projects/sift/guard.toml |
 | scoped-event-view-access | change | 1671 | planned | planned | negative | store/query project authorization gate |
 | audit-event-retention-policy | change | 1668 | planned | planned | negative | legal hold, export, and retention gate |
-| pii-redaction-and-index-denylist | change | 1657 | planned | planned | negative | pre-journal content and attribute policy gate |
+| pii-redaction-and-index-denylist | change | 1657 | implemented | planned | negative | pre-journal policy passes; projection index denylist remains in #1660 |
 
 ### Competitor Feature Parity
 

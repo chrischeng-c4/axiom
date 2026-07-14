@@ -1,5 +1,5 @@
 // HANDWRITE-BEGIN gap="sift-service-core" tracker="1576" reason="Implement the versioned operational-event envelope, durable raw journal, idempotency, query, and replay core."
-//! Sift's bootstrap service core: a versioned six-signal envelope and the
+//! Sift's service core: a versioned eight-signal envelope and the
 //! canonical, fsync-before-ack raw event journal. Materialized log, trace,
 //! error, metric, and audit/change stores deliberately build from this journal
 //! in later slices rather than becoming alternate sources of truth.
@@ -8,10 +8,18 @@ pub mod auth;
 pub mod backup;
 pub mod deploy;
 pub mod durability;
+pub mod event;
 pub mod operator;
 
+pub use event::{
+    decode_event_json, AttributeValue, EventEnvelope, EventEnvelopeV1, GovernancePolicy,
+    GovernancePolicySet, IncomingEvent, InstrumentationScope, MetricExemplar, MetricPoint,
+    MetricTemporality, OperationalEventV2, SignalKind, EVENT_SCHEMA_URL, EVENT_SCHEMA_VERSION,
+    EVENT_SCHEMA_VERSION_V1,
+};
+
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -29,167 +37,39 @@ use axum::{
     Json, Router,
 };
 use chrono::Utc;
-use clap::ValueEnum;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::{Deserialize, Deserializer, Serialize};
 use service_metrics::{Counter, Sample};
 use utoipa::{OpenApi, ToSchema};
 
-pub const EVENT_SCHEMA_VERSION: u16 = 1;
 const JOURNAL_FILE: &str = "raw-events.framed";
 const SNAPSHOT_FILE: &str = "raw-events.snapshot.json";
 
-/// The six operational signal kinds accepted into Sift's canonical event log.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, ToSchema, ValueEnum)]
-#[serde(rename_all = "snake_case")]
-pub enum SignalKind {
-    Log,
-    Span,
-    Metric,
-    Exception,
-    AuditEvent,
-    ChangeEvent,
-}
-
-impl SignalKind {
-    pub const ALL: [Self; 6] = [
-        Self::Log,
-        Self::Span,
-        Self::Metric,
-        Self::Exception,
-        Self::AuditEvent,
-        Self::ChangeEvent,
-    ];
-}
-
-impl std::fmt::Display for SignalKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let name = match self {
-            Self::Log => "log",
-            Self::Span => "span",
-            Self::Metric => "metric",
-            Self::Exception => "exception",
-            Self::AuditEvent => "audit_event",
-            Self::ChangeEvent => "change_event",
-        };
-        f.write_str(name)
-    }
-}
-
-/// Metric aggregation semantics are preserved in raw events; Sift does not
-/// rewrite direct points into logs before the metric store consumes them.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum MetricTemporality {
-    Delta,
-    Cumulative,
-    Gauge,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
-pub struct MetricExemplar {
-    pub value: f64,
-    pub trace_id: String,
-    pub span_id: String,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
-pub struct MetricPoint {
-    pub name: String,
-    pub value: f64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub unit: Option<String>,
-    pub temporality: MetricTemporality,
-    #[serde(default)]
-    pub exemplars: Vec<MetricExemplar>,
-}
-
-/// Stable, producer-neutral envelope written to the raw journal.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
-pub struct EventEnvelope {
-    pub schema_version: u16,
-    pub event_id: String,
-    #[serde(default = "now_rfc3339")]
-    pub occurred_at: String,
-    pub signal: SignalKind,
-    #[serde(default)]
-    #[schema(value_type = Object)]
-    pub resource: BTreeMap<String, String>,
-    #[serde(default)]
-    #[schema(value_type = Object)]
-    pub attributes: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trace_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub span_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub severity: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub metric: Option<MetricPoint>,
-    #[schema(value_type = Object)]
-    pub payload: Value,
-}
-
-impl EventEnvelope {
-    pub fn new(event_id: impl Into<String>, signal: SignalKind, payload: Value) -> Self {
-        Self {
-            schema_version: EVENT_SCHEMA_VERSION,
-            event_id: event_id.into(),
-            occurred_at: now_rfc3339(),
-            signal,
-            resource: BTreeMap::new(),
-            attributes: BTreeMap::new(),
-            trace_id: None,
-            span_id: None,
-            severity: None,
-            metric: None,
-            payload,
-        }
-    }
-
-    pub fn validate(&self) -> Result<()> {
-        if self.schema_version != EVENT_SCHEMA_VERSION {
-            bail!(
-                "unsupported schema_version {}; expected {}",
-                self.schema_version,
-                EVENT_SCHEMA_VERSION
-            );
-        }
-        if self.event_id.trim().is_empty() {
-            bail!("event_id must not be empty");
-        }
-        if self.occurred_at.trim().is_empty() {
-            bail!("occurred_at must not be empty");
-        }
-        if self.resource.is_empty() {
-            bail!("resource must contain at least one stable identity field");
-        }
-        if self.payload.is_null() {
-            bail!("payload must not be null");
-        }
-        if self.signal == SignalKind::Metric {
-            let metric = self
-                .metric
-                .as_ref()
-                .context("metric signals require a direct metric point")?;
-            if metric.name.trim().is_empty() || !metric.value.is_finite() {
-                bail!("metric name must be non-empty and value must be finite");
-            }
-            for exemplar in &metric.exemplars {
-                if exemplar.trace_id.trim().is_empty() || exemplar.span_id.trim().is_empty() {
-                    bail!("metric exemplars require trace_id and span_id");
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, ToSchema)]
 pub struct StoredEvent {
     pub cursor: u64,
     pub acknowledged_at: String,
     pub event: EventEnvelope,
+}
+
+#[derive(Deserialize)]
+struct StoredEventWire {
+    cursor: u64,
+    acknowledged_at: String,
+    event: IncomingEvent,
+}
+
+impl<'de> Deserialize<'de> for StoredEvent {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = StoredEventWire::deserialize(deserializer)?;
+        Ok(Self {
+            cursor: wire.cursor,
+            acknowledged_at: wire.acknowledged_at,
+            event: wire.event.into_inner(),
+        })
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
@@ -218,6 +98,7 @@ pub struct DurableJournal {
     snapshot_path: PathBuf,
     writer: Mutex<service_durability::FramedLogWriter>,
     state: RwLock<JournalState>,
+    governance: GovernancePolicySet,
     accepted: Counter,
     duplicates: Counter,
     fsyncs: Counter,
@@ -225,6 +106,14 @@ pub struct DurableJournal {
 
 impl DurableJournal {
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self> {
+        Self::open_with_governance(data_dir, GovernancePolicySet::from_env()?)
+    }
+
+    pub fn open_with_governance(
+        data_dir: impl AsRef<Path>,
+        governance: GovernancePolicySet,
+    ) -> Result<Self> {
+        governance.validate()?;
         let data_dir = data_dir.as_ref();
         fs::create_dir_all(data_dir)
             .with_context(|| format!("create Sift data directory {}", data_dir.display()))?;
@@ -268,6 +157,7 @@ impl DurableJournal {
                 service_durability::FsyncPolicy::Always,
             )?),
             state: RwLock::new(state),
+            governance,
             accepted: Counter::new(),
             duplicates: Counter::new(),
             fsyncs: Counter::new(),
@@ -289,7 +179,7 @@ impl DurableJournal {
         expected_cursor: Option<u64>,
         event: EventEnvelope,
     ) -> Result<AppendResult> {
-        event.validate()?;
+        let event = self.govern_event(event)?;
         let mut state = self.state.write().expect("journal state lock poisoned");
         if let Some(cursor) = state.cursors_by_event_id.get(&event.event_id).copied() {
             self.duplicates.incr();
@@ -336,6 +226,10 @@ impl DurableJournal {
             cursor,
             duplicate: false,
         })
+    }
+
+    pub fn govern_event(&self, event: EventEnvelope) -> Result<EventEnvelope> {
+        self.governance.govern(event)
     }
 
     fn insert_recovered(state: &mut JournalState, stored: StoredEvent) -> Result<()> {
@@ -530,6 +424,10 @@ impl ServiceState {
     }
 
     async fn append(&self, event: EventEnvelope) -> Result<AppendResult> {
+        // Govern before the Raft proposal so sensitive content never enters a
+        // replicated log, even transiently. DurableJournal repeats the policy
+        // idempotently at the raw boundary for direct/single-node callers.
+        let event = self.journal.govern_event(event)?;
         if let Some(accepted) = self.journal.result_for(&event.event_id) {
             return Ok(accepted);
         }
@@ -627,7 +525,7 @@ pub fn protected_router(state: Arc<ServiceState>, verifier: Arc<auth::SiftVerifi
 #[utoipa::path(
     post,
     path = "/v1/events",
-    request_body = EventEnvelope,
+    request_body = OperationalEventV2,
     responses(
         (status = 201, description = "raw event appended and fsynced", body = AppendResult),
         (status = 200, description = "idempotent retry", body = AppendResult),
@@ -637,12 +535,12 @@ pub fn protected_router(state: Arc<ServiceState>, verifier: Arc<auth::SiftVerifi
 )]
 async fn ingest(
     State(state): State<Arc<ServiceState>>,
-    payload: Result<Json<EventEnvelope>, JsonRejection>,
+    payload: Result<Json<IncomingEvent>, JsonRejection>,
 ) -> Result<(StatusCode, Json<AppendResult>), ApiError> {
     let Json(event) =
         payload.map_err(|error| ApiError::bad_request("invalid_json", error.body_text()))?;
     let result = state
-        .append(event)
+        .append(event.into_inner())
         .await
         .map_err(|error| ApiError::bad_request("invalid_event", error.to_string()))?;
     let status = if result.duplicate {
@@ -711,7 +609,9 @@ async fn replay_events(
 #[openapi(
     paths(ingest, query_events, replay_events),
     components(schemas(
-        EventEnvelope,
+        OperationalEventV2,
+        AttributeValue,
+        InstrumentationScope,
         SignalKind,
         MetricPoint,
         MetricTemporality,

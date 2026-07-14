@@ -10,8 +10,7 @@ use utoipa::ToSchema;
 
 pub const EVENT_SCHEMA_VERSION_V1: u16 = 1;
 pub const EVENT_SCHEMA_VERSION: u16 = 2;
-pub const EVENT_SCHEMA_URL: &str =
-    "https://cclab.dev/sift/schemas/operational-event/v2";
+pub const EVENT_SCHEMA_URL: &str = "https://cclab.dev/sift/schemas/operational-event/v2";
 
 /// Canonical signal kinds. GenAI generation/tool/RAG observations are span
 /// specializations; sessions are correlation groups rather than a signal.
@@ -101,11 +100,7 @@ impl AttributeValue {
                     value.validate()?;
                 }
             }
-            Self::String(_)
-            | Self::Bool(_)
-            | Self::Int(_)
-            | Self::Double(_)
-            | Self::Bytes(_) => {}
+            Self::String(_) | Self::Bool(_) | Self::Int(_) | Self::Double(_) | Self::Bytes(_) => {}
         }
         Ok(())
     }
@@ -253,10 +248,8 @@ impl OperationalEventV2 {
                 bail!("{name} must not be empty");
             }
         }
-        DateTime::parse_from_rfc3339(&self.occurred_at)
-            .context("occurred_at must be RFC3339")?;
-        DateTime::parse_from_rfc3339(&self.observed_at)
-            .context("observed_at must be RFC3339")?;
+        DateTime::parse_from_rfc3339(&self.occurred_at).context("occurred_at must be RFC3339")?;
+        DateTime::parse_from_rfc3339(&self.observed_at).context("observed_at must be RFC3339")?;
         if self.resource.is_empty() {
             bail!("resource must contain at least one stable identity field");
         }
@@ -438,5 +431,4 @@ fn decode_event_value(value: Value) -> Result<OperationalEventV2> {
     }
 }
 
-<!-- marker: sift-operational-event-v2-model path: projects/sift/src/event/model.rs reason: Define OperationalEventV2, typed attributes, eight signals, v1 wire shape, incoming compatibility decode, and deterministic upcast. -->
 // HANDWRITE-END
