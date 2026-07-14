@@ -3913,7 +3913,15 @@ fn instance_new_with_init_impl(
     if let Some(ref meta_name) = metaclass_name {
         let call_method = lookup_method(meta_name, "__call__");
         if !call_method.is_none() {
-            let addr = extract_func_addr(call_method);
+            // R1525: mirrors #1594's `extract_registered_func_addr` fix for
+            // `__init__` — a metaclass `__call__` body referencing bare
+            // `__class__`/zero-arg `super()` (e.g. `super().__call__()`)
+            // compiles as a closure (int-tagged handle), which
+            // `extract_func_addr` doesn't unwrap. That garbage pseudo-address
+            // was never in `CALLABLE_REGISTRY`, so `is_registered` came back
+            // false and the whole custom `__call__` silently never ran —
+            // falling through to default construction with no error.
+            let addr = extract_registered_func_addr(call_method);
             if addr != 0 {
                 let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
                 if is_registered {
@@ -13741,6 +13749,7 @@ pub fn mb_super_argcount_error(count: MbValue) -> MbValue {
 
 const SUPER_MISSING_INIT_METHOD: &str = "__super_missing_init__";
 const SUPER_TYPE_INIT_METHOD: &str = "__super_type_init__";
+const SUPER_TYPE_CALL_METHOD: &str = "__super_type_call__";
 
 pub(crate) fn is_base_exception_like(class_name: &str) -> bool {
     class_name == "BaseException"
@@ -13899,6 +13908,14 @@ fn super_builtin_native_method(
                     "__new__" => Some(make_unbound_method("type", "__new__")),
                     "__init__" => {
                         Some(make_bound_native_method(super_self, SUPER_TYPE_INIT_METHOD))
+                    }
+                    // #1525: `super().__call__()` from a custom metaclass's
+                    // `__call__` override reaching `type` — CPython's
+                    // `type.__call__(cls, ...)` default-constructs the class,
+                    // bypassing the metaclass override (the very frame this
+                    // call is in), matching `instance_new_default`'s contract.
+                    "__call__" => {
+                        Some(make_bound_native_method(super_self, SUPER_TYPE_CALL_METHOD))
                     }
                     _ => None,
                 };
@@ -16812,6 +16829,16 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     super::gc::gc_safepoint();
 
     let name_for_proxy = extract_str(method_name).unwrap_or_default();
+    // R1525: `super().__call__(...)` from a custom metaclass reaching `type`
+    // — CPython's `type.__call__(cls, ...)` is the default instance-creation
+    // path (bypassing the metaclass `__call__` override we're already inside,
+    // which `instance_new_default` guarantees). The receiver here is the
+    // metaclass instantiation's plain-Str `cls` value, not an `Instance`, so
+    // this must be checked before the ObjData-shape dispatch below rather
+    // than inside the `ObjData::Instance` arm (unlike SUPER_TYPE_INIT_METHOD).
+    if name_for_proxy == SUPER_TYPE_CALL_METHOD {
+        return instance_new_default(receiver, args);
+    }
     if super::stdlib::weakref_mod::proxy_dead_attr_access(receiver, &name_for_proxy) {
         super::stdlib::weakref_mod::raise_reference_error();
         return MbValue::none();
