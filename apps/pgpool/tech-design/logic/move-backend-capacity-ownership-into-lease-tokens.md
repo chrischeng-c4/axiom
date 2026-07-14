@@ -64,3 +64,28 @@ changes:
     section: pgpool-lease-owned-capacity
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-lease-owned-capacity-verification
+requirements:
+  capacity_raii:
+    id: R1
+    text: "Active and idle physical backend connections own exactly one capacity permit, and dropping an unreleased lease returns it once and wakes waiters."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool --test pool
+  pool_modes:
+    id: R4
+    text: "Transaction reset isolation, failed-reset disposal, and whole-session lease semantics remain correct without the shared outstanding map."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool --test pool --test pool_modes
+---
+flowchart TD
+    r1[R1 capacity raii] --> cargo_test_p_pgpool_test_pool[cargo test -p pgpool --test pool]
+    r4[R4 pool modes] --> cargo_test_p_pgpool_test_pool_test_pool_modes[cargo test -p pgpool --test pool --test pool_modes]
+```
