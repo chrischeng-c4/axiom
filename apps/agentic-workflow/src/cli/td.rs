@@ -4537,8 +4537,6 @@ async fn prepare_td_generation_before_lifecycle(
 
     let spec_path = if let Some(explicit) = explicit_spec_path {
         explicit.to_string()
-    } else if let Some(discovered) = discover_worktree_spec(project_root) {
-        discovered
     } else if let Some(issue) = local_issue.as_ref() {
         default_spec_path_for_issue_in_project(project_root, issue, &workflow_slug).map_err(
             |error| {
@@ -4547,6 +4545,8 @@ async fn prepare_td_generation_before_lifecycle(
                 )
             },
         )?
+    } else if let Some(discovered) = discover_worktree_spec(project_root) {
+        discovered
     } else {
         anyhow::bail!(
             "td gen cannot discover a unique spec before issue hydration or branch activation; rerun `aw td gen {requested_slug} --spec-path <repo-relative-spec.md>`"
@@ -5607,6 +5607,50 @@ mod tests {
             ship_commit: None,
             regen_verified_at: None,
         }
+    }
+
+    #[tokio::test]
+    async fn td_gen_prefers_project_default_over_foreign_legacy_spec() {
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        std::process::Command::new("git")
+            .args(["checkout", "-q", "-b", "work"])
+            .current_dir(root)
+            .status()
+            .unwrap();
+        std::fs::write(
+            root.join("aw.toml"),
+            "[[projects]]\nname = \"lumen\"\npath = \"apps/lumen\"\ntd_path = \"apps/lumen/tech-design\"\nlabel = \"app:lumen\"\n",
+        )
+        .unwrap();
+        let mut issue = issue_with_title("lumen: active generation scope");
+        issue.slug = "lumen-gen-scope".to_string();
+        issue.labels = vec!["app:lumen".to_string()];
+        let expected = default_spec_path_for_issue_in_project(root, &issue, &issue.slug).unwrap();
+        let expected_abs = root.join(&expected);
+        std::fs::create_dir_all(expected_abs.parent().unwrap()).unwrap();
+        std::fs::write(&expected_abs, "# active configured TD\n").unwrap();
+        let foreign = root.join(".aw/tech-design/projects/mamba/logic/foreign.md");
+        std::fs::create_dir_all(foreign.parent().unwrap()).unwrap();
+        std::fs::write(&foreign, "# foreign legacy TD\n").unwrap();
+        for args in [["add", "."].as_slice(), ["commit", "-qm", "foreign legacy TD"].as_slice()] {
+            let status = std::process::Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+        LocalBackend::from_project_root(root).create(&issue).await.unwrap();
+
+        let prepared = prepare_td_generation_before_lifecycle(root, &issue.slug, None)
+            .await
+            .unwrap();
+        assert_eq!(prepared.spec_path, expected);
     }
 
     #[test]
