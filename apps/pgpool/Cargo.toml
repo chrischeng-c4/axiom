@@ -33,7 +33,6 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 server-lifecycle = { path = "../../libs/server-lifecycle" }
 server-tcp = { path = "../../libs/server-tcp" }
-socket2 = "0.6"
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-postgres = "0.7"
