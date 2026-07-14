@@ -5766,6 +5766,23 @@ impl TypeChecker {
         }
     }
 
+    /// True when `ty_id` is a bare `ctypes`/`ctypes.*` class object
+    /// (`Ty::Class { role: Object, external: Some(..) }` with module
+    /// `"ctypes"` or `"ctypes.wintypes"`/etc). Used to recognize
+    /// `SomeCtypesType * count` — the ctypes metaclass `__mul__`/`__rmul__`
+    /// protocol that builds an `Array` type (e.g. `c_ubyte * 4`) — which is
+    /// class-level array construction, never integer arithmetic (#1615).
+    fn is_ctypes_type_object(&self, ty_id: TypeId) -> bool {
+        matches!(
+            self.tcx.get(ty_id),
+            Ty::Class {
+                role: ClassRole::Object,
+                external: Some(external),
+                ..
+            } if external.module == "ctypes" || external.module.starts_with("ctypes.")
+        )
+    }
+
     pub(crate) fn check_binop(&mut self, op: BinOp, lt: TypeId, rt: TypeId, span: Span) -> TypeId {
         if self.tcx.get(lt).is_error() || self.tcx.get(rt).is_error() {
             return self.tcx.error();
@@ -5827,6 +5844,19 @@ impl TypeChecker {
                 }
                 // List * Int or Int * List → List (repetition)
                 if matches!(op, BinOp::Mul) {
+                    // ctypes type-object * int → Array type-object
+                    // (`ctypes.c_ubyte * 4`, `WCHAR * MAX_PATH`, ...): the
+                    // ctypes metaclass `__mul__`/`__rmul__` protocol, not
+                    // real numeric multiplication (#1615). Defer to Any like
+                    // the class-instance-dunder case below, since mamba
+                    // doesn't model `ctypes.Array[T]` as a distinct type.
+                    if (self.is_ctypes_type_object(lt)
+                        && matches!(self.tcx.get(rt), Ty::Int | Ty::Bool))
+                        || (self.is_ctypes_type_object(rt)
+                            && matches!(self.tcx.get(lt), Ty::Int | Ty::Bool))
+                    {
+                        return self.tcx.any();
+                    }
                     if (matches!(self.tcx.get(lt), Ty::List(_))
                         && matches!(self.tcx.get(rt), Ty::Int))
                         || (matches!(self.tcx.get(lt), Ty::Int)

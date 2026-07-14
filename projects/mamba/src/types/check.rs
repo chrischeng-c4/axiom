@@ -3795,7 +3795,7 @@ impl TypeChecker {
             }
             match (external1, external2) {
                 (Some(left), Some(right)) => {
-                    return left.module == right.module
+                    if left.module == right.module
                         && left.name == right.name
                         && (left.args.is_empty()
                             || right.args.is_empty()
@@ -3804,7 +3804,34 @@ impl TypeChecker {
                                     left == right
                                         || matches!(self.tcx.get(*left), Ty::Any | Ty::TypeVar(_))
                                         || matches!(self.tcx.get(*right), Ty::Any | Ty::TypeVar(_))
-                                })));
+                                })))
+                    {
+                        return true;
+                    }
+                    // typeshed declares every public `ctypes` concrete type
+                    // (`c_long`, `c_wchar`, a user `Structure`/`Union`
+                    // subclass, ...) as a nominal subclass of one of
+                    // `_ctypes`'s internal base protocols (`_CData`,
+                    // `_SimpleCData`, `_Pointer`, `CFuncPtr`, `Union`,
+                    // `Structure`, `Array`) — real ctypes runtime behavior
+                    // has every ctypes type descend from `_CData`. This
+                    // generic external-class comparison doesn't walk
+                    // typeshed base-class edges, so widen narrowly for just
+                    // this family rather than rejecting e.g.
+                    // `WINFUNCTYPE(BOOL, ...)` where `BOOL` is `ctypes.c_long`
+                    // (#1615).
+                    return left.module == "_ctypes"
+                        && matches!(
+                            left.name.as_str(),
+                            "_CData"
+                                | "_SimpleCData"
+                                | "_Pointer"
+                                | "CFuncPtr"
+                                | "Union"
+                                | "Structure"
+                                | "Array"
+                        )
+                        && (right.module == "ctypes" || right.module.starts_with("ctypes."));
                 }
                 (Some(left), None)
                     if left.module == "builtins"
