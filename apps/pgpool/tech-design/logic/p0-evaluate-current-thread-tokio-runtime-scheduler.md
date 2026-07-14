@@ -44,7 +44,6 @@ flowchart LR
 
 - Any failed service behavior or first valid normal-baseline 30-second comparison that loses to PgBouncer reverts the scheduler-flavor change immediately.
 - Meter output may diagnose scheduler contention but cannot decide candidate retention.
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
