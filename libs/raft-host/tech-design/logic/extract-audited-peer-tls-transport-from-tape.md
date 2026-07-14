@@ -9,55 +9,46 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: raft-host-peer-tls-configuration
-entry: env
+id: raft-host-peer-tls-contract
+entry: resolve
 nodes:
-  env:
-    kind: start
-    label: "Service-specific peer TLS environment prefix"
   resolve:
-    kind: process
-    label: "raft-host PeerTlsConfig resolves the shared service-tls configuration"
-  validate:
-    kind: decision
-    label: "Complete cert/key/CA material present and valid?"
-  plain:
+    kind: start
+    label: "PeerTlsConfig::from_env(prefix)"
+  absent:
     kind: terminal
-    label: "No material: explicit plaintext h2c mode"
-  typed:
-    kind: process
-    label: "Validated typed rustls client/server configuration"
-  adopt:
+    label: "Ok(None): explicit plaintext peer mode"
+  invalid:
     kind: terminal
-    label: "Tape consumes shared adapter; no local unsafe environment test surface"
+    label: "Err: partial, missing, or unusable TLS material fails startup"
+  config:
+    kind: process
+    label: "Ok(Some): cert/key/CA paths and mTLS required policy"
+  builders:
+    kind: terminal
+    label: "rustls_server_config and rustls_client_config delegate to service-tls"
 edges:
-  - { from: env, to: resolve }
-  - { from: resolve, to: plain, label: "none configured" }
-  - { from: resolve, to: validate, label: "material configured" }
-  - { from: validate, to: typed, label: "valid" }
-  - { from: validate, to: plain, label: "invalid: fail startup" }
-  - { from: typed, to: adopt }
+  - { from: resolve, to: absent, label: "no variables set" }
+  - { from: resolve, to: invalid, label: "invalid material" }
+  - { from: resolve, to: config, label: "valid material" }
+  - { from: config, to: builders }
 ---
 flowchart TD
-    env([service prefix]) --> resolve[raft-host PeerTlsConfig resolves service-tls]
-    resolve -->|none| plain([explicit plaintext h2c])
-    resolve -->|configured| validate{complete and valid material?}
-    validate -->|valid| typed[typed rustls client/server configuration]
-    validate -->|invalid| fail([startup error])
-    typed --> adopt([Tape consumes shared adapter])
+    resolve([from_env prefix]) --> absent([None: plaintext h2c])
+    resolve --> invalid([Err: fail startup])
+    resolve --> config[Some: cert key CA + required policy]
+    config --> builders([rustls configs via service-tls])
 ```
 
-`raft-host` owns the shared peer-transport configuration boundary. It delegates
-PEM parsing, client/server config construction, and mTLS policy validation to
-`service-tls`, preserving the existing all-or-nothing material contract. Tape
-will consume this typed adapter instead of maintaining a local wrapper and
-unsafe environment-mutating tests.
+The public contract is `raft_host::PeerTlsConfig`: `from_env(prefix)` returns
+`None` only when all variables are absent, returns an error for partial or
+unusable material, and exposes the validated paths and mTLS-required flag.
+Its rustls builders delegate to `service-tls`; no private-key parsing or unsafe
+operation is duplicated in service applications.
 
-This slice deliberately does not claim TLS termination on the current h2c peer
-router: that transport seam is absent today. A configured peer policy is
-validated and represented by the host; actual acceptor/connector wiring remains
-a later transport change.
-
+The contract explicitly does not change the Raft host's current h2c router or
+peer dialing protocol. Consumers may validate and stage material now; TLS
+termination requires a later acceptor/connector seam.
 ## Changes
 <!-- type: changes lang: yaml -->
 
