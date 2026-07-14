@@ -60,13 +60,13 @@ id: terminal-code-check-exact-spec-evidence-scope-verification
 requirements:
   failure_diagnostics:
     id: R2
-    text: "When the completing WI lacks evidence, its refusal names its own declared paths and never names another project's TD paths."
+    text: "A target evidence refusal names only paths declared by the completing WI and never paths from another project's TD."
     kind: regression
     risk: high
     verify: cargo test -p agentic-workflow --test cli_tests test_code_check_ignores_unrelated_hand_written_evidence_outside_wi_spec -- --nocapture
   target_spec_only:
     id: R1
-    text: "A completed hand-written WI must close even when a different project's TD declares unimplemented hand-written paths, because terminal evidence is resolved only from the completing WI's Issue.implements path."
+    text: "A completed hand-written WI closes even when a different project's TD declares unimplemented hand-written paths, because terminal evidence comes only from the completing WI's Issue.implements path."
     kind: regression
     risk: high
     verify: cargo test -p agentic-workflow --test cli_tests test_code_check_ignores_unrelated_hand_written_evidence_outside_wi_spec -- --nocapture
