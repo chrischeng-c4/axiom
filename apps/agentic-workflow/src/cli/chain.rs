@@ -500,7 +500,7 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         mutates_lifecycle: true,
         sunset_criterion: "",
     },
-    // -- wi (core loop: work-item inventory, planning, CRRR, run) -------
+    // -- wi (core loop: work-item inventory, linear authoring, run) -----
     VerbLifecycle {
         path: "wi.draft.init",
         class: VerbLifecycleClass::Core,
@@ -509,12 +509,6 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     },
     VerbLifecycle {
         path: "wi.draft.fill",
-        class: VerbLifecycleClass::Core,
-        mutates_lifecycle: false,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "wi.draft.review",
         class: VerbLifecycleClass::Core,
         mutates_lifecycle: false,
         sunset_criterion: "",
@@ -605,18 +599,6 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     },
     VerbLifecycle {
         path: "wi.fill-section",
-        class: VerbLifecycleClass::Core,
-        mutates_lifecycle: true,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "wi.review",
-        class: VerbLifecycleClass::Core,
-        mutates_lifecycle: true,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "wi.arbitrate",
         class: VerbLifecycleClass::Core,
         mutates_lifecycle: true,
         sunset_criterion: "",
@@ -763,7 +745,7 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     VerbLifecycle {
         path: "ec.review",
         class: VerbLifecycleClass::Core,
-        mutates_lifecycle: false,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
@@ -1338,8 +1320,6 @@ mod tests {
             "wi.update",
             "wi.close",
             "wi.fill-section",
-            "wi.review",
-            "wi.arbitrate",
             "td.create",
             "td.gen",
             "td.gen-source",

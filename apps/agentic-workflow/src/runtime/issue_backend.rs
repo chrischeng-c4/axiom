@@ -9,8 +9,8 @@
 //! Slice-1 contract:
 //! - `create / list / read` MUST work on every backend
 //! - `update / close` are required for `local`; remote backends MAY return
-//!   `BackendError::Unsupported` (per issue R8 — full SDD CRRR fill
-//!   semantics stay scoped to local in slice 1).
+//!   `BackendError::Unsupported` because local artifact mutation is not
+//!   projected to remote backends in slice 1.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

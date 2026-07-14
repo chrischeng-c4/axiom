@@ -23,7 +23,7 @@ pub enum SessionEvent {
         content: String,
     },
     /// Emitted right before an LLM turn opens. Carries the SDD agent role
-    /// (`score-issue-author` / `-reviewer` / `-reviser`) and the routed
+    /// (`score-issue-author`) and the routed
     /// model name so the TUI can open a correctly-labeled chat bubble
     /// before any deltas arrive.
     TurnStart {

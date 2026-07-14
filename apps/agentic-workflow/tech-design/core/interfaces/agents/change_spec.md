@@ -29,7 +29,6 @@ Public API manifest for `apps/agentic-workflow/src/agents/change_spec.rs` genera
 | `builder` | apps/agentic-workflow/src/agents/change_spec.rs | function | pub | 133 | builder() -> ChangeSpecAgentBuilder |
 | `generate_spec` | apps/agentic-workflow/src/agents/change_spec.rs | function | pub | 138 | generate_spec(&self, input: &ChangeSpecInput) -> NovaResult<String> |
 | `new` | apps/agentic-workflow/src/agents/change_spec.rs | function | pub | 384 | new() -> Self |
-| `revise_spec` | apps/agentic-workflow/src/agents/change_spec.rs | function | pub | 144 | revise_spec(&self, spec: &str, issues: &[ReviewIssue]) -> NovaResult<String> |
 | `with_max_retries` | apps/agentic-workflow/src/agents/change_spec.rs | function | pub | 416 | with_max_retries(mut self, n: u32) -> Self |
 | `with_max_tokens` | apps/agentic-workflow/src/agents/change_spec.rs | function | pub | 406 | with_max_tokens(mut self, max_tokens: u32) -> Self |
 | `with_model` | apps/agentic-workflow/src/agents/change_spec.rs | function | pub | 401 | with_model(mut self, model: impl Into<String>) -> Self |
@@ -122,24 +121,15 @@ definitions:
 <!-- source-from-target: strip-managed-markers -->
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/agents/change_spec.rs -->
-~~~rust
+~~~~~rust
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/core/interfaces/agents/change_spec.md#source
 // CODEGEN-BEGIN
 //! ChangeSpecAgent — generates formal technical specifications from structured issues.
 //!
 //! Operates during SDD phase 6 (change spec). Takes a [`ChangeSpecInput`] containing
 //! a [`StructuredIssue`] and [`ReferenceContextOutput`], generates a complete sdd
-//! spec document, and integrates with the CRR cycle as both creator and reviser.
-//!
-//! # CRR Integration
-//!
-//! The agent implements [`Agent`] so it can fill both creator and reviser roles in a
-//! [`CRRCycle`]:
-//!
-//! - **Creator**: `run()` receives a JSON-encoded [`ChangeSpecInput`] → calls
-//!   [`generate_spec`][ChangeSpecAgent::generate_spec].
-//! - **Reviser**: `run()` receives the CRR revision prompt (artifact + issues text) →
-//!   calls the LLM directly with the SDD system prompt prepended.
+//! spec document in one linear generation pass. Structural validation and EC,
+//! rather than a generic review/revise loop, own acceptance.
 //!
 //! # SDD Format Rules Enforced
 //!
@@ -166,7 +156,6 @@ definitions:
 
 use crate::agents::reference_spec_context::ReferenceContextOutput;
 use crate::agents::restructure::StructuredIssue;
-use crate::agents::review::ReviewIssue;
 use crate::agents::Agent;
 use agent::error::{NovaError, NovaResult};
 use agent::llm::{CompletionRequest, LLMProvider};
@@ -265,16 +254,6 @@ impl ChangeSpecAgent {
         self.complete_text(vec![system_msg, user_msg]).await
     }
 
-    /// Revise an existing spec to address review issues.
-    pub async fn revise_spec(&self, spec: &str, issues: &[ReviewIssue]) -> NovaResult<String> {
-        let user_content = build_revise_prompt(spec, issues);
-        self.complete_text(vec![
-            Message::system(SYSTEM_PROMPT),
-            Message::user(user_content),
-        ])
-        .await
-    }
-
     // ---- private ----
 
     /// Call the LLM and return the text response, retrying on empty responses.
@@ -323,22 +302,14 @@ impl ChangeSpecAgent {
 #[async_trait]
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/agents/change_spec.md#source
 impl Agent for ChangeSpecAgent {
-    /// Run in creator or reviser role.
-    ///
-    /// - **Creator**: input is JSON-encoded [`ChangeSpecInput`] → [`generate_spec`][ChangeSpecAgent::generate_spec].
-    /// - **Reviser**: input is a CRR revision prompt → `complete_text` with system prompt.
+    /// Run the linear creator path from JSON-encoded [`ChangeSpecInput`].
     async fn run(&self, input: &str) -> NovaResult<String> {
-        match serde_json::from_str::<ChangeSpecInput>(input) {
-            Ok(spec_input) => self.generate_spec(&spec_input).await,
-            Err(_) => {
-                // Reviser role: CRR built the revision prompt; prepend the SDD system prompt.
-                self.complete_text(vec![
-                    Message::system(SYSTEM_PROMPT),
-                    Message::user(input.to_string()),
-                ])
-                .await
-            }
-        }
+        let spec_input = serde_json::from_str::<ChangeSpecInput>(input).map_err(|error| {
+            NovaError::Other(anyhow::anyhow!(
+                "ChangeSpecAgent requires JSON ChangeSpecInput: {error}"
+            ))
+        })?;
+        self.generate_spec(&spec_input).await
     }
 
     async fn run_with_handler(
@@ -472,34 +443,6 @@ fn build_generate_prompt(input: &ChangeSpecInput) -> (Message, Message) {
     (system_msg, Message::user(content))
 }
 
-fn build_revise_prompt(spec: &str, issues: &[ReviewIssue]) -> String {
-    let mut prompt = format!(
-        "Revise the following specification to address all review issues listed below.\n\n\
-         ## Original Spec\n\n{}\n\n\
-         ## Review Issues\n",
-        spec
-    );
-
-    for (i, issue) in issues.iter().enumerate() {
-        prompt.push_str(&format!(
-            "\n{}. [{}] {}\n   Suggestion: {}\n",
-            i + 1,
-            issue.severity,
-            issue.description,
-            issue.suggestion,
-        ));
-        if let Some(ref loc) = issue.location {
-            prompt.push_str(&format!("   Location: {}\n", loc));
-        }
-    }
-
-    prompt.push_str(
-        "\nAddress every issue above. Return the fully revised specification, \
-         maintaining the artifact section structure and all SDD format rules.",
-    );
-    prompt
-}
-
 // ============================================================
 // Builder
 // ============================================================
@@ -572,7 +515,6 @@ mod tests {
         Contradiction, ReferenceContextOutput, RelevanceLevel, SpecReferenceEntry,
     };
     use crate::agents::restructure::StructuredIssue;
-    use crate::agents::review::{ReviewIssue, Severity};
     use agent::llm::{CompletionRequest, CompletionResponse, StreamResponse};
     use agent::types::TokenUsage;
     use async_trait::async_trait;
@@ -676,7 +618,6 @@ R1: The agent MUST generate specs.\n\
             labels: vec!["crate:agent".to_string()],
             acceptance_criteria: vec![
                 "Agent generates spec from StructuredIssue and ReferenceContext".to_string(),
-                "Agent revises spec given ReviewIssues".to_string(),
             ],
             depends_on: vec![],
             scope: "medium".to_string(),
@@ -692,15 +633,6 @@ R1: The agent MUST generate specs.\n\
                 key_requirements: vec!["Agent trait must be implemented".to_string()],
             }],
             contradictions: vec![],
-        }
-    }
-
-    fn make_review_issue(msg: &str) -> ReviewIssue {
-        ReviewIssue {
-            severity: Severity::High,
-            description: msg.to_string(),
-            suggestion: "Fix it.".to_string(),
-            location: None,
         }
     }
 
@@ -724,21 +656,6 @@ R1: The agent MUST generate specs.\n\
     }
 
     #[tokio::test]
-    async fn test_revise_spec_returns_revised_content() {
-        let revised = "## Overview\n\nRevised overview.\n\n## Requirements\n\nR1: Updated.";
-        let agent = ChangeSpecAgent::builder()
-            .with_provider(MockProvider {
-                response: revised.to_string(),
-            })
-            .build()
-            .unwrap();
-
-        let issues = vec![make_review_issue("Missing diagram section")];
-        let result = agent.revise_spec(DRAFT_SPEC, &issues).await.unwrap();
-        assert_eq!(result, revised.trim());
-    }
-
-    #[tokio::test]
     async fn test_run_creator_role_via_json_input() {
         let agent = ChangeSpecAgent::builder()
             .with_provider(MockProvider {
@@ -757,25 +674,18 @@ R1: The agent MUST generate specs.\n\
     }
 
     #[tokio::test]
-    async fn test_run_reviser_role_via_text_prompt() {
-        let revised = "## Overview\n\nRevised.\n\n## Requirements\n\nR1: Fixed.";
+    async fn test_run_rejects_non_json_revision_prompt() {
         let agent = ChangeSpecAgent::builder()
             .with_provider(MockProvider {
-                response: revised.to_string(),
+                response: DRAFT_SPEC.to_string(),
             })
             .build()
             .unwrap();
-
-        // CRR revision prompt — plain text, not JSON
-        let prompt = format!(
-            "Revise the following artifact based on the review issues listed below.\n\n\
-             ## Original Artifact\n\n{}\n\n\
-             ## Review Issues\n\n\
-             1. [High] Missing diagrams\n   Suggestion: Add them",
-            DRAFT_SPEC
-        );
-        let result = agent.run(&prompt).await.unwrap();
-        assert_eq!(result, revised.trim());
+        let error = agent
+            .run("Revise this artifact")
+            .await
+            .expect_err("generic reviser role is retired");
+        assert!(error.to_string().contains("requires JSON ChangeSpecInput"));
     }
 
     #[tokio::test]
@@ -848,26 +758,6 @@ R1: The agent MUST generate specs.\n\
         assert!(!result.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_revise_spec_with_location_in_issue() {
-        let agent = ChangeSpecAgent::builder()
-            .with_provider(MockProvider {
-                response: DRAFT_SPEC.to_string(),
-            })
-            .build()
-            .unwrap();
-
-        let issues = vec![ReviewIssue {
-            severity: Severity::High,
-            description: "Missing classDiagram".to_string(),
-            suggestion: "Add a classDiagram for the agent".to_string(),
-            location: Some("spec.md:Diagrams".to_string()),
-        }];
-
-        let result = agent.revise_spec(DRAFT_SPEC, &issues).await.unwrap();
-        assert!(!result.is_empty());
-    }
-
     #[test]
     fn test_builder_missing_provider_returns_config_error() {
         let err = ChangeSpecAgent::builder().build().unwrap_err();
@@ -918,7 +808,7 @@ R1: The agent MUST generate specs.\n\
 }
 
 // CODEGEN-END
-~~~
+~~~~~
 
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -930,22 +820,10 @@ changes:
     section: source
     impl_mode: codegen
     description: |
-      Source template owns the complete change-spec agent module, including
-      generated data shapes, defaults, prompt builders, LLM retry behavior,
-      Agent dispatch, builder methods, and unit tests.
+      Source template owns the linear change-spec implementation; semantic
+      approval belongs exclusively to the external-contract review gate.
   - action: annotate
     section: schema
     impl_mode: hand-written
-    description: "Traceability metadata edge for the schema section."
-
+    description: Traceability metadata edge for the schema section.
 ```
-
-# Reviews
-
-## Review 1
-<!-- type: doc lang: markdown -->
-**Verdict:** approved
-
-- [overview] Standard agent pattern: Input + Config + Agent + Builder.
-- [schema] All four well-formed; foreign types via x-rust-type; visibility private.
-- [changes] Standard split.

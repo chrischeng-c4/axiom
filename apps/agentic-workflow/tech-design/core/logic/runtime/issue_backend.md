@@ -44,9 +44,7 @@ Public API manifest for 2 target files generated from AST during Score force-reg
 | `enqueue_create_err` | apps/agentic-workflow/src/runtime/score_process.rs | function | pub | 538 | enqueue_create_err(&self, err: BackendError) -> &Self |
 | `enqueue_fill_section` | apps/agentic-workflow/src/runtime/score_process.rs | function | pub | 236 | enqueue_fill_section(&self, env: Envelope) -> &Self |
 | `enqueue_list` | apps/agentic-workflow/src/runtime/score_process.rs | function | pub | 543 | enqueue_list(&self, refs: Vec<IssueRef>) -> &Self |
-| `enqueue_merge` | apps/agentic-workflow/src/runtime/score_process.rs | function | pub | 251 | enqueue_merge(&self, env: Envelope) -> &Self |
 | `enqueue_read` | apps/agentic-workflow/src/runtime/score_process.rs | function | pub | 548 | enqueue_read(&self, body: IssueBody) -> &Self |
-| `enqueue_review` | apps/agentic-workflow/src/runtime/score_process.rs | function | pub | 241 | enqueue_review(&self, env: Envelope) -> &Self |
 | `enqueue_validate` | apps/agentic-workflow/src/runtime/score_process.rs | function | pub | 246 | enqueue_validate(&self, env: Envelope) -> &Self |
 | `envelope_slug` | apps/agentic-workflow/src/runtime/score_process.rs | function | pub | 622 | envelope_slug(env: &Envelope) -> Option<&str> |
 | `new` | apps/agentic-workflow/src/runtime/score_process.rs | function | pub | 80 | new(binary: impl Into<String>) -> Self |
@@ -312,22 +310,13 @@ scenarios:
         assertion: closed issue disappears from open list and appears in closed list
 ```
 
-# Reviews
 
-## Review 1
-<!-- type: review lang: markdown -->
-
-**Verdict:** approved
-
-- [schema] All six required types are defined (IssueId, IssueRef, IssueBody, ListFilter, BackendError, BackendKind) plus the IssueBackend trait surface with all five methods and their slice1_remote_allowed flags. Correct and complete.
-- [scenarios] Two scenarios cover config-driven backend selection and mainthread routing through the active backend, each with concrete given/when/then and named acceptance tests. Sufficient for implementation.
-- [changes] Seven change entries cover the full call-path: issue_backend.rs (new trait + types), score_process.rs (LocalIssueBackend extraction), session.rs (active_backend field + routing), mod.rs (re-exports), config.rs (IssueConfig struct), tui/mod.rs (Session wiring), and e2e test file. No missing construction site. Note (secondary, non-blocking): sibling specs github_backend.md, gitlab_backend.md, jira_backend.md reference IssueId/IssueRef/IssueBody by name consistently with this spec, confirming cross-spec type alignment.
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/runtime/issue_backend.rs -->
-```rust
+~~~~~rust
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/core/logic/runtime/issue_backend.md#source
 // CODEGEN-BEGIN
 //! Issue subsystem abstraction. The AW runtime talks to configured issue state via this
@@ -339,8 +328,8 @@ scenarios:
 //! Slice-1 contract:
 //! - `create / list / read` MUST work on every backend
 //! - `update / close` are required for `local`; remote backends MAY return
-//!   `BackendError::Unsupported` (per issue R8 — full SDD CRRR fill
-//!   semantics stay scoped to local in slice 1).
+//!   `BackendError::Unsupported` because local artifact mutation is not
+//!   projected to remote backends in slice 1.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -538,16 +527,18 @@ mod tests {
 }
 
 // CODEGEN-END
-```
+~~~~~
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/runtime/score_process.rs -->
-```rust
-//! Trait + impls for invoking the `score` CLI from a Rust process.
+~~~~~rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/logic/runtime/issue_backend.md#source
+// CODEGEN-BEGIN
+//! Trait + impls for invoking the `aw` CLI from a Rust process.
 //!
 //! `aw wi` and `aw td` are CLI-only today (no Rust library API),
 //! so the real impl shells out via `tokio::process::Command` and parses the
 //! envelope JSON from stdout. A `MockScoreProcess` lets tests run without a real
-//! `score` binary.
+//! `aw` binary.
 //!
 //! The trait takes `serde_json::Value` for fill-section args so the schema
 //! stays in lockstep with the CLI's `Invoke.args` shape.
@@ -574,14 +565,14 @@ use tokio::process::Command;
 pub enum ScoreProcessError {
     #[error("aw binary not found on PATH")]
     BinaryNotFound,
-    #[error("score exited non-zero ({code:?}): {stderr}")]
+    #[error("aw exited non-zero ({code:?}): {stderr}")]
     NonZeroExit { code: Option<i32>, stderr: String },
     #[error("could not parse envelope JSON: {source}\n--- stdout ---\n{stdout}")]
     ParseEnvelope {
         source: serde_json::Error,
         stdout: String,
     },
-    #[error("io error invoking score: {0}")]
+    #[error("io error invoking aw: {0}")]
     Io(#[from] std::io::Error),
     #[error("mock has no canned response queued for `{0}`")]
     MockExhausted(String),
@@ -597,12 +588,10 @@ pub trait ScoreProcess: Send + Sync {
         section: &str,
         body: &str,
     ) -> Result<Envelope, ScoreProcessError>;
-    async fn review_apply(&self, slug: &str, body: &str) -> Result<Envelope, ScoreProcessError>;
     async fn validate(&self, slug: &str) -> Result<Envelope, ScoreProcessError>;
-    async fn merge(&self, slug: &str) -> Result<Envelope, ScoreProcessError>;
 }
 
-/// Real impl — shells out to the `score` binary on PATH.
+/// Real impl — shells out to the `aw` binary on PATH.
 /// @spec apps/agentic-workflow/tech-design/core/logic/runtime/issue_backend.md#source
 pub struct RealScoreProcess {
     pub binary: String,
@@ -694,17 +683,6 @@ impl ScoreProcess for RealScoreProcess {
     async fn validate(&self, slug: &str) -> Result<Envelope, ScoreProcessError> {
         self.run(&["issues", "validate", slug]).await
     }
-
-    async fn review_apply(&self, slug: &str, body: &str) -> Result<Envelope, ScoreProcessError> {
-        self.run(&[
-            "issues", "review", "--apply", "--slug", slug, "--body", body,
-        ])
-        .await
-    }
-
-    async fn merge(&self, slug: &str) -> Result<Envelope, ScoreProcessError> {
-        self.run(&["issues", "merge", slug]).await
-    }
 }
 
 /// Mock impl — feed it canned envelopes and assert on recorded calls.
@@ -719,14 +697,7 @@ pub enum ScoreCall {
         section: String,
         body: String,
     },
-    ReviewApply {
-        slug: String,
-        body: String,
-    },
     Validate {
-        slug: String,
-    },
-    Merge {
         slug: String,
     },
 }
@@ -735,15 +706,12 @@ pub enum ScoreCall {
 impl ScoreCall {
     /// Stable verb token matching the CLI subcommand path. Lifecycle harness
     /// uses this to wait for "the next time MockScoreProcess sees `validate`".
-    /// Tokens: `"create"`, `"fill_section"`, `"review_apply"`, `"validate"`,
-    /// `"merge"`.
+    /// Tokens: `"create"`, `"fill_section"`, `"validate"`.
     pub fn verb(&self) -> &'static str {
         match self {
             ScoreCall::Create { .. } => "create",
             ScoreCall::FillSectionApply { .. } => "fill_section",
-            ScoreCall::ReviewApply { .. } => "review_apply",
             ScoreCall::Validate { .. } => "validate",
-            ScoreCall::Merge { .. } => "merge",
         }
     }
 }
@@ -753,9 +721,7 @@ impl ScoreCall {
 pub struct MockScoreProcess {
     create_responses: Mutex<Vec<Result<Envelope, ScoreProcessError>>>,
     fill_responses: Mutex<Vec<Result<Envelope, ScoreProcessError>>>,
-    review_responses: Mutex<Vec<Result<Envelope, ScoreProcessError>>>,
     validate_responses: Mutex<Vec<Result<Envelope, ScoreProcessError>>>,
-    merge_responses: Mutex<Vec<Result<Envelope, ScoreProcessError>>>,
     calls: Mutex<Vec<ScoreCall>>,
 }
 
@@ -780,18 +746,8 @@ impl MockScoreProcess {
         self
     }
 
-    pub fn enqueue_review(&self, env: Envelope) -> &Self {
-        self.review_responses.lock().unwrap().push(Ok(env));
-        self
-    }
-
     pub fn enqueue_validate(&self, env: Envelope) -> &Self {
         self.validate_responses.lock().unwrap().push(Ok(env));
-        self
-    }
-
-    pub fn enqueue_merge(&self, env: Envelope) -> &Self {
-        self.merge_responses.lock().unwrap().push(Ok(env));
         self
     }
 
@@ -844,29 +800,6 @@ impl ScoreProcess for MockScoreProcess {
         let mut q = self.validate_responses.lock().unwrap();
         if q.is_empty() {
             return Err(ScoreProcessError::MockExhausted("validate".into()));
-        }
-        q.remove(0)
-    }
-
-    async fn review_apply(&self, slug: &str, body: &str) -> Result<Envelope, ScoreProcessError> {
-        self.calls.lock().unwrap().push(ScoreCall::ReviewApply {
-            slug: slug.to_string(),
-            body: body.to_string(),
-        });
-        let mut q = self.review_responses.lock().unwrap();
-        if q.is_empty() {
-            return Err(ScoreProcessError::MockExhausted("review_apply".into()));
-        }
-        q.remove(0)
-    }
-
-    async fn merge(&self, slug: &str) -> Result<Envelope, ScoreProcessError> {
-        self.calls.lock().unwrap().push(ScoreCall::Merge {
-            slug: slug.to_string(),
-        });
-        let mut q = self.merge_responses.lock().unwrap();
-        if q.is_empty() {
-            return Err(ScoreProcessError::MockExhausted("merge".into()));
         }
         q.remove(0)
     }
@@ -1276,33 +1209,33 @@ mod tests {
         write_stored_issue(
             tmp.path(),
             &stored_issue(
-                "open-cue",
+                "open-jet",
                 StoredIssueState::Open,
-                vec!["app:cue", "priority:p1"],
+                vec!["app:jet", "priority:p1"],
             ),
         )
         .await;
         write_stored_issue(
             tmp.path(),
             &stored_issue(
-                "draft-cue",
+                "draft-jet",
                 StoredIssueState::Draft,
-                vec!["app:cue", "priority:p1"],
+                vec!["app:jet", "priority:p1"],
             ),
         )
         .await;
         write_stored_issue(
             tmp.path(),
             &stored_issue(
-                "closed-cue",
+                "closed-jet",
                 StoredIssueState::Closed,
-                vec!["app:cue", "priority:p1"],
+                vec!["app:jet", "priority:p1"],
             ),
         )
         .await;
         write_stored_issue(
             tmp.path(),
-            &stored_issue("open-other", StoredIssueState::Open, vec!["app:cue"]),
+            &stored_issue("open-other", StoredIssueState::Open, vec!["app:jet"]),
         )
         .await;
 
@@ -1310,23 +1243,19 @@ mod tests {
         let refs = backend
             .list(&ListFilter {
                 state: RuntimeIssueState::Open,
-                labels: vec!["app:cue".into(), "priority:p1".into()],
+                labels: vec!["app:jet".into(), "priority:p1".into()],
             })
             .await
             .unwrap();
         let ids: Vec<_> = refs.into_iter().map(|r| r.id.0).collect();
 
-        assert_eq!(ids, vec!["draft-cue", "open-cue"]);
+        assert_eq!(ids, vec!["draft-jet", "open-jet"]);
     }
 
     #[tokio::test]
     async fn local_issue_backend_reads_body_and_frontmatter() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let mut issue = stored_issue(
-            "enhancement-read",
-            StoredIssueState::Open,
-            vec!["app:cue"],
-        );
+        let mut issue = stored_issue("enhancement-read", StoredIssueState::Open, vec!["app:jet"]);
         issue.phase = Some("reviewed".into());
         issue.review_count = Some(1);
         write_stored_issue(tmp.path(), &issue).await;
@@ -1391,7 +1320,9 @@ mod tests {
         assert_eq!(closed[0].state, RuntimeIssueState::Closed);
     }
 }
-```
+
+// CODEGEN-END
+~~~~~
 
 ## Changes
 <!-- type: changes lang: yaml -->

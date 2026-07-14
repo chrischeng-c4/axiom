@@ -14185,8 +14185,8 @@ Gate Inventory:
                 reconciliation_count: 3,
                 resolved_wi_ref_count: 0,
                 warnings: vec!["issue inventory unavailable: gh auth missing".to_string()],
-                agent_review_required: true,
-                review_status: "pending",
+                requires_hitl: true,
+                hitl_status: "pending",
                 plan_command: "aw wi plan --project lumen".to_string(),
             }]);
 
@@ -14413,8 +14413,8 @@ Gate Inventory:
             reconciliation_count: 3,
             resolved_wi_ref_count: 0,
             warnings: Vec::new(),
-            agent_review_required: true,
-            review_status: "pending",
+            requires_hitl: true,
+            hitl_status: "pending",
             plan_command: "aw wi plan --project lumen".to_string(),
         }];
         sweep.wi_plan_index_path = Some(PathBuf::from(

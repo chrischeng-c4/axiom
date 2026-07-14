@@ -275,20 +275,20 @@ definitions:
         x-rust-type: "Vec<String>"
         x-serde-default: true
         x-serde-skip-if: "Vec::is_empty"
-        description: "CRR validation errors — set by aw wi validate, cleared on pass."
+        description: "WI validation errors — set by aw wi validate, cleared on pass."
       review_count:
         type: integer
         x-rust-type: "Option<u8>"
         x-serde-default: true
         x-serde-skip-if: "Option::is_none"
-        description: "CRRR review count — number of score-issue-reviewer runs on this issue."
+        description: "Legacy review count retained only for decoding and round-tripping older trackers."
       flagged_sections:
         type: array
         items: { type: string }
         x-rust-type: "Option<Vec<IssueSection>>"
         x-serde-default: true
         x-serde-skip-if: "Option::is_none"
-        description: "Sections flagged by the most recent needs-revision review."
+        description: "Legacy flagged sections retained only for older tracker compatibility."
       fill_retry_count:
         type: integer
         x-rust-type: "Option<u8>"
@@ -449,7 +449,7 @@ definitions:
         type: integer
         x-rust-type: "Option<u8>"
         x-serde-default: true
-        description: "CRRR review counter — Some(n) writes, None leaves untouched."
+        description: "Legacy review counter compatibility field — Some(n) writes, None leaves untouched."
       flagged_sections:
         type: array
         items: { type: string }

@@ -24,6 +24,8 @@ const EC_MANIFEST_VERSION: u8 = 1;
 const EC_DOC_REL: &str = "docs/aw-ec-manual.md";
 const EC_SOURCE_REL: &str = "external-contracts";
 const EC_LOCK_FILE: &str = "ec.lock";
+const EC_REVIEW_FILE: &str = "ec-review.json";
+const EC_REVIEW_VERSION: u8 = 1;
 const PROJECT_AW_REL: &str = "aw.toml";
 const LEGACY_EC_MANIFEST_FILE: &str = "aw-ec.toml";
 const EC_AW_BEGIN_MARKER: &str = "AW-EC-BEGIN";
@@ -55,7 +57,7 @@ pub fn ec_categories() -> &'static [&'static str] {
 }
 
 #[derive(Debug, Args)]
-/// External-contract lifecycle: draft/fill EC markdown, then generate/check/verify artifacts.
+/// External-contract lifecycle: draft/fill, independent semantic review, then generate/verify.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub struct EcArgs {
     /// Project name or alias from aw.toml.
@@ -78,7 +80,7 @@ pub enum EcCommand {
     Check(EcCheckArgs),
     /// Write or verify the canonical EC IR lock.
     Lock(EcLockArgs),
-    /// Review whether each capability's EC covers every dimension its type requires (#188 E6).
+    /// Run the independent semantic approval gate for production EC evidence.
     Review(EcReviewArgs),
     /// Record a verifier (EC) result onto a LOCAL lifecycle work-item's loop-state block (#188 E1/E4).
     Record(EcRecordArgs),
@@ -177,8 +179,13 @@ pub struct EcLockArgs {
 }
 
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+/// @spec apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md#schema
 #[derive(Debug, Args)]
 pub struct EcReviewArgs {
+    /// Human-backed semantic review payload. Defaults to the initialized
+    /// project-scoped payload under /tmp/aw/workspaces/<workspace>/payloads/ec/.
+    #[arg(long)]
+    pub evidence_file: Option<PathBuf>,
     /// Emit JSON instead of human-readable output.
     #[arg(long)]
     pub json: bool,
@@ -376,6 +383,87 @@ pub struct EcCheckSummary {
     pub ec_binding_warnings: Vec<String>,
 }
 
+/// Human-backed semantic approval state for the current EC inventory digest.
+/// @spec apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct EcReviewSummary {
+    pub project: String,
+    pub status: String,
+    pub clean: bool,
+    pub requires_hitl: bool,
+    pub source_digest: String,
+    pub review_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload_path: Option<String>,
+    pub findings: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum EcReviewDecision {
+    Pending,
+    Accepted,
+    NeedsRevision,
+}
+
+impl Default for EcReviewDecision {
+    fn default() -> Self {
+        Self::Pending
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+struct EcReviewChecklist {
+    #[serde(default)]
+    capability_claim_coverage: bool,
+    #[serde(default)]
+    required_dimensions: bool,
+    #[serde(default)]
+    assertions_specific: bool,
+    #[serde(default)]
+    oracle_independent: bool,
+    #[serde(default)]
+    loopholes_checked: bool,
+    #[serde(default)]
+    false_green_risk_checked: bool,
+}
+
+impl EcReviewChecklist {
+    fn all_satisfied(&self) -> bool {
+        self.capability_claim_coverage
+            && self.required_dimensions
+            && self.assertions_specific
+            && self.oracle_independent
+            && self.loopholes_checked
+            && self.false_green_risk_checked
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct EcReviewRecord {
+    version: u8,
+    project: String,
+    source_digest: String,
+    #[serde(default)]
+    decision: EcReviewDecision,
+    #[serde(default)]
+    reviewer_kind: String,
+    #[serde(default)]
+    reviewed_by: String,
+    #[serde(default)]
+    reviewed_at: String,
+    #[serde(default)]
+    summary: String,
+    #[serde(default)]
+    checklist: EcReviewChecklist,
+    #[serde(default)]
+    findings: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    target_path: String,
+}
+
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct EcLockStatus {
@@ -523,6 +611,7 @@ pub enum EcVerifyFailureKind {
     Timeout,
     RunnerError,
     SingleFlight,
+    SemanticReviewRequired,
 }
 
 struct EcCommandOutput {
@@ -884,7 +973,7 @@ fn run_draft(project: &str, args: EcDraftArgs) -> Result<()> {
                 section
             );
         }
-        println!("then: aw ec gen --project {} --verify", ctx.project);
+        println!("then: aw ec review --project {}", ctx.project);
     }
     Ok(())
 }
@@ -975,6 +1064,9 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
                 "section": args.section,
                 "payload_path": relative_to(&ctx.project_root, &body_file),
                 "action": "filled",
+                "next": {
+                    "command": format!("aw ec review --project {}", ctx.project),
+                },
             }))?
         );
     } else {
@@ -982,7 +1074,7 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
             "ec fill {}: filled {} in {}",
             ctx.project, args.section, rel
         );
-        println!("next: aw ec gen --project {} --verify", ctx.project);
+        println!("next: aw ec review --project {}", ctx.project);
     }
     Ok(())
 }
@@ -1260,11 +1352,21 @@ fn parse_ec_annotation(line: &str) -> Option<EcSectionAnnotation> {
     Some(EcSectionAnnotation { section_type })
 }
 
+/// @spec apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md#logic
 fn run_gen(project: &str, args: EcGenArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
     ensure_ec_lock_clean_for_gen(&ctx)?;
     let manifest = build_expected_manifest(&ctx)?;
+    if !args.dry_run {
+        let review_findings = ec_review_gate_findings(&ctx, &manifest)?;
+        if !review_findings.is_empty() {
+            bail!(
+                "ec gen requires accepted independent semantic review for the current EC digest:\n- {}",
+                review_findings.join("\n- ")
+            );
+        }
+    }
     let generated_files = generated_ec_test_files(&ctx, &manifest);
 
     if args.dry_run {
@@ -1430,36 +1532,389 @@ fn run_lock(project: &str, args: EcLockArgs) -> Result<()> {
     Ok(())
 }
 
+/// @spec apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md#logic
 fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
-    let cases = load_ec_manifest(&ctx)?
-        .map(|(_, manifest)| manifest.cases)
-        .unwrap_or_default();
-    let findings = ec_review_findings(&ctx, &cases);
-    if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "project": project,
-                "clean": findings.is_empty(),
-                "findings": findings,
-            }))?
+    let manifest = build_expected_manifest(&ctx)?;
+    let review_path = ec_review_path(&ctx);
+    let review_path_rel = relative_to(&ctx.project_root, &review_path);
+
+    if !ec_semantic_review_required(&manifest) {
+        return emit_ec_review_summary(
+            &EcReviewSummary {
+                project: ctx.project.clone(),
+                status: "not_required".to_string(),
+                clean: true,
+                requires_hitl: false,
+                source_digest: manifest.generated_from_td_digest,
+                review_path: review_path_rel,
+                payload_path: None,
+                findings: Vec::new(),
+                next: Some(format!("aw ec gen --project {} --verify", ctx.project)),
+            },
+            args.json,
         );
-    } else if findings.is_empty() {
-        println!(
-            "ec review {project}: clean — every typed capability's EC covers its required dimensions"
+    }
+
+    let automatic_findings = ec_semantic_review_findings(&ctx, &manifest.cases);
+    if !automatic_findings.is_empty() {
+        let next = first_ec_fill_command(&ctx, &manifest.cases);
+        return emit_ec_review_summary(
+            &EcReviewSummary {
+                project: ctx.project.clone(),
+                status: "needs_revision".to_string(),
+                clean: false,
+                requires_hitl: next.is_none(),
+                source_digest: manifest.generated_from_td_digest,
+                review_path: review_path_rel,
+                payload_path: None,
+                findings: automatic_findings,
+                next,
+            },
+            args.json,
         );
-    } else {
-        println!("ec review {project}: {} finding(s)", findings.len());
-        for finding in &findings {
-            println!("  - {finding}");
+    }
+
+    if args.evidence_file.is_none() {
+        if let Some(record) = load_ec_review_record(&ctx)? {
+            let findings = ec_review_record_findings(&ctx, &manifest, &record);
+            if findings.is_empty() {
+                return emit_ec_review_summary(
+                    &EcReviewSummary {
+                        project: ctx.project.clone(),
+                        status: "accepted".to_string(),
+                        clean: true,
+                        requires_hitl: false,
+                        source_digest: manifest.generated_from_td_digest,
+                        review_path: review_path_rel,
+                        payload_path: None,
+                        findings: Vec::new(),
+                        next: Some(format!("aw ec gen --project {} --verify", ctx.project)),
+                    },
+                    args.json,
+                );
+            }
         }
     }
-    if !findings.is_empty() {
-        std::process::exit(1);
+
+    let payload_path = args
+        .evidence_file
+        .unwrap_or_else(|| ec_review_payload_path(&ctx));
+    ensure_ec_review_payload(&ctx, &manifest, &payload_path)?;
+    let mut record = read_ec_review_record(&payload_path)?;
+
+    if record.decision == EcReviewDecision::Pending {
+        return emit_ec_review_summary(
+            &EcReviewSummary {
+                project: ctx.project.clone(),
+                status: "pending".to_string(),
+                clean: false,
+                requires_hitl: true,
+                source_digest: manifest.generated_from_td_digest,
+                review_path: review_path_rel,
+                payload_path: Some(payload_path.to_string_lossy().into_owned()),
+                findings: vec![
+                    "independent EC semantic review is pending; a human must complete the review payload"
+                        .to_string(),
+                ],
+                next: None,
+            },
+            args.json,
+        );
+    }
+
+    validate_ec_review_payload(&ctx, &manifest, &record)?;
+    record.reviewed_at = chrono::Utc::now().to_rfc3339();
+    write_ec_review_record(&review_path, &record)?;
+    remove_ec_review_payload(&payload_path);
+
+    match record.decision {
+        EcReviewDecision::Accepted => emit_ec_review_summary(
+            &EcReviewSummary {
+                project: ctx.project.clone(),
+                status: "accepted".to_string(),
+                clean: true,
+                requires_hitl: false,
+                source_digest: manifest.generated_from_td_digest,
+                review_path: review_path_rel,
+                payload_path: None,
+                findings: Vec::new(),
+                next: Some(format!("aw ec gen --project {} --verify", ctx.project)),
+            },
+            args.json,
+        ),
+        EcReviewDecision::NeedsRevision => {
+            let next = ec_fill_command_for_target(&ctx, &record.target_path);
+            emit_ec_review_summary(
+                &EcReviewSummary {
+                    project: ctx.project.clone(),
+                    status: "needs_revision".to_string(),
+                    clean: false,
+                    requires_hitl: next.is_none(),
+                    source_digest: manifest.generated_from_td_digest,
+                    review_path: review_path_rel,
+                    payload_path: None,
+                    findings: record.findings,
+                    next,
+                },
+                args.json,
+            )
+        }
+        EcReviewDecision::Pending => unreachable!("pending review returned above"),
+    }
+}
+
+fn emit_ec_review_summary(summary: &EcReviewSummary, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(summary)?);
+        return Ok(());
+    }
+    println!("ec review {}: {}", summary.project, summary.status);
+    println!("review: {}", summary.review_path);
+    if let Some(payload) = &summary.payload_path {
+        println!("payload: {payload}");
+    }
+    for finding in &summary.findings {
+        println!("  - {finding}");
+    }
+    if summary.requires_hitl {
+        println!("requires_hitl: true");
+    }
+    if let Some(next) = &summary.next {
+        println!("next: {next}");
     }
     Ok(())
+}
+
+fn ec_review_path(ctx: &EcProjectContext) -> PathBuf {
+    ctx.ec_root.join(EC_REVIEW_FILE)
+}
+
+fn ec_review_payload_path(ctx: &EcProjectContext) -> PathBuf {
+    crate::shared::workspace::payloads_path(&ctx.project_root)
+        .join("ec")
+        .join(&ctx.project)
+        .join(EC_REVIEW_FILE)
+}
+
+fn ec_semantic_review_required(manifest: &EcManifest) -> bool {
+    manifest
+        .cases
+        .iter()
+        .any(|case| case.required_for_production)
+}
+
+fn ec_review_payload_template(ctx: &EcProjectContext, manifest: &EcManifest) -> EcReviewRecord {
+    EcReviewRecord {
+        version: EC_REVIEW_VERSION,
+        project: ctx.project.clone(),
+        source_digest: manifest.generated_from_td_digest.clone(),
+        decision: EcReviewDecision::Pending,
+        reviewer_kind: "human".to_string(),
+        reviewed_by: String::new(),
+        reviewed_at: String::new(),
+        summary: String::new(),
+        checklist: EcReviewChecklist::default(),
+        findings: Vec::new(),
+        target_path: String::new(),
+    }
+}
+
+fn ensure_ec_review_payload(
+    ctx: &EcProjectContext,
+    manifest: &EcManifest,
+    payload_path: &Path,
+) -> Result<()> {
+    let rewrite = match read_ec_review_record(payload_path) {
+        Ok(record) => {
+            record.version != EC_REVIEW_VERSION
+                || record.project != ctx.project
+                || record.source_digest != manifest.generated_from_td_digest
+        }
+        Err(_) => true,
+    };
+    if payload_path.exists() && !rewrite {
+        return Ok(());
+    }
+    write_ec_review_record(payload_path, &ec_review_payload_template(ctx, manifest))
+}
+
+fn read_ec_review_record(path: &Path) -> Result<EcReviewRecord> {
+    let content = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))
+}
+
+fn write_ec_review_record(path: &Path, record: &EcReviewRecord) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let content = format!("{}\n", serde_json::to_string_pretty(record)?);
+    fs::write(path, content).with_context(|| format!("write {}", path.display()))
+}
+
+fn load_ec_review_record(ctx: &EcProjectContext) -> Result<Option<EcReviewRecord>> {
+    let path = ec_review_path(ctx);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    read_ec_review_record(&path).map(Some)
+}
+
+fn remove_ec_review_payload(path: &Path) {
+    let _ = fs::remove_file(path);
+    if let Some(parent) = path.parent() {
+        let _ = fs::remove_dir(parent);
+    }
+}
+
+/// @spec apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md#schema
+fn validate_ec_review_payload(
+    ctx: &EcProjectContext,
+    manifest: &EcManifest,
+    record: &EcReviewRecord,
+) -> Result<()> {
+    if record.version != EC_REVIEW_VERSION {
+        bail!(
+            "EC review payload version {} is unsupported; expected {}",
+            record.version,
+            EC_REVIEW_VERSION
+        );
+    }
+    if record.project != ctx.project {
+        bail!(
+            "EC review payload project `{}` does not match `{}`",
+            record.project,
+            ctx.project
+        );
+    }
+    if record.source_digest != manifest.generated_from_td_digest {
+        bail!(
+            "EC review payload is stale; rerun `aw ec review --project {}`",
+            ctx.project
+        );
+    }
+    if record.reviewer_kind != "human" {
+        bail!(
+            "production EC review currently requires reviewer_kind `human`; same-agent self-review is not accepted evidence"
+        );
+    }
+    if record.reviewed_by.trim().is_empty() {
+        bail!("EC review payload requires a non-empty reviewed_by human identity");
+    }
+    if record.summary.trim().is_empty() {
+        bail!("EC review payload requires a non-empty semantic review summary");
+    }
+    match record.decision {
+        EcReviewDecision::Accepted => {
+            if !record.findings.is_empty() {
+                bail!("accepted EC review payload must not contain findings");
+            }
+            if !record.checklist.all_satisfied() {
+                bail!(
+                    "accepted EC review requires every coverage, dimension, assertion, oracle-independence, loophole, and false-green checklist item"
+                );
+            }
+        }
+        EcReviewDecision::NeedsRevision => {
+            if record.findings.is_empty() {
+                bail!("needs_revision EC review requires at least one finding");
+            }
+            if ec_fill_command_for_target(ctx, &record.target_path).is_none() {
+                bail!(
+                    "needs_revision EC review target_path must name a markdown file under {}",
+                    relative_to(&ctx.project_root, &ctx.ec_root)
+                );
+            }
+        }
+        EcReviewDecision::Pending => bail!("EC review payload decision is still pending"),
+    }
+    Ok(())
+}
+
+fn ec_review_record_findings(
+    ctx: &EcProjectContext,
+    manifest: &EcManifest,
+    record: &EcReviewRecord,
+) -> Vec<String> {
+    let mut findings = Vec::new();
+    if record.version != EC_REVIEW_VERSION {
+        findings.push(format!(
+            "review version {} is unsupported; expected {}",
+            record.version, EC_REVIEW_VERSION
+        ));
+    }
+    if record.project != ctx.project {
+        findings.push(format!(
+            "review project `{}` does not match `{}`",
+            record.project, ctx.project
+        ));
+    }
+    if record.source_digest != manifest.generated_from_td_digest {
+        findings.push("accepted review evidence is stale for the current EC digest".to_string());
+    }
+    if record.decision != EcReviewDecision::Accepted {
+        findings.push("EC semantic review is not accepted".to_string());
+    }
+    if record.reviewer_kind != "human" || record.reviewed_by.trim().is_empty() {
+        findings.push("accepted EC review lacks independent human evidence".to_string());
+    }
+    if record.reviewed_at.trim().is_empty() || record.summary.trim().is_empty() {
+        findings.push("accepted EC review lacks timestamp or semantic summary".to_string());
+    }
+    if !record.checklist.all_satisfied() {
+        findings.push("accepted EC review has an incomplete semantic checklist".to_string());
+    }
+    if !record.findings.is_empty() {
+        findings.push("accepted EC review still contains unresolved findings".to_string());
+    }
+    findings
+}
+
+fn ec_review_gate_findings(ctx: &EcProjectContext, manifest: &EcManifest) -> Result<Vec<String>> {
+    if !ec_semantic_review_required(manifest) {
+        return Ok(Vec::new());
+    }
+    let mut findings = ec_semantic_review_findings(ctx, &manifest.cases);
+    match load_ec_review_record(ctx)? {
+        Some(record) => findings.extend(ec_review_record_findings(ctx, manifest, &record)),
+        None => findings.push(format!(
+            "independent EC semantic review evidence is missing; run `aw ec review --project {}`",
+            ctx.project
+        )),
+    }
+    findings.sort();
+    findings.dedup();
+    Ok(findings)
+}
+
+fn ec_fill_command_for_target(ctx: &EcProjectContext, target: &str) -> Option<String> {
+    if target.trim().is_empty() {
+        return None;
+    }
+    let path = if Path::new(target).is_absolute() {
+        PathBuf::from(target)
+    } else {
+        ctx.project_root.join(target)
+    };
+    if !path.starts_with(&ctx.ec_root)
+        || path.extension().and_then(|ext| ext.to_str()) != Some("md")
+    {
+        return None;
+    }
+    Some(format!(
+        "aw ec fill --project {} {} --section e2e-test",
+        ctx.project,
+        relative_to(&ctx.project_root, &path)
+    ))
+}
+
+fn first_ec_fill_command(ctx: &EcProjectContext, cases: &[EcManifestCase]) -> Option<String> {
+    cases
+        .iter()
+        .filter(|case| case.required_for_production)
+        .filter_map(|case| case.td_ref.split('#').next())
+        .find_map(|path| ec_fill_command_for_target(ctx, path))
 }
 
 /// Map a `--result` string to the loop's verifier verdict.
@@ -2595,6 +3050,84 @@ fn ec_review_findings(ctx: &EcProjectContext, cases: &[EcManifestCase]) -> Vec<S
         }
     }
     findings
+}
+
+/// Deterministic preflight for the human semantic review. The checklist owns
+/// judgment-heavy questions; these findings reject objective omissions and
+/// obvious false-green/self-oracle loopholes before a human can accept them.
+/// @spec apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md#scenarios
+fn ec_semantic_review_findings(ctx: &EcProjectContext, cases: &[EcManifestCase]) -> Vec<String> {
+    let mut findings = ec_review_findings(ctx, cases);
+    for case in cases.iter().filter(|case| case.required_for_production) {
+        if case.capability_id.trim().is_empty() || case.capability_id == "unmapped" {
+            findings.push(format!(
+                "EC case `{}` has no mapped capability claim ({})",
+                case.id, case.td_ref
+            ));
+        }
+        if case.claim_id.trim().is_empty() || case.claim_id == "unmapped" {
+            findings.push(format!(
+                "EC case `{}` has no mapped claim ({})",
+                case.id, case.td_ref
+            ));
+        }
+        if case.assertions.iter().any(|assertion| {
+            let lower = assertion.to_ascii_lowercase();
+            lower.contains("(fill)")
+                || lower.contains("(replace-this)")
+                || lower.contains("describe the externally observable guarantee")
+        }) {
+            findings.push(format!(
+                "EC case `{}` still contains a placeholder assertion ({})",
+                case.id, case.td_ref
+            ));
+        }
+        if let Some(reason) = ec_review_false_green_reason(&case.command) {
+            findings.push(format!(
+                "EC case `{}` has false-green risk: {} ({})",
+                case.id, reason, case.td_ref
+            ));
+        }
+        for evaluator in &case.evaluators {
+            if evaluator.command.trim().is_empty() || evaluator.pass_criteria.is_empty() {
+                findings.push(format!(
+                    "EC case `{}` evaluator `{}` lacks a command or pass criteria ({})",
+                    case.id, evaluator.id, case.td_ref
+                ));
+            }
+        }
+    }
+    findings.sort();
+    findings.dedup();
+    findings
+}
+
+/// @spec apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md#scenarios
+fn ec_review_false_green_reason(command: &str) -> Option<&'static str> {
+    let normalized = command.trim().trim_matches(|ch| ch == '\'' || ch == '"');
+    if normalized.is_empty() {
+        return Some("verification command is empty");
+    }
+    if matches!(
+        normalized,
+        "true" | ":" | "exit 0" | "sh -c true" | "bash -c true"
+    ) || normalized.starts_with("echo ")
+        || normalized.starts_with("printf ")
+        || normalized.contains("|| true")
+        || normalized.contains("; exit 0")
+    {
+        return Some("command can succeed without evaluating the contract");
+    }
+    if normalized.contains("aw ec check")
+        || normalized.contains("aw ec review")
+        || normalized.contains("aw ec gen")
+        || normalized.contains("agentic-workflow -- ec check")
+        || normalized.contains("agentic-workflow -- ec review")
+        || normalized.contains("agentic-workflow -- ec gen")
+    {
+        return Some("command uses AW's own EC lifecycle as its oracle");
+    }
+    None
 }
 
 /// Which executable artifact `aw ec gen` should skeleton for a claim, dispatched
@@ -3798,6 +4331,7 @@ fn check_ec_doc_context(ctx: &EcProjectContext) -> Result<EcDocCheckSummary> {
 /// `failed_count` (and therefore `clean`) only ever count executed entries,
 /// so a demoted advisory case can never taint `clean`. Tool-manifest
 /// commands have no `required_for_production` concept and always run.
+/// @spec apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md#logic
 fn verify_ec_context(ctx: &EcProjectContext, required_only: bool) -> Result<EcVerifySummary> {
     let Some((inventory_path, manifest)) = load_ec_manifest(ctx)? else {
         bail!(
@@ -3806,6 +4340,29 @@ fn verify_ec_context(ctx: &EcProjectContext, required_only: bool) -> Result<EcVe
             ctx.project
         );
     };
+    let review_findings = ec_review_gate_findings(ctx, &manifest)?;
+    if !review_findings.is_empty() {
+        return Ok(EcVerifySummary {
+            project: ctx.project.clone(),
+            inventory_path: relative_to(&ctx.project_root, &inventory_path),
+            clean: false,
+            command_count: 1,
+            passed_count: 0,
+            failed_count: 1,
+            results: vec![EcVerifyCommandResult {
+                case_id: "ec-semantic-review".to_string(),
+                capability_id: String::new(),
+                claim_id: String::new(),
+                category: "review".to_string(),
+                command: format!("aw ec review --project {}", ctx.project),
+                status: "failed".to_string(),
+                failure_kind: Some(EcVerifyFailureKind::SemanticReviewRequired),
+                exit_code: None,
+                stdout_tail: String::new(),
+                stderr_tail: review_findings.join("; "),
+            }],
+        });
+    }
     let mut results = Vec::new();
     let mut seen_commands = BTreeSet::new();
     for case in &manifest.cases {
@@ -5293,6 +5850,30 @@ e2e_tests:
         }
     }
 
+    fn write_accepted_ec_review(ctx: &EcProjectContext, manifest: &EcManifest) {
+        let record = EcReviewRecord {
+            version: EC_REVIEW_VERSION,
+            project: ctx.project.clone(),
+            source_digest: manifest.generated_from_td_digest.clone(),
+            decision: EcReviewDecision::Accepted,
+            reviewer_kind: "human".to_string(),
+            reviewed_by: "test-reviewer".to_string(),
+            reviewed_at: "2026-07-14T00:00:00Z".to_string(),
+            summary: "Independent EC semantic review accepted the fixture.".to_string(),
+            checklist: EcReviewChecklist {
+                capability_claim_coverage: true,
+                required_dimensions: true,
+                assertions_specific: true,
+                oracle_independent: true,
+                loopholes_checked: true,
+                false_green_risk_checked: true,
+            },
+            findings: Vec::new(),
+            target_path: String::new(),
+        };
+        write_ec_review_record(&ec_review_path(ctx), &record).unwrap();
+    }
+
     #[test]
     fn ec_case_test_path_does_not_double_prefix_app_source_root() {
         let root = Path::new("/repo/apps/tape");
@@ -5375,6 +5956,85 @@ e2e_tests:
             &["behavior".to_string()]
         )
         .is_empty());
+    }
+
+    #[test]
+    fn ec_review_rejects_obvious_false_green_and_self_oracle_commands() {
+        assert_eq!(
+            ec_review_false_green_reason("true"),
+            Some("command can succeed without evaluating the contract")
+        );
+        assert_eq!(
+            ec_review_false_green_reason("cargo run -p agentic-workflow -- ec check"),
+            Some("command uses AW's own EC lifecycle as its oracle")
+        );
+        assert_eq!(
+            ec_review_false_green_reason("aw ec review --project demo"),
+            Some("command uses AW's own EC lifecycle as its oracle")
+        );
+    }
+
+    #[test]
+    fn ec_review_requires_current_independent_human_evidence() {
+        let (_tmp, ctx) = write_demo_repo();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        let mut record = ec_review_payload_template(&ctx, &manifest);
+        record.decision = EcReviewDecision::Accepted;
+        record.reviewer_kind = "agent".to_string();
+        record.reviewed_by = "same-agent".to_string();
+        record.summary = "self review".to_string();
+        record.checklist = EcReviewChecklist {
+            capability_claim_coverage: true,
+            required_dimensions: true,
+            assertions_specific: true,
+            oracle_independent: true,
+            loopholes_checked: true,
+            false_green_risk_checked: true,
+        };
+        let error = validate_ec_review_payload(&ctx, &manifest, &record)
+            .expect_err("same-agent review must not be production evidence");
+        assert!(error.to_string().contains("reviewer_kind `human`"));
+
+        record.reviewer_kind = "human".to_string();
+        record.source_digest = "sha256:stale".to_string();
+        let error = validate_ec_review_payload(&ctx, &manifest, &record)
+            .expect_err("stale review evidence must be rejected");
+        assert!(error.to_string().contains("stale"));
+    }
+
+    #[test]
+    fn ec_verify_routes_missing_review_evidence_to_hitl_review() {
+        let (_tmp, ctx) = write_demo_repo();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_manifest(&ctx, &manifest).unwrap();
+
+        let summary = verify_ec_context(&ctx, false).unwrap();
+
+        assert!(!summary.clean);
+        assert_eq!(summary.command_count, 1);
+        assert_eq!(
+            summary.results[0].failure_kind,
+            Some(EcVerifyFailureKind::SemanticReviewRequired)
+        );
+        assert_eq!(summary.results[0].command, "aw ec review --project demo");
+        assert!(summary.results[0]
+            .stderr_tail
+            .contains("independent EC semantic review evidence is missing"));
+    }
+
+    #[test]
+    fn ec_needs_revision_routes_back_to_bounded_fill() {
+        let (tmp, ctx) = write_demo_repo();
+        let target = tmp
+            .path()
+            .join("projects/demo/external-contracts/behavior/search.md");
+        assert_eq!(
+            ec_fill_command_for_target(&ctx, &target.to_string_lossy()),
+            Some(
+                "aw ec fill --project demo projects/demo/external-contracts/behavior/search.md --section e2e-test"
+                    .to_string()
+            )
+        );
     }
 
     #[test]
@@ -6037,13 +6697,14 @@ e2e_tests:
   - id: smoke
     capability_id: demo
     claim_id: demo-smoke
-    command: "true"
+    command: "test -f aw.toml"
 ```
 "#,
         )
         .unwrap();
         let manifest = build_expected_manifest(&ctx).unwrap();
         write_ec_manifest(&ctx, &manifest).unwrap();
+        write_accepted_ec_review(&ctx, &manifest);
         for (path, content) in generated_ec_test_files(&ctx, &manifest) {
             write_generated_ec_test(&path, &content).unwrap();
         }
@@ -6079,7 +6740,7 @@ e2e_tests:
   - id: required-case
     capability_id: demo
     claim_id: demo-required
-    command: "true"
+    command: "test -f aw.toml"
   - id: advisory-case
     capability_id: demo
     claim_id: demo-advisory
@@ -6091,6 +6752,7 @@ e2e_tests:
         .unwrap();
         let manifest = build_expected_manifest(&ctx).unwrap();
         write_ec_manifest(&ctx, &manifest).unwrap();
+        write_accepted_ec_review(&ctx, &manifest);
         for (path, content) in generated_ec_test_files(&ctx, &manifest) {
             write_generated_ec_test(&path, &content).unwrap();
         }
@@ -6173,6 +6835,7 @@ e2e_tests:
         .unwrap();
         let manifest = build_expected_manifest(&ctx).unwrap();
         write_ec_manifest(&ctx, &manifest).unwrap();
+        write_accepted_ec_review(&ctx, &manifest);
 
         let summary = verify_ec_context(&ctx, false).unwrap();
 
@@ -6425,6 +7088,7 @@ exit 0
             tool_manifests: vec![],
         };
         write_ec_manifest(&ctx, &manifest).unwrap();
+        write_accepted_ec_review(&ctx, &manifest);
 
         let root = tmp.path().to_path_buf();
         let first_root = root.clone();
@@ -6478,7 +7142,7 @@ e2e_tests:
   - id: guard smoke
     capability_id: demo
     claim_id: guarded
-    command: "true"
+    command: "test -f aw.toml"
 ```
 
 ## Guard Tool
@@ -6500,6 +7164,7 @@ tool_contracts:
         .unwrap();
         let manifest = build_expected_manifest(&ctx).unwrap();
         write_ec_manifest(&ctx, &manifest).unwrap();
+        write_accepted_ec_review(&ctx, &manifest);
 
         let summary = verify_ec_context(&ctx, false).unwrap();
 
@@ -6527,7 +7192,7 @@ e2e_tests:
   - id: guard smoke
     capability_id: demo
     claim_id: guarded
-    command: "true"
+    command: "test -f aw.toml"
 ```
 
 ## Guard Tool
@@ -6539,7 +7204,7 @@ tool_contracts:
     tool: guard
     manifest: guard.toml
     category: security
-    command: "true"
+    command: "test -f aw.toml"
     native:
       version: 1
       id: demo-guard
@@ -6549,6 +7214,7 @@ tool_contracts:
         .unwrap();
         let manifest = build_expected_manifest(&ctx).unwrap();
         write_ec_manifest(&ctx, &manifest).unwrap();
+        write_accepted_ec_review(&ctx, &manifest);
 
         let summary = verify_ec_context(&ctx, false).unwrap();
 

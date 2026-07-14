@@ -184,14 +184,16 @@ scenarios:
 <!-- source-from-target: strip-handwrite -->
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/runtime/github_backend.rs -->
-```rust
+~~~~~rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/logic/runtime/github_backend.md#source
+// CODEGEN-BEGIN
 //! GitHub Issues backend — shells out to the `gh` CLI.
 //!
 //! @spec apps/agentic-workflow/tech-design/core/logic/runtime/github_backend.md
 //!
 //! Slice 1: create / list / read (R2). update / close return
-//! `BackendError::Unsupported` (R8 — SDD CRRR fill semantics stay
-//! local in slice 1).
+//! `BackendError::Unsupported` because local artifact mutation is not
+//! projected to GitHub in slice 1.
 //!
 //! Auth: `GITHUB_TOKEN` env var, read natively by the `gh` CLI.
 //! Backend checks for its presence at construction; absent → all
@@ -386,7 +388,7 @@ impl IssueBackend for GitHubIssueBackend {
     }
 
     async fn update(&self, _id: &IssueId, _section: &str, _body: &str) -> Result<(), BackendError> {
-        // R8: SDD CRRR fill semantics scoped to local in slice 1.
+        // Local artifact mutation is not projected in slice 1.
         Err(BackendError::Unsupported)
     }
 
@@ -457,7 +459,9 @@ mod tests {
         );
     }
 }
-```
+
+// CODEGEN-END
+~~~~~
 
 ## Changes
 <!-- type: changes lang: yaml -->

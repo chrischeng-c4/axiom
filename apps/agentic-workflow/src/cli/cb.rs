@@ -3129,11 +3129,11 @@ mod tests {
         is_minified_asset_file, repo_relative_code_path, resolve_project_force_regen_scope,
         run_force_regen, run_force_regen_specs, sample_count, sample_semantic_review_units,
         spec_declares_source_section, td_public_symbol_semantic_coverage,
-        upsert_public_api_overview, upsert_public_api_overview_targets,
-        verify_force_regen_conformance, write_project_root_llms_targets, CbCodegenOriginClass,
-        CbCommand, CbGenArgs, ClaimIssueRef, CwdGuard, ForceRegenConformanceReport,
-        ForceRegenScope, PublicApiManifestSymbol, PublicApiManifestTarget,
-        PublicSymbolSemanticCoverage, SemanticReviewUnit,
+        terminal_ec_failure_envelope, upsert_public_api_overview,
+        upsert_public_api_overview_targets, verify_force_regen_conformance,
+        write_project_root_llms_targets, CbCodegenOriginClass, CbCommand, CbGenArgs, ClaimIssueRef,
+        CwdGuard, ForceRegenConformanceReport, ForceRegenScope, PublicApiManifestSymbol,
+        PublicApiManifestTarget, PublicSymbolSemanticCoverage, SemanticReviewUnit,
     };
     use crate::fillback::ast::{Symbol, SymbolKind};
     use clap::Parser;
@@ -4671,6 +4671,37 @@ pub fn signature_only() -> Result<()>
         assert!(message.contains("aw health --project demo"));
         assert!(message.contains("drift_marker"));
     }
+
+    #[test]
+    fn terminal_ec_missing_semantic_review_routes_to_hitl() {
+        let summary = crate::cli::ec::EcVerifySummary {
+            project: "demo".to_string(),
+            inventory_path: "projects/demo/aw.toml".to_string(),
+            clean: false,
+            command_count: 1,
+            passed_count: 0,
+            failed_count: 1,
+            results: vec![crate::cli::ec::EcVerifyCommandResult {
+                case_id: "ec-semantic-review".to_string(),
+                capability_id: String::new(),
+                claim_id: String::new(),
+                category: "review".to_string(),
+                command: "aw ec review --project demo".to_string(),
+                status: "failed".to_string(),
+                failure_kind: Some(crate::cli::ec::EcVerifyFailureKind::SemanticReviewRequired),
+                exit_code: None,
+                stdout_tail: String::new(),
+                stderr_tail: "independent evidence missing".to_string(),
+            }],
+        };
+
+        let env = terminal_ec_failure_envelope("demo-wi", &summary);
+
+        assert_eq!(env["action"], "hitl");
+        assert_eq!(env["requires_hitl"], true);
+        assert_eq!(env["error_kind"], "terminal_ec_semantic_review_required");
+        assert_eq!(env["next"]["command"], "aw ec review --project demo");
+    }
 }
 
 /// True if `target` (an `aw td code-check <target>` argument) does not
@@ -4781,31 +4812,42 @@ fn terminal_ec_failure_envelope(
             .iter()
             .any(|result| result.failure_kind == Some(kind))
     };
-    let (error_kind, remediation_detail) =
-        if has_failure_kind(crate::cli::ec::EcVerifyFailureKind::SingleFlight) {
-            (
-                "terminal_ec_single_flight",
-                "wait for the in-flight terminal EC evaluation to finish, then retry",
-            )
-        } else if has_failure_kind(crate::cli::ec::EcVerifyFailureKind::Timeout) {
-            (
-                "terminal_ec_timeout",
-                "inspect or fix the timed-out EC command, then retry",
-            )
-        } else if has_failure_kind(crate::cli::ec::EcVerifyFailureKind::RunnerError) {
-            (
-                "terminal_ec_runner_error",
-                "fix the EC runner or process-cleanup error, then retry",
-            )
-        } else {
-            (
-                "terminal_ec_failure",
-                "fix the failing EC command, then retry",
-            )
-        };
-    let remediation = format!("aw td code-check {slug}");
+    let semantic_review_required =
+        has_failure_kind(crate::cli::ec::EcVerifyFailureKind::SemanticReviewRequired);
+    let (error_kind, remediation_detail) = if semantic_review_required {
+        (
+            "terminal_ec_semantic_review_required",
+            "obtain independent human-backed EC review evidence, then retry",
+        )
+    } else if has_failure_kind(crate::cli::ec::EcVerifyFailureKind::SingleFlight) {
+        (
+            "terminal_ec_single_flight",
+            "wait for the in-flight terminal EC evaluation to finish, then retry",
+        )
+    } else if has_failure_kind(crate::cli::ec::EcVerifyFailureKind::Timeout) {
+        (
+            "terminal_ec_timeout",
+            "inspect or fix the timed-out EC command, then retry",
+        )
+    } else if has_failure_kind(crate::cli::ec::EcVerifyFailureKind::RunnerError) {
+        (
+            "terminal_ec_runner_error",
+            "fix the EC runner or process-cleanup error, then retry",
+        )
+    } else {
+        (
+            "terminal_ec_failure",
+            "fix the failing EC command, then retry",
+        )
+    };
+    let remediation = if semantic_review_required {
+        format!("aw ec review --project {}", summary.project)
+    } else {
+        format!("aw td code-check {slug}")
+    };
     serde_json::json!({
-        "action": "error",
+        "action": if semantic_review_required { "hitl" } else { "error" },
+        "requires_hitl": semantic_review_required,
         "error_kind": error_kind,
         "slug": slug,
         "message": format!(

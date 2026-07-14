@@ -44,7 +44,7 @@ must be resolved from a canonical tracker label before the command is emitted.
 <!-- source-from-target: strip-handwrite -->
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/cli/chain.rs -->
-```rust
+~~~~~rust
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/interfaces/src/chain.md#source
 // CODEGEN-BEGIN
 //! Validate an emitted `aw ...` next-command string against the real CLI
@@ -547,7 +547,7 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         mutates_lifecycle: true,
         sunset_criterion: "",
     },
-    // -- wi (core loop: work-item inventory, planning, CRRR, run) -------
+    // -- wi (core loop: work-item inventory, linear authoring, run) -----
     VerbLifecycle {
         path: "wi.draft.init",
         class: VerbLifecycleClass::Core,
@@ -556,12 +556,6 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     },
     VerbLifecycle {
         path: "wi.draft.fill",
-        class: VerbLifecycleClass::Core,
-        mutates_lifecycle: false,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "wi.draft.review",
         class: VerbLifecycleClass::Core,
         mutates_lifecycle: false,
         sunset_criterion: "",
@@ -652,18 +646,6 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     },
     VerbLifecycle {
         path: "wi.fill-section",
-        class: VerbLifecycleClass::Core,
-        mutates_lifecycle: true,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "wi.review",
-        class: VerbLifecycleClass::Core,
-        mutates_lifecycle: true,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "wi.arbitrate",
         class: VerbLifecycleClass::Core,
         mutates_lifecycle: true,
         sunset_criterion: "",
@@ -810,7 +792,7 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     VerbLifecycle {
         path: "ec.review",
         class: VerbLifecycleClass::Core,
-        mutates_lifecycle: false,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
@@ -1385,8 +1367,6 @@ mod tests {
             "wi.update",
             "wi.close",
             "wi.fill-section",
-            "wi.review",
-            "wi.arbitrate",
             "td.create",
             "td.gen",
             "td.gen-source",
@@ -1796,7 +1776,7 @@ mod tests {
     }
 }
 // CODEGEN-END
-```
+~~~~~
 
 ## Changes
 <!-- type: changes lang: yaml -->

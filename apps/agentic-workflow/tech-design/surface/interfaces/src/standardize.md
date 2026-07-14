@@ -102,7 +102,7 @@ Public API manifest for `apps/agentic-workflow/src/cli/standardize.rs` generated
 <!-- source-from-target: strip-handwrite -->
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/cli/standardize.rs -->
-`````rust
+~~~~~rust
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
 // CODEGEN-BEGIN
 //! `aw standardize` — existing-project workflow guidance and bounded remediation.
@@ -161,6 +161,9 @@ const DELETED_COMMAND_PATHS: &[&str] = &[
     "aw td review",
     "aw td revise",
     "aw wi merge",
+    "aw wi review",
+    "aw wi arbitrate",
+    "aw wi draft review",
     "aw cb ",
     // #1278 (epic #1270 R7): `aw standardize` is fully retired -- reporting
     // folded into `aw health`'s takeover-audit axis, `audit record` rehomed
@@ -10375,7 +10378,7 @@ target = "python"
     }
 }
 // CODEGEN-END
-`````
+~~~~~
 
 ## Changes
 <!-- type: changes lang: yaml -->

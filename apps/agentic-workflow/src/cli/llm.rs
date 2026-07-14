@@ -236,6 +236,10 @@ iff ec is green; td chases ec green. So ec is the one artifact that decides
 - What to test is DERIVED FROM caps. That derivation is the single human +
   agent collaboration point (HITL) -- and the only place a review belongs,
   because a wrong ec yields a false green nothing downstream can catch.
+- The approval path is `draft -> fill -> check -> review`. `needs_revision`
+  routes back to bounded `fill`; `accepted` advances to `gen -> verify`.
+  Production-required EC needs digest-bound independent review evidence.
+  Until subagent review exists, that evidence must be human-backed.
 - ec green is the only code-check gate. Code style / fmt are not gates.
 - Wired per project via `aw.toml` `ec.<category>`; absent -> the
   default test gate. Non-capability scope (delivery, docs) has no behavior ec
@@ -275,8 +279,9 @@ loop converges on ec green.
 
 Drive it: `aw wi run <id>` for one work item, or `aw capability run
 <capability-id> --project <project>` for a capability's work-root queue; the
-linear forward path is `wi -> td -> code-check`. `aw run --wi|--project|
---capability` still works but is a deprecated forwarding alias.
+linear authoring path is `skeleton -> fill -> validate`; unresolved product
+decisions become HITL. There is no WI review or arbitration phase. The
+implementation path is `wi -> ec -> td/codegen -> code-check`.
 
 For exact flags, run `aw wi run --help`, `aw capability run --help`, or
 `aw wi --help`.

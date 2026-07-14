@@ -25,12 +25,10 @@ Public API manifest for `apps/agentic-workflow/src/agents/mod.rs` generated from
 | `change_spec` | apps/agentic-workflow/src/agents/mod.rs | module | pub | 7 |  |
 | `code_agent` | apps/agentic-workflow/src/agents/mod.rs | module | pub | 8 |  |
 | `codebase_to_spec` | apps/agentic-workflow/src/agents/mod.rs | module | pub | 9 |  |
-| `crr` | apps/agentic-workflow/src/agents/mod.rs | module | pub | 11 |  |
 | `reference_codebase_context` | apps/agentic-workflow/src/agents/mod.rs | module | pub | 12 |  |
 | `reference_spec_context` | apps/agentic-workflow/src/agents/mod.rs | module | pub | 13 |  |
 | `restructure` | apps/agentic-workflow/src/agents/mod.rs | module | pub | 14 |  |
 | `restructure_codebase` | apps/agentic-workflow/src/agents/mod.rs | module | pub | 15 |  |
-| `review` | apps/agentic-workflow/src/agents/mod.rs | module | pub | 16 |  |
 ## Schema
 <!-- type: schema lang: yaml -->
 
@@ -54,7 +52,9 @@ definitions:
 <!-- source-from-target: strip-managed-markers -->
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/agents/mod.rs -->
-```rust
+~~~~~rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/interfaces/agents/mod.md#source
+// CODEGEN-BEGIN
 //! Agent module - defines the Agent trait and agent implementations.
 
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/agents/mod.md#source
@@ -63,12 +63,10 @@ pub mod change_spec;
 pub mod code_agent;
 pub mod codebase_to_spec;
 mod coding;
-pub mod crr;
 pub mod reference_codebase_context;
 pub mod reference_spec_context;
 pub mod restructure;
 pub mod restructure_codebase;
-pub mod review;
 
 // Keep the old module path accessible so existing code compiles without changes.
 // `reference_context` is now an alias for `reference_spec_context`.
@@ -87,7 +85,6 @@ pub use codebase_to_spec::{
     CodebaseToSpecAgent, CodebaseToSpecAgentBuilder, CodebaseToSpecAgentConfig, CodebaseToSpecInput,
 };
 pub use coding::{CodingAgent, CodingAgentBuilder, CodingAgentConfig};
-pub use crr::{CRRCycle, CRRCycleBuilder, CRREvent, CRRResult, CRRVerdictType};
 pub use reference_codebase_context::{
     CodebaseDependency, ComponentRelationship, KeyFile, ReferenceCodebaseArtifact,
     ReferenceCodebaseContextAgent, ReferenceCodebaseContextAgentBuilder,
@@ -104,10 +101,6 @@ pub use restructure::{
 };
 pub use restructure_codebase::{
     RestructureCodebaseAgent, RestructureCodebaseAgentBuilder, RestructureCodebaseAgentConfig,
-};
-pub use review::{
-    ReviewAgent, ReviewAgentBuilder, ReviewAgentConfig, ReviewIssue, ReviewType, ReviewVerdict,
-    Reviewer, Severity,
 };
 
 use agent::error::NovaResult;
@@ -159,7 +152,9 @@ impl ApprovalHandler for AutoApproveHandler {
 /// `impl ApprovalHandler for AutoApproveHandler` block.
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/agents/mod.md#schema
 pub struct AutoApproveHandler;
-```
+
+// CODEGEN-END
+~~~~~
 
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -171,30 +166,10 @@ changes:
     section: source
     impl_mode: codegen
     description: |
-      Source template owns the complete agent module facade, including module
-      declarations, public re-exports, async traits, the auto-approve handler
-      unit struct, and its approval implementation.
+      Source template owns the linear agent-module implementation; semantic
+      approval belongs exclusively to the external-contract review gate.
   - action: annotate
     section: schema
     impl_mode: hand-written
-    description: "Traceability metadata edge for the schema section."
-
+    description: Traceability metadata edge for the schema section.
 ```
-
-# Reviews
-
-## Review 1
-<!-- type: doc lang: markdown -->
-**Verdict:** approved
-
-- [overview] Correctly identifies the unit struct, its trait impl, and the hand-written boundary (all module-level items, two trait decls, async_trait impl).
-- [schema] Definition is well-formed: `properties: {}` + `required: []` + `x-rust-struct.derive: []` + `unit: true` produces a bare `pub struct X;`. Matches the 17 generator unit structs already dogfooded.
-- [changes] Two entries cleanly split codegen vs hand-written. `replaces` lists the single struct name; hand-written entry covers all out-of-block items including the async_trait impl.
-
-## Review 2
-<!-- type: doc lang: markdown -->
-**Verdict:** approved
-
-- [overview] Promotes the module facade to full source ownership without adding a Rust-specific section type for module declarations or trait impls.
-- [source] Uses `strip-managed-markers` so the current Rust module remains the source template while removing the HANDWRITE/CODEGEN wrapper split.
-- [changes] Correctly routes the target file through the `source` section with `impl_mode: codegen`.

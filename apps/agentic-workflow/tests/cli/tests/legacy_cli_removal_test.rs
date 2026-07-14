@@ -236,6 +236,10 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         // note above re: `templates/cli/mainthread/skills/aw-wi/SKILL.md`).
         // #1277 (epic #1270 R3): `aw td validate` folded into `aw td check`.
         "aw td validate",
+        // #1504: WI authoring is linear; semantic approval belongs only to EC.
+        "aw wi review",
+        "aw wi arbitrate",
+        "aw wi draft review",
     ];
     for doc in docs {
         let Ok(content) = std::fs::read_to_string(&doc) else {
@@ -248,6 +252,33 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
                 doc.display()
             );
         }
+    }
+}
+
+#[test]
+fn wi_crrr_commands_are_removed() {
+    let cmd = Cli::command();
+    let wi = cmd.find_subcommand("wi").expect("wi namespace registered");
+    assert!(wi.find_subcommand("review").is_none());
+    assert!(wi.find_subcommand("arbitrate").is_none());
+    let draft = wi
+        .find_subcommand("draft")
+        .expect("wi draft namespace registered");
+    assert!(draft.find_subcommand("review").is_none());
+
+    for invocation in [
+        vec!["aw", "wi", "review", "1504"],
+        vec!["aw", "wi", "arbitrate", "1504"],
+        vec!["aw", "wi", "draft", "review", "1504"],
+    ] {
+        let error = match Cli::try_parse_from(invocation) {
+            Ok(_) => panic!("retired WI command unexpectedly parsed"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("unrecognized subcommand"),
+            "unexpected parse error: {error}"
+        );
     }
 }
 

@@ -118,6 +118,7 @@ Gate Inventory:
 | Wi Create Remote Flag Tests | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib wi_create_remote -- --nocapture`; apps/agentic-workflow/tech-design/specs/3909.md |
 | Wi Remove Agent Estimate Unit Command | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib wi_remove_agent_estimate -- --nocapture`; apps/agentic-workflow/tech-design/specs/3910.md |
 | WI close remote rehydration | change | #1551 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests wi_close_remote_ -- --nocapture`; apps/agentic-workflow/tech-design/semantic/wi-close-remote-rehydration.md; #1583 is a duplicate field reproducer |
+| Linear WI authoring without CRRR | change | #1504 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests legacy_cli_removal_test -- --nocapture`; `cargo test -p agentic-workflow --lib runtime::session -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-wi-crrr-removal.md; WI and draft authoring terminate at validation, with generic review/arbitration/runtime roles removed and older tracker review fields retained only for compatibility |
 
 ### TD/CB Lifecycle Automation
 
@@ -194,6 +195,7 @@ Gate Inventory:
 | EC external-contract source | change | #13 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_draft_fill_markdown_drives_inventory`; aw ec draft/fill authors project-local external-contract markdown and aw ec gen writes the project aw.toml EC inventory plus generated tests and rig/meter/guard/vat tool configs; arena is retained as a legacy compatibility import |
 | EC tool binding dispatch | change | #13 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_binding_command`; `cargo test -p agentic-workflow --lib resolve_ec_command_dispatches_bound_category`; apps/agentic-workflow/tech-design/config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md; apps/agentic-workflow/tech-design/logic/aw-ec-add-vat-binding-command-support.md |
 | EC false-green guard | change | #694 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_verify_rejects_zero_test_false_green -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-ec-zero-test-false-green.md |
+| EC-only independent semantic approval | change | #1504 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_review_ -- --nocapture`; `cargo test -p agentic-workflow --lib terminal_ec_missing_semantic_review_routes_to_hitl -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md; production EC generation and verification require current digest-bound human acceptance after dimension, claim, assertion, oracle-independence, loophole, and false-green inspection |
 
 ### Manual Evidence Artifacts
 
