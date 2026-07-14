@@ -12,6 +12,7 @@ use bytes::BytesMut;
 use server_lifecycle::ConnectionBudget;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::oneshot;
 
 use pgpool::pool::{
     BackendPool, LeaseDisposition, PoolConfig, PoolError, PoolRejectionReason, PoolStats,
@@ -250,6 +251,69 @@ async fn acquire_reuses_idle_connection_after_liveness_check_passes() {
     let stats = pool.stats();
     assert_eq!(stats.backend_active, 1);
     assert_eq!(stats.backend_idle, 0);
+}
+
+/// `MSG_PEEK` must leave readable backend bytes in the socket. The backend
+/// sends one sentinel byte only after the reset has completed and the pool has
+/// parked its stream idle; the next acquire liveness probe observes it without
+/// consuming it, so the lease holder reads that exact byte afterwards.
+///
+/// verify: pool::acquire_liveness_peek_preserves_queued_backend_bytes (R3)
+#[tokio::test]
+async fn acquire_liveness_peek_preserves_queued_backend_bytes() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake backend");
+    let port = listener.local_addr().expect("fake backend addr").port();
+    let (reset_complete_tx, reset_complete_rx) = oneshot::channel();
+    let (send_sentinel_tx, send_sentinel_rx) = oneshot::channel();
+    let (sentinel_written_tx, sentinel_written_rx) = oneshot::channel();
+    let _backend = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept backend");
+        let _ = read_frontend_query(&mut stream).await;
+        write_backend(
+            &mut stream,
+            &BackendMessage::CommandComplete(CommandComplete {
+                tag: "DISCARD ALL".to_string(),
+            }),
+        )
+        .await;
+        write_backend(
+            &mut stream,
+            &BackendMessage::ReadyForQuery(ReadyForQuery {
+                status: TransactionStatus::Idle,
+            }),
+        )
+        .await;
+        let _ = reset_complete_tx.send(());
+        let _ = send_sentinel_rx.await;
+        stream
+            .write_all(&[0xA5])
+            .await
+            .expect("write queued sentinel");
+        let _ = sentinel_written_tx.send(());
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    });
+
+    let pool = BackendPool::new(pool_config(port, 1));
+    let first = pool.acquire_fresh().await.expect("fresh acquire succeeds");
+    pool.release(first.id, first.stream, LeaseDisposition::ReturnToIdle)
+        .await;
+    reset_complete_rx.await.expect("reset response completed");
+    send_sentinel_tx
+        .send(())
+        .expect("backend awaits sentinel trigger");
+    sentinel_written_rx.await.expect("sentinel was queued");
+
+    let mut reused = pool.acquire().await.expect("idle backend is reused");
+    assert!(!reused.fresh, "the queued-byte backend remains reusable");
+    let mut sentinel = [0_u8; 1];
+    reused
+        .stream
+        .read_exact(&mut sentinel)
+        .await
+        .expect("relay-side read sees byte preserved by liveness peek");
+    assert_eq!(sentinel, [0xA5], "MSG_PEEK must not consume queued bytes");
 }
 
 /// A fake backend that accepts connections in a loop; the first connection
