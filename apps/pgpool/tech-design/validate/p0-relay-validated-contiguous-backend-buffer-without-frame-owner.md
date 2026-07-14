@@ -53,26 +53,25 @@ A descriptor cannot be consumed twice or after another reader mutation. Write fa
 changes:
   - path: apps/pgpool/src/wire/reader.rs
     action: modify
-    section: pgpool-contiguous-validated-relay-prefix
+    section: pgpool-contiguous-validated-relay-prefix-contract
     impl_mode: hand-written
-    reason: Add a bounded non-consuming backend relay-prefix scan plus an explicit post-write consume operation while preserving the existing owned-frame APIs for all other callers.
+    reason: Define an internal descriptor that scans backend frames without consuming buffer bytes and a guarded consume operation that commits Ready status only after output success.
   - path: apps/pgpool/src/proxy/relay.rs
     action: modify
-    section: pgpool-contiguous-validated-relay-prefix
+    section: pgpool-contiguous-validated-relay-prefix-contract
     impl_mode: hand-written
-    reason: Replace the copied BackendRelayBatch handoff with a validated prefix descriptor and a direct contiguous reader-buffer write seam.
+    reason: Make backend relay obtain a prefix descriptor, borrow the contiguous bytes for the existing single write_all, and request post-write consumption without retaining a copied batch.
   - path: apps/pgpool/src/pool/transaction.rs
     action: modify
-    section: pgpool-contiguous-validated-relay-prefix
+    section: pgpool-contiguous-validated-relay-prefix-contract
     impl_mode: hand-written
-    reason: Consume a backend reader prefix only after its client write completes, then preserve existing ReadyForQuery and terminal-error outcomes.
+    reason: Preserve existing transaction outcome handling while receiving Ready or terminal facts only after direct-prefix output and consumption.
   - path: apps/pgpool/tests/wire_codec.rs
     action: modify
-    section: pgpool-contiguous-validated-relay-prefix
+    section: pgpool-contiguous-validated-relay-prefix-contract
     impl_mode: hand-written
-    reason: Cover direct validated prefixes, incomplete retention, malformed-first and malformed-suffix ordering, and ReadyForQuery consume timing.
+    reason: Assert descriptor bounds, exactly-once consumption, Ready timing, incomplete retention, and malformed-prefix ordering at the parser boundary.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
