@@ -107,6 +107,7 @@ pub(crate) struct ThreadClassState {
     user_classes: HashSet<String>,
     callable_registry: HashSet<u64>,
     slots_registry: HashMap<String, Vec<String>>,
+    own_slots_registry: HashMap<String, Vec<String>>,
     dict_suppressed: HashSet<String>,
     kwargs_registry: HashMap<String, HashMap<String, MbValue>>,
     classcell_required: HashSet<String>,
@@ -138,7 +139,17 @@ thread_local! {
     static CALLABLE_REGISTRY: std::cell::RefCell<HashSet<u64>> =
         std::cell::RefCell::new(HashSet::new());
     /// __slots__ registry: class name → effective (merged) slot names.
+    /// This is the instance LAYOUT — used for attribute-assignment
+    /// restriction checks and member-descriptor synthesis. It must NOT be
+    /// read back as the `__slots__` attribute VALUE (see OWN_SLOTS_REGISTRY);
+    /// CPython keeps those two concepts distinct (#1523).
     static SLOTS_REGISTRY: std::cell::RefCell<HashMap<String, Vec<String>>> =
+        std::cell::RefCell::new(HashMap::new());
+    /// `__slots__` registry: class name → declared-own slot names, exactly as
+    /// written in the class body (no MRO merge). Backs the `cls.__slots__`
+    /// attribute value, which CPython reports as-declared regardless of what
+    /// the merged instance layout looks like (#1523).
+    static OWN_SLOTS_REGISTRY: std::cell::RefCell<HashMap<String, Vec<String>>> =
         std::cell::RefCell::new(HashMap::new());
     /// R13: Classes with __dict__ suppressed (defined __slots__ without '__dict__' in it).
     static DICT_SUPPRESSED: std::cell::RefCell<HashSet<String>> =
@@ -11351,6 +11362,12 @@ pub fn mb_register_slots(class_name: MbValue, slots: MbValue) {
         });
     }
 
+    // #1523: record the declared-own tuple separately from the merged
+    // layout — `cls.__slots__` must report this, not `effective_slots`.
+    OWN_SLOTS_REGISTRY.with(|reg| {
+        reg.borrow_mut().insert(name.clone(), own_slot_names);
+    });
+
     SLOTS_REGISTRY.with(|reg| {
         reg.borrow_mut().insert(name, effective_slots);
     });
@@ -12006,8 +12023,11 @@ pub(crate) fn class_slot_names(class_name: &str) -> Vec<String> {
     SLOTS_REGISTRY.with(|reg| reg.borrow().get(class_name).cloned().unwrap_or_default())
 }
 
+/// The `cls.__slots__` attribute VALUE — the declared-own tuple exactly as
+/// written in the class body, NOT the merged instance layout (#1523: CPython
+/// keeps these distinct even though instance layout merges MRO slots).
 fn class_slots_value(class_name: &str) -> Option<MbValue> {
-    let slots = SLOTS_REGISTRY.with(|reg| reg.borrow().get(class_name).cloned());
+    let slots = OWN_SLOTS_REGISTRY.with(|reg| reg.borrow().get(class_name).cloned());
     slots.map(|names| {
         MbValue::from_ptr(MbObject::new_tuple(
             names
@@ -21248,6 +21268,7 @@ pub(crate) fn snapshot_thread_class_state() -> ThreadClassState {
         user_classes: USER_CLASSES.with(|c| c.borrow().clone()),
         callable_registry: CALLABLE_REGISTRY.with(|c| c.borrow().clone()),
         slots_registry: SLOTS_REGISTRY.with(|c| c.borrow().clone()),
+        own_slots_registry: OWN_SLOTS_REGISTRY.with(|c| c.borrow().clone()),
         dict_suppressed: DICT_SUPPRESSED.with(|c| c.borrow().clone()),
         kwargs_registry,
         classcell_required: CLASSCELL_REQUIRED.with(|c| c.borrow().clone()),
@@ -21267,6 +21288,7 @@ pub(crate) fn replace_thread_class_state(next: ThreadClassState) -> ThreadClassS
     USER_CLASSES.with(|c| *c.borrow_mut() = next.user_classes);
     CALLABLE_REGISTRY.with(|c| *c.borrow_mut() = next.callable_registry);
     SLOTS_REGISTRY.with(|c| *c.borrow_mut() = next.slots_registry);
+    OWN_SLOTS_REGISTRY.with(|c| *c.borrow_mut() = next.own_slots_registry);
     DICT_SUPPRESSED.with(|c| *c.borrow_mut() = next.dict_suppressed);
     KWARGS_REGISTRY.with(|c| *c.borrow_mut() = next.kwargs_registry);
     CLASSCELL_REQUIRED.with(|c| *c.borrow_mut() = next.classcell_required);
@@ -21292,6 +21314,7 @@ pub(crate) fn cleanup_all_classes() {
     let _ = USER_CLASSES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = CALLABLE_REGISTRY.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = SLOTS_REGISTRY.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = OWN_SLOTS_REGISTRY.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = DICT_SUPPRESSED.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let pending_kwargs = KWARGS_REGISTRY.with(|c| {
         c.try_borrow_mut()
