@@ -82,3 +82,42 @@ changes:
     impl_mode: hand-written
     reason: Cover direct validated prefixes, incomplete retention, malformed-first and malformed-suffix ordering, and ReadyForQuery consume timing.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-contiguous-validated-relay-prefix-verification
+requirements:
+  direct_validated_prefix:
+    id: R1
+    text: "A complete backend prefix, including multiple contiguous frames, is structurally validated in place and advances only after explicit successful-write consumption."
+    kind: regression
+    risk: high
+    verify: wire_codec::backend_relay_prefix_validates_and_consumes_contiguous_frames
+  peer_gate:
+    id: R4
+    text: "The unchanged competitor comparison is the sole retention gate: meter is diagnostic only, three clean unsampled release comparisons must match or exceed PgBouncer, and a first valid loss reverts production code."
+    kind: e2e
+    risk: high
+    verify: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --pgpool-bin target/release/pgpool
+  suffix_ordering:
+    id: R2
+    text: "An incomplete suffix remains buffered; malformed-first input produces no prefix, while a malformed suffix after a valid prefix preserves the valid-prefix-then-terminal order."
+    kind: regression
+    risk: high
+    verify: wire_codec::backend_relay_prefix_preserves_incomplete_and_malformed_suffix_boundaries
+  transaction_isolation:
+    id: R3
+    text: "Transaction mode keeps its ReadyForQuery ownership boundary, DISCARD ALL reset isolation, and configured backend cap while the backend response relay uses post-write prefix consumption."
+    kind: integration
+    risk: high
+    verify: cargo test -p pgpool --test pool --test pool_modes --test trust_startup_replay --test proxy
+---
+flowchart TD
+    r1[R1 direct validated prefix] --> wire_codec_backend_relay_prefix_validates_and_consumes_contiguous_frames[wire_codec::backend_relay_prefix_validates_and_consumes_contiguous_frames]
+    r2[R2 suffix ordering] --> wire_codec_backend_relay_prefix_preserves_incomplete_and_malformed_suffix_boundaries[wire_codec::backend_relay_prefix_preserves_incomplete_and_malformed_suffix_boundaries]
+    r3[R3 transaction isolation] --> cargo_test_p_pgpool_test_pool_test_pool_modes_test_trust_startup_replay_test_proxy[cargo test -p pgpool --test pool --test pool_modes --test trust_startup_replay --test proxy]
+    r4[R4 peer gate] --> apps_pgpool_benchmarks_pgbouncer_transaction_pooling_run_sh_pgpool_bin_target_release_pgpool[apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --pgpool-bin target/release/pgpool]
+```
