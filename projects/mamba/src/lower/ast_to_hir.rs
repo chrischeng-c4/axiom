@@ -7877,6 +7877,60 @@ impl<'a> AstLowerer<'a> {
                         });
                     }
                 }
+                // Mixed form: dict(mapping_or_iterable, **kwargs) /
+                // dict(mapping, k=v, ...) — dict ACCEPTS kwargs (unlike
+                // list/set/frozenset, #1549). Build the positional mapping via
+                // mb_dict_from_pairs, then merge the keyword entries over it
+                // via mb_dict_merge so kwargs override same-key positional
+                // entries (matching CPython's dict(iterable, **kwargs))
+                // while preserving insertion order. Restricted to exactly one
+                // positional arg + no bare `*args` splat so every other
+                // dict(...) call shape (pure keyword, pure `**spread`, extra
+                // positionals) keeps its existing, already-correct path.
+                if let ast::Expr::Ident(name) = &func.node {
+                    if name == "dict"
+                        && args
+                            .iter()
+                            .filter(|a| matches!(a, ast::CallArg::Positional(_)))
+                            .count()
+                            == 1
+                        && args.iter().any(|a| {
+                            matches!(
+                                a,
+                                ast::CallArg::Keyword { .. } | ast::CallArg::DoubleStarArg(_)
+                            )
+                        })
+                        && args.iter().all(|a| !matches!(a, ast::CallArg::StarArg(_)))
+                    {
+                        let positional = args.iter().find_map(|a| {
+                            if let ast::CallArg::Positional(value) = a {
+                                self.lower_expr(value)
+                            } else {
+                                None
+                            }
+                        });
+                        if let (Some(positional), Some(kwargs)) =
+                            (positional, self.build_kwargs_dict(args, any_ty))
+                        {
+                            let base = HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_dict_from_pairs".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![positional],
+                                ty: any_ty,
+                            };
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_dict_merge".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![base, kwargs],
+                                ty: any_ty,
+                            });
+                        }
+                    }
+                }
                 // Kwargs-aware builtin dispatch: when a known builtin is called
                 // with keyword arguments, route to the kwargs variant that preserves
                 // keyword semantics. Without this, keyword names are lost during
