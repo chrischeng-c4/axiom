@@ -369,18 +369,23 @@ fn resolve_class_arg(val: MbValue) -> Option<String> {
         return super::super::module::NATIVE_TYPE_NAMES
             .with(|m| m.borrow().get(&(addr as u64)).cloned());
     }
-    // a type object Instance{class_name="type", __name__=X}
+    // a type object Instance{class_name="type", __name__=X}. Resolve via the
+    // type object's REGISTRY key, not its `__name__` field: `__name__` holds
+    // the human-readable *display* name, while `CLASS_REGISTRY` (and thus
+    // `is_logger_subclass`'s MRO walk below) is keyed by the class's
+    // runtime-registration key. Those two can differ, and reading `__name__`
+    // directly made a real subclass like `class MyLogger(logging.Logger):
+    // pass` fail the MRO lookup and get spuriously rejected by
+    // `setLoggerClass`, even though `issubclass(MyLogger, logging.Logger)`
+    // (which resolves through the same registry key via `resolve_class_name`
+    // in `runtime::class`) correctly returns `True`.
     val.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Instance {
-            class_name: ref cn,
-            ref fields,
+            class_name: ref cn, ..
         } = (*ptr).data
         {
             if cn == "type" {
-                fields
-                    .read()
-                    .ok()
-                    .and_then(|f| f.get("__name__").map(|v| extract_str(*v)))
+                super::super::builtins::type_object_registry_key(val)
             } else {
                 // a bare class instance used as a class? treat class_name.
                 Some(cn.clone())

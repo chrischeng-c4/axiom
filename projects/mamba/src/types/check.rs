@@ -3691,6 +3691,22 @@ impl TypeChecker {
             {
                 return true;
             }
+            // `typing.SupportsIndex`/`typing.SupportsFloat` are structural
+            // protocols satisfied by concrete numeric primitives that define
+            // `__index__`/`__float__` — every int/bool defines `__index__`,
+            // and every int/float/bool defines `__float__`. This mirrors the
+            // primitive/protocol pairing `known_stdlib_class_projection`
+            // (check_expr.rs) already uses for the structured stdlib-call
+            // checker, so the general compatibility engine (used e.g. for the
+            // `Iterable[SupportsFloat]` element-type recursion below) agrees
+            // instead of hard-rejecting legal calls like `math.fsum([1, 2.0])`.
+            if external.module == "typing" {
+                match external.name.as_str() {
+                    "SupportsIndex" if matches!(a, Ty::Int | Ty::Bool) => return true,
+                    "SupportsFloat" if matches!(a, Ty::Int | Ty::Float | Ty::Bool) => return true,
+                    _ => {}
+                }
+            }
 
             if external.module == "typing" && external.name == "MutableSequence" {
                 let mutable_items = match a.clone() {
@@ -3806,7 +3822,26 @@ impl TypeChecker {
                 {
                     return true;
                 }
-                (Some(_), None) | (None, Some(_)) => return false,
+                // A user class whose base chain includes an unresolved
+                // (non-locally-declared) base — e.g. `class MyLogger(logging.Logger)`,
+                // where `logging.Logger` isn't a symbol this pass can link — is
+                // recorded as "open" inheritance (`class_inheritance_open`) rather
+                // than assumed unrelated to `expected`. Elsewhere (see
+                // `stdlib_type_relation_inner` in check_expr.rs) that same open-ness
+                // already means "can't prove incompatible, so don't reject"; apply
+                // the identical policy here so a real subclass of an external stdlib
+                // class (passed as e.g. `type[logging.Logger]`) isn't hard-walled
+                // just because its external base couldn't be statically linked.
+                (Some(_), None) => {
+                    return user2
+                        .as_ref()
+                        .is_some_and(|user| self.class_inheritance_open.contains(&user.symbol));
+                }
+                (None, Some(_)) => {
+                    return user1
+                        .as_ref()
+                        .is_some_and(|user| self.class_inheritance_open.contains(&user.symbol));
+                }
                 (None, None) => {}
             }
             match (user1, user2) {
