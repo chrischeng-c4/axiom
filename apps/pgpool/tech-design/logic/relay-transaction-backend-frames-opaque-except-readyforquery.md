@@ -93,14 +93,13 @@ changes:
     action: modify
     section: pgpool-opaque-backend-transaction-relay
     impl_mode: hand-written
-    reason: Keep bounded frame extraction and strict ReadyForQuery state classification while making other established backend relay payloads opaque.
+    reason: Make only the established backend transaction relay opaque after its bounded envelope is accepted, while preserving strict ReadyForQuery status validation.
   - path: apps/pgpool/tests/wire_codec.rs
     action: modify
     section: pgpool-opaque-backend-transaction-relay
     impl_mode: hand-written
-    reason: Prove non-control backend payloads relay byte-for-byte without structural parsing and that malformed ReadyForQuery still rejects.
+    reason: Pin opaque bounded result forwarding, malformed ReadyForQuery rejection, and unchanged raw-byte ownership evidence.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
