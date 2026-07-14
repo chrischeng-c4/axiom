@@ -4319,6 +4319,21 @@ impl TypeChecker {
         {
             return None;
         }
+        // #1550: typeshed's `dir()` overload set folds to a single
+        // fixed-arity `(o: object)` `ModuleFn` row, so the generated
+        // `CallableSpec` arity walk rejects a 2-arg call like `dir(42, 42)`
+        // as a compile-time type error. Real CPython has no static arity
+        // check on builtins — `dir()` validates its own argument count at
+        // *runtime* and raises a catchable `TypeError`. Defer to the legacy
+        // `check_stdlib_call` path, whose `builtins.dir` row is
+        // `enforceable: false` (skips arg-count enforcement entirely), and
+        // let the runtime dispatcher (`dispatch_dir`) raise the TypeError.
+        if target.access == StdlibSpecAccess::ModuleFn
+            && target.module == "builtins"
+            && target.name == "dir"
+        {
+            return None;
+        }
         let constructor_result = if target.access == StdlibSpecAccess::Constructor {
             target.receiver.as_ref().map(|receiver| {
                 self.external_class_instance(

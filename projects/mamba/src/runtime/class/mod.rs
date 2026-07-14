@@ -9131,6 +9131,24 @@ fn mb_getattr_impl(
         }
     }
 
+    // #1550: `None.__ne__(x)` (attribute-access + explicit call, distinct
+    // from the `==`/`!=` operator form which already dispatches correctly)
+    // — synthesize the same `__bound_native_method__` shell int/float/
+    // container attrs use above. `mb_call_method`'s `receiver.is_none()` arm
+    // already implements identity comparison + `NotImplemented` fallback for
+    // exactly these six names; without this, `getattr` fell through to the
+    // bare `MbValue::none()` below (None carries no MbObject to look a
+    // method up on) and calling that result raised "'NoneType' object is
+    // not callable" instead of dispatching.
+    if obj.is_none()
+        && matches!(
+            attr_name.as_str(),
+            "__eq__" | "__ne__" | "__lt__" | "__le__" | "__gt__" | "__ge__"
+        )
+    {
+        return make_bound_native_method(obj, &attr_name);
+    }
+
     MbValue::none()
 }
 
@@ -10408,6 +10426,10 @@ fn builtin_type_method_names(obj: &MbValue) -> Vec<&'static str> {
                     "__getitem__",
                     "__setitem__",
                     "__delitem__",
+                    // Bindable so `[].__dir__` resolves to a callable (not
+                    // None) and `sorted([].__dir__()) == dir([])` holds —
+                    // dispatch_list_method already handles the call.
+                    "__dir__",
                 ],
                 ObjData::Dict(_) => vec![
                     "keys",
@@ -10725,7 +10747,15 @@ pub fn mb_dir(obj: MbValue) -> MbValue {
                 }
                 ObjData::Dict(lock) => {
                     let guard = lock.read().unwrap();
-                    let looks_like_module = guard.contains_key("__name__");
+                    // `guard.contains_key("__name__")` would probe with a bare
+                    // `&str`, which IndexMap hashes via Rust's default `Hash
+                    // for str` — a different domain than `DictKey::Str`'s
+                    // Python-semantic `dict_string_hash_value` (#1028), so it
+                    // never finds the bucket the key actually lives in and
+                    // always reports `false`. Use the same is_module_value
+                    // check the rest of getattr/`__dict__`/`super()` use to
+                    // classify a Dict as a module namespace.
+                    let looks_like_module = super::module::is_module_value(obj);
                     if looks_like_module {
                         for k in guard.keys() {
                             if let super::dict_ops::DictKey::Str(s) = k {
