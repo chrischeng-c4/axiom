@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "apps/lumen/tech-design"
-generated_at = "2026-07-14T03:56:51.117755+00:00"
-digest = "sha256:5f38b721d6b3887bc8e9304065b6cdb1568fd0bd766bb00b600c9afd14903b22"
-source_digest = "sha256:5f38b721d6b3887bc8e9304065b6cdb1568fd0bd766bb00b600c9afd14903b22"
-ir_digest = "sha256:a4289c031720425688f928a9134ba2632107d0ed23a2b76ab6b7ba71b14ebb58"
+generated_at = "2026-07-14T03:59:28.420479+00:00"
+digest = "sha256:a627faa0b6128fbcf152e85f7fa40b5dabce9a403b21fc1a49681a89b31cddab"
+source_digest = "sha256:a627faa0b6128fbcf152e85f7fa40b5dabce9a403b21fc1a49681a89b31cddab"
+ir_digest = "sha256:cab49585bfea52735184766ee3bf2178cb5ddb839890236559e004aa4c9d8bbd"
 
 [[files]]
 path = "interfaces/cli/cli-connect-query-k8s-agent-workflow.md"
@@ -75,8 +75,8 @@ section_count = 4
 
 [[files]]
 path = "logic/adopt-shared-service-http-otlp-tracing.md"
-digest = "sha256:8b014138cee9666f1933beafc1f3a658970d5c82259ef9738a3f9f8832386bb6"
-ir_digest = "sha256:c870962c79328eb5ec77ab0e57575978e53e88707217040560861935ca1e8172"
+digest = "sha256:26604a05bcbcf1f7211dac765ccac66e1338fcc983ca1db496620ce28d8c0836"
+ir_digest = "sha256:4e44de072c9d429681ba924c58420dcaa431f97b5a57b106e240a6d7945dcfc8"
 section_count = 3
 
 [[files]]
