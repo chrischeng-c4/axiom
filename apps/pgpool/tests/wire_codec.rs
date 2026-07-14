@@ -407,6 +407,38 @@ fn transaction_relay_validates_hot_frames_and_tracks_ownership() {
     assert_eq!(terminate_frame.bytes.as_ref(), terminate.as_ref());
 }
 
+/// After consuming a terminal idle frame, the same backend reader must decode
+/// the next backend frame cleanly. This preserves the parser boundary that a
+/// future reset optimization would need, without requiring reader reuse in
+/// production after P0 #1695 lost its peer comparison.
+///
+/// verify: wire_codec::transaction_reset_reader_consumes_idle_before_next_backend_frame (P0 #1695 no-go guard)
+#[test]
+fn transaction_reset_reader_consumes_idle_before_next_backend_frame() {
+    let config = WireCodecConfig::default();
+    let mut reader = FrameReader::new(Role::Backend, &config);
+    let ready = encode_backend(&BackendMessage::ReadyForQuery(ReadyForQuery {
+        status: TransactionStatus::Idle,
+    }));
+    reader.feed(&ready);
+    assert!(matches!(
+        reader
+            .next_relay_frame_with_raw()
+            .expect("valid ReadyForQuery decodes"),
+        Some(frame) if frame.kind == RelayFrameKind::BackendReady(TransactionStatus::Idle)
+    ));
+
+    let reset_response = encode_backend(&BackendMessage::CommandComplete(CommandComplete {
+        tag: "DISCARD ALL".to_string(),
+    }));
+    reader.feed(&reset_response);
+    assert!(matches!(
+        reader.next_frame().expect("next backend frame decodes"),
+        Some(WireMessage::Backend(BackendMessage::CommandComplete(command)))
+            if command.tag == "DISCARD ALL"
+    ));
+}
+
 /// The allocation-free relay validators must reject malformed hot frames in
 /// exactly the same way as the established full typed decoder.
 #[test]
