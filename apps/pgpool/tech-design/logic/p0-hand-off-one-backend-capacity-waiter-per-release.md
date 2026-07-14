@@ -53,3 +53,22 @@ one capacity waiter]
 ### Error handling
 
 All existing timeout and I/O failures remain terminal for their stream and release their permit before notifying one capacity waiter. A waiter that wakes after another task consumed the resource simply re-enters its deadline-bounded wait; it never reports a false saturation error before the original deadline. Replay publication still broadcasts after the entry is committed under the pool mutex, so every awakened startup admission sees either the exact cached reply or safely retries.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/pool/backend_pool.rs
+    action: modify
+    section: pgpool-single-capacity-handoff
+    impl_mode: hand-written
+  - path: apps/pgpool/tests/pool.rs
+    action: modify
+    section: pgpool-single-capacity-handoff
+    impl_mode: hand-written
+  - path: apps/pgpool/tests/pool_modes.rs
+    action: modify
+    section: pgpool-single-capacity-handoff
+    impl_mode: hand-written
+```
