@@ -59,3 +59,26 @@ flowchart TD
 ### Error handling
 
 When the earliest deadline fires, the scheduler removes every expired head in order, sends each a saturation result, and arms the next earliest live deadline. Dropping an acquire future marks or removes its waiter; a later release skips it without consuming a capacity handoff. Reset, liveness, connect, and dropped-lease failures preserve their existing stream disposal and physical-permit behavior, then invoke the same one-slot handoff only after capacity is actually visible.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: apps/pgpool/src/pool/backend_pool.rs
+    action: modify
+    section: pgpool-capacity-deadline-scheduler
+    impl_mode: hand-written
+    reason: Replace per-waiter timeout and Notify capacity waits with pool-owned FIFO deadline scheduling and exact one-slot handoff.
+  - path: apps/pgpool/tests/pool.rs
+    action: modify
+    section: pgpool-capacity-deadline-scheduler
+    impl_mode: hand-written
+    reason: Prove FIFO capacity handoff, deadline expiry, cancellation cleanup, and permit conservation.
+  - path: apps/pgpool/tests/pool_modes.rs
+    action: modify
+    section: pgpool-capacity-deadline-scheduler
+    impl_mode: hand-written
+    reason: Preserve transaction reuse, capped replay admission, reset isolation, and no session-state leak under queued acquisition.
+```
