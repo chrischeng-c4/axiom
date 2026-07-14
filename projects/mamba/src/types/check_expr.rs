@@ -4298,6 +4298,27 @@ impl TypeChecker {
         use super::stdlib_typespec::CallableSpecKind;
 
         let target = self.resolve_structured_stdlib_call(func, func_ty)?;
+        // #1611: `classmethod.__get__`/`staticmethod.__get__`'s typeshed
+        // overloads type `instance` as an unresolved TypeVar (`_T`) bound
+        // from the wrapped callable's own (usually unannotated) parameter.
+        // This generic-overload evaluator has no concrete binding for `_T`
+        // at the construction site, so it treats the parameter as
+        // permissive-Any and silently ACCEPTS a provably bare `_W()`
+        // instance — starving the curated `STDLIB_SIGS` Typed wall in the
+        // legacy `check_stdlib_call` fallback (which exists precisely to
+        // reject that shape, see the `classmethod`/`staticmethod` rows
+        // there) of ever running, since returning `Some(..)` here short-
+        // circuits it. Defer these two specific bound calls to the legacy
+        // path instead; every other structured stdlib call is unaffected.
+        if matches!(
+            target.access,
+            StdlibSpecAccess::ClassMember | StdlibSpecAccess::BoundMember
+        ) && target.module == "builtins"
+            && target.name == "__get__"
+            && matches!(target.qualifier.as_str(), "classmethod" | "staticmethod")
+        {
+            return None;
+        }
         let constructor_result = if target.access == StdlibSpecAccess::Constructor {
             target.receiver.as_ref().map(|receiver| {
                 self.external_class_instance(
