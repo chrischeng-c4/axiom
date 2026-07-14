@@ -56,3 +56,35 @@ changes:
     impl_mode: hand-written
     reason: Configure exactly two workers on the existing Tokio multi-thread runtime while leaving all service and pool semantics intact.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-two-worker-runtime-locality-verification
+requirements:
+  diagnostic_only:
+    id: R3
+    text: "Meter may diagnose worker contention but its instrumented TPS is diagnostic-only and cannot retain this candidate."
+    kind: integration
+    risk: medium
+    verify: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --meter-bin target/debug/meter
+  peer_proof:
+    id: R2
+    text: "A normal-baseline unchanged 64-client, 16-backend, simple-protocol transaction-pooling comparison completes for 30 seconds without errors and beats PgBouncer; the first valid loss reverts the candidate."
+    kind: e2e
+    risk: high
+    verify: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --pgpool-bin target/release/pgpool
+  runtime_contract:
+    id: R1
+    text: "The binary builds with the existing Tokio multi-thread runtime constrained to exactly two workers and preserves the transaction-pooling test surface."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool --test pool --test pool_modes --test proxy --test trust_startup_replay --test wire_codec
+---
+flowchart TD
+    r1[R1 runtime contract] --> cargo_test_p_pgpool_test_pool_test_pool_modes_test_proxy_test_trust_startup_replay_test_wire_codec[cargo test -p pgpool --test pool --test pool_modes --test proxy --test trust_startup_replay --test wire_codec]
+    r2[R2 peer proof] --> apps_pgpool_benchmarks_pgbouncer_transaction_pooling_run_sh_pgpool_bin_target_release_pgpool[apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --pgpool-bin target/release/pgpool]
+    r3[R3 diagnostic only] --> apps_pgpool_benchmarks_pgbouncer_transaction_pooling_run_sh_meter_bin_target_debug_meter[apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --meter-bin target/debug/meter]
+```
