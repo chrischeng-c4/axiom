@@ -5629,6 +5629,16 @@ impl<'a> AstLowerer<'a> {
         let mut class_cell_required = false;
         // Track all method name→SymbolId mappings so they survive scope clears
         let mut method_name_map: Vec<(String, crate::resolve::SymbolId)> = Vec::new();
+        // Method names are only bare-name-resolvable *within this class body*
+        // (CPython: a method is never a bare identifier in the enclosing
+        // scope). Save whatever `local_names` held for each method name
+        // before we shadow it, so it can be restored once this class body is
+        // fully lowered — mirroring `class_attr_saved_names` below. Without
+        // this, a same-named enclosing-scope function/variable declared
+        // AFTER this class would still resolve to the method's SymbolId at
+        // call sites, since `resolve_name` checks `local_names` first.
+        let mut method_saved_names: HashMap<String, Option<crate::resolve::SymbolId>> =
+            HashMap::new();
         // Scan for explicit `__match_args__ = ("x", "y")` in the class body (#827).
         let mut explicit_match_args: Option<Vec<String>> = None;
         // P2-R3: Class-level attribute assignments (e.g., `attr = Verbose()` in class body).
@@ -5804,6 +5814,9 @@ impl<'a> AstLowerer<'a> {
                         self.next_local_sym += 1;
                         id
                     });
+                    method_saved_names
+                        .entry(mname.to_string())
+                        .or_insert_with(|| self.local_names.get(mname.as_str()).copied());
                     self.local_names.insert(mname.to_string(), method_sym);
                     self.local_types
                         .insert(method_sym, self.checker.tcx.int());
@@ -6148,6 +6161,21 @@ impl<'a> AstLowerer<'a> {
                 }
                 None => {
                     self.local_names.remove(&attr_name);
+                }
+            }
+        }
+
+        // Restore (or remove) each method name's pre-class binding in
+        // `local_names` now that this class body is fully lowered — a
+        // method name must not leak as a bare identifier into the
+        // enclosing scope (CPython scoping; see `method_saved_names` above).
+        for (mname, saved) in method_saved_names {
+            match saved {
+                Some(sym) => {
+                    self.local_names.insert(mname, sym);
+                }
+                None => {
+                    self.local_names.remove(&mname);
                 }
             }
         }
