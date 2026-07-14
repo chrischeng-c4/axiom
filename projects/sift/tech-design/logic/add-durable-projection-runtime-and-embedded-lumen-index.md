@@ -175,6 +175,7 @@ schemas:
       - { name: rebuilt_digest, type: String, required: false }
       - { name: equal, type: bool, required: false }
       - { name: error, type: String, required: false }
+      - { name: commit_index, type: u64, required: true, description: Commit index of the latest durable lifecycle transition. }
   - name: ProjectionLag
     fields:
       - { name: error, type: String, required: true, constraints: projection_lag }
@@ -200,6 +201,7 @@ embedded_lumen:
     occurred_at: { type: keyword }
     cursor: { type: number }
   deny: Arbitrary payload and attribute keys are never promoted to fields.
+  semantic_digest: Hash the canonical fixed-field document manifest; keep the full Lumen snapshot checksum separately for state integrity because internal hash-map ordering is not a semantic equality signal.
 durability_order:
   append_event: governance -> Raft/local state-machine commit index -> blob/raw segment fsync -> control applied-index fsync -> acknowledgement
   replay_job: Raft/local state-machine commit index -> replay catalog transition fsync -> acknowledgement

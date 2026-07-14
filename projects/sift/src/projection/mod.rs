@@ -14,5 +14,4 @@ pub use runtime::{
     PROJECTION_RETRY_AFTER_SECONDS,
 };
 
-<!-- marker: sift-projection-module path: projects/sift/src/projection/mod.rs reason: Export projection contracts, runtime, replay state, and the embedded Lumen adapter. -->
 // HANDWRITE-END

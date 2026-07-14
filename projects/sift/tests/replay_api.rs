@@ -147,5 +147,4 @@ async fn replay_api_rejects_unknown_projection_and_returns_not_found() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
-<!-- marker: sift-replay-api-tests path: projects/sift/tests/replay_api.rs reason: Verify one-state-machine event/replay ordering, durable job restart, and API lifecycle. -->
 // HANDWRITE-END

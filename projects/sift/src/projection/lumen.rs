@@ -1,5 +1,5 @@
 // HANDWRITE-BEGIN gap="sift-embedded-lumen-adapter" tracker="1660" reason="Wrap lumen Engine and RdbSnapshot for fixed-field indexing/search without a second service or durable log."
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::RwLock};
 
 use anyhow::{bail, Context, Result};
 use lumen::{
@@ -10,6 +10,8 @@ use lumen::{
         TermQuery,
     },
 };
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::StoredEvent;
 
@@ -31,6 +33,19 @@ const KEYWORD_FIELDS: &[&str] = &[
 
 pub struct EmbeddedLumenProjection {
     engine: Engine,
+    documents: RwLock<BTreeMap<String, CanonicalDocument>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct CanonicalDocument {
+    version: u64,
+    fields: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct EmbeddedSnapshot {
+    lumen: SnapshotV1,
+    documents: BTreeMap<String, CanonicalDocument>,
 }
 
 impl EmbeddedLumenProjection {
@@ -44,15 +59,21 @@ impl EmbeddedLumenProjection {
                 },
             )
             .context("create embedded Sift Lumen collection")?;
-        Ok(Self { engine })
+        Ok(Self {
+            engine,
+            documents: RwLock::new(BTreeMap::new()),
+        })
     }
 
     pub fn search_text(&self, text: &str, limit: u32) -> Result<Vec<String>> {
-        self.search(QueryNode::Match(MatchQuery {
-            field: "body".into(),
-            text: text.into(),
-            op: MatchOp::And,
-        }), limit)
+        self.search(
+            QueryNode::Match(MatchQuery {
+                field: "body".into(),
+                text: text.into(),
+                op: MatchOp::And,
+            }),
+            limit,
+        )
     }
 
     pub fn search_keyword(&self, field: &str, value: &str, limit: u32) -> Result<Vec<String>> {
@@ -150,6 +171,10 @@ impl Projection for EmbeddedLumenProjection {
             value: FieldValue::Number(stored.cursor as f64),
             version: Some(stored.cursor),
         });
+        let fields = items
+            .iter()
+            .map(|item| Ok((item.field.clone(), serde_json::to_value(&item.value)?)))
+            .collect::<Result<BTreeMap<_, _>>>()?;
         self.engine.index(
             COLLECTION,
             IndexRequest {
@@ -157,17 +182,55 @@ impl Projection for EmbeddedLumenProjection {
                 request_id: Some(format!("sift:{}:{}", event.event_id, stored.cursor)),
             },
         )?;
+        let mut documents = self
+            .documents
+            .write()
+            .expect("embedded Lumen document manifest lock poisoned");
+        if documents
+            .get(&event.event_id)
+            .is_none_or(|current| current.version <= stored.cursor)
+        {
+            documents.insert(
+                event.event_id.clone(),
+                CanonicalDocument {
+                    version: stored.cursor,
+                    fields,
+                },
+            );
+        }
         Ok(())
     }
 
     fn snapshot(&self) -> Result<Vec<u8>> {
-        canonical_snapshot(&self.engine.snapshot()?)
+        canonical_snapshot(&EmbeddedSnapshot {
+            lumen: self.engine.snapshot()?,
+            documents: self
+                .documents
+                .read()
+                .expect("embedded Lumen document manifest lock poisoned")
+                .clone(),
+        })
     }
 
     fn restore(&self, state: &[u8]) -> Result<()> {
-        let snapshot: SnapshotV1 =
+        let snapshot: EmbeddedSnapshot =
             serde_json::from_slice(state).context("decode embedded Lumen snapshot")?;
-        self.engine.restore(snapshot)
+        self.engine.restore(snapshot.lumen)?;
+        *self
+            .documents
+            .write()
+            .expect("embedded Lumen document manifest lock poisoned") = snapshot.documents;
+        Ok(())
+    }
+
+    fn semantic_digest(&self) -> Result<String> {
+        let documents = self
+            .documents
+            .read()
+            .expect("embedded Lumen document manifest lock poisoned");
+        Ok(hex::encode(Sha256::digest(serde_json::to_vec(
+            &*documents,
+        )?)))
     }
 }
 
@@ -207,12 +270,11 @@ fn event_body(stored: &StoredEvent) -> String {
         .unwrap_or_else(|| stored.event.payload.to_string())
 }
 
-fn canonical_snapshot(snapshot: &SnapshotV1) -> Result<Vec<u8>> {
+fn canonical_snapshot(snapshot: &EmbeddedSnapshot) -> Result<Vec<u8>> {
     // Snapshot internals contain hash maps. Round-tripping through Value gives
     // object keys serde_json's deterministic map ordering before hashing.
     let value: serde_json::Value = serde_json::from_slice(&serde_json::to_vec(snapshot)?)?;
     serde_json::to_vec(&value).map_err(Into::into)
 }
 
-<!-- marker: sift-embedded-lumen-adapter path: projects/sift/src/projection/lumen.rs reason: Wrap lumen Engine and RdbSnapshot for fixed-field indexing/search without a second service or durable log. -->
 // HANDWRITE-END

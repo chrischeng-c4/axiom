@@ -61,16 +61,12 @@ impl ProjectionRuntime {
     pub fn open(data_dir: impl AsRef<Path>, journal: Arc<DurableJournal>) -> Result<Self> {
         let projection_root = data_dir.as_ref().join("projections");
         fs::create_dir_all(&projection_root).with_context(|| {
-            format!(
-                "create projection state root {}",
-                projection_root.display()
-            )
+            format!("create projection state root {}", projection_root.display())
         })?;
 
         let mut slots = BTreeMap::new();
-        let factory: ProjectionFactory = Arc::new(|| {
-            Ok(Arc::new(EmbeddedLumenProjection::new()?) as Arc<dyn Projection>)
-        });
+        let factory: ProjectionFactory =
+            Arc::new(|| Ok(Arc::new(EmbeddedLumenProjection::new()?) as Arc<dyn Projection>));
         let implementation = factory()?;
         let descriptor = implementation.descriptor();
         let state_path = projection_root.join(&descriptor.name).join("state.json");
@@ -221,14 +217,15 @@ impl ProjectionRuntime {
                 rebuilt.apply_idempotent(event)?;
                 after = event.cursor;
             }
-            if events.last().is_some_and(|event| event.cursor > source_cursor) {
+            if events
+                .last()
+                .is_some_and(|event| event.cursor > source_cursor)
+            {
                 break;
             }
         }
         if after != source_cursor {
-            bail!(
-                "projection {name} rebuild stopped at cursor {after}, expected {source_cursor}"
-            );
+            bail!("projection {name} rebuild stopped at cursor {after}, expected {source_cursor}");
         }
         let rebuilt_digest = rebuilt.semantic_digest()?;
         let equal = live_digest == rebuilt_digest;
@@ -356,5 +353,4 @@ fn sha256(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-<!-- marker: sift-projection-runtime path: projects/sift/src/projection/runtime.rs reason: Register factories, restore atomic states, catch up asynchronously, wait for cursors, and rebuild from raw. -->
 // HANDWRITE-END

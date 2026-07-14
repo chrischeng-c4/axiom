@@ -39,7 +39,10 @@ fn embedded_lumen_indexes_only_the_fixed_projection_schema() {
     )
     .unwrap();
 
-    assert_eq!(projection.search_text("database timeout", 10).unwrap(), vec!["evt-1"]);
+    assert_eq!(
+        projection.search_text("database timeout", 10).unwrap(),
+        vec!["evt-1"]
+    );
     assert_eq!(
         projection.search_keyword("project", "alpha", 10).unwrap(),
         vec!["evt-1"]
@@ -96,5 +99,4 @@ fn sift_embeds_lumen_without_a_second_service_or_raft_boundary() {
     }
 }
 
-<!-- marker: sift-embedded-lumen-tests path: projects/sift/tests/embedded_lumen_projection.rs reason: Verify fixed-field text/keyword/range search, snapshot restore, and absence of a second service boundary. -->
 // HANDWRITE-END

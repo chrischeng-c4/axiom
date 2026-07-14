@@ -86,7 +86,9 @@ fn fresh_raw_rebuild_matches_and_installs_the_live_projection() {
     let temp = tempfile::tempdir().unwrap();
     let journal = Arc::new(DurableJournal::open(temp.path()).unwrap());
     journal.append(event("evt-1", "database timeout")).unwrap();
-    journal.append(event("evt-2", "database recovered")).unwrap();
+    journal
+        .append(event("evt-2", "database recovered"))
+        .unwrap();
     let runtime = ProjectionRuntime::open(temp.path(), journal).unwrap();
     runtime.catch_up(PROJECTION_EVENT_INDEX).unwrap();
 
@@ -98,5 +100,4 @@ fn fresh_raw_rebuild_matches_and_installs_the_live_projection() {
     assert_eq!(runtime.current_cursor(PROJECTION_EVENT_INDEX).unwrap(), 2);
 }
 
-<!-- marker: sift-projection-runtime-tests path: projects/sift/tests/projection_runtime.rs reason: Verify idempotency, atomic restart, lag waits, and fresh/live rebuild equality. -->
 // HANDWRITE-END

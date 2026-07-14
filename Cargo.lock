@@ -12316,6 +12316,7 @@ dependencies = [
  "hex",
  "k8s-openapi",
  "kube",
+ "lumen",
  "operator",
  "prost 0.13.5",
  "raft-core",

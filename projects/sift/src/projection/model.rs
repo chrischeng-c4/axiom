@@ -189,5 +189,4 @@ fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
-<!-- marker: sift-projection-model path: projects/sift/src/projection/model.rs reason: Define descriptors, checkpoints, state envelopes, replay jobs, and projection-lag errors. -->
 // HANDWRITE-END

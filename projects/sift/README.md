@@ -65,14 +65,14 @@ first-class domain roots.
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
 | Operational Event Ingest | 1658 | implemented | verified | conformance | ready | bounded JSON and OTLP JSON/protobuf/gzip ingest with ordered outcomes, project admission, and normalized resource/context |
-| Raw Event Journal And Archive | 1659 | implemented | partial | conformance | not_ready | sharded source-of-truth journal, durable blobs, and GCS archive/restore are passing; projection replay remains #1660 |
+| Raw Event Journal And Archive | 1659 | implemented | partial | conformance | not_ready | sharded source-of-truth journal, durable blobs, GCS archive/restore, and projection replay equality pass; retained soak remains #1676 |
 | Durability And Acknowledgment | 1659 | implemented | partial | conformance | not_ready | blob and sharded raw fsync-before-ack plus single-node Raft apply pass; three-node proof remains #1676 |
-| Shard-Aware Hot Storage | 1659 | implemented | partial | conformance | not_ready | 4096 buckets, future-only epochs, sealed segments, movement, and recovery pass; rebuild index/retention remain |
+| Shard-Aware Hot Storage | 1659 | implemented | partial | conformance | not_ready | 4096 buckets, future-only epochs, sealed segments, movement, recovery, and embedded rebuild index pass; retention remains |
 | Replica Sync And Bootstrap | 1676 | implemented | partial | conformance | not_ready | existing Raft state machine plus pending three-node/domain recovery proof |
 | Backup And Restore | 1659 | implemented | partial | conformance | not_ready | snapshot plus real Vat-backed GCS archive/cold restore pass; scheduled off-node and three-node proof remain #1676 |
-| Schema Governance | 1657 | implemented | partial | conformance | not_ready | OperationalEventV2/upcast/privacy are verified; index/cardinality controls remain |
-| Materialized Observability Stores | 1660 | planned | planned | conformance | not_ready | independent logging, trace, error, metric, audit/change, profile, and GenAI views |
-| Query Tail And Replay | 1671 | planned | planned | conformance | not_ready | typed cross-signal query, tail resume, correlation, cursoring, and replay jobs |
+| Schema Governance | 1657 | implemented | partial | conformance | not_ready | OperationalEventV2/upcast/privacy and fixed projection-index allowlist are verified; metric cardinality remains |
+| Materialized Observability Stores | 1660 | implemented | partial | conformance | not_ready | independent durable projection runtime, embedded index, lag waits, and rebuild equality pass; domain stores remain #1664-#1670 |
+| Query Tail And Replay | 1671 | implemented | partial | conformance | not_ready | durable replay start/status and view rebuild pass; typed cross-signal query, tail resume, correlation, and pagination remain #1671 |
 | GKE Event Collection | 1675 | planned | planned | conformance | not_ready | later DaemonSet producer reads CRI logs and emits deduplicated structured events |
 | Security Audit And Governance | 1668 | planned | planned | conformance | not_ready | immutable audit/change projections, legal hold, scoped access, and export controls |
 | Profile Observability | 1669 | planned | planned | conformance | not_ready | OTel profiles, blob durability, flamegraphs, top functions, diffs, and trace correlation |
@@ -138,7 +138,8 @@ replay and archive inspection.
 EC Dimensions: behavior: `cargo test -p sift --test sharded_journal` and
 `cargo test -p sift --test gcs_archive` - append/read, torn-tail recovery,
 blob-before-reference durability, manifest integrity, and cold restore;
-stability: projection rebuild and archive/replay soak remain #1660/#1676.
+stability: projection rebuild equality and durable replay jobs pass under #1660;
+archive/replay soak remains #1676.
 Required Verification: conformance, dogfood
 Promise:
 Treat raw operational events as Sift's source of truth so every materialized
@@ -147,14 +148,14 @@ copy of the facts.
 Gate Inventory:
 - implemented raw/shard/blob recovery: projects/sift/tests/sharded_journal.rs
 - implemented Vat GCS archive/restore: projects/sift/tests/gcs_archive.rs
-- pending projection equality/replay jobs: 1660
+- implemented projection equality/replay jobs: projects/sift/tests/projection_runtime.rs and projects/sift/tests/replay_api.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | append-only-operational-event-journal | change | 1659 | implemented | passing | conformance | projects/sift/tests/sharded_journal.rs |
 | durable-content-addressed-blobs | change | 1659 | implemented | passing | conformance | projects/sift/tests/sharded_journal.rs |
 | gcs-raw-archive-manifest | change | 1659 | implemented | passing | dogfood | projects/sift/tests/gcs_archive.rs |
-| replayable-view-rebuild | change | #1660 | planned | planned | dogfood | durable replay job and projection equality gate |
+| replayable-view-rebuild | change | #1660 | implemented | passing | dogfood | durable replay jobs, restart recovery, and semantic projection equality tests |
 
 ### Durability And Acknowledgment
 
@@ -207,7 +208,7 @@ split new writes by epoch and move sealed segments without rewriting the entire
 history.
 Gate Inventory:
 - implemented routing/epoch/segment recovery: projects/sift/tests/sharded_journal.rs
-- pending projection-index equality: 1660
+- implemented projection-index equality: projects/sift/tests/embedded_lumen_projection.rs and projects/sift/tests/projection_runtime.rs
 - pending retention/capacity soak: 1676
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
@@ -215,7 +216,7 @@ Gate Inventory:
 | 4096-virtual-bucket-routing | change | 1659 | implemented | passing | conformance | projects/sift/tests/sharded_journal.rs |
 | epoch-based-future-write-split | change | 1659 | implemented | passing | conformance | projects/sift/tests/sharded_journal.rs |
 | sealed-segment-retention-and-move | change | 1659 | implemented | passing | dogfood | byte-preserving move passes; retention worker remains #1676 |
-| rebuildable-hot-index | change | #1660 | planned | planned | dogfood | embedded-Lumen rebuild equality gate |
+| rebuildable-hot-index | change | #1660 | implemented | passing | dogfood | fixed-field embedded-Lumen snapshot/restore and rebuild equality gate |
 
 ### Replica Sync And Bootstrap
 
@@ -303,7 +304,7 @@ Gate Inventory:
 | operational-event-v2-envelope | change | 1657 | implemented | passing | conformance | V2 typed round-trip and legacy journal/snapshot upcast tests |
 | signal-taxonomy-and-versioning | change | 1657 | implemented | passing | conformance | eight-signal schema and compatibility tests |
 | typed-attribute-policy | change | 1657 | implemented | passing | conformance | allow/deny and recursive typed-value validation tests |
-| projection-index-allowlist | change | #1660 | planned | planned | conformance | rebuildable index field allowlist gate |
+| projection-index-allowlist | change | #1660 | implemented | passing | conformance | arbitrary payload/attribute fields are rejected by the embedded index adapter |
 | metric-cardinality-policy | change | 1667 | planned | planned | conformance | time-series overflow and budget gate |
 | pii-and-genai-content-policy | change | 1657 | implemented | passing | negative | raw-byte absence, allow/deny, truncation, and project-policy tests |
 
@@ -328,6 +329,8 @@ journal. Each store is materialized and rebuildable, but metrics are also
 accepted as the direct `metric` signal with points, temporality, exemplars, and
 resource dimensions; they are not merely log/span-derived counters.
 Gate Inventory:
+- implemented runtime/rebuild foundation: projects/sift/tests/projection_runtime.rs
+- implemented embedded index boundary: projects/sift/tests/embedded_lumen_projection.rs
 - pending: projects/sift/tests/logging_store.rs
 - pending: projects/sift/tests/trace_store.rs
 - pending: projects/sift/tests/error_report_store.rs
@@ -336,7 +339,7 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| projection-runtime-and-checkpoints | change | #1660 | planned | planned | conformance | async idempotent apply, lag, checkpoint, and replay-job gate |
+| projection-runtime-and-checkpoints | change | #1660 | implemented | passing | conformance | idempotent apply, atomic independent checkpoint, typed lag, and restart gate |
 | logging-store-over-events | change | 1664 | planned | planned | conformance | log stream/index/query/rebuild gate |
 | trace-store-topology-and-correlation | change | 1665 | planned | planned | conformance | span tree, critical path, and correlation gate |
 | error-report-store-grouping-lifecycle | change | 1666 | planned | planned | conformance | fingerprint, group, occurrence, and lifecycle gate |
@@ -344,7 +347,7 @@ Gate Inventory:
 | audit-and-change-store-timeline | change | 1668 | planned | planned | conformance | immutable timeline, legal hold, and export gate |
 | profile-store-and-analysis | change | 1669 | planned | planned | conformance | flamegraph, top-functions, diff, and trace-correlation gate |
 | genai-session-cost-evaluation-views | change | 1670 | planned | planned | conformance | observation, session, token/cost, and evaluation gate |
-| store-rebuild-from-raw-journal | change | #1660 | planned | planned | dogfood | independent projection rebuild equality gate |
+| store-rebuild-from-raw-journal | change | #1660 | implemented | passing | dogfood | fresh raw replay compares canonical semantic digest before atomic install |
 
 ### Query Tail And Replay
 
@@ -366,14 +369,14 @@ change context, then tail or replay matching events during incidents.
 Gate Inventory:
 - pending: projects/sift/tests/event_query_api.rs
 - pending: projects/sift/tests/tail_api.rs
-- pending: projects/sift/tests/replay_api.rs
+- implemented: projects/sift/tests/replay_api.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | typed-cross-signal-query | change | 1671 | planned | planned | conformance | store routes and typed DSL contract gate |
 | cursor-pagination-and-ordering | change | 1671 | planned | planned | conformance | stable cursor and sort gate |
 | live-tail-resume | change | 1671 | planned | planned | dogfood | reconnect/resume streaming gate |
-| replay-cursor-and-view-rebuild | change | 1671 | planned | planned | dogfood | durable replay start/status and idempotency gate |
+| replay-cursor-and-view-rebuild | change | #1660 | implemented | passing | dogfood | durable start/status, shared command ordering, restart, and equality gate |
 
 ### GKE Event Collection
 

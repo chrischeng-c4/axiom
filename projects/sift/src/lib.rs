@@ -11,6 +11,7 @@ pub mod durability;
 pub mod event;
 pub mod ingest;
 pub mod operator;
+pub mod projection;
 pub mod storage;
 
 pub use event::{
@@ -25,7 +26,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, RwLock,
     },
 };
@@ -33,7 +34,7 @@ use std::{
 use anyhow::{bail, Context, Result};
 use axum::{
     body::{Body, Bytes},
-    extract::{rejection::JsonRejection, Extension, Query, State},
+    extract::{rejection::JsonRejection, Extension, Path as AxumPath, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -104,8 +105,18 @@ impl<'de> Deserialize<'de> for StoredEvent {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct AppendResult {
     pub event_id: String,
+    /// Compatibility alias for `raw_cursor`.
     pub cursor: u64,
+    pub raw_cursor: u64,
+    pub commit_index: u64,
     pub duplicate: bool,
+}
+
+impl AppendResult {
+    fn with_commit_index(mut self, commit_index: u64) -> Self {
+        self.commit_index = commit_index;
+        self
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -241,10 +252,6 @@ impl DurableJournal {
         self.append_with_cursor(None, event)
     }
 
-    pub(crate) fn append_at(&self, cursor: u64, event: EventEnvelope) -> Result<AppendResult> {
-        self.append_with_cursor(Some(cursor), event)
-    }
-
     fn append_with_cursor(
         &self,
         expected_cursor: Option<u64>,
@@ -257,6 +264,8 @@ impl DurableJournal {
             return Ok(AppendResult {
                 event_id: event.event_id,
                 cursor,
+                raw_cursor: cursor,
+                commit_index: cursor,
                 duplicate: true,
             });
         }
@@ -302,6 +311,8 @@ impl DurableJournal {
         Ok(AppendResult {
             event_id: stored.event.event_id,
             cursor,
+            raw_cursor: cursor,
+            commit_index: cursor,
             duplicate: false,
         })
     }
@@ -407,6 +418,8 @@ impl DurableJournal {
             .map(|cursor| AppendResult {
                 event_id: event_id.to_string(),
                 cursor,
+                raw_cursor: cursor,
+                commit_index: cursor,
                 duplicate: true,
             })
     }
@@ -470,6 +483,9 @@ pub struct ServiceState {
     journal: Arc<DurableJournal>,
     draining: Arc<AtomicBool>,
     raft: Option<Arc<raft_host::RaftHost>>,
+    state_machine: Arc<durability::SiftStateMachine>,
+    local_command: Arc<tokio::sync::Mutex<()>>,
+    projections: Arc<projection::ProjectionRuntime>,
     admission: Arc<ingest::AdmissionController>,
 }
 
@@ -484,10 +500,13 @@ impl ServiceState {
     ) -> Result<Self> {
         let data_dir = data_dir.as_ref();
         let journal = Arc::new(DurableJournal::open(data_dir)?);
+        let state_machine = Arc::new(durability::SiftStateMachine::open(
+            data_dir,
+            journal.clone(),
+        )?);
         let raft = if raft_host::replica_mode() {
             let topology =
                 raft_host::ClusterTopology::from_env("sift", "sift-peer", 7380, "SIFT_PEERS")?;
-            let state_machine = Arc::new(durability::SiftStateMachine::new(journal.clone()));
             let store = raft_host::RaftStore::open(
                 data_dir
                     .to_str()
@@ -501,16 +520,22 @@ impl ServiceState {
                 topology.membership,
                 topology.peers,
                 store,
-                state_machine as Arc<dyn raft_host::RaftStateMachine>,
+                state_machine.clone() as Arc<dyn raft_host::RaftStateMachine>,
                 raft_host::HostConfig::default(),
             )))
         } else {
             None
         };
         Ok(Self {
+            projections: Arc::new(projection::ProjectionRuntime::open(
+                data_dir,
+                journal.clone(),
+            )?),
             journal,
             draining: Arc::new(AtomicBool::new(false)),
             raft,
+            state_machine,
+            local_command: Arc::new(tokio::sync::Mutex::new(())),
             admission: Arc::new(ingest::AdmissionController::new(limits)?),
         })
     }
@@ -527,24 +552,55 @@ impl ServiceState {
         &self.journal
     }
 
+    pub fn projections(&self) -> &projection::ProjectionRuntime {
+        &self.projections
+    }
+
     async fn append(&self, event: EventEnvelope) -> Result<AppendResult> {
         // Govern before the Raft proposal so sensitive content never enters a
         // replicated log, even transiently. DurableJournal repeats the policy
         // idempotently at the raw boundary for direct/single-node callers.
         let event = self.journal.govern_event(event)?;
         if let Some(accepted) = self.journal.result_for(&event.event_id) {
-            return Ok(accepted);
+            return Ok(accepted.with_commit_index(self.state_machine.applied_commit_index()));
         }
         let event_id = event.event_id.clone();
+        let commit_index = self
+            .commit_command(durability::SiftCommandV1::AppendEvent {
+                event: Box::new(event),
+            })
+            .await?;
+        let result = self
+            .state_machine
+            .take_append_outcome(commit_index)
+            .or_else(|| {
+                self.journal
+                    .result_for(&event_id)
+                    .map(|result| result.with_commit_index(commit_index))
+            })
+            .context("state-machine commit completed without applying the Sift event")?;
+        let projections = self.projections.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(error) = projections.catch_up(projection::PROJECTION_EVENT_INDEX) {
+                tracing::warn!(%error, "asynchronous event-index projection failed");
+            }
+        });
+        Ok(result)
+    }
+
+    async fn commit_command(&self, command: durability::SiftCommandV1) -> Result<u64> {
+        let bytes = serde_json::to_vec(&command).context("encode Sift state-machine command")?;
         if let Some(raft) = &self.raft {
-            raft.propose(serde_json::to_vec(&event).context("encode replicated raw event")?)
-                .await?;
-            return self
-                .journal
-                .result_for(&event_id)
-                .context("Raft proposal completed without applying the Sift event");
+            return raft.propose(bytes).await;
         }
-        self.journal.append(event)
+        let _guard = self.local_command.lock().await;
+        let index = self.state_machine.applied_commit_index() + 1;
+        self.state_machine.apply_local(index, &bytes)?;
+        Ok(index)
+    }
+
+    fn replay_job(&self, id: &str) -> Option<projection::ReplayJob> {
+        self.state_machine.replay_job(id)
     }
 
     pub fn raft_router(&self) -> Option<Router> {
@@ -610,6 +666,26 @@ impl ApiError {
         }
     }
 
+    fn not_found(error: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            error,
+            message: message.into(),
+            retryable: false,
+            retry_after_secs: None,
+        }
+    }
+
+    fn unavailable(error: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            error,
+            message: message.into(),
+            retryable: true,
+            retry_after_secs: Some(1),
+        }
+    }
+
     fn from_admission(error: ingest::AdmissionError) -> Self {
         Self {
             status: error.status,
@@ -657,6 +733,8 @@ pub fn router(state: Arc<ServiceState>) -> Router {
         .route("/v1/metrics", post(ingest_metrics))
         .route("/v1/profiles", post(ingest_profiles))
         .route("/v1/replay", get(replay_events))
+        .route("/v1/replays", post(start_replay))
+        .route("/v1/replays/{id}", get(get_replay))
         .with_state(state)
 }
 
@@ -1014,6 +1092,119 @@ async fn replay_events(
     Ok(Json(rows))
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+struct StartReplayRequest {
+    projection: String,
+}
+
+static REPLAY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+#[utoipa::path(
+    post,
+    path = "/v1/replays",
+    request_body = StartReplayRequest,
+    responses(
+        (status = 202, description = "durable replay scheduled", body = projection::ReplayJob),
+        (status = 400, description = "unknown projection", body = ErrorEnvelope),
+        (status = 503, description = "state-machine mutation unavailable", body = ErrorEnvelope)
+    )
+)]
+async fn start_replay(
+    State(state): State<Arc<ServiceState>>,
+    payload: Result<Json<StartReplayRequest>, JsonRejection>,
+) -> Result<(StatusCode, Json<projection::ReplayJob>), ApiError> {
+    let Json(request) =
+        payload.map_err(|error| ApiError::bad_request("invalid_json", error.body_text()))?;
+    if !state.projections.has_projection(&request.projection) {
+        return Err(ApiError::bad_request(
+            "unknown_projection",
+            format!("projection `{}` is not registered", request.projection),
+        ));
+    }
+    let id = format!(
+        "replay-{}-{}",
+        Utc::now().timestamp_millis(),
+        REPLAY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    );
+    let job =
+        projection::ReplayJob::pending(id.clone(), request.projection, state.journal.last_cursor());
+    state
+        .commit_command(durability::SiftCommandV1::UpsertReplayJob { job: Box::new(job) })
+        .await
+        .map_err(|error| ApiError::unavailable("replay_commit_failed", error.to_string()))?;
+    let durable = state
+        .replay_job(&id)
+        .context("replay state missing after durable commit")
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    let replay_state = state.clone();
+    let replay_id = id.clone();
+    tokio::spawn(async move {
+        if let Err(error) = run_replay(replay_state, &replay_id).await {
+            tracing::error!(replay_id, %error, "projection replay task failed");
+        }
+    });
+    Ok((StatusCode::ACCEPTED, Json(durable)))
+}
+
+async fn run_replay(state: Arc<ServiceState>, id: &str) -> Result<()> {
+    let mut job = state
+        .replay_job(id)
+        .with_context(|| format!("replay job {id} disappeared"))?;
+    job.mark_running();
+    state
+        .commit_command(durability::SiftCommandV1::UpsertReplayJob { job: Box::new(job) })
+        .await?;
+
+    let projection_name = state
+        .replay_job(id)
+        .with_context(|| format!("replay job {id} disappeared after running transition"))?
+        .projection;
+    let runtime = state.projections.clone();
+    let result = tokio::task::spawn_blocking(move || runtime.rebuild_and_compare(&projection_name))
+        .await
+        .context("projection replay task panicked")?;
+
+    let mut job = state
+        .replay_job(id)
+        .with_context(|| format!("replay job {id} disappeared before terminal transition"))?;
+    match result {
+        Ok(comparison) if comparison.equal => job.mark_completed(comparison),
+        Ok(comparison) => {
+            let live = comparison.live_digest.clone();
+            let rebuilt = comparison.rebuilt_digest.clone();
+            job.mark_completed(comparison);
+            job.state = projection::ReplayState::Failed;
+            job.error = Some(format!(
+                "projection rebuild digest mismatch: live={live}, rebuilt={rebuilt}"
+            ));
+        }
+        Err(error) => job.mark_failed(error.to_string()),
+    }
+    state
+        .commit_command(durability::SiftCommandV1::UpsertReplayJob { job: Box::new(job) })
+        .await?;
+    Ok(())
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/replays/{id}",
+    params(("id" = String, Path, description = "durable replay id")),
+    responses(
+        (status = 200, description = "durable replay status", body = projection::ReplayJob),
+        (status = 404, description = "replay not found", body = ErrorEnvelope)
+    )
+)]
+async fn get_replay(
+    State(state): State<Arc<ServiceState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<projection::ReplayJob>, ApiError> {
+    state
+        .replay_job(&id)
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found("replay_not_found", format!("replay `{id}` not found")))
+}
+
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -1024,7 +1215,9 @@ async fn replay_events(
         ingest_metrics,
         ingest_profiles,
         query_events,
-        replay_events
+        replay_events,
+        start_replay,
+        get_replay
     ),
     components(schemas(
         OperationalEventV2,
@@ -1041,6 +1234,10 @@ async fn replay_events(
         ingest::BatchItemResult,
         ingest::BatchOutcome,
         ingest::IngestErrorDetail,
+        projection::ProjectionLag,
+        projection::ReplayJob,
+        projection::ReplayState,
+        StartReplayRequest,
         ErrorEnvelope
     )),
     tags((name = "events", description = "Versioned operational-event ingestion and durable replay"))
