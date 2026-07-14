@@ -1472,6 +1472,30 @@ impl TypeChecker {
         self.check_expr(index);
         let value_ty = self.check_expr(value);
         let is_slice = matches!(index.node, Expr::Slice { .. });
+
+        // #1536: `d[key] = d` -- the dict makes itself its own value -- is
+        // legal, mutating Python; CPython does not reject it, the dict just
+        // becomes self-referential. The value type was pinned too early by
+        // the dict's first literal, so detect the aliasing shape (receiver
+        // and RHS are the same bare name) and widen the recorded value type
+        // instead of walling the assignment.
+        if !is_slice {
+            if let (Expr::Ident(obj_name), Expr::Ident(value_name)) = (&object.node, &value.node) {
+                if obj_name == value_name {
+                    if let Ty::Dict(key, val) = self.semantic_ty(obj_ty) {
+                        if !matches!(self.tcx.get(val), Ty::Any) {
+                            if let Some(symbol) = self.symbols.lookup(obj_name) {
+                                let any = self.tcx.any();
+                                let widened = self.tcx.intern(Ty::Dict(key, any));
+                                self.set_sym_type(symbol.0, widened);
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+
         let expected = match self.semantic_ty(obj_ty) {
             Ty::List(elem) if is_slice => {
                 // #1595: slice assignment (`obj[a:b:c] = rhs`) accepts ANY
