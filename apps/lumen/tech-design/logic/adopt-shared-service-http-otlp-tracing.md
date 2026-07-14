@@ -83,3 +83,35 @@ changes:
     impl_mode: hand-written
     description: Update the semantic source unit to distinguish shared tracing from Lumen-owned metrics export.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: lumen-adopt-shared-otlp-tracing-verification
+requirements:
+  feature_propagation:
+    id: R2
+    text: "The Lumen otel feature enables the shared service-http otlp feature while keeping the metrics exporter dependencies available."
+    kind: contract
+    risk: high
+    verify: cargo test -p lumen --features otel --test shared_otlp_tracing -- --exact
+  no_duplicate_trace_constructor:
+    id: R3
+    text: "Lumen no longer owns an OTLP trace pipeline or tracing-opentelemetry layer; Lumen-owned OTLP metrics instrumentation remains separate."
+    kind: regression
+    risk: medium
+    verify: cargo test -p lumen --test shared_otlp_tracing -- --exact
+  shared_trace_initializer:
+    id: R1
+    text: "Lumen delegates trace subscriber initialization to service-http with a stable lumen name and build-version identity instead of constructing a local tracer."
+    kind: regression
+    risk: high
+    verify: cargo test -p lumen --test shared_otlp_tracing -- --exact
+---
+flowchart TD
+    r1[R1 shared trace initializer] --> cargo_test_p_lumen_test_shared_otlp_tracing_exact[cargo test -p lumen --test shared_otlp_tracing -- --exact]
+    r3[R3 no duplicate trace constructor] --> cargo_test_p_lumen_test_shared_otlp_tracing_exact
+    r2[R2 feature propagation] --> cargo_test_p_lumen_features_otel_test_shared_otlp_tracing_exact[cargo test -p lumen --features otel --test shared_otlp_tracing -- --exact]
+```
