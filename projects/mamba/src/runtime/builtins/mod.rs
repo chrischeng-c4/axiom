@@ -4884,6 +4884,18 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
                     if type_name == "object" && method_str == "__init__" {
                         return super::class::object_init_unbound(&items);
                     }
+                    // BaseException-family unbound `__init__`
+                    // (`Exception.__init__(self, a)`, `TypeError.__init__(self)`)
+                    // — same arg-storage constructor `super().__init__`
+                    // already reaches via SUPER_MISSING_INIT_METHOD (#1557).
+                    // `items[0]` is the receiver; the rest are the ctor args.
+                    if method_str == "__init__" && super::class::is_base_exception_like(&type_name)
+                    {
+                        let self_v = items.first().copied().unwrap_or_else(MbValue::none);
+                        let rest = items.get(1..).unwrap_or(&[]).to_vec();
+                        let args_list = MbValue::from_ptr(MbObject::new_list(rest));
+                        return super::exception::mb_exception_init_instance(self_v, args_list);
+                    }
                     if type_name == "object" {
                         match method_str.as_str() {
                             "__setattr__" => return super::class::object_setattr_unbound(&items),
