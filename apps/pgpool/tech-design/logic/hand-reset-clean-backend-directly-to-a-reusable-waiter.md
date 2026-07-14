@@ -101,3 +101,26 @@ flowchart TD
 - A direct waiter is reusable-only. `acquire_fresh` and startup replay publication never receive an authenticated idle stream through this queue.
 - Receiver cancellation cannot leak capacity: a failed oneshot send returns the lease to release, which tries the next live waiter before parking it idle. Timeout does not change the caller's deadline or reset the generic Notify path.
 - Direct handoff has no timer driver, global scheduler, or new connection decision. It removes only the reset-clean idle-vector and liveness-probe round trip.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: apps/pgpool/src/pool/backend_pool.rs
+    action: modify
+    section: pgpool-reset-clean-direct-handoff
+    impl_mode: hand-written
+    reason: Register reusable-only waiters and transfer a reset-clean stream/permit directly without changing fresh admission or generic Notify fallback.
+  - path: apps/pgpool/tests/pool.rs
+    action: modify
+    section: pgpool-reset-clean-direct-handoff
+    impl_mode: hand-written
+    reason: Prove direct stream handoff skips idle re-acquisition and remains capacity/cancellation safe.
+  - path: apps/pgpool/tests/pool_modes.rs
+    action: modify
+    section: pgpool-reset-clean-direct-handoff
+    impl_mode: hand-written
+    reason: Pin transaction reset isolation and backend-count stability while a reusable waiter receives a reset-clean connection.
+```
