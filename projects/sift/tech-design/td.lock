@@ -2,10 +2,10 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-14T08:52:08.608760+00:00"
-digest = "sha256:f06604942394df216a5aa82dba5520a9b327986bf4e19dd1c76c994a5dba591c"
-source_digest = "sha256:f06604942394df216a5aa82dba5520a9b327986bf4e19dd1c76c994a5dba591c"
-ir_digest = "sha256:dc2c83cbf6e396813a0aa6b3ba7fb0b51202ce6707cbbdb1dd995434400484e2"
+generated_at = "2026-07-14T09:12:11.562749+00:00"
+digest = "sha256:f67713893af0c2bae7d652ca69ec4ae347cb5b12913ddcd85cfb4fe78b09458b"
+source_digest = "sha256:f67713893af0c2bae7d652ca69ec4ae347cb5b12913ddcd85cfb4fe78b09458b"
+ir_digest = "sha256:7fb69ce986121bab6d3cae4eaaa9ad1a1c10cd004c23cade4e17592188c53e22"
 
 [[files]]
 path = "interfaces/rest/adopt-shared-runtime-security-and-agent-interface.md"
@@ -47,6 +47,12 @@ section_count = 5
 path = "logic/add-gcp-compatible-logging-store.md"
 digest = "sha256:d65d965a392f831f92579c32655ed8b572ffc8c79713ed18eb24ce5def840b8e"
 ir_digest = "sha256:ddff869221c15108b49447dd1bbabf7fd533761b6023abf0b8d9bfea7b3e9165"
+section_count = 5
+
+[[files]]
+path = "logic/add-immutable-audit-and-change-store.md"
+digest = "sha256:3fe3160bf28d852afd404fef6d177974dbb34747c2386de08ebb8171ab2ba0c2"
+ir_digest = "sha256:c96d47985527b5a0f0c7d7e515108d9129e59f95c97aeebe733b19603318ad54"
 section_count = 5
 
 [[files]]
