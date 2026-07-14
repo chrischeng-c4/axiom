@@ -533,6 +533,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     service_http::init_tracing(&config)?;
 
     let state = Arc::new(ServiceState::open(&args.data_dir)?);
+    let projection_worker = state.start_projection_worker();
     let verifier = Arc::new(SiftVerifier::from_env()?);
     let data_plane = sift::protected_router(state.clone(), verifier);
     let data_plane = match state.raft_router() {
@@ -555,6 +556,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
         service_http::shutdown_with_drain(move || state.start_drain(), grace),
     )
     .await;
+    projection_worker.stop().await;
     Ok(())
 }
 

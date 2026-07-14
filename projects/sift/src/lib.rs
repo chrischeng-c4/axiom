@@ -556,6 +556,39 @@ impl ServiceState {
         &self.projections
     }
 
+    /// Start the one in-process projection worker owned by the Sift service.
+    /// The worker has no listener, WAL, or Raft group of its own and can be
+    /// stopped after HTTP drain during graceful shutdown.
+    pub fn start_projection_worker(&self) -> ProjectionWorker {
+        let projections = self.projections.clone();
+        let (shutdown, mut shutdown_rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    changed = shutdown_rx.changed() => {
+                        if changed.is_err() || *shutdown_rx.borrow() {
+                            break;
+                        }
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                        let runtime = projections.clone();
+                        match tokio::task::spawn_blocking(move || {
+                            runtime.catch_up(projection::PROJECTION_EVENT_INDEX)
+                        }).await {
+                            Ok(Ok(_)) => {}
+                            Ok(Err(error)) => tracing::warn!(%error, "projection worker catch-up failed"),
+                            Err(error) => tracing::warn!(%error, "projection worker task panicked"),
+                        }
+                    }
+                }
+            }
+        });
+        ProjectionWorker {
+            shutdown: Some(shutdown),
+            task,
+        }
+    }
+
     async fn append(&self, event: EventEnvelope) -> Result<AppendResult> {
         // Govern before the Raft proposal so sensitive content never enters a
         // replicated log, even transiently. DurableJournal repeats the policy
@@ -605,6 +638,20 @@ impl ServiceState {
 
     pub fn raft_router(&self) -> Option<Router> {
         self.raft.as_ref().map(|raft| raft.router())
+    }
+}
+
+pub struct ProjectionWorker {
+    shutdown: Option<tokio::sync::watch::Sender<bool>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl ProjectionWorker {
+    pub async fn stop(mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(true);
+        }
+        let _ = self.task.await;
     }
 }
 
