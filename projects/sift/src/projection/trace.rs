@@ -170,14 +170,22 @@ impl TraceProjection {
             }
         }
         if let Some(conflicts) = state.conflicts.get(&key) {
-            gaps.extend(conflicts.iter().map(|span| format!("conflicting_span:{span}")));
+            gaps.extend(
+                conflicts
+                    .iter()
+                    .map(|span| format!("conflicting_span:{span}")),
+            );
         }
         roots.sort();
         gaps.sort();
         let cycles = detect_cycles(&by_id);
         let mut children = BTreeMap::<String, Vec<String>>::new();
         for span in &spans {
-            if let Some(parent) = span.parent_span_id.as_ref().filter(|id| by_id.contains_key(*id)) {
+            if let Some(parent) = span
+                .parent_span_id
+                .as_ref()
+                .filter(|id| by_id.contains_key(*id))
+            {
                 children
                     .entry(parent.clone())
                     .or_default()
@@ -216,7 +224,12 @@ impl TraceProjection {
             cycles,
             critical_path_span_ids,
             duration_unix_nano,
-            projection_cursor: state.cursor_by_event_id.values().copied().max().unwrap_or(0),
+            projection_cursor: state
+                .cursor_by_event_id
+                .values()
+                .copied()
+                .max()
+                .unwrap_or(0),
         }))
     }
 }
@@ -295,18 +308,23 @@ impl Projection for TraceProjection {
         {
             return Ok(());
         }
-        let trace = state.traces.entry(key.clone()).or_default();
-        if trace
-            .get(span_id)
-            .is_some_and(|existing| existing != &record)
-        {
+        let conflicting = state
+            .traces
+            .get(&key)
+            .and_then(|trace| trace.get(span_id))
+            .is_some_and(|existing| existing != &record);
+        if conflicting {
             state
                 .conflicts
-                .entry(key)
+                .entry(key.clone())
                 .or_default()
                 .insert(span_id.into());
         }
-        trace.insert(span_id.into(), record);
+        state
+            .traces
+            .entry(key)
+            .or_default()
+            .insert(span_id.into(), record);
         state
             .cursor_by_event_id
             .insert(event.event_id.clone(), stored.cursor);

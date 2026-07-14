@@ -28,6 +28,9 @@ fn span(project: &str, trace_id: &str, span_id: &str) -> EventEnvelope {
     event.trace_id = Some(trace_id.into());
     event.span_id = Some(span_id.into());
     event
+        .resource
+        .insert("service.name".into(), "trace-api-test".into());
+    event
 }
 
 async fn body_json(response: axum::response::Response) -> serde_json::Value {

@@ -820,6 +820,7 @@ pub fn router(state: Arc<ServiceState>) -> Router {
         .route("/v1/profiles", post(ingest_profiles))
         .route("/v1/logs:query", post(query_logs))
         .route("/v1/logs:tail", get(tail_logs))
+        .route("/v1/traces/{id}", get(get_trace))
         .route("/v1/replay", get(replay_events))
         .route("/v1/replays", post(start_replay))
         .route("/v1/replays/{id}", get(get_replay))
@@ -1222,6 +1223,68 @@ async fn query_logs_page(
 }
 
 #[derive(Debug, Deserialize)]
+struct HttpTraceQuery {
+    project: String,
+    min_cursor: Option<u64>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/traces/{id}",
+    params(
+        ("id" = String, Path, description = "trace id"),
+        ("project" = String, Query, description = "authorized project"),
+        ("min_cursor" = Option<u64>, Query, description = "read-your-write projection cursor")
+    ),
+    responses(
+        (status = 200, description = "complete or explicitly partial trace", body = projection::TraceResultV1),
+        (status = 400, description = "invalid trace query", body = ErrorEnvelope),
+        (status = 403, description = "project read denied", body = ErrorEnvelope),
+        (status = 404, description = "trace not found", body = ErrorEnvelope),
+        (status = 503, description = "projection has not reached min_cursor", body = ErrorEnvelope)
+    )
+)]
+async fn get_trace(
+    State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<HttpTraceQuery>,
+) -> Result<Json<projection::TraceResultV1>, ApiError> {
+    authorize_project_read(principal.as_ref().map(|value| &value.0), &query.project)?;
+    if id.trim().is_empty() {
+        return Err(ApiError::bad_request(
+            "invalid_trace_id",
+            "trace id must not be empty",
+        ));
+    }
+    state
+        .projections
+        .catch_up(projection::PROJECTION_TRACE_STORE)
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    let projection_cursor = state
+        .projections
+        .wait_for_min_cursor(
+            projection::PROJECTION_TRACE_STORE,
+            query.min_cursor.unwrap_or(0),
+            LOG_QUERY_PROJECTION_WAIT,
+        )
+        .await
+        .map_err(ApiError::projection_lag)?;
+    let mut trace = state
+        .projections
+        .get_trace(&query.project, &id)
+        .map_err(|error| ApiError::bad_request("invalid_trace_query", error.to_string()))?
+        .ok_or_else(|| {
+            ApiError::not_found(
+                "trace_not_found",
+                format!("trace `{id}` was not found in project `{}`", query.project),
+            )
+        })?;
+    trace.projection_cursor = projection_cursor;
+    Ok(Json(trace))
+}
+
+#[derive(Debug, Deserialize)]
 struct HttpEventQuery {
     signal: Option<SignalKind>,
     after: Option<u64>,
@@ -1394,6 +1457,7 @@ async fn get_replay(
         ingest_profiles,
         query_logs,
         tail_logs,
+        get_trace,
         query_events,
         replay_events,
         start_replay,
@@ -1418,6 +1482,10 @@ async fn get_replay(
         projection::LogRecordV1,
         projection::LogQuery,
         projection::LogPage,
+        projection::SpanLinkV1,
+        projection::SpanEventV1,
+        projection::SpanRecordV1,
+        projection::TraceResultV1,
         projection::ReplayJob,
         projection::ReplayState,
         StartReplayRequest,

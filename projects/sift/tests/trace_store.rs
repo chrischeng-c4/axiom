@@ -42,9 +42,10 @@ fn span(
     event.span_id = Some(span_id.into());
     event.request_id = Some("request-a".into());
     event.session_id = Some("session-a".into());
-    event
-        .attributes
-        .insert("component".into(), AttributeValue::String("checkout".into()));
+    event.attributes.insert(
+        "component".into(),
+        AttributeValue::String("checkout".into()),
+    );
     event.resource = BTreeMap::from([("service.name".into(), "checkout".into())]);
     StoredEvent {
         cursor,
@@ -113,16 +114,10 @@ fn missing_parents_and_cycles_are_explicit_partial_trace_diagnostics() {
         .iter()
         .any(|gap| gap == "missing_parent:child:absent"));
 
-    Projection::apply_idempotent(
-        &projection,
-        &span(2, "cycle-trace", "a", Some("b"), 10, 30),
-    )
-    .unwrap();
-    Projection::apply_idempotent(
-        &projection,
-        &span(3, "cycle-trace", "b", Some("a"), 15, 25),
-    )
-    .unwrap();
+    Projection::apply_idempotent(&projection, &span(2, "cycle-trace", "a", Some("b"), 10, 30))
+        .unwrap();
+    Projection::apply_idempotent(&projection, &span(3, "cycle-trace", "b", Some("a"), 15, 25))
+        .unwrap();
     let cycle = projection
         .get_trace("project-a", "cycle-trace")
         .unwrap()

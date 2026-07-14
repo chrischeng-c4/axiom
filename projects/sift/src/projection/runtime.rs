@@ -23,6 +23,7 @@ use super::{
         ProjectionCheckpoint, ProjectionDescriptor, ProjectionLag, ProjectionStateEnvelope,
         RebuildComparison, PROJECTION_STATE_FORMAT_VERSION,
     },
+    trace::{TraceProjection, TraceResultV1, PROJECTION_TRACE_STORE},
 };
 
 pub const PROJECTION_EVENT_INDEX: &str = "event-index";
@@ -73,6 +74,8 @@ impl ProjectionRuntime {
                 as ProjectionFactory,
             Arc::new(|| Ok(Arc::new(LoggingProjection::new()?) as Arc<dyn Projection>))
                 as ProjectionFactory,
+            Arc::new(|| Ok(Arc::new(TraceProjection::new()) as Arc<dyn Projection>))
+                as ProjectionFactory,
         ] {
             let (name, slot) = open_slot(&projection_root, factory)?;
             if slots.insert(name.clone(), slot).is_some() {
@@ -119,6 +122,17 @@ impl ProjectionRuntime {
             .downcast_ref::<LoggingProjection>()
             .context("logging-store projection registration has the wrong implementation")?;
         logging.query(query)
+    }
+
+    pub fn get_trace(&self, project: &str, trace_id: &str) -> Result<Option<TraceResultV1>> {
+        let slot = self.slot(PROJECTION_TRACE_STORE)?;
+        let live = slot.live.lock().expect("projection state lock poisoned");
+        let traces = live
+            .implementation
+            .as_any()
+            .downcast_ref::<TraceProjection>()
+            .context("trace-store projection registration has the wrong implementation")?;
+        traces.get_trace(project, trace_id)
     }
 
     pub fn catch_up(&self, name: &str) -> Result<u64> {

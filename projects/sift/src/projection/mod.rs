@@ -3,6 +3,7 @@ mod logging;
 mod lumen;
 mod model;
 mod runtime;
+mod trace;
 
 pub use logging::{
     LogPage, LogQuery, LogRecordV1, LoggingProjection, DEFAULT_RETAINED_LOG_RECORDS,
@@ -17,6 +18,10 @@ pub use model::{
 pub use runtime::{
     Projection, ProjectionRuntime, PROJECTION_BATCH_SIZE, PROJECTION_EVENT_INDEX,
     PROJECTION_RETRY_AFTER_SECONDS,
+};
+pub use trace::{
+    SpanEventV1, SpanLinkV1, SpanRecordV1, TraceProjection, TraceResultV1, PROJECTION_TRACE_STORE,
+    TRACE_SCHEMA_VERSION,
 };
 
 // HANDWRITE-END
