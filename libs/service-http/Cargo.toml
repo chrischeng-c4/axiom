@@ -8,6 +8,16 @@ description = "Shared HTTP-service scaffolding for the ecosystem's k8s-native se
 name = "service_http"
 path = "src/lib.rs"
 
+[features]
+# The default service shell stays logging-only. Applications opt into trace
+# export and retain ownership of their service identity and endpoint.
+otlp = [
+    "dep:opentelemetry",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry_sdk",
+    "dep:tracing-opentelemetry",
+]
+
 [dependencies]
 # Inherit the workspace pins so the lock stays single-versioned.
 axum = { workspace = true }
@@ -20,6 +30,10 @@ utoipa = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+opentelemetry = { version = "0.21", optional = true }
+opentelemetry-otlp = { version = "0.14", features = ["tonic"], optional = true }
+opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"], optional = true }
+tracing-opentelemetry = { version = "0.22", optional = true }
 
 # The HTTP runtime (HTTP/1.1 + h2c on one port) is composed, not re-implemented.
 http-server = { path = "../http-server" }

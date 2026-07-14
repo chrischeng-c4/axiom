@@ -16,8 +16,10 @@ e2e_tests:
     claim_id: shared-http-service-scaffold-contract
     contract_id: shared-http-service-scaffold-contract
     category: behavior
-    command: "cargo test -p service-http"
+    command: "cargo test -p service-http && cargo test -p service-http --features otlp --test otlp_tracing"
     assertions:
       - "Shared HTTP Service Scaffold public Rust API behavior remains covered by the configured library test suite."
       - "The library contract stays usable through its documented README capability surface."
+      - "Optional OTLP export uses stable service identity and falls back to structured logging when unavailable."
+      - "The shared request trace layer propagates valid W3C parent context without changing logging-only startup."
 ```
