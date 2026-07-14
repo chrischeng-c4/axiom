@@ -102,3 +102,42 @@ changes:
     impl_mode: hand-written
     reason: Prove non-control backend payloads relay byte-for-byte without structural parsing and that malformed ReadyForQuery still rejects.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-opaque-backend-transaction-relay-verification
+requirements:
+  opaque_non_control:
+    id: R1
+    text: "A complete bounded non-ReadyForQuery backend frame preserves its exact bytes and never requires a structurally valid result payload to be relayed."
+    kind: regression
+    risk: high
+    verify: wire_codec::transaction_relay_forwards_bounded_non_control_backend_frame_without_payload_validation
+  peer_comparison:
+    id: R4
+    text: "The unchanged 64-client, 16-backend, simple-protocol comparison runs cleanly; a first valid loss reverts production code and preserves evidence."
+    kind: integration
+    risk: high
+    verify: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --pgpool-bin target/release/pgpool
+  pool_isolation:
+    id: R3
+    text: "Existing transaction ownership, reset-before-reuse, and pipelined-query isolation remain intact."
+    kind: integration
+    risk: high
+    verify: cargo test -p pgpool --test wire_codec --test pool --test pool_modes
+  ready_control_boundary:
+    id: R2
+    text: "ReadyForQuery remains the only relay control frame: invalid payload length or status rejects before transaction state or reuse can change."
+    kind: regression
+    risk: high
+    verify: wire_codec::transaction_relay_rejects_malformed_ready_for_query
+---
+flowchart TD
+    r1[R1 opaque non control] --> wire_codec_transaction_relay_forwards_bounded_non_control_backend_frame_without_payload_validation[wire_codec::transaction_relay_forwards_bounded_non_control_backend_frame_without_payload_validation]
+    r2[R2 ready control boundary] --> wire_codec_transaction_relay_rejects_malformed_ready_for_query[wire_codec::transaction_relay_rejects_malformed_ready_for_query]
+    r3[R3 pool isolation] --> cargo_test_p_pgpool_test_wire_codec_test_pool_test_pool_modes[cargo test -p pgpool --test wire_codec --test pool --test pool_modes]
+    r4[R4 peer comparison] --> apps_pgpool_benchmarks_pgbouncer_transaction_pooling_run_sh_pgpool_bin_target_release_pgpool[apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --pgpool-bin target/release/pgpool]
+```
