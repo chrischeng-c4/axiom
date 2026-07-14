@@ -360,6 +360,14 @@ impl TypeChecker {
                         self.check_expr(value);
                         return;
                     }
+                    // `@functools.cached_property` is a non-data descriptor:
+                    // CPython lets `instance.attr = anything` freely shadow
+                    // the cached value with any type, not just the getter's
+                    // declared return type (#1615).
+                    if self.is_cached_property_attr(object_ty, attr) {
+                        self.check_expr(value);
+                        return;
+                    }
                     if let Some(expected_ty) = self.resolve_property_setter_type(object_ty, attr) {
                         let value_ty = self.check_expr(value);
                         if !self.types_compatible(expected_ty, value_ty) {
