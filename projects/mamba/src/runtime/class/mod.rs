@@ -6658,15 +6658,27 @@ fn mb_getattr_impl(
             }
         }
         if attr_name == "__class__" {
-            let has_stored = obj.as_ptr().map_or(false, |p| unsafe {
-                matches!(&(*p).data,
-                    ObjData::Instance { fields, .. } if fields.read().unwrap().contains_key("__class__"))
+            // A bare `super()` proxy is a synthetic Instance tagged with the
+            // internal "__super__" marker class, not a real class — falling
+            // through to `mb_type(obj)` below would surface that raw marker
+            // name instead of the true `super` builtin type, breaking
+            // `super().__class__ is super` (#1581). Yield to the dedicated
+            // `mb_super_getattr` path (reached later in this function) which
+            // reports the real `super` type object.
+            let is_super_proxy = obj.as_ptr().map_or(false, |p| unsafe {
+                matches!(&(*p).data, ObjData::Instance { class_name, .. } if class_name == "__super__")
             });
-            if !has_stored {
-                if super::module::is_module_value(obj) {
-                    return make_type_object("module");
+            if !is_super_proxy {
+                let has_stored = obj.as_ptr().map_or(false, |p| unsafe {
+                    matches!(&(*p).data,
+                        ObjData::Instance { fields, .. } if fields.read().unwrap().contains_key("__class__"))
+                });
+                if !has_stored {
+                    if super::module::is_module_value(obj) {
+                        return make_type_object("module");
+                    }
+                    return super::builtins::mb_type(obj);
                 }
-                return super::builtins::mb_type(obj);
             }
         }
         // A module's __dict__ is its namespace mapping. Return a snapshot
@@ -13781,6 +13793,13 @@ fn super_dispatch_class(instance_class: String, super_class: &str, class_context
 /// Get an attribute from a super proxy — walks MRO starting after the given class.
 pub fn mb_super_getattr(proxy: MbValue, attr: MbValue) -> MbValue {
     let attr_name = extract_str(attr).unwrap_or_default();
+
+    // A bare `super()` proxy's own type is the `super` builtin itself, not a
+    // name in the wrapped instance's MRO — CPython's `super_getattro` never
+    // walks the MRO for `__class__` (#1581).
+    if attr_name == "__class__" {
+        return make_type_object("super");
+    }
 
     if let Some(ptr) = proxy.as_ptr() {
         unsafe {
