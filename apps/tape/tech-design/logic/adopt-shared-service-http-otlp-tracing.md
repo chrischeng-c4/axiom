@@ -72,3 +72,28 @@ changes:
     impl_mode: hand-written
     description: Capture the shared trace initializer and retained Tape domain boundary.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: tape-adopt-shared-otlp-tracing-verification
+requirements:
+  feature_fallback:
+    id: R2
+    text: "Tape's optional otel feature enables the shared exporter while the default build remains logging-only and starts without an endpoint."
+    kind: regression
+    risk: high
+    verify: cargo test -p tape --features otel --test shared_otlp_tracing -- --exact
+  shared_initializer:
+    id: R1
+    text: "Tape maps TAPE_OTLP_ENDPOINT into service-http initialization with stable Tape identity before serving requests."
+    kind: contract
+    risk: high
+    verify: cargo test -p tape --test shared_otlp_tracing -- --exact
+---
+flowchart TD
+    r1[R1 shared initializer] --> cargo_test_p_tape_test_shared_otlp_tracing_exact[cargo test -p tape --test shared_otlp_tracing -- --exact]
+    r2[R2 feature fallback] --> cargo_test_p_tape_features_otel_test_shared_otlp_tracing_exact[cargo test -p tape --features otel --test shared_otlp_tracing -- --exact]
+```
