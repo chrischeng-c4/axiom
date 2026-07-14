@@ -411,7 +411,9 @@ function __sendRequest(req) {
 }
 
 function __sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
+  // Runner polling must remain on the real event loop even when a spec opts
+  // into fake timers.
+  return new Promise((resolve) => __nativeTimers.setTimeout(resolve, ms));
 }
 
 // ── Auto-artifacts on failure (P3.4) ───────────────────────────────────────
@@ -532,7 +534,7 @@ test.step = async (name, body) => {
   const step_id = `step-${String(__jet.currentStepSeq).padStart(4, "0")}`;
   const parent_step_id =
     __jet.currentStepStack[__jet.currentStepStack.length - 1] ?? null;
-  const started = Date.now();
+  const started = __realNow();
   __emit({
     kind: "step_start",
     test_id: __jet.currentTestId,
@@ -550,7 +552,7 @@ test.step = async (name, body) => {
       title,
       parent_step_id,
       outcome: "passed",
-      duration_ms: Date.now() - started,
+      duration_ms: __realNow() - started,
       error: null,
     });
     return result;
@@ -562,7 +564,7 @@ test.step = async (name, body) => {
       title,
       parent_step_id,
       outcome: "failed",
-      duration_ms: Date.now() - started,
+      duration_ms: __realNow() - started,
       error: toWireError(err, "step"),
     });
     throw err;
@@ -643,6 +645,15 @@ const __jestModuleMocks = new Map();
 const __jestRequiredModuleIds = new Set();
 let __jestNodeRequire = null;
 
+// Keep the exact native constructor and clock separate from the test-facing
+// fake clock. The runner itself relies on these for deadlines and telemetry.
+const __nativeDate = globalThis.Date;
+const __nativeDateNow = __nativeDate.now.bind(__nativeDate);
+
+function __realNow() {
+  return __nativeDateNow();
+}
+
 // The test worker is native ESM, but Jest's `requireActual` contract is a
 // synchronous CommonJS API. Keep a project/spec-relative require just for
 // that explicit escape hatch. Static ESM imports still belong to Node's ESM
@@ -709,15 +720,29 @@ const __nativeTimers = Object.freeze({
       : null,
 });
 
-// Deliberately small fake-timer clock: it virtualizes scheduled callbacks,
-// not Date or microtasks. That keeps runner timeouts and wire protocol timing
-// real while covering the Jest lifecycle that ordinary unit specs use.
+// Deliberately small fake-timer clock. Test code sees its scheduled callbacks
+// and Date clock, while the runner keeps using the captured native clock.
 const __fakeTimers = {
   enabled: false,
   now: 0,
   nextId: 1,
   timers: new Map(),
 };
+
+function __fakeDate(...args) {
+  if (new.target) {
+    return args.length === 0
+      ? new __nativeDate(__fakeTimers.now)
+      : new __nativeDate(...args);
+  }
+  return new __nativeDate(__fakeTimers.now).toString();
+}
+
+// Preserve Date's static helpers and native Date instances while substituting
+// only the fake clock-facing constructor behavior.
+Object.setPrototypeOf(__fakeDate, __nativeDate);
+__fakeDate.prototype = __nativeDate.prototype;
+__fakeDate.now = () => __fakeTimers.now;
 
 function __timerDelay(value) {
   const numeric = Number(value);
@@ -789,6 +814,32 @@ function __advanceFakeTimersBy(ms) {
   __fakeTimers.now = target;
 }
 
+async function __advanceFakeTimersByAsync(ms) {
+  __requireFakeTimers("jest.advanceTimersByTimeAsync");
+  const target = __fakeTimers.now + __timerDelay(ms);
+  let timer;
+  while ((timer = __nextFakeTimer(target)) != null) {
+    __fakeTimers.now = timer.due;
+    // Unlike the synchronous API, preserve a callback's async completion so
+    // callers do not observe its promise as an unhandled background task.
+    await __runFakeTimer(timer);
+  }
+  __fakeTimers.now = target;
+}
+
+function __setFakeSystemTime(value) {
+  __requireFakeTimers("jest.setSystemTime");
+  const now = value === undefined
+    ? __realNow()
+    : value instanceof __nativeDate
+      ? value.getTime()
+      : Number(value);
+  if (!Number.isFinite(now)) {
+    throw new TypeError("jest.setSystemTime expects a valid Date or timestamp");
+  }
+  __fakeTimers.now = now;
+}
+
 function __runAllFakeTimers() {
   __requireFakeTimers("jest.runAllTimers");
   let runs = 0;
@@ -816,7 +867,7 @@ function __runOnlyPendingFakeTimers() {
 
 function __installFakeTimers() {
   __fakeTimers.enabled = true;
-  __fakeTimers.now = 0;
+  __fakeTimers.now = __realNow();
   __fakeTimers.nextId = 1;
   __fakeTimers.timers.clear();
 
@@ -836,6 +887,7 @@ function __installFakeTimers() {
     globalThis.clearImmediate = (id) =>
       __clearFakeTimer(id, __nativeTimers.clearImmediate);
   }
+  globalThis.Date = __fakeDate;
 }
 
 function __restoreRealTimers() {
@@ -846,6 +898,7 @@ function __restoreRealTimers() {
   globalThis.clearInterval = __nativeTimers.clearInterval;
   if (__nativeTimers.setImmediate) globalThis.setImmediate = __nativeTimers.setImmediate;
   if (__nativeTimers.clearImmediate) globalThis.clearImmediate = __nativeTimers.clearImmediate;
+  globalThis.Date = __nativeDate;
   __fakeTimers.enabled = false;
   __fakeTimers.now = 0;
   __fakeTimers.timers.clear();
@@ -1029,6 +1082,12 @@ const jest = {
   advanceTimersByTime(ms) {
     __advanceFakeTimersBy(ms);
   },
+  advanceTimersByTimeAsync(ms) {
+    return __advanceFakeTimersByAsync(ms);
+  },
+  setSystemTime(value) {
+    __setFakeSystemTime(value);
+  },
   runAllTimers() {
     __runAllFakeTimers();
   },
@@ -1083,8 +1142,8 @@ expect.extend = (matchers) => {
   }
 };
 
-// Asymmetric matcher consumed by deepEqual below, so this works in nested
-// `toEqual` structures exactly where Jest callers use stringContaining.
+// Asymmetric matchers consumed by deepEqual below, so these work in nested
+// `toEqual` structures exactly where Jest callers use them.
 expect.stringContaining = (expected) => {
   if (typeof expected !== "string") {
     throw new TypeError("expect.stringContaining expects a string");
@@ -1098,6 +1157,53 @@ expect.stringContaining = (expected) => {
     },
     toAsymmetricMatcher() {
       return `StringContaining ${JSON.stringify(expected)}`;
+    },
+  });
+};
+
+expect.stringMatching = (expected) => {
+  if (!(expected instanceof RegExp) && typeof expected !== "string") {
+    throw new TypeError("expect.stringMatching expects a string or RegExp");
+  }
+  const matcher = expected instanceof RegExp ? expected : new RegExp(expected);
+  return Object.freeze({
+    asymmetricMatch(value) {
+      if (typeof value !== "string") return false;
+      // Global and sticky regexes retain lastIndex across `test()` calls.
+      // Reset it so an asymmetric matcher stays deterministic in deep equals.
+      matcher.lastIndex = 0;
+      const matched = matcher.test(value);
+      matcher.lastIndex = 0;
+      return matched;
+    },
+    toString() {
+      return "StringMatching";
+    },
+    toAsymmetricMatcher() {
+      return `StringMatching ${matcher}`;
+    },
+  });
+};
+
+expect.objectContaining = (expected) => {
+  if (expected == null || typeof expected !== "object") {
+    throw new TypeError("expect.objectContaining expects an object");
+  }
+  const entries = Object.entries(expected);
+  return Object.freeze({
+    asymmetricMatch(value) {
+      if (value == null || typeof value !== "object") return false;
+      return entries.every(
+        ([key, expectedValue]) =>
+          Object.prototype.hasOwnProperty.call(value, key) &&
+          deepEqual(value[key], expectedValue),
+      );
+    },
+    toString() {
+      return "ObjectContaining";
+    },
+    toAsymmetricMatcher() {
+      return `ObjectContaining ${display(expected)}`;
     },
   });
 };
@@ -1402,7 +1508,7 @@ function __expectBase(actual) {
       const options = opts ?? {};
       const pageId = (actual && actual.__jet_page_id) ?? "default";
       const timeout = options.timeout ?? 5000;
-      const start = Date.now();
+      const start = __realNow();
       let lastError = null;
       while (true) {
         try {
@@ -1415,7 +1521,7 @@ function __expectBase(actual) {
         } catch (err) {
           lastError = err;
         }
-        if (Date.now() - start >= timeout) {
+        if (__realNow() - start >= timeout) {
           const msg = lastError
             ? `toBeVisible(${JSON.stringify(selectorOrOpts)}): ${lastError.message ?? String(lastError)}`
             : `Expected ${selectorOrOpts} to be visible within ${timeout}ms`;
@@ -1485,7 +1591,7 @@ function __expectBase(actual) {
       const options = opts ?? {};
       const pageId = (actual && actual.__jet_page_id) ?? "default";
       const timeout = options.timeout ?? 5000;
-      const start = Date.now();
+      const start = __realNow();
       let lastText = null;
       let lastError = null;
       while (true) {
@@ -1500,7 +1606,7 @@ function __expectBase(actual) {
         } catch (err) {
           lastError = err;
         }
-        if (Date.now() - start >= timeout) {
+        if (__realNow() - start >= timeout) {
           const msg = lastError
             ? `toHaveText(${JSON.stringify(selector)}): ${lastError.message ?? String(lastError)}`
             : `Expected ${selector} to have text ${display(expected)}, got ${display(lastText)}`;
@@ -1846,7 +1952,7 @@ async function runSuite(suite, parentPath, opts, grep, nextId) {
       });
     }
 
-    const started = Date.now();
+    const started = __realNow();
     let outcome = "passed";
     let error = null;
     // P3.4: artifact paths captured on failure (screenshots today).
@@ -2041,7 +2147,7 @@ async function runSuite(suite, parentPath, opts, grep, nextId) {
       suite: path,
       name: t.name,
       outcome,
-      duration_ms: Date.now() - started,
+      duration_ms: __realNow() - started,
       error,
       artifacts,
     });
@@ -2076,14 +2182,14 @@ function ancestorChain(suite) {
 function withTimeout(promise, ms) {
   let handle;
   const timeout = new Promise((_, reject) => {
-    handle = setTimeout(() => {
+    handle = __nativeTimers.setTimeout(() => {
       const e = new Error("timeout");
       e.__jet_timeout = true;
       reject(e);
     }, ms);
   });
   return Promise.race([Promise.resolve(promise), timeout]).finally(() =>
-    clearTimeout(handle),
+    __nativeTimers.clearTimeout(handle),
   );
 }
 

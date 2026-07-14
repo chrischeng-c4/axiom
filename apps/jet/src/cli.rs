@@ -2732,7 +2732,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             Ok(())
         }
 
-        Some(("check", _)) => Err(check_not_implemented_error()),
+        Some(("check", _)) => handle_check(&root_dir).await,
 
         Some(("run", m)) => {
             // No target → list available scripts (like `npm run`)
@@ -4899,18 +4899,38 @@ fn build_minify_enabled_from_matches(m: &ArgMatches) -> bool {
     !m.get_flag("no-minify")
 }
 
-/// Produce the typed error returned by `jet check` until TypeScript
-/// type checking actually lands. Extracted so the diagnostic message
-/// is unit-testable without spawning the binary.
+/// Run the project's TypeScript checker from its project root.
 ///
-/// @spec apps/jet/docs/check-exits-non-zero-while-unimplemented.md#interface
-/// @issue #1648
-fn check_not_implemented_error() -> anyhow::Error {
-    anyhow::anyhow!(
-        "`jet check` is not yet implemented (TypeScript type checking is on \
-         the roadmap). Until it lands, run `tsc --noEmit` \
-         directly. Exiting non-zero so this stub does not silently mask \
-         frontend validation failures in CI."
+/// `ScriptRunner` prefers `<root>/node_modules/.bin/tsc`, injects the local
+/// binary directory into `PATH`, and runs the child with `root_dir` as its
+/// working directory.
+async fn handle_check(root_dir: &Path) -> Result<()> {
+    let runner = crate::runner::ScriptRunner::new(root_dir.to_path_buf());
+    let args = [String::from("--noEmit")];
+    let result = runner.exec_command("tsc", &args).await.with_context(|| {
+        format!(
+            "Failed to start local `tsc --noEmit` in {}. Install project dependencies with \
+                 `jet install` and retry.",
+            root_dir.display()
+        )
+    })?;
+
+    print!("{}", result.stdout);
+    eprint!("{}", result.stderr);
+    ensure_check_success(result.exit_code)
+}
+
+/// Convert a failed TypeScript check into an actionable CLI error after its
+/// compiler output has been relayed to the user.
+fn ensure_check_success(exit_code: i32) -> Result<()> {
+    if exit_code == 0 {
+        return Ok(());
+    }
+
+    anyhow::bail!(
+        "`jet check` failed: `tsc --noEmit` exited with code {exit_code}. \
+         Fix the reported TypeScript errors (or install project dependencies with \
+         `jet install`) and rerun `jet check`."
     )
 }
 
@@ -5115,34 +5135,79 @@ mod build_index_html_tests {
 
 #[cfg(test)]
 mod check_handler_tests {
-    //! Regression for #1648: `jet check` must surface a non-zero
-    //! "not yet implemented" diagnostic instead of printing
-    //! "under development" and exiting 0.
-    //!
-    //! Spec: apps/jet/docs/check-exits-non-zero-while-unimplemented.md
+    //! Regression for #1648: `jet check` delegates to the project's local
+    //! TypeScript compiler and fails clearly when that compiler fails.
     use super::*;
 
-    #[test]
-    fn check_not_implemented_error_does_not_cite_an_unrelated_issue() {
-        let err = check_not_implemented_error();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("not yet implemented"),
-            "diagnostic must say `not yet implemented`, got: {msg}"
+    #[cfg(unix)]
+    fn write_fake_tsc(root: &Path, script_body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let bin_dir = root.join("node_modules/.bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let script = bin_dir.join("tsc");
+        std::fs::write(&script, script_body).unwrap();
+        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(script, permissions).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn check_runs_project_local_tsc_with_no_emit_from_project_root() {
+        let temp = tempfile::tempdir().unwrap();
+        write_fake_tsc(
+            temp.path(),
+            r#"#!/bin/sh
+: > .jet-check-ran-from-project-root
+printf '%s\n' "$@" > .jet-check-args
+printf '%s\n' 'typecheck stdout'
+printf '%s\n' 'typecheck stderr' >&2
+"#,
         );
+
+        handle_check(temp.path()).await.unwrap();
+
         assert!(
-            msg.contains("tsc --noEmit") && !msg.contains("#1316"),
-            "diagnostic must give the direct fallback without citing an unrelated issue: {msg}"
+            temp.path()
+                .join(".jet-check-ran-from-project-root")
+                .exists(),
+            "the fake compiler must run with the supplied project root as cwd"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join(".jet-check-args")).unwrap(),
+            "--noEmit\n",
+            "jet check must pass exactly the no-emit TypeScript flag"
         );
     }
 
-    #[test]
-    fn check_not_implemented_error_is_non_empty_and_not_panicking() {
-        let err = check_not_implemented_error();
-        let msg = format!("{err}");
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn check_returns_actionable_error_when_tsc_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        write_fake_tsc(
+            temp.path(),
+            r#"#!/bin/sh
+printf '%s\n' 'simulated compiler failure' >&2
+exit 17
+"#,
+        );
+
+        let err = handle_check(temp.path())
+            .await
+            .expect_err("a non-zero tsc exit must fail jet check");
+        let msg = format!("{err:#}");
         assert!(
-            !msg.trim().is_empty(),
-            "diagnostic must be non-empty so users see why the exit was non-zero"
+            msg.contains("tsc --noEmit"),
+            "diagnostic must name tsc: {msg}"
+        );
+        assert!(
+            msg.contains("17"),
+            "diagnostic must preserve the exit code: {msg}"
+        );
+        assert!(
+            msg.contains("Fix the reported TypeScript errors") && msg.contains("jet install"),
+            "diagnostic must explain how to recover: {msg}"
         );
     }
 }
