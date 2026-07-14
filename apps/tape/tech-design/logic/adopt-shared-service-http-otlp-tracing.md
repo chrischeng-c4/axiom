@@ -9,38 +9,29 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: tape-adopt-shared-otlp-tracing
-entry: start
+id: tape-shared-otlp-contract
+entry: args
 nodes:
-  start: { kind: start, label: "tape serve resolves TAPE_OTLP_ENDPOINT and RUST_LOG" }
-  config: { kind: process, label: "build shared HttpConfig with Tape logging defaults" }
-  identity: { kind: process, label: "create ServiceIdentity tape plus build version" }
-  init: { kind: process, label: "call service-http shared trace initializer before auth and server startup" }
-  fallback: { kind: decision, label: "endpoint feature and exporter setup valid" }
-  logging: { kind: process, label: "keep structured logging and start Tape" }
-  otlp: { kind: process, label: "export shared request spans with W3C parents" }
-  done: { kind: terminal, label: "Tape topic and subscription domain logic is unchanged" }
+  args: { kind: start, label: "Tape ServeArgs owns bind grace auth and TAPE_OTLP_ENDPOINT" }
+  config: { kind: process, label: "create service-http config with Rust log compatible defaults" }
+  identity: { kind: process, label: "service identity is tape plus package version" }
+  initializer: { kind: process, label: "shared initializer installs logging or optional OTLP tracing" }
+  span: { kind: process, label: "existing shared request trace layer receives W3C parent propagation" }
+  domain: { kind: terminal, label: "Tape authentication journal and topic routes remain domain owned" }
 edges:
-  - { from: start, to: config }
+  - { from: args, to: config }
   - { from: config, to: identity }
-  - { from: identity, to: init }
-  - { from: init, to: fallback }
-  - { from: fallback, to: logging, label: "none invalid or unavailable" }
-  - { from: fallback, to: otlp, label: "enabled" }
-  - { from: logging, to: done }
-  - { from: otlp, to: done }
+  - { from: identity, to: initializer }
+  - { from: initializer, to: span }
+  - { from: span, to: domain }
 ---
 flowchart TD
-    start([tape serve resolves TAPE_OTLP_ENDPOINT and RUST_LOG]) --> config[build shared HttpConfig with Tape logging defaults]
-    config --> identity[create ServiceIdentity tape plus build version]
-    identity --> init[call shared trace initializer before auth and server startup]
-    init --> fallback{endpoint feature and exporter setup valid}
-    fallback -->|none invalid or unavailable| logging[keep structured logging and start Tape]
-    fallback -->|enabled| otlp[export shared request spans with W3C parents]
-    logging --> done([Tape topic and subscription domain logic unchanged])
-    otlp --> done
+    args([Tape ServeArgs owns bind grace auth and TAPE_OTLP_ENDPOINT]) --> config[create service-http config with Rust log compatible defaults]
+    config --> identity[service identity is tape plus package version]
+    identity --> initializer[shared initializer installs logging or optional OTLP tracing]
+    initializer --> span[existing shared request trace layer receives W3C parent propagation]
+    span --> domain([Tape authentication journal and topic routes remain domain owned])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
