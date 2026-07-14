@@ -36,6 +36,18 @@ flowchart LR
   drain -->|malformed suffix| prefix[forward valid prefix then end]
 ```
 
+### Invariants
+
+- A segment enters a batch only after `FrameReader::next_relay_frame_with_raw` validates its declared length and relay structure. No forwarding API accepts an arbitrary byte buffer.
+- The batch drains only already complete frames in reader order. It never performs a new read while batching, and it ends immediately after the first `ReadyForQuery`.
+- `write_vectored` may write a prefix of the submitted slices. The forwarding loop advances a `(segment_index, byte_offset)` cursor by exactly the returned byte count and retries the remaining suffix; zero-byte writes are treated as `WriteZero`.
+- Each call submits at most the platform-safe I/O-vector count. The next call begins at the same cursor, so an oversized batch cannot lose, duplicate, or reorder frames.
+- `ready` and `terminal_error` retain their current meaning and are inspected only after the valid prefix has been fully forwarded. Therefore lease ownership and malformed-suffix observable ordering are unchanged.
+- A one-frame batch remains a raw single-frame write; a multi-frame batch must not allocate or concatenate a replacement payload.
+
+### Error handling
+
+A socket error or zero-byte successful vectored write ends the relay leg exactly as `forward_raw` does today. An invalid buffered suffix leaves the already valid prefix batch intact, marks `terminal_error`, and causes the caller to close after that prefix has been forwarded. The feature does not alter frontend reads, startup/auth replay, or reset I/O.
 ## Changes
 <!-- type: changes lang: yaml -->
 
