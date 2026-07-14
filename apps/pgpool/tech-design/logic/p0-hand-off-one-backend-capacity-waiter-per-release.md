@@ -72,3 +72,42 @@ changes:
     section: pgpool-single-capacity-handoff
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-single-capacity-handoff-verification
+requirements:
+  benchmark:
+    id: AC5
+    text: "The immutable 64-client, 16-backend transaction-pooling benchmark has no client errors and is retained only after three valid unsampled release wins over PgBouncer."
+    kind: e2e
+    risk: high
+    verify: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh
+  isolation:
+    id: R3
+    text: "Pool capacity, DISCARD ALL isolation, transaction reuse, and session mode behavior remain unchanged under concurrent transaction clients."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool --test pool --test pool_modes
+  replay_broadcast:
+    id: R2
+    text: "Publishing a replay-safe startup response still wakes all relevant startup admissions so they can re-check the shared reply cache."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool --test pool_modes replayed_startup_admits_while_all_backends_are_active
+  single_handoff:
+    id: R1
+    text: "One returned or freed backend capacity slot wakes one waiter, and successive releases eventually admit the remaining saturated waiters without exceeding the pool cap."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool --test pool single_capacity_release_wakes_one_waiter
+---
+flowchart TD
+    r1[R1 single handoff] --> cargo_test_p_pgpool_test_pool_single_capacity_release_wakes_one_waiter[cargo test -p pgpool --test pool single_capacity_release_wakes_one_waiter]
+    r2[R2 replay broadcast] --> cargo_test_p_pgpool_test_pool_modes_replayed_startup_admits_while_all_backends_are_active[cargo test -p pgpool --test pool_modes replayed_startup_admits_while_all_backends_are_active]
+    r3[R3 isolation] --> cargo_test_p_pgpool_test_pool_test_pool_modes[cargo test -p pgpool --test pool --test pool_modes]
+    ac5[AC5 benchmark] --> apps_pgpool_benchmarks_pgbouncer_transaction_pooling_run_sh[apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh]
+```
