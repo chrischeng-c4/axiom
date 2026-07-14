@@ -38,3 +38,40 @@ flowchart LR
   fallback[generic release] --> new_reader[existing fresh reset reader]
   new_reader --> reset
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/pool/backend_pool.rs
+    action: modify
+    section: pgpool-reset-reader-reuse
+    impl_mode: hand-written
+    reason: Accept an optional drained transaction reader for reset validation while preserving the generic fresh-reader release path.
+  - path: apps/pgpool/src/pool/transaction.rs
+    action: modify
+    section: pgpool-reset-reader-reuse
+    impl_mode: hand-written
+    reason: Transfer the established transaction backend reader only at the verified Idle lease boundary.
+  - path: apps/pgpool/src/wire/reader.rs
+    action: modify
+    section: pgpool-reset-reader-reuse
+    impl_mode: hand-written
+    reason: Expose the bounded drained-buffer fact needed to reject unsafe reader reuse without weakening frame validation.
+  - path: apps/pgpool/tests/pool.rs
+    action: modify
+    section: pgpool-reset-reader-reuse
+    impl_mode: hand-written
+    reason: Exercise generic reset fallback and malformed reset close behavior when no transaction reader is supplied.
+  - path: apps/pgpool/tests/pool_modes.rs
+    action: modify
+    section: pgpool-reset-reader-reuse
+    impl_mode: hand-written
+    reason: Verify a contended real transaction remains reset-isolated and backend-cap bounded through the reused-reader path.
+  - path: apps/pgpool/tests/wire_codec.rs
+    action: modify
+    section: pgpool-reset-reader-reuse
+    impl_mode: hand-written
+    reason: Pin the drained reader precondition and preserve strict ReadyForQuery state validation.
+```
