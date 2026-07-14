@@ -3001,6 +3001,11 @@ async fn test_code_check_consumes_implements_populated_by_real_td_create() {
     let spec_content = "---\nid: demo\nfill_sections: [changes]\n---\n\n# Demo\n\n## Changes\n\
          <!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: src/tier1_demo.rs\n    action: create\n    impl_mode: hand-written\n```\n";
     std::fs::write(&spec_abs, spec_content).unwrap();
+    // The TD is an input to terminal validation, so commit it before invoking
+    // code-check. The deliberately missing implementation path remains
+    // uncommitted/nonexistent, which makes the assertion below exercise the
+    // implementation-evidence gate rather than the earlier dirty-scope gate.
+    commit_all(&git, root);
 
     let check_out = Command::new(&aw_bin)
         .arg("td")
