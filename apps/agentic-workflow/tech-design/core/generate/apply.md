@@ -10,6 +10,12 @@ capability_refs:
     rationale: "Generator primitives are part of TD/CB lifecycle automation because they produce reviewable code artifacts from TD sections."
   - id: td-cb-lifecycle-automation
     role: primary
+    gap: terminal-touched-codegen-drift-gate
+    claim: terminal-touched-codegen-drift-gate
+    coverage: full
+    rationale: "Terminal repair replays only the audited target-file set and suppresses project-wide sibling, README, and marker-inventory post-passes."
+  - id: td-cb-lifecycle-automation
+    role: primary
     gap: ambiguous-multi-target-generation-preflight
     claim: ambiguous-multi-target-generation-preflight
     coverage: full
@@ -92,6 +98,7 @@ mutation.
 | `run_apply_scoped_sections` | apps/agentic-workflow/src/generate/apply.rs | function | pub | 137 | run_apply_scoped_sections(     spec_path: &Path,     project_root: &Path,     dry_run: bool,     allowed_target_roots: &[PathBuf],     allowed_sections: &[&str], ) -> crate::generate::Result<ApplyReport> |
 | `run_apply_scoped_targets` | apps/agentic-workflow/src/generate/apply.rs | function | pub | 155 | run_apply_scoped_targets(     spec_path: &Path,     project_root: &Path,     dry_run: bool,     allowed_target_roots: &[PathBuf], ) -> crate::generate::Result<ApplyReport> |
 | `run_apply_scoped_targets_quiet` | apps/agentic-workflow/src/generate/apply.rs | function | pub | 176 | run_apply_scoped_targets_quiet(     spec_path: &Path,     project_root: &Path,     dry_run: bool,     allowed_target_roots: &[PathBuf], ) -> crate::generate::Result<ApplyReport> |
+| `run_apply_terminal_targets` | apps/agentic-workflow/src/generate/apply.rs | function | pub | 223 | run_apply_terminal_targets(     spec_path: &Path,     project_root: &Path,     dry_run: bool,     targets: &[PathBuf], ) -> crate::generate::Result<ApplyReport> |
 | `run_apply_worktree` | apps/agentic-workflow/src/generate/apply.rs | function | pub | 196 | run_apply_worktree(     spec_path: &Path,     worktree: &Path, ) -> crate::generate::Result<ApplyReport> |
 | `should_emit_section_to_entry` | apps/agentic-workflow/src/generate/apply.rs | function | pub | 1859 | should_emit_section_to_entry(     entry: &ChangeEntry,     all_entries: &[ChangeEntry],     anchors: &[String], ) -> bool |
 | `supports_source_backed_replay` | apps/agentic-workflow/src/generate/apply.rs | function | pub | 7479 | supports_source_backed_replay(target_rel_path: &str, section: Option<&str>) -> bool |
@@ -171,6 +178,11 @@ the sole Changes entry and target ownership, snapshot the target, generate one
 candidate, re-check the snapshot, then either report an idempotent no-write or
 persist that candidate. Any failed preflight exits before mutation, and the
 ordinary post-pass chain is never entered.
+
+Terminal CODEGEN repair uses a second narrow entrypoint over an explicit set
+of target files. It retains the ordinary section generators and complete-plan
+preflight, but suppresses sibling module wiring, README aggregation, and marker
+inventory writes so remediation cannot escape the claims just audited.
 
 Legacy `source-snapshot` mirrors enter the same exact-write boundary after a
 separate fail-closed metadata preflight. Their embedded Source payload is the
@@ -301,7 +313,16 @@ pub fn run_apply(
     project_root: &Path,
     dry_run: bool,
 ) -> crate::generate::Result<ApplyReport> {
-    run_apply_inner(spec_path, project_root, dry_run, None, None, None, false)
+    run_apply_inner(
+        spec_path,
+        project_root,
+        dry_run,
+        None,
+        None,
+        None,
+        false,
+        false,
+    )
 }
 
 /// Run codegen apply for a spec file, skipping change entries whose targets
@@ -324,6 +345,7 @@ pub fn run_apply_scoped(
         None,
         None,
         false,
+        false,
     )
 }
 
@@ -345,6 +367,7 @@ pub fn run_apply_scoped_sections(
         Some(allowed_sections),
         None,
         false,
+        false,
     )
 }
 
@@ -362,6 +385,7 @@ pub fn run_apply_scoped_targets(
         Some(allowed_target_roots),
         None,
         None,
+        false,
         false,
     )
 }
@@ -384,6 +408,37 @@ pub fn run_apply_scoped_targets_quiet(
         Some(allowed_target_roots),
         None,
         None,
+        true,
+        false,
+    )
+}
+
+/// Replay only the supplied target files and suppress project-wide sibling,
+/// README, and marker-inventory post-passes. Terminal code-check remediation
+/// uses this to repair the exact claim set it just audited without widening
+/// the write scope.
+// @spec apps/agentic-workflow/tech-design/core/generate/apply.md#source
+pub fn run_apply_terminal_targets(
+    spec_path: &Path,
+    project_root: &Path,
+    dry_run: bool,
+    targets: &[PathBuf],
+) -> crate::generate::Result<ApplyReport> {
+    validate_exact_apply_path(project_root, spec_path, true)
+        .and_then(|_| {
+            targets
+                .iter()
+                .try_for_each(|target| validate_exact_apply_path(project_root, target, false))
+        })
+        .map_err(crate::generate::GenerateError::InvalidValue)?;
+    run_apply_inner(
+        spec_path,
+        project_root,
+        dry_run,
+        Some(targets),
+        None,
+        None,
+        false,
         true,
     )
 }
@@ -412,6 +467,7 @@ pub fn run_apply_exact_source_target(
         Some(&["source", "rust-source-unit", "text-source-unit"]),
         Some(exact_target),
         false,
+        true,
     )
 }
 
@@ -502,7 +558,7 @@ pub fn run_apply_worktree(
     spec_path: &Path,
     worktree: &Path,
 ) -> crate::generate::Result<ApplyReport> {
-    run_apply_inner(spec_path, worktree, false, None, None, None, false)
+    run_apply_inner(spec_path, worktree, false, None, None, None, false, false)
 }
 
 fn run_apply_inner(
@@ -513,6 +569,7 @@ fn run_apply_inner(
     allowed_sections: Option<&[&str]>,
     exact_target: Option<&Path>,
     quiet: bool,
+    suppress_global_postpasses: bool,
 ) -> crate::generate::Result<ApplyReport> {
     use crate::generate::frontmatter::extract_mermaid_plus_blocks;
     use crate::generate::marker::{parse_codegen_blocks, replace_codegen_block};
@@ -1303,7 +1360,7 @@ fn run_apply_inner(
     // Post-pass: dedupe `use` statements across CODEGEN blocks in the same file.
     // Each generator emits imports inside its own block; at module scope that
     // produces E0252 (name defined multiple times). Keep the first occurrence.
-    if !dry_run && exact_target.is_none() {
+    if !dry_run && exact_target.is_none() && !suppress_global_postpasses {
         let mut unique_paths: std::collections::BTreeSet<PathBuf> =
             std::collections::BTreeSet::new();
         for f in files.iter().filter(|file| file.processed) {
@@ -1325,7 +1382,7 @@ fn run_apply_inner(
     // update two CODEGEN blocks — `mamba-mod-decls` at crate root with
     // `pub mod X;` and `mamba-register-body` inside the register() body with
     // `X::register(r);`.
-    if !dry_run && exact_target.is_none() {
+    if !dry_run && exact_target.is_none() && !suppress_global_postpasses {
         let generated_paths: Vec<PathBuf> = files
             .iter()
             .filter(|f| f.updated)
@@ -1340,7 +1397,7 @@ fn run_apply_inner(
     }
 
     // R5: Write the ephemeral codegen marker inventory with all emitted SPEC-REF markers
-    if !dry_run && exact_target.is_none() {
+    if !dry_run && exact_target.is_none() && !suppress_global_postpasses {
         write_markers_yaml(root, &files)?;
     }
 

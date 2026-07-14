@@ -115,7 +115,16 @@ pub fn run_apply(
     project_root: &Path,
     dry_run: bool,
 ) -> crate::generate::Result<ApplyReport> {
-    run_apply_inner(spec_path, project_root, dry_run, None, None, None, false)
+    run_apply_inner(
+        spec_path,
+        project_root,
+        dry_run,
+        None,
+        None,
+        None,
+        false,
+        false,
+    )
 }
 
 /// Run codegen apply for a spec file, skipping change entries whose targets
@@ -138,6 +147,7 @@ pub fn run_apply_scoped(
         None,
         None,
         false,
+        false,
     )
 }
 
@@ -159,6 +169,7 @@ pub fn run_apply_scoped_sections(
         Some(allowed_sections),
         None,
         false,
+        false,
     )
 }
 
@@ -176,6 +187,7 @@ pub fn run_apply_scoped_targets(
         Some(allowed_target_roots),
         None,
         None,
+        false,
         false,
     )
 }
@@ -198,6 +210,37 @@ pub fn run_apply_scoped_targets_quiet(
         Some(allowed_target_roots),
         None,
         None,
+        true,
+        false,
+    )
+}
+
+/// Replay only the supplied target files and suppress project-wide sibling,
+/// README, and marker-inventory post-passes. Terminal code-check remediation
+/// uses this to repair the exact claim set it just audited without widening
+/// the write scope.
+// @spec apps/agentic-workflow/tech-design/core/generate/apply.md#source
+pub fn run_apply_terminal_targets(
+    spec_path: &Path,
+    project_root: &Path,
+    dry_run: bool,
+    targets: &[PathBuf],
+) -> crate::generate::Result<ApplyReport> {
+    validate_exact_apply_path(project_root, spec_path, true)
+        .and_then(|_| {
+            targets
+                .iter()
+                .try_for_each(|target| validate_exact_apply_path(project_root, target, false))
+        })
+        .map_err(crate::generate::GenerateError::InvalidValue)?;
+    run_apply_inner(
+        spec_path,
+        project_root,
+        dry_run,
+        Some(targets),
+        None,
+        None,
+        false,
         true,
     )
 }
@@ -226,6 +269,7 @@ pub fn run_apply_exact_source_target(
         Some(&["source", "rust-source-unit", "text-source-unit"]),
         Some(exact_target),
         false,
+        true,
     )
 }
 
@@ -316,7 +360,7 @@ pub fn run_apply_worktree(
     spec_path: &Path,
     worktree: &Path,
 ) -> crate::generate::Result<ApplyReport> {
-    run_apply_inner(spec_path, worktree, false, None, None, None, false)
+    run_apply_inner(spec_path, worktree, false, None, None, None, false, false)
 }
 
 fn run_apply_inner(
@@ -327,6 +371,7 @@ fn run_apply_inner(
     allowed_sections: Option<&[&str]>,
     exact_target: Option<&Path>,
     quiet: bool,
+    suppress_global_postpasses: bool,
 ) -> crate::generate::Result<ApplyReport> {
     use crate::generate::frontmatter::extract_mermaid_plus_blocks;
     use crate::generate::marker::{parse_codegen_blocks, replace_codegen_block};
@@ -1117,7 +1162,7 @@ fn run_apply_inner(
     // Post-pass: dedupe `use` statements across CODEGEN blocks in the same file.
     // Each generator emits imports inside its own block; at module scope that
     // produces E0252 (name defined multiple times). Keep the first occurrence.
-    if !dry_run && exact_target.is_none() {
+    if !dry_run && exact_target.is_none() && !suppress_global_postpasses {
         let mut unique_paths: std::collections::BTreeSet<PathBuf> =
             std::collections::BTreeSet::new();
         for f in files.iter().filter(|file| file.processed) {
@@ -1139,7 +1184,7 @@ fn run_apply_inner(
     // update two CODEGEN blocks — `mamba-mod-decls` at crate root with
     // `pub mod X;` and `mamba-register-body` inside the register() body with
     // `X::register(r);`.
-    if !dry_run && exact_target.is_none() {
+    if !dry_run && exact_target.is_none() && !suppress_global_postpasses {
         let generated_paths: Vec<PathBuf> = files
             .iter()
             .filter(|f| f.updated)
@@ -1154,7 +1199,7 @@ fn run_apply_inner(
     }
 
     // R5: Write the ephemeral codegen marker inventory with all emitted SPEC-REF markers
-    if !dry_run && exact_target.is_none() {
+    if !dry_run && exact_target.is_none() && !suppress_global_postpasses {
         write_markers_yaml(root, &files)?;
     }
 

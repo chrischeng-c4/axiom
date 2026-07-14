@@ -76,6 +76,12 @@ capability_refs:
     rationale: "The CLI semantic domain owns read-only exact-spec preparation before TD lifecycle mutation, stable plan-error envelopes, and prepared-byte revalidation in src/cli/td.rs."
   - id: td-cb-lifecycle-automation
     role: primary
+    gap: terminal-touched-codegen-drift-gate
+    claim: terminal-touched-codegen-drift-gate
+    coverage: full
+    rationale: "The CLI semantic domain resolves accepted Td-Init-scoped CODEGEN claims, invokes the shared deterministic audit before EC or mutation, and routes drift through phase-safe exact-target regeneration."
+  - id: td-cb-lifecycle-automation
+    role: primary
     gap: terminal-ec-process-liveness
     claim: terminal-ec-process-liveness
     coverage: full
@@ -681,6 +687,15 @@ semantic_domain:
           - name: "run_gen"
             kind: "function"
             public: true
+          - name: "run_terminal_codegen_repair"
+            kind: "function"
+            public: false
+          - name: "terminal_touched_codegen_claims"
+            kind: "function"
+            public: false
+          - name: "terminal_touched_codegen_findings"
+            kind: "function"
+            public: false
           - name: "run_force_regen"
             kind: "function"
             public: false
@@ -3884,6 +3899,14 @@ changes:
       its prior distinction: no slug history stays legacy-compatible, while
       same-slug lifecycle history without an exact Td-Init remains a hard
       verification error rather than becoming implementation evidence.
+      Issue #1635 reuses that exact baseline to intersect committed paths with
+      current CODEGEN rows from the WI's accepted TDs. The fresh terminal path
+      sends each exact target/spec-section claim through `audit_file` before
+      EC or mutation, ignores reports owned by other specs or sections, and
+      emits `aw td gen <slug>` on drift. In a terminal phase that command
+      preflights and regenerates only the selected target-file scopes without
+      project-wide post-passes, commits those paths, preserves WI phase, and
+      returns the exact code-check retry.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/chat_members.rs"
     action: modify

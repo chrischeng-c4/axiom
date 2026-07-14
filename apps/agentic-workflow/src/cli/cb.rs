@@ -429,11 +429,120 @@ pub async fn run_gen(args: CbGenArgs) -> Result<()> {
     let Some(slug) = args.slug else {
         anyhow::bail!("Either specify a slug or use --force-regen --project <project>");
     };
+    if args.spec_path.is_none() && run_terminal_codegen_repair(&slug).await? {
+        return Ok(());
+    }
     let td_args = GenCodeArgs {
         slug,
         spec_path: args.spec_path,
     };
     td::run_gen_code(td_args).await
+}
+
+/// Re-run only the accepted TD's touched CODEGEN targets when `aw td gen`
+/// is invoked from a fresh terminal phase. Normal authoring still delegates
+/// to `td::run_gen_code`; this branch is the executable remediation emitted
+/// by terminal drift detection and deliberately leaves WI phase/state alone.
+async fn run_terminal_codegen_repair(slug: &str) -> Result<bool> {
+    use crate::issues::types::td_phase;
+    use crate::issues::{IssueBackend, LocalBackend};
+
+    let project_root = crate::find_project_root()?;
+    let backend = LocalBackend::from_project_root(&project_root);
+    let Some(issue) = backend.get(slug).await? else {
+        return Ok(false);
+    };
+    let phase = issue.phase.as_deref().unwrap_or("");
+    if !td_phase::is_terminal_code_checkable(phase) {
+        return Ok(false);
+    }
+
+    let spec_paths = resolve_slug_spec_paths(&project_root, &issue);
+    let claims = terminal_touched_codegen_claims(&project_root, slug, &spec_paths)?;
+    if claims.is_empty() {
+        return Ok(false);
+    }
+
+    let mut targets_by_spec: BTreeMap<std::path::PathBuf, BTreeSet<std::path::PathBuf>> =
+        BTreeMap::new();
+    for claim in &claims {
+        targets_by_spec
+            .entry(claim.spec_path.clone())
+            .or_default()
+            .insert(project_root.join(&claim.target));
+    }
+
+    // Preflight every accepted TD before the first write, then replay only
+    // the exact target files selected by the terminal comparison contract.
+    for (spec, targets) in &targets_by_spec {
+        let targets = targets.iter().cloned().collect::<Vec<_>>();
+        crate::generate::apply::run_apply_terminal_targets(spec, &project_root, true, &targets)
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "terminal CODEGEN repair preflight failed for {}: {error}",
+                    spec.display()
+                )
+            })?;
+    }
+
+    let mut changed_paths = Vec::new();
+    for (spec, targets) in &targets_by_spec {
+        let targets = targets.iter().cloned().collect::<Vec<_>>();
+        let report = crate::generate::apply::run_apply_terminal_targets(
+            spec,
+            &project_root,
+            false,
+            &targets,
+        )
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "terminal CODEGEN repair failed for {}: {error}",
+                spec.display()
+            )
+        })?;
+        changed_paths.extend(
+            report
+                .files
+                .into_iter()
+                .filter(|file| file.created || file.updated || file.blocks_updated > 0)
+                .map(|file| project_root.join(file.path)),
+        );
+    }
+    changed_paths.sort();
+    changed_paths.dedup();
+    format_rust_files(&changed_paths)?;
+
+    let message = format!(
+        "cb({slug}) - repair touched CODEGEN\n\n\
+         Lifecycle-Slug: {slug}\n\
+         Work-Item: {slug}\n\
+         Lifecycle-Stage: Cb-Repair"
+    );
+    let committed = crate::git::commit_scoped_paths(&project_root, &changed_paths, &message)?;
+    if !committed {
+        anyhow::bail!(
+            "terminal CODEGEN repair for `{slug}` produced no committed target change; inspect the accepted TD and retry `aw td code-check {slug}`"
+        );
+    }
+
+    let artifacts = changed_paths
+        .iter()
+        .map(|path| {
+            path.strip_prefix(&project_root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>();
+    let env = serde_json::json!({
+        "action": "repair_complete",
+        "slug": slug,
+        "artifacts": artifacts,
+        "message": "touched CODEGEN targets regenerated and committed; rerun terminal code-check",
+        "next": { "command": format!("aw td code-check {slug}") },
+    });
+    println!("{}", serde_json::to_string(&env)?);
+    Ok(true)
 }
 
 fn ensure_td_lock_clean_for_project(root: &std::path::Path, project: &str) -> Result<()> {
@@ -4902,6 +5011,54 @@ async fn run_check_lifecycle_terminal(
             return Ok(true);
         }
 
+        // #1635: the numeric/slug terminal path must run the same
+        // deterministic per-block regeneration comparison used by
+        // `aw td code-check <path>`. Limit it to CODEGEN claims owned by
+        // this WI's accepted TD and touched since its Td-Init baseline, and
+        // run it before EC evaluation or any lifecycle/tracker mutation.
+        let codegen_findings = match terminal_touched_codegen_findings(
+            project_root,
+            slug,
+            &slug_spec_paths,
+        ) {
+            Ok(findings) => findings,
+            Err(error) => {
+                let env = serde_json::json!({
+                    "action": "error",
+                    "error_kind": "terminal_touched_codegen_unverifiable",
+                    "slug": slug,
+                    "message": format!(
+                        "td code-check refused because touched CODEGEN parity could not be verified: {error:#}"
+                    ),
+                    "next": { "command": format!("aw td gen {slug}") },
+                });
+                println!("{}", serde_json::to_string(&env)?);
+                return Ok(true);
+            }
+        };
+        if !codegen_findings.is_empty() {
+            let files = codegen_findings
+                .iter()
+                .map(|finding| finding.file.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let env = serde_json::json!({
+                "action": "error",
+                "error_kind": "terminal_touched_codegen_drift",
+                "slug": slug,
+                "message": format!(
+                    "td code-check refused: {} touched CODEGEN claim(s) differ from deterministic TD replay; run `aw td gen {slug}`, then follow its emitted retry command",
+                    codegen_findings.len(),
+                ),
+                "files": files,
+                "findings": codegen_findings,
+                "next": { "command": format!("aw td gen {slug}") },
+            });
+            println!("{}", serde_json::to_string(&env)?);
+            return Ok(true);
+        }
+
         // Marker gate (issue #859 part a): `aw td fill`'s own apply loop
         // already re-enumerates the whole worktree after every marker write
         // and only advances phase to `cb_filled` once that re-enumeration
@@ -5194,6 +5351,166 @@ fn resolve_slug_spec_paths(
         }
     }
     rels.into_iter().map(|r| project_root.join(r)).collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct TerminalCodegenClaim {
+    spec_path: std::path::PathBuf,
+    spec_rel: String,
+    target: String,
+    section: Option<String>,
+}
+
+impl TerminalCodegenClaim {
+    fn display_ref(&self) -> String {
+        self.section
+            .as_deref()
+            .map(|section| format!("{}#{section}", self.spec_rel))
+            .unwrap_or_else(|| format!("{}#*", self.spec_rel))
+    }
+
+    fn owns_report(&self, spec_ref: &str) -> bool {
+        match self.section.as_deref() {
+            Some(section) => spec_ref == format!("{}#{section}", self.spec_rel),
+            None => spec_ref
+                .strip_prefix(&self.spec_rel)
+                .is_some_and(|suffix| suffix.starts_with('#')),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TerminalCodegenFinding {
+    file: String,
+    spec_ref: String,
+    status: String,
+    detail: String,
+}
+
+/// Resolve the exact accepted CODEGEN claims whose target or owning TD has a
+/// committed net change from the slug's Td-Init-parent baseline to HEAD.
+/// Synthetic legacy fixtures with no lifecycle history retain their existing
+/// vacuous behavior; real lifecycle history without a usable Td-Init fails
+/// closed through `committed_paths_since_td_init`.
+fn terminal_touched_codegen_claims(
+    project_root: &std::path::Path,
+    slug: &str,
+    spec_paths: &[std::path::PathBuf],
+) -> Result<Vec<TerminalCodegenClaim>> {
+    let Some(changed) = committed_paths_since_td_init(project_root, slug)? else {
+        return Ok(Vec::new());
+    };
+    accepted_codegen_claims_for_changed_paths(project_root, spec_paths, &changed)
+}
+
+fn accepted_codegen_claims_for_changed_paths(
+    project_root: &std::path::Path,
+    spec_paths: &[std::path::PathBuf],
+    changed: &BTreeSet<String>,
+) -> Result<Vec<TerminalCodegenClaim>> {
+    let mut claims = BTreeSet::new();
+    for spec_path in spec_paths {
+        let spec_rel = spec_path
+            .strip_prefix(project_root)
+            .with_context(|| {
+                format!(
+                    "accepted TD `{}` is outside project root `{}`",
+                    spec_path.display(),
+                    project_root.display()
+                )
+            })?
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        let content = std::fs::read_to_string(spec_path)
+            .with_context(|| format!("read accepted TD `{spec_rel}`"))?;
+        for entry in crate::generate::apply::extract_change_entries(&content) {
+            if entry.impl_mode != crate::generate::apply::ImplMode::Codegen
+                || !(entry.action.eq_ignore_ascii_case("create")
+                    || entry.action.eq_ignore_ascii_case("modify"))
+            {
+                continue;
+            }
+            let target = normalize_touched_rel_path(&entry.path);
+            if changed.contains(&spec_rel) || changed.contains(&target) {
+                claims.insert(TerminalCodegenClaim {
+                    spec_path: spec_path.clone(),
+                    spec_rel: spec_rel.clone(),
+                    target,
+                    section: entry.section_id.clone(),
+                });
+            }
+        }
+    }
+    Ok(claims.into_iter().collect())
+}
+
+/// Compare the terminal claim set with the same `audit_file` primitive that
+/// backs path-mode `aw td code-check <path>`. Reports from other specs or
+/// sections in the same file are ignored, so unrelated repository drift does
+/// not broaden the WI verdict.
+fn terminal_touched_codegen_findings(
+    project_root: &std::path::Path,
+    slug: &str,
+    spec_paths: &[std::path::PathBuf],
+) -> Result<Vec<TerminalCodegenFinding>> {
+    use crate::generate::audit::ReportKind;
+
+    let claims = terminal_touched_codegen_claims(project_root, slug, spec_paths)?;
+    let mut findings = Vec::new();
+    for claim in claims {
+        let target = project_root.join(&claim.target);
+        let reports = match crate::generate::audit::audit_file(&target, project_root) {
+            Ok(reports) => reports,
+            Err(error) => {
+                findings.push(TerminalCodegenFinding {
+                    file: claim.target.clone(),
+                    spec_ref: claim.display_ref(),
+                    status: "unverifiable".to_string(),
+                    detail: error.to_string(),
+                });
+                continue;
+            }
+        };
+        let owned = reports
+            .iter()
+            .filter(|report| claim.owns_report(&report.spec_ref))
+            .collect::<Vec<_>>();
+        if owned.is_empty() {
+            findings.push(TerminalCodegenFinding {
+                file: claim.target.clone(),
+                spec_ref: claim.display_ref(),
+                status: "missing_codegen_region".to_string(),
+                detail: "accepted CODEGEN claim has no matching SPEC-MANAGED/CODEGEN region"
+                    .to_string(),
+            });
+            continue;
+        }
+        for report in owned {
+            match &report.kind {
+                ReportKind::Clean | ReportKind::Aggregate => {}
+                ReportKind::Drift { diff } => findings.push(TerminalCodegenFinding {
+                    file: claim.target.clone(),
+                    spec_ref: report.spec_ref.clone(),
+                    status: "drift".to_string(),
+                    detail: diff.clone(),
+                }),
+                ReportKind::Unresolvable { reason } => findings.push(TerminalCodegenFinding {
+                    file: claim.target.clone(),
+                    spec_ref: report.spec_ref.clone(),
+                    status: "unresolvable".to_string(),
+                    detail: reason.clone(),
+                }),
+            }
+        }
+    }
+    findings.sort_by(|left, right| {
+        (&left.file, &left.spec_ref, &left.status).cmp(&(
+            &right.file,
+            &right.spec_ref,
+            &right.status,
+        ))
+    });
+    Ok(findings)
 }
 
 /// Clean-touched-scope precondition (issue #807 / #1275): find every entry
@@ -5504,7 +5821,11 @@ pub(crate) fn reachable_td_init_from_head(
 
 #[cfg(test)]
 mod td_init_reachability_tests {
-    use super::{committed_paths_since_td_init, reachable_td_init_from_head, TdInitReachability};
+    use super::{
+        accepted_codegen_claims_for_changed_paths, committed_paths_since_td_init,
+        reachable_td_init_from_head, TdInitReachability,
+    };
+    use std::collections::BTreeSet;
 
     fn git(root: &std::path::Path, args: &[&str]) {
         let status = std::process::Command::new("git")
@@ -5578,6 +5899,65 @@ mod td_init_reachability_tests {
             reachable_td_init_from_head(root, "1602").unwrap(),
             TdInitReachability::Found(_)
         ));
+    }
+
+    #[test]
+    fn touched_codegen_claims_select_changed_accepted_codegen_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let accepted = root.join("tech-design/accepted.md");
+        let unrelated = root.join("tech-design/unrelated.md");
+        std::fs::create_dir_all(accepted.parent().unwrap()).unwrap();
+        std::fs::write(
+            &accepted,
+            r#"---
+id: accepted
+---
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/generated.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+  - path: src/hand.rs
+    action: modify
+    section: source
+    impl_mode: hand-written
+```
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &unrelated,
+            r#"---
+id: unrelated
+---
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/unrelated.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+```
+"#,
+        )
+        .unwrap();
+
+        let changed = BTreeSet::from(["tech-design/accepted.md".to_string()]);
+        let claims =
+            accepted_codegen_claims_for_changed_paths(root, &[accepted, unrelated], &changed)
+                .unwrap();
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].target, "src/generated.rs");
+        assert_eq!(claims[0].display_ref(), "tech-design/accepted.md#schema");
     }
 }
 
