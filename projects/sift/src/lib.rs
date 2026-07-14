@@ -693,7 +693,7 @@ struct ApiError {
     message: String,
     retryable: bool,
     retry_after_secs: Option<u64>,
-    projection_lag: Option<projection::ProjectionLag>,
+    projection_lag: Option<Box<projection::ProjectionLag>>,
 }
 
 impl ApiError {
@@ -773,7 +773,7 @@ impl ApiError {
             ),
             retryable: true,
             retry_after_secs: Some(lag.retry_after_seconds),
-            projection_lag: Some(lag),
+            projection_lag: Some(Box::new(lag)),
         }
     }
 }
