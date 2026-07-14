@@ -33,7 +33,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: operator
-          image: tape:latest
+          image: tape:0.4.5
           imagePullPolicy: IfNotPresent
           command: ["tape", "k8s", "operator", "run"]
           env:

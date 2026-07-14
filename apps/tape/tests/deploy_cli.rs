@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:31f1a60c" tracker="pending-tracker" reason="Offline deploy-CLI tests driving the COMPILED tape binary in the default build: every k8s/dockerfile render verb succeeds and round-trips serde_yaml; dockerfile source/release outputs equal the committed fixtures (+ --version substitution); the CRD render is structural-schema safe; operator run without the feature exits nonzero with the rebuild hint; the llm topic names the deploy verbs."
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:31f1a60c" tracker="#1703" reason="Offline deploy-CLI tests driving the COMPILED tape binary in the default build: every k8s/dockerfile render verb succeeds and round-trips serde_yaml; dockerfile source/release outputs equal the committed fixtures (+ --version substitution); the CRD render is structural-schema safe; operator run without the feature exits nonzero with the rebuild hint; the llm topic names the deploy verbs."
 //! Offline deploy-CLI surface driven against the COMPILED `tape` binary in
 //! the DEFAULT (kube-free) build (#1328): every `tape k8s ... render` and
 //! `tape dockerfile render` verb succeeds offline and emits parseable
@@ -71,6 +71,12 @@ fn render_verbs_emit_parseable_yaml_offline() {
     }
     let ns = ops.iter().find(|d| d["kind"] == "Namespace").unwrap();
     assert_eq!(ns["metadata"]["name"], "tape-ops", "namespace substituted");
+    let deployment = ops.iter().find(|d| d["kind"] == "Deployment").unwrap();
+    let image = deployment["spec"]["template"]["spec"]["containers"][0]["image"]
+        .as_str()
+        .expect("operator deployment image");
+    assert_eq!(image, "tape:0.4.5", "operator image is release-pinned");
+    assert_ne!(image, "tape:latest", "operator never emits a mutable tag");
 
     // Instance render: all four profiles emit a `kind: Tape` CR.
     for profile in ["dev", "staging", "prod", "template"] {
