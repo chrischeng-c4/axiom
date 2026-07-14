@@ -851,30 +851,40 @@ section.
 > nothing catches the drift.
 
 Meta docs split by *layer*, not by topic. A fact belongs to exactly one layer.
+The machine-readable source is
+`apps/agentic-workflow/src/cli/meta_docs.rs`; its matrix drives placement and
+section validation as well as the projection below.
 
-**Repo/global layer** is for facts that apply across the repository or teach an
-agent how to operate in this checkout. The only live root meta docs are:
+<!-- aw:meta-doc-matrix:start -->
+| Layer | Doc | Fact owner | Required headings | Inherits |
+|---|---|---|---|---|
+| repo | `/AGENTS.md` | Codex checkout operations; CLAUDE projection plus the fixed Codex whitelist | `## Agentic Workflow CLI Surface` | none |
+| repo | `/CLAUDE.md` | Claude checkout operations and shared agent workflow guidance | `## Agentic Workflow CLI Surface` | none |
+| repo | `/README.md` | repository identity, inventory, install, and discovery entrypoints | `## Contributing` | none |
+| repo | `/CONTRIBUTING.md` | repo-wide authoring contracts, CLI conventions, and META-doc taxonomy | `## Meta-doc content contract` | none |
+| project | `<project>/README.md` | project identity and brief projections linking local contribution and goal contracts | `## Brief`<br>`## Contributing`<br>`## Capability Contract` | repo README + CONTRIBUTING |
+| project | `<project>/CONTRIBUTING.md` | project-local authoring, verification, migration, and contribution rules | `## Brief`<br>`## Authoritative Inputs`<br>`## Local Workflow`<br>`## Verification` | repo CONTRIBUTING |
+| project | `<project>/CAPABILITIES.md` | project product promises, work roots, and required verification | `## Brief`<br>`## Capabilities`<br>`### Capability Index` | repo capability schema policy |
+<!-- aw:meta-doc-matrix:end -->
 
-| Doc | Ownership |
-|-----|-----------|
-| `README.md` | repo identity, generated Projects table, install/discovery entrypoint |
-| `CONTRIBUTING.md` | repo-wide authoring contracts, CLI conventions, service archetypes, meta-doc taxonomy |
-| `CLAUDE.md` | repo-level agent operating manual for Claude Code |
-| `AGENTS.md` | repo-level agent operating manual for Codex; generated/mirrored from `CLAUDE.md` plus Codex-only inserts |
-| `LICENSE` | legal license text; the only root uppercase meta file without a `.md` extension |
+The repo/global layer applies across the repository and teaches an agent how
+to operate in the checkout. `AGENTS.md` and `CLAUDE.md` exist only at this
+layer. `LICENSE` remains the legal text and the only root uppercase meta file
+without a `.md` extension.
 
-**Project/app layer** is for one deliverable's product contract and scoped
-local conventions. `apps/<name>` is for app-facing binaries/services; legacy
-and library-like deliverables may still live under `projects/<name>`. Allowed
-project/app-layer meta docs are:
+The project/app layer owns one deliverable's product contract and scoped local
+conventions. `apps/<name>` is for app-facing binaries/services; legacy and
+library-like deliverables may still live under `projects/<name>`. In a
+single-product repository the repo root is also the project root, so the
+project rows apply there and root `CAPABILITIES.md` is required. In a
+monorepo, root `CAPABILITIES.md` is forbidden because the root is not itself a
+product. Scoped convention docs remain allowed only next to the tree they
+govern; generated evidence/docs require an explicit producer, validator, or
+policy-only marker.
 
-| Doc | Ownership |
-|-----|-----------|
-| `apps/<name>/README.md` or `projects/<name>/README.md` | fixed orientation shell: `## Brief`, `## Contributing`, and `## Capability Contract`; the latter two include a short brief extracted from the linked project/app-layer docs |
-| `apps/<name>/CONTRIBUTING.md` or `projects/<name>/CONTRIBUTING.md` | local authoring, verification, migration, and contribution rules that are too specific for this repo-wide file; must include `## Brief` |
-| `apps/<name>/CAPABILITIES.md` or `projects/<name>/CAPABILITIES.md` | capability contract using the canonical capability schema; must include `## Brief`; README links here rather than restating the full contract |
-| scoped convention docs | only when placed next to the tree they govern, e.g. test fixture layout rules under the fixture tree |
-| generated evidence/docs | only when backed by an explicit producer, validator, or policy-only marker |
+`CAPABILITIES.md` is therefore a project-layer META-doc goal contract, not a
+separate lifecycle phase. WI, EC, and TD work roots resolve against it; they do
+not transfer ownership of the product promise out of the META-doc layer.
 
 Project-layer docs are written for agents first: they should answer "what is
 this project promising?", "where is the source of truth?", "what am I allowed
