@@ -2,15 +2,15 @@ version = 2
 project = "raft-host"
 ir_kind = "td"
 td_path = "libs/raft-host/tech-design"
-generated_at = "2026-07-14T10:13:49.438246+00:00"
-digest = "sha256:92ffbdc9348b981d6f5aaa2cfa29c20d4ab2bbf3d8b1fc8b64e8dd03d9b274a6"
-source_digest = "sha256:92ffbdc9348b981d6f5aaa2cfa29c20d4ab2bbf3d8b1fc8b64e8dd03d9b274a6"
-ir_digest = "sha256:4785166a67817a92c5801208221943cd639c4d4af013102b7b8bf3b4c25864b8"
+generated_at = "2026-07-14T10:26:55.546981+00:00"
+digest = "sha256:0893ef4152170feac21e3665d2520a1ae30c4f8e973ce9363faade33b7278060"
+source_digest = "sha256:0893ef4152170feac21e3665d2520a1ae30c4f8e973ce9363faade33b7278060"
+ir_digest = "sha256:fa6f6857d3b81d9c5a3672eadd033e1b042076c70c2c39b1784e9241c3c59bc6"
 
 [[files]]
 path = "logic/extract-audited-peer-tls-transport-from-tape.md"
-digest = "sha256:ecbf8c9c9930a3baed30317058ca0d068aa57de5a6d05bb544fc1afbcc9655e8"
-ir_digest = "sha256:6b7a81d30ddefe3b5a925ae4a6667e02baead54db73acc4b87f937d78fee98c5"
+digest = "sha256:727e7f8b4cad6b4ecb04c0ccdc8b81153a665d80ab4e9c94e802302e9a5029cc"
+ir_digest = "sha256:ac78f18b8324b614e3263331bb338e39432a419f14e3f1d9f35d44164c138e61"
 section_count = 3
 
 [[files]]
@@ -38,8 +38,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/libs-raft-host-src-lib-rs.md"
-digest = "sha256:905daecad9511d168fbff9e0d878c3d1d3c69cfbf8f62c8205afcb1570395d5a"
-ir_digest = "sha256:d7b8d588b372e4c00885fb640025deaabb1489c0611f27d70868290af645e2ab"
+digest = "sha256:7110883a7eb3e005c50197eecb5a9f7b899d0d7a4ea7449321d683dc9c99102b"
+ir_digest = "sha256:24ad2543aa2f664f7434e304f20f6a406d7d04f946dda96a425a6532fcc9247c"
 section_count = 3
 
 [[files]]
