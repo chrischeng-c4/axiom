@@ -9,35 +9,41 @@ fill_sections: [logic]
 
 ```mermaid
 ---
-id: sift-metric-store
+id: sift-metric-store-contract
 entry: metric
 nodes:
-  metric: { kind: start, label: "committed metric event" }
-  identity: { kind: process, label: "canonical project resource attribute series identity" }
-  budget: { kind: decision, label: "within project cardinality budget" }
-  chunk: { kind: process, label: "temporality aware ordered chunk" }
-  overflow: { kind: process, label: "deterministic overflow series and diagnostic" }
-  rollup: { kind: process, label: "histogram exemplar and fixed-window rollups" }
-  checkpoint: { kind: terminal, label: "independent durable checkpoint" }
-  query: { kind: start, label: "typed metric query" }
-  aggregate: { kind: process, label: "stable aggregation and pagination" }
-  result: { kind: terminal, label: "series rollup and diagnostics" }
+  metric: { kind: start, label: "validated direct metric signal" }
+  identity: { kind: process, label: "hash canonical resource attributes name unit kind" }
+  budget: { kind: decision, label: "new identity within project budget" }
+  normal: { kind: process, label: "retain exact series identity" }
+  overflow: { kind: process, label: "route to deterministic overflow identity and count diagnostic" }
+  point: { kind: process, label: "insert timestamp cursor ordered point" }
+  reset: { kind: process, label: "detect cumulative reset without rewriting raw point" }
+  histogram: { kind: process, label: "validate and merge compatible explicit or exponential histogram" }
+  rollup: { kind: process, label: "materialize fixed windows with exemplars" }
+  checkpoint: { kind: terminal, label: "fsynced projection checkpoint" }
+  query: { kind: start, label: "typed bounded query" }
+  aggregate: { kind: process, label: "gauge last delta sum cumulative increase histogram merge" }
+  page: { kind: terminal, label: "stable page and projection cursor" }
 edges:
   - { from: metric, to: identity }
   - { from: identity, to: budget }
-  - { from: budget, to: chunk, when: yes }
+  - { from: budget, to: normal, when: yes }
   - { from: budget, to: overflow, when: no }
-  - { from: chunk, to: rollup }
-  - { from: overflow, to: rollup }
+  - { from: normal, to: point }
+  - { from: overflow, to: point }
+  - { from: point, to: reset }
+  - { from: reset, to: histogram }
+  - { from: histogram, to: rollup }
   - { from: rollup, to: checkpoint }
   - { from: query, to: aggregate }
-  - { from: aggregate, to: result }
+  - { from: aggregate, to: page }
 ---
 flowchart LR
-    metric([metric]) --> identity[series identity] --> budget{budget}
-    budget -->|yes| chunk[ordered chunk]
-    budget -->|no| overflow[overflow series]
-    chunk --> rollup[rollups]
-    overflow --> rollup --> checkpoint([checkpoint])
-    query([query]) --> aggregate[aggregate] --> result([result])
+    metric([metric]) --> identity[series identity] --> budget{cardinality}
+    budget -->|yes| normal[exact identity]
+    budget -->|no| overflow[overflow identity]
+    normal --> point[ordered point]
+    overflow --> point --> reset[reset semantics] --> histogram[histogram] --> rollup[rollups] --> checkpoint([checkpoint])
+    query([query]) --> aggregate[typed aggregate] --> page([page])
 ```
