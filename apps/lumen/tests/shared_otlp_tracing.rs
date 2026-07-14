@@ -1,4 +1,3 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:acef149f" tracker="pending-tracker" reason="Verify Lumen uses the shared OTLP trace initializer and does not own a duplicate tracer constructor."
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:acef149f" tracker="#1661" reason="Verify Lumen uses the shared OTLP trace initializer and does not own a duplicate tracer constructor."
 const LUMEN_BIN: &str = include_str!("../src/bin/lumen.rs");
 const LUMEN_MANIFEST: &str = include_str!("../Cargo.toml");
@@ -17,5 +16,4 @@ fn lumen_otel_feature_uses_shared_trace_capability_without_a_local_pipeline() {
     assert!(!LUMEN_BIN.contains("fn build_otel_tracer"));
     assert!(!LUMEN_BIN.contains("tracing_opentelemetry::"));
 }
-// HANDWRITE-END
 // HANDWRITE-END

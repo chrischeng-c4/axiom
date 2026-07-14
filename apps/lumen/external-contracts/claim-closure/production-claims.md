@@ -433,7 +433,7 @@ e2e_tests:
     category: behavior
     command: "cargo test -p lumen --test api_e2e -- --nocapture"
     assertions:
-      - "The serving process keeps observability configuration and metadata routes wired."
+      - "The serving process maps its OTLP trace configuration through shared service-http wiring while retaining Lumen-owned metrics instrumentation and metadata routes."
 
   - id: lumen-claim-k8s-kustomize-base
     capability_id: kubernetes-native-deployment

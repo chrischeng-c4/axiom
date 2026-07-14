@@ -23,6 +23,15 @@ fill_sections: [overview, source, changes]
 
 Public API manifest for `apps/lumen/src/bin/lumen.rs` generated from AST during Score force-regeneration standardization.
 
+### Shared OTLP trace adoption
+
+Lumen maps its resolved serve logging settings and `LUMEN_OTLP_ENDPOINT` into
+`service_http::HttpConfig`, then calls
+`service_http::init_tracing_with_identity` with the stable `lumen` build
+identity. The shared library owns trace exporter construction, fallback, and
+W3C parent propagation. Lumen retains `init_otel_meter` because its observable
+metrics instruments read Lumen engine counters and keep Lumen-owned cadence.
+
 ### Symbols
 
 No public AST symbols.

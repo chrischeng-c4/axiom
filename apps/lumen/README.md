@@ -586,7 +586,7 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | prometheus-metrics-endpoint | epic | - | implemented | passing | smoke | apps/lumen/tests/api_e2e.rs |
 | servicemonitor-prometheusrule-bundle | epic | - | implemented | passing | smoke | apps/lumen/k8s/components/observability |
-| otlp-traces-and-metrics | epic | - | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs<br>apps/lumen/compose.yaml |
+| otlp-traces-and-metrics | epic | #1661 | implemented | passing | conformance | shared `libs/service-http` traces; Lumen engine metrics remain local |
 
 ### Kubernetes-Native Deployment
 

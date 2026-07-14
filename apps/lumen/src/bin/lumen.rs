@@ -24,6 +24,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+#[cfg(feature = "operator")]
 use tracing_subscriber::EnvFilter;
 
 use lumen::auth::AuthConfig;
@@ -1942,7 +1943,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
         &args.log_level,
         args.log_format,
         args.otlp_endpoint.as_deref(),
-    );
+    )?;
 
     let engine = Arc::new(Engine::new());
 
@@ -2614,75 +2615,22 @@ async fn connect_nats_with_retry(url: &str, timeout_secs: u64) -> Result<NatsWal
     }
 }
 
-fn init_tracing(level: &str, format: LogFormat, otlp_endpoint: Option<&str>) {
-    use tracing_subscriber::prelude::*;
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(format!("info,lumen={level}")));
-    let fmt_layer = match format {
-        LogFormat::Pretty => tracing_subscriber::fmt::layer().boxed(),
-        LogFormat::Json => tracing_subscriber::fmt::layer().json().boxed(),
+fn init_tracing(level: &str, format: LogFormat, otlp_endpoint: Option<&str>) -> Result<()> {
+    let log_format = match format {
+        LogFormat::Pretty => service_http::LogFormat::Pretty,
+        LogFormat::Json => service_http::LogFormat::Json,
     };
-    let registry = tracing_subscriber::registry().with(filter).with(fmt_layer);
-
-    #[cfg(feature = "otel")]
-    {
-        if let Some(endpoint) = otlp_endpoint {
-            match build_otel_tracer(endpoint) {
-                Ok(tracer) => {
-                    registry
-                        .with(tracing_opentelemetry::layer().with_tracer(tracer))
-                        .init();
-                    tracing::info!(otlp_endpoint = endpoint, "OTLP trace export enabled");
-                }
-                Err(e) => {
-                    registry.init();
-                    tracing::error!(error = %e, "OTLP init failed; continuing without trace export");
-                }
-            }
-        } else {
-            registry.init();
-        }
-        return;
-    }
-
-    #[cfg(not(feature = "otel"))]
-    {
-        if otlp_endpoint.is_some() {
-            registry.init();
-            tracing::warn!(
-                "LUMEN_OTLP_ENDPOINT is set but this binary was built without the `otel` \
-                 feature — no trace export (rebuild with --features otel)"
-            );
-        } else {
-            registry.init();
-        }
-    }
-}
-
-/// Build a batch OTLP (tonic/gRPC, plaintext) tracer exporting to `endpoint`.
-/// Runs inside the tokio runtime (`serve` is `#[tokio::main]`-driven).
-#[cfg(feature = "otel")]
-fn build_otel_tracer(
-    endpoint: &str,
-) -> std::result::Result<opentelemetry_sdk::trace::Tracer, Box<dyn std::error::Error>> {
-    use opentelemetry_otlp::WithExportConfig;
-    let exporter = opentelemetry_otlp::new_exporter()
-        .tonic()
-        .with_endpoint(endpoint.to_string());
-    let tracer = opentelemetry_otlp::new_pipeline()
-        .tracing()
-        .with_exporter(exporter)
-        .with_trace_config(opentelemetry_sdk::trace::Config::default().with_resource(
-            opentelemetry_sdk::Resource::new(vec![
-                opentelemetry::KeyValue::new("service.name", "lumen"),
-                opentelemetry::KeyValue::new(
-                    "service.version",
-                    env!("CARGO_PKG_VERSION").to_string(),
-                ),
-            ]),
-        ))
-        .install_batch(opentelemetry_sdk::runtime::Tokio)?;
-    Ok(tracer)
+    let config = service_http::HttpConfig::new(
+        "127.0.0.1",
+        0,
+        format!("info,lumen={level}"),
+        log_format,
+        0,
+        0,
+        otlp_endpoint.map(str::to_owned),
+    );
+    let identity = service_http::ServiceIdentity::new("lumen", env!("CARGO_PKG_VERSION"))?;
+    service_http::init_tracing_with_identity(&config, &identity)
 }
 
 /// Build + install a global OTLP (tonic) meter provider that PUSHES lumen's
