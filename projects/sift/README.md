@@ -154,7 +154,7 @@ Gate Inventory:
 | append-only-operational-event-journal | change | 1659 | implemented | passing | conformance | projects/sift/tests/sharded_journal.rs |
 | durable-content-addressed-blobs | change | 1659 | implemented | passing | conformance | projects/sift/tests/sharded_journal.rs |
 | gcs-raw-archive-manifest | change | 1659 | implemented | passing | dogfood | projects/sift/tests/gcs_archive.rs |
-| replayable-view-rebuild | change | 1660 | planned | planned | dogfood | durable replay job and projection equality gate |
+| replayable-view-rebuild | change | #1660 | planned | planned | dogfood | durable replay job and projection equality gate |
 
 ### Durability And Acknowledgment
 
@@ -215,7 +215,7 @@ Gate Inventory:
 | 4096-virtual-bucket-routing | change | 1659 | implemented | passing | conformance | projects/sift/tests/sharded_journal.rs |
 | epoch-based-future-write-split | change | 1659 | implemented | passing | conformance | projects/sift/tests/sharded_journal.rs |
 | sealed-segment-retention-and-move | change | 1659 | implemented | passing | dogfood | byte-preserving move passes; retention worker remains #1676 |
-| rebuildable-hot-index | change | 1660 | planned | planned | dogfood | embedded-Lumen rebuild equality gate |
+| rebuildable-hot-index | change | #1660 | planned | planned | dogfood | embedded-Lumen rebuild equality gate |
 
 ### Replica Sync And Bootstrap
 
@@ -303,7 +303,7 @@ Gate Inventory:
 | operational-event-v2-envelope | change | 1657 | implemented | passing | conformance | V2 typed round-trip and legacy journal/snapshot upcast tests |
 | signal-taxonomy-and-versioning | change | 1657 | implemented | passing | conformance | eight-signal schema and compatibility tests |
 | typed-attribute-policy | change | 1657 | implemented | passing | conformance | allow/deny and recursive typed-value validation tests |
-| projection-index-allowlist | change | 1660 | planned | planned | conformance | rebuildable index field allowlist gate |
+| projection-index-allowlist | change | #1660 | planned | planned | conformance | rebuildable index field allowlist gate |
 | metric-cardinality-policy | change | 1667 | planned | planned | conformance | time-series overflow and budget gate |
 | pii-and-genai-content-policy | change | 1657 | implemented | passing | negative | raw-byte absence, allow/deny, truncation, and project-policy tests |
 
@@ -336,7 +336,7 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| projection-runtime-and-checkpoints | change | 1660 | planned | planned | conformance | async idempotent apply, lag, checkpoint, and replay-job gate |
+| projection-runtime-and-checkpoints | change | #1660 | planned | planned | conformance | async idempotent apply, lag, checkpoint, and replay-job gate |
 | logging-store-over-events | change | 1664 | planned | planned | conformance | log stream/index/query/rebuild gate |
 | trace-store-topology-and-correlation | change | 1665 | planned | planned | conformance | span tree, critical path, and correlation gate |
 | error-report-store-grouping-lifecycle | change | 1666 | planned | planned | conformance | fingerprint, group, occurrence, and lifecycle gate |
@@ -344,7 +344,7 @@ Gate Inventory:
 | audit-and-change-store-timeline | change | 1668 | planned | planned | conformance | immutable timeline, legal hold, and export gate |
 | profile-store-and-analysis | change | 1669 | planned | planned | conformance | flamegraph, top-functions, diff, and trace-correlation gate |
 | genai-session-cost-evaluation-views | change | 1670 | planned | planned | conformance | observation, session, token/cost, and evaluation gate |
-| store-rebuild-from-raw-journal | change | 1660 | planned | planned | dogfood | independent projection rebuild equality gate |
+| store-rebuild-from-raw-journal | change | #1660 | planned | planned | dogfood | independent projection rebuild equality gate |
 
 ### Query Tail And Replay
 
