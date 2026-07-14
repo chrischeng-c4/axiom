@@ -306,6 +306,60 @@ async fn concurrent_transactions_isolated_on_distinct_backends() {
     stop_proxy(server, shutdown_tx).await;
 }
 
+/// verify: pool_modes::queued_transactions_complete_with_one_backend_without_state_leak (R2)
+#[tokio::test]
+async fn queued_transactions_complete_with_one_backend_without_state_leak() {
+    let Some((backend_addr, user)) = real_backend_ready().await else {
+        eprintln!(
+            "skipping queued_transactions_complete_with_one_backend_without_state_leak: \
+             no reachable local Postgres at 127.0.0.1:5432 for user {:?}",
+            backend_user()
+        );
+        return;
+    };
+
+    let backend_pool = BackendPool::new(pool_config(backend_addr, 1, Duration::from_secs(5)));
+    let (proxy_addr, server, shutdown_tx) =
+        spawn_transaction_proxy(backend_pool.clone(), ConnectionBudget::new(10)).await;
+    let dsn = proxy_dsn(proxy_addr, &user);
+
+    let (client_a, connection_a) = tokio_postgres::connect(&dsn, tokio_postgres::NoTls)
+        .await
+        .expect("client A admits");
+    let task_a = tokio::spawn(connection_a);
+    let (client_b, connection_b) = tokio_postgres::connect(&dsn, tokio_postgres::NoTls)
+        .await
+        .expect("client B admits");
+    let task_b = tokio::spawn(connection_b);
+
+    let (value_a, value_b) = tokio::join!(
+        simple_query_i32(
+            &client_a,
+            "SELECT 11 AS value, pg_sleep(0.15) AS delay",
+            "value"
+        ),
+        simple_query_i32(
+            &client_b,
+            "SELECT 22 AS value, pg_sleep(0.15) AS delay",
+            "value"
+        )
+    );
+    assert_eq!(value_a, 11);
+    assert_eq!(value_b, 22);
+
+    let stats = backend_pool.stats();
+    assert!(
+        stats.backend_active + stats.backend_idle <= 1,
+        "queued clients must not exceed the one-backend cap: {stats:?}"
+    );
+
+    drop(client_a);
+    drop(client_b);
+    task_a.await.expect("connection A joins").expect("A clean");
+    task_b.await.expect("connection B joins").expect("B clean");
+    stop_proxy(server, shutdown_tx).await;
+}
+
 /// verify: pool_modes::reset_between_owners_prevents_session_state_leak_across_transaction_leases (AC2)
 #[tokio::test]
 async fn reset_between_owners_prevents_session_state_leak_across_transaction_leases() {
