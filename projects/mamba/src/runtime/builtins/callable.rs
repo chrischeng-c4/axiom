@@ -44,7 +44,9 @@ pub fn mb_callable(obj: MbValue) -> MbValue {
                     if class_name == "__exec_function__" {
                         return MbValue::from_bool(true);
                     }
-                    if class_name == "__unbound_method__" || class_name == "__bound_native_method__"
+                    if class_name == "__unbound_method__"
+                        || class_name == "__bound_native_method__"
+                        || class_name == "method"
                     {
                         return MbValue::from_bool(true);
                     }
