@@ -19,8 +19,9 @@ use pgpool::pool::{
 };
 use pgpool::proxy::BackendEndpointConfig;
 use pgpool::wire::{
-    BackendMessage, CommandComplete, ErrorResponse, Frame, FrameReader, FrontendMessage, Query,
-    ReadyForQuery, Role, TransactionStatus, WireCodecConfig, WireMessage,
+    AuthenticationOk, BackendMessage, CommandComplete, ErrorResponse, Frame, FrameReader,
+    FrontendMessage, Query, ReadyForQuery, Role, StartupMessage, TransactionStatus,
+    WireCodecConfig, WireMessage,
 };
 
 fn test_wire_config() -> WireCodecConfig {
@@ -747,6 +748,58 @@ async fn acquire_times_out_with_saturated_error_after_acquire_timeout() {
 
     // Cleanup: release the held lease so the fake backend task can be
     // dropped without leaking a warning.
+    pool.release(held.id, held.stream, LeaseDisposition::Close)
+        .await;
+}
+
+/// Repeated non-matching startup-replay publications wake the existing
+/// acquisition loop, but must not extend its original acquire deadline.
+///
+/// verify: pool::saturated_waiter_keeps_deadline_across_spurious_wakeups (P0 #1698)
+#[tokio::test]
+async fn saturated_waiter_keeps_deadline_across_spurious_wakeups() {
+    let (port, _backend) = spawn_fake_backend_accept_and_hold().await;
+    let mut config = pool_config(port, 1);
+    config.acquire_timeout = Duration::from_millis(180);
+    let pool = BackendPool::new(config);
+    let held = pool.acquire_fresh().await.expect("first acquire succeeds");
+
+    let waiting_startup = StartupMessage {
+        protocol_major: 3,
+        protocol_minor: 0,
+        parameters: vec![("user".to_string(), "waiting".to_string())],
+    };
+    let waiter_pool = pool.clone();
+    let started = std::time::Instant::now();
+    let waiter =
+        tokio::spawn(async move { waiter_pool.acquire_for_startup(&waiting_startup).await });
+
+    // These entries cannot satisfy the waiting startup identity, but each
+    // publishes the same Notify path that a backend return uses.
+    for i in 0..3 {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        pool.publish_startup_replay(
+            StartupMessage {
+                protocol_major: 3,
+                protocol_minor: 0,
+                parameters: vec![("user".to_string(), format!("other-{i}"))],
+            },
+            vec![BackendMessage::AuthenticationOk(AuthenticationOk)],
+        );
+    }
+
+    let result = waiter.await.expect("waiter task joins");
+    let elapsed = started.elapsed();
+    assert!(matches!(result, Err(PoolError::Saturated { max: 1, .. })));
+    assert!(
+        elapsed >= Duration::from_millis(165),
+        "wakeups must not make the acquire deadline fire early: waited {elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_millis(350),
+        "wakeups must not extend the fixed acquire deadline: waited {elapsed:?}"
+    );
+
     pool.release(held.id, held.stream, LeaseDisposition::Close)
         .await;
 }
